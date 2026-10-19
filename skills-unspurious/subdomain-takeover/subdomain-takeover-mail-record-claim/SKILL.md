@@ -46,10 +46,8 @@ This variant owns the post-claim step the web-content claim cannot describe: pub
 
 ## Trust Assumptions
 
-- **The agreement**: every mail-authorisation record points at a host the owner controls, so the published policy authorises only the owner's sending infrastructure, and every mail-service record points at a host that receives the name's mail under owner control.
+- **The agreement**: every mail-authorisation record points at a host the owner controls, so the published policy authorises only the owner's sending infrastructure, and every mail-service record points at a host that receives the name's mail under owner control, and the parent domain's own policy trusts the records published under the claimed host, so the claim inherits send authority rather than only the name, and the parent domain's mail routing trusts the record's destination, so the claim inherits delivery for the trusted name.
 - **The failing clause**: the record outlives its host binding, so a claimed host can publish authorising records the parent domain's policy then honours, or receive the messages the parent domain's mail service routes to it.
-- **The policy clause**: the parent domain's own policy trusts the records published under the claimed host, so the claim inherits send authority rather than only the name.
-- **The receipt clause**: the parent domain's mail routing trusts the record's destination, so the claim inherits delivery for the trusted name.
 
 ## Key Vulnerabilities
 
@@ -89,8 +87,7 @@ This variant owns the post-claim step the web-content claim cannot describe: pub
 - **Receipt without proof**: provider paths that enable forwarding or a mailbox on a claimed host with no domain-ownership check.
 - **Record-type independence**: one record family may stay verified while another stays claimable; probe each family separately.
 - **Race windows**: re-claim the exact host inside the window between release and re-verification.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -134,4 +131,3 @@ Claim runs mail-record enumeration plus resolution plus fingerprinting plus auth
 
 A mail record that outlives its host binding hands the parent domain's mail role to whoever claims the host.
 Claim the exact host, publish the authorising records or enable receipt, and prove the effect on the parent domain's own mail rather than on the attacker's.
-

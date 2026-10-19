@@ -72,9 +72,8 @@ Transclusion reads local files and internal URLs through element-driven fetches 
 - **Namespace variation**: vary element namespace prefixes and attribute capitalisation so naive element filters miss the include craft.
 - **Stylesheet variation**: vary stylesheet structure between minimal templates and multi-template programs to reach the evaluation path.
 - **Target-family pivot**: pivot between file-URI targets and internal-URL targets inside the fetch attribute so one blocked family still yields the other.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 ## Chaining Attacks
 
 - **Configuration handoff**: hand transcluded configuration content to path traversal follow-ups when the fetched file names further readable paths.
@@ -83,11 +82,21 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Inventory consumers and transformers** - list every XML sink plus every transform endpoint plus every pipeline stage that parses uploaded documents, and the step completes when every stage carries a transclusion capability question and no upload path lacks a downstream parser.
-2. **Probe transclusion capability** - submit benign include elements and benign stylesheets with unique per-probe tokens to each stage, and the step completes when every stage shows either an executed fetch or recorded refusal.
-3. **Fix the oracle** - record where transcluded content surfaces plus which error shapes name fetch targets plus which callback hits correlate, and the step completes when every stage has a fixed channel of direct output plus error plus callback baseline.
-4. **Run the targeted fetch** - aim include href craft and stylesheet document-fetch craft at a controlled file path or internal URL and reproduce the access evidence, and the step completes when a controlled target produces reproducible content surfacing, a reproduced error fragment, or a correlated callback hit.
-5. **Validate parity** - repeat the fetch craft across service endpoints plus uploads plus background jobs and record every divergence in processor options, and the step completes when every channel shows the same options or a recorded divergence.
+1. **Inventory consumers and transformers.**
+List every XML sink plus every transform endpoint plus every pipeline stage that parses uploaded documents.
+Completion holds when every stage carries a transclusion capability question and no upload path lacks a downstream parser.
+2. **Probe transclusion capability.**
+Submit benign include elements and benign stylesheets with unique per-probe tokens to each stage.
+Completion holds when every stage shows either an executed fetch or recorded refusal.
+3. **Fix the oracle.**
+Record where transcluded content surfaces plus which error shapes name fetch targets plus which callback hits correlate.
+Completion holds when every stage has a fixed channel of direct output plus error plus callback baseline.
+4. **Run the targeted fetch.**
+Aim include href craft and stylesheet document-fetch craft at a controlled file path or internal URL and reproduce the access evidence.
+Completion holds when a controlled target produces reproducible content surfacing, a reproduced error fragment, or a correlated callback hit.
+5. **Validate parity.**
+Repeat the fetch craft across service endpoints plus uploads plus background jobs and record every divergence in processor options.
+Completion holds when every channel shows the same options or a recorded divergence.
 
 ## False Positives
 

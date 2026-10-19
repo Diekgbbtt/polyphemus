@@ -63,8 +63,7 @@ This variant breaks the claims and context binding while the signature routine, 
 - **Privilege bypass**: defeat privilege enforcement by presenting edited privilege claim sets against a single service and observing authorization change.
 - **Lifetime bypass**: defeat lifetime enforcement by presenting expired and premature shapes and by bracketing the clock skew tolerance.
 - **Token-kind bypass**: defeat token kind enforcement by swapping token kinds across paths and by swapping nested token orderings.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

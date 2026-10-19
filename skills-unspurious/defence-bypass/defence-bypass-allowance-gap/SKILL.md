@@ -27,7 +27,7 @@ A permit that enumerates what may happen is defeated by every route to the capab
 
 ## Detection Channels
 
-- **Channel scope**: allowance gaps listen to the permit's enumeration rather than to a value comparison, so only the entries below are live here.
+- **Channel scope**: allowance gaps listen to the permit's enumeration rather than to a value comparison.
 - **Permit refusal**: the permit's refusal on a plainly forbidden request, which proves the restriction is enforced.
 - **Unlisted pass**: a permitted request that reaches the withheld capability, which shows the enumeration was incomplete.
 - **Route differential**: the differential between the refused forbidden route and the permitted unlisted route, which localises the omission.

@@ -11,26 +11,26 @@ Weak cryptography in session management, token generation, or data storage leads
 
 ## Attack Surface
 
-- **Structured tokens**: session cookies, access and refresh artifacts, identity assertions
-- **Recovery and proof artifacts**: password reset, email confirmation, invite, unlock, share links
-- **Keyed checksums**: signed session blobs, signed state carriers, signed upload descriptors
-- **Machine-issued values**: API keys, device codes, one-time codes, anti-forgery tokens
-- **At-rest material**: stored digests, embedded keys, seeded secrets, static placeholders
-- **Encrypted at-rest material**: stored ciphertext blocks, encrypted cookies, and encrypted columns whose confidentiality rests on the cipher and its initialisation value
+- **Structured tokens**: session cookies, access and refresh artifacts, identity assertions.
+- **Recovery and proof artifacts**: password reset, email confirmation, invite, unlock, share links.
+- **Keyed checksums**: signed session blobs, signed state carriers, signed upload descriptors.
+- **Machine-issued values**: API keys, device codes, one-time codes, anti-forgery tokens.
+- **At-rest material**: stored digests, embedded keys, seeded secrets, static placeholders.
+- **Encrypted at-rest material**: stored ciphertext blocks, encrypted cookies, and encrypted columns whose confidentiality rests on the cipher and its initialisation value.
 
 ## Reconnaissance
 
 ### Decode and Inspect
 
-- **Immediate decoding**: decode every issued value immediately: a structured token often carries identity, role, and lifetime in clear form
-- **Structure recording**: record structure per artifact: segment count, alphabet, length, casing, fixed versus variable fields
-- **Algorithm marker**: note the algorithm marker and whether a signature segment is present
+- **Immediate decoding**: decode every issued value immediately: a structured token often carries identity, role, and lifetime in clear form.
+- **Structure recording**: record structure per artifact: segment count, alphabet, length, casing, fixed versus variable fields.
+- **Algorithm marker**: note the algorithm marker and whether a signature segment is present.
 
 ### Sampling
 
-- **Batch collection**: collect a batch of values per artifact from repeated issuance, from several principals, and from several roles
-- **Channel capture**: capture the same artifact across channels (web, mobile, API) to compare issuance paths
-- **Invalid candidate**: keep one known-invalid candidate of the same shape to calibrate acceptance verdicts
+- **Batch collection**: collect a batch of values per artifact from repeated issuance, from several principals, and from several roles.
+- **Channel capture**: capture the same artifact across channels (web, mobile, API) to compare issuance paths.
+- **Invalid candidate**: keep one known-invalid candidate of the same shape to calibrate acceptance verdicts.
 
 ## Detection Channels
 
@@ -72,73 +72,73 @@ Weak cryptography in session management, token generation, or data storage leads
 
 ### Structured Token Inspection
 
-- **Decoded payloads**: often carry identity, role, expiry, and tenant in clear form; the signature protects integrity, not confidentiality
-- **Signed-but-readable artifacts**: treat any signed-but-readable artifact as a claim set to target: what the verifier reads is what the attacker can rewrite once the signing clause fails
-- **Trusted claims**: record which claims the verifier trusts (identity, role, scope, lifetime) and whether it re-derives any of them
+- **Decoded payloads**: often carry identity, role, expiry, and tenant in clear form; the signature protects integrity, not confidentiality.
+- **Signed-but-readable artifacts**: treat any signed-but-readable artifact as a claim set to target: what the verifier reads is what the attacker can rewrite once the signing clause fails.
+- **Trusted claims**: record which claims the verifier trusts (identity, role, scope, lifetime) and whether it re-derives any of them.
 
 ### Predictable Token Patterns
 
-- **Embedded counters, timestamps, or identifiers**: make the next value derivable from samples
-- **Digest-of-known-input values**: values that are digests of known input (identifier, email, hostname) are recomputable offline
-- **Fixed length with a restricted alphabet**: marks a hashed value rather than a random one
-- **Short values**: fall to brute force or lookup tables; repeated values across issuance show a static source
+- **Embedded counters, timestamps, or identifiers**: make the next value derivable from samples.
+- **Digest-of-known-input values**: values that are digests of known input (identifier, email, hostname) are recomputable offline.
+- **Fixed length with a restricted alphabet**: marks a hashed value rather than a random one.
+- **Short values**: fall to brute force or lookup tables; repeated values across issuance show a static source.
 
 ### Guessable Signing Secrets
 
-- **Placeholder and product-derived secrets**: placeholder, dictionary, and product-derived secrets appear in default configurations and copied deployments
-- **Local key verification**: a key guess is verified locally against one captured signature before it is spent at the endpoint
-- **Derived-value guessing**: values derived from the domain, the product name, or the environment are tried alongside wordlists
-- **Key-source resolution**: where the verifier derives its key basis from artifact-carried input, the key basis is attacker-supplied rather than recovered; name the signing-key variant for the resolution step and the authentication-jwt skill for the token-header shapes
+- **Placeholder and product-derived secrets**: placeholder, dictionary, and product-derived secrets appear in default configurations and copied deployments.
+- **Local key verification**: a key guess is verified locally against one captured signature before it is spent at the endpoint.
+- **Derived-value guessing**: values derived from the domain, the product name, or the environment are tried alongside wordlists.
+- **Key-source resolution**: where the verifier derives its key basis from artifact-carried input, the key basis is attacker-supplied rather than recovered; name the signing-key variant for the resolution step and the authentication-jwt skill for the token-header shapes.
 
 ### Digest-of-Known-Input Derivation
 
-- **Digest recomputation**: recovery tokens computed as a digest of the identifier are recomputed for each candidate identifier and replayed
-- **Normalisation variants**: case, whitespace, and alternate-identifier normalisations produce further candidates that still verify
-- **Precomputed tables**: precomputed tables and lookup services answer for common plaintexts without server contact
+- **Digest recomputation**: recovery tokens computed as a digest of the identifier are recomputed for each candidate identifier and replayed.
+- **Normalisation variants**: case, whitespace, and alternate-identifier normalisations produce further candidates that still verify.
+- **Precomputed tables**: precomputed tables and lookup services answer for common plaintexts without server contact.
 
 ### Token Forgery
 
-- **Signing-clause recovery**: recover the signing clause once the secret or the checksum source is known, then mint claims the verifier trusts
-- **Claim-set targeting**: decode a genuine artifact to read the claim names that control identity, role, and tenant, then mint only those claims under the recovered or attacker-supplied key basis
-- **Elevation targets**: identity of another principal, role or privilege flags, extended lifetime, widened scope
-- **Local re-verification**: re-verify the forged artifact locally before replaying it, so a rejected replay attributes to binding rather than construction
+- **Signing-clause recovery**: recover the signing clause once the secret or the checksum source is known, then mint claims the verifier trusts.
+- **Claim-set targeting**: decode a genuine artifact to read the claim names that control identity, role, and tenant, then mint only those claims under the recovered or attacker-supplied key basis.
+- **Elevation targets**: identity of another principal, role or privilege flags, extended lifetime, widened scope.
+- **Local re-verification**: re-verify the forged artifact locally before replaying it, so a rejected replay attributes to binding rather than construction.
 
 ### Comparison Weakness
 
-- **Byte-by-byte comparison**: verification that compares values byte by byte without constant time leaks prefix correctness
-- **Amplification conditions**: the leak is amplified where tokens are long, comparison is repeated, and the endpoint tolerates many attempts
-- **Timing-work prerequisites**: timing work needs a calibrated baseline over known-invalid values and statistical separation over noise
+- **Byte-by-byte comparison**: verification that compares values byte by byte without constant time leaks prefix correctness.
+- **Amplification conditions**: the leak is amplified where tokens are long, comparison is repeated, and the endpoint tolerates many attempts.
+- **Timing-work prerequisites**: timing work needs a calibrated baseline over known-invalid values and statistical separation over noise.
 
 ### Ciphertext Confidentiality
 
-- **Block-aligned leakage**: a mode that encrypts equal plaintext blocks to equal ciphertext blocks exposes structure and repetition in stored material without any key recovery
-- **Initialisation reuse**: a reused or predictable initialisation value makes equal plaintext prefixes produce equal ciphertext, so one sample answers for many
-- **Weak random source**: a non-cryptographic generator behind key or initialisation creation turns the value into a guessable one, so the search space for the secret step above collapses
+- **Block-aligned leakage**: a mode that encrypts equal plaintext blocks to equal ciphertext blocks exposes structure and repetition in stored material without any key recovery.
+- **Initialisation reuse**: a reused or predictable initialisation value makes equal plaintext prefixes produce equal ciphertext, so one sample answers for many.
+- **Weak random source**: a non-cryptographic generator behind key or initialisation creation turns the value into a guessable one, so the search space for the secret step above collapses.
 
 ## Advanced Techniques
 
 ### Timing Oracle Refinement
 
-- **Baseline calibration**: calibrate a baseline over known-invalid candidates, then iterate candidate prefixes position by position
-- **Noise separation**: separate comparison-driven differences from transport noise by repeating each sample and watching error classes
-- **Stop condition**: stop when the extracted value verifies, or when a flat distribution across all prefixes reports constant-time comparison
+- **Baseline calibration**: calibrate a baseline over known-invalid candidates, then iterate candidate prefixes position by position.
+- **Noise separation**: separate comparison-driven differences from transport noise by repeating each sample and watching error classes.
+- **Stop condition**: stop when the extracted value verifies, or when a flat distribution across all prefixes reports constant-time comparison.
 
 ### Entropy and Sampling Analysis
 
-- **Sample counts**: sample counts in the tens per artifact: unique-value counts, length variety, and shared prefixes reveal the generator
-- **Sample clustering**: cluster samples by issuance time and by principal to separate counter-driven from time-driven and identity-driven fields
-- **Strong-randomness verdict**: a generator verdict of strong randomness redirects effort to key and comparison clauses
+- **Sample counts**: sample counts in the tens per artifact: unique-value counts, length variety, and shared prefixes reveal the generator.
+- **Sample clustering**: cluster samples by issuance time and by principal to separate counter-driven from time-driven and identity-driven fields.
+- **Strong-randomness verdict**: a generator verdict of strong randomness redirects effort to key and comparison clauses.
 
 ### Rotation and Retirement Windows
 
-- **Retired-key validity**: values issued under a retired key or a previous generator version stay valid inside an overlap window
-- **Rotation-boundary sampling**: sampling across a rotation boundary shows whether the retirement is enforced at verification or only at issuance
+- **Retired-key validity**: values issued under a retired key or a previous generator version stay valid inside an overlap window.
+- **Rotation-boundary sampling**: sampling across a rotation boundary shows whether the retirement is enforced at verification or only at issuance.
 
 ### Ciphertext Structure Analysis
 
-- **Sample comparison first**: compare ciphertext samples for repeated blocks and repeated initialisation values before attempting any key work
-- **Structure recovery**: recover plaintext structure from a mode that preserves block equality, and search the seed space where the initialisation value advances predictably
-- **Stop signal**: a mode that randomises every block under a unique unpredictable initialisation value closes this line rather than inviting more samples
+- **Sample comparison first**: compare ciphertext samples for repeated blocks and repeated initialisation values before attempting any key work.
+- **Structure recovery**: recover plaintext structure from a mode that preserves block equality, and search the seed space where the initialisation value advances predictably.
+- **Stop signal**: a mode that randomises every block under a unique unpredictable initialisation value closes this line rather than inviting more samples.
 
 ## Bypass Techniques
 
@@ -149,16 +149,15 @@ Weak cryptography in session management, token generation, or data storage leads
 - **Retired-key overlap**: retired keys and previous generator versions accepted during a rotation overlap.
 - **Spelling folding**: alternate identifier spellings accepted by the derivation path while the lookup stays on the canonical one.
 - **Family handoff**: name the defence-bypass family at the normalisation, tolerant-acceptance, and spelling-folding steps, and the proxy-techniques family at the second-carrier step, rather than restating those mechanics here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **Predictable recovery artifact**: account takeover → durable access
-- **Recovered signing key**: forged session artifact → privilege escalation
-- **Weak session artifact**: replay against a second service that checks only the signature
-- **Timing oracle**: full value recovery → reuse in any downstream action the artifact authorizes
-- **Crypto weakness plus an authorization gap**: the forged identity then reaches resources the original holder could not
+- **Predictable recovery artifact**: account takeover → durable access.
+- **Recovered signing key**: forged session artifact → privilege escalation.
+- **Weak session artifact**: replay against a second service that checks only the signature.
+- **Timing oracle**: full value recovery → reuse in any downstream action the artifact authorizes.
+- **Crypto weakness plus an authorization gap**: the forged identity then reaches resources the original holder could not.
 
 ## Testing Methodology
 
@@ -179,22 +178,22 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## False Positives
 
-- **Long random values**: long random values that decode to nothing meaningful and share no structure across samples
-- **Full-binding artifacts**: artifacts that verify only under a full binding of identity plus audience plus lifetime, and expire quickly
-- **Vanishing timing differences**: timing differences that vanish under repetition, or that match the endpoint's normal variance
-- **Failed derivations**: candidate derivations that fail acceptance at every endpoint, which marks a strong random source rather than a weak one
-- **Randomised encryption**: encrypted material whose mode randomises every block under a unique unpredictable initialisation value, with no reuse across samples
+- **Long random values**: long random values that decode to nothing meaningful and share no structure across samples.
+- **Full-binding artifacts**: artifacts that verify only under a full binding of identity plus audience plus lifetime, and expire quickly.
+- **Vanishing timing differences**: timing differences that vanish under repetition, or that match the endpoint's normal variance.
+- **Failed derivations**: candidate derivations that fail acceptance at every endpoint, which marks a strong random source rather than a weak one.
+- **Randomised encryption**: encrypted material whose mode randomises every block under a unique unpredictable initialisation value, with no reuse across samples.
 
 ## Pro Tips
 
-- **Immediate decoding**: decode every session cookie and token immediately; claims often travel in clear form
-- **Offline recomputation**: digests of known values (identifier, email, hostname) are recomputed offline before any guessing
-- **Default-secret priority**: default and placeholder secrets are the fastest win; try product-derived and environment-derived values next
-- **Stripped-signature acceptance**: stripped-signature acceptance belongs to the unchecked-algorithm clause; test it where pinning is unclear
-- **Short values**: values shorter than the strong-randomness bound fall to brute force or tables
-- **Sample volume**: collect 5-10 samples per artifact and look for counters, timestamps, and shared prefixes inside them
-- **End-to-end confirmation**: mint elevated claims and confirm acceptance end to end; a local re-verification success is not yet a finding
-- **Suite sweep**: run the whole forgery suite across every mode before manual chaining; one automated pass finds the weak mode faster than a hand-built chain
+- **Immediate decoding**: decode every session cookie and token immediately; claims often travel in clear form.
+- **Offline recomputation**: digests of known values (identifier, email, hostname) are recomputed offline before any guessing.
+- **Default-secret priority**: default and placeholder secrets are the fastest win; try product-derived and environment-derived values next.
+- **Stripped-signature acceptance**: stripped-signature acceptance belongs to the unchecked-algorithm clause; test it where pinning is unclear.
+- **Short values**: values shorter than the strong-randomness bound fall to brute force or tables.
+- **Sample volume**: collect 5-10 samples per artifact and look for counters, timestamps, and shared prefixes inside them.
+- **End-to-end confirmation**: mint elevated claims and confirm acceptance end to end; a local re-verification success is not yet a finding.
+- **Suite sweep**: run the whole forgery suite across every mode before manual chaining; one automated pass finds the weak mode faster than a hand-built chain.
 
 ## Summary
 

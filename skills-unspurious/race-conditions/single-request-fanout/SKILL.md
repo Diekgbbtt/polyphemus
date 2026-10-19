@@ -14,8 +14,8 @@ A second direction rides the same packing: one envelope carrying many costly ope
 
 ## Attack Surface
 
-- **Applicability**: fanout applicability centers on interfaces that accept batched operations, aliased fields, persisted query identifiers, or rapid emits over one connection.
-- **Surface composition**: the surface holds batch plus alias plus persisted-query plus message-emit operations where per-mutation guards assume isolated execution.
+- **Applicability**: centers on interfaces that accept batched operations, aliased fields, persisted query identifiers, or rapid emits over one connection.
+- **Surface composition**: batch plus alias plus persisted-query plus message-emit operations where per-mutation guards assume isolated execution.
 - **Widening factors**: resolver-level atomicity gaps, per-mutation guards without batch accounting, and per-handshake checks without per-message enforcement all widen the surface.
 - **Out-of-scope variant**: parallel multi-request bursts ride in the parent core rather than here, because this variant owns only intra-request multiplication.
 
@@ -28,10 +28,10 @@ A second direction rides the same packing: one envelope carrying many costly ope
 
 ## Detection Channels
 
-- **Channel scope**: fanout listens for intra-request multiplication, so only the entries below are live here.
-- **Multiple success signals**: multiple success signals for one intent inside a single response envelope.
+- **Channel scope**: fanout listens for intra-request multiplication.
+- **Multiple success signals**: one intent yields multiple success signals inside a single response envelope.
 - **Over-issuance**: duplicate rows or over-issuance where one request produced many ledger writes.
-- **Batched-versus-single divergence**: simultaneous-versus-sequential divergence where one batched call outcommits the same operations sent singly.
+- **Batched-versus-single divergence**: one batched call outcommits the same operations sent singly.
 - **Correlation-identifier gaps**: missing or duplicate correlation identifiers across the fanned-out writes for one request.
 
 ## Adversarial Capabilities
@@ -45,9 +45,8 @@ A second direction rides the same packing: one envelope carrying many costly ope
 
 ## Trust Assumptions
 
-- **The agreement**: the feature trusts that concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed.
-- **The exposure**: sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
-- **The failing clause**: this variant breaks the one-request-one-effect clause because a single request fans out into many state changes inside the commit window.
+- **The agreement**: concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed, and sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
+- **The failing clause**: the variant breaks the one-request-one-effect clause because a single request fans out into many state changes inside the commit window.
 
 ## Key Vulnerabilities
 
@@ -73,12 +72,11 @@ A second direction rides the same packing: one envelope carrying many costly ope
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no throttle difference changes the fanout step itself.
-- **Identity rotation**: identity rotation across sessions widens the envelope set when per-entity throttles cap one principal.
-- **Slow-backend provocation**: slow-backend provocation widens the intra-request window so sibling mutations interleave before guards serialize them.
+- **Identity rotation**: rotate identities across sessions to widen the envelope set when per-entity throttles cap one principal.
+- **Slow-backend provocation**: widen the intra-request window with slow-backend provocation so sibling mutations interleave before guards serialize them.
 - **Proxy-technique pointer**: name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
 - **Defence-bypass pointer**: name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -99,14 +97,14 @@ Fanout packs the envelope first and everything else counts, because no later ste
 ## False Positives
 
 - **Enforcement-held stop**: stop when the evidence shows per-mutation enforcement held, because clean batch accounting is not a finding.
-- **Per-mutation validation**: batched mutations each validated with per-mutation rejection of over-limit inner calls.
-- **Per-message enforcement**: per-message authorization and idempotency enforced on every emit over the connection.
-- **Visual-only multiplicity**: visual-only multiplicity without durable extra writes in the authoritative source.
-- **Rate limits**: rate limits that reject excess inner mutations with atomic counters.
+- **Per-mutation validation**: batched mutations are each validated with per-mutation rejection of over-limit inner calls.
+- **Per-message enforcement**: per-message authorization and idempotency are enforced on every emit over the connection.
+- **Visual-only multiplicity**: multiplicity without durable extra writes in the authoritative source.
+- **Rate limits**: rate limits reject excess inner mutations with atomic counters.
 
 ## Pro Tips
 
-- **Envelope discipline**: fanout rewards envelope discipline plus per-mutation counting plus minimal packing.
+- **Discipline**: fanout rewards envelope discipline plus per-mutation counting plus minimal packing.
 - **Minimal envelope**: prefer the smallest envelope that multiplies, then grow only to map the accounting threshold.
 - **Direct calls**: favor direct calls over scripted interface clicks so envelope shape stays exact.
 - **Envelope logging**: log every envelope behind its inner markers and timestamps so each write is attributable.

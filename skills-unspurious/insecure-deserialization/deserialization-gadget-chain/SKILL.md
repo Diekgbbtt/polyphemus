@@ -32,20 +32,20 @@ This variant proves live deserialization behind a no-exec oracle gate and then a
 - **Magic-byte prefixes**: confirm a native graph format is in play on decoded blobs.
 - **Framework indicators**: confirm the unmarshaller family behind the endpoint.
 - **Unmarshal sink names**: confirm the exact decode entry point in white-box views.
-- **Stack traces naming graph-resolution failures**: confirm attacker bytes reach the resolver.
-- **No-exec callback or delay oracles**: confirm live deserialization before any payload with effects is sent.
+- **Graph-resolution stack traces**: confirm attacker bytes reach the resolver.
+- **No-exec oracles**: confirm live deserialization before any payload with effects is sent.
 
 ## Adversarial Capabilities
 
-- **Prerequisites**: this variant presupposes the ability to submit blobs at reachable request loci.
+- **Blob submission**: presupposes the ability to submit blobs at reachable request loci.
 - **Inventory consumption**: consumes version and library inventory from the runtime knowledge base to select a matching chain.
 - **Oracle gating**: operates a callback listener or timing oracle to gate proof without executing effects first.
-- **Bounded-effect payloads**: mints bounded-effect payloads that demonstrate control with the least destructive action.
+- **Bounded-effect payloads**: mints payloads that demonstrate control with the least destructive action.
 
 ## Trust Assumptions
 
-- **The agreement**: the feature executes an object-graph rehydration step under a standing agreement. The agreement holds that every consumed blob is sender-faithful and every unsigned graph instantiates only benign object shapes. The runtime exposes a native unmarshaller, resolves only expected types, and leaks at most a benign error on malformed input.
-- **The failing clause**: the unsigned-graph clause: the blob arrives without integrity binding and the unmarshaller instantiates attacker-chosen graphs.
+- **The agreement**: the feature executes an object-graph rehydration step where every consumed blob is sender-faithful and every unsigned graph instantiates only benign object shapes, the runtime exposes a native unmarshaller, resolves only expected types, and leaks at most a benign error on malformed input.
+- **The failing clause**: the blob arrives without integrity binding and the unmarshaller instantiates attacker-chosen graphs.
 
 ## Key Vulnerabilities
 
@@ -62,16 +62,15 @@ This variant proves live deserialization behind a no-exec oracle gate and then a
 - **Fingerprint first**: fingerprint the library set before assembling anything, since a mismatched chain wastes the run and burns noise budget.
 - **Oracle gating**: gate every effect behind the no-exec oracle, starting with callback or delay payloads before any bounded command.
 - **Session-store priority**: prioritise session stores early, since they offer the shortest path from blob acceptance to rehydration.
-- **Type-named probing**: carry type-named probing as a secondary divergence inside the proof loop, using discriminator-field responses to confirm resolution rather than re-reading markers.
+- **Type-named probing**: carry it as a secondary divergence inside the proof loop, using discriminator-field responses to confirm resolution rather than re-reading markers.
 
 ## Bypass Techniques
 
 - **Encoding layering**: layer text encodings or compression wrappers to pass inspection points that match only outer shapes.
 - **Request-locus shifting**: shift the blob across equivalent request loci when one locus is filtered and another feeds the same sink.
-- **Alternate structural shapes**: offer alternate structural shapes where the resolver branches on shape, confirming each branch with the oracle.
-- **Defence-bypass family naming**: name the defence-bypass family at steps that defeat hardened verifiers instead of restating its mechanics here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Alternate structural shapes**: offer alternate shapes where the resolver branches on shape, confirming each branch with the oracle.
+- **Defence-bypass family naming**: name the family at steps that defeat hardened verifiers instead of restating its mechanics here.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -81,24 +80,24 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Sink-to-locus mapping** - map unmarshal sinks to injection loci; the step is complete when each reachable blob-carrying locus has a sink reference or a documented no-sink finding.
-2. **Format confirmation** - confirm the graph format through markers, traces, or fingerprints; the step is complete when the responsible deserializer family and blob shape are recorded.
-3. **Liveness proof** - prove liveness with a no-exec callback or delay oracle; the step is complete when the callback or delay attributes attacker input to deserialization.
-4. **Payload assembly** - assemble the oracle-gated payload by matching library inventory to a chain, naming a type through a discriminator field, or selecting a self-executing encoding with a version rationale; the step is complete when exactly one construction path is chosen with its rationale recorded.
-5. **Bounded demonstration** - demonstrate bounded execution or critical logic bypass with the least destructive action; the step is complete when the observed effect ties to the gated payload and not to an earlier probe.
-6. **Priority coverage** - cover priority session stores first and revisit skipped loci; the step is complete when each named session locus is tested or ruled out with an observation.
+1. Map unmarshal sinks to injection loci; the step is complete when each reachable blob-carrying locus has a sink reference or a documented no-sink finding.
+2. Confirm the graph format through markers, traces, or fingerprints; the step is complete when the responsible deserializer family and blob shape are recorded.
+3. Prove liveness with a no-exec callback or delay oracle; the step is complete when the callback or delay attributes attacker input to deserialization.
+4. Assemble the oracle-gated payload by matching library inventory to a chain, naming a type through a discriminator field, or selecting a self-executing encoding with a version rationale; the step is complete when exactly one construction path is chosen with its rationale recorded.
+5. Demonstrate bounded execution or critical logic bypass with the least destructive action; the step is complete when the observed effect ties to the gated payload and not to an earlier probe.
+6. Cover priority session stores first and revisit skipped loci; the step is complete when each named session locus is tested or ruled out with an observation.
 
 ## False Positives
 
-- **Verified integrity checks**: verified integrity checks that bind the blob before unmarshalling close this variant when the binding uses a strong secret.
-- **Primitive-only whitelists**: primitive-only whitelists without polymorphic or discriminator-driven types close this variant when every accepted shape parses to inert structures.
+- **Verified integrity checks**: binding the blob before unmarshalling closes this variant when the binding uses a strong secret.
+- **Primitive-only whitelists**: close this variant when every accepted shape parses to inert structures and no polymorphic or discriminator-driven type is accepted.
 - **Safe loaders and plain-structure parsing**: close this variant when no object instantiation follows the parse.
-- **Sandboxed rehydration**: sandboxed rehydration without network or execution primitives neutralises the effect demonstration when isolation is verified thoroughly.
+- **Sandboxed rehydration**: neutralises the effect demonstration when no network or execution primitive is reachable and isolation is verified thoroughly.
 - **Misleading error text**: error text naming graph classes without attacker bytes reaching the sink marks a dead code path rather than a finding.
 
 ## Pro Tips
 
-- **Fingerprint first**: fingerprint first and fire second, since chain selection depends on inventory rather than guesswork.
+- **Fingerprint first**: fingerprint before firing, since chain selection depends on inventory rather than guesswork.
 - **Callback gadgets**: favour callback gadgets over command execution on production-like targets to keep proof bounded.
 - **Backward tracing**: trace from unmarshal sinks backward to sources in white-box views to find the shortest attacker-influenced path.
 - **Session-store focus**: treat session stores as the early focus, since they rehydrate on almost every authenticated interaction.

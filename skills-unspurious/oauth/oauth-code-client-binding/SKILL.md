@@ -47,8 +47,7 @@ The theft goal is a credential minted for one client redeemed by another, or a v
 
 ## Trust Assumptions
 
-- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it.
-- **The exposure**: sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
+- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it, and sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
 - **The failing clause**: this variant breaks the client-identity clause because a credential minted for one client is honored when a different client presents it.
 
 ## Key Vulnerabilities
@@ -95,8 +94,7 @@ The theft goal is a credential minted for one client redeemed by another, or a v
 - **Secretless calls**: pass a redemption side that treats long-term authentication as advisory.
 - **Over-requested scope**: passes an issuance side that grants everything asked.
 - **Cross-audience tokens**: pass a resource side that never validates the intended audience.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

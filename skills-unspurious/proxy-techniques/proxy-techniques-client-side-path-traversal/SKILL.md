@@ -26,7 +26,7 @@ A client builds a request path by concatenating a value it was given, and the va
 
 ## Detection Channels
 
-- **Channel scope**: client-side path traversal listens to the relocated request and to the response the page consumes, so only the entries below are live here.
+- **Channel scope**: client-side path traversal listens to the relocated request and to the response the page consumes.
 - **Relocated path**: the request path differing from the constructed one, which proves the value relocated the request.
 - **Unintended arrival**: an arrival at an endpoint the page never intended to call, carrying the victim's session.
 - **Followed redirect**: the redirect followed to an operated target, which proves the client's own follower carried the request onward.

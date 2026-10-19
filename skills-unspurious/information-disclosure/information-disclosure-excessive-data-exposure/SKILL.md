@@ -54,9 +54,8 @@ This variant reads one response against the caller's entitlement: it maps the em
 
 ## Trust Assumptions
 
-- **The agreement**: at the moment the serializer answers a read, the feature trusts that the emitted field set equals the caller's entitlement scope, so a response carries exactly the fields that scope renders, with no credential material, no other party's fields, and no internal metadata beyond the entitlement.
-- **The field-scope clause fails**: where the serializer emits the full model and the rendered view's filtering carries no security.
-- **Identity scope stays with the siblings**: cross-caller reads belong to the sibling variants and the principal step belongs to `two-principal-authz`, so this variant judges field scope only.
+- **The agreement**: at the moment the serializer answers a read, the feature trusts that the emitted field set equals the caller's entitlement scope, so a response carries exactly the fields that scope renders, with no credential material, no other party's fields, and no internal metadata beyond the entitlement, and cross-caller reads belong to the sibling variants and the principal step belongs to `two-principal-authz`, so this variant judges field scope only.
+- **The failing clause**: the field-scope clause fails where the serializer emits the full model and the rendered view's filtering carries no security.
 
 ## Key Vulnerabilities
 

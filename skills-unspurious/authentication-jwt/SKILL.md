@@ -75,10 +75,10 @@ JWT/OIDC failures often enable token forgery, token confusion, cross-service acc
 
 ### Header Manipulation
 
-- **Key selector injection**: path traversal in the selector, SQL/command/template injection in key lookup, or a selector pointing at a world-readable file
-- **Remote key references**: host an attacker-controlled key document or certificate chain; where the reference is not pinned or whitelisted, the server fetches and trusts attacker keys
-- **Inline key embedding**: embed an attacker key in the header; some libraries prefer the inline key over the configured key
-- **SSRF via remote key fetch**: exploit key-URL fetching to reach internal hosts
+- **Key selector injection**: path traversal in the selector, SQL/command/template injection in key lookup, or a selector pointing at a world-readable file.
+- **Remote key references**: host an attacker-controlled key document or certificate chain; where the reference is not pinned or whitelisted, the server fetches and trusts attacker keys.
+- **Inline key embedding**: embed an attacker key in the header; some libraries prefer the inline key over the configured key.
+- **SSRF via remote key fetch**: exploit key-URL fetching to reach internal hosts.
 
 ### Key and Cache Issues
 
@@ -140,8 +140,7 @@ JWT/OIDC failures often enable token forgery, token confusion, cross-service acc
 - **Envelope-only checks**: a nested token verifies at the envelope while the inner claims stay unread.
 - **Cached verdicts**: an edge or gateway reuses a prior verification result across a change of claims or session, where the defence-bypass family owns the edge-versus-core step.
 - **Transport variants**: the same token replayed over a second channel or device where proof-of-possession is absent, where the proxy-techniques family owns the carrier step.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

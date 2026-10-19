@@ -11,32 +11,32 @@ Upload surfaces are high risk: server-side execution, script delivery in the bro
 
 ## Attack Surface
 
-- **Upload surfaces**: web, mobile, and API uploads, including direct-to-cloud flows and resumable multipart protocols
-- **Media and document pipelines**: converters, renderers, metadata parsers, office and archive expanders
-- **Compound document containers**: office and archive formats are nested containers whose inner markup a second component parses, so the xxe class owns the entity step while this class owns the pipeline step
-- **Administrative and bulk importers**: archive uploads, report and template uploads, rich-text attachments
-- **Serving paths**: the application itself, object storage, an edge cache, message attachments, previews and thumbnails
+- **Upload surfaces**: web, mobile, and API uploads, including direct-to-cloud flows and resumable multipart protocols.
+- **Media and document pipelines**: converters, renderers, metadata parsers, office and archive expanders.
+- **Compound document containers**: office and archive formats are nested containers whose inner markup a second component parses, so the xxe class owns the entity step while this class owns the pipeline step.
+- **Administrative and bulk importers**: archive uploads, report and template uploads, rich-text attachments.
+- **Serving paths**: the application itself, object storage, an edge cache, message attachments, previews and thumbnails.
 
 ## Reconnaissance
 
 ### Surface Map
 
-- **Endpoints and fields**: upload, file, avatar, image, attachment, import, media, document, template
-- **Direct-to-cloud parameters**: key, bucket, access control, declared type, disposition, metadata fields, cache directives
-- **Resumable APIs**: create, chunk, complete; check whether metadata and headers can be altered late
-- **Background processors**: thumbnail, conversion, and scanning queues; identify timing and status transitions
+- **Endpoints and fields**: upload, file, avatar, image, attachment, import, media, document, template.
+- **Direct-to-cloud parameters**: key, bucket, access control, declared type, disposition, metadata fields, cache directives.
+- **Resumable APIs**: create, chunk, complete; check whether metadata and headers can be altered late.
+- **Background processors**: thumbnail, conversion, and scanning queues; identify timing and status transitions.
 
 ### Capability Probes
 
-- **Probe files**: small probe files of each claimed type; diff the resulting declared type, disposition, and sniffing-guard headers on download
-- **Magic bytes versus extension**: a mismatch reveals reliance on the declared name or on sniffing
-- **Markup probe**: does a script-capable file render inline or download
-- **Archive probe**: a simple archive with traversal entries and links to detect extraction rules
+- **Probe files**: small probe files of each claimed type; diff the resulting declared type, disposition, and sniffing-guard headers on download.
+- **Magic bytes versus extension**: a mismatch reveals reliance on the declared name or on sniffing.
+- **Markup probe**: does a script-capable file render inline or download.
+- **Archive probe**: a simple archive with traversal entries and links to detect extraction rules.
 
 ### Placement and Serving
 
-- **Placement recording**: record where each accepted file lands and which path serves it back
-- **Header recording**: note per asset type the final headers and whether the type is server-set or reflected from the upload
+- **Placement recording**: record where each accepted file lands and which path serves it back.
+- **Header recording**: note per asset type the final headers and whether the type is server-set or reflected from the upload.
 
 ## Detection Channels
 
@@ -76,94 +76,93 @@ Upload surfaces are high risk: server-side execution, script delivery in the bro
 
 ### Server-Side Execution
 
-- **Interpreter placement**: placing interpreter-shaped content where the server executes it, including configuration files that map extensions or inject prelude paths
-- **Converter evaluation**: converters that evaluate embedded operators during conversion, so an ordinary media or document file becomes a command carrier
-- **Polyglot construction**: a valid magic-byte prefix followed by interpreter content, so content inspection and extension checks both pass
-- **Extension tricks**: double extensions, mixed casing, and trailing separators that defeat extension-based checks
+- **Interpreter placement**: placing interpreter-shaped content where the server executes it, including configuration files that map extensions or inject prelude paths.
+- **Converter evaluation**: converters that evaluate embedded operators during conversion, so an ordinary media or document file becomes a command carrier.
+- **Polyglot construction**: a valid magic-byte prefix followed by interpreter content, so content inspection and extension checks both pass.
+- **Extension tricks**: double extensions, mixed casing, and trailing separators that defeat extension-based checks.
 
 ### Client-Side Script Delivery
 
-- **Inline markup**: markup files served inline without sufficient headers fire scripts in the viewer's browser
-- **Previewer script**: document formats with embedded script executed by previewers, and markup carried inside metadata fields
-- **Missing sniffing guard**: missing sniffing guard on any serving path, which lets a browser treat stored bytes as script-capable markup
+- **Inline markup**: markup files served inline without sufficient headers fire scripts in the viewer's browser.
+- **Previewer script**: document formats with embedded script executed by previewers, and markup carried inside metadata fields.
+- **Missing sniffing guard**: missing sniffing guard on any serving path, which lets a browser treat stored bytes as script-capable markup.
 
 ### Archive Extraction
 
-- **Traversal and link entries**: traversal entries escaping the extraction directory, and link entries pointing outside it
-- **Nested archives**: nested archives that re-expand into a second traversal
-- **Compression-ratio abuse**: compression-ratio abuse that exhausts the expander or the queue behind it
+- **Traversal and link entries**: traversal entries escaping the extraction directory, and link entries pointing outside it.
+- **Nested archives**: nested archives that re-expand into a second traversal.
+- **Compression-ratio abuse**: compression-ratio abuse that exhausts the expander or the queue behind it.
 
 ### Toolchain Exploitation
 
-- **External operators**: crafted images and documents invoking external operators or reading local files during conversion
-- **Renderer engines**: document-to-image and screenshot services run a browser that fetches remote URLs, reads local paths, and may execute script inside the rendered document; name the ssrf skill at the fetch step and the xss skill at the script step
-- **Stream demuxers**: converters that follow a stream manifest or a concatenation list fetch remote content as part of the conversion, which turns an ordinary media file into a fetch carrier
-- **Metadata blocks**: metadata blocks sized or shaped to trigger parser flaws in the extraction stage
-- **Derived outputs**: derived outputs that carry the operator side effect into a served artifact
+- **External operators**: crafted images and documents invoking external operators or reading local files during conversion.
+- **Renderer engines**: document-to-image and screenshot services run a browser that fetches remote URLs, reads local paths, and may execute script inside the rendered document; name the ssrf skill at the fetch step and the xss skill at the script step.
+- **Stream demuxers**: converters that follow a stream manifest or a concatenation list fetch remote content as part of the conversion, which turns an ordinary media file into a fetch carrier.
+- **Metadata blocks**: metadata blocks sized or shaped to trigger parser flaws in the extraction stage.
+- **Derived outputs**: derived outputs that carry the operator side effect into a served artifact.
 
 ### Storage and Direct-to-Cloud Vectors
 
-- **Client-set type and disposition**: client-set type and disposition on presigned uploads, which then render inline from the bucket or edge
-- **Broad read access**: broad read access on the storage location, and user-controlled key prefixes that place objects in sensitive namespaces
-- **Stale signed links**: stale signed links reused later, and serving directly from storage without download and sniffing headers
+- **Client-set type and disposition**: client-set type and disposition on presigned uploads, which then render inline from the bucket or edge.
+- **Broad read access**: broad read access on the storage location, and user-controlled key prefixes that place objects in sensitive namespaces.
+- **Stale signed links**: stale signed links reused later, and serving directly from storage without download and sniffing headers.
 
 ### Gate Timing and Processing Races
 
-- **Pre-verdict requests**: requesting the object after upload but before the verification or transformation step completes
-- **Window widening**: widening the window with heavy conversions or large objects
-- **Container formats**: container formats that bypass inspection by hiding content from the scanner
+- **Pre-verdict requests**: requesting the object after upload but before the verification or transformation step completes.
+- **Window widening**: widening the window with heavy conversions or large objects.
+- **Container formats**: container formats that bypass inspection by hiding content from the scanner.
 
 ## Advanced Techniques
 
 ### Resumable Multipart
 
-- **Finalize swap**: change metadata between initiation and completion, swapping the declared type or disposition at finalize
-- **Chunk swap**: upload benign chunks, then swap the last chunk or complete from a different source
+- **Finalize swap**: change metadata between initiation and completion, swapping the declared type or disposition at finalize.
+- **Chunk swap**: upload benign chunks, then swap the last chunk or complete from a different source.
 
 ### Filename and Path
 
-- **Lookalike names**: lookalike characters, trailing dots and spaces, device names, and reserved characters to bypass validators
-- **Truncation and collisions**: truncation on legacy stacks, overlong paths, and case-insensitive collisions overwriting an existing file
+- **Lookalike names**: lookalike characters, trailing dots and spaces, device names, and reserved characters to bypass validators.
+- **Truncation and collisions**: truncation on legacy stacks, overlong paths, and case-insensitive collisions overwriting an existing file.
 
 ### Metadata Abuse
 
-- **Oversized blocks**: oversized metadata blocks that trigger parser flaws
-- **Document properties**: payloads in document properties rendered by previewers
+- **Oversized blocks**: oversized metadata blocks that trigger parser flaws.
+- **Document properties**: payloads in document properties rendered by previewers.
 
 ### Serving Header Manipulation
 
-- **Inline forcing**: force inline rendering through a declared type plus an inline disposition
-- **Cache poisoning**: poison an edge cache whose key omits the content type and disposition
+- **Inline forcing**: force inline rendering through a declared type plus an inline disposition.
+- **Cache poisoning**: poison an edge cache whose key omits the content type and disposition.
 
 ### Client-Layer Surfaces
 
-- **Rich-text editors**: rich-text editors that accept attachments and embed links; verify sanitization and serving headers
-- **Mobile clients**: mobile clients sending nonstandard types or metadata that the server trusts as already transformed
-- **Serverless post-processing**: serverless and edge post-processing where the security decision is delegated to the front end
+- **Rich-text editors**: rich-text editors that accept attachments and embed links; verify sanitization and serving headers.
+- **Mobile clients**: mobile clients sending nonstandard types or metadata that the server trusts as already transformed.
+- **Serverless post-processing**: serverless and edge post-processing where the security decision is delegated to the front end.
 
 ## Bypass Techniques
 
 ### Validation Gaps
 
-- **Client-side checks**: client-side-only checks, including trust in the type the browser or client declares
-- **Part-header trust**: trust in part headers of a multipart body
-- **Allowlists without inspection**: extension allowlists without server-side content inspection
+- **Client-side checks**: client-side-only checks, including trust in the type the browser or client declares.
+- **Part-header trust**: trust in part headers of a multipart body.
+- **Allowlists without inspection**: extension allowlists without server-side content inspection.
 
 ### Evasion Tricks
 
-- **Name tricks**: double extensions, mixed case, hidden dotfiles, repeated dots, and long paths ending in an allowed suffix
-- **Parameter divergence**: divergence between the name in the multipart part and the name carried in the parameters, plus duplicate parameters where the later wins
+- **Name tricks**: double extensions, mixed case, hidden dotfiles, repeated dots, and long paths ending in an allowed suffix.
+- **Parameter divergence**: divergence between the name in the multipart part and the name carried in the parameters, plus duplicate parameters where the later wins.
 - **Bypass reference**: see `references/upload-bypass-matrix.md` for the bypass families and the expected verdicts behind each probe.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **Upload plus server execution**: the placed object becomes an interpreter entry point
-- **Upload plus client execution**: the served object fires in another user's browser session
-- **Upload plus extraction**: an archive writes outside its destination into a served or executable location
-- **Upload plus the document toolchain**: conversion executes the payload inside a processor
-- **Upload plus cross-site delivery**: the stored markup is served under the victim's trusted origin
+- **Upload plus server execution**: the placed object becomes an interpreter entry point.
+- **Upload plus client execution**: the served object fires in another user's browser session.
+- **Upload plus extraction**: an archive writes outside its destination into a served or executable location.
+- **Upload plus the document toolchain**: conversion executes the payload inside a processor.
+- **Upload plus cross-site delivery**: the stored markup is served under the victim's trusted origin.
 
 ## Testing Methodology
 
@@ -184,22 +183,22 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## False Positives
 
-- **Never-served uploads**: upload stored but never served back, or always served as a download with a strict sniffing guard
-- **Locked-down converters**: converters running in locked-down sandboxes with no external resources and no script engines
-- **Quarantined payloads**: the verification step blocking the payload and quarantining it, with pre-verdict access impossible by design
+- **Never-served uploads**: upload stored but never served back, or always served as a download with a strict sniffing guard.
+- **Locked-down converters**: converters running in locked-down sandboxes with no external resources and no script engines.
+- **Quarantined payloads**: the verification step blocking the payload and quarantining it, with pre-verdict access impossible by design.
 
 ## Pro Tips
 
-- **Minimal proofs**: keep proofs minimal: a tiny markup file for script delivery, a single-line interpreter file where that is the finding
-- **Download headers**: always capture download headers and the final served type; they decide browser behaviour
-- **Inert renderings**: prefer transforming risky formats into inert renderings over complex sanitization
-- **Direct-to-cloud constraints**: in direct-to-cloud flows, constrain every header and object key server-side
-- **Archive discipline**: extract archives in an isolated directory with an explicit allowlist, drop links, and reject traversal
-- **Finalize testing**: test the finalize step in resumable flows; many validations run only at initiation
-- **Processor verification**: verify background processors with concatenation markers and tiny polyglots
-- **Stored script delivery**: when server execution stays out of reach, aim for stored script delivery or header-driven rendering
-- **Edge header honouring**: validate that the edge honours download and sniffing headers
-- **Pipeline documentation**: document the pipeline behaviour per asset type
+- **Minimal proofs**: keep proofs minimal: a tiny markup file for script delivery, a single-line interpreter file where that is the finding.
+- **Download headers**: always capture download headers and the final served type; they decide browser behaviour.
+- **Inert renderings**: prefer transforming risky formats into inert renderings over complex sanitization.
+- **Direct-to-cloud constraints**: in direct-to-cloud flows, constrain every header and object key server-side.
+- **Archive discipline**: extract archives in an isolated directory with an explicit allowlist, drop links, and reject traversal.
+- **Finalize testing**: test the finalize step in resumable flows; many validations run only at initiation.
+- **Processor verification**: verify background processors with concatenation markers and tiny polyglots.
+- **Stored script delivery**: when server execution stays out of reach, aim for stored script delivery or header-driven rendering.
+- **Edge header honouring**: validate that the edge honours download and sniffing headers.
+- **Pipeline documentation**: document the pipeline behaviour per asset type.
 
 ## Summary
 

@@ -14,7 +14,7 @@ The read goal is short-lived credential disclosure plus platform API access, all
 ## Attack Surface
 
 - **Applicability**: centers on a server-side fetch sink that can influence request headers or the request method.
-- **Destination sink**: the sink accepts attacker-influenced destination input reaching a platform credential store that is gated behind a token plus header plus method check.
+- **Destination sink**: accepts attacker-influenced destination input reaching a platform credential store that is gated behind a token plus header plus method check.
 - **Fetcher sequencing**: the fetcher permits at least a two-step sequence, namely one fetch that mints the gate token plus one fetch that presents it.
 - **Response oracle**: stays direct, meaning each gated outcome returns visibly as credential content or as a gate denial.
 - **User-data target**: a second metadata target beside the credential path is the instance user-data path, because startup scripts plus provisioning material often carry secrets of their own.
@@ -22,7 +22,7 @@ The read goal is short-lived credential disclosure plus platform API access, all
 
 ## Detection Channels
 
-- **Channel scope**: gated reads listen to token plus credential objects rather than side channels, so only the entries below are live here.
+- **Channel scope**: gated reads listen to token plus credential objects rather than side channels.
 - **Token-fetch response**: carries a short-lived gate token that proves the sequencing first half succeeded.
 - **Authenticated metadata read**: returns a credential object that proves the gate opened.
 - **Gate-denied versus gate-passed response contrast**: separates a missing header or method from a satisfied gate.
@@ -39,8 +39,7 @@ The read goal is short-lived credential disclosure plus platform API access, all
 
 ## Trust Assumptions
 
-- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
-- **The exposure**: stored platform credentials leak only when the server exposes them through such a fetch.
+- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, keeps the request in plain-fetch shape with no gate-passing header or method pair, and stored platform credentials leak only when the server exposes them through such a fetch.
 - **The failing clause**: this variant breaks the plain-header clause because the gated target demands a token header plus method pair that a plain fetch cannot supply, so a single fetch never reaches the credential.
 
 ## Key Vulnerabilities
@@ -67,10 +66,12 @@ The read goal is short-lived credential disclosure plus platform API access, all
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no encoding difference changes the token-then-read step itself.
-- **Address encoding families**: address encoding families such as decimal plus hex plus octal plus mapped forms steer the gated destination past a naive textual allowlist.
+- **Address encoding families**: decimal plus hex plus octal plus mapped forms steer the gated destination past a naive textual allowlist.
 - **Parser differentials**: parser differentials, redirect chains, and short-lived resolution carry the gated destination to the fetch side, and the proxy-techniques family owns those mechanics; record only the gated verdict here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Parser differentials**: between the enforcing side and the fetching side smuggle the credential path through a split parse.
+- **Redirect chains**: convert one allowlisted first hop into the token endpoint or the gated path as the second hop.
+- **Short-lived resolution**: answers differently across the check-time and fetch-time lookups.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -82,7 +83,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-gated reads run the direct oracle first and the sequence second, because an unconfirmed token cannot authenticate anything.
+Gated reads run the direct oracle first and the sequence second, because an unconfirmed token cannot authenticate anything.
 1. **Inventory sinks** - list every attacker-influenced destination sink with its carrier plus its header and method influence, and the step completes when no unlisted sink or influence remains.
 2. **Establish the direct oracle** - confirm gated outcomes return visibly as content or as denial, and the step completes when a benign gated path shows a recorded denial and a benign open path shows a recorded body.
 3. **Test header and method influence** - vary the method plus one header at a time, and the step completes when the influence over each is recorded as present or absent.
@@ -93,16 +94,16 @@ gated reads run the direct oracle first and the sequence second, because an unco
 ## False Positives
 
 - **Gate-closed stop**: stop when the gate never opens or no fetch leaves the server, because a denial without influence is not this variant.
-- **Client-side fetch only**: client-side fetch only, where no request ever leaves the server.
-- **Header and method influence absent**: header and method influence absent, confirmed by uniform denials across every pairing attempt.
-- **Canned simulator responses**: canned simulator responses that return fixed bodies without real gate evaluation.
-- **Strict allowlist**: strict allowlist with resolution pinning plus no redirect following, confirmed by uniform negatives across all gated paths.
-- **Callback-source mismatch**: callback hits whose source matches the tester machine rather than the server, which indicate a client-side fetch made the request.
+- **Client-side fetch only**: no request ever leaves the server.
+- **Header and method influence absent**: confirmed by uniform denials across every pairing attempt.
+- **Canned simulator responses**: return fixed bodies without real gate evaluation.
+- **Strict allowlist**: resolution pinning plus no redirect following, confirmed by uniform negatives across all gated paths.
+- **Callback-source mismatch**: callback hits whose source matches the tester machine rather than the server indicate a client-side fetch made the request.
 - **Plain-read sink**: a sink that can issue nothing but a plain read cannot open the gate, confirmed by uniform denials across every method and header attempt.
 
 ## Pro Tips
 
-- **Pairing discipline**: gated reads reward exact pairing plus fresh tokens plus minimal follow-up.
+- **Discipline**: gated reads reward exact pairing plus fresh tokens plus minimal follow-up.
 - **Independent influence testing**: test method plus header influence independently before attempting the full sequence.
 - **Fresh token per flavour**: mint one fresh token per flavour and never reuse a token across flavours.
 - **Visible token confirmation**: confirm the token value visibly before spending it in the authenticated read.

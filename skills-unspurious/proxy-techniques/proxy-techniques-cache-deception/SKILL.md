@@ -26,7 +26,7 @@ A shared cache stores one response under one key and serves it to every caller t
 
 ## Detection Channels
 
-- **Channel scope**: cache deception listens to the stored entry and its key, so only the entries below are live here.
+- **Channel scope**: cache deception listens to the stored entry and its key.
 - **Later-caller serving**: a shared cache serving a response to a later caller under a key the caller influenced or reads.
 - **Cache status fields**: the cache's own status and age fields, which name the cache, the entry's state, and its lifetime.
 - **Paired baseline**: a paired baseline where the same operation differs with and without the cache in the path.

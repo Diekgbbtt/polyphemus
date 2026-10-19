@@ -83,8 +83,7 @@ The confirmation goal is replayed semantics under the victim session that later 
 - **Header-value steering**: null plus missing plus cross-origin header values steer the replay past a weak origin or referrer check.
 - **Encoding-family switching**: encoding-family switching reaches different server code paths while the replay semantics stay identical.
 - **Referrer stripping**: referrer stripping through an empty-context navigation source presents the replay without its origin context.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

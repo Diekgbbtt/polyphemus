@@ -13,7 +13,7 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Attack Surface
 
-- **Applicability**: centers on a bulk or batch endpoint whose per-item enforcement gaps let one slot bind what the others would refuse.
+- **Applicability**: a bulk or batch endpoint whose per-item enforcement gaps let one slot bind what the others would refuse.
 - **Array action exposure**: the server exposes array-of-objects actions with allowlists applied at the boundary or on first elements only.
 - **Sparse update widening**: sparse or patch update support widens the surface because a flat candidate can arrive inside a batch patch document.
 - **Aliased mutation widening**: aliased or batched GraphQL mutations widen the surface the same way through repeated input objects in one request.
@@ -29,12 +29,12 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Detection Channels
 
-- **Channel scope**: batch proof listens to per-position state rather than batch echo, so only the entries below are live here.
-- **Persisted flat value**: persisted flat value inside one batch slot visible in a later per-item read binds one slot to one verdict.
-- **Silent mid-batch persistence**: silent mid-batch persistence without batch echo confirms a write the response never reflected.
-- **Per-position diff**: per-position diff across roles separates a validated slot from a smuggled one.
-- **Recomputed flat field**: recomputed flat field ignoring input marks a guarded slot rather than a success.
-- **Uniform batch rejection**: uniform batch rejection with no slot persisted marks a guarded batch rather than a finding.
+- **Channel scope**: batch proof listens to per-position state rather than batch echo.
+- **Persisted flat value**: a flat value persisted inside one batch slot and visible in a later per-item read binds one slot to one verdict.
+- **Silent mid-batch persistence**: a mid-batch write without batch echo confirms a write the response never reflected.
+- **Per-position diff**: a per-position diff across roles separates a validated slot from a smuggled one.
+- **Recomputed flat field**: a recomputed flat field that ignores input marks a guarded slot rather than a success.
+- **Uniform batch rejection**: a batch rejected uniformly with no slot persisted marks a guarded batch rather than a finding.
 
 ## Adversarial Capabilities
 
@@ -47,9 +47,7 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Trust Assumptions
 
-- **The trust premise**: at the moment a create or update executes, the feature trusts client-supplied attributes to bind only to caller-writable fields.
-- **The agreement**: it holds read-only markers plus derived-field recomputation steady, covers every encoding through one allowlist, and keeps nested relations inside caller scope.
-- **The exposure**: sensitive privilege plus ownership plus gate plus billing state leaks only when the server binds what the caller may not write.
+- **The agreement**: at the moment a create or update executes, the feature trusts client-supplied attributes to bind only to caller-writable fields, holds read-only markers plus derived-field recomputation steady, covers every encoding through one allowlist, and keeps nested relations inside caller scope, and sensitive privilege plus ownership plus gate plus billing state leaks only when the server binds what the caller may not write.
 - **The failing clause**: this variant breaks the collection-scope clause because a mid-batch flat item binds while only boundary items face validation on a bulk payload.
 
 ## Key Vulnerabilities
@@ -86,8 +84,7 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 - **Encoding switch**: switch body encoding while holding the batch candidate constant, because some code paths validate only one framing.
 - **Batch reshaping**: reshape the batch across array plus object-wrapped plus aliased forms to reach the binder through another parser.
 - **Delegated techniques**: nested key reshaping never rides here, and race interleaving names the race-conditions skill at its TOCTOU step rather than restating it.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Testing Methodology
 
@@ -102,10 +99,10 @@ Per-position reasoning runs after the baseline is fixed, because no slot verdict
 ## False Positives
 
 - **Durable-write stop**: stop when no batch slot shows a durable out-of-scope write, because batch echo alone proves nothing here.
-- **Server recomputation**: server recomputes the flat field and ignores client input, confirmed by identical before plus after reads.
-- **Read-only enforcement**: read-only marking enforced per item across encodings, confirmed by uniform negatives on every slot.
-- **Batch-wide rejection**: batch-wide rejection with nothing persisted, which is guarded behavior rather than a finding.
-- **In-scope slot change**: slot change inside caller scope, which is permitted behavior rather than a finding.
+- **Server recomputation**: the server recomputes the flat field and ignores client input, confirmed by identical before plus after reads.
+- **Read-only enforcement**: read-only marking is enforced per item across encodings, confirmed by uniform negatives on every slot.
+- **Batch-wide rejection**: batch-wide rejection with nothing persisted is guarded behavior rather than a finding.
+- **In-scope slot change**: a slot change inside caller scope is permitted behavior rather than a finding.
 
 ## Pro Tips
 

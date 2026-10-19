@@ -75,8 +75,7 @@ The extraction goal is metadata plus table rows rebuilt from response differenti
 - **Numeric and character-builder encodings**: numeric plus character-builder encodings reach the parser past literal-pattern filters.
 - **Clause relocation**: clause relocation through derived tables plus common table expressions hides the predicate shape.
 - **Timing promotion**: promotion to gated timing applies only when jitter removes every stable differential.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

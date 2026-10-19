@@ -155,8 +155,7 @@ Applications expose credential material in places they never intended to publish
 **Artifact Reading**
 - **Encoding recovery**: recover claim content from padded, compressed, or segmented encodings.
 - **Visible identifiers**: read identifiers from visible fields where the artifact itself hides them.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -205,5 +204,4 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Summary
 
-Weak credential discovery ends in authentication obtained from something that should not have been reachable: served source, a deployable path, an unchanged default, an identity oracle, or a client-readable artifact.
-Fix the holder first; each one is a barrier that failed before any exploitation was needed.
+Weak credential discovery ends in authentication obtained from something that should not have been reachable: served source, a deployable path, an unchanged default, an identity oracle, or a client-readable artifact. Fix the holder first; each one is a barrier that failed before any exploitation was needed.

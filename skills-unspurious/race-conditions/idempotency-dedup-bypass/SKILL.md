@@ -13,8 +13,8 @@ The goal is duplicate fulfillment plus duplicate credit that persists in the aut
 
 ## Attack Surface
 
-- **Applicability**: idempotency applicability centers on workflows that accept a client-supplied dedup key alongside a state-changing operation.
-- **Surface composition**: the surface holds create plus apply plus redeem plus transfer operations where exactly-once execution depends on the key rather than on an atomic commit guard.
+- **Applicability**: centers on workflows that accept a client-supplied dedup key alongside a state-changing operation.
+- **Surface composition**: create plus apply plus redeem plus transfer operations where exactly-once execution depends on the key rather than on an atomic commit guard.
 - **Widening factors**: keys scoped to path rather than principal, keys held only in volatile cache, and keys with short lifetimes that re-arm after eviction all widen the surface.
 - **Out-of-scope variant**: pure read-modify-write increments without any dedup layer ride in the parent core rather than here, because this variant owns only key-mediated dedup.
 
@@ -27,11 +27,11 @@ The goal is duplicate fulfillment plus duplicate credit that persists in the aut
 
 ## Detection Channels
 
-- **Channel scope**: idempotency listens for dedup-shaped doubles, so only the entries below are live here.
-- **Sequential-versus-parallel divergence**: sequential request fails but parallel requests succeed with the same dedup key material.
-- **Response-versus-effect split**: second effect commits while the response claims deduplication for one intent.
-- **Foreign-key acceptance**: foreign or replayed key still commits a second effect in the authoritative source.
-- **Persisting delta**: balance or entitlement delta persists across a fresh read after the dedup response claimed suppression.
+- **Channel scope**: idempotency listens for dedup-shaped doubles.
+- **Sequential-versus-parallel divergence**: a sequential request fails but parallel requests succeed with the same dedup key material.
+- **Response-versus-effect split**: a second effect commits while the response claims deduplication for one intent.
+- **Foreign-key acceptance**: a foreign or replayed key still commits a second effect in the authoritative source.
+- **Persisting delta**: a balance or entitlement delta persists across a fresh read after the dedup response claimed suppression.
 
 ## Adversarial Capabilities
 
@@ -44,9 +44,8 @@ The goal is duplicate fulfillment plus duplicate credit that persists in the aut
 
 ## Trust Assumptions
 
-- **The agreement**: the feature trusts that concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed.
-- **The exposure**: sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
-- **The failing clause**: this variant breaks the durable dedup clause because a reused key suppresses only the response while the effect commits again.
+- **The agreement**: concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed, and sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
+- **The failing clause**: the variant breaks the durable dedup clause because a reused key suppresses only the response while the effect commits again.
 
 ## Key Vulnerabilities
 
@@ -72,12 +71,11 @@ The goal is duplicate fulfillment plus duplicate credit that persists in the aut
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no channel difference changes the dedup step itself.
-- **Identity rotation**: identity rotation across sessions widens the burst when per-entity throttles cap one principal.
-- **Slow-backend provocation**: slow-backend provocation widens the check-to-store gap so the second lane lands before the key persists.
+- **Identity rotation**: rotate identities across sessions to widen the burst when per-entity throttles cap one principal.
+- **Slow-backend provocation**: widen the check-to-store gap with slow-backend provocation so the second lane lands before the key persists.
 - **Proxy-technique pointer**: name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
 - **Defence-bypass pointer**: name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -99,14 +97,14 @@ Idempotency races the key first and everything else confirms, because no later s
 ## False Positives
 
 - **Dedup-held stop**: stop when the evidence shows dedup held, because a clean key store is not a finding.
-- **Durable single effect**: durable single effect with deduped responses and no second ledger write.
-- **Policy-allowed issuance**: policy-allowed duplicate issuance such as documented goodwill credits with matching ledger annotations.
-- **Visual-only echoes**: visual-only echoes without durable state change in the authoritative source.
-- **Settling doubles**: doubles that collapse after settling because a compensating job correctly reversed the second commit.
+- **Durable single effect**: one durable effect with deduped responses and no second ledger write.
+- **Policy-allowed issuance**: duplicate issuance such as documented goodwill credits with matching ledger annotations.
+- **Visual-only echoes**: echoes without durable state change in the authoritative source.
+- **Settling doubles**: doubles collapse after settling because a compensating job correctly reversed the second commit.
 
 ## Pro Tips
 
-- **Key discipline**: idempotency rewards key discipline plus ledger discipline plus minimal bursts.
+- **Discipline**: idempotency rewards key discipline plus ledger discipline plus minimal bursts.
 - **Minimal burst**: prefer the smallest burst that reaches the gap, then tighten timing only to map the window.
 - **Direct calls**: favor direct calls over scripted interface clicks so lane timing stays tight.
 - **Lane logging**: log every lane behind its key and timestamp so the double is attributable.

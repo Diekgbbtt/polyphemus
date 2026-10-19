@@ -12,45 +12,45 @@ Header injection turns user input into protocol-level control: response splittin
 ## Attack Surface
 
 **Input shapes that reach headers**
-- **Query, body, and path values echoed into response headers**: cookie setters, location, content type and disposition, link, custom fields
-- **Request headers re-emitted into responses**: referer, client, correlation, and forwarding families
-- **Webhook and callback flows**: where the server constructs outbound requests using user-supplied URLs
-- **Outbound message headers**: populated from user input
+- **Query, body, and path values echoed into response headers**: cookie setters, location, content type and disposition, link, custom fields.
+- **Request headers re-emitted into responses**: referer, client, correlation, and forwarding families.
+- **Webhook and callback flows**: where the server constructs outbound requests using user-supplied URLs.
+- **Outbound message headers**: populated from user input.
 
 **Code patterns that enable injection**
-- **Direct concatenation**: direct concatenation of user input into header values without line-break stripping
-- **Verbatim serialization**: frameworks that accept header values as strings and serialize them verbatim (no normalization)
-- **Upstream trust**: proxy chains trusting forwarding headers set by an upstream that anyone can spoof
-- **Method-shaping headers**: method-shaping headers respected past the authorization layer
+- **Direct concatenation**: direct concatenation of user input into header values without line-break stripping.
+- **Verbatim serialization**: frameworks that accept header values as strings and serialize them verbatim (no normalization).
+- **Upstream trust**: proxy chains trusting forwarding headers set by an upstream that anyone can spoof.
+- **Method-shaping headers**: method-shaping headers respected past the authorization layer.
 
 **Transports and parser layers**
-- **Protocol-version framing**: each HTTP version parses framing differently
-- **Edge-to-application boundary**: edge to application server, where the two sides may disagree on framing
-- **Transfer boundaries**: chunked transfer boundaries and multipart delimiters
+- **Protocol-version framing**: each HTTP version parses framing differently.
+- **Edge-to-application boundary**: edge to application server, where the two sides may disagree on framing.
+- **Transfer boundaries**: chunked transfer boundaries and multipart delimiters.
 
 ## Reconnaissance
 
 ### Header Inventory
 
-- **Varying-header inventory**: enumerate every response header that varies with input - flip query, body, and cookie values and diff the cookie, location, content-type, disposition, validator, and cache-control fields
-- **Source attribution**: for each varying header, identify the source field (user-controlled vs server-derived)
-- **Reflected request headers**: look for request headers reflected into responses, such as the referer echoed into error pages or a correlation identifier
+- **Varying-header inventory**: enumerate every response header that varies with input - flip query, body, and cookie values and diff the cookie, location, content-type, disposition, validator, and cache-control fields.
+- **Source attribution**: for each varying header, identify the source field (user-controlled vs server-derived).
+- **Reflected request headers**: look for request headers reflected into responses, such as the referer echoed into error pages or a correlation identifier.
 
 ### Line-Break and Whitespace Variants
 
-- **Bare line-break bytes**: bare line feed, bare carriage return, and the CRLF pair
-- **Double encoding**: double encoding for filters that decode once
-- **Overlong encodings**: overlong encodings of the line-break bytes, accepted by some parsers although invalid
-- **Unicode separators**: Unicode line and paragraph separators, sometimes folded to a line feed by intermediaries
-- **Tab and whitespace**: tab and leading whitespace, which the syntax allows inside field values
-- **Null byte**: null byte, which truncates the value in some parsers
+- **Bare line-break bytes**: bare line feed, bare carriage return, and the CRLF pair.
+- **Double encoding**: double encoding for filters that decode once.
+- **Overlong encodings**: overlong encodings of the line-break bytes, accepted by some parsers although invalid.
+- **Unicode separators**: Unicode line and paragraph separators, sometimes folded to a line feed by intermediaries.
+- **Tab and whitespace**: tab and leading whitespace, which the syntax allows inside field values.
+- **Null byte**: null byte, which truncates the value in some parsers.
 
 ### Parser and Layer Fingerprinting
 
-- **Banners**: server, proxy, and platform banners reveal the stack
-- **Cache-signal headers**: cache-signal headers reveal the caching layer and its key composition
-- **Cross-version probing**: the same probe over HTTP/1.1, HTTP/2, and chunked framing - diff status, headers, and body length to map parsing differences
-- **Authority-versus-alias probing**: compare the authority header against its forwarding aliases - send both with different values and observe which wins in redirects, links, and stored entries
+- **Banners**: server, proxy, and platform banners reveal the stack.
+- **Cache-signal headers**: cache-signal headers reveal the caching layer and its key composition.
+- **Cross-version probing**: the same probe over HTTP/1.1, HTTP/2, and chunked framing - diff status, headers, and body length to map parsing differences.
+- **Authority-versus-alias probing**: compare the authority header against its forwarding aliases - send both with different values and observe which wins in redirects, links, and stored entries.
 
 ## Detection Channels
 
@@ -98,89 +98,88 @@ Header injection turns user input into protocol-level control: response splittin
 
 ### Cache Poisoning
 
-- **Unkeyed input to keyed response**: input that influences the body but not the cache key, such as a forwarding alias echoed into a link or an unkeyed parameter reflected into markup
-- **Cache-control manipulation**: inject a freshness or eligibility value to flip an entry private or shared, or to extend its life
-- **Forwarding alias poisoning**: the backend builds canonical URLs from forwarded values, and the cache stores the response with attacker-controlled links
-- **Cache deception**: trick the cache into storing an authenticated response at a public-looking URL by appending a cacheable extension
+- **Unkeyed input to keyed response**: input that influences the body but not the cache key, such as a forwarding alias echoed into a link or an unkeyed parameter reflected into markup.
+- **Cache-control manipulation**: inject a freshness or eligibility value to flip an entry private or shared, or to extend its life.
+- **Forwarding alias poisoning**: the backend builds canonical URLs from forwarded values, and the cache stores the response with attacker-controlled links.
+- **Cache deception**: trick the cache into storing an authenticated response at a public-looking URL by appending a cacheable extension.
 - **Keying-mechanics ownership**: the shared-cache keying mechanics these shapes work are the proxy-techniques family's step; name it there and keep the injection detail here.
 
 ### Authority Confusion
 
 - **Authority trust**: backends often trust the authority header or its forwarding alias when constructing absolute URLs - password reset messages, authorization callbacks, canonical links. A forged authority produces a message pointing at attacker infrastructure that still carries the victim's token.
 - **Precedence and shape testing**: also test precedence between the authority header and its aliases, bracketed and trailing-dot forms, and port confusion shapes.
-- **Double authority and absolute-target shapes**: send a second authority field, and send an absolute request target whose authority differs from the field, so the precedence order decides which layer reads which value
-- **Discovery-document oracle**: a discovery document that publishes issuer and endpoint addresses is a second link-generating oracle beside a reset or callback flow, because the authority family is rebuilt into every published address
-- **Routing versus rewriting**: an authority that selects the upstream the front end forwards to and a rewrite header that changes the routed path act at different layers and never compose; the interior-body read that follows a routed fetch escalates to the `ssrf` class
+- **Double authority and absolute-target shapes**: send a second authority field, and send an absolute request target whose authority differs from the field, so the precedence order decides which layer reads which value.
+- **Discovery-document oracle**: a discovery document that publishes issuer and endpoint addresses is a second link-generating oracle beside a reset or callback flow, because the authority family is rebuilt into every published address.
+- **Routing versus rewriting**: an authority that selects the upstream the front end forwards to and a rewrite header that changes the routed path act at different layers and never compose; the interior-body read that follows a routed fetch escalates to the `ssrf` class.
 
 ### Cookie Manipulation
 
-- **Scope widening**: widen the scope of an attacker-set cookie through a broader domain or path attribute
-- **Cross-site relaxation**: relax the cross-site attribute so the cookie travels on cross-site requests
-- **Lifetime control**: set a long lifetime for persistence, or a negative lifetime to destroy the victim's session
-- **Name shadowing**: shadow a real session cookie by reusing its name, where precedence rules favor the later entry
-- **Reflected cookie rendering**: the injection point is the header and the sink is the page
+- **Scope widening**: widen the scope of an attacker-set cookie through a broader domain or path attribute.
+- **Cross-site relaxation**: relax the cross-site attribute so the cookie travels on cross-site requests.
+- **Lifetime control**: set a long lifetime for persistence, or a negative lifetime to destroy the victim's session.
+- **Name shadowing**: shadow a real session cookie by reusing its name, where precedence rules favor the later entry.
+- **Reflected cookie rendering**: the injection point is the header and the sink is the page.
 
 ### Forwarding Header Spoofing
 
 - **Informational family**: the forwarding family is informational - no protocol guarantee says who set it. Any application that trusts it past the boundary it controls is exploitable.
-- **Loopback value**: a loopback value in a client-address header bypasses IP allowlists or rate limits
-- **Scheme value**: a scheme value satisfying "secure transport only" checks while the connection stays unencrypted
-- **Authority alias**: an authority alias feeding the confusion variants above
-- **Rewrite and override headers**: rewrite and override headers honored after the authorization check, the classic guarded-path bypass
-- **Address families under several names**: spray all of them, since each layer may read a different one
+- **Loopback value**: a loopback value in a client-address header bypasses IP allowlists or rate limits.
+- **Scheme value**: a scheme value satisfying "secure transport only" checks while the connection stays unencrypted.
+- **Authority alias**: an authority alias feeding the confusion variants above.
+- **Rewrite and override headers**: rewrite and override headers honored after the authorization check, the classic guarded-path bypass.
+- **Address families under several names**: spray all of them, since each layer may read a different one.
 - **Relay-mechanics ownership**: the relay mechanics these shapes work are the proxy-techniques family's relay step; name it there and keep the header-shape detail here.
-See references/forwarded-field-families.md for the family list with its per-family consumer and read-out.
+- **Forwarded-field families**: see `references/forwarded-field-families.md` for the family list with its per-family consumer and read-out.
 
 ### Content-Type and Encoding Confusion
 
-- **HTML media type**: inject an HTML media type into an endpoint that returned structured data; browsers may sniff and render it
-- **Legacy charset**: inject a legacy charset to enable encoded-script rendering
-- **Inline disposition**: inject an inline disposition to switch a download into in-page rendering
-- **Content-encoding declaration**: inject a content-encoding declaration without compressing; clients decode-fail and may reveal raw bytes in error paths
-- **Missing sniffing-prevention header**: a missing sniffing-prevention header on some endpoints is what enables the sniffing attacks above; target the endpoints that lack it
+- **HTML media type**: inject an HTML media type into an endpoint that returned structured data; browsers may sniff and render it.
+- **Legacy charset**: inject a legacy charset to enable encoded-script rendering.
+- **Inline disposition**: inject an inline disposition to switch a download into in-page rendering.
+- **Content-encoding declaration**: inject a content-encoding declaration without compressing; clients decode-fail and may reveal raw bytes in error paths.
+- **Missing sniffing-prevention header**: a missing sniffing-prevention header on some endpoints is what enables the sniffing attacks above; target the endpoints that lack it.
 
 ### Script and Redirect Sinks in Headers
 
-- **Location header**: a location header whose target is reflected unescaped reaches legacy clients and embedded hosts
-- **Refresh-style header**: a refresh-style header carries the same navigation without script
-- **Reflected request headers**: reflected request headers rendered into an error page or a debug field combine header injection with a body sink
-- **Server-internal rewrite header**: a server-internal rewrite header makes internal-only files reachable when user input reaches it
+- **Location header**: a location header whose target is reflected unescaped reaches legacy clients and embedded hosts.
+- **Refresh-style header**: a refresh-style header carries the same navigation without script.
+- **Reflected request headers**: reflected request headers rendered into an error page or a debug field combine header injection with a body sink.
+- **Server-internal rewrite header**: a server-internal rewrite header makes internal-only files reachable when user input reaches it.
 
 ### HTTP/2 Pseudo-Header and Frame Confusion
 
-- **Pseudo-header handling**: HTTP/2 splits framing into pseudo-headers and regular fields; servers downgrading to HTTP/1.1 sometimes mishandle pseudo-header values, enabling smuggling across the boundary
-- **Lowercased names**: HTTP/2 lowercases header names; an upstream filter that is case-sensitive may miss the lowercase variant
-- **Header-block frame splitting**: a payload spans frames and intermediaries differ on whether they reassemble before filtering
+- **Pseudo-header handling**: HTTP/2 splits framing into pseudo-headers and regular fields; servers downgrading to HTTP/1.1 sometimes mishandle pseudo-header values, enabling smuggling across the boundary.
+- **Lowercased names**: HTTP/2 lowercases header names; an upstream filter that is case-sensitive may miss the lowercase variant.
+- **Header-block frame splitting**: a payload spans frames and intermediaries differ on whether they reassemble before filtering.
 
 ## Bypass Techniques
 
 **Encoding**
-- **Double encoding**: URL-encode and double-encode for filters that decode the wrong number of times
-- **Mixed encodings**: mix encodings inside one probe - alternate case and mixed escape forms
-- **Newline equivalents**: newline-equivalent Unicode and overlong encodings
+- **Double encoding**: URL-encode and double-encode for filters that decode the wrong number of times.
+- **Mixed encodings**: mix encodings inside one probe - alternate case and mixed escape forms.
+- **Newline equivalents**: newline-equivalent Unicode and overlong encodings.
 
 **Header normalization edges**
-- **Surrounding whitespace**: leading and trailing whitespace and tabs in field names and values
-- **Field folding**: continuation lines starting with whitespace, formally obsolete but still accepted by some parsers
-- **Duplicate fields**: the syntax says join, but servers pick the first, the last, or differ from the proxy in front of them
+- **Surrounding whitespace**: leading and trailing whitespace and tabs in field names and values.
+- **Field folding**: continuation lines starting with whitespace, formally obsolete but still accepted by some parsers.
+- **Duplicate fields**: the syntax says join, but servers pick the first, the last, or differ from the proxy in front of them.
 
 **Method and method-override**
-- **Override before authorization**: method-override headers reach state-changing handlers when the framework consults the override before method-based authorization
-- **Caller classes**: effective from server-side and non-browser callers; from a browser the override header triggers a preflight, so it is not on its own a cross-site primitive
+- **Override before authorization**: method-override headers reach state-changing handlers when the framework consults the override before method-based authorization.
+- **Caller classes**: effective from server-side and non-browser callers; from a browser the override header triggers a preflight, so it is not on its own a cross-site primitive.
 
 **Header name games**
-- **Case mangling**: case mangling for filters that key off exact casing
-- **Null-byte truncation**: null-byte truncation inside the field name on parsers that stop at the null
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Case mangling**: case mangling for filters that key off exact casing.
+- **Null-byte truncation**: null-byte truncation inside the field name on parsers that stop at the null.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **Header injection plus cache poisoning**: the poisoned entry serves the injected body to every later requester
-- **Header injection plus cross-site scripting**: the injected field becomes a script sink once the body is rendered
-- **Authority confusion plus recovery flows**: the forged link carries a live token to attacker infrastructure
-- **Forwarding spoof plus access control**: the decision flips without touching credentials
-- **Framing disagreement plus authentication bypass**: the smuggled request skips the front-end check
+- **Header injection plus cache poisoning**: the poisoned entry serves the injected body to every later requester.
+- **Header injection plus cross-site scripting**: the injected field becomes a script sink once the body is rendered.
+- **Authority confusion plus recovery flows**: the forged link carries a live token to attacker infrastructure.
+- **Forwarding spoof plus access control**: the decision flips without touching credentials.
+- **Framing disagreement plus authentication bypass**: the smuggled request skips the front-end check.
 
 ## Testing Methodology
 
@@ -204,21 +203,21 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## False Positives
 
-- **Correctly keyed variation**: headers that vary by input but are correctly keyed in the cache (intentional personalization, cache-key variation set correctly)
-- **Logging-only reflection**: forwarding values reflected back but used only for logging, which is not a security boundary
-- **Client-side refusal**: client-side refusal to navigate to script or data destinations, which leaves the protocol capability without a live sink
-- **Outer-proxy stripping**: line breaks appearing in a response but stripped by an outer proxy before reaching any client or cache
-- **Ordinary pipelining**: framing indicators that turn out to be ordinary pipelining or keep-alive behavior
+- **Correctly keyed variation**: headers that vary by input but are correctly keyed in the cache (intentional personalization, cache-key variation set correctly).
+- **Logging-only reflection**: forwarding values reflected back but used only for logging, which is not a security boundary.
+- **Client-side refusal**: client-side refusal to navigate to script or data destinations, which leaves the protocol capability without a live sink.
+- **Outer-proxy stripping**: line breaks appearing in a response but stripped by an outer proxy before reaching any client or cache.
+- **Ordinary pipelining**: framing indicators that turn out to be ordinary pipelining or keep-alive behavior.
 
 ## Pro Tips
 
-- **Forged authority first**: the fastest win is usually a forged authority in a recovery or authorization flow; try it first, it costs one request
-- **Unkeyed input first**: for cache poisoning, find the unkeyed input first; the rest follows
-- **Override headers**: override headers are high-yield against backends that route on them before checking method-based auth, most useful from server-side callers
-- **Smuggling lives at the boundary**: identify the pair and target the framing disagreement
-- **Rewrite headers against guarded paths**: rewrite headers against guarded paths remain a high-yield bypass on stacks that honor them
-- **Splitting-win verification**: before claiming a splitting win, verify the second field landed as a real field in the cache or downstream consumer
-- **Outbound message flows**: outbound message flows are a related surface with the same root cause - user input reaching message headers
+- **Forged authority first**: the fastest win is usually a forged authority in a recovery or authorization flow; try it first, it costs one request.
+- **Unkeyed input first**: for cache poisoning, find the unkeyed input first; the rest follows.
+- **Override headers**: override headers are high-yield against backends that route on them before checking method-based auth, most useful from server-side callers.
+- **Smuggling lives at the boundary**: identify the pair and target the framing disagreement.
+- **Rewrite headers against guarded paths**: rewrite headers against guarded paths remain a high-yield bypass on stacks that honor them.
+- **Splitting-win verification**: before claiming a splitting win, verify the second field landed as a real field in the cache or downstream consumer.
+- **Outbound message flows**: outbound message flows are a related surface with the same root cause - user input reaching message headers.
 
 ## Summary
 

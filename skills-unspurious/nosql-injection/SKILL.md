@@ -174,8 +174,7 @@ NoSQL injection exploits the mismatch between how applications pass user input t
 - **Wrapping disagreement**: array versus object operator wrapping, where parsers disagree on which is the operator.
 - **Prototype keys**: prototype keys in structured bodies that pollute shared objects consumed by the query builder.
 - **Case-insensitive flags**: case-insensitive pattern flags that widen matches case-sensitive filters miss.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Testing Methodology
 
@@ -217,5 +216,4 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Summary
 
-NoSQL injection has the same root cause as SQL injection - user input controlling query structure - reached through operator embedding rather than syntax breaking.
-Enforce typed schema validation, bind values through the driver's parameterized form, keep script surfaces closed, and never pass raw user input as a query object.
+NoSQL injection has the same root cause as SQL injection - user input controlling query structure - reached through operator embedding rather than syntax breaking. Enforce typed schema validation, bind values through the driver's parameterized form, keep script surfaces closed, and never pass raw user input as a query object.

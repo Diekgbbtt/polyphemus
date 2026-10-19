@@ -129,8 +129,7 @@ Prototype pollution corrupts shared object prototypes through unsafe merges of u
 - **Array and index shapes**: reach the prototype through a different path.
 - **Normalization variants**: of the key compare unequal to a filter list.
 - **Second-order delivery**: where the stored form merges after the filter stage.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -180,5 +179,4 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Summary
 
-Any unsafe recursive merge of user-controlled keys is a prototype pollution candidate.
-Filter prototype keys at every merge boundary, construct options objects without a prototype, freeze shared prototypes, and validate impact with behavioral proof rather than a reflected key.
+Any unsafe recursive merge of user-controlled keys is a prototype pollution candidate. Filter prototype keys at every merge boundary, construct options objects without a prototype, freeze shared prototypes, and validate impact with behavioral proof rather than a reflected key.

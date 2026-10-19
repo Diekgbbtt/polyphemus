@@ -26,7 +26,7 @@ A matcher that lists shapes is defeated by every equivalent shape the list omits
 
 ## Detection Channels
 
-- **Channel scope**: signature evasion listens to the matcher's rule set rather than to the sink's behaviour, so only the entries below are live here.
+- **Channel scope**: signature evasion listens to the matcher's rule set rather than to the sink's behaviour.
 - **Refusal signal**: the control's refusal signal on the obvious spelling, which proves the rule set engaged.
 - **Second-spelling pass**: a pass for the same effect in a second spelling, which shows the rule was stepped around rather than satisfied.
 - **Spelling differential**: the differential between the refused spelling and the passed spelling at one position, which localises the axis the list misses.

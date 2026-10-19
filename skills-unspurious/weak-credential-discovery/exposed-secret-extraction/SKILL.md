@@ -22,7 +22,7 @@ The extraction goal is a reusable credential that enables an authenticated sessi
 
 - **Holder inventory**: reconnaissance inventories fetchable holders before any parsing begins.
 - **Linked-source listing**: list every rendered page plus every linked script reachable from anonymous navigation, and record each carrier for later shape matching.
-- **Artifact-class listing**: list every guessable artifact location class that could carry credential holders, such as environment dumps plus configuration documents plus version-control remnants plus diagnostic pages plus build and bundle artifacts.
+- **Artifact-class listing**: list every guessable artifact location class that could carry credential holders, such as environment dumps plus configuration documents plus version-control remnants plus diagnostic pages.
 - **Build and bundle artifacts**: treat build and bundle artifacts as holders in their own right: a published source map reconstructs the client source, an interface specification document enumerates routes, and an asset manifest or build-info file names further holders.
 - **Response recording**: record the response status plus body size for each candidate so later triage can separate holders from misses.
 

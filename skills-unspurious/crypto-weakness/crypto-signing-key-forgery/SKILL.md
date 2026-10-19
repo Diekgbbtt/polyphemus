@@ -28,12 +28,12 @@ The forgery goal is an accepted token carrying attacker-chosen claims without ev
 
 ## Detection Channels
 
-- **Live channels**: forgery listens to signature plus acceptance signals, so only the entries below are live here.
-- **Signature segment**: present on structured tokens marking the keyed-checksum binding.
-- **Algorithm marker**: showing a symmetric scheme or an unchecked acceptance option.
-- **Local re-verification success**: confirming a recovered secret without server contact.
-- **Accepted minted token**: carrying elevated claims confirming signature trust failure.
-- **Rejected stripped-algorithm token**: closing the removal hypothesis for that flow.
+- **Live channels**: forgery listens to signature plus acceptance signals.
+- **Signature segment**: structured tokens carry a signature segment marking the keyed-checksum binding.
+- **Algorithm marker**: shows a symmetric scheme or an unchecked acceptance option.
+- **Local re-verification**: success confirms a recovered secret without server contact.
+- **Accepted minted token**: carrying elevated claims confirms signature trust failure.
+- **Rejected stripped-algorithm token**: closes the removal hypothesis for that flow.
 - **Key-reference resolution**: a verifier that honours a key reference carried in the artifact, which confirms the key basis is attacker-supplied rather than recovered.
 
 ## Adversarial Capabilities
@@ -63,7 +63,7 @@ The forgery goal is an accepted token carrying attacker-chosen claims without ev
 ### Algorithm Removal Acceptance
 
 - **Removal test**: strip the signature segment and mark the token as keyless, then test whether the accepting side still honours the claims.
-- **Removal classification**: treat removal as validation-layer bypass with no secret recovery rather than as a weak-secret case.
+- **Removal classification**: treat removal as a validation-layer bypass with no secret recovery rather than as a weak-secret case.
 - **Variant scope**: the parent recover-then-mint description cannot cover acceptance without a key, so this variant owns the removal procedure.
 
 ### Elevated Claim Minting
@@ -96,9 +96,8 @@ The forgery goal is an accepted token carrying attacker-chosen claims without ev
 - **Default-secret success**: demonstrate deployment-default secret success against a rotation policy that promises uniqueness.
 - **Keyless acceptance**: demonstrate keyless acceptance against a verifier that promises rejection of unpinned algorithms.
 - **Key-reference admission**: demonstrate acceptance of an artifact-carried key reference against a verifier that promises a server-side key basis.
-- **Stop signal**: treat rejection of recovered-secret, keyless, and key-reference tokens as a stop signal rather than a bypass.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Stop signal**: treat rejection of both recovered-secret and keyless tokens as a stop signal rather than a bypass.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -119,10 +118,10 @@ Forgery breaks signing trust before minting, because minting without a key basis
 ## False Positives
 
 - **Stop condition**: stop when the evidence shows strong signing, because further search is only noise.
-- **Rejected minted tokens**: rejected verdicts across minted tokens under every recovered-secret hypothesis.
-- **Rejected keyless tokens**: rejected verdicts across keyless tokens at every acceptance flow.
-- **Local verification failure**: local re-verification failure across the full secret-search space.
-- **Algorithm pinning**: pinned algorithm enforcement with no unchecked acceptance path.
+- **Rejected minted tokens**: every recovered-secret hypothesis yields rejected verdicts across minted tokens.
+- **Rejected keyless tokens**: every acceptance flow yields rejected verdicts across keyless tokens.
+- **Local verification failure**: local re-verification fails across the full secret-search space.
+- **Algorithm pinning**: pinned algorithm enforcement holds with no unchecked acceptance path.
 - **Server-side key basis**: a verifier that resolves its key basis only from server-side configuration, with no artifact-carried reference honoured.
 
 ## Pro Tips
@@ -132,7 +131,7 @@ Forgery breaks signing trust before minting, because minting without a key basis
 - **Early keyless probes**: favor keyless probes and artifact-carried key references early because one acceptance ends the need for secret search.
 - **Default-family seeding**: seed guesses from deployment-default families before widening the space.
 - **Key-basis logging**: log each minted token behind its key basis so recovery versus removal stays separable.
-- **Exhaustion stop**: stop minting once the secret, removal, and reference hypotheses are refuted and record the negative.
+- **Exhaustion stop**: stop minting once both secret and removal hypotheses are refuted and record the negative.
 
 ## Summary
 

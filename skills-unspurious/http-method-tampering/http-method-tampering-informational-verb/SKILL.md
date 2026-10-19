@@ -58,8 +58,7 @@ It owns the informational verbs exclusively and never counts them toward the app
 - **Defeated controls**: authorization parity across verbs and echo containment.
 - **Bypass path**: reads disclosure and metadata without triggering body checks and replays reflected material past authentication.
 - **Confirmation basis**: confirm each bypass by data return, metadata use, or authenticated effect rather than by transport success alone.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -69,10 +68,14 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Endpoint probe** - probe each endpoint with disclosure, header-only, and echo verbs and record each answer, and the step completes when every endpoint carries disclosure content plus header-only outcome plus echo outcome.
-2. **Target selection** - select bypass targets from disclosure content by matching listed methods to guarded resources, and the step completes when each selected target cites the disclosure entry that named it.
-3. **Metadata extraction** - extract guarded metadata from header-only success diverging from the guarded read, and the step completes when each extraction shows metadata unattainable through the guarded read under the same session.
-4. **Credential replay** - extract reflected credential material from echo answers and replay it toward authentication, and the step completes when each replay shows an authenticated effect or guarded-data return proving the reflected material functioned as credential input.
+1. Probe each endpoint with disclosure, header-only, and echo verbs and record each answer.
+Complete when every endpoint carries disclosure content plus header-only outcome plus echo outcome.
+2. Select bypass targets from disclosure content by matching listed methods to guarded resources.
+Complete when each selected target cites the disclosure entry that named it.
+3. Extract guarded metadata from header-only success diverging from the guarded read.
+Complete when each extraction shows metadata unattainable through the guarded read under the same session.
+4. Extract reflected credential material from echo answers and replay it toward authentication.
+Complete when each replay shows an authenticated effect or guarded-data return proving the reflected material functioned as credential input.
 
 ## False Positives
 

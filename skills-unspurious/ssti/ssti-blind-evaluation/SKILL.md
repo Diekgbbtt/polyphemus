@@ -79,9 +79,8 @@ Treat every timing, callback, and length signal as an oracle to be corroborated 
 - **Encoding layering**: survives pre-render filters by arriving in an encoding that decodes only at the template stage.
 - **Multi-stage pipelines**: carry payloads through markup or formatting layers that strip raw syntax but preserve fenced or encoded blocks.
 - **Timing-shape discipline**: keeps oracle payloads distinguishable from benign slow responses by using margins the baseline never reaches.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 ## Chaining Attacks
 
 - **File-write primitives**: convert blind execution into retrievable evidence by planting content for a separate read surface.
@@ -92,13 +91,13 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Find templated input** - through store-then-sweep, the first bent step, by storing a probe in every writable field and sweeping every rendering surface, and the step completes when each submission-to-render pair is listed with its outcome recorded.
-2. **Fingerprint the engine** - through oracle-compatible probes, and the step completes when exactly one delimiter family produces an oracle signal and the family is recorded.
-3. **Confirm hidden evaluation** - through the selected oracle, and the step completes when a benign baseline and a triggering submission diverge on latency, callback receipt, or length shape with coincidence excluded.
-4. **Probe sandbox state** - through the confirmed grammar, and the step completes when the reachable pool or its definitive denial is recorded.
-5. **Enumerate gadgets** - walk reflection paths from the reachable pool, and the step completes when at least one shell-equivalent chain or a definitive negative is recorded.
-6. **Reach execution** - invoke the shortest gadget chain, and the step completes when an oracle signal ties the effect to the submitted probe.
-7. **Validate side effects** - through an independent oracle channel, and the step completes when a second signal corroborates the first.
+1. Find templated input through store-then-sweep, the first bent step, by storing a probe in every writable field and sweeping every rendering surface with completion when each submission-to-render pair is listed with its outcome recorded.
+2. Fingerprint the engine through oracle-compatible probes with completion when exactly one delimiter family produces an oracle signal and the family is recorded.
+3. Confirm hidden evaluation through the selected oracle with completion when a benign baseline and a triggering submission diverge on latency, callback receipt, or length shape with coincidence excluded.
+4. Probe sandbox state through the confirmed grammar with completion when the reachable pool or its definitive denial is recorded.
+5. Enumerate gadgets by walking reflection paths from the reachable pool with completion when at least one shell-equivalent chain or a definitive negative is recorded.
+6. Reach execution by invoking the shortest gadget chain with completion when an oracle signal ties the effect to the submitted probe.
+7. Validate side effects through an independent oracle channel with completion when a second signal corroborates the first.
 
 ## False Positives
 

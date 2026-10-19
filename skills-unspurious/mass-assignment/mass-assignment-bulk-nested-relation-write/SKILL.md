@@ -13,7 +13,7 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Attack Surface
 
-- **Applicability**: centers on a bulk or batch endpoint whose items carry writable nested relations beneath a boundary-only item gate.
+- **Applicability**: a bulk or batch endpoint whose items carry writable nested relations beneath a boundary-only item gate.
 - **Array action exposure**: the server exposes array-of-objects actions where each position traverses nested serializers or relation helpers into child records.
 - **Sparse update widening**: sparse or patch update support widens the surface because a nested path can arrive as a path string inside a batch document.
 - **Aliased mutation widening**: aliased or batched GraphQL mutations with nested inputs widen the surface the same way through repeated relation writes in one request.
@@ -29,12 +29,12 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Detection Channels
 
-- **Channel scope**: combined proof listens to per-position child state rather than batch echo, so only the entries below are live here.
-- **Persisted child value**: persisted child value inside one batch slot visible in a later per-item child read binds one slot plus one child to one verdict.
-- **Silent nested persistence**: silent nested persistence inside a mid-batch slot without batch echo confirms a write the response never reflected.
-- **Child-scope diff**: per-position child-scope diff across roles separates a permitted nested link from an out-of-scope nested write.
-- **Recomputed child field**: recomputed child field ignoring input marks a guarded slot rather than a success.
-- **Flat slot change**: flat slot change with no child persistence marks a non-finding for this variant.
+- **Channel scope**: combined proof listens to per-position child state rather than batch echo.
+- **Persisted child value**: a child value persisted inside one batch slot and visible in a later per-item child read binds one slot plus one child to one verdict.
+- **Silent nested persistence**: a mid-batch slot that persists a nested write without batch echo confirms a write the response never reflected.
+- **Child-scope diff**: a per-position child-scope diff across roles separates a permitted nested link from an out-of-scope nested write.
+- **Recomputed child field**: a recomputed child field that ignores input marks a guarded slot rather than a success.
+- **Flat slot change**: a flat slot change with no child persistence marks a non-finding for this variant.
 
 ## Adversarial Capabilities
 
@@ -47,9 +47,7 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Trust Assumptions
 
-- **The trust premise**: at the moment a create or update executes, the feature trusts client-supplied attributes to bind only to caller-writable fields.
-- **The agreement**: it holds read-only markers plus derived-field recomputation steady, covers every encoding through one allowlist, and keeps nested relations inside caller scope.
-- **The exposure**: sensitive privilege plus ownership plus gate plus billing state leaks only when the server binds what the caller may not write.
+- **The agreement**: at the moment a create or update executes, the feature trusts client-supplied attributes to bind only to caller-writable fields, holds read-only markers plus derived-field recomputation steady, covers every encoding through one allowlist, and keeps nested relations inside caller scope, and sensitive privilege plus ownership plus gate plus billing state leaks only when the server binds what the caller may not write.
 - **The failing clause**: this variant breaks the combined-scope clause because a nested relation inside a mid-batch item binds a child beyond caller scope while only boundary items face validation.
 
 ## Key Vulnerabilities
@@ -87,8 +85,7 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 - **Nested key reshaping**: reshape the nested key across object plus dot plus bracket plus patch-path forms inside the chosen slot to reach the binder through another parser.
 - **Batch reshaping**: reshape the batch across array plus object-wrapped plus aliased forms for the same reason.
 - **Delegated race handling**: race interleaving names the race-conditions skill at its TOCTOU step rather than restating it.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Testing Methodology
 
@@ -103,10 +100,10 @@ Combined reasoning runs after both single-axis baselines are understood, because
 ## False Positives
 
 - **Durable-write stop**: stop when no slot-plus-child pair shows a durable out-of-scope write, because batch echo alone proves nothing here.
-- **Server recomputation**: server recomputes the child field and ignores client input, confirmed by identical before plus after reads.
-- **Read-only enforcement**: read-only marking enforced per item plus per child across encodings, confirmed by uniform negatives on every shape.
-- **Batch-wide rejection**: batch-wide rejection with nothing persisted, which is guarded behavior rather than a finding.
-- **In-scope nested change**: nested change inside caller scope, which is permitted behavior rather than a finding.
+- **Server recomputation**: the server recomputes the child field and ignores client input, confirmed by identical before plus after reads.
+- **Read-only enforcement**: read-only marking is enforced per item plus per child across encodings, confirmed by uniform negatives on every shape.
+- **Batch-wide rejection**: batch-wide rejection with nothing persisted is guarded behavior rather than a finding.
+- **In-scope nested change**: a nested change inside caller scope is permitted behavior rather than a finding.
 
 ## Pro Tips
 

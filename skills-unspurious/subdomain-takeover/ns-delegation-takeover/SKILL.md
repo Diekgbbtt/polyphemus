@@ -45,8 +45,7 @@ The impact goal is full subzone control with trusted-origin serving plus session
 
 ## Trust Assumptions
 
-- **The agreement**: when the subdomain feature executes, DNS is trusted to point only at owned resources and the platform is trusted to bind a name only to its owning account and delegations are trusted to stay live under owner control and alternate names are trusted to stay bound to their owning distribution.
-- **The exposure**: sensitive content and session trust leak only through a name that still resolves to attacker-controlled content.
+- **The agreement**: when the subdomain feature executes, DNS is trusted to point only at owned resources and the platform is trusted to bind a name only to its owning account and delegations are trusted to stay live under owner control and alternate names are trusted to stay bound to their owning distribution, and sensitive content and session trust leak only through a name that still resolves to attacker-controlled content.
 - **The failing clause**: the agreement fails at the delegation-liveness clause because the child zone still delegates to expired nameservers that accept outside registration and authoritative hosting.
 
 ## Key Vulnerabilities
@@ -72,8 +71,7 @@ The impact goal is full subzone control with trusted-origin serving plus session
 - **Lifeless authoritative answers**: treat lifeless authoritative answers as the signal that no owner still serves the delegation.
 - **Issuance restriction**: treat issuance restriction as a guardrail that limits certificate issuance while the delegation is triaged.
 - **Live authoritative answer**: treat a live authoritative answer from the owner as a stop condition that marks the delegation unclaimable.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

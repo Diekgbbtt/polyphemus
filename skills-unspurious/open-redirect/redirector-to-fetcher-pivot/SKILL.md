@@ -78,14 +78,12 @@ Treat first-hop approval as worthless until every hop the fetcher follows is re-
 - **Separator and encoding values**: shape separator and encoding values that normalize differently between the redirector check and the fetcher resolution.
 - **Numeric address forms**: shape numeric address forms that match textual rules while resolving to internal targets.
 - **Nested-redirector values**: shape nested-redirector values that hide the internal destination one forwarding layer deep.
-
 - **Proxy-techniques handoff**: the hop chain and the destination parse comparison are the proxy-techniques family's steps; name it there and keep the class-specific pivot verdict here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **Internal-exploitation handoff**: pivot the egress into internal exploitation only by handing off to the `ssrf` class at the internal-access step.
+- **Internal-exploitation handoff**: pivot the egress into internal exploitation only by handing off to the SSRF family at the internal-access step.
 - **Multi-hop escape**: escape through multi-hop chains where the trusted redirector fronts the internal destination.
 - **Token-bearing relay**: relay the pivot through token-bearing fetcher flows only where the fetcher attaches credentials to the followed hop.
 

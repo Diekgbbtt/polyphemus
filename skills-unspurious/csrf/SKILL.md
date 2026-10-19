@@ -177,8 +177,7 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 - **Null-origin acceptance**: test null-origin acceptance.
 - **CORS-added custom headers**: leverage misconfigured CORS to add custom headers that servers mistakenly treat as anti-forgery tokens.
 - **Path-family carve-out**: a carve-out that excludes one path family, such as a socket hub or a long-polling path, from the proof-of-intent check leaves the excluded family reachable under the same session authority.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

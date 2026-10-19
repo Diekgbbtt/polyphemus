@@ -96,8 +96,7 @@ The breaking goal is filter escape plus clause control without any operator or s
 - **Case folding**: case folding plus keyword splitting reach the parser past naive keyword blocklists.
 - **Encoded quotes**: percent-encoded plus double-encoded quotes reach the parser past filters that match only literal quote bytes.
 - **Filter-clause alternatives**: filter-clause alternatives reach the parser past single-keyword stripping.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

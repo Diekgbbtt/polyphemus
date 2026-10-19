@@ -13,26 +13,26 @@ The impact goal is victim-context execution with sink-log evidence rather than r
 
 ## Attack Surface
 
-- **Applicability**: centers on a non-persistent client-only flow from source to sink with no server reflection and no storage boundary.
+- **Applicability**: a non-persistent client-only flow runs from source to sink with no server reflection and no storage boundary.
 - **Source**: is a client-observable value such as a fragment identifier or a query string read in the browser or a cross-document message or a client store read within one page lifetime or the window-name property that survives cross-origin navigation.
-- **Sink**: is a client rendering or execution primitive such as markup insertion or attribute binding or navigation handling or string evaluation or worker creation.
+- **Sink**: a client rendering or execution primitive such as markup insertion or attribute binding or navigation handling or string evaluation or worker creation.
 - **Flow completion**: the flow completes within one page lifetime without a write-then-retrieve pair.
 - **Out-of-scope persistence**: any technique with a persistence boundary belongs to stored even when its sink is a client sink, so this variant owns only the non-persistent remainder.
 
 ## Reconnaissance
 
-- **Reconnaissance scope**: reconnaissance inventories client sources and their reachable sinks without touching the server body.
-- **Client-source inventory**: enumerate client sources by exercising fragment values plus query values read in the browser plus cross-document messages plus window-name values plus client store values and recording which ones reach script.
+- **Reconnaissance scope**: inventories client sources and their reachable sinks without touching the server body.
+- **Client-source inventory**: enumerate client sources by exercising fragment values plus query values read in the browser plus cross-document messages plus client store values and recording which ones reach script.
 - **Sink inventory**: enumerate sinks by instrumenting markup insertion plus library pre-filters that mutate markup before insertion plus framework bindings that mark a value as safe markup plus attribute binding plus navigation handling plus evaluation primitives, and recording which sink fires per source.
 - **Flow recording**: record one source-to-sink path per flow with its observation hook, and the inventory completes when every reachable client source maps to its sinks with no unmapped source left.
 
 ## Detection Channels
 
-- **Channel scope**: DOM confirmation listens to instrumented sinks, so only the entries below are live here.
-- **Instrumented sink invocation**: instrumented sink invocation without server reflection confirms the client-only flow.
-- **Source-to-sink trace log**: source-to-sink trace log binds one client source value to one sink call within one page lifetime.
-- **Policy violation report**: policy violation report fired by the client-only render binds execution to sink invocation rather than to a response body.
-- **Mutated markup sample**: mutated markup sample shows the client parser turning the sourced value into executable markup.
+- **Channel scope**: DOM confirmation listens to instrumented sinks.
+- **Instrumented sink invocation**: confirms the client-only flow without server reflection.
+- **Source-to-sink trace log**: binds one client source value to one sink call within one page lifetime.
+- **Policy violation report**: fires at the client-only render and binds execution to sink invocation rather than to a response body.
+- **Mutated markup sample**: shows the client parser turning the sourced value into executable markup.
 
 ## Adversarial Capabilities
 
@@ -45,9 +45,7 @@ The impact goal is victim-context execution with sink-log evidence rather than r
 
 ## Trust Assumptions
 
-- **Exact-sink encoding**: every user-influenced string stays untrusted until strictly encoded for the exact sink at render time.
-- **The agreement**: the agreement holds the data contract from entry through storage and retrieval to sink, keeps encoding bound to the exact sink context, keeps runtime policy enforced on executable sinks, and keeps rendering from exposing executable markup to a victim context.
-- **The exposure**: session state plus token material leaks only when executable markup reaches such a context.
+- **The agreement**: every user-influenced string stays untrusted until strictly encoded for the exact sink at render time, so the data contract holds from entry through storage and retrieval to sink, encoding stays bound to the exact sink context, runtime policy stays enforced on executable sinks, rendering stays free of executable markup in a victim context, and session state plus token material leaks only when executable markup reaches such a context.
 - **The failing clause**: this variant breaks the server-mediation clause because a client-side source reaches an executable sink without server reflection and executes without exact-context encoding at sink invocation.
 
 ## Key Vulnerabilities
@@ -68,7 +66,7 @@ The impact goal is victim-context execution with sink-log evidence rather than r
 
 ### Client-Source Families
 
-- **Family coverage**: cover fragment-driven plus browser-read query plus cross-document message plus window-name plus client-store flows under one tracing procedure.
+- **Family coverage**: cover fragment-driven plus browser-read query plus cross-document message plus client-store flows under one tracing procedure.
 - **Driver variation**: vary only the driver that sets the source value while keeping the instrumentation fixed.
 - **Message-flow shapes**: message flows need their sender and listener shapes enumerated - a partial origin check by substring, suffix, or unanchored pattern is bypassable with a look-alike host, so a weak check is still a finding.
 - **Listener races**: where several listeners exist, record which one fires per message and whether a race between two handlers lets a message reach the wrong sink.
@@ -88,8 +86,7 @@ The impact goal is victim-context execution with sink-log evidence rather than r
 - **Unclosed markup**: unclosed-markup shape reaches the client parser past a filter that matches only balanced markup.
 - **Handler variety**: handler-variety shapes reach execution when one sink family blocks direct script shapes.
 - **Configuration gaps**: sanitizer configuration gaps plus policy gaps plus sink-type gaps surface through sink-log positives with negative-test controls.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -103,11 +100,11 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 DOM testing runs instrumentation first and everything else follows, because no later step is meaningful without a trusted sink log.
 1. **Inventory client sources** - exercise each fragment plus browser-read query plus cross-document message plus client store candidate with a traceable marker, and the step completes when every reachable source maps to a named entry point with no unmapped source left.
-3. **Instrument and trace to sinks** - hook markup insertion plus attribute binding plus navigation handling plus evaluation primitives then drive each source, and the step completes when every source carries a stated source-to-sink path plus a sink log or a recorded negative.
-4. **Classify sink context** - label the invoked sink within markup plus attribute plus navigation plus script plus event plus style plus vector-graphics families, and the step completes when every trace carries a recorded context label that selects its probe family.
-5. **Assess client defenses** - inspect output encoding plus sanitizer plus content policy plus sink-type enforcement at the sink with negative tests, and the step completes when every trace carries a recorded defense model plus negative-test evidence.
-6. **Craft sink probes** - build a small curated probe set per classified context using abstract shapes with placeholders plus encoding variants, and the step completes when every context owns a tied probe set with no catalog spraying.
-7. **Confirm across render paths** - repeat each source-to-sink flow across server render plus client render plus hydration plus socket plus event-stream delivery, and the step completes when every exercised path carries a sink-invocation verdict in the transport matrix.
+2. **Instrument and trace to sinks** - hook markup insertion plus attribute binding plus navigation handling plus evaluation primitives then drive each source, and the step completes when every source carries a stated source-to-sink path plus a sink log or a recorded negative.
+3. **Classify sink context** - label the invoked sink within markup plus attribute plus navigation plus script plus event plus style plus vector-graphics families, and the step completes when every trace carries a recorded context label that selects its probe family.
+4. **Assess client defenses** - inspect output encoding plus sanitizer plus content policy plus sink-type enforcement at the sink with negative tests, and the step completes when every trace carries a recorded defense model plus negative-test evidence.
+5. **Craft sink probes** - build a small curated probe set per classified context using abstract shapes with placeholders plus encoding variants, and the step completes when every context owns a tied probe set with no catalog spraying.
+6. **Confirm across render paths** - repeat each source-to-sink flow across server render plus client render plus hydration plus socket plus event-stream delivery, and the step completes when every exercised path carries a sink-invocation verdict in the transport matrix.
 
 ## False Positives
 
@@ -120,7 +117,7 @@ DOM testing runs instrumentation first and everything else follows, because no l
 
 ## Pro Tips
 
-- **Instrumentation discipline**: DOM work rewards instrumentation discipline plus small probe sets plus source control.
+- **Discipline basis**: DOM work rewards instrumentation discipline plus small probe sets plus source control.
 - **Classify first**: prefer context classification before any probe driving, and hook sinks before sending values.
 - **Traceable markers**: favor one traceable marker per client source so sink attribution stays exact.
 - **Curated probe sets**: keep a small curated probe set per sink context and iterate with encoding variants.

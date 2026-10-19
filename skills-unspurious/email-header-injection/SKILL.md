@@ -99,8 +99,7 @@ The goal is a message the application's own template never described: an extra r
 - **Post-check composition**: a composition path that decodes or concatenates the value after the validation step, so the checked value is not the composed value.
 - **Command-context filtering**: a filter written for the header context applied to a value that reaches a command channel, where the operand boundary differs.
 - **Encoding-path divergence**: a decoding path that differs between the validation component and the composition component, so one side sees data and the other sees structure.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -144,4 +143,3 @@ Injection reads the delivered message first and mutates one field second, becaus
 
 An outbound message is safe only when every user value stays data inside the field the application assigned it, at the composition point and at the transport point.
 Validate the decoded value at the last composition step, keep the recipient set server-decided, and never let one input reach a command channel.
-

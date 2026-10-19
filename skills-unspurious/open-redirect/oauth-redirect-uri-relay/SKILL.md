@@ -76,8 +76,7 @@ Treat every registration comparison as hostile until exact matching binds the is
 - **Traversal values**: shape traversal values that escape the registered path after canonicalization.
 - **Encoded values**: shape encoded values that decode one extra time between verifier and navigating consumer.
 - **Logout continuation values**: shape logout continuation values that exploit the weaker logout rule with an otherwise rejected shape.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

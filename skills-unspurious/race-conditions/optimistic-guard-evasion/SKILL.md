@@ -13,8 +13,8 @@ The goal is lost-update overwrites plus privilege or entitlement errors that per
 
 ## Attack Surface
 
-- **Applicability**: optimistic applicability centers on workflows that carry a concurrency token or version field alongside a state-changing operation.
-- **Surface composition**: the surface holds update plus transfer plus role-change operations where correctness depends on the server rejecting mismatched versions.
+- **Applicability**: centers on workflows that carry a concurrency token or version field alongside a state-changing operation.
+- **Surface composition**: update plus transfer plus role-change operations where correctness depends on the server rejecting mismatched versions.
 - **Widening factors**: optional tokens, tokens accepted but never validated, and tokens enforced on one channel but ignored on another all widen the surface.
 - **Out-of-scope variant**: dedup-key scope failures ride in idempotency-dedup-bypass rather than here, because this variant owns only token-mediated guards.
 
@@ -27,11 +27,11 @@ The goal is lost-update overwrites plus privilege or entitlement errors that per
 
 ## Detection Channels
 
-- **Channel scope**: optimistic listens for guard-shaped overwrites, so only the entries below are live here.
-- **Sequential-versus-parallel divergence**: sequential request fails but parallel requests succeed when tokens are omitted or staled.
+- **Channel scope**: optimistic listens for guard-shaped overwrites.
+- **Sequential-versus-parallel divergence**: a sequential request fails but parallel requests succeed when tokens are omitted or staled.
 - **Response-shape divergence**: distinct response shapes or timings for simultaneous versus sequential versioned requests.
 - **Stale-write overwrites**: duplicate rows or overwritten entitlements where the later stale write erased the earlier fresh write.
-- **Lost-update imbalance**: lost-update ledger imbalance where two increments net to one or two assignments collapse to the stale value.
+- **Lost-update imbalance**: a ledger imbalance where two increments net to one or two assignments collapse to the stale value.
 
 ## Adversarial Capabilities
 
@@ -44,9 +44,8 @@ The goal is lost-update overwrites plus privilege or entitlement errors that per
 
 ## Trust Assumptions
 
-- **The agreement**: the feature trusts that concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed.
-- **The exposure**: sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
-- **The failing clause**: this variant breaks the version-guard clause because an omitted or stale concurrency token commits without validation.
+- **The agreement**: concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed, and sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
+- **The failing clause**: the variant breaks the version-guard clause because an omitted or stale concurrency token commits without validation.
 
 ## Key Vulnerabilities
 
@@ -72,11 +71,10 @@ The goal is lost-update overwrites plus privilege or entitlement errors that per
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no throttle difference changes the guard step itself.
 - **Method-switched paths**: method-switched same-effect paths join the probe set when an alternate verb reaches the same state change.
-- **Identity rotation**: identity rotation across sessions widens the burst when per-entity throttles cap one principal.
+- **Identity rotation**: rotate identities across sessions to widen the burst when per-entity throttles cap one principal.
 - **Proxy-technique pointer**: name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
 - **Defence-bypass pointer**: name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -97,14 +95,14 @@ Optimistic mutates the token first and everything else confirms, because no late
 ## False Positives
 
 - **Guard-held stop**: stop when the evidence shows the guard held, because enforced versioning is not a finding.
-- **Rejected stale writes**: stale writes rejected with a version-conflict signal and no ledger change.
+- **Rejected stale writes**: stale writes are rejected with a version-conflict signal and no ledger change.
 - **Idempotent operations**: truly idempotent operations with enforced token checks or unique constraints behind them.
-- **Visual-only echoes**: visual-only echoes without durable overwrite in the authoritative source.
-- **Serializable transactions**: serializable transactions or correct advisory locks that serialize the tokenless lanes.
+- **Visual-only echoes**: echoes without durable overwrite in the authoritative source.
+- **Serializable transactions**: serializable transactions or correct advisory locks serialize the tokenless lanes.
 
 ## Pro Tips
 
-- **Token discipline**: optimistic rewards token discipline plus channel comparison plus minimal bursts.
+- **Discipline**: optimistic rewards token discipline plus channel comparison plus minimal bursts.
 - **Single omission probes**: prefer single omission probes before scaling, then scale only to map the overwrite threshold.
 - **Direct calls**: favor direct calls over scripted interface clicks so token mutation stays exact.
 - **Lane logging**: log every lane behind its token value and timestamp so the winning write is attributable.

@@ -13,7 +13,7 @@ The goal is confirmed delegate execution that later escalates to durable control
 
 ## Attack Surface
 
-- **Applicability**: centers on an upload, import, or management-interface flow whose content reaches an out-of-process conversion, rendering, metadata-parsing, document-compilation, or configuration-rendering delegate.
+- **Applicability**: an upload or import flow whose file reaches an out-of-process conversion, rendering, metadata-parsing, or document-compilation delegate.
 - **Processing jobs**: the pipeline triggers at least one processing job per accepted input, such as thumbnail generation, format conversion, metadata extraction, document build, or a configuration reload that evaluates the rendered file.
 - **Observable outputs**: derived outputs or job status return to storage or to a serving path where side effects become observable.
 - **Management-interface topology**: a second input topology rides here without an upload - a free-form field in a management interface is rendered into a configuration file that a privileged daemon later reads, so the field value becomes a delegate directive.
@@ -23,7 +23,7 @@ The goal is confirmed delegate execution that later escalates to durable control
 
 ## Detection Channels
 
-- **Channel scope**: pipeline probing listens to the entries below, and only these entries are live here.
+- **Channel scope**: pipeline probing listens to the channels below.
 - **Job-trigger signal**: separates a live delegate from inert storage when an upload fires a conversion or parse job.
 - **Derived-artifact difference**: separates execution from rendering when converted outputs or error state carry operator results.
 - **Callback oracle**: binds one minted unique marker per crafted file to one inbound arrival on operated listener infrastructure.
@@ -43,8 +43,7 @@ The goal is confirmed delegate execution that later escalates to durable control
 
 ## Trust Assumptions
 
-- **The agreement**: the feature agrees that every input string stays inside its shell quoting or CLI argument role through concatenation and parsing and execution, that every template stays inert data, that every blob stays sender-faithful, that every uploaded file stays rendition-only, that every management-interface field stays configuration data rather than a directive, and that every internal service stays unreachable.
-- **The exposure**: sensitive server control leaks only when an execution primitive consumes input outside its agreed role.
+- **The agreement**: the feature agrees that every input string stays inside its shell quoting or CLI argument role through concatenation and parsing and execution, that every template stays inert data, that every blob stays sender-faithful, that every uploaded file stays rendition-only, that every management-interface field stays configuration data rather than a directive, and that every internal service stays unreachable, and sensitive server control leaks only when an execution primitive consumes input outside its agreed role.
 - **The failing clause**: this variant breaks the rendition-only clause because an uploaded file or a rendered configuration field exercises an out-of-process delegate that executes its embedded operators.
 
 ## Key Vulnerabilities
@@ -65,7 +64,6 @@ The goal is confirmed delegate execution that later escalates to durable control
 - **Management-interface entry**: a management interface that renders free-form fields into a configuration file carries the same execution primitive as an uploaded file through a different entry.
 - **Interface enumeration**: enumerate management interfaces plus their free-form configuration fields, then submit evaluation probes to learn which delegate consumes the rendered file.
 - **Delegate families**: the delegate families are the ones a privileged daemon reloads - log destinations, plugin execution blocks, and job-template renderers.
-- **Abstract payload shapes**: payload shapes stay abstract with placeholders denoting the configuration field, the operator directive, the probe command, and the callback marker.
 - **Field injection**: inject the delegate's execution primitive into the field so the rendered configuration carries it, and confirm through the same callback or file-write oracle as the file-craft loop.
 - **Trust-context root cause**: treat the administrator trust context as the root cause, because the field was accepted on the assumption that its author was trusted rather than because the value was validated.
 
@@ -85,13 +83,12 @@ The goal is confirmed delegate execution that later escalates to durable control
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no framing difference changes the file-craft step itself.
-- **Container framing**: container framing reaches the evaluating parser through an accepted wrapper that still carries operator content past format gates.
-- **Property-block distribution**: property-block distribution reaches the parser past size gates through blocks that each pass alone and combine during parsing.
-- **Sandbox-claim probing**: sandbox-claim probing reaches external IO or script engines that the declared policy claims are disabled.
-- **Fallback variation**: fallback variation reaches execution through a second operator family when the first family is confined.
+- **Container framing**: reaches the evaluating parser through an accepted wrapper that still carries operator content past format gates.
+- **Property-block distribution**: reaches the parser past size gates through blocks that each pass alone and combine during parsing.
+- **Sandbox-claim probing**: reaches external IO or script engines that the declared policy claims are disabled.
+- **Fallback variation**: reaches execution through a second operator family when the first family is confined.
 - **Layered combinations**: hand off to the defence-bypass family at the filter step rather than restating relay mechanics here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -106,12 +103,18 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 Pipeline probing runs file-craft construction first and everything else follows, because no oracle is meaningful without a delegate-exercising file.
 The first bent step is P1 file-mediated construction against delegate semantics.
 The delta over the parent is the upload-then-delegate procedure with policy-gated fallback reasoning that parameter break-out language never names.
-1. **Pipeline mapping** - records every conversion plus parse plus render plus build plus configuration-reload job with its trigger and its derived-output destination, and the step is done when every job with its accepted input family and its output destination is recorded.
-2. **Baseline capture** - triggers each job with benign files and records job status plus output shape plus duration, and the step is done when every job family shows a captured baseline covering status plus output plus timing.
-3. **Operator probing** - submits minimal delegate-exercising files plus management-interface field values one operator family at a time through gated callback or file-write oracles, and the step is done when every operator family at every job shows execution or confinement with its oracle verdict.
-4. **File-read proof** - plants unique marker content out of scope and watches derived outputs plus error channels for its surfacing, and the step is done when every read shape shows marker surfacing or confirmed absence.
-5. **Fallback reasoning** - replays confined operator families through alternate spellings plus distributed property blocks plus policy-gate signals, and the step is done when every fallback shows acceptance or uniform enforcement across the job family.
-6. **Durable-control proof** - demonstrates the smallest file write or scheduled effect that proves persistence without an unnecessary shell, and the step is done when every claimed durable effect shows its artifact or is recorded as absent.
+1. **Pipeline mapping records** every conversion plus parse plus render plus build plus configuration-reload job with its trigger and its derived-output destination.
+The step is done when every job with its accepted input family and its output destination is recorded.
+2. **Baseline capture triggers** each job with benign files and records job status plus output shape plus duration.
+The step is done when every job family shows a captured baseline covering status plus output plus timing.
+3. **Operator probing submits** minimal delegate-exercising files plus management-interface field values one operator family at a time through gated callback or file-write oracles.
+The step is done when every operator family at every job shows execution or confinement with its oracle verdict.
+4. **File-read proof plants** unique marker content out of scope and watches derived outputs plus error channels for its surfacing.
+The step is done when every read shape shows marker surfacing or confirmed absence.
+5. **Fallback reasoning replays** confined operator families through alternate spellings plus distributed property blocks plus policy-gate signals.
+The step is done when every fallback shows acceptance or uniform enforcement across the job family.
+6. **Durable-control proof demonstrates** the smallest file write or scheduled effect that proves persistence without an unnecessary shell.
+The step is done when every claimed durable effect shows its artifact or is recorded as absent.
 
 ## False Positives
 
@@ -123,7 +126,7 @@ The delta over the parent is the upload-then-delegate procedure with policy-gate
 
 ## Pro Tips
 
-- **Operator discipline**: pipeline probing rewards minimal operators plus per-job baselines plus small claims.
+- **Discipline**: pipeline probing rewards minimal operators plus per-job baselines plus small claims.
 - **Minimal operators**: keep each operator probe minimal so the tied side effect stays unambiguous.
 - **Per-job baselines**: baseline every job family before crafting so duration and output deltas stand out.
 - **Policy verification**: verify sandbox and policy claims with live operator probes instead of trusting configuration alone.

@@ -76,8 +76,7 @@ The extraction goal is metadata plus table rows read from error text without nee
 - **Numeric and character-builder encodings**: numeric plus character-builder encodings reach the parser past literal-pattern filters.
 - **Clause relocation**: clause relocation through derived tables plus common table expressions hides the conversion shape.
 - **Channel fallback**: fallback to UNION or blind channels applies only when filtering silences every shaped error.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

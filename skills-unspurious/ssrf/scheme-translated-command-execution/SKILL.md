@@ -14,18 +14,18 @@ The translation goal is command execution against internal text-protocol service
 ## Attack Surface
 
 - **Applicability**: centers on a server-side fetch sink whose fetcher supports at least one non-HTTP scheme handler.
-- **Destination sink**: the sink accepts attacker-influenced destination input with enough expressive room to carry grammar text past the scheme separator.
+- **Destination sink**: accepts attacker-influenced destination input with enough expressive room to carry grammar text past the scheme separator.
 - **Scheme translation**: the handler translates the destination remainder into a raw conversation with an internal service, or into local-file semantics, or into a key-value lookup.
 - **Response oracle**: stays direct, meaning the handler outcome returns visibly in the body or in a distinguishable error.
 - **Blind translated craft**: adds no step beyond inference plus the craft below, so it rides as a secondary inside the inference variant.
 
 ## Detection Channels
 
-- **Channel scope**: translation listens to handler outcomes rather than side channels, so only the entries below are live here.
+- **Channel scope**: translation listens to handler outcomes rather than side channels.
 - **Direct response body**: echoes the handler outcome, such as returned file content or a service banner or an error text.
 - **Error-class difference**: separates a reachable handler from an absent one.
 - **Downstream state change**: confirms execution, such as a scheduled entry firing or a written record appearing.
-- **Command-path timing gap**: timing gap on the command path separates a processed grammar from a refused destination.
+- **Command-path timing gap**: separates a processed grammar from a refused destination.
 
 ## Adversarial Capabilities
 
@@ -38,8 +38,7 @@ The translation goal is command execution against internal text-protocol service
 
 ## Trust Assumptions
 
-- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
-- **The exposure**: sensitive network position plus stored file content leak only when the server exposes them through such a fetch.
+- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, keeps the request in plain-fetch shape with no gate-passing header or method pair, and sensitive network position plus stored file content leak only when the server exposes them through such a fetch.
 - **The failing clause**: this variant breaks the plain-protocol clause because the scheme selects a non-HTTP handler that translates the destination into raw protocol grammar, so a fetch becomes a command.
 
 ## Key Vulnerabilities
@@ -65,10 +64,12 @@ The translation goal is command execution against internal text-protocol service
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no encoding difference changes the grammar-crafting step itself.
-- **Address encoding families**: address encoding families such as decimal plus hex plus octal plus mapped forms steer the translated destination past a naive textual allowlist.
+- **Address encoding families**: decimal plus hex plus octal plus mapped forms steer the translated destination past a naive textual allowlist.
 - **Parser differentials**: parser differentials, redirect chains, and short-lived resolution carry the translated destination to the fetch side, and the proxy-techniques family owns those mechanics; record only the grammar verdict here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Parser differentials**: between the enforcing side and the fetching side smuggle the translated scheme through a split parse.
+- **Redirect chains**: convert one allowlisted first hop into a translated second hop where the client follows scheme switches.
+- **Short-lived resolution**: answers differently across the check-time and fetch-time lookups.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -81,7 +82,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-translation runs the direct oracle first and crafts grammar second, because grammar without a visible outcome cannot be confirmed.
+Translation runs the direct oracle first and crafts grammar second, because grammar without a visible outcome cannot be confirmed.
 1. **Inventory sinks** - list every attacker-influenced destination sink with its carrier plus its supported schemes, and the step completes when no unlisted sink or scheme remains.
 2. **Establish the direct oracle** - confirm the handler outcome returns visibly in the body or in a distinguishable error, and the step completes when a benign translated destination shows a recorded positive and an absent handler shows a recorded negative.
 3. **Confirm handler presence** - probe each candidate scheme with a minimal benign grammar, and the step completes when every scheme carries a present or absent verdict.
@@ -92,15 +93,15 @@ translation runs the direct oracle first and crafts grammar second, because gram
 ## False Positives
 
 - **No-translation stop**: stop when the handler never translates, because a plain fetch without translation is not this variant.
-- **Client-side fetch only**: client-side fetch only, where no request ever leaves the server.
-- **Handler absent**: handler absent for every candidate scheme, confirmed by uniform negatives across all grammars.
-- **Canned simulator responses**: canned simulator responses that return fixed bodies without real handler dispatch.
-- **Strict scheme allowlist**: strict scheme allowlist with no redirect following, confirmed by uniform refusals of every translated destination.
-- **Callback-source mismatch**: callback hits whose source matches the tester machine rather than the server, which indicate a client-side fetch made the request.
+- **Client-side fetch only**: no request ever leaves the server.
+- **Handler absent**: for every candidate scheme, confirmed by uniform negatives across all grammars.
+- **Canned simulator responses**: return fixed bodies without real handler dispatch.
+- **Strict scheme allowlist**: no redirect following, confirmed by uniform refusals of every translated destination.
+- **Callback-source mismatch**: callback hits whose source matches the tester machine rather than the server indicate a client-side fetch made the request.
 
 ## Pro Tips
 
-- **Minimal-grammar discipline**: translation rewards minimal grammar plus direct confirmation plus quick chaining.
+- **Discipline**: translation rewards minimal grammar plus direct confirmation plus quick chaining.
 - **Small-grammar confirmation**: confirm handler presence with the smallest benign grammar before crafting anything heavier.
 - **Minimal grammar**: keep each grammar minimal and observe the direct outcome before extending it.
 - **Narrow wrapper reads**: read wrapper files narrowly and stop at the first confirming read.

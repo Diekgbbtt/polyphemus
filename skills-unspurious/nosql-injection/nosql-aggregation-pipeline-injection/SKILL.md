@@ -79,8 +79,7 @@ The pivoting goal is cross-collection exfiltration that row filtering in a fixed
 - **Nested stage documents**: nested stage documents reach the builder past flattening sanitizers that inspect only top-level keys.
 - **Dotted-key shapes**: dotted-key versus nested-object shapes reach the builder past sanitizers that strip only one form.
 - **Encoded stage text**: percent-encoded plus double-encoded stage text reaches the parser past filters that match only literal stage names.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

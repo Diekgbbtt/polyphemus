@@ -58,8 +58,7 @@ It confirms every claim by execution effect rather than by delivery alone.
 - **Defeated controls**: preflight gating and shape-tied token or policy checks.
 - **Bypass shape**: coerces the request into the gate-trusted simple shape so the preflight check never engages.
 - **Bypass confirmation**: show the simple shape executed the semantics the preflighted shape was denied.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -69,10 +68,14 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Shape-pair inventory** - list each state-changing endpoint with its preflighted shape plus its simple-shape counterpart of identical semantics, and the step completes when no candidate lacks a semantics-matched shape pair.
-2. **Blocked baseline** - deliver the preflighted shape and record the blocked baseline with its gate decision, and the step completes when every pair carries a recorded blocked outcome for the preflighted shape.
-3. **Simple-shape delivery** - deliver the simple shape with identical semantics and record the gate decision plus the outcome, and the step completes when every pair carries a recorded simple-shape outcome comparable against its baseline.
-4. **Divergence confirmation** - confirm shape-dependent divergence by execution effect through state change or guarded-data return, and the step completes when each claimed bypass shows the simple shape executed the semantics the preflighted shape was denied under the same session.
+1. List each state-changing endpoint with its preflighted shape plus its simple-shape counterpart of identical semantics.
+Complete when no candidate lacks a semantics-matched shape pair.
+2. Deliver the preflighted shape and record the blocked baseline with its gate decision.
+Complete when every pair carries a recorded blocked outcome for the preflighted shape.
+3. Deliver the simple shape with identical semantics and record the gate decision plus the outcome.
+Complete when every pair carries a recorded simple-shape outcome comparable against its baseline.
+4. Confirm shape-dependent divergence by execution effect through state change or guarded-data return.
+Complete when each claimed bypass shows the simple shape executed the semantics the preflighted shape was denied under the same session.
 
 ## False Positives
 

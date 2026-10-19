@@ -60,10 +60,8 @@ Treat every stored value that a read path reuses as statement text until the tri
 
 ## Trust Assumptions
 
-- **The agreement**: text that passed validation at the write boundary is safe to interpolate when read back, because the storage layer is trusted and the value was already checked.
-- **Held clauses**: stored text stays a validated literal, the read path applies the same binding as the write path, the stored value keeps the shape the write accepted, and the trigger statement carries only application-composed fragments.
+- **The agreement**: text that passed validation at the write boundary is safe to interpolate when read back, because the storage layer is trusted and the value was already checked. Stored text stays a validated literal, the read path applies the same binding as the write path, the stored value keeps the shape the write accepted, and the trigger statement carries only application-composed fragments. The parent holds every input to a bound value at the door; this variant holds a stored value to the binding at the read, which the write's own success cannot prove.
 - **The failing clause**: the stored-data clause. The check applied at the write is not applied where the value is interpolated, so text the write accepted as data becomes statement text at the trigger.
-- **The delta**: the parent holds every input to a bound value at the door; this variant holds a stored value to the binding at the read, which the write's own success cannot prove.
 
 ## Key Vulnerabilities
 
@@ -111,8 +109,7 @@ Treat every stored value that a read path reuses as statement text until the tri
 - **Encoding between the boundaries**: a layer that decodes between the write and the trigger restores the shaped text after the write-time filter.
 - **Stored-form shaping**: length, truncation, and normalisation rules at the write decide which fragments survive; shape the plant to survive them.
 - **Defeat scope**: the bypass belongs to the trigger context, so record the filter chain of the trigger rather than of the write.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

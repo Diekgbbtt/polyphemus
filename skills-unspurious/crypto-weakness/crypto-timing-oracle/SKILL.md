@@ -27,12 +27,12 @@ The extraction goal is the honest token recovered character by character without
 
 ## Detection Channels
 
-- **Live channels**: extraction listens to timing plus verdict signals, so only the entries below are live here.
-- **Timing baseline**: over known-invalid tokens showing stable reference behaviour.
-- **Timing differential**: of a correct prefix over baseline with statistical separation.
-- **Acceptance verdict**: on the fully extracted token confirming the recovered value.
-- **Flat timing distribution**: across all prefixes signalling constant-time comparison.
-- **Error-class stability**: showing timing differences are comparison-driven rather than transport-driven.
+- **Live channels**: extraction listens to timing plus verdict signals.
+- **Timing baseline**: known-invalid tokens show stable reference behaviour.
+- **Timing differential**: a correct prefix separates from baseline with statistical separation.
+- **Acceptance verdict**: the fully extracted token confirms the recovered value.
+- **Flat distribution**: all prefixes show a flat timing distribution signalling constant-time comparison.
+- **Error-class stability**: stable error classes show timing differences are comparison-driven rather than transport-driven.
 
 ## Adversarial Capabilities
 
@@ -45,8 +45,8 @@ The extraction goal is the honest token recovered character by character without
 
 ## Trust Assumptions
 
-- **The agreement**: the token service trusts each issued token to be unpredictable and each signature to bind claims to a strong secret under a pinned algorithm and each comparison to leak no timing. The agreement covers the verification data contract plus the comparison state at check time plus the equality primitive used in the request plus the server exposing only acceptance verdicts plus the token-value sensitivity that leaks when timing varies.
-- **The failing clause**: this variant breaks the timing-independence clause because the comparison exits early on mismatch, so repeated measurement extracts the token prefix by prefix.
+- **The agreement**: the token service trusts each issued token to be unpredictable and each signature to bind claims to a strong secret under a pinned algorithm and each comparison to leak no timing, and the agreement covers the verification data contract plus the comparison state at check time plus the equality primitive used in the request plus the server exposing only acceptance verdicts plus the token-value sensitivity that leaks when timing varies.
+- **The failing clause**: the timing-independence clause fails because the comparison exits early on mismatch, so repeated measurement extracts the token prefix by prefix.
 
 ## Key Vulnerabilities
 
@@ -83,8 +83,7 @@ The extraction goal is the honest token recovered character by character without
 - **Repeatable elevation**: demonstrate repeatable elevation across interleaved rounds against a deployment that promises jitter cover.
 - **Full-token recovery**: demonstrate full-token recovery against a store that promises no oracle beyond accept-or-reject.
 - **Stop signal**: treat flat distributions across all prefixes and rounds as a stop signal rather than a bypass.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -105,10 +104,10 @@ Extraction measures before concluding, because uncalibrated timing is only noise
 ## False Positives
 
 - **Stop condition**: stop when the evidence shows timing independence, because further sampling is only noise.
-- **Flat distributions**: flat timing distributions across every prefix candidate and every round.
-- **Vanishing separation**: separation that vanishes under interleaved sampling, signalling drift rather than comparison cost.
-- **Error-class tracking**: error-class differences tracking the timing gaps, signalling transport behaviour rather than comparison behaviour.
-- **Transport artefacts**: rate-limit or queueing artefacts dominating per-request timing across all candidates.
+- **Flat distributions**: every prefix candidate and every round shows a flat timing distribution.
+- **Vanishing separation**: separation vanishes under interleaved sampling, signalling drift rather than comparison cost.
+- **Error-class tracking**: error-class differences track the timing gaps, signalling transport behaviour rather than comparison behaviour.
+- **Transport artefacts**: rate-limit or queueing artefacts dominate per-request timing across all candidates.
 
 ## Pro Tips
 

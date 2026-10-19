@@ -26,7 +26,7 @@ A name that is resolved twice can answer differently each time. This variant mak
 
 ## Detection Channels
 
-- **Channel scope**: rebinding listens to the two answers of one name, so only the entries below are live here.
+- **Channel scope**: rebinding listens to the two answers of one name.
 - **Divergent answers**: the second answer differing from the first, which proves the name was rebound between lookups.
 - **Operated arrival**: an arrival at operated infrastructure in place of the approved destination, which proves the connection used the second answer.
 - **Paired baseline**: a paired baseline where the same name reaches two different targets across one operation.

@@ -26,7 +26,7 @@ A client script reads a global by name, and markup can define that name. This va
 
 ## Detection Channels
 
-- **Channel scope**: DOM clobbering listens to the named global's resolution and to the sink it feeds, so only the entries below are live here.
+- **Channel scope**: DOM clobbering listens to the named global's resolution and to the sink it feeds.
 - **Clobbered resolution**: a global resolving to an element or a collection in place of its expected value, which proves the name was clobbered.
 - **Sink appearance**: the clobbered value appearing at the sink, such as a navigation, a markup insertion, or a resource load carrying the attacker's value.
 - **Unique marker**: a per-attempt unique marker inside the clobbered value, so the sink effect is attributable to this injection rather than to ambient traffic.

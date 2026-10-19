@@ -101,8 +101,7 @@ The bypass mechanics stay with the skills that own them: the spread across lanes
 - **Race**: outrun the counter's read-modify-write with a concurrent burst; name `race-conditions` at this step.
 - **Carry**: re-present the attempt through a carrier the counting layer does not parse; name `proxy-techniques-channel-wrapping` at this step.
 - **Re-route**: reach the same operation through a sibling route or version the limit never covered; name `defence-bypass-edge-origin-differential` at this step.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

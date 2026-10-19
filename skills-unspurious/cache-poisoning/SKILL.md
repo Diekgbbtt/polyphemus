@@ -96,8 +96,7 @@ The cache-key mechanics stay with `proxy-techniques-cache-deception`, the contro
 - **Forced miss**: a field that makes the shaped request miss the existing entry, so the shaped response is fetched and stored.
 - **Parameter and body duplication**: a duplicate member or a body carried on a read-only verb that the parser reads and the key omits.
 - **Normalisation collapse**: separators, casing, and fragmentation the key's normalisation collapses, named with `proxy-techniques-cache-deception` at the key step.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

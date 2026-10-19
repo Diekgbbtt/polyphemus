@@ -30,13 +30,13 @@ The prediction goal is a valid token that authenticates or authorises without an
 
 ## Detection Channels
 
-- **Live channels**: prediction listens to inspection plus acceptance signals, so only the entries below are live here.
-- **Decoded predictable fields**: showing embedded counters or timestamps or identifiers.
-- **Duplicate tokens**: across repeated issuance showing absent randomness.
-- **Short token length**: below the strong-randomness bound.
-- **Fixed-length restricted-alphabet structure**: showing a digest-of-known-input shape.
-- **Accepted predicted token**: confirming a valid session or recovery action.
-- **Rejected candidate verdict per derivation**: closing that derivation hypothesis.
+- **Live channels**: prediction listens to inspection plus acceptance signals.
+- **Decoded predictable fields**: show embedded counters or timestamps or identifiers.
+- **Duplicate-token repetition**: duplicate tokens across repeated issuance show absent randomness.
+- **Short token length**: token length falls below the strong-randomness bound.
+- **Restricted-alphabet structure**: a fixed-length restricted alphabet shows a digest-of-known-input shape.
+- **Accepted prediction**: an accepted predicted token confirms a valid session or recovery action.
+- **Rejected-candidate verdict**: a rejected candidate closes that derivation hypothesis.
 - **Effective bits below the bound**: an entropy estimate under the strong-randomness bound after decoding, which marks encoding rather than randomness.
 - **Space exhausted inside the window**: an enumerated candidate accepted within the validity window, which confirms the space was small enough to search.
 
@@ -51,7 +51,7 @@ The prediction goal is a valid token that authenticates or authorises without an
 
 ## Trust Assumptions
 
-- **The agreement**: the token service trusts each issued token to be unpredictable and each signature to bind claims to a strong secret under a pinned algorithm and each comparison to leak no timing. The agreement covers the issuance-to-acceptance data contract plus the token state at mint and at check plus the random-generation primitive used in the request plus the server exposing only acceptance verdicts plus the account-control sensitivity that leaks when a token is accepted.
+- **The agreement**: the token service trusts each issued token to be unpredictable and each signature to bind claims to a strong secret under a pinned algorithm and each comparison to leak no timing, and the agreement covers the issuance-to-acceptance data contract plus the token state at mint and at check plus the random-generation primitive used in the request plus the server exposing only acceptance verdicts plus the account-control sensitivity that leaks when a token is accepted.
 - **The failing clause**: this variant breaks the unpredictability clause because the token derives from guessable input or a weak generator, or because its effective bits fall short of the bound and the searchable space fits inside the validity window, so re-derivation or enumeration yields a valid token.
 
 ## Key Vulnerabilities
@@ -98,8 +98,7 @@ The prediction goal is a valid token that authenticates or authorises without an
 - **Short-value acceptance**: demonstrate short-value acceptance against a policy that promises a sufficient entropy bound.
 - **Encoding versus randomness**: demonstrate that a mixing step adds no effective bits, so an encoded token falls to enumeration where a random one does not.
 - **Stop signal**: treat full uniqueness at sufficient length as a stop signal rather than a bypass.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -120,10 +119,10 @@ Prediction proves re-derivation plus acceptance, because inspection without a va
 ## False Positives
 
 - **Stop condition**: stop when the evidence shows genuine randomness, because further prediction is only brute force.
-- **Full uniqueness**: full uniqueness across a sufficient token run at or above the entropy bound.
-- **No embedded structure**: no embedded sequence or timestamp or identifier structure after decoding.
-- **Rejected verdicts**: rejected verdicts across the full derivation matrix plus lookup-sourced candidates.
-- **Per-account isolation**: per-account isolation with no cross-account derivation success.
+- **Full uniqueness**: full uniqueness holds across a sufficient token run at or above the entropy bound.
+- **No embedded structure**: decoding reveals no embedded sequence or timestamp or identifier structure.
+- **Rejected verdicts**: the full derivation matrix plus lookup-sourced candidates are rejected.
+- **Per-account isolation**: per-account isolation holds with no cross-account derivation success.
 - **Window-bounded space**: a searchable space too large to exhaust inside the validity window, which closes the enumeration path even when the effective bits fall short of the bound.
 
 ## Pro Tips

@@ -46,8 +46,7 @@ The theft goal is a victim session fixed to an attacker-chosen grant or a replay
 
 ## Trust Assumptions
 
-- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it.
-- **The exposure**: sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
+- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it, and sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
 - **The failing clause**: this variant breaks the freshness-binding clause because a response minted outside the redeeming session is honored as though it belonged to it.
 
 ## Key Vulnerabilities
@@ -84,8 +83,7 @@ The theft goal is a victim session fixed to an attacker-chosen grant or a replay
 - **Cross-session redemptions**: pass a check that reads the carrier without comparing sessions.
 - **Reused carriers**: pass a check that never marks a value consumed.
 - **Identity-freshness shapes**: omitted or replayed identity freshness passes a check that never validates the identity-layer value.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

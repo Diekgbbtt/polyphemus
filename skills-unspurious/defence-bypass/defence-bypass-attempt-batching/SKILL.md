@@ -26,7 +26,7 @@ A limiter counts requests, and the backend executes whatever one request carries
 
 ## Detection Channels
 
-- **Channel scope**: attempt batching listens to the counted request beside the per-item effects, so only the entries below are live here.
+- **Channel scope**: attempt batching listens to the counted request beside the per-item effects.
 - **Per-item verdicts**: per-item verdicts returned inside one counted response, which proves the backend iterated the payload.
 - **Counter movement**: several logical attempts executed while the attempt counter moved once, which proves the counting unit is the request.
 - **Above-rate effect**: the effect reproduced above the configured rate from a single counted request.

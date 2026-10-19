@@ -13,31 +13,31 @@ The leading word is swap: every probe substitutes exactly one identifier and rea
 ## Attack Surface
 
 - **Swap**: applies where a request names one object and the service answers with that object's data or state change.
-- **Carrier and form coverage**: the reference may arrive in any carrier the runtime graph locates, and it may use any identifier form the knowledge base records.
-- **Trust-direction labels**: trust direction labels change reporting only, so horizontal, vertical, and cross-tenant attempts share this one procedure.
-- **Selector aspects**: tenant selectors that only route without carrying identity stay inside this variant as aspects.
+- **Reference arrival**: the reference may arrive in any carrier the runtime graph locates, and it may use any identifier form the knowledge base records.
+- **Trust direction labels**: change reporting only, so horizontal, vertical, and cross-tenant attempts share this one procedure.
+- **Routing-only tenant selectors**: tenant selectors that only route without carrying identity stay inside this variant as aspects.
 
 ## Reconnaissance
 
 - **Carrier mapping**: map every carrier that names a single object before swapping anything.
 - **Evidence collection**: collect client bundles, interface documents, prior HTTP history, and recon notes until the real method, path pattern, and body field shapes are inferable.
 - **Identifier harvesting**: harvest one valid identifier per principal from cooperative list, search, or export endpoints until each role owns a seeded corpus.
-- **Baseline confirmation**: confirm the owner's baseline request succeeds with the inferred verb and fields before judging any foreign attempt.
+- **Owner baseline**: confirm the owner's baseline request succeeds with the inferred verb and fields before judging any foreign attempt.
 
 ## Detection Channels
 
-- **Foreign content**: foreign content or metadata returned for a non-owner identifier decides the finding.
+- **Foreign content or metadata**: foreign content or metadata returned for a non-owner identifier decides the finding.
 - **Control pair**: the owner's request beside the foreign request under identical shaping, with only the reference differing, is the deciding pair.
 - **Error-shape differential**: an error shape that differs between owned and foreign identifiers signals a missing binding even when content is masked.
-- **Blind differentials**: status, size, and timing differentials between the control and the swapped attempt confirm blind access.
-- **Validator confirmation**: conditional-request validators that match for a foreign object confirm its existence without full content.
+- **Status, size, and timing differentials**: status, size, and timing differentials between the control and the swapped attempt confirm blind access.
+- **Conditional-request validators**: conditional-request validators that match for a foreign object confirm its existence without full content.
 
 ## Adversarial Capabilities
 
-- **Prerequisites**: this variant presupposes working sessions for at least an owner and a non-owner, with an elevated role where the matrix names one.
-- **Direct calls**: it consumes the ability to call endpoints directly with a substituted reference while holding the token constant.
-- **Control responses**: it consumes the ability to hold a control response beside every swapped attempt for comparison.
-- **Principal handling**: principal handling follows the procedure owned by `two-principal-authz`, named here rather than restated.
+- **Working sessions**: this variant presupposes working sessions for at least an owner and a non-owner, with an elevated role where the matrix names one.
+- **Direct endpoint calls**: this variant consumes the ability to call endpoints directly with a substituted reference while holding the token constant.
+- **Control pairing**: this variant consumes the ability to hold a control response beside every swapped attempt for comparison.
+- **Principal handling**: follows the procedure owned by `two-principal-authz`, named here rather than restated.
 
 ## Trust Assumptions
 
@@ -46,10 +46,10 @@ The leading word is swap: every probe substitutes exactly one identifier and rea
 
 ## Key Vulnerabilities
 
-- **Bent step**: control-paired substitution is the bent step this variant owns over the parent.
-- **Control-paired substitution**: substitute one foreign identifier into an evidence-derived request while replaying the owner's control unchanged.
-- **Action coverage**: repeat the pair across every action the matrix names, including partial-update framings that mutate silently.
-- **Differential reading**: read the verdict from the differential between the two responses, never from a single status alone.
+- **Control-paired substitution**: the bent step this variant owns over the parent.
+- **Control-paired swap**: substitute one foreign identifier into an evidence-derived request while replaying the owner's control unchanged.
+- **Action-wide pairing**: repeat the pair across every action the matrix names, including partial-update framings that mutate silently.
+- **Differential verdict**: read the verdict from the differential between the two responses, never from a single status alone.
 
 ### Paired-Argument Binding
 
@@ -59,43 +59,42 @@ The leading word is swap: every probe substitutes exactly one identifier and rea
 
 ## Bypass Techniques
 
-- **Framing coercion**: coerce the transport framing when a first attempt is rejected, varying content type and serialization while keeping the swapped identifier constant.
+- **Transport coercion**: coerce the transport framing when a first attempt is rejected, varying content type and serialization while keeping the swapped identifier constant.
 - **Reference reshaping**: reshape the reference itself: array-wrapped, wildcard, boolean-coerced, zero, negative, and fractional numeric forms, and extension-appended path forms, since a parser that coerces one form can match a broader set than the gate expects.
-- **Duplicate fields**: pollute duplicate reference fields with both orderings and read which occurrence the service honors.
+- **Reference-field pollution**: pollute duplicate reference fields with both orderings and read which occurrence the service honors.
 - **Delegated parser step**: treat parser disagreements as defeat detail shared with the defence-bypass family at its parser step, recording only the authorization verdict here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **Seeder chaining**: feed identifiers harvested from list, search, notification, and export channels into direct swaps.
-- **Cross-site pivot**: pivot a confirmed read into a cross-site trigger against the discovered object where the engagement permits it.
+- **Identifier feeding**: feed identifiers harvested from list, search, notification, and export channels into direct swaps.
+- **Cross-site trigger pivot**: pivot a confirmed read into a cross-site trigger against the discovered object where the engagement permits it.
 - **Content pivot**: pivot exfiltrated content into further session or object discovery, keeping each chained step's verdict separate.
 
 ## Testing Methodology
 
-1. **Request-shape derivation** - derive the request shape from evidence by collecting client, interface, and history material, with completion when the real method, path pattern, and field shapes are inferable.
-2. **Matrix build** - build the subject-object-action matrix by enumerating each role against each object and action, with completion when every action on each object has an expected-principal cell.
-3. **Principal setup** - establish principals by acquiring one working session per matrix role, with completion when each role issues an authenticated baseline (procedure owned by `two-principal-authz`).
-4. **Corpus seeding** - seed the corpus by capturing one valid identifier per principal, with completion when each principal has a recorded identifier.
-5. **Control-paired swapping** - swap with control pairing by substituting one foreign identifier per attempt beside its unchanged control, with completion when every matrix action has a swapped attempt beside its control.
-6. **Blind confirmation** - confirm blind cases with differentials by comparing status, size, validator, and timing signals, with completion when every masked response has a decided verdict rather than an assumption.
-7. **Retry before verdict** - retry failures with the inferred verb and fields before judging, with completion when no probe is judged on a wrong-verb or placeholder-identifier attempt.
+1. Derive the request shape from evidence by collecting client, interface, and history material, with completion when the real method, path pattern, and field shapes are inferable.
+2. Build the subject-object-action matrix by enumerating each role against each object and action, with completion when every action on each object has an expected-principal cell.
+3. Establish principals by acquiring one working session per matrix role, with completion when each role issues an authenticated baseline (procedure owned by `two-principal-authz`).
+4. Seed the corpus by capturing one valid identifier per principal, with completion when each principal has a recorded identifier.
+5. Swap with control pairing by substituting one foreign identifier per attempt beside its unchanged control, with completion when every matrix action has a swapped attempt beside its control.
+6. Confirm blind cases with differentials by comparing status, size, validator, and timing signals, with completion when every masked response has a decided verdict rather than an assumption.
+7. Retry failures with the inferred verb and fields before judging, with completion when no probe is judged on a wrong-verb or placeholder-identifier attempt.
 
 ## False Positives
 
 - **Public resources**: discard resources the design exposes publicly, since reachability without sensitivity is not a binding failure.
-- **Publicly mirrored content**: discard soft-privatized content already public elsewhere, confirming publicity before filing.
-- **Metadata-only lookups**: discard metadata lookups that return no sensitive content for the foreign identifier.
-- **Silent enforcement**: discard silent-enforcement responses that return an empty shape for the foreign identifier while the owner view holds data, confirming the data is actually missing rather than hidden by the response shape.
+- **Soft-privatized content**: discard soft-privatized content already public elsewhere, confirming publicity before filing.
+- **Metadata lookups**: discard metadata lookups that return no sensitive content for the foreign identifier.
+- **Silent-enforcement responses**: discard silent-enforcement responses that return an empty shape for the foreign identifier while the owner view holds data, confirming the data is actually missing rather than hidden by the response shape.
 
 ## Pro Tips
 
 - **Seeder endpoints first**: seed identifiers from list, search, and export endpoints first, since they are the richest corpus source.
 - **Transport variation**: vary content types and transports independently, since authorization middleware often differs per stack.
-- **Opaque identifiers**: treat opaque identifier forms as untrusted and harvest them rather than guessing, since opacity is never a binding.
-- **Paired evidence**: prove impact with before-and-after diffs captured under separated roles, since paired evidence survives scrutiny.
-- **Wrong-verb caution**: never conclude resistance from a single wrong-verb or placeholder-identifier attempt, since the shape may be wrong while the binding is absent.
+- **Opaque identifier handling**: treat opaque identifier forms as untrusted and harvest them rather than guessing, since opacity is never a binding.
+- **Role-separated diffs**: prove impact with before-and-after diffs captured under separated roles, since paired evidence survives scrutiny.
+- **Wrong-shape retry**: never conclude resistance from a single wrong-verb or placeholder-identifier attempt, since the shape may be wrong while the binding is absent.
 
 ## Summary
 

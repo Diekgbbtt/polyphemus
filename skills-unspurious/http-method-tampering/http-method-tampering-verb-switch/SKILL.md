@@ -58,8 +58,7 @@ It covers only application-decision verbs and never informational verbs.
 - **Defeated control**: per-method authorization on the documented verb.
 - **Bypass shape**: replays the sibling verb so the documented-verb check never engages.
 - **Bypass confirmation**: compare the sibling-verb effect against the guarded baseline.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -69,10 +68,14 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Resource inventory** - list every guarded resource with its documented verb, and the step completes when no guarded path lacks a documented-verb entry.
-2. **Sibling-verb replay** - replay each sibling application verb against each resource with identical session material, and the step completes when every resource carries a recorded status-plus-length entry for every application verb.
-3. **Dispatch-map reconstruction** - reconstruct the dispatch map by marking verbs that diverge toward success or state change, and the step completes when each divergent verb is mapped to its handler outcome including write paths reached through a read verb.
-4. **Execution confirmation** - confirm execution by comparing sibling-verb effect against the guarded baseline through data return or state change, and the step completes when each claimed bypass shows guarded data or a state effect unattainable through the documented verb under the same session.
+1. List every guarded resource with its documented verb.
+Complete when no guarded path lacks a documented-verb entry.
+2. Replay each sibling application verb against each resource with identical session material.
+Complete when every resource carries a recorded status-plus-length entry for every application verb.
+3. Reconstruct the dispatch map by marking verbs that diverge toward success or state change.
+Complete when each divergent verb is mapped to its handler outcome including write paths reached through a read verb.
+4. Confirm execution by comparing sibling-verb effect against the guarded baseline through data return or state change.
+Complete when each claimed bypass shows guarded data or a state effect unattainable through the documented verb under the same session.
 
 ## False Positives
 

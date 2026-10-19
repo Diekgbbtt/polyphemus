@@ -72,20 +72,26 @@ The result turns an unsafe recursive merge into server-side code execution.
 - **Split pollution evades per-input limits**: by spreading the path across inputs that merge sequentially.
 - **Stored triggering evades immediate inspection**: by resting the payload until a background job or export pipeline merges it.
 - **Operator-key overlap belongs elsewhere**: by handing dollar-prefixed or dotted keys to the NoSQL-injection skill at that step.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Testing Methodology
 
 Shared setup runs first across merge-point mapping, canary proof, shape variation, and channel variation.
 The first bent step is the inventory-driven gadget-chain assembly.
 The delta over the parent is white-box module enumeration plus version-gated chain assembly plus server-execution proof.
-1. **Merge-point mapping locates** - recursive merges over user-controlled objects on server-reachable paths, and the step completes when every candidate merge sink is listed.
-2. **Canary proof sends a benign unique marker** - through one channel and observes it through response behavior or a follow-up shared-state read, and the step completes when shared-prototype corruption or its absence is proven.
-3. **Shape variation replays the canary** - through each non-chain payload shape in Key Vulnerabilities, and the step completes when every shape shows acceptance or filtering.
-4. **Channel variation repeats the canary** - across each input channel for the same target, and the step completes when every channel shows acceptance or rejection.
-5. **Enumeration assembles the chain** - by inventorying server dependencies under white-box scope, gating candidate sinks on available versions, and driving the assembled keys to execution evidence, and the step completes when a server-side gadget chain or its absence is proven.
-6. **Delayed-trigger ruling stores the payload** - and re-checks after any asynchronous merge completes, and the step completes when delayed effects are captured or confirmed absent.
+
+1. **Merge-point mapping locates** recursive merges over user-controlled objects on server-reachable paths.
+The step is done when every candidate merge sink is listed.
+2. **Canary proof sends a benign unique marker** through one channel and observes it through response behavior or a follow-up shared-state read.
+The step is done when shared-prototype corruption or its absence is proven.
+3. **Shape variation replays the canary** through each non-chain payload shape in Key Vulnerabilities.
+The step is done when every shape shows acceptance or filtering.
+4. **Channel variation repeats the canary** across each input channel for the same target.
+The step is done when every channel shows acceptance or rejection.
+5. **Enumeration assembles the chain** by inventorying server dependencies under white-box scope, gating candidate sinks on available versions, and driving the assembled keys to execution evidence.
+The step is done when a server-side gadget chain or its absence is proven.
+6. **Delayed-trigger ruling stores the payload** and re-checks after any asynchronous merge completes.
+The step is done when delayed effects are captured or confirmed absent.
 
 ## False Positives
 

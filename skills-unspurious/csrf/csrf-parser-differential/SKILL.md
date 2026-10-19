@@ -84,8 +84,7 @@ The confirmation goal is transformed semantics under the victim session that lat
 - **Parser-branch steering**: duplicate-key plus collection-shape ambiguity steers the body through a lenient parser branch.
 - **Path-scope mismatch**: a path-scope mismatch steers the token check: the token scope is matched on the pre-normalisation path while execution uses the post-normalisation path.
 - **Referrer stripping**: referrer stripping through an empty-context navigation source presents the reconstruction without its origin context.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -12,13 +12,13 @@ This variant owns serving-header adjudication with reflection and sniffing analy
 
 ## Attack Surface
 
-- **Inline-serving flows**: file submission flows whose stored objects return under an inline serving context apply here.
+- **Inline-serving flows**: files whose stored objects return under an inline serving context apply.
 - **Staged pipelines**: apply where the serving stage decides type and disposition independently of ingress validation.
 - **Previewer contexts**: apply where a derived rendering serves stored properties as active content.
 
 ## Reconnaissance
 
-- **Pipeline map**: map the pipeline from submission through storage to each serving path and record the serving party for every path.
+- **Pipeline map**: map from submission through storage to each serving path and record the serving party for every path.
 - **Serving-header probe**: probe with benign markup and document-shaped files and record the served type with disposition and sniffing-guard state.
 - **Type-source comparison**: compare server-set type against reflected submission type to find reflection-driven serving decisions.
 - **Disposition baseline**: record inline against attachment behavior for every serving path before attempting live content.
@@ -38,8 +38,8 @@ This variant owns serving-header adjudication with reflection and sniffing analy
 
 ## Trust Assumptions
 
-- **The agreement**: the pipeline agrees that a file accepted at ingress keeps its validated type through storage and processing and serving, that serving reflects only server-set type with sniffing disabled, that extraction and conversion stay confined, and that no late control point re-opens the gate.
-- **The failing clause**: serving-context confinement: stored content renders inline as active script.
+- **The agreement**: a file accepted at ingress keeps its validated type through storage and processing and serving, serving reflects only server-set type with sniffing disabled, extraction and conversion stay confined, and no late control point re-opens the gate.
+- **The failing clause**: serving-context confinement fails because stored content renders inline as active script.
 
 ## Key Vulnerabilities
 
@@ -51,15 +51,14 @@ This variant owns serving-header adjudication with reflection and sniffing analy
 
 - **Header-capture proof**: capture serving headers then prove inline script fire under reflection with sniffing and disposition analysis.
 - **Reflection search**: vary submission-declared type and disposition hints to find the reflection that flips attachment to inline.
-- **Previewer confirmation**: confirm previewer delivery by placing script logic in document properties and observing derived renderings.
+- **Previewer confirmation**: place script logic in document properties and observe derived renderings.
 
 ## Bypass Techniques
 
-- **Type-gate defeat**: defeat type gates by submitting polyglot shapes that read as inert at ingress and as markup at serving time.
-- **Disposition-policy defeat**: defeat disposition policy by steering reflected hints so the served object returns inline instead of as attachment.
-- **Sniffing-guard defeat**: defeat sniffing guards by targeting serving paths that omit the guard and let the browser upgrade the content.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Type-gate defeat**: submit polyglot shapes that read as inert at ingress and as markup at serving time.
+- **Disposition-policy defeat**: steer reflected hints so the served object returns inline instead of as attachment.
+- **Sniffing-guard defeat**: target serving paths that omit the guard and let the browser upgrade the content.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -68,15 +67,18 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Pipeline mapping** - map the pipeline and record submission, storage, and every serving path with its serving party, and the step completes when every serving path has captured baseline headers for legitimate uploads.
-2. **Header adjudication** - capture serving headers for each probe and adjudicate server-set against reflected type with disposition and sniffing state, and the step completes when every probe has a recorded header verdict covering type source plus disposition plus guard state.
-3. **Script-fire proof** - capture serving headers then prove inline script fire under reflection with sniffing and disposition analysis, and the step completes when script fire is demonstrated for every inline path or when all paths are proven attachment with strict sniffing guards.
+- Map the pipeline and record submission, storage, and every serving path with its serving party.
+- Complete when every serving path has captured baseline headers for legitimate uploads.
+- Capture serving headers for each probe and adjudicate server-set against reflected type with disposition and sniffing state.
+- Complete when every probe has a recorded header verdict covering type source plus disposition plus guard state.
+- Capture serving headers then prove inline script fire under reflection with sniffing and disposition analysis.
+- Complete when script fire is demonstrated for every inline path or when all paths are proven attachment with strict sniffing guards.
 
 ## False Positives
 
-- **Unserved objects**: exclude stored objects that never return to any client under any serving path.
-- **Attachment-served objects**: exclude objects always served as attachment with strict sniffing guards enforced by the server.
-- **Inert-rendering previewers**: exclude previewer paths that transform risky formats into inert renderings before serving.
+- **Unserved objects**: stored objects never return to any client under any serving path.
+- **Attachment-served objects**: objects always serve as attachment with strict sniffing guards enforced by the server.
+- **Inert-rendering previewers**: previewer paths transform risky formats into inert renderings before serving.
 
 ## Pro Tips
 

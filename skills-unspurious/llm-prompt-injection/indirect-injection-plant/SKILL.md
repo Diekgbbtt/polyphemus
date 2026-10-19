@@ -13,9 +13,9 @@ The plant goal is attacker instructions running where the victim's data and tool
 
 ## Attack Surface
 
-- **Applicability**: centers on an LLM-backed feature that ingests content the attacker can author or influence.
+- **Applicability**: an LLM-backed feature that ingests content the attacker can author or influence.
 - **Ingestion path**: the content reaches the model through retrieval, summarization, or document processing rather than direct chat.
-- **Victim trigger**: a victim trigger such as a summarization request or a query that surfaces the planted record is required.
+- **Victim trigger**: a summarization request or a query that surfaces the planted record is required.
 - **Retrieval layer**: the retrieval layer behind the feature is part of the surface: a record the retriever ranks highly is planted even when no conversation carries it.
 - **Companion-skill reference**: where the retrieval store is reachable on its own, name the idor and information-disclosure skills at the direct-read step rather than restating their procedures here.
 - **Exclusion**: direct chat access alone is insufficient for this variant.
@@ -32,10 +32,10 @@ The plant goal is attacker instructions running where the victim's data and tool
 
 ## Detection Channels
 
-- **Channel scope**: plant listens to victim-context behavior, so only the entries below are live here.
-- **Victim behavior change**: behavior change in the victim's session against developer intent confirms the planted text executed.
-- **Retrieved-content citation**: retrieved-content citation that surfaces the planted record confirms the seeding path works.
-- **Victim tool call**: tool call performed in the victim's context with planted arguments confirms cross-domain steering.
+- **Channel scope**: plant listens to victim-context behavior.
+- **Victim behavior change**: in the victim's session against developer intent confirms the planted text executed.
+- **Retrieved-content citation**: that surfaces the planted record confirms the seeding path works.
+- **Victim tool call**: performed in the victim's context with planted arguments confirms cross-domain steering.
 - **Treated-as-data verdict**: absence of execution after retrieval confirms the plant was treated as data.
 - **Second-session inheritance**: a clean session receiving the planted text confirms the poison persisted in the corpus rather than riding one conversation.
 
@@ -81,12 +81,11 @@ The plant goal is attacker instructions running where the victim's data and tool
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no wrapper changes the plant step itself.
-- **Encoding wrappers**: encoding wrappers disguise the planted instruction past ingestion-time filters.
-- **Placement rotation**: placement rotation moves the instruction across hiding spots when one spot is stripped.
-- **Multi-record seeding**: multi-record seeding spreads fragments across several records that merge at retrieval.
-- **Paraphrase variation**: paraphrase variation reshapes the directive when a verbatim pattern is blocked.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Encoding wrappers**: disguise the planted instruction past ingestion-time filters.
+- **Placement rotation**: moves the instruction across hiding spots when one spot is stripped.
+- **Multi-record seeding**: spreads fragments across several records that merge at retrieval.
+- **Paraphrase variation**: reshapes the directive when a verbatim pattern is blocked.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -111,9 +110,9 @@ Plant runs seeding first and everything else follows, because no detonation clai
 - **Cited-as-data text**: planted text the model cites or summarizes as data without following as instructions.
 - **Unsurfaced record**: records that never surface for the target query, which indicate a seeding failure rather than resistance.
 - **Victim-explained behavior**: victim behavior explainable by the victim's own request rather than the planted directive.
-- **Single-run execution**: single-run execution that never reproduces across fresh retrieval cycles.
+- **Single-run execution**: that never reproduces across fresh retrieval cycles.
 - **Authoring-session echo**: a plant that surfaces only inside the authoring session, which marks a conversational echo rather than persistence.
-- **Sandbox-scoped execution**: sandbox-scoped execution with no reachable tool, sink, or hidden text behind it.
+- **Sandbox-scoped execution**: with no reachable tool, sink, or hidden text behind it.
 
 ## Pro Tips
 

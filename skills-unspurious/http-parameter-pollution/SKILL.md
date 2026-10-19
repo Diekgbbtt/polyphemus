@@ -97,8 +97,7 @@ The bypass mechanics stay with the skills that own them: the duplicate-member pr
 - **Spelling variants**: fold the duplicated identifier's spelling so a per-name rule sees a fresh name while the consumer resolves the same entity.
 - **Serialisation swap**: carry the duplicate in a second body shape the validator does not parse.
 - **Carried separator**: place an encoded separator inside a reflected value so the consumer of the rebuilt link re-splits it into a second parameter.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -13,9 +13,9 @@ The leakage goal is hidden text in the tester's hands rather than a mere behavio
 
 ## Attack Surface
 
-- **Applicability**: centers on an LLM-backed feature whose context carries text the caller must never see.
-- **Hidden material**: the hidden material includes developer instructions plus tool schemas plus other tenants' data present in context.
-- **Delivery paths**: delivery may arrive through direct turns or planted content, since membership follows the terminal disclosure proof.
+- **Applicability**: an LLM-backed feature whose context carries text the caller must never see.
+- **Hidden material**: developer instructions plus tool schemas plus other tenants' data present in context.
+- **Delivery paths**: direct turns or planted content, since membership follows the terminal disclosure proof.
 - **Channel requirement**: a verbatim-capable response channel is required for this variant.
 
 ## Reconnaissance
@@ -28,11 +28,11 @@ The leakage goal is hidden text in the tester's hands rather than a mere behavio
 
 ## Detection Channels
 
-- **Channel scope**: leakage listens to disclosure evidence, so only the entries below are live here.
-- **Disclosed hidden text**: disclosed hidden text matching ground truth confirms an extraction positive.
-- **Refusal-pattern shift**: refusal-pattern or boilerplate shift across probes maps the guardrail boundary.
-- **Tool-schema disclosure**: tool-schema disclosure in the response confirms schema extraction even without a call.
-- **Hallucinated instruction text**: hallucinated instruction text matching no ground truth marks a negative rather than a finding.
+- **Channel scope**: leakage listens to disclosure evidence.
+- **Disclosed hidden text**: matching ground truth confirms an extraction positive.
+- **Refusal-pattern shift**: a boilerplate or refusal shift across probes maps the guardrail boundary.
+- **Tool-schema disclosure**: response disclosure confirms schema extraction even without a call.
+- **Hallucinated instruction text**: matching no ground truth marks a negative rather than a finding.
 
 ## Adversarial Capabilities
 
@@ -72,13 +72,12 @@ The leakage goal is hidden text in the tester's hands rather than a mere behavio
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no wrapper changes the disclosure step itself.
-- **Refusal-boilerplate inference**: refusal-boilerplate inference reads system shape from what the guard refuses to say.
-- **Paraphrase reframing**: paraphrase reframing asks for the same hidden text through a differently worded request.
-- **Multi-turn laundering**: multi-turn laundering builds disclosure across several individually innocent turns.
-- **Translation wrappers**: translation wrappers request the hidden text rendered in another language form.
+- **Refusal-boilerplate inference**: reads system shape from what the guard refuses to say.
+- **Paraphrase reframing**: asks for the same hidden text through a differently worded request.
+- **Multi-turn laundering**: builds disclosure across several individually innocent turns.
+- **Translation wrappers**: request the hidden text rendered in another language form.
 - **Encoded-rendering requests**: request the hidden text in an encoded or transposed rendering so an output filter that scans for the literal never sees it.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -45,8 +45,7 @@ The impact goal is trusted-origin content serving with phishing plus session plu
 
 ## Trust Assumptions
 
-- **The agreement**: when the subdomain feature executes, DNS is trusted to point only at owned resources and the platform is trusted to bind a name only to its owning account and delegations are trusted to stay live under owner control and alternate names are trusted to stay bound to their owning distribution.
-- **The exposure**: sensitive content and session trust leak only through a name that still resolves to attacker-controlled content.
+- **The agreement**: when the subdomain feature executes, DNS is trusted to point only at owned resources and the platform is trusted to bind a name only to its owning account and delegations are trusted to stay live under owner control and alternate names are trusted to stay bound to their owning distribution, and sensitive content and session trust leak only through a name that still resolves to attacker-controlled content.
 - **The failing clause**: the agreement fails at the alternate-name binding clause because the edge accepts the victim name on the attacker distribution without ownership proof.
 
 ## Key Vulnerabilities
@@ -72,8 +71,7 @@ The impact goal is trusted-origin content serving with phishing plus session plu
 - **Ownership-check refusal**: treat ownership-check refusal as a stop condition that marks the binding unclaimable.
 - **Fallback-origin exposure**: treat fallback-origin exposure as the signal that unknown-domain answers still route through shared edge capacity.
 - **Issuance restriction**: treat issuance restriction as a guardrail that limits certificate issuance while the binding is triaged.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

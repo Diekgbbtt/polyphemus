@@ -26,7 +26,7 @@ A guard watches the carrier it inspects, and the operation can travel in another
 
 ## Detection Channels
 
-- **Channel scope**: channel wrapping listens to the carrier the guard does not watch, so only the entries below are live here.
+- **Channel scope**: channel wrapping listens to the carrier the guard does not watch.
 - **Sibling arrival**: the operation arriving through a sibling carrier while the primary carrier stays refused.
 - **Primary wrap signal**: the sibling carrier returning another principal's data while the primary carrier stays refused, which is the primary wrap signal.
 - **Protocol-version carrier**: a front tier that accepts a newer protocol and downgrades it for the origin, which proves a protocol-version carrier exists.

@@ -27,7 +27,7 @@ The splitting goal is protocol-level control over a cached or proxied response, 
 
 ## Detection Channels
 
-- **Splitting**: listens for stored framing, so only the entries below are live here.
+- **Splitting**: listens for stored framing.
 - **Stored second field**: injected second header field stored and served downstream as a real header field binds the probe to the parser trust.
 - **Second-response serving**: second response served to an unrelated clean request proves the injected framing left the attack session.
 - **Header-set diff**: header-set diff between the attack replay and a clean replay isolates the injected field from ambient variation.
@@ -44,7 +44,7 @@ The splitting goal is protocol-level control over a cached or proxied response, 
 ## Trust Assumptions
 
 - **The agreement**: the stack treats an attacker-influenced value that reaches a response header field as inert data at the moment the feature executes, holds the value free of framing meaning from capture through serialization, holds one declared interpreter for the value across the proxy-to-backend-to-client path, keeps the request in its declared method plus path plus protocol shape, keeps each response observable only to its caller, and keeps link targets plus cached bodies plus session state plus token-bearing destinations out of attacker reach.
-- **The failing clause**: this variant breaks the framing-meaning clause because a line-break payload becomes a stored header field that a downstream component serves to an unrelated request.
+- **The failing clause**: a line-break payload becomes a stored header field that a downstream component serves to an unrelated request.
 
 ## Key Vulnerabilities
 
@@ -67,8 +67,7 @@ The splitting goal is protocol-level control over a cached or proxied response, 
 - **Whitespace edges**: slip tab plus whitespace plus folded-continuation edges past a filter that strips only strict pair sequences.
 - **Duplicate splitting**: split duplicate header fields so the enforcing side joins them while the storing side keeps the injected member.
 - **Casing and truncation**: mangle field-name casing plus truncation markers where the filter keys off exact spelling.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

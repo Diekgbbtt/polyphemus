@@ -30,7 +30,7 @@ A limit counts one dimension, and the effect can move in another. This variant r
 
 ## Detection Channels
 
-- **Channel scope**: throttle evasion listens to the counter beside the effect, so only the entries below are live here.
+- **Channel scope**: throttle evasion listens to the counter beside the effect.
 - **Refusal or challenge**: the limit's refusal or challenge on a tight burst, which proves the accounting engaged.
 - **Spread pass**: a pass for the same effect spread across identities, paths, or windows, which shows the counter observed a different dimension.
 - **Dimension differential**: the differential between the refused tight burst and the passed spread attempts at one effect, which localises the counted dimension.

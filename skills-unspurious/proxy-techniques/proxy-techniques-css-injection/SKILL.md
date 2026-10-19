@@ -26,7 +26,7 @@ A stylesheet is treated as presentation, and presentation can still read the doc
 
 ## Detection Channels
 
-- **Channel scope**: CSS injection listens to the out-of-band requests the stylesheet emits, so only the entries below are live here.
+- **Channel scope**: CSS injection listens to the out-of-band requests the stylesheet emits.
 - **Prefix hit**: one out-of-band hit per matching prefix, which proves the selector matched the target's value.
 - **Positioned hit**: a hit carrying the position and the matched character, so the value is reconstructed rather than inferred.
 - **Completed extraction**: the hit set forming the real value once every position is solved, which is the completed extraction.

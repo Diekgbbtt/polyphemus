@@ -47,8 +47,7 @@ The theft goal is a grant credential arriving at an attacker-controlled destinat
 
 ## Trust Assumptions
 
-- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it.
-- **The exposure**: sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
+- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it, and sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
 - **The failing clause**: this variant breaks the destination-match clause because the validator accepts a destination the legitimate client never registered while the consumer delivers the credential there.
 
 ## Key Vulnerabilities
@@ -86,8 +85,7 @@ The theft goal is a grant credential arriving at an attacker-controlled destinat
 - **Parser-differential tricks**: encoded-separator plus backslash plus delimiter tricks pass a validator whose parser differs from the consumer.
 - **Suffix-host shapes**: suffix-host plus query-injection shapes pass a prefix-only comparison.
 - **Duplicate carriers**: pass a check that reads one occurrence while delivery reads the other.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

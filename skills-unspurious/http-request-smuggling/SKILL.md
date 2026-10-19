@@ -12,43 +12,43 @@ HTTP request smuggling exploits disagreements between a front-end proxy and a ba
 ## Attack Surface
 
 **Topologies**
-- **Edge in front of an origin**: cache, load balancer, or gateway
-- **Proxy chains**: where each hop reparses and reframes the request
-- **API gateways**: forwarding to services
-- **Protocol translation**: from a modern front-end protocol to an older back-end protocol
-- **Tunneling and filtering layers**: that terminate and re-forward requests
+- **Edge in front of an origin**: cache, load balancer, or gateway.
+- **Proxy chains**: where each hop reparses and reframes the request.
+- **API gateways**: forwarding to services.
+- **Protocol translation**: from a modern front-end protocol to an older back-end protocol.
+- **Tunneling and filtering layers**: that terminate and re-forward requests.
 
 **Protocol versions**
-- **Older versions**: carry the classic length-versus-encoding ambiguity
-- **Newer versions**: carry the downgrade-injected declarations and frame-level shapes
+- **Older versions**: carry the classic length-versus-encoding ambiguity.
+- **Newer versions**: carry the downgrade-injected declarations and frame-level shapes.
 
 **Ambiguity surface**
-- **Duplicate length declarations**: with different values
-- **Encoding beside length**: an encoding declaration present beside a length declaration
-- **Chunk size obfuscation**: through whitespace, tab, case, or invalid extensions
-- **Header-block and frame boundaries**: where reassembly order differs between hops
+- **Duplicate length declarations**: with different values.
+- **Encoding beside length**: an encoding declaration present beside a length declaration.
+- **Chunk size obfuscation**: through whitespace, tab, case, or invalid extensions.
+- **Header-block and frame boundaries**: where reassembly order differs between hops.
 
-See references/smuggling-carrier-families.md for the carriers a smuggled prefix can ride and each carrier's prerequisite.
+- **Smuggling carrier families**: see `references/smuggling-carrier-families.md` for the carriers a smuggled prefix can ride and each carrier's prerequisite.
 
 ## Reconnaissance
 
 ### Map the Chain
 
-- **Hop identification**: identify each hop between the client and the application, and note which protocol version each hop speaks
-- **Connection termination**: note whether the front-end terminates the connection or reuses a back-end socket across client connections
-- **Ambiguity handling**: record whether the front-end rejects ambiguous requests or normalizes them before forwarding
-- **Strictness posture**: fingerprint the front-end strictness posture before any pair sweep - a front-end that rejects or normalizes ambiguous framing closes the plain forms, so record that posture as the gate for the probe set rather than spending pairs on it
+- **Hop identification**: identify each hop between the client and the application, and note which protocol version each hop speaks.
+- **Connection termination**: note whether the front-end terminates the connection or reuses a back-end socket across client connections.
+- **Ambiguity handling**: record whether the front-end rejects ambiguous requests or normalizes them before forwarding.
+- **Strictness posture**: fingerprint the front-end strictness posture before any pair sweep - a front-end that rejects or normalizes ambiguous framing closes the plain forms, so record that posture as the gate for the probe set rather than spending pairs on it.
 
 ### Probe Framing Acceptance
 
-- **Conflicting declarations**: send a request whose declared lengths conflict and watch which declaration each hop honours
-- **Direction comparison**: compare the two directions - front-end reads length while back-end reads encoding, and the reverse
-- **Sequencing discipline**: test with one request at a time first, then two in sequence over one connection, so the two verdicts stay separate
+- **Conflicting declarations**: send a request whose declared lengths conflict and watch which declaration each hop honours.
+- **Direction comparison**: compare the two directions - front-end reads length while back-end reads encoding, and the reverse.
+- **Sequencing discipline**: test with one request at a time first, then two in sequence over one connection, so the two verdicts stay separate.
 
 ### Establish a Marker
 
-- **Unique placeholder token**: keep a unique placeholder token in each probe body so a response that carries the token can be attributed to a specific request
-- **Clean sequential baseline**: record a clean sequential baseline, namely latency and response pairing without any ambiguity, for later differentials
+- **Unique placeholder token**: keep a unique placeholder token in each probe body so a response that carries the token can be attributed to a specific request.
+- **Clean sequential baseline**: record a clean sequential baseline, namely latency and response pairing without any ambiguity, for later differentials.
 
 ## Detection Channels
 
@@ -82,76 +82,75 @@ See references/smuggling-carrier-families.md for the carriers a smuggled prefix 
 
 ### Length-Versus-Encoding Disagreement
 
-- **Front-end reads length**: the front-end reads a declared length while the back-end reads the encoding terminator - the trailing bytes stay on the socket and become a new request
-- **Front-end reads encoding**: the front-end reads the encoding to completion while the back-end reads only the declared length - the remainder stays for the next request
-- **Duplicate declarations**: with conflicting values, where each hop picks a different one
+- **Front-end reads length**: the front-end reads a declared length while the back-end reads the encoding terminator - the trailing bytes stay on the socket and become a new request.
+- **Front-end reads encoding**: the front-end reads the encoding to completion while the back-end reads only the declared length - the remainder stays for the next request.
+- **Duplicate declarations**: with conflicting values, where each hop picks a different one.
 
 ### Downgrade-Injected Declarations
 
-- **Derived length declaration**: a front-end translating to the older protocol derives a length declaration from a regular header, which the attacker sets independently of the true body length
-- **Forbidden encoding declaration**: an encoding declaration that the newer protocol forbids passes through the front-end to the older back-end, which honours it
-- **Pseudo-header and frame-level shapes**: that survive translation and that the back-end resolves differently
+- **Derived length declaration**: a front-end translating to the older protocol derives a length declaration from a regular header, which the attacker sets independently of the true body length.
+- **Forbidden encoding declaration**: an encoding declaration that the newer protocol forbids passes through the front-end to the older back-end, which honours it.
+- **Pseudo-header and frame-level shapes**: that survive translation and that the back-end resolves differently.
 
 ### Front-End Control Bypass
 
-- **Smuggled prefix as proxy request**: a smuggled prefix reaches the back-end as a new request from the trusted proxy, so a check the front-end enforces never runs
-- **Bypassed check classes**: the bypassed check is usually authentication, address restriction, or the bound of a rate limit
+- **Smuggled prefix as proxy request**: a smuggled prefix reaches the back-end as a new request from the trusted proxy, so a check the front-end enforces never runs.
+- **Bypassed check classes**: the bypassed check is usually authentication, address restriction, or the bound of a rate limit.
 
 ### Cross-User Capture
 
-- **Partial request prefix**: a poisoned socket prepends a partial request whose declared length exceeds the sent body, so the back-end consumes bytes from the next user's request
-- **Reflective handler targeting**: aim the smuggled prefix at a handler that echoes the whole request, so the next caller's headers and body return in a readable response attributed to the smuggled request, which harvests at scale instead of one request at a time
-- **Controlled reflective endpoint**: the captured bytes land in the response of a controlled reflective endpoint, which discloses headers and body of the next request
-- **Marker arrival proof**: proof lives in the arrival of the marker token in a response to a request that never carried it
+- **Partial request prefix**: a poisoned socket prepends a partial request whose declared length exceeds the sent body, so the back-end consumes bytes from the next user's request.
+- **Reflective handler targeting**: aim the smuggled prefix at a handler that echoes the whole request, so the next caller's headers and body return in a readable response attributed to the smuggled request, which harvests at scale instead of one request at a time.
+- **Controlled reflective endpoint**: the captured bytes land in the response of a controlled reflective endpoint, which discloses headers and body of the next request.
+- **Marker arrival proof**: proof lives in the arrival of the marker token in a response to a request that never carried it.
 
 ### Response-Queue and Cache Chains
 
-- **Misaligned responses**: on pipelined connections, a misaligned response can be delivered to the wrong user, which serves attacker content or captures the next response
-- **Cacheable-endpoint poisoning**: a smuggled prefix landing on a cacheable endpoint with an injected authority declaration poisons the stored entry for every later requester
-- **Upgrade socket hijack**: a smuggled upgrade request hijacks a subsequent user's socket, where the front-end performs the upgrade itself
+- **Misaligned responses**: on pipelined connections, a misaligned response can be delivered to the wrong user, which serves attacker content or captures the next response.
+- **Cacheable-endpoint poisoning**: a smuggled prefix landing on a cacheable endpoint with an injected authority declaration poisons the stored entry for every later requester.
+- **Upgrade socket hijack**: a smuggled upgrade request hijacks a subsequent user's socket, where the front-end performs the upgrade itself.
 
 ## Advanced Techniques
 
 ### Connection Reuse Amplification
 
-- **Socket-reuse scaling**: the impact scales with back-end socket reuse - a front-end holding one back-end socket per client limits the blast radius, a shared pool widens it
-- **Repeated header blocks**: repeated header blocks over one client connection show whether the poisoned socket is reached again
+- **Socket-reuse scaling**: the impact scales with back-end socket reuse - a front-end holding one back-end socket per client limits the blast radius, a shared pool widens it.
+- **Repeated header blocks**: repeated header blocks over one client connection show whether the poisoned socket is reached again.
 
 ### Frame-Level Shapes
 
-- **Header-block splitting**: across frames, where hops differ on whether reassembly precedes filtering
-- **Reparse-triggering fields**: fields that trigger a reparse of a block the front-end already validated
+- **Header-block splitting**: across frames, where hops differ on whether reassembly precedes filtering.
+- **Reparse-triggering fields**: fields that trigger a reparse of a block the front-end already validated.
 
 ### Upgrade-Based Shapes
 
-- **Upgrade framing declaration**: an upgrade request carries a framing declaration that the front-end validates and the back-end re-reads, so smuggled bytes ride a connection the front-end believes it upgraded
-- **Tunnel-establishment request**: a smuggled tunnel-establishment request makes the back-end open a channel that the front-end attributes to its own upgrade handling
-- **Connection-reuse poisoning**: a smuggled prefix that survives on a pooled socket re-shapes the framing of every later request that lands on it
+- **Upgrade framing declaration**: an upgrade request carries a framing declaration that the front-end validates and the back-end re-reads, so smuggled bytes ride a connection the front-end believes it upgraded.
+- **Tunnel-establishment request**: a smuggled tunnel-establishment request makes the back-end open a channel that the front-end attributes to its own upgrade handling.
+- **Connection-reuse poisoning**: a smuggled prefix that survives on a pooled socket re-shapes the framing of every later request that lands on it.
 
 ### Translation-Hop Shapes
 
-- **Binary-protocol translation**: where the hop re-encodes HTTP into a binary protocol of the back-end's own design, the framing declaration never reaches the back-end at all; that craft belongs to http-request-smuggling-cross-protocol-desync rather than to the declaration pairs here
+- **Binary-protocol translation**: where the hop re-encodes HTTP into a binary protocol of the back-end's own design, the framing declaration never reaches the back-end at all; that craft belongs to http-request-smuggling-cross-protocol-desync rather than to the declaration pairs here.
 
 ## Bypass Techniques
 
 - **Declaration variation**: to force the declaration disagreement, vary the encoding declaration itself.
-- **Non-standard value**: a non-standard value some front-ends ignore while back-ends accept
-- **Whitespace and tabs**: extra whitespace or a tab before the value, or before the field-name colon
-- **Duplicate encoding fields**: where the back-end uses the last and the front-end the first
-- **Injected line break**: a line break injected into a preceding field value, so the declaration arrives only at the back-end
-- **Case and folding variants**: case variation and obsolete folding forms accepted by one hop and normalized by the other
+- **Non-standard value**: a non-standard value some front-ends ignore while back-ends accept.
+- **Whitespace and tabs**: extra whitespace or a tab before the value, or before the field-name colon.
+- **Duplicate encoding fields**: where the back-end uses the last and the front-end the first.
+- **Injected line break**: a line break injected into a preceding field value, so the declaration arrives only at the back-end.
+- **Case and folding variants**: case variation and obsolete folding forms accepted by one hop and normalized by the other.
 
-See references/declaration-pair-matrix.md for the pair cells and the leftover accounting.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Declaration pair matrix**: see `references/declaration-pair-matrix.md` for the pair cells and the leftover accounting.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **Smuggling plus cache poisoning**: the smuggled prefix shapes a stored entry for later users
-- **Smuggling plus authentication bypass**: the front-end check is skipped for the smuggled request
-- **Smuggling plus capture**: session material harvested from the next request is replayed
-- **Smuggling plus socket hijack**: the smuggled upgrade takes over a later user's connection
-- **Smuggling plus header injection**: the injected authority declaration bends emitted links from the smuggled response
+- **Smuggling plus cache poisoning**: the smuggled prefix shapes a stored entry for later users.
+- **Smuggling plus authentication bypass**: the front-end check is skipped for the smuggled request.
+- **Smuggling plus capture**: session material harvested from the next request is replayed.
+- **Smuggling plus socket hijack**: the smuggled upgrade takes over a later user's connection.
+- **Smuggling plus header injection**: the injected authority declaration bends emitted links from the smuggled response.
 
 ## Testing Methodology
 
@@ -170,21 +169,21 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## False Positives
 
-- **Latency and processing delays**: general network latency or server processing delays unrelated to framing
-- **Connection-per-request servers**: a server that closes the connection after each request, so no socket is ever shared
-- **End-to-end modern protocol**: with no downgrade, which leaves no framing disagreement
-- **Normalizing layers**: a layer that normalizes or rejects ambiguous framing before forwarding
-- **Ordinary pipelining**: ordinary pipelining or keep-alive behaviour mistaken for a desync
+- **Latency and processing delays**: general network latency or server processing delays unrelated to framing.
+- **Connection-per-request servers**: a server that closes the connection after each request, so no socket is ever shared.
+- **End-to-end modern protocol**: with no downgrade, which leaves no framing disagreement.
+- **Normalizing layers**: a layer that normalizes or rejects ambiguous framing before forwarding.
+- **Ordinary pipelining**: ordinary pipelining or keep-alive behaviour mistaken for a desync.
 
 ## Pro Tips
 
-- **Manual confirmation first**: confirm manually before filing; automated scanners report false positives here often
-- **Declaration obfuscation**: declaration obfuscation is the most reliable path when the plain forms are normalized
-- **Short prefixes**: keep smuggled prefixes short during detection; confirm the desync before attempting capture
-- **Downgrade-injected length**: downgrade-injected length is the highest-impact modern shape, because the front-end derives it from a header the attacker controls
-- **Capture-length sizing**: in capture attempts, declare a length larger than the partial body so a full header from the next request lands in the buffer
-- **Low-traffic testing**: test during low-traffic periods first; capture attempts touch real users and need explicit authorization
-- **Pipelined fallback**: if timing probes stay inconsistent, pipeline two requests over one connection and look for response swapping
+- **Manual confirmation first**: confirm manually before filing; automated scanners report false positives here often.
+- **Declaration obfuscation**: declaration obfuscation is the most reliable path when the plain forms are normalized.
+- **Short prefixes**: keep smuggled prefixes short during detection; confirm the desync before attempting capture.
+- **Downgrade-injected length**: downgrade-injected length is the highest-impact modern shape, because the front-end derives it from a header the attacker controls.
+- **Capture-length sizing**: in capture attempts, declare a length larger than the partial body so a full header from the next request lands in the buffer.
+- **Low-traffic testing**: test during low-traffic periods first; capture attempts touch real users and need explicit authorization.
+- **Pipelined fallback**: if timing probes stay inconsistent, pipeline two requests over one connection and look for response swapping.
 
 ## Summary
 

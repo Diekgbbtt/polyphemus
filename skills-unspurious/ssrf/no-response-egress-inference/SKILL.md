@@ -14,14 +14,14 @@ The inference goal is internal service discovery plus port mapping that later en
 ## Attack Surface
 
 - **Applicability**: centers on a server-side fetch sink whose response carries no readable reflection of the fetched target.
-- **Destination sink**: the sink accepts attacker-influenced destination input through a direct field or an indirect source such as a preview job or an import job.
+- **Destination sink**: accepts attacker-influenced destination input through a direct field or an indirect source such as a preview job or an import job.
 - **Side channels**: the server emits at least one observable side channel per fetch, such as arrival timing or response size or error class or presence-header value.
 - **Internal reachability**: the internal address space stays reachable from the fetcher even while the response body stays masked or uniform.
 - **Secondary variants**: translated-protocol craft plus gated credential sequencing ride inside this variant only as secondary confirmation once the inference oracle is established.
 
 ## Detection Channels
 
-- **Channel scope**: inference listens to side channels rather than bodies, so only the entries below are live here.
+- **Channel scope**: inference listens to side channels rather than bodies.
 - **Per-probe callback arrival**: callback arrival carrying a per-probe token binds one inbound hit to one outbound probe.
 - **Arrival-timing gap**: separates a reachable internal target from an unreachable one.
 - **Response-size difference**: separates a reachable fetch from a refused one.
@@ -41,8 +41,7 @@ The inference goal is internal service discovery plus port mapping that later en
 
 ## Trust Assumptions
 
-- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
-- **The exposure**: sensitive network position leaks only when the server exposes reachability through such a fetch.
+- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, keeps the request in plain-fetch shape with no gate-passing header or method pair, and sensitive network position leaks only when the server exposes reachability through such a fetch.
 - **The failing clause**: this variant breaks the observability clause because the response carries no readable body, so reachability is decided only through callback correlation plus timing plus size plus error-class differencing.
 
 ## Key Vulnerabilities
@@ -69,10 +68,12 @@ The inference goal is internal service discovery plus port mapping that later en
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no encoding or parsing difference changes the inference step itself.
-- **Address encoding families**: address encoding families such as decimal plus hex plus octal plus mapped forms reach the fetcher past a naive textual allowlist.
+- **Address encoding families**: decimal plus hex plus octal plus mapped forms reach the fetcher past a naive textual allowlist.
 - **Parser differentials**: parser differentials, redirect chains, and short-lived resolution carry an internal destination to the fetch side, and the proxy-techniques family owns those mechanics; record only the inference verdict here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Parser differentials**: between the enforcing side and the fetching side smuggle an internal destination through a split parse.
+- **Redirect chains**: convert one allowlisted first hop into an internal second hop for the inference probe.
+- **Short-lived resolution**: answers differently across the check-time and fetch-time lookups.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -84,7 +85,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-inference runs the oracle first and everything else follows, because no later step is meaningful without a calibrated difference.
+Inference runs the oracle first and everything else follows, because no later step is meaningful without a calibrated difference.
 1. **Inventory sinks** - list every attacker-influenced destination sink with its carrier plus its masking behavior, and the step completes when no unlisted sink remains.
 2. **Calibrate the oracle** - mint one token per probe and record baseline timing plus size plus error class on a known-unreachable candidate, and the step completes when every side channel shows a stable baseline.
 3. **Correlate callbacks** - send one probe per token and attribute each inbound hit to its probe, and the step completes when every hit maps to exactly one probe and every probe shows a recorded outcome.
@@ -95,15 +96,15 @@ inference runs the oracle first and everything else follows, because no later st
 ## False Positives
 
 - **No-fetch stop**: stop when the evidence shows no server fetch, because inference without egress is only noise.
-- **Client-side fetch only**: client-side fetch only, where no request ever leaves the server.
-- **Strict allowlist**: strict allowlist with resolution pinning plus no redirect following, confirmed by uniform negatives across all candidates.
-- **Canned simulator responses**: canned simulator responses that return fixed bodies without real egress.
-- **Uniform differences**: uniform differences across every candidate and every side channel, which signal measurement noise rather than reachability.
-- **Callback-source mismatch**: callback hits whose source matches the tester machine rather than the server, which indicate a client-side fetch made the request.
+- **Client-side fetch only**: no request ever leaves the server.
+- **Strict allowlist**: resolution pinning plus no redirect following, confirmed by uniform negatives across all candidates.
+- **Canned simulator responses**: return fixed bodies without real egress.
+- **Uniform differences**: across every candidate and every side channel signal measurement noise rather than reachability.
+- **Callback-source mismatch**: callback hits whose source matches the tester machine rather than the server indicate a client-side fetch made the request.
 
 ## Pro Tips
 
-- **Inference patience**: inference rewards patience plus tiny probes plus tight budgets.
+- **Discipline**: inference rewards patience plus tiny probes plus tight budgets.
 - **Quiet oracle first**: prefer the quiet callback oracle first, then promote only stable positives to differencing.
 - **Tiny probes**: favor tiny destinations plus tight timeouts so the port map stays fast and quiet.
 - **Sample logging**: repeat each probe until the class stabilises, and log every sample behind its token.

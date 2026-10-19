@@ -69,9 +69,8 @@ Expansion nests small definitions inside larger ones until processor time and me
 - **Encoding variation**: vary declaration encoding and newline shapes so naive declaration filters miss the nested definitions.
 - **Placement variation**: vary the definition block between internal placement and external-subset placement to reach the resolution path.
 - **Shape splitting**: split definitions across indentation and comment shapes so pattern filters match no single recognisable block.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 ## Chaining Attacks
 
 - **Availability handoff**: hand expansion-induced outages to availability follow-ups when the exhausted processor shares capacity with other tenants.
@@ -80,11 +79,21 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Inventory definition-accepting consumers** - list every XML sink with its carrier and its entity-definition acceptance answer, and the step completes when every sink carries an acceptance answer and no consumer lacks a carrier label.
-2. **Probe with a minimal seed** - submit a tiny two-level nesting definition and record latency plus error shape against the baseline, and the step completes when every accepting consumer shows either a measured delta or recorded indifference.
-3. **Fix the exhaustion oracle** - confirm which signal moves with depth: latency growth, load-induced errors, or response degradation, and the step completes when every vulnerable consumer has a fixed exhaustion channel with a recorded baseline.
-4. **Scale geometrically to exhaustion** - grow nesting depth one level at a time with minimal payloads until reproducible exhaustion appears, and the step completes when a fixed depth produces reproducible timeout, error, or degradation across repeated trials.
-5. **Validate parity** - repeat the minimal seed across service endpoints plus uploads plus background jobs and record every divergence in expansion limits, and the step completes when every channel shows the same limits or a recorded divergence.
+1. **Inventory definition-accepting consumers.**
+List every XML sink with its carrier and its entity-definition acceptance answer.
+Completion holds when every sink carries an acceptance answer and no consumer lacks a carrier label.
+2. **Probe with a minimal seed.**
+Submit a tiny two-level nesting definition and record latency plus error shape against the baseline.
+Completion holds when every accepting consumer shows either a measured delta or recorded indifference.
+3. **Fix the exhaustion oracle.**
+Confirm which signal moves with depth: latency growth, load-induced errors, or response degradation.
+Completion holds when every vulnerable consumer has a fixed exhaustion channel with a recorded baseline.
+4. **Scale geometrically to exhaustion.**
+Grow nesting depth one level at a time with minimal payloads until reproducible exhaustion appears.
+Completion holds when a fixed depth produces reproducible timeout, error, or degradation across repeated trials.
+5. **Validate parity.**
+Repeat the minimal seed across service endpoints plus uploads plus background jobs and record every divergence in expansion limits.
+Completion holds when every channel shows the same limits or a recorded divergence.
 
 ## False Positives
 

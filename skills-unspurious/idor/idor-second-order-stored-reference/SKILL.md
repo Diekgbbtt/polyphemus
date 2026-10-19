@@ -52,8 +52,7 @@ The leading word is stored: every probe writes one reference into the caller's o
 ## Trust Assumptions
 
 - **The agreement**: an object reference arriving with a request is private to the caller, any surrounding authorization already binds the referenced object to that caller, identity arriving through surrounding channels belongs to the same caller, a token accepted by one service transfers only to its intended audience, and a check performed at creation still holds at retrieval, so no caller reaches data beyond its own scope.
-- **The stored-reference clause fails**: where a later operation resolves a stored reference without re-binding it to the caller, so the write-time check stands in for a check at use.
-- **The use-time clause fails**: where the resolving operation trusts the stored value because an entitled caller wrote it, rather than because the current caller is entitled to the resolved object.
+- **The failing clause**: the stored-reference clause fails where a later operation resolves a stored reference without re-binding it to the caller, so the write-time check stands in for a check at use, and the use-time clause fails where the resolving operation trusts the stored value because an entitled caller wrote it, rather than because the current caller is entitled to the resolved object.
 
 ## Key Vulnerabilities
 
@@ -87,8 +86,7 @@ The leading word is stored: every probe writes one reference into the caller's o
 - **Re-save before trigger**: re-save the reference immediately before the trigger where a normalization step would otherwise rewrite it.
 - **Delivery handoff**: where the trigger arrives through a cross-site or navigational delivery, name `csrf` for the delivery mechanics and record only the binding verdict here.
 - **Parser handoff**: name the `defence-bypass` family at its parser step where a stored shape reaches the resolver through a different binder.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

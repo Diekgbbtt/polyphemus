@@ -11,37 +11,37 @@ Information leaks accelerate exploitation by revealing code, configuration, iden
 
 ## Attack Surface
 
-- **Errors and exception pages**: stack traces, file paths, query fragments, component versions
-- **Debug and diagnostic tooling reachable in production**: debuggers, profilers, feature flags
-- **Build artifacts**: version-control and build artifacts, plus temp and backup files produced by editors and deploy scripts
-- **Configuration and secret stores reachable over HTTP**: environment files, status dumps, deployment manifests
-- **Interface descriptions and schema interfaces**: aPI documents, schema introspection, service reflection
-- **Client bundles and source maps**: build maps, embedded environment values, serialized page data, static data files
-- **Headers and response metadata**: server and platform banners, tracing identifiers, validators, range and timing fields
-- **Storage and export surfaces**: public buckets, signed URLs, export and download endpoints
-- **API response bodies**: ordinary resource responses whose field sets may exceed the caller's entitlement, including embedded related objects and expansion results
-- **Observability and administrative surfaces**: metrics, health and actuator paths, tracing consoles, admin views
-- **Directory listings and indexing**: autoindex, sitemaps and crawl directives revealing hidden routes
+- **Errors and exception pages**: stack traces, file paths, query fragments, component versions.
+- **Debug and diagnostic tooling reachable in production**: debuggers, profilers, feature flags.
+- **Build artifacts**: version-control and build artifacts, plus temp and backup files produced by editors and deploy scripts.
+- **Configuration and secret stores reachable over HTTP**: environment files, status dumps, deployment manifests.
+- **Interface descriptions and schema interfaces**: aPI documents, schema introspection, service reflection.
+- **Client bundles and source maps**: build maps, embedded environment values, serialized page data, static data files.
+- **Headers and response metadata**: server and platform banners, tracing identifiers, validators, range and timing fields.
+- **Storage and export surfaces**: public buckets, signed URLs, export and download endpoints.
+- **API response bodies**: ordinary resource responses whose field sets may exceed the caller's entitlement, including embedded related objects and expansion results.
+- **Observability and administrative surfaces**: metrics, health and actuator paths, tracing consoles, admin views.
+- **Directory listings and indexing**: autoindex, sitemaps and crawl directives revealing hidden routes.
 
 ## Reconnaissance
 
 ### Channel Map
 
-- **Channel enumeration**: enumerate every channel that renders content: web, API, schema layer, socket, RPC, mobile, background jobs, exports, and the cache in front
-- **Rendering-path recording**: per channel, record the rendering path and the hardening headers so inconsistency between channels is visible later
-- **Reach recording**: note which channels are reachable anonymously, as an owner, and as a non-owner
+- **Channel enumeration**: enumerate every channel that renders content: web, API, schema layer, socket, RPC, mobile, background jobs, exports, and the cache in front.
+- **Rendering-path recording**: per channel, record the rendering path and the hardening headers so inconsistency between channels is visible later.
+- **Reach recording**: note which channels are reachable anonymously, as an owner, and as a non-owner.
 
 ### Artifact Enumeration
 
-- **Artifact sweep**: sweep for deployable artifacts: version-control folders, editor backups, archives, configuration dumps, build maps, and interface documents
-- **Crawl-directive following**: follow crawl directives and listing surfaces for route names that were meant to stay unreferenced
-- **Candidate recording**: record one candidate location per artifact family before probing further
+- **Artifact sweep**: sweep for deployable artifacts: version-control folders, editor backups, archives, configuration dumps, build maps, and interface documents.
+- **Crawl-directive following**: follow crawl directives and listing surfaces for route names that were meant to stay unreferenced.
+- **Candidate recording**: record one candidate location per artifact family before probing further.
 
 ### Differential Harness
 
-- **Identity-contrast baseline**: the same resource fetched as anonymous, as owner, and as non-owner
-- **Response normalization**: normalize each response on status, body length, validators, and headers so later comparisons rest on digests rather than eyeballing
-- **Control requests**: keep one never-touched control request per channel for ambient comparison
+- **Identity-contrast baseline**: the same resource fetched as anonymous, as owner, and as non-owner.
+- **Response normalization**: normalize each response on status, body length, validators, and headers so later comparisons rest on digests rather than eyeballing.
+- **Control requests**: keep one never-touched control request per channel for ambient comparison.
 
 ## Detection Channels
 
@@ -80,39 +80,39 @@ Information leaks accelerate exploitation by revealing code, configuration, iden
 
 ### Differential Oracles
 
-- **Role comparison**: compare owner versus non-owner versus anonymous for the same resource
-- **Field tracking**: track status, length, validators, and cache-control fields
-- **Header-only pairs**: header-only requests beside full requests: header-only differences can confirm existence
-- **Conditional requests**: conditional requests: revalidation outcomes leak existence and state
+- **Role comparison**: compare owner versus non-owner versus anonymous for the same resource.
+- **Field tracking**: track status, length, validators, and cache-control fields.
+- **Header-only pairs**: header-only requests beside full requests: header-only differences can confirm existence.
+- **Conditional requests**: conditional requests: revalidation outcomes leak existence and state.
 
 ### Cache and Key Composition
 
-- **Identity-agnostic caches**: keys missing the authorization or tenant binding
-- **Key-variation misconfiguration**: varying on client shape without varying on identity
-- **Partial and stale entries**: partial-content and stale entries leaking object fragments
+- **Identity-agnostic caches**: keys missing the authorization or tenant binding.
+- **Key-variation misconfiguration**: varying on client shape without varying on identity.
+- **Partial and stale entries**: partial-content and stale entries leaking object fragments.
 
 ### Cross-Channel Mirroring
 
-- **Inconsistent hardening**: inconsistent hardening between surfaces: the same object rendered with different fields per channel
-- **Rendering asymmetry**: server-rendered pages omitting fields that the structured interface includes, and the reverse
+- **Inconsistent hardening**: inconsistent hardening between surfaces: the same object rendered with different fields per channel.
+- **Rendering asymmetry**: server-rendered pages omitting fields that the structured interface includes, and the reverse.
 
 ### Field-Set Over-Exposure
 
-- **Field-set comparison**: compare the emitted field set of an ordinary response against the fields the caller's scope renders, and classify any excess by sensitivity
-- **Embedded-object comparison**: read embedded related objects with their own comparison, because a shared type can render fields beyond the caller's scope
+- **Field-set comparison**: compare the emitted field set of an ordinary response against the fields the caller's scope renders, and classify any excess by sensitivity.
+- **Embedded-object comparison**: read embedded related objects with their own comparison, because a shared type can render fields beyond the caller's scope.
 
 ### Data Channels Without Execution
 
-- **No-execution channels**: a stylesheet-injection channel leaks values through rendering alone, with no script execution; the proxy-techniques family owns the mechanism, so this class names `proxy-techniques-css-injection` at the no-execution disclosure step rather than restating it
-- **Embedded values**: client bundles, browser storage, and serialized page data carry embedded values, read in place with masking and redaction states recorded as held controls
+- **No-execution channels**: a stylesheet-injection channel leaks values through rendering alone, with no script execution; the proxy-techniques family owns the mechanism, so this class names `proxy-techniques-css-injection` at the no-execution disclosure step rather than restating it.
+- **Embedded values**: client bundles, browser storage, and serialized page data carry embedded values, read in place with masking and redaction states recorded as held controls.
 
 ## Chaining Attacks
 
-- **Artifact to credentials**: configuration dumps and deploy artifacts expose keys for databases, mail, tokens, and cloud control planes
-- **Version to known flaw**: derive precise component versions from banners, errors, and bundles, map them to known issues, and confirm reachability
-- **Path to file read**: paths from traces and templates reveal the layout, and an inclusion primitive then fetches configuration or keys
-- **Schema to authorization bypass**: an interface listing hidden fields and routes, whose absence of checks is then confirmed by direct requests
-- **Disclosure to authorization**: a leaked header name, hidden route, or internal field that a bypass accepts feeds the authorization classes, which own the access verdict
+- **Artifact to credentials**: configuration dumps and deploy artifacts expose keys for databases, mail, tokens, and cloud control planes.
+- **Version to known flaw**: derive precise component versions from banners, errors, and bundles, map them to known issues, and confirm reachability.
+- **Path to file read**: paths from traces and templates reveal the layout, and an inclusion primitive then fetches configuration or keys.
+- **Schema to authorization bypass**: an interface listing hidden fields and routes, whose absence of checks is then confirmed by direct requests.
+- **Disclosure to authorization**: a leaked header name, hidden route, or internal field that a bypass accepts feeds the authorization classes, which own the access verdict.
 
 ## Testing Methodology
 
@@ -134,24 +134,24 @@ Elicitation is one procedure with the mechanism as a parameter: failure verbosit
 
 ## False Positives
 
-- **Public documentation**: intentional public documentation or non-sensitive metadata with no exploitation path
-- **Generic errors**: generic errors with no actionable detail
-- **Redacted fields**: redacted fields that do not change a differential or oracle
-- **Version banners**: version banners with no reachable vulnerable surface and no chain
-- **Owner-visible details**: owner-visible details that do not cross an identity or tenant boundary
-- **Rotated artifacts**: a previously recorded artifact location that now answers not-found: content-hashed build artifacts rotate on every deploy, so the absence is a new build rather than remediation; re-derive the live hash before each verdict
+- **Public documentation**: intentional public documentation or non-sensitive metadata with no exploitation path.
+- **Generic errors**: generic errors with no actionable detail.
+- **Redacted fields**: redacted fields that do not change a differential or oracle.
+- **Version banners**: version banners with no reachable vulnerable surface and no chain.
+- **Owner-visible details**: owner-visible details that do not cross an identity or tenant boundary.
+- **Rotated artifacts**: a previously recorded artifact location that now answers not-found: content-hashed build artifacts rotate on every deploy, so the absence is a new build rather than remediation; re-derive the live hash before each verdict.
 
 ## Pro Tips
 
-- **Artifacts first**: start with artifacts before payloads; deployable files and maps yield the fastest wins
-- **Digest diffing**: normalize responses and diff by digest to reduce noise when comparing identities
-- **Source-map hunting**: hunt source maps and serialized page data; they often carry internal identifiers and flags
-- **Cache-key probing**: probe caches for identity-unaware keys; verify the key variation covers identity and tenant
-- **Introspection as configuration**: treat introspection and reflection as configuration findings across schema and RPC surfaces
-- **Observability last**: mine observability endpoints last; they are noisy but high-yield when misconfigured
-- **Minimal proofs**: chain quickly to a concrete risk and keep the proof minimal and reversible
-- **Artifact re-derivation**: re-derive a content-hashed artifact location before each verdict, because a recorded location that now answers not-found is a new build rather than remediation
-- **Triage ladder**: triage ladder for findings: credentials and control-plane keys first; then cross-tenant data and caches serving foreign content; then internal paths and maps that enable inclusion or fetch pivots; then banners and intended documentation with no path
+- **Artifacts first**: start with artifacts before payloads; deployable files and maps yield the fastest wins.
+- **Digest diffing**: normalize responses and diff by digest to reduce noise when comparing identities.
+- **Source-map hunting**: hunt source maps and serialized page data; they often carry internal identifiers and flags.
+- **Cache-key probing**: probe caches for identity-unaware keys; verify the key variation covers identity and tenant.
+- **Introspection as configuration**: treat introspection and reflection as configuration findings across schema and RPC surfaces.
+- **Observability last**: mine observability endpoints last; they are noisy but high-yield when misconfigured.
+- **Minimal proofs**: chain quickly to a concrete risk and keep the proof minimal and reversible.
+- **Artifact re-derivation**: re-derive a content-hashed artifact location before each verdict, because a recorded location that now answers not-found is a new build rather than remediation.
+- **Triage ladder**: triage ladder for findings: credentials and control-plane keys first; then cross-tenant data and caches serving foreign content; then internal paths and maps that enable inclusion or fetch pivots; then banners and intended documentation with no path.
 
 ## Summary
 

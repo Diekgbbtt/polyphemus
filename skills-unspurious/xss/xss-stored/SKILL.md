@@ -33,10 +33,10 @@ The impact goal is victim-context execution with evidence-backed retrieval proof
 
 ## Detection Channels
 
-- **Channel scope**: stored confirmation listens at retrieval time, so only the entries below are live here.
-- **Later-view execution**: later-view execution after persistence through any sink confirms the write-then-retrieve flow.
+- **Channel scope**: stored confirmation listens at retrieval time.
+- **Later-view execution**: confirms the write-then-retrieve flow after persistence through any sink.
 - **Retrieval-response reflection**: shows the persisted marker rendering at a later view rather than in the write response.
-- **Policy violation report**: policy violation report fired at the retrieval view binds execution to the persisted render.
+- **Policy violation report**: fires at the retrieval view and binds execution to the persisted render.
 - **Stored artifact observation**: records the persisted probe instance plus any inline file served with an active content type.
 - **Delayed callback**: delayed callback carrying the per-payload marker from a browser user agent, which proves victim execution of a blind stored value rather than a backend fetch of the same value.
 - **Sanitizer-output morph sample**: shows retrieval rendering turning sanitized markup into executable markup.
@@ -44,7 +44,7 @@ The impact goal is victim-context execution with evidence-backed retrieval proof
 ## Adversarial Capabilities
 
 - **Prerequisites**: stored testing presupposes write access plus retrieval access plus cross-view operation, and it consumes all three.
-- **Write input**: that another principal later views, or that the same principal views in a later session.
+- **Write input**: write input that another principal later views, or that the same principal views in a later session.
 - **Retrieval-view reach**: reach the retrieval view directly or induce the victim principal to open it through normal workflow.
 - **Inline file supply**: supply an inline file whose served content type plus disposition govern whether it executes on navigation.
 - **Transport repetition**: repeat the write plus retrieval pair across direct calls plus query APIs plus socket channels plus event streams plus background workers.
@@ -52,9 +52,7 @@ The impact goal is victim-context execution with evidence-backed retrieval proof
 
 ## Trust Assumptions
 
-- **Exact-sink encoding**: every user-influenced string stays untrusted until strictly encoded for the exact sink at render time.
-- **The agreement**: holds the data contract from entry through storage and retrieval to sink, keeps encoding bound to the exact sink context, keeps runtime policy enforced on executable sinks, and keeps rendering from exposing executable markup to a victim context.
-- **The exposure**: session state plus token material leaks only when executable markup reaches such a context.
+- **The agreement**: every user-influenced string stays untrusted until strictly encoded for the exact sink at render time, so the data contract holds from entry through storage and retrieval to sink, encoding stays bound to the exact sink context, runtime policy stays enforced on executable sinks, rendering stays free of executable markup in a victim context, and session state plus token material leaks only when executable markup reaches such a context.
 - **The failing clause**: this variant breaks the persistence clause because stored input crosses a storage boundary and renders at a later retrieval without exact-context encoding at retrieval time.
 
 ## Key Vulnerabilities
@@ -93,8 +91,7 @@ The impact goal is victim-context execution with evidence-backed retrieval proof
 - **Unclosed markup**: unclosed-markup shape reaches the retrieval parser past a filter that matches only balanced markup.
 - **Handler variety**: handler-variety shapes reach execution when one sink family blocks direct script shapes.
 - **Configuration gaps**: sanitizer configuration gaps plus policy gaps plus sink-type gaps surface through negative tests at retrieval time.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -121,11 +118,11 @@ Stored testing runs write-then-retrieve as the spine, because no later step is m
 - **Content policy**: content policy with nonces plus hashes and no inline plus handler execution, confirmed by violation-free retrieval.
 - **Sink-type enforcement**: sink-type enforcement applied on retrieval sinks with strict creation policies.
 - **Sanitizer strict mode**: sanitizer in strict mode with scheme allowlists, confirmed by morph-free re-parsing at retrieval.
-- **Scriptable contexts**: disabled at the retrieval view with safe schemes enforced and no markup pass-through.
+- **Scriptable contexts**: scriptable contexts disabled at the retrieval view with safe schemes enforced and no markup pass-through.
 
 ## Pro Tips
 
-- **Pair discipline**: stored work rewards pair discipline plus small probe sets plus retrieval-side patience.
+- **Discipline basis**: stored work rewards pair discipline plus small probe sets plus retrieval-side patience.
 - **Map first**: prefer write-to-retrieval mapping before any probe crafting, and never count write-response reflection.
 - **Traceable markers**: favor one traceable marker per write entry so retrieval attribution stays exact.
 - **Curated probe sets**: keep a small curated probe set per retrieval context and iterate with encoding variants.

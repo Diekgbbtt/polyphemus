@@ -117,8 +117,7 @@ Authorization controls are sometimes tied to the HTTP method rather than the res
 - **Parse-path skip**: reach the route over a protocol version or request form whose parse path skips the gate.
 - **Direct core route**: request the guarded path directly where the edge block hides a live core route.
 - **Family handoff**: name the defence-bypass family at its signature, parser, and edge-versus-core steps for the verb-token, duplicate-input, parse-path, and core-route shapes, rather than restating those mechanics here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

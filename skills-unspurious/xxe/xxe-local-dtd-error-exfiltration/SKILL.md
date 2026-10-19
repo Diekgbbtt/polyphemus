@@ -59,10 +59,8 @@ The exfiltration goal is file content returned to the caller through the error c
 
 ## Trust Assumptions
 
-- **The agreement**: a caller document supplies no definitions of its own, and an installed definition document is trusted because the application placed it there.
-- **Held clauses**: declarations stay application-chosen, installed definitions stay unreachable as caller-controlled content, and resolution failures never quote content the application did not supply.
+- **The agreement**: a caller document supplies no definitions of its own, and an installed definition document is trusted because the application placed it there. Declarations stay application-chosen, installed definitions stay unreachable as caller-controlled content, and resolution failures never quote content the application did not supply. The callback variant breaks the external-resolution clause over the network; this variant breaks the local-definition clause with no egress at all, so the two never share a channel.
 - **The failing clause**: the local-definition clause. The parser resolves a caller-named definition from the filesystem, so an entity inside a trusted document is redefined by the caller and the error path interpolates the read value.
-- **The delta**: the callback variant breaks the external-resolution clause over the network; this variant breaks the local-definition clause with no egress at all, so the two never share a channel.
 
 ## Key Vulnerabilities
 
@@ -99,8 +97,7 @@ The exfiltration goal is file content returned to the caller through the error c
 - **Encoding variants**: declaration encodings and newline shapes that a text filter misses while the parser still accepts them.
 - **Truncation workaround**: split the read into windows when the error channel truncates a long value.
 - **Chain scope**: the whole bypass stays inside the local filesystem, so it never depends on a network control.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

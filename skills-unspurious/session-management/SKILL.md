@@ -133,8 +133,7 @@ Session state is coupled to the systems around it: follow the authentication, au
 - **Cache and history restoration**: a cached authenticated response or a restored history entry defeats the client-side half of logout.
 - **Planting through coupled mechanics**: an accepted identifier in a URL or a cross-site-deliverable request plants the value; `csrf` owns the delivery mechanics and this class records only the session verdict.
 - **Coupled-system requirements**: fixation and self-contained-token forgery rest on properties owned by `authentication-jwt`, `oauth`, `two-principal-authz`, and `crypto-weakness`; name the owner at the step that consumes the property.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

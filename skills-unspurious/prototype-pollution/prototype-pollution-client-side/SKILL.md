@@ -67,20 +67,26 @@ The result turns an unsafe recursive merge into privilege bypass and script exec
 - **Content-type switching evades parser-specific filtering**: by replaying the same marker as structured body, urlencoded form, and multipart fields.
 - **Split pollution evades per-input limits**: by spreading the path across inputs that merge sequentially.
 - **Stored triggering evades immediate inspection**: by resting the payload until a later background merge or export step activates it.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Testing Methodology
 
 Shared setup runs first across merge-point mapping, canary proof, shape variation, and channel variation.
 The first bent step is the catalog-driven client-sink proof.
 The delta over the parent is gadget-catalog consultation plus per-library sink driving to behavioral proof.
-1. **Merge-point mapping locates** - recursive merges over user-controlled objects on client-reachable paths, and the step completes when every candidate merge sink is listed.
-2. **Canary proof sends a benign unique marker** - through one channel and reads it back through an unrelated object or render, and the step completes when shared-prototype corruption or its absence is proven.
-3. **Shape variation replays the canary** - through each payload shape in Key Vulnerabilities, and the step completes when every shape shows acceptance or filtering.
-4. **Channel variation repeats the canary** - across each input channel for the same target, and the step completes when every channel shows acceptance or rejection.
-5. **Catalog consultation drives client sinks** - by looking up the confirmed marker in the per-library gadget catalog and proving each listed sink across routing, auth state, and rendering, and the step completes when every catalog-listed sink reachable from the marker shows an effect or its absence.
-6. **Delayed-trigger ruling stores the payload** - and re-checks after any asynchronous merge completes, and the step completes when delayed effects are captured or confirmed absent.
+
+1. **Merge-point mapping locates** recursive merges over user-controlled objects on client-reachable paths.
+The step is done when every candidate merge sink is listed.
+2. **Canary proof sends a benign unique marker** through one channel and reads it back through an unrelated object or render.
+The step is done when shared-prototype corruption or its absence is proven.
+3. **Shape variation replays the canary** through each payload shape in Key Vulnerabilities.
+The step is done when every shape shows acceptance or filtering.
+4. **Channel variation repeats the canary** across each input channel for the same target.
+The step is done when every channel shows acceptance or rejection.
+5. **Catalog consultation drives client sinks** by looking up the confirmed marker in the per-library gadget catalog and proving each listed sink across routing, auth state, and rendering.
+The step is done when every catalog-listed sink reachable from the marker shows an effect or its absence.
+6. **Delayed-trigger ruling stores the payload** and re-checks after any asynchronous merge completes.
+The step is done when delayed effects are captured or confirmed absent.
 
 ## False Positives
 

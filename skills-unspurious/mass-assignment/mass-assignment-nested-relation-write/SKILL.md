@@ -13,10 +13,10 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Attack Surface
 
-- **Applicability**: centers on a singleton create or update action whose binder traverses nested objects into related records.
+- **Applicability**: a singleton create or update action whose binder traverses nested objects into related records.
 - **Nested helpers**: the server exposes writable nested serializers or relation helpers beneath an otherwise guarded parent.
 - **Sparse update widening**: sparse or patch update support widens the surface because a nested path can arrive as a path string rather than as an object.
-- **GraphQL input widening**: graphQL input types that mirror model relations widen the surface the same way through nested input fields.
+- **GraphQL input widening**: GraphQL input types that mirror model relations widen the surface the same way through nested input fields.
 - **Out-of-scope variants**: flat singleton injection belongs to the parent baseline and any batch payload belongs to a bulk-owning sibling, so neither rides here.
 
 ## Reconnaissance
@@ -29,12 +29,12 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Detection Channels
 
-- **Channel scope**: child-scope proof listens to child state rather than parent echo, so only the entries below are live here.
-- **Persisted child value**: persisted child value visible in a later child read or in a parent overfetch binds one attempt to one child verdict.
-- **Silent child persistence**: silent child persistence without parent echo confirms a write the response never reflected.
-- **Child-scope diff**: child-scope diff across roles separates a caller-permitted link from an out-of-scope write.
-- **Recomputed child field**: recomputed child field ignoring input marks a guarded attempt rather than a success.
-- **Parent-only change**: parent-only change with no child persistence marks a non-finding for this variant.
+- **Channel scope**: child-scope proof listens to child state rather than parent echo.
+- **Persisted child value**: a child value visible in a later child read or in a parent overfetch binds one attempt to one child verdict.
+- **Silent child persistence**: a child write without parent echo confirms a write the response never reflected.
+- **Child-scope diff**: a child-scope diff across roles separates a caller-permitted link from an out-of-scope write.
+- **Recomputed child field**: a recomputed child field that ignores input marks a guarded attempt rather than a success.
+- **Parent-only change**: a parent-only change with no child persistence marks a non-finding for this variant.
 
 ## Adversarial Capabilities
 
@@ -47,9 +47,7 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 
 ## Trust Assumptions
 
-- **The trust premise**: at the moment a create or update executes, the feature trusts client-supplied attributes to bind only to caller-writable fields.
-- **The agreement**: it holds read-only markers plus derived-field recomputation steady, covers every encoding through one allowlist, and keeps nested relations inside caller scope.
-- **The exposure**: sensitive privilege plus ownership plus gate plus billing state leaks only when the server binds what the caller may not write.
+- **The agreement**: at the moment a create or update executes, the feature trusts client-supplied attributes to bind only to caller-writable fields, holds read-only markers plus derived-field recomputation steady, covers every encoding through one allowlist, and keeps nested relations inside caller scope, and sensitive privilege plus ownership plus gate plus billing state leaks only when the server binds what the caller may not write.
 - **The failing clause**: this variant breaks the nested-scope clause because a nested relation object binds plus creates or links a child beyond caller scope on a singleton payload.
 
 ## Key Vulnerabilities
@@ -93,8 +91,7 @@ The goal is privilege plus ownership plus gate plus billing effects reached thro
 - **Encoding switch**: switch body encoding while holding the nested candidate constant, because some code paths validate only one framing.
 - **Nested key reshaping**: reshape the nested key across object plus dot plus bracket plus patch-path forms to reach the binder through another parser.
 - **Delegated techniques**: batch smuggling never rides here, and race interleaving names the race-conditions skill at its TOCTOU step rather than restating it.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Testing Methodology
 
@@ -109,10 +106,10 @@ Relation reasoning runs after the baseline is fixed, because no child verdict is
 ## False Positives
 
 - **Durable-write stop**: stop when the child state shows no durable out-of-scope write, because UI-only effects prove nothing here.
-- **Server recomputation**: server recomputes the child field and ignores client input, confirmed by identical before plus after reads.
-- **Read-only enforcement**: read-only marking enforced consistently across encodings, confirmed by uniform negatives on every shape.
-- **Parent-only change**: parent-only change with no child persistence, which belongs to the baseline rather than to this variant.
-- **In-scope child change**: child change inside caller scope, which is permitted behavior rather than a finding.
+- **Server recomputation**: the server recomputes the child field and ignores client input, confirmed by identical before plus after reads.
+- **Read-only enforcement**: read-only marking is enforced consistently across encodings, confirmed by uniform negatives on every shape.
+- **Parent-only change**: a parent-only change with no child persistence belongs to the baseline rather than to this variant.
+- **In-scope child change**: a child change inside caller scope is permitted behavior rather than a finding.
 
 ## Pro Tips
 

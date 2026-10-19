@@ -12,9 +12,9 @@ Treat every scheme-qualified name as untrusted until scheme enablement with outb
 
 ## Attack Surface
 
-- **Applicability**: applies where user influence reaches an include sink that resolves scheme-qualified names through a remote fetcher.
-- **Policy and behavior**: applies where scheme policy and fetcher behavior decide whether retrieved content executes.
-- **Fetcher variance**: varies only in which fetcher consumes the input and which outbound oracle proves the fetch-to-execution crossing.
+- **Applicability**: user influence reaches an include sink that resolves scheme-qualified names through a remote fetcher.
+- **Policy and behavior**: scheme policy and fetcher behavior decide whether retrieved content executes.
+- **Fetcher variance**: the only variation is which fetcher consumes the input and which outbound oracle proves the fetch-to-execution crossing.
 
 ## Reconnaissance
 
@@ -26,9 +26,9 @@ Treat every scheme-qualified name as untrusted until scheme enablement with outb
 
 ## Detection Channels
 
-- **Outbound fetch receipt**: where a hosted beacon confirms the server retrieved attacker-controlled content.
-- **Direct deterministic output**: where the response carries the hosted marker as evaluation evidence.
-- **Error echo**: where fetcher warnings expose resolution behavior for a crafted scheme-qualified shape.
+- **Outbound fetch receipt**: a hosted beacon confirms the server retrieved attacker-controlled content.
+- **Direct deterministic output**: the response carries the hosted marker as evaluation evidence.
+- **Error echo**: fetcher warnings expose resolution behavior for a crafted scheme-qualified shape.
 
 ## Adversarial Capabilities
 
@@ -39,14 +39,14 @@ Treat every scheme-qualified name as untrusted until scheme enablement with outb
 
 ## Trust Assumptions
 
-- **The agreement**: when the file-operation feature executes, the server trusts that carrier-supplied names join a base location under a normalization contract. The server trusts that resolution states settle inside one intended root before any read occurs. The server trusts that request primitives read only what the join permits and that exposed readers stay unreachable to crafted names. The server trusts that sensitive file content never leaks to the sender through crafted resolution.
-- **The failing clause**: the remote-scheme clause: remote-scheme names fetch hosted content and execute retrieved content.
+- **The agreement**: the server trusts, when the file-operation feature executes, that carrier-supplied names join a base location under a normalization contract, that resolution states settle inside one intended root before any read occurs, that request primitives read only what the join permits and exposed readers stay unreachable to crafted names, and that sensitive file content never leaks to the sender through crafted resolution.
+- **The failing clause**: remote-scheme names fetch hosted content and execute retrieved content.
 
 ## Key Vulnerabilities
 
-- **Scheme-qualified shapes**: that address hosted content through transfer and stream-handler spellings, held as <remote-shape>.
-- **Fetcher shapes**: that retrieve remote content and route it toward evaluation instead of inert storage.
-- **Enablement gaps**: where scheme policy permits remote retrieval in one sink while appearing forbidden elsewhere.
+- **Scheme-qualified shapes**: address hosted content through transfer and stream-handler spellings, held as <remote-shape>.
+- **Fetcher shapes**: retrieve remote content and route it toward evaluation instead of inert storage.
+- **Enablement gaps**: scheme policy permits remote retrieval in one sink while appearing forbidden elsewhere.
 - **Variant delta**: the delta over the parent is host-then-fetch proof with scheme enablement verification and beacon confirmation, which the parent fetcher and escalation steps never name.
 
 ## Advanced Techniques
@@ -63,8 +63,7 @@ Treat every scheme-qualified name as untrusted until scheme enablement with outb
 - **Fetcher-assumption bypass**: defeat fetcher assumptions by routing stream-handler shapes through sinks that evaluate rather than store.
 - **Extension-enforcement bypass**: defeat appended-extension enforcement by terminating the name with a query or fragment delimiter where the fetcher truncates at it.
 - **Beacon-blocking bypass**: defeat beacon blocking by keeping hosted content minimal and deterministic per candidate.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -74,10 +73,14 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Carrier inventory** - inventory scheme-accepting carriers and record scheme policy per sink, and the step completes when every inclusion carrier has a recorded accepted-versus-rejected scheme verdict.
-2. **Enablement verification** - verify scheme enablement with benign hosted content and record fetcher retrieval behavior, and the step completes when every scheme-accepting carrier has a recorded enablement verdict with no untested sink remaining.
-3. **Hosted-content preparation** - host minimal deterministic content with per-candidate beacons under operator control, and the step completes when every candidate maps to exactly one hosted beacon with readiness confirmed.
-4. **Bent step** - verify scheme enablement and host a minimal payload and confirm outbound fetch with beacon proof, and the step completes when every hosted candidate has a recorded beacon verdict paired with a recorded evaluation verdict.
+1. Inventory scheme-accepting carriers and record scheme policy per sink.
+Complete when every inclusion carrier has a recorded accepted-versus-rejected scheme verdict.
+2. Verify scheme enablement with benign hosted content and record fetcher retrieval behavior.
+Complete when every scheme-accepting carrier has a recorded enablement verdict with no untested sink remaining.
+3. Host minimal deterministic content with per-candidate beacons under operator control.
+Complete when every candidate maps to exactly one hosted beacon with readiness confirmed.
+4. Bent step: verify scheme enablement and host a minimal payload and confirm outbound fetch with beacon proof.
+Complete when every hosted candidate has a recorded beacon verdict paired with a recorded evaluation verdict.
 
 ## False Positives
 

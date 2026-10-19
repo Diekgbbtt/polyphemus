@@ -26,7 +26,7 @@ A control that decodes a value evaluates the value it decoded, and the sink cons
 
 ## Detection Channels
 
-- **Channel scope**: encoding differentials listen to the two readings of one value, so only the entries below are live here.
+- **Channel scope**: encoding differentials listen to the two readings of one value.
 - **Plain refusal**: the control's refusal on the plainly decoded value, which proves the comparison engaged.
 - **Layered pass**: a pass for the same effect in a layered or folded form, which shows the two sides decoded the value differently.
 - **Form differential**: the differential between the refused plain form and the passed encoded form at one position, which localises the decode step.

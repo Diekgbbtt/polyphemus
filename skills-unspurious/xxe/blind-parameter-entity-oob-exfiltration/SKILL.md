@@ -74,9 +74,8 @@ Blind chains smuggle file and internal-network data out through subset delivery 
 - **Encoding variation**: vary declaration encoding and newline shapes so naive declaration filters miss the external subset reference.
 - **Keyword variation**: vary the subset declaration between peer keyword forms and internal-versus-external placement to reach the fetch path.
 - **Read-family pivot**: pivot between file-URI reads and internal-URL reads inside the redefinition so one blocked family still yields the other.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 ## Chaining Attacks
 
 - **Internal-URL handoff**: hand exfiltrated internal URLs to the ssrf skill when the blind chain reaches internal control planes.
@@ -84,11 +83,21 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Inventory consumers** - list every XML parsing sink with its carrier and its declaration acceptance answer, and the step completes when every sink carries a carrier label and no consumer lacks an acceptance answer.
-2. **Probe subset fetch** - aim each accepting consumer at a callback-owned subset address with a unique per-probe token, and the step completes when every accepting consumer shows either a logged hit or recorded silence.
-3. **Fix the oracle** - correlate each callback hit with its probe token and record error-shape plus latency baselines per consumer, and the step completes when every consumer has a fixed channel of callback plus error plus timing baseline.
-4. **Run the two-stage chain** - serve the external subset from the callback host, capture the file or internal-URL value through redefinition, and exfiltrate it inside the exfil request path, and the step completes when a controlled file path or internal URL produces a reproducible callback hit or a reproduced error fragment.
-5. **Validate parity** - repeat the chain across service endpoints plus uploads plus background jobs and record every divergence in parser options, and the step completes when every channel shows the same options or a recorded divergence.
+1. **Inventory consumers.**
+List every XML parsing sink with its carrier and its declaration acceptance answer.
+Completion holds when every sink carries a carrier label and no consumer lacks an acceptance answer.
+2. **Probe subset fetch.**
+Aim each accepting consumer at a callback-owned subset address with a unique per-probe token.
+Completion holds when every accepting consumer shows either a logged hit or recorded silence.
+3. **Fix the oracle.**
+Correlate each callback hit with its probe token and record error-shape plus latency baselines per consumer.
+Completion holds when every consumer has a fixed channel of callback plus error plus timing baseline.
+4. **Run the two-stage chain.**
+Serve the external subset from the callback host, capture the file or internal-URL value through redefinition, and exfiltrate it inside the exfil request path.
+Completion holds when a controlled file path or internal URL produces a reproducible callback hit or a reproduced error fragment.
+5. **Validate parity.**
+Repeat the chain across service endpoints plus uploads plus background jobs and record every divergence in parser options.
+Completion holds when every channel shows the same options or a recorded divergence.
 
 ## False Positives
 

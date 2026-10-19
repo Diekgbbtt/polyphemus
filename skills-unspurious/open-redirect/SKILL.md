@@ -119,8 +119,7 @@ Open redirects enable phishing, credential theft in authorization flows, and all
 - **Full-width dots and numeric forms**: full-width dots and numeric address forms that the validator treats as untrusted-looking text.
 - **Scheme variants**: scheme case variation and scheme-relative forms.
 - **Response-header injection**: a reflected destination value that reaches a response-header context can inject a location header; name `header-injection` at the injection step rather than restating the line-break mechanics here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -62,8 +62,7 @@ This variant breaks the signature algorithm binding while the key source, the cl
 - **Unsigned-rejection bypass**: defeat unsigned rejection by presenting the unsigned shape with the signature segment removed and the algorithm identifier declaring no signature, including case-variant algorithm identifiers and signature-segment variants beside it.
 - **Strict-verification bypass**: defeat strict verification by presenting encoding edge shapes such as unencoded payload forms and nested token orderings that mishandle the verification path.
 - **Secret-strength bypass**: defeat secret strength by recovering the weak secret offline and then minting under the legitimate algorithm.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

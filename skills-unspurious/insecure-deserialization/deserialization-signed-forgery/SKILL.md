@@ -38,7 +38,7 @@ This variant breaks the binding through weak-secret recovery or signature remova
 
 ## Adversarial Capabilities
 
-- **Prerequisites**: this variant presupposes the ability to submit state blobs at reachable request loci.
+- **Blob submission**: presupposes the ability to submit state blobs at reachable request loci.
 - **Offline secret search**: runs offline secret search against captured blobs with local re-verification before touching the server.
 - **Known-plaintext recovery**: recovers the binding secret from a known plaintext pair where both the blob and its plaintext are in hand.
 - **Signature stripping**: strips signature segments to test keyless acceptance paths without any secret.
@@ -46,8 +46,8 @@ This variant breaks the binding through weak-secret recovery or signature remova
 
 ## Trust Assumptions
 
-- **The agreement**: the feature executes an object-graph rehydration step under a standing agreement. The agreement holds that every consumed blob is sender-faithful and every signature binds its blob to a strong secret. The runtime exposes only verified state, resolves only bound claims, and leaks at most a benign error on malformed input.
-- **The failing clause**: the signature-binding clause: the binding rests on a recoverable or removable secret and the server accepts a minted blob.
+- **The agreement**: the feature executes an object-graph rehydration step where every consumed blob is sender-faithful and every signature binds its blob to a strong secret, the runtime exposes only verified state, resolves only bound claims, and leaks at most a benign error on malformed input.
+- **The failing clause**: the binding rests on a recoverable or removable secret and the server accepts a minted blob.
 
 ## Key Vulnerabilities
 
@@ -73,32 +73,31 @@ This variant breaks the binding through weak-secret recovery or signature remova
 - **Binding downgrade**: downgrade the binding where legacy verifiers accept weaker checks beside the current one.
 - **Binding-evaluation defeat**: defeat binding evaluation by shaping the blob so a legacy parser resolves it before the integrity check runs, confirming the ordering with the response-class differential.
 - **Request-locus shifting**: shift the blob across equivalent request loci when one locus enforces verification and another feeds the same rehydration.
-- **Defence-bypass family naming**: name the defence-bypass family at steps that defeat hardened verifiers instead of restating its mechanics here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Defence-bypass family naming**: name the family at steps that defeat hardened verifiers instead of restating its mechanics here.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
 - **Forged identity or role state**: hands off to the authorization-principal skill for privilege-effect demonstration.
-- **Accepted minted blobs that reach object-graph sinks**: hand off to gadget-chain consumers for execution proof.
+- **Accepted minted blobs**: reach object-graph sinks and hand off to gadget-chain consumers for execution proof.
 - **Session-fixation effects**: from planted state hand off to session-management consumers where fixation is owned.
 
 ## Testing Methodology
 
-1. **Blob-to-verifier mapping** - map signed state blobs to their verifiers; the step is complete when each reachable state blob has a tamper-response observation recorded.
-2. **Unsigned-fallback test** - test the unsigned fallback by stripping the binding segment; the step is complete when the fallback verdict of accepted or rejected is recorded.
-3. **Parser-order probe** - probe the parser order with one payload per blob shape and read the response class; the step is complete when every shape carries a parse-order verdict.
-4. **Weak-secret recovery** - recover the weak secret through offline search with local re-verification, using a known plaintext pair where one is available; the step is complete when a candidate re-verifies locally or the search space is exhausted with its bounds recorded.
-5. **Blob minting** - mint the state blob by re-signing chosen claims or by shaping the stripped form, breaking only the signature layer; the step is complete when exactly one minted blob exists with its construction rationale recorded.
-6. **Acceptance proof** - prove acceptance with the least-privilege claim that still demonstrates effect; the step is complete when the server reflects the minted claims from the forged blob.
-7. **Priority coverage** - cover priority session stores first and revisit skipped loci; the step is complete when each named session locus is tested or ruled out with an observation.
+1. Map signed state blobs to their verifiers; the step is complete when each reachable state blob has a tamper-response observation recorded.
+2. Test the unsigned fallback by stripping the binding segment; the step is complete when the fallback verdict of accepted or rejected is recorded.
+3. Probe the parser order with one payload per blob shape and read the response class; the step is complete when every shape carries a parse-order verdict.
+4. Recover the weak secret through offline search with local re-verification, using a known plaintext pair where one is available; the step is complete when a candidate re-verifies locally or the search space is exhausted with its bounds recorded.
+5. Mint the state blob by re-signing chosen claims or by shaping the stripped form, breaking only the signature layer; the step is complete when exactly one minted blob exists with its construction rationale recorded.
+6. Prove acceptance with the least-privilege claim that still demonstrates effect; the step is complete when the server reflects the minted claims from the forged blob.
+7. Cover priority session stores first and revisit skipped loci; the step is complete when each named session locus is tested or ruled out with an observation.
 
 ## False Positives
 
-- **Verified bindings with strong secrets**: verified bindings with strong secrets and strict rejection of tampered blobs close this variant.
+- **Verified bindings with strong secrets**: close this variant when tampered blobs are rejected strictly.
 - **Stripped-blob rejection**: verifiers that reject stripped blobs without any fallback close the keyless path.
 - **Claim-schema filtering**: claim schemas that ignore unknown or elevated fields neutralise minting when the reflected state shows no effect.
-- **Sandboxed rehydration**: sandboxed rehydration without identity or state consequences limits the finding to acceptance without impact.
+- **Sandboxed rehydration**: limits the finding to acceptance without impact when identity or state consequences are absent.
 - **Misleading error text**: error text naming state classes without attacker bytes reaching the verifier marks a dead code path rather than a finding.
 - **Ordering-path closure**: a verifier that evaluates the binding before any parse, with uniform rejection across every blob shape, closes the ordering path.
 

@@ -60,8 +60,7 @@ It pairs every override delivery with a gate-view versus executor-view compariso
 - **Bypass shape**: the outer method stays gate-visible while the executor applies the smuggled verb.
 - **Bypass confirmation**: show the overridden effect unattainable through the outer method alone.
 - **Path-normalisation shapes**: case, dot segments, encoded separators, semicolon parameters, and trailing characters move the request onto an unguarded path pattern while the guard evaluated the original path.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -71,10 +70,14 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Candidate inventory** - list every candidate resource with its gate-visible outer method plus candidate override carriers, and the step completes when no candidate lacks a carrier inventory.
-2. **Carrier delivery** - send the outer method carrying each override carrier with identical session material and fixed action semantics, and the step completes when every carrier has a recorded gate-view versus executor-view outcome.
-3. **Divergence proof** - prove gate-versus-executor divergence by comparing front-gate authorization against backend-executed effect per carrier, and the step completes when each accepted carrier shows the overridden verb executed while the gate authorized only the outer method.
-4. **Execution confirmation** - confirm execution against the guarded baseline through data return or state change, and the step completes when each claimed bypass shows guarded data or a state effect unattainable through the outer method alone under the same session.
+1. List every candidate resource with its gate-visible outer method plus candidate override carriers.
+Complete when no candidate lacks a carrier inventory.
+2. Send the outer method carrying each override carrier with identical session material and fixed action semantics.
+Complete when every carrier has a recorded gate-view versus executor-view outcome.
+3. Prove gate-versus-executor divergence by comparing front-gate authorization against backend-executed effect per carrier.
+Complete when each accepted carrier shows the overridden verb executed while the gate authorized only the outer method.
+4. Confirm execution against the guarded baseline through data return or state change.
+Complete when each claimed bypass shows guarded data or a state effect unattainable through the outer method alone under the same session.
 
 ## False Positives
 

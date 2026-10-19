@@ -22,12 +22,12 @@ The overriding goal is a guarded handler reached through a safe-looking request,
 
 - **Inventory**: narrows to method-gated handlers plus rewrite-aware routers.
 - **Endpoint listing**: list state-changing endpoints reachable by safe methods and record which unsafe methods the gate refuses directly.
-- **Support probing**: probe override-header support with abstract alias shapes, namely the primary override form plus its common alias forms, and probe rewrite-header support with the original-address form plus the rewrite-address form plus the alias-rewrite form.
+- **Support probing**: probe override-header support with abstract alias shapes, namely the primary override form plus its common alias forms, and probe rewrite-header support with the original-address form plus the rewrite-address form.
 - **Order determination**: determine routing-versus-authorization order by pairing each header with a guarded endpoint and recording whether the reroute or the refusal wins.
 
 ## Detection Channels
 
-- **Overriding**: listens for order-of-check wins, so only the entries below are live here.
+- **Overriding**: listens for order-of-check wins.
 - **Safe-method reach**: guarded handler reached through a safe method plus an override header while the direct unsafe method stays refused binds the probe to the ordering flaw.
 - **Rewrite-path serving**: guarded path served through a rewrite header while the direct guarded request stays refused binds the probe to rewrite-after-check behavior.
 - **Order record**: routing-versus-refusal record per header-plus-endpoint pair isolates the trusting router from ambient method support.
@@ -44,7 +44,7 @@ The overriding goal is a guarded handler reached through a safe-looking request,
 ## Trust Assumptions
 
 - **The agreement**: the stack treats an attacker-influenced value that reaches a response header field as inert data at the moment the feature executes, holds the value free of framing meaning from capture through serialization, holds one declared interpreter for the value across the proxy-to-backend-to-client path, keeps the request in its declared method plus path plus protocol shape, keeps each response observable only to its caller, and keeps link targets plus cached bodies plus session state plus token-bearing destinations out of attacker reach.
-- **The failing clause**: this variant breaks the routing-order clause because override plus rewrite headers reroute the method or the path before the authorization check.
+- **The failing clause**: override plus rewrite headers reroute the method or the path before the authorization check.
 
 ## Key Vulnerabilities
 
@@ -68,8 +68,7 @@ The overriding goal is a guarded handler reached through a safe-looking request,
 - **Casing and whitespace**: mangle header casing plus surrounding whitespace where the filter keys off exact spelling.
 - **Header duplication**: duplicate the routing header so the enforcing side reads one member while the router reads the other.
 - **Encoded-path layering**: layer encoded-path forms inside the rewrite value past a filter that decodes fewer times than the router.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

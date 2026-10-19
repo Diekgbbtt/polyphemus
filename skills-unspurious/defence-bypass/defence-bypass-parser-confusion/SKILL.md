@@ -27,7 +27,7 @@ Two components read one request and each consumes a different member. This varia
 
 ## Detection Channels
 
-- **Channel scope**: parser confusion listens to the two readings of one request, so only the entries below are live here.
+- **Channel scope**: parser confusion listens to the two readings of one request.
 - **Canonical refusal**: the control's refusal on the canonical single-member request, which proves the reading that evaluates the member engaged.
 - **Re-read pass**: a pass for the same effect in a duplicated or re-framed request, which shows the readers consumed different members.
 - **Member differential**: the differential between the refused canonical request and the passed re-read request at one member, which localises the disagreement.

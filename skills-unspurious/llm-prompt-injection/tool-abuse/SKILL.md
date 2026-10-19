@@ -13,10 +13,10 @@ The abuse goal is a logged invocation with attacker-controlled effect rather tha
 
 ## Attack Surface
 
-- **Applicability**: centers on an LLM-backed feature with a reachable tool or agent layer.
+- **Applicability**: an LLM-backed feature with a reachable tool or agent layer.
 - **Exposed capabilities**: the layer exposes capabilities such as data access plus messaging plus retrieval plus state-changing actions.
 - **Direct tool server**: a tool server reachable as its own endpoint is part of the surface: tools are listed and called there without a model turn.
-- **Delivery paths**: delivery may arrive through direct turns or planted content, since delivery is an aspect carried inside this variant.
+- **Delivery paths**: direct turns or planted content, since delivery is an aspect carried inside this variant.
 - **Evidence requirement**: an invocation log or otherwise observable call record is required for this variant.
 
 ## Reconnaissance
@@ -31,7 +31,7 @@ The abuse goal is a logged invocation with attacker-controlled effect rather tha
 
 ## Detection Channels
 
-- **Channel scope**: abuse listens to invocation evidence, so only the entries below are live here.
+- **Channel scope**: abuse listens to invocation evidence.
 - **Steered tool call**: tool call performed with attacker-chosen arguments confirms a steering positive.
 - **Log binding**: invocation log entry binding one call to its arguments confirms the chained path.
 - **Downstream effect**: state change or exfiltration observable downstream confirms the call took effect.
@@ -54,8 +54,7 @@ The abuse goal is a logged invocation with attacker-controlled effect rather tha
 
 - **The agreement**: the feature executes under an agreement that the model separates instructions from data, treats ingested content as untrusted data, holds tool choice plus arguments to developer intent, keeps hidden system text undisclosed, and emits only sink-safe output.
 - **The behavior bound**: sensitive application behavior changes only when developer instructions direct them.
-- **The failing clause**: this variant breaks the tool-choice-and-arguments clause because a privileged tool is selected and parameterised by attacker-steered content.
-- **The interface-agreement clause**: where the tool server is reachable directly, this variant also breaks the interface-agreement clause: the declared interface is assumed to be the enforced interface, and each lifecycle transition is assumed to keep the identity and permission decisions of the previous one.
+- **The failing clause**: this variant breaks the tool-choice-and-arguments clause because a privileged tool is selected and parameterised by attacker-steered content. Where the tool server is reachable directly, this variant also breaks the interface-agreement clause: the declared interface is assumed to be the enforced interface, and each lifecycle transition is assumed to keep the identity and permission decisions of the previous one.
 
 ## Key Vulnerabilities
 
@@ -92,12 +91,11 @@ The abuse goal is a logged invocation with attacker-controlled effect rather tha
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no wrapper changes the invocation step itself.
-- **Paraphrase reframing**: paraphrase reframing redescribes the tool task when a direct steering phrase is refused.
-- **Multi-turn laundering**: multi-turn laundering spreads tool selection and argument filling across several turns.
-- **Encoding wrappers**: encoding wrappers disguise argument values past input-side filters.
-- **Split-request framing**: split-request framing separates the tool choice from the argument values across messages.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Paraphrase reframing**: redescribes the tool task when a direct steering phrase is refused.
+- **Multi-turn laundering**: spreads tool selection and argument filling across several turns.
+- **Encoding wrappers**: disguise argument values past input-side filters.
+- **Split-request framing**: separates the tool choice from the argument values across messages.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -125,8 +123,8 @@ Abuse runs steering first and everything else follows, because no argument claim
 - **Described call**: the model describing a call it never makes in the invocation log.
 - **Sandboxed stub call**: calls into sandboxed stubs with no sensitive data or action behind them.
 - **Neutralised arguments**: argument values the server-side validation neutralises before effect.
-- **Single-run call**: single-run calls that never reproduce across repeated steering.
-- **Hallucinated tool names**: hallucinated tool names matching no inventoried capability.
+- **Single-run call**: that never reproduces across repeated steering.
+- **Hallucinated tool names**: matching no inventoried capability.
 - **Model-mediated-only server**: a tool server that refuses direct calls and requires a model-mediated invocation, confirmed by uniform refusals without a turn.
 
 ## Pro Tips

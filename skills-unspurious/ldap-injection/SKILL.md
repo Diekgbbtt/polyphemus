@@ -121,8 +121,7 @@ The class owns authentication bypass, blind attribute extraction, directory enum
 - **Operator alternatives**: substitute an equivalent predicate for a filtered operator, and compose caller logic from the operators the filter leaves reachable.
 - **Nested clause placement**: place the caller clause deeper in the compound filter where the filter stage inspects only the outer level.
 - **Case and spacing variants**: spelling and spacing changes that compare unequal to a blocklist yet parse identically.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

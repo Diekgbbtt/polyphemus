@@ -26,19 +26,19 @@ The leftover prefix stays on the shared back-end socket and prepends to the next
 - **Back-end version confirmation**: confirm the back-end receives HTTP/1.1 framing from the translation hop.
 - **Surviving-field probe**: probe which header fields survive translation and in what form.
 - **Connection-correspondence record**: record whether one client connection corresponds to one persistent back-end connection.
-- **Reconnaissance completion**: reconnaissance is complete when every hop version is identified and the surviving-field set is recorded.
+- **Reconnaissance completion**: every hop version is identified and the surviving-field set is recorded.
 
 ## Detection Channels
 
-- **Downgrade mapping**: observe the downgrade mapping - which injected framing field reaches the back-end and which value wins when both disagree.
-- **Passthrough survival**: observe passthrough survival - whether a spec-forbidden framing field arrives at the back-end intact.
-- **Length divergence**: observe length divergence - behaviour change when the injected declared length differs from the true body length.
-- **Connection correspondence**: observe connection correspondence - whether repeated header blocks ride one persistent back-end socket.
-- **Differential marker confirmation**: confirm desync with a differential marker response - send two rapid requests carrying a unique placeholder token and treat an unexpected or token-bearing second response as proof of socket poisoning.
+- **Downgrade mapping**: observe which injected framing field reaches the back-end and which value wins when both disagree.
+- **Passthrough survival**: observe whether a spec-forbidden framing field arrives at the back-end intact.
+- **Length divergence**: observe behaviour change when the injected declared length differs from the true body length.
+- **Connection correspondence**: observe whether repeated header blocks ride one persistent back-end socket.
+- **Differential marker confirmation**: send two rapid requests carrying a unique placeholder token and treat an unexpected or token-bearing second response as proof of socket poisoning.
 
 ## Adversarial Capabilities
 
-- **Raw header-block client**: this variant presupposes a client that crafts raw HTTP/2 header blocks field by field.
+- **Raw header-block client**: the variant presupposes a client that crafts raw HTTP/2 header blocks field by field.
 - **Declared-length field injection**: the operator injects a regular declared-length field kept distinct from the reserved pseudo-header fields.
 - **Framing-field injection**: the operator injects a spec-forbidden framing field that the HTTP/2 framing itself never authorises.
 - **Reused-connection control**: the operator holds a reused connection open and reads mapping, timing, and differential responses.
@@ -46,8 +46,8 @@ The leftover prefix stays on the shared back-end socket and prepends to the next
 
 ## Trust Assumptions
 
-- **The agreement**: the translation path executes under one agreement - the back-end trusts the front-end parsed framing, treats the re-emitted framing as proxy-originated, and processes any bytes beyond the declared body as the next legitimate request on the shared socket - and the agreement covers the header contract between hops, the persistent socket state, the downgrade mapping primitives, the restricted and reflective endpoints the server exposes, and the session bytes that could leak with an adversarial orientation.
-- **The failing clause**: the clause that fails here is the mapping clause - the downgrade path derives back-end framing from an attacker-supplied header field that the HTTP/2 framing never authorised.
+- **The agreement**: the translation path executes under one agreement where the back-end trusts the front-end parsed framing, treats the re-emitted framing as proxy-originated, and processes any bytes beyond the declared body as the next legitimate request on the shared socket, and the agreement covers the header contract between hops, the persistent socket state, the downgrade mapping primitives, the restricted and reflective endpoints the server exposes, and the session bytes that could leak with an adversarial orientation.
+- **The failing clause**: the mapping clause fails because the downgrade path derives back-end framing from an attacker-supplied header field that the HTTP/2 framing never authorised.
 
 ## Key Vulnerabilities
 
@@ -79,9 +79,9 @@ The leftover prefix stays on the shared back-end socket and prepends to the next
 ## Advanced Techniques
 
 - **Mapping-observation depth**: deepen the mapping observation by injecting each framing field alone and then both together, recording which value wins each conflict.
-- **Pseudo-header discipline**: vary pseudo-header discipline - keep reserved fields valid while moving the injected field between regular positions to find placements the translation hop forwards.
+- **Pseudo-header discipline**: keep reserved fields valid while moving the injected field between regular positions to find placements the translation hop forwards.
 - **Passthrough-survival probe**: probe passthrough survival across field encodings the normaliser may mishandle, recording per-value survival rather than assuming uniform handling.
-- **Impact amplification**: amplify impact through connection correspondence - confirm one persistent back-end socket before attempting capture, since capture needs the victim bytes to land on the poisoned socket.
+- **Impact amplification**: amplify impact through connection correspondence by confirming one persistent back-end socket before attempting capture, since capture needs the victim bytes to land on the poisoned socket.
 
 ## Bypass Techniques
 
@@ -90,8 +90,7 @@ The leftover prefix stays on the shared back-end socket and prepends to the next
 - **Forbidden-field preference**: prefer the forbidden framing field where the front-end validates only HTTP/2 framing rules and forwards unknown fields untouched.
 - **Declared-length preference**: prefer the regular declared-length field where the translation hop derives back-end framing from it without reconciling it against the true body.
 - **Attempt completion**: each attempt is complete when the survival read-out names the exact field and value the back-end honoured.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -102,13 +101,13 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Hop-chain mapping** - map the chain and record the protocol version on each hop, complete when front-end, translation hop, and back-end versions are all identified.
-2. **Length disagreement** - craft a header block carrying an injected declared-length field that disagrees with the true body length, complete when the block is sent and the downgrade read-out is recorded.
-3. **Forbidden-field passthrough** - craft a header block carrying a spec-forbidden framing field, complete when the block is sent and the passthrough-survival read-out is recorded.
-4. **Attempt completion** - observe downgrade mapping, passthrough survival, and connection correspondence across both injections, complete when the winning field per conflict and the socket-reuse behaviour are both recorded.
-5. **Differential marker confirmation** - confirm with a differential marker response over two rapid requests, complete when the second response is classified as expected or as marker-bearing proof of poisoning.
-6. **Bypass-to-privilege chain** - attempt bypass against a restricted endpoint over the confirmed channel, complete when the back-end acceptance or rejection is recorded.
-7. **Capture-to-session chain** - attempt capture with a partial prefix against a reflective endpoint, complete when follow-up bytes are captured or the attempt is recorded as failed.
+1. Map the chain and record the protocol version on each hop, complete when front-end, translation hop, and back-end versions are all identified.
+2. Craft a header block carrying an injected declared-length field that disagrees with the true body length, complete when the block is sent and the downgrade read-out is recorded.
+3. Craft a header block carrying a spec-forbidden framing field, complete when the block is sent and the passthrough-survival read-out is recorded.
+4. Observe downgrade mapping, passthrough survival, and connection correspondence across both injections, complete when the winning field per conflict and the socket-reuse behaviour are both recorded.
+5. Confirm with a differential marker response over two rapid requests, complete when the second response is classified as expected or as marker-bearing proof of poisoning.
+6. Attempt bypass against a restricted endpoint over the confirmed channel, complete when the back-end acceptance or rejection is recorded.
+7. Attempt capture with a partial prefix against a reflective endpoint, complete when follow-up bytes are captured or the attempt is recorded as failed.
 
 ## False Positives
 

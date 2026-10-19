@@ -76,8 +76,7 @@ The smuggling goal is command execution plus persistent store control rather tha
 - **Split delimiters**: split delimiters across key and value halves reach the parser past per-field length checks that inspect each half alone.
 - **Padding-command shapes**: padding-command shapes reach the parser past trailing-syntax validation that assumes single commands.
 - **Mixed framings**: mixed text and binary framings reach the parser past checks written for one framing only.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

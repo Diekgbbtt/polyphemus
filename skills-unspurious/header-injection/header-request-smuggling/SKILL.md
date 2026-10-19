@@ -14,7 +14,7 @@ The smuggling goal is a prepended request executed under another party's connect
 ## Attack Surface
 
 - **Applicability**: centers on a proxy-fronted deployment where the frontend and the backend can disagree on message framing.
-- **Pair shapes**: span conflicting length-versus-encoding declarations plus dual-length declarations plus malformed chunked boundaries, replayed over version boundaries where downgrade handling differs.
+- **Pair shapes**: the pair shapes span conflicting length-versus-encoding declarations plus dual-length declarations plus malformed chunked boundaries, replayed over version boundaries where downgrade handling differs.
 - **Excluded shapes**: stored line-break responses belong to header-crlf-splitting, and delimiter-free same-response replacement belongs to header-response-value-confusion, so neither rides here.
 
 ## Reconnaissance
@@ -26,11 +26,11 @@ The smuggling goal is a prepended request executed under another party's connect
 
 ## Detection Channels
 
-- **Smuggling**: listens for cross-request leakage, so only the entries below are live here.
+- **Smuggling**: listens for cross-request leakage.
 - **Appended victim data**: victim request data appended to another request binds the probe to leftover-bytes disclosure across the boundary.
-- **Response-queue anomaly**: a response that answers a request never sent proves the smuggled bytes executed as a request.
+- **Response-queue anomaly**: response-queue anomaly, namely a response that answers a request never sent, proves the smuggled bytes executed as a request.
 - **Timing and length diff**: timing plus length diff between the paired replay and a clean sequential baseline isolates framing disagreement from ordinary latency.
-- **Cross-version behavior diff**: records which protocol path honors the smuggled framing and which path rejects it.
+- **Cross-version behavior diff**: cross-version behavior diff records which protocol path honors the smuggled framing and which path rejects it.
 - **Anomalous normal-request response**: anomalous response to a normal request, namely a forbidden or wrong-path result for a request that carried no ambiguity of its own, because it was appended to the smuggled prefix.
 
 ## Adversarial Capabilities
@@ -44,7 +44,7 @@ The smuggling goal is a prepended request executed under another party's connect
 ## Trust Assumptions
 
 - **The agreement**: the stack treats an attacker-influenced value that reaches a response header field as inert data at the moment the feature executes, holds the value free of framing meaning from capture through serialization, holds one declared interpreter for the value across the proxy-to-backend-to-client path, keeps the request in its declared method plus path plus protocol shape, keeps each response observable only to its caller, and keeps link targets plus cached bodies plus session state plus token-bearing destinations out of attacker reach.
-- **The failing clause**: this variant breaks the framing-agreement clause because a framing pair splits the frontend read from the backend read and leaks leftover bytes across requests.
+- **The failing clause**: a framing pair splits the frontend read from the backend read and leaks leftover bytes across requests.
 
 ## Key Vulnerabilities
 
@@ -67,8 +67,7 @@ The smuggling goal is a prepended request executed under another party's connect
 - **Frame splitting**: split the framing payload across continuation frames so reassembly order decides which side filters first.
 - **Duplicate length declarations**: smuggle duplicate length declarations where the enforcing side reads one member while the backend reads the other.
 - **Encoded-length layering**: layer encoded-length forms past a filter that decodes fewer times than the framing parser.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -90,7 +89,7 @@ Smuggling runs boundary mapping before pairing and leakage proof last, because d
 
 - **Stop condition**: stop when the evidence shows agreement or ordinary connection behavior, because syntax without leakage is only noise.
 - **Pipelining resolution**: request indicators that resolve to normal pipelining or keep-alive behavior, confirmed by clean-sequential baselines.
-- **Frontend-backend agreement**: frontend and backend agreeing on every pair shape, confirmed by uniform reads across the sweep.
+- **Agreement**: frontend and backend agreeing on every pair shape, confirmed by uniform reads across the sweep.
 - **Single-parser topology**: single-parser topology with no boundary pair, confirmed by deployment mapping rather than probing.
 - **Unrelated anomalies**: queue anomalies that reproduce without any framing pair, confirmed by clean-replay repetition.
 

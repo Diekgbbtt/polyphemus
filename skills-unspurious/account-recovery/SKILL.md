@@ -109,8 +109,7 @@ The class covers the request step, the artifact lifecycle, the binding between a
 - **Supersession defeat**: keep the first artifact valid across a re-issue, where the flow issues a second artifact without invalidating the first.
 - **Cross-account identity swap**: supply a different identity at completion where the artifact is not joined to the account it was issued for.
 - **Old-address confirmation**: where the flow confirms an address change only to the new address, the current address owner never sees the change.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -156,4 +155,3 @@ Recovery testing baselines the delivery first and mutates one control second, be
 
 A recovery flow is safe only when its artifact is unguessable, single-use, short-lived, and joined to the account it changes, and when every transition it reaches carries its own proof.
 Test the artifact and the transition set together, because the flow is as strong as its weakest accepted path.
-

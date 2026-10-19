@@ -26,7 +26,7 @@ One destination value, two readers, two targets. This variant exploits the gap b
 
 ## Detection Channels
 
-- **Channel scope**: destination parse differentials listen to the two targets one value yields, so only the entries below are live here.
+- **Channel scope**: destination parse differentials listen to the two targets one value yields.
 - **Two-target value**: the same destination value read as two different targets by two components, which is the primary signal.
 - **Unnamed-target arrival**: an arrival at a target the approver never named, which proves the consuming parse won.
 - **Paired baseline**: a paired baseline where the direct destination and the shaped value reach different targets across one operation.

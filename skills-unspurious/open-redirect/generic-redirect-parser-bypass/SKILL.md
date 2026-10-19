@@ -88,10 +88,8 @@ Treat the destination as hostile until one canonical parser has constrained it t
 - **Fragment and query values**: shape fragment and query values that mask the effective destination from prefix checks.
 - **Confusable-character and trailing-dot values**: shape confusable-character and trailing-dot values that equalize differently per parser.
 - **Double-encoded and case-varied values**: shape double-encoded and case-varied values that decode one extra time in the consumer.
-
 - **Proxy-techniques handoff**: the destination parse comparison is the proxy-techniques family's step; name it there and keep the class-specific navigation verdict here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

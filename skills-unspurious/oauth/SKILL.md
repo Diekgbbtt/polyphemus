@@ -133,8 +133,7 @@ OAuth and OIDC failures often enable account takeover, token theft, and cross-cl
 - **Wildcard plus claimable name**: wildcard acceptance combined with a claimable or dangling sibling name.
 - **Separator confusion**: separator and authority-confusion shapes inside the destination value.
 - **Double-encoded separators**: encoded and double-encoded forms of separators, resolved by the consumer after validation.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

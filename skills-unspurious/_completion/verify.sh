@@ -184,15 +184,15 @@ fi
 
 # 10. Every non-family SKILL.md that carries a `## Bypass Techniques` section
 # closes it with the canonical extended-reading pointer to the two families,
-# exactly once. The two family bundles ARE the extended reading, so they are
-# exempt.
-pointer="When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families."
+# exactly once, as the section's last record. The two family bundles ARE the
+# extended reading, so they are exempt.
+pointer="- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families."
 pointer_bad=""
 for f in $(grep -rlE '^## Bypass Techniques' skills-unspurious --include=SKILL.md); do
   case "$f" in
     skills-unspurious/defence-bypass/*|skills-unspurious/proxy-techniques/*) continue ;;
   esac
-  if [ "$(grep -cF "$pointer" "$f")" != "1" ]; then pointer_bad="$pointer_bad $f"; fi
+  if [ "$(grep -cF -e "$pointer" "$f")" != "1" ]; then pointer_bad="$pointer_bad $f"; fi
 done
 if [ -z "$pointer_bad" ]; then
   pass "every class bypass section carries the extended-reading pointer once"
@@ -200,6 +200,69 @@ else
   printf 'FAIL  every class bypass section carries the extended-reading pointer once; offenders:%s\n' "$pointer_bad"
   fail=1
 fi
+
+# 11. The reference layout of the twelve enumerable sections. Every non-blank,
+# non-heading, non-fence, non-indented line there is one record
+# (`- **<identifier>**: <content>.`): no prose paragraph, no numbered item, and
+# no bare `**Group**` line in a variant. A level-1 class parent keeps its
+# `**Group**` labels above its records, which is the reference-native
+# organisation of the parent layer, so the bare-bold line is allowed there and
+# only there. `## Variants` is exempt because checks 8's R9/R10 sweep parses its
+# line set, and the out-of-scope sections (front matter, title, intro, Testing
+# Methodology, Summary) keep their prose by the spec's section 4.
+# The scan is awk-based on purpose: a `grep -n` prefix defeats an anchored `-v`
+# filter, so the line-number form is built only for the offender report.
+layout_scan() {
+  local root="$1" out="$2"
+  : > "$out"
+  find "$root" -name SKILL.md -print | sort | while IFS= read -r f; do
+    rel="${f#"$root"/}"
+    cp_flag=0
+    case "$rel" in
+      */*/*) ;;
+      */*) cp_flag=1 ;;
+    esac
+    awk -v cp="$cp_flag" '
+      function inscope_head(h) {
+        return h == "## Attack Surface" || h == "## Reconnaissance" || \
+               h == "## Detection Channels" || h == "## Adversarial Capabilities" || \
+               h == "## Trust Assumptions" || h == "## Key Vulnerabilities" || \
+               h == "## Advanced Techniques" || h == "## Bypass Techniques" || \
+               h == "## Chaining Attacks" || h == "## False Positives" || \
+               h == "## Pro Tips" || h == "## Tooling"
+      }
+      BEGIN { inscope = 0; fence = 0 }
+      /^## / { inscope = inscope_head($0); fence = 0; next }
+      {
+        if (!inscope) next
+        if ($0 ~ /^```/) { fence = !fence; next }
+        if (fence) next
+        if ($0 ~ /^[[:space:]]*$/) next
+        if ($0 ~ /^#/) next
+        if ($0 ~ /^[[:space:]]/) next
+        if ($0 ~ /^- \*\*[^*]+\*\*: .+\.$/) next
+        if ($0 ~ /^[0-9]+\./) {
+          printf "%s:%d: numbered item: %s\n", FILENAME, FNR, $0; next
+        }
+        if ($0 ~ /^\*\*[^*]+\*\*$/ && cp == 1) next
+        if ($0 ~ /^\*\*[^*]+\*\*$/) {
+          printf "%s:%d: bare group header: %s\n", FILENAME, FNR, $0; next
+        }
+        printf "%s:%d: not a record: %s\n", FILENAME, FNR, $0
+      }
+    ' "$f" >> "$out"
+  done
+}
+layout_tmp="${TMPDIR:-/tmp}/skills-layout-$$.txt"
+layout_scan skills-unspurious "$layout_tmp"
+if [ -s "$layout_tmp" ]; then
+  printf 'FAIL  every enumerable-section line is a reference record; offenders:\n'
+  sed 's/^/      /' "$layout_tmp"
+  fail=1
+else
+  pass "every enumerable-section line is a reference record"
+fi
+rm -f "$layout_tmp"
 
 if [ "$fail" != 0 ]; then
   summary="FAILURES-PRESENT"

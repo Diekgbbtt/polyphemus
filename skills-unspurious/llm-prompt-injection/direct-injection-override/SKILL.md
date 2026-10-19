@@ -13,7 +13,7 @@ The override goal is a visible behavior change against developer intent that lat
 
 ## Attack Surface
 
-- **Applicability**: centers on an LLM-backed feature reachable through direct conversational input in the attacker's own session.
+- **Applicability**: an LLM-backed feature reachable through direct conversational input in the attacker's own session.
 - **Merge behavior**: the feature accepts free-text turns that are merged into a single prompt alongside developer instructions.
 - **Exclusions**: no ingested third-party content and no victim trigger is required for this variant.
 - **Proof scope**: a tool layer or output sink may exist downstream, but this variant proves only the chat-behavior override itself.
@@ -28,11 +28,11 @@ The override goal is a visible behavior change against developer intent that lat
 
 ## Detection Channels
 
-- **Channel scope**: override listens to chat behavior, so only the entries below are live here.
-- **Behavior change**: behavior change against developer intent confirms the model followed attacker instructions.
-- **Refusal-pattern shift**: refusal-pattern shift across repeated turns signals a guardrail boundary rather than a pass.
+- **Channel scope**: override listens to chat behavior.
+- **Behavior change**: against developer intent confirms the model followed attacker instructions.
+- **Refusal-pattern shift**: across repeated turns signals a guardrail boundary rather than a pass.
 - **Resisted probe**: absence of change after override plus breakout plus wrapped attempts records a resisted probe.
-- **Non-reproducible compliance**: non-reproducible compliance across runs marks chatter rather than a finding.
+- **Non-reproducible compliance**: across runs marks chatter rather than a finding.
 
 ## Adversarial Capabilities
 
@@ -78,14 +78,13 @@ The override goal is a visible behavior change against developer intent that lat
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no wrapper changes the override step itself.
-- **Encoding wrappers**: encoding wrappers transform the instruction shape past a textual input filter.
+- **Encoding wrappers**: transform the instruction shape past a textual input filter.
 - **Matcher probing**: encoded, transposed, or substituted-alphabet forms of a blocked phrase pass a keyword matcher, so probe the matcher beside the model.
-- **Character-substitution wrappers**: character-substitution wrappers alter surface form while preserving model readability.
-- **Translation wrappers**: translation wrappers shift the instruction into another language form the filter misses.
-- **Multi-turn laundering**: multi-turn laundering splits one blocked request across several turns that merge in context.
-- **Role-play framing**: role-play framing wraps the same instruction in a hypothetical the guard misclassifies.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Character-substitution wrappers**: alter surface form while preserving model readability.
+- **Translation wrappers**: shift the instruction into another language form the filter misses.
+- **Multi-turn laundering**: splits one blocked request across several turns that merge in context.
+- **Role-play framing**: wraps the same instruction in a hypothetical the guard misclassifies.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -108,10 +107,10 @@ Override runs direct turns first and everything else follows, because no sink pr
 
 - **Stop rule**: stop when the evidence shows words without effect, because chatter without a behavior change is not a finding.
 - **Described override**: the model describing an override it never performs in subsequent behavior.
-- **Hallucinated instruction text**: hallucinated instruction text that matches no real developer directive.
-- **Single-run compliance**: single-run compliance that never reproduces across repeated turns.
+- **Hallucinated instruction text**: that matches no real developer directive.
+- **Single-run compliance**: that never reproduces across repeated turns.
 - **Held refusal boundary**: properly refused turns where the refusal boundary holds across wrappers.
-- **Sandbox-scoped compliance**: sandbox-scoped compliance with no reachable tool, sink, or hidden text behind it.
+- **Sandbox-scoped compliance**: with no reachable tool, sink, or hidden text behind it.
 
 ## Pro Tips
 

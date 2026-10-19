@@ -13,8 +13,8 @@ The goal is duplicate side effects plus over-issuance plus inconsistent aggregat
 
 ## Attack Surface
 
-- **Applicability**: cross-service applicability centers on multi-step sagas and asynchronous jobs with eventual consistency between services.
-- **Surface composition**: the surface holds reserve plus commit plus publish plus compensate sequences where correctness depends on visibility ordering rather than on a single atomic guard.
+- **Applicability**: centers on multi-step sagas and asynchronous jobs with eventual consistency between services.
+- **Surface composition**: reserve plus commit plus publish plus compensate sequences where correctness depends on visibility ordering rather than on a single atomic guard.
 - **Widening factors**: writes committed before publication, consumers without idempotent handling, and compensations that roll back without blocking the success path all widen the surface.
 - **Out-of-scope variant**: single-service increments ride in the parent core rather than here, because this variant owns only distributed windows.
 
@@ -27,11 +27,11 @@ The goal is duplicate side effects plus over-issuance plus inconsistent aggregat
 
 ## Detection Channels
 
-- **Channel scope**: cross-service listens for ordering-shaped divergence, so only the entries below are live here.
+- **Channel scope**: cross-service listens for ordering-shaped divergence.
 - **Audit-log disorder**: audit logs out of order across services with the dependent action timestamped before the authoritative write.
 - **Correlation-identifier gaps**: missing or duplicate correlation identifiers across the saga trace for one intent.
-- **Duplicate downstream writes**: where one worker retry produces a second persistent side effect.
-- **Inconsistent aggregates**: where service ledgers disagree after the burst settles.
+- **Duplicate downstream writes**: one worker retry produces a second persistent side effect.
+- **Inconsistent aggregates**: service ledgers disagree after the burst settles.
 
 ## Adversarial Capabilities
 
@@ -44,9 +44,8 @@ The goal is duplicate side effects plus over-issuance plus inconsistent aggregat
 
 ## Trust Assumptions
 
-- **The agreement**: the feature trusts that concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed.
-- **The exposure**: sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
-- **The failing clause**: this variant breaks the visibility-ordering clause because a dependent action proceeds before the authoritative write becomes visible.
+- **The agreement**: concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed, and sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
+- **The failing clause**: the variant breaks the visibility-ordering clause because a dependent action proceeds before the authoritative write becomes visible.
 
 ## Key Vulnerabilities
 
@@ -72,12 +71,11 @@ The goal is duplicate side effects plus over-issuance plus inconsistent aggregat
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no throttle difference changes the ordering step itself.
-- **Identity rotation**: identity rotation across sessions widens the burst when per-entity throttles cap one principal.
-- **Slow-backend provocation**: slow-backend provocation widens the visibility window so the dependent act lands before publication.
+- **Identity rotation**: rotate identities across sessions to widen the burst when per-entity throttles cap one principal.
+- **Slow-backend provocation**: widen the visibility window with slow-backend provocation so the dependent act lands before publication.
 - **Proxy-technique pointer**: name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
 - **Defence-bypass pointer**: name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -99,14 +97,14 @@ Cross-service maps the ordering first and everything else triggers, because no l
 ## False Positives
 
 - **Ordering-held stop**: stop when the evidence shows ordering held, because idempotent consumers are not a finding.
-- **Clean redeliveries**: redeliveries deduped cleanly with a single durable downstream write.
-- **Serializable transactions**: serializable transactions or correct queues that serialize the dependent act behind the publish.
+- **Clean redeliveries**: redeliveries dedup cleanly with a single durable downstream write.
+- **Serializable transactions**: serializable transactions or correct queues serialize the dependent act behind the publish.
 - **Visual-only divergence**: visual-only divergence without durable disagreement across service ledgers.
-- **True compensations**: compensations that truly reversed the success path with matching ledger annotations.
+- **True compensations**: compensations truly reverse the success path with matching ledger annotations.
 
 ## Pro Tips
 
-- **Ordering discipline**: cross-service rewards ordering discipline plus trace discipline plus minimal bursts.
+- **Discipline**: cross-service rewards ordering discipline plus trace discipline plus minimal bursts.
 - **Timed downstream act**: prefer one carefully timed downstream act before scaling, then scale only to map the lag.
 - **Direct calls**: favor direct calls over scripted interface clicks so timeout provocation stays controlled.
 - **Leg logging**: log every leg behind correlation identifiers and timestamps so the interleaving is provable.

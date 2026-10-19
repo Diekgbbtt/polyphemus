@@ -79,9 +79,8 @@ Treat any same-response arithmetic proof as injection-shaped until the coinciden
 - **Encoding layering**: survives pre-render filters by arriving in an encoding that decodes only at the template stage.
 - **Whitespace, case, and precedence variants**: defeat naive keyword denylists while preserving evaluation semantics.
 - **Multi-stage pipelines**: carry payloads through markup or formatting layers that strip raw syntax but preserve fenced or encoded blocks.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 ## Chaining Attacks
 
 - **File-write primitives**: establish persistence by placing executable content where a follow-up request triggers it.
@@ -92,13 +91,13 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Find templated input** - submit a benign marker through every candidate sink, and the step completes when each sink is listed with its reflection behaviour recorded.
-2. **Fingerprint the engine** - run one arithmetic probe per delimiter family, and the step completes when exactly one grammar evaluates and the family is recorded.
-3. **Confirm evaluation** - the first bent step, by showing computed output rather than literal echo, and the step completes when a second independent expression also computes and the markup-escaping line is adjudicated.
-4. **Probe sandbox state** - request framework globals through the confirmed grammar, and the step completes when the reachable pool or its definitive denial is recorded.
-5. **Enumerate gadgets** - walk reflection paths from the reachable pool, and the step completes when at least one shell-equivalent chain or a definitive negative is recorded.
-6. **Reach execution** - invoke the shortest gadget chain, and the step completes when command output or an opaque execution handle is observed.
-7. **Validate side effects** - through an observable execution signal, and the step completes when the effect is tied to the submitted probe.
+1. Find templated input by submitting a benign marker through every candidate sink with completion when each sink is listed with its reflection behaviour recorded.
+2. Fingerprint the engine by running one arithmetic probe per delimiter family with completion when exactly one grammar evaluates and the family is recorded.
+3. Confirm evaluation, the first bent step, by showing computed output rather than literal echo with completion when a second independent expression also computes and the markup-escaping line is adjudicated.
+4. Probe sandbox state by requesting framework globals through the confirmed grammar with completion when the reachable pool or its definitive denial is recorded.
+5. Enumerate gadgets by walking reflection paths from the reachable pool with completion when at least one shell-equivalent chain or a definitive negative is recorded.
+6. Reach execution by invoking the shortest gadget chain with completion when command output or an opaque execution handle is observed.
+7. Validate side effects through an observable execution signal with completion when the effect is tied to the submitted probe.
 
 ## False Positives
 

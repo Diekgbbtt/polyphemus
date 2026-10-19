@@ -44,8 +44,7 @@ The theft goal is an attacker-initiated login the victim approves, yielding a se
 
 ## Trust Assumptions
 
-- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it.
-- **The exposure**: sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
+- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it, and sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
 - **The failing clause**: this variant breaks the approval-channel clause because a victim approval for an attacker-issued code is honored as though the requester and the approver were the same party.
 
 ## Key Vulnerabilities
@@ -79,8 +78,7 @@ The theft goal is an attacker-initiated login the victim approves, yielding a se
 - **Slow-only rate limits**: pass a polling side that throttles without ever blocking, with the partial-limit step owned by the defence-bypass family.
 - **Unbound approvals**: pass a confirmation side that never joins the approver identity to the requester session.
 - **Unverified approval screens**: pass an inducement where any visitor can confirm any code.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -71,8 +71,7 @@ The exfiltration goal is metadata plus table rows delivered to the listener with
 - **Numeric and character-builder encodings**: numeric plus character-builder encodings reach the parser past literal-pattern filters.
 - **Clause relocation**: clause relocation through derived tables plus common table expressions hides the callback shape.
 - **Blind fallback**: fallback to blind extraction applies only when egress filtering removes every callback.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

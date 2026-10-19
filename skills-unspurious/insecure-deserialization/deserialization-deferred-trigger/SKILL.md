@@ -28,21 +28,21 @@ This variant plants a payload at an injection locus, induces or awaits the disti
 ## Detection Channels
 
 - **Delayed callbacks**: confirm a planted blob rehydrated after the submission interaction closed.
-- **Timing correlation between plant, trigger, and callback**: attributes the effect to the paired loci.
+- **Timing correlation**: attributes the effect to the paired loci across the plant, trigger, and callback.
 - **File-operation trigger signals**: confirm a path reference reached implicit deserialization.
 - **Job and administrative invocation records**: confirm the trigger ran after the plant landed.
 
 ## Adversarial Capabilities
 
-- **Prerequisites**: this variant presupposes the ability to plant stored values at reachable injection loci.
+- **Stored-value planting**: presupposes the ability to plant stored values at reachable injection loci.
 - **Trigger inducement**: induces triggers through exports, cache warming, or administrative actions where the agent holds access, and otherwise awaits scheduled triggers.
-- **Delayed oracle listener**: operates a delayed oracle listener that stays open across the plant-to-trigger window.
+- **Delayed oracle listener**: operates a listener that stays open across the plant-to-trigger window.
 - **Path-reference shaping**: shapes path references that file operations consume as implicit triggers.
 
 ## Trust Assumptions
 
-- **The agreement**: the feature executes an object-graph rehydration step under a standing agreement. The agreement holds that every consumed blob is sender-faithful and every stored blob reaches rehydration unmodified. The runtime exposes only its own stored state, rehydrates only what its own writers produced, and leaks at most a benign error on malformed input.
-- **The failing clause**: the storage-stability clause: the blob is planted at one locus and rehydrated at a distinct later trigger outside the submission interaction.
+- **The agreement**: the feature executes an object-graph rehydration step where every consumed blob is sender-faithful and every stored blob reaches rehydration unmodified, the runtime exposes only its own stored state, rehydrates only what its own writers produced, and leaks at most a benign error on malformed input.
+- **The failing clause**: the blob is planted at one locus and rehydrated at a distinct later trigger outside the submission interaction.
 
 ## Key Vulnerabilities
 
@@ -67,35 +67,34 @@ This variant plants a payload at an injection locus, induces or awaits the disti
 - **Storage-locus staggering**: stagger plants across equivalent storage loci when one locus is inspected and another feeds the same trigger.
 - **Trigger blending**: spread trigger inducement across normal-use actions so the trigger blends with expected administrative behaviour.
 - **Defence-bypass family naming**: name the defence-bypass family at steps that defeat hardened inspection instead of restating its mechanics here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
 - **Delayed code execution**: hands off to command-execution consumers once correlation attributes the effect to the plant.
 - **Delayed credential or session effects**: hand off to the authorization-principal skill for privilege-effect demonstration.
-- **Egress opened through resolved references**: hands off to server-side request consumers where the fetch is owned.
+- **Egress through resolved references**: hands off to server-side request consumers where the fetch is owned.
 
 ## Testing Methodology
 
-1. **Plant-trigger pairing** - pair each plantable injection locus with its distinct trigger locus; the step is complete when every pair has a recorded inducement action or a documented await-only finding.
-2. **Correlatable planting** - plant a uniquely correlatable value at the injection locus; the step is complete when the stored value is confirmed present without yet claiming deserialization.
-3. **Trigger inducement** - induce or await the trigger at the distinct locus; the step is complete when the trigger invocation is confirmed through interface feedback or invocation records.
-4. **Delayed-oracle correlation** - correlate the delayed oracle back to the plant through correlator match and timing order; the step is complete when exactly one plant explains the observed effect.
-5. **Bounded impact** - demonstrate bounded impact through the correlated trigger with the least destructive action; the step is complete when the effect ties to the planted value and not to background activity.
-6. **Remaining coverage** - cover remaining plant loci and wrapper-implicit paths; the step is complete when each named storage and path-reference locus is tested or ruled out with an observation.
+1. Pair each plantable injection locus with its distinct trigger locus; the step is complete when every pair has a recorded inducement action or a documented await-only finding.
+2. Plant a uniquely correlatable value at the injection locus; the step is complete when the stored value is confirmed present without yet claiming deserialization.
+3. Induce or await the trigger at the distinct locus; the step is complete when the trigger invocation is confirmed through interface feedback or invocation records.
+4. Correlate the delayed oracle back to the plant through correlator match and timing order; the step is complete when exactly one plant explains the observed effect.
+5. Demonstrate bounded impact through the correlated trigger with the least destructive action; the step is complete when the effect ties to the planted value and not to background activity.
+6. Cover remaining plant loci and wrapper-implicit paths; the step is complete when each named storage and path-reference locus is tested or ruled out with an observation.
 
 ## False Positives
 
-- **Schema-validated storage**: storage layers that re-encode or schema-validate blobs into primitive-only structures close this variant when rehydration never instantiates graphs.
+- **Schema-validated storage**: re-encoding or schema validation into primitive-only structures closes this variant when rehydration never instantiates graphs.
 - **Unexecuted triggers**: triggers that never execute during the observation window leave an uncorrelated plant rather than a finding.
 - **Background-matching callbacks**: callbacks that match background activity instead of the unique correlator mark misattribution rather than success.
-- **Sandboxed trigger contexts**: sandboxed trigger contexts without network or execution primitives neutralise the effect demonstration when isolation is verified thoroughly.
+- **Sandboxed trigger contexts**: neutralise the effect demonstration when no network or execution primitive is reachable and isolation is verified thoroughly.
 - **Misleading error text**: error text naming storage classes without the planted value reaching rehydration marks a dead code path rather than a finding.
 
 ## Pro Tips
 
-- **Unique correlators**: plant unique correlators on every run, since concurrent jobs make untagged delays unreadable.
+- **Unique correlators**: plant a unique correlator on every run, since concurrent jobs make untagged delays unreadable.
 - **Fastest trigger first**: prefer the fastest inducible trigger first, since short windows produce the cleanest attribution.
 - **Listener persistence**: keep the delayed listener open past the longest expected schedule before ruling a locus out.
 - **Time recording**: record plant time, trigger time, and callback time together so the correlation survives later review.

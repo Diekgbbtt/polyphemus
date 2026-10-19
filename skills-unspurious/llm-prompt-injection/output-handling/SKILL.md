@@ -13,9 +13,9 @@ The handling goal is proven rendering, execution, forwarding, or exfiltration ra
 
 ## Attack Surface
 
-- **Applicability**: centers on an LLM-backed feature whose output flows into an interpreting sink.
+- **Applicability**: an LLM-backed feature whose output flows into an interpreting sink.
 - **Sink behaviors**: the sink renders markup, runs statements, follows links, or forwards content to another system.
-- **Delivery paths**: delivery may arrive through direct turns or planted content, since delivery is an aspect carried inside this variant.
+- **Delivery paths**: direct turns or planted content, since delivery is an aspect carried inside this variant.
 - **Evidence requirement**: a sink transcript or otherwise observable sink behavior is required for this variant.
 
 ## Reconnaissance
@@ -28,7 +28,7 @@ The handling goal is proven rendering, execution, forwarding, or exfiltration ra
 
 ## Detection Channels
 
-- **Channel scope**: handling listens to sink behavior, so only the entries below are live here.
+- **Channel scope**: handling listens to sink behavior.
 - **Rendered execution**: rendered script execution or dispatched request at the sink confirms a handling positive.
 - **Outbound exfiltration**: outbound request carrying context data to an attacker-observable destination confirms an exfiltration channel.
 - **Name-resolution exfiltration**: name-resolution queries whose labels carry context data confirm an exfiltration channel where full egress is filtered.
@@ -74,12 +74,11 @@ The handling goal is proven rendering, execution, forwarding, or exfiltration ra
 ## Bypass Techniques
 
 - **Bypass scope**: bypass forms stay aspects inside this variant because no wrapper changes the sink step itself.
-- **Encoding wrappers**: encoding wrappers disguise the emission shape past output-side filters.
-- **Markup variation**: markup variation rotates tag and attribute forms when one shape is neutralised.
-- **Split-emission framing**: split-emission framing spreads one sink payload across several model outputs that merge at the sink.
-- **Context-breakout shaping**: context-breakout shaping closes the surrounding sink template before opening the new construct.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Encoding wrappers**: disguise the emission shape past output-side filters.
+- **Markup variation**: rotates tag and attribute forms when one shape is neutralised.
+- **Split-emission framing**: spreads one sink payload across several model outputs that merge at the sink.
+- **Context-breakout shaping**: closes the surrounding sink template before opening the new construct.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -104,8 +103,8 @@ Handling runs emission first and everything else follows, because no impact clai
 - **Properly encoded output**: model output the sink properly encodes or sanitizes before rendering or running.
 - **Unreached emission**: emitted shapes that never reach a sink transcript or observable sink behavior.
 - **Undelivered exfiltration**: exfiltration-shaped output whose outbound request never arrives at the observable destination.
-- **Single-run rendering**: single-run rendering that never reproduces across repeated emissions.
-- **Sandbox-rendered output**: sandbox-rendered output with no sensitive data or action reachable behind it.
+- **Single-run rendering**: that never reproduces across repeated emissions.
+- **Sandbox-rendered output**: with no sensitive data or action reachable behind it.
 
 ## Pro Tips
 

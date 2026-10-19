@@ -115,8 +115,7 @@ The class owns predicate bypass, node-set widening, node-name discovery, and bli
 - **Alternate path syntax**: abbreviated paths, wildcards, and descendant axes reach the same nodes when the obvious path form is filtered.
 - **Encoding layers**: an encoding that survives the filter and decodes before the expression parses restores the grammar characters.
 - **Predicate substitution**: substitute an equivalent predicate for a filtered function or operator, and build the oracle from what remains reachable.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

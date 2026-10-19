@@ -83,8 +83,7 @@ The confirmation goal is reversed session direction that later enables data capt
 - **Header-value steering**: null plus missing plus cross-origin header values steer the planting sequence past a weak origin or referrer check.
 - **Cleared-state steering**: forced logout steers the flow through a cleared state where fresh planting faces the weakest check.
 - **Referrer stripping**: referrer stripping through an empty-context navigation source presents the planting without its origin context.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

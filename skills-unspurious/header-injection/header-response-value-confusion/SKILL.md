@@ -14,7 +14,7 @@ The confusing goal is jar plus render plus navigation control within one respons
 ## Attack Surface
 
 - **Applicability**: centers on response header values consumed in the same response by the cookie jar, the renderer, or the navigator.
-- **Replacement values**: carry no line break and use delimiter-free shapes such as attribute suffixes plus media values plus disposition directives plus redirect destinations.
+- **Replacement values**: replacement values carry no line break and use delimiter-free shapes such as attribute suffixes plus media values plus disposition directives plus redirect destinations.
 - **Excluded framing**: line-break framing payloads belong to header-crlf-splitting and are excluded here by the delimiter-free predicate, so this variant never proves stored framing.
 - **Excluded shapes**: framing-disagreement pairs belong to header-request-smuggling, and cache-key splits belong to header-cache-poisoning, so neither rides here.
 
@@ -27,8 +27,8 @@ The confusing goal is jar plus render plus navigation control within one respons
 
 ## Detection Channels
 
-- **Confusion**: listens to same-response client behavior, so only the entries below are live here.
-- **Cookie-jar state change**: widened scope plus persisted attacker cookie plus shadowed session name binds the probe to the jar sink.
+- **Confusion**: listens to same-response client behavior.
+- **Cookie-jar state change**: cookie-jar state change, namely widened scope plus persisted attacker cookie plus shadowed session name, binds the probe to the jar sink.
 - **Sniff-render change**: sniff-render behavior change, namely a body rendered as script-capable content after a media-value replacement, binds the probe to the renderer sink.
 - **Navigation to replaced destination**: navigation to a replaced destination inside the same response binds the probe to the redirect sink.
 - **Header-value diff**: header-value diff between the replacement replay and a clean replay isolates the replaced semantics from ambient variation.
@@ -44,7 +44,7 @@ The confusing goal is jar plus render plus navigation control within one respons
 ## Trust Assumptions
 
 - **The agreement**: the stack treats an attacker-influenced value that reaches a response header field as inert data at the moment the feature executes, holds the value free of framing meaning from capture through serialization, holds one declared interpreter for the value across the proxy-to-backend-to-client path, keeps the request in its declared method plus path plus protocol shape, keeps each response observable only to its caller, and keeps link targets plus cached bodies plus session state plus token-bearing destinations out of attacker reach.
-- **The failing clause**: this variant breaks the client-semantics clause because a delimiter-free replacement rewrites jar plus render plus navigation meaning inside the same response.
+- **The failing clause**: a delimiter-free replacement rewrites jar plus render plus navigation meaning inside the same response.
 
 ## Key Vulnerabilities
 
@@ -68,8 +68,7 @@ The confusing goal is jar plus render plus navigation control within one respons
 - **Separator smuggling**: smuggle separator-equivalent characters inside redirect destinations past a filter that strips only strict delimiters.
 - **Encoded-scheme layering**: layer encoded-scheme forms past a filter that decodes fewer times than the navigator.
 - **Field casing**: mangle sink-field casing where the filter keys off exact spelling while the client folds case.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

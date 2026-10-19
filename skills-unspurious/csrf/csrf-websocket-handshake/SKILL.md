@@ -83,8 +83,7 @@ The confirmation goal is two-phase transport abuse under the victim session that
 - **Header-value steering**: null plus missing plus cross-origin header values steer the handshake past a weak origin check.
 - **Upgrade-shape steering**: upgrade-shape reliance steers the request through a path whose checks differ from plain HTTP paths.
 - **Referrer stripping**: referrer stripping through an empty-context navigation source presents the handshake without its origin context.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

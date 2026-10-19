@@ -68,21 +68,14 @@ The embedded request is executed by the back-end as a first-class request from t
 
 ## Advanced Techniques
 
-**Attribute Set Enumeration**
-- **Mapped and unmapped positions**: move the injected field between mapped and unmapped positions to learn which positions the hop forwards.
-- **Per-position verdicts**: record one verdict per position so the mapped set stays explicit.
-
-**Terminator Variation**
+- **Attribute-set positions**: move the injected field between mapped and unmapped positions to learn which positions the hop forwards.
+- **Attribute-set verdicts**: record one verdict per position so the mapped set stays explicit.
 - **Terminator and length encoding**: vary the frame's terminator and length encoding to find the shape the back-end honours over the HTTP declaration.
-- **Smallest variation**: prefer the smallest variation that still reaches the back-end unchanged.
-
-**Shared-Pool Amplification**
+- **Smallest terminator variation**: prefer the smallest variation that still reaches the back-end unchanged.
 - **Shared back-end pool**: prefer a shared back-end pool, because a per-client connection limits the smuggled frame to its own client.
-- **Connection confirmation**: confirm connection correspondence before attempting capture-shaped effects.
-
-**Quiet Confirmation**
-- **Marker and pairing anomaly**: confirm with a marker read plus a response-pairing anomaly before attempting interior-path reach.
-- **Short embedded request**: keep the embedded request short during detection and extend it only after the mapping is proven.
+- **Shared-pool connection confirmation**: confirm connection correspondence before attempting capture-shaped effects.
+- **Quiet marker and pairing anomaly**: confirm with a marker read plus a response-pairing anomaly before attempting interior-path reach.
+- **Quiet short embedded request**: keep the embedded request short during detection and extend it only after the mapping is proven.
 
 ## Bypass Techniques
 
@@ -91,8 +84,7 @@ The embedded request is executed by the back-end as a first-class request from t
 - **Attribute-order variation**: reorder attributes where the back-end resolves duplicates by position rather than by name.
 - **Framing-declaration conflict**: present conflicting HTTP framing declarations so the hop's re-derivation and the edge's validation diverge.
 - **Layered combinations**: name the defence-bypass family at the filter step and the proxy-techniques family at the channel-wrapping step rather than restating either here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

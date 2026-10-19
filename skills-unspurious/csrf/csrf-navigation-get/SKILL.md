@@ -84,8 +84,7 @@ The confirmation goal is navigation-triggered semantics under the victim session
 - **Sending-scope steering**: sending-scope reliance steers top-level GETs through the permitted navigation case while direct cross-site sub-requests stay blocked.
 - **Cookie-refresh grace window**: a cookie-refresh grace window re-admits a top-level navigation after a fresh cookie is issued, so the scoping clause weakens at refresh time.
 - **Referrer stripping**: referrer stripping through an empty-context navigation source presents the chain without its origin context.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

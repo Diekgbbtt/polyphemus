@@ -23,12 +23,12 @@ The poisoning goal is an attacker-influenced body served to a victim key, which 
 - **Inventory**: narrows to the key-versus-content split plus the signals that expose it.
 - **Cache-signal mapping**: map cache-signal headers in abstract form, namely age plus hit-or-miss plus key-status indicators, across repeated requests to learn the caching layer and its key behavior.
 - **Split finding**: find inputs that move the body without moving the key by flipping headers plus parameters and diffing bodies beside signal values.
-See references/unkeyed-input-families.md for the component families to sweep against the key.
+- **Unkeyed-input families**: see `references/unkeyed-input-families.md` for the component families to sweep against the key.
 - **Baseline recording**: record eligibility plus fragmentation behavior per sub-shape before sweeping, so each sweep starts from a mapped baseline.
 
 ## Detection Channels
 
-- **Poisoning**: listens for victim-key serving, so only the entries below are live here.
+- **Poisoning**: listens for victim-key serving.
 - **Clean-replay body serving**: attacker-influenced body served under a victim key on clean replay with no new header field required binds the probe to the key-versus-content split.
 - **Cache-signal persistence**: cache-signal values showing a stored hit behind the poisoned body confirm the entry persisted rather than reflecting once.
 - **Control-key body diff**: body diff between the poisoned key and a never-touched control key isolates the attacker influence from ambient content drift.
@@ -45,7 +45,7 @@ See references/unkeyed-input-families.md for the component families to sweep aga
 ## Trust Assumptions
 
 - **The agreement**: the stack treats an attacker-influenced value that reaches a response header field as inert data at the moment the feature executes, holds the value free of framing meaning from capture through serialization, holds one declared interpreter for the value across the proxy-to-backend-to-client path, keeps the request in its declared method plus path plus protocol shape, keeps each response observable only to its caller, and keeps link targets plus cached bodies plus session state plus token-bearing destinations out of attacker reach.
-- **The failing clause**: this variant breaks the cache-key clause because unkeyed input shapes a cached body that a second session receives under a victim key.
+- **The failing clause**: unkeyed input shapes a cached body that a second session receives under a victim key.
 
 ## Key Vulnerabilities
 
@@ -72,8 +72,7 @@ See references/unkeyed-input-families.md for the component families to sweep aga
 - **Deception-suffix shaping**: suffice deception suffixes in cacheable shape past a rule that keys off the address tail alone.
 - **Deception path-discrepancy sweep**: sweep the deception path-discrepancy family, namely delimiter append, encoded separator, encoded percent, null byte, fragment, dot-segment normalization, case variation, and double-encoded path, because each member moves the cache key and the origin path apart.
 - **Sibling boundary**: name the proxy-techniques family at the shared-cache keying step rather than restating its mechanics.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -96,14 +95,14 @@ Poisoning runs split-finding before sweeping and clean replay last, because atta
 - **Stop condition**: stop when the evidence shows the influenced body never leaves the attacker session, because private reflection is only noise.
 - **Personalization**: keyed correctly per session, confirmed by clean-session absence across all sub-shapes.
 - **Fragmentation markers**: honored by the cache, confirmed by per-variant keys that never collapse.
-- **Eligibility**: staying private across the sweep, confirmed by shareability signals that never flip.
+- **Eligibility**: stays private across the sweep, confirmed by shareability signals that never flip.
 - **Poisoned body**: visible only while attack headers ride along, confirmed by clean-replay absence.
 
 ## Pro Tips
 
 - **Poisoning**: rewards split-finding patience over sweep speed, because the unkeyed input is the whole finding.
 - **Split-first**: prefer the body-moving but key-ignored input hunt first, since every sub-shape follows from it.
-- **One sub-shape per probe**: favor one sub-shape per probe so each stored entry attributes cleanly, and probe under a fresh throwaway key so a live victim key is never poisoned during the sweep.
+- **One sub-shape per probe**: favor one sub-shape per probe so each stored entry attributes cleanly.
 - **Clean-session confirmation**: confirm through the second clean session before claiming impact, since attacker-session visibility proves nothing.
 - **Eligibility watch**: watch eligibility signals beside bodies, because a stored-but-private entry is not a victim finding.
 - **Sibling handoff**: hand link-only proto-host results to the spoofing sibling where no cache store backs them.

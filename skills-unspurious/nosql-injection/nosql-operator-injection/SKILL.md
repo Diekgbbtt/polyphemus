@@ -82,8 +82,7 @@ The extraction goal is unauthorized access plus field values rebuilt from boolea
 - **Wrapping variants**: array-wrapped versus object-wrapped operators reach the parser past shape checks that assume one wrapping.
 - **Encoded brackets**: percent-encoded plus double-encoded brackets reach the parser past filters that match only literal bracket text.
 - **Case folding**: case-folding pattern options widen matches past case-sensitive comparisons.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -12,48 +12,48 @@ Object-level authorization failures (BOLA/IDOR) lead to cross-account data expos
 ## Attack Surface
 
 **Scope**
-- **Horizontal access**: reach another subject's objects of the same type
-- **Vertical access**: reach privileged objects or actions
-- **Cross-tenant access**: break isolation boundaries in multi-tenant systems
-- **Cross-service access**: a token or context accepted by the wrong service
+- **Horizontal access**: reach another subject's objects of the same type.
+- **Vertical access**: reach privileged objects or actions.
+- **Cross-tenant access**: break isolation boundaries in multi-tenant systems.
+- **Cross-service access**: a token or context accepted by the wrong service.
 
 **Reference Locations**
-- **HTTP carriers**: paths, query parameters, structured bodies, form data, headers, cookies
-- **Protocol carriers**: token claims, schema-layer arguments, socket messages, RPC messages
+- **HTTP carriers**: paths, query parameters, structured bodies, form data, headers, cookies.
+- **Protocol carriers**: token claims, schema-layer arguments, socket messages, RPC messages.
 
 **Identifier Forms**
-- **Simple forms**: integers, generated identifiers, slugs
-- **Composite keys**: join two scopes in one value
-- **Opaque forms**: opaque tokens, encoded blobs
+- **Simple forms**: integers, generated identifiers, slugs.
+- **Composite keys**: join two scopes in one value.
+- **Opaque forms**: opaque tokens, encoded blobs.
 
 **Relationship References**
-- **Relation fields**: parent, owner, account, tenant, organization, team, project, and subscription references
+- **Relation fields**: parent, owner, account, tenant, organization, team, project, and subscription references.
 
 **Expansion and Projection Knobs**
-- **Knob parameters**: field selection, include, expand, and populate parameters on read operations
-- **Knob resolution**: often resolved without their own authorization check in resolvers or serializers
+- **Knob parameters**: field selection, include, expand, and populate parameters on read operations.
+- **Knob resolution**: often resolved without their own authorization check in resolvers or serializers.
 
 ## Reconnaissance
 
 ### Parameter Analysis
 
-- **Pagination and cursors**: offset, limit, cursor, and continuation handles often reveal or accept another tenant's state
-- **Directory and list endpoints as seeders**: search, list, suggest, and export operations leak object identifiers for later steps
-- **Filter discovery**: find undocumented filters, such as soft-delete or impersonation selectors, that widen the object set
+- **Pagination and cursors**: offset, limit, cursor, and continuation handles often reveal or accept another tenant's state.
+- **Directory and list endpoints as seeders**: search, list, suggest, and export operations leak object identifiers for later steps.
+- **Filter discovery**: find undocumented filters, such as soft-delete or impersonation selectors, that widen the object set.
 
 ### Reference Enumeration
 
-- **Alternate value types**: for one identifier: numeric versus textual forms, scalars versus arrays, arrays versus objects
-- **Edge values**: null, empty, zero, negative, and the maximum integer
-- **Duplicate keys and parameter pollution**: where parser precedence decides which value reaches the lookup
-- **Alias variants**: case and alias variants of the reference name, so the gate and the lookup read different fields
-- **Traversal-shaped values**: traversal-shaped values inside virtual namespaces
+- **Alternate value types**: for one identifier: numeric versus textual forms, scalars versus arrays, arrays versus objects.
+- **Edge values**: null, empty, zero, negative, and the maximum integer.
+- **Duplicate keys and parameter pollution**: where parser precedence decides which value reaches the lookup.
+- **Alias variants**: case and alias variants of the reference name, so the gate and the lookup read different fields.
+- **Traversal-shaped values**: traversal-shaped values inside virtual namespaces.
 
 ### Identifier Sources
 
-- **Harvest sources**: logs, exports, client bundles, analytics endpoints, messages, and public activity
-- **Time-derived identifiers**: which may be guessable within a window
-- **Corpus tooling**: harvest the corpus before any swap, and generate candidate windows around a known identifier with `scripts/idor-id-enumeration`; the sources, the extraction shapes, and the adjudication gate are in `references/identifier-harvesting.md`
+- **Harvest sources**: logs, exports, client bundles, analytics endpoints, messages, and public activity.
+- **Time-derived identifiers**: which may be guessable within a window.
+- **Corpus tooling**: harvest the corpus before any swap, and generate candidate windows around a known identifier with `scripts/idor-id-enumeration`; the sources, the extraction shapes, and the adjudication gate are in `references/identifier-harvesting.md`.
 
 ## Detection Channels
 
@@ -96,110 +96,109 @@ Object-level authorization failures (BOLA/IDOR) lead to cross-account data expos
 
 ### Horizontal and Vertical Access
 
-- **Horizontal probing**: swap object references between principals using the same token to probe horizontal access
-- **Vertical repetition**: repeat with lower-privilege tokens to probe vertical access
-- **Partial updates**: target partial updates for silent unauthorized modifications
-- **Paired arguments**: where one request names a source and a destination (a paired transfer, a copy, a move), test which member carries the check: a validated destination beside an unchecked source is the common asymmetric gap, and each member needs its own verdict
+- **Horizontal probing**: swap object references between principals using the same token to probe horizontal access.
+- **Vertical repetition**: repeat with lower-privilege tokens to probe vertical access.
+- **Partial updates**: target partial updates for silent unauthorized modifications.
+- **Paired arguments**: where one request names a source and a destination (a paired transfer, a copy, a move), test which member carries the check: a validated destination beside an unchecked source is the common asymmetric gap, and each member needs its own verdict.
 
 ### Bulk and Batch Operations
 
-- **Mid-array inclusion**: batch endpoints often validate only the first element; include foreign references mid-array
-- **Import paths**: import operations referencing foreign keys may bypass create-time checks
+- **Mid-array inclusion**: batch endpoints often validate only the first element; include foreign references mid-array.
+- **Import paths**: import operations referencing foreign keys may bypass create-time checks.
 
 ### Secondary References
 
-- **Seeder surfaces**: use list, search, notification, message, and callback surfaces to collect valid identifiers
-- **Direct use**: fetch or mutate the collected objects directly
-- **Pagination manipulation**: pagination manipulation to skip filters and pull other principals' pages
-- **Chained access**: chain one harvested identifier into a second, distinct access: an identifier leaked by one surface (a message, an export, a shared record) fuels an access the first surface never exposed, so harvest before you swap
+- **Seeder surfaces**: use list, search, notification, message, and callback surfaces to collect valid identifiers.
+- **Direct use**: fetch or mutate the collected objects directly.
+- **Pagination manipulation**: pagination manipulation to skip filters and pull other principals' pages.
+- **Chained access**: chain one harvested identifier into a second, distinct access: an identifier leaked by one surface (a message, an export, a shared record) fuels an access the first surface never exposed, so harvest before you swap.
 
 ### Job and Task Objects
 
-- **Job-handle access**: access another principal's job handle to retrieve its results
-- **Job cancellation**: cancel or approve another principal's jobs by referencing their handles
+- **Job-handle access**: access another principal's job handle to retrieve its results.
+- **Job cancellation**: cancel or approve another principal's jobs by referencing their handles.
 
 ### File and Object Storage
 
-- **Object paths**: direct object paths and weakly scoped signed links
-- **Key and link variants**: key-prefix changes, disposition tricks, and stale links reused across tenants
-- **Share-token substitution**: share tokens replaced with tokens from other tenants, including case and encoding variants
+- **Object paths**: direct object paths and weakly scoped signed links.
+- **Key and link variants**: key-prefix changes, disposition tricks, and stale links reused across tenants.
+- **Share-token substitution**: share tokens replaced with tokens from other tenants, including case and encoding variants.
 
 ### Schema-Layer Reads
 
-- **Resolver checks**: enforce resolver-level checks; do not rely on a top-level gate
-- **Per-hop verification**: verify field and edge resolvers bind the resource to the caller on every hop
-- **Batching and aliases**: abuse batching and aliases to retrieve several principals' nodes in one request
-- **Global node lookups**: global node lookups resolve any typed object by identifier; decode and swap the raw identifier
-- **Fragment overfetch**: overfetching through fragments on privileged types
+- **Resolver checks**: enforce resolver-level checks; do not rely on a top-level gate.
+- **Per-hop verification**: verify field and edge resolvers bind the resource to the caller on every hop.
+- **Batching and aliases**: abuse batching and aliases to retrieve several principals' nodes in one request.
+- **Global node lookups**: global node lookups resolve any typed object by identifier; decode and swap the raw identifier.
+- **Fragment overfetch**: overfetching through fragments on privileged types.
 
 ### Microservices and Gateways
 
-- **Token confusion**: token confusion: a token scoped for one service accepted by another because verification checks the signature but not the audience
-- **Header trust**: header trust: proxies and gateways injecting or trusting identity headers; try overriding or removing them
-- **Context loss**: context loss: async consumers reprocess work without re-checking authorization
+- **Token confusion**: token confusion: a token scoped for one service accepted by another because verification checks the signature but not the audience.
+- **Header trust**: header trust: proxies and gateways injecting or trusting identity headers; try overriding or removing them.
+- **Context loss**: context loss: async consumers reprocess work without re-checking authorization.
 
 ### Multi-Tenant
 
-- **Tenant-scoping probes**: probe tenant scoping through headers, subdomains, and path parameters
-- **Tenant mixing**: mix the tenant of the token with a resource from another tenant
-- **Aggregate views**: test rollups and admin views that aggregate several tenants
+- **Tenant-scoping probes**: probe tenant scoping through headers, subdomains, and path parameters.
+- **Tenant mixing**: mix the tenant of the token with a resource from another tenant.
+- **Aggregate views**: test rollups and admin views that aggregate several tenants.
 
 ### Socket and Message Layers
 
-- **Subscription authorization**: authorization per subscription: ensure channel and topic names cannot be guessed from identifiers
-- **Server-side checks**: subscribe and publish checks must run server-side, not only at the handshake
-- **Foreign-identifier messages**: send messages naming another principal's identifiers after joining one's own channels
+- **Subscription authorization**: authorization per subscription: ensure channel and topic names cannot be guessed from identifiers.
+- **Server-side checks**: subscribe and publish checks must run server-side, not only at the handshake.
+- **Foreign-identifier messages**: send messages naming another principal's identifiers after joining one's own channels.
 
 ### RPC Layers
 
-- **Direct message fields**: direct message fields often bypass HTTP-layer middleware; validate references with a generic client holding another principal's token
+- **Direct message fields**: direct message fields often bypass HTTP-layer middleware; validate references with a generic client holding another principal's token.
 
 ### Integrations
 
-- **Callbacks and webhooks**: callbacks and webhooks referencing foreign objects processed without verifying ownership
-- **Third-party importers**: third-party importers syncing data into the wrong tenant because the tenant binding is missing
+- **Callbacks and webhooks**: callbacks and webhooks referencing foreign objects processed without verifying ownership.
+- **Third-party importers**: third-party importers syncing data into the wrong tenant because the tenant binding is missing.
 
 ## Bypass Techniques
 
 **Parser and Transport**
-- **Content-type switching**: content-type switching between structured, form, and multipart bodies
-- **Method tunnelling**: method tunnelling through override headers or fields, or a read verb on an endpoint that accepts state changes
-- **Duplicate keys**: duplicate keys and array injection to bypass naive validators
-- **Version fallback and path decoration**: replay the same action through older version prefixes and through extension-appended path forms, because authorization logic is frequently version-specific and extension handlers frequently skip the middleware
-- **Static keyword swap**: replace a self-referential reference keyword with a numeric or opaque identifier, so the lookup stops resolving from session context
+- **Content-type switching**: content-type switching between structured, form, and multipart bodies.
+- **Method tunnelling**: method tunnelling through override headers or fields, or a read verb on an endpoint that accepts state changes.
+- **Duplicate keys**: duplicate keys and array injection to bypass naive validators.
+- **Version fallback and path decoration**: replay the same action through older version prefixes and through extension-appended path forms, because authorization logic is frequently version-specific and extension handlers frequently skip the middleware.
+- **Static keyword swap**: replace a self-referential reference keyword with a numeric or opaque identifier, so the lookup stops resolving from session context.
 
 **Parameter Pollution**
-- **Duplicate parameters**: duplicate parameters in query or body to influence server-side precedence; try both orderings
-- **Mixed case and aliases**: mixed case and alias names so the gate and the backend disagree
-- **Server-side case**: the server-side case, where the server interpolates the caller's value into a backend URL rather than a text field, is noted in `references/server-side-parameter-pollution.md`, with the mechanism owned by `proxy-techniques-url-parser-differential`
+- **Duplicate parameters**: duplicate parameters in query or body to influence server-side precedence; try both orderings.
+- **Mixed case and aliases**: mixed case and alias names so the gate and the backend disagree.
+- **Server-side case**: the server-side case, where the server interpolates the caller's value into a backend URL rather than a text field, is noted in `references/server-side-parameter-pollution.md`, with the mechanism owned by `proxy-techniques-url-parser-differential`.
 
 **Cache and Gateway**
-- **Cache-key gaps**: cache keys that omit the authorization or tenant binding, which expose cached objects to other users
-- **Key-variation fields**: manipulate the key-variation and accept fields
-- **Redirect and partial responses**: redirect chains and conditional or partial responses that leak content across tenants
-- **Family naming**: name the proxy-techniques family at the shared-cache and relay steps rather than restating its mechanics
+- **Cache-key gaps**: cache keys that omit the authorization or tenant binding, which expose cached objects to other users.
+- **Key-variation fields**: manipulate the key-variation and accept fields.
+- **Redirect and partial responses**: redirect chains and conditional or partial responses that leak content across tenants.
+- **Family naming**: name the proxy-techniques family at the shared-cache and relay steps rather than restating its mechanics.
 
 **Race Windows**
-- **Check-to-use window**: change the referenced identifier between the check and the use with parallel requests
+- **Check-to-use window**: change the referenced identifier between the check and the use with parallel requests.
 
 **Blind Channels**
-- **Differential responses**: use differential responses (status, size, validator, timing) to detect existence
-- **Error-shape differential**: error shape often differs for owned versus foreign objects
-- **Conditional requests**: header-only and conditional requests can confirm existence without full content
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Differential responses**: use differential responses (status, size, validator, timing) to detect existence.
+- **Error-shape differential**: error shape often differs for owned versus foreign objects.
+- **Conditional requests**: header-only and conditional requests can confirm existence without full content.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **IDOR + CSRF**: force victims to trigger unauthorized changes on objects you discovered
-- **IDOR + stored scripting**: pivot into other principals' sessions through data you gained access to
-- **IDOR + server-side fetches**: exfiltrate internal identifiers, then access their corresponding resources
-- **IDOR + race**: bypass spot checks with simultaneous requests
-- **Identifier swap to identity change**: reach the identity-change path for a foreign object, then drive the reset flow to takeover; the terminal primitive is the changed contact field, and the reset steps belong to the authentication classes
-- **Artifact read to session theft**: an artifact whose download name or headers the caller influences feeds a delivery that hands over a session; the session class owns the theft verdict
-- **Relationship write to ownership**: a relation or membership write that changes an owner field turns the object into the caller's; the mass-assignment class owns the bind verdict
-- **Soft-delete persistence**: an identifier that still resolves after removal keeps the access alive, so record the temporal primitive rather than a second swap
-- **Double-IDOR**: chain two distinct identifier swaps so the terminal write lands on a foreign object, keeping each swap's verdict separate
+- **IDOR + CSRF**: force victims to trigger unauthorized changes on objects you discovered.
+- **IDOR + stored scripting**: pivot into other principals' sessions through data you gained access to.
+- **IDOR + server-side fetches**: exfiltrate internal identifiers, then access their corresponding resources.
+- **IDOR + race**: bypass spot checks with simultaneous requests.
+- **Identifier swap to identity change**: reach the identity-change path for a foreign object, then drive the reset flow to takeover; the terminal primitive is the changed contact field, and the reset steps belong to the authentication classes.
+- **Artifact read to session theft**: an artifact whose download name or headers the caller influences feeds a delivery that hands over a session; the session class owns the theft verdict.
+- **Relationship write to ownership**: a relation or membership write that changes an owner field turns the object into the caller's; the mass-assignment class owns the bind verdict.
+- **Soft-delete persistence**: an identifier that still resolves after removal keeps the access alive, so record the temporal primitive rather than a second swap.
+- **Double-IDOR**: chain two distinct identifier swaps so the terminal write lands on a foreign object, keeping each swap's verdict separate.
 
 ## Testing Methodology
 
@@ -226,24 +225,24 @@ The control-pair matrix, the reference-form probe table, and the masked-differen
 
 ## False Positives
 
-- **Public resources**: public or anonymous resources by design
-- **Publicly mirrored data**: soft-private data whose content is already public
-- **Metadata lookups**: idempotent metadata lookups that reveal no sensitive content
-- **Correct checks**: correct row-level checks enforced across all channels
-- **Silent enforcement**: an empty result or null returned for another principal's resource, which is silent enforcement rather than exposure; compare against the owner's view to confirm
+- **Public resources**: public or anonymous resources by design.
+- **Publicly mirrored data**: soft-private data whose content is already public.
+- **Metadata lookups**: idempotent metadata lookups that reveal no sensitive content.
+- **Correct checks**: correct row-level checks enforced across all channels.
+- **Silent enforcement**: an empty result or null returned for another principal's resource, which is silent enforcement rather than exposure; compare against the owner's view to confirm.
 
 ## Pro Tips
 
-- **Seeder endpoints first**: test list, search, and export endpoints first; they are rich identifier seeders
-- **Corpus building**: build a reusable identifier corpus from logs, notifications, messages, and client bundles
-- **Transport toggling**: toggle content-types and transports; authorization middleware often differs per stack
-- **Resolver-boundary validation**: in the schema layer, validate at resolver boundaries; never trust parent authorization to cover children
-- **Tenant variation**: in multi-tenant apps, vary tenant headers, subdomains, and path parameters independently
-- **Batch and job checks**: check batch and background job endpoints; they frequently skip per-item checks
-- **Gateway inspection**: inspect gateways for header trust and cache key composition
-- **Opaque identifiers**: treat opaque identifiers as untrusted; obtain them from leaks and test binding
-- **Blind confirmation**: use timing, size, and validator differentials for blind confirmation when content is masked
-- **Paired evidence**: prove impact with precise before-and-after diffs and role-separated evidence
+- **Seeder endpoints first**: test list, search, and export endpoints first; they are rich identifier seeders.
+- **Corpus building**: build a reusable identifier corpus from logs, notifications, messages, and client bundles.
+- **Transport toggling**: toggle content-types and transports; authorization middleware often differs per stack.
+- **Resolver-boundary validation**: in the schema layer, validate at resolver boundaries; never trust parent authorization to cover children.
+- **Tenant variation**: in multi-tenant apps, vary tenant headers, subdomains, and path parameters independently.
+- **Batch and job checks**: check batch and background job endpoints; they frequently skip per-item checks.
+- **Gateway inspection**: inspect gateways for header trust and cache key composition.
+- **Opaque identifiers**: treat opaque identifiers as untrusted; obtain them from leaks and test binding.
+- **Blind confirmation**: use timing, size, and validator differentials for blind confirmation when content is masked.
+- **Paired evidence**: prove impact with precise before-and-after diffs and role-separated evidence.
 
 ## Summary
 

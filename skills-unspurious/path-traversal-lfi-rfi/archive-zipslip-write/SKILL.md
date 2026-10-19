@@ -12,9 +12,9 @@ Treat every entry name as untrusted until synthetic extraction with outside-writ
 
 ## Attack Surface
 
-- **Applicability**: applies where user influence reaches an archive extractor that resolves entry names into write locations.
-- **Path-resolution controls**: applies where entry normalization, link handling, and destination binding decide the final write path.
-- **Extractor variance**: varies only in which extractor consumes the input and which location oracle proves the outside write.
+- **Applicability**: user influence reaches an archive extractor that resolves entry names into write locations.
+- **Path-resolution controls**: entry normalization, link handling, and destination binding decide the final write path.
+- **Extractor variance**: the only variation is which extractor consumes the input and which location oracle proves the outside write.
 
 ## Reconnaissance
 
@@ -26,9 +26,9 @@ Treat every entry name as untrusted until synthetic extraction with outside-writ
 
 ## Detection Channels
 
-- **Outside-write evidence**: where post-extract listings reveal files beyond the destination for a crafted archive shape.
-- **Follow-up read evidence**: where a subsequent read retrieves content from the outside location.
-- **Error echo**: where extractor warnings expose canonicalized entry paths for a crafted archive shape.
+- **Outside-write evidence**: post-extract listings reveal files beyond the destination for a crafted archive shape.
+- **Follow-up read evidence**: a subsequent read retrieves content from the outside location.
+- **Error echo**: extractor warnings expose canonicalized entry paths for a crafted archive shape.
 
 ## Adversarial Capabilities
 
@@ -39,16 +39,16 @@ Treat every entry name as untrusted until synthetic extraction with outside-writ
 
 ## Trust Assumptions
 
-- **The agreement**: when the file-operation feature executes, the server trusts that carrier-supplied names join a base location under a normalization contract. The server trusts that resolution states settle inside one intended root before any read occurs. The server trusts that request primitives read only what the join permits and that exposed readers stay unreachable to crafted names. The server trusts that sensitive file content never leaks to the sender through crafted resolution.
-- **The failing clause**: the extraction-containment clause: archive entries extract outside the destination and write outside files.
+- **The agreement**: the server trusts, when the file-operation feature executes, that carrier-supplied names join a base location under a normalization contract, that resolution states settle inside one intended root before any read occurs, that request primitives read only what the join permits and exposed readers stay unreachable to crafted names, and that sensitive file content never leaks to the sender through crafted resolution.
+- **The failing clause**: archive entries extract outside the destination and write outside files.
 
 ## Key Vulnerabilities
 
-- **Traversal-entry shapes**: that ascend past the destination through relative segments, held as <entry-shape>.
-- **Rooted-entry shapes**: that discard the destination by supplying absolute names.
-- **Link shapes**: that redirect subsequent writes outside the destination through alias targets.
+- **Traversal-entry shapes**: ascend past the destination through relative segments, held as <entry-shape>.
+- **Rooted-entry shapes**: discard the destination by supplying absolute names.
+- **Link shapes**: redirect subsequent writes outside the destination through alias targets.
 - **Format-dependent link handling**: where one format stores links as first-class entries while another drops or sanitises them, so repeat the link test across every supported format before closing the link path.
-- **Canonicalization gaps**: where sanitization resolves before link expansion or after the write decision.
+- **Canonicalization gaps**: sanitization resolves before link expansion or after the write decision.
 - **Variant delta**: the delta over the parent is extract-then-locate proof with synthetic archives and outside-write location, which the parent escalation step never names.
 
 ## Advanced Techniques
@@ -64,8 +64,7 @@ Treat every entry name as untrusted until synthetic extraction with outside-writ
 - **Destination-binding defeat**: defeat destination binding with rooted names that discard the bound destination.
 - **Link-policy defeat**: defeat link policy by introducing alias entries that resolve outside after the check completes.
 - **Format-assumption defeat**: defeat format assumptions by repeating traversal entries across each supported archive shape.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -75,10 +74,14 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Importer inventory** - inventory archive importers and record each extract destination binding, and the step completes when every importer has a recorded destination binding with no unvisited extraction surface remaining.
-2. **Synthetic crafting** - craft synthetic archives with traversal entries, rooted names, and link shapes, one behavior per archive, and the step completes when every entry behavior has a dedicated synthetic archive with recorded entry names.
-3. **Extraction recording** - extract each synthetic archive and record canonicalization behavior and warning output, and the step completes when every synthetic archive has a recorded extraction outcome with warnings preserved.
-4. **Bent step** - craft synthetic archives with traversal entries and symlinks and locate outside writes after extraction, and the step completes when every synthetic archive has a recorded listing verdict paired with a recorded follow-up read verdict.
+1. Inventory archive importers and record each extract destination binding.
+Complete when every importer has a recorded destination binding with no unvisited extraction surface remaining.
+2. Craft synthetic archives with traversal entries, rooted names, and link shapes, one behavior per archive.
+Complete when every entry behavior has a dedicated synthetic archive with recorded entry names.
+3. Extract each synthetic archive and record canonicalization behavior and warning output.
+Complete when every synthetic archive has a recorded extraction outcome with warnings preserved.
+4. Bent step: craft synthetic archives with traversal entries and symlinks and locate outside writes after extraction.
+Complete when every synthetic archive has a recorded listing verdict paired with a recorded follow-up read verdict.
 
 ## False Positives
 

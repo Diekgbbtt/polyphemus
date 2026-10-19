@@ -26,7 +26,7 @@ An intermediary adds its own fields to a request, and the origin reads those fie
 
 ## Detection Channels
 
-- **Channel scope**: relay forwarding listens to the origin's decision on a supplied value, so only the entries below are live here.
+- **Channel scope**: relay forwarding listens to the origin's decision on a supplied value.
 - **Origin action**: the origin acting on a value the caller supplied through the relay's own fields.
 - **Reflection without decision**: a reflected supplied value that reached no decision, because a reflection alone is not trust; require the origin's effect or an out-of-band callback before claiming it.
 - **Intermediary arrival**: an arrival whose source is the intermediary rather than the caller, which separates a relay effect from a client-side request.

@@ -12,52 +12,52 @@ Cross-site scripting is attacker-controlled input that reaches a render or execu
 ## Attack Surface
 
 **Delivery Shapes**
-- **Immediate reflection**: the input returns in the same response that carried it
-- **Persistence**: the input is stored and rendered later, in retrieval views, exports, notifications, inline file serving, or another principal's page
-- **Client-only**: a client-side source reaches an executing sink with no server round trip
+- **Immediate reflection**: the input returns in the same response that carried it.
+- **Persistence**: the input is stored and rendered later, in retrieval views, exports, notifications, inline file serving, or another principal's page.
+- **Client-only**: a client-side source reaches an executing sink with no server round trip.
 
 **Contexts**
-- **Markup and attributes**: markup text and nodes, attribute values, URL-bearing attributes, script strings, style contexts, and structured document nodes
-- **Active-content markup formats**: markup formats treated as active content by a renderer
+- **Markup and attributes**: markup text and nodes, attribute values, URL-bearing attributes, script strings, style contexts, and structured document nodes.
+- **Active-content markup formats**: markup formats treated as active content by a renderer.
 
 **Render Paths**
-- **Render and hydration paths**: server render, client render, and hydration or re-render paths, which apply different encoding to the same value
-- **Restricted engines**: message and document bodies rendered by restricted engines (mail, print, and report pipelines)
-- **Inline file serving**: uploaded files served inline under an active content type
+- **Render and hydration paths**: server render, client render, and hydration or re-render paths, which apply different encoding to the same value.
+- **Restricted engines**: message and document bodies rendered by restricted engines (mail, print, and report pipelines).
+- **Inline file serving**: uploaded files served inline under an active content type.
 
 **Defenses to Bypass**
-- **Defense families**: context encoding, sanitizer configuration, content-type and disposition handling, runtime script policy (CSP, Trusted Types), and URL scheme allowlists
+- **Defense families**: context encoding, sanitizer configuration, content-type and disposition handling, runtime script policy (CSP, Trusted Types), and URL scheme allowlists.
 
 ## Reconnaissance
 
 ### Source and Sink Mapping
 
-- **Source enumeration**: enumerate sources - URL components, referrer, message channels, storage, server data, and uploaded file names or metadata
-- **Source-to-sink tracing**: trace each source to every sink that renders or evaluates it, including deferred, retrieval, and re-render paths
-- **Sink instrumentation**: instrument markup-insertion and evaluation sinks to log which values reach them
+- **Source enumeration**: enumerate sources - URL components, referrer, message channels, storage, server data, and uploaded file names or metadata.
+- **Source-to-sink tracing**: trace each source to every sink that renders or evaluates it, including deferred, retrieval, and re-render paths.
+- **Sink instrumentation**: instrument markup-insertion and evaluation sinks to log which values reach them.
 
-See references/source-sink-families.md for the source and sink family lists with the context-to-encoding matrix.
+- **Source and sink families**: see `references/source-sink-families.md` for the source and sink family lists with the context-to-encoding matrix.
 
 ### Context Classification
 
-- **Sink classification**: classify each sink - markup node, quoted or unquoted attribute, URL slot, script string, evaluator, style, or active-content document node
-- **Encoding recording**: record the encoding the application applies at that sink, and test with a marker that survives the encoder but changes meaning when the encoder is missing
-- **Structured-document classification**: classify structured-document and message renderers separately; their execution rules differ from the browser's
+- **Sink classification**: classify each sink - markup node, quoted or unquoted attribute, URL slot, script string, evaluator, style, or active-content document node.
+- **Encoding recording**: record the encoding the application applies at that sink, and test with a marker that survives the encoder but changes meaning when the encoder is missing.
+- **Structured-document classification**: classify structured-document and message renderers separately; their execution rules differ from the browser's.
 
 ### Defense Assessment
 
-- **Per-sink encoding inspection**: inspect encoding per sink rather than globally
-- **Sanitizer inspection**: identify the sanitizer and its configuration; feed its output back through the parser and inspect the result
-- **Runtime policy inspection**: inspect the runtime script policy - nonces and hashes, allowed origins, and whether every scriptable sink is covered
-- **Content-type handling**: verify content-type and disposition handling for every served upload
+- **Per-sink encoding inspection**: inspect encoding per sink rather than globally.
+- **Sanitizer inspection**: identify the sanitizer and its configuration; feed its output back through the parser and inspect the result.
+- **Runtime policy inspection**: inspect the runtime script policy - nonces and hashes, allowed origins, and whether every scriptable sink is covered.
+- **Content-type handling**: verify content-type and disposition handling for every served upload.
 
 ### Trigger and Evidence Setup
 
-- **Trigger retention**: keep a trigger URL or navigation for each stored payload so later-view execution is attributable
-- **Marker uniqueness**: use a unique alphanumeric marker and search the no-marker baseline for it first, because a common word echoed by a help link reads as a reflection until the baseline clears it
-- **Beacon-field recording**: record the beacon-field family that reaches a logged or stored surface and is later rendered - error messages, return and source parameters, identity fields, agent and referrer strings, addresses, and file names
-- **Listener operation**: operate a listener to receive exfiltration callbacks, with one marker per payload
-- **Victim-state snapshot**: snapshot the victim-context state that execution changes, so the proof shows effect rather than echo
+- **Trigger retention**: keep a trigger URL or navigation for each stored payload so later-view execution is attributable.
+- **Marker uniqueness**: use a unique alphanumeric marker and search the no-marker baseline for it first, because a common word echoed by a help link reads as a reflection until the baseline clears it.
+- **Beacon-field recording**: record the beacon-field family that reaches a logged or stored surface and is later rendered - error messages, return and source parameters, identity fields, agent and referrer strings, addresses, and file names.
+- **Listener operation**: operate a listener to receive exfiltration callbacks, with one marker per payload.
+- **Victim-state snapshot**: snapshot the victim-context state that execution changes, so the proof shows effect rather than echo.
 
 ## Detection Channels
 
@@ -94,94 +94,93 @@ See references/source-sink-families.md for the source and sink family lists with
 
 ### Context Encoding Gaps
 
-- **Wrong-context encoder**: an encoder belonging to a different context - a markup value placed into an attribute, a URL slot, or a script string
-- **Attribute handling**: quoted and unquoted attribute handling, and attributes whose values become URLs or handlers
-- **Active-content document nodes**: structured document nodes the renderer treats as active content
-- **Style and template contexts**: style and template contexts where a value reaches an expression rather than a literal
+- **Wrong-context encoder**: an encoder belonging to a different context - a markup value placed into an attribute, a URL slot, or a script string.
+- **Attribute handling**: quoted and unquoted attribute handling, and attributes whose values become URLs or handlers.
+- **Active-content document nodes**: structured document nodes the renderer treats as active content.
+- **Style and template contexts**: style and template contexts where a value reaches an expression rather than a literal.
 
 ### Sanitizer Round Trip
 
-- **Re-parse repair**: sanitised output re-parsed by the client can repair into executable markup; feed the output back through the parser
-- **Parsing-ambiguity combinations**: parsing-ambiguity combinations where one namespace plus one foreign-content element re-parse into executable markup although each part alone is inert; enumerate the namespace-plus-element pairs the sanitizer's grammar does not model
-- **Post-processing renderers**: markdown and diagram renderers post-process sanitized text and can reintroduce markup after the sanitizer has run, so test the renderer's own grammar as a second sanitizer
-- **Configuration gaps**: allowed elements or attributes that form a gadget with an allowed handler
-- **Partial sanitizer coverage**: sanitizers that cover markup while other sinks stay live
+- **Re-parse repair**: sanitised output re-parsed by the client can repair into executable markup; feed the output back through the parser.
+- **Parsing-ambiguity combinations**: parsing-ambiguity combinations where one namespace plus one foreign-content element re-parse into executable markup although each part alone is inert; enumerate the namespace-plus-element pairs the sanitizer's grammar does not model.
+- **Post-processing renderers**: markdown and diagram renderers post-process sanitized text and can reintroduce markup after the sanitizer has run, so test the renderer's own grammar as a second sanitizer.
+- **Configuration gaps**: allowed elements or attributes that form a gadget with an allowed handler.
+- **Partial sanitizer coverage**: sanitizers that cover markup while other sinks stay live.
 
 ### Stored Delivery
 
-- **Unencoded retrieval views**: retrieval views, exports, notifications, and other principals' pages render content the writing path never encoded
-- **Inline file execution**: files served inline from an upload path execute under their response type
-- **Environment-crossing persistence**: content persisted across environments, caches, or exports re-renders where the original encoding assumptions no longer hold
+- **Unencoded retrieval views**: retrieval views, exports, notifications, and other principals' pages render content the writing path never encoded.
+- **Inline file execution**: files served inline from an upload path execute under their response type.
+- **Environment-crossing persistence**: content persisted across environments, caches, or exports re-renders where the original encoding assumptions no longer hold.
 
 ### Client-Only Flow
 
-- **Client sources**: URL components, referrer, message channels, storage, server data consumed in the client, and the window-name property that survives cross-origin navigation
-- **Client sinks**: markup insertion, URL-bearing attributes, string-evaluating timers, dynamic code construction, and worker or document creation
-- **Re-render paths**: re-render and hydration paths where the client renders server-encoded content under different rules
+- **Client sources**: URL components, referrer, message channels, storage, server data consumed in the client, and the window-name property that survives cross-origin navigation.
+- **Client sinks**: markup insertion, URL-bearing attributes, string-evaluating timers, dynamic code construction, and worker or document creation.
+- **Re-render paths**: re-render and hydration paths where the client renders server-encoded content under different rules.
 
 ### Computed Expressions
 
-- **Expression sinks**: a sink that evaluates expressions rather than rendering text; where the computation happens on the server, the template class owns the step
-- **Legacy expression frameworks**: legacy expression frameworks escape their sandbox through constructor access and evaluation helpers, and some accept an order-by form that needs no quoting; treat a client-only expression sink as escaping whenever a constructor or helper reference reaches evaluation
-- **Client-only evaluation**: client-only expression evaluation stays here
+- **Expression sinks**: a sink that evaluates expressions rather than rendering text; where the computation happens on the server, the template class owns the step.
+- **Legacy expression frameworks**: legacy expression frameworks escape their sandbox through constructor access and evaluation helpers, and some accept an order-by form that needs no quoting; treat a client-only expression sink as escaping whenever a constructor or helper reference reaches evaluation.
+- **Client-only evaluation**: client-only expression evaluation stays here.
 
 ### Restricted Renderers
 
-- **Restricted execution subset**: message and document engines execute a reduced subset - markup, styles, and link actions rather than scripts
-- **Renderer verification**: verify what a renderer allows before claiming execution
+- **Restricted execution subset**: message and document engines execute a reduced subset - markup, styles, and link actions rather than scripts.
+- **Renderer verification**: verify what a renderer allows before claiming execution.
 
 ## Advanced Techniques
 
 **Sink Instrumentation**
-- **Sink logging**: log every value that reaches a markup-insertion or evaluation sink, with the source that supplied it
-- **Instrumentation value**: instrumentation reveals flows the static source list misses
+- **Sink logging**: log every value that reaches a markup-insertion or evaluation sink, with the source that supplied it.
+- **Instrumentation value**: instrumentation reveals flows the static source list misses.
 
 **Mutation Round Trip**
-- **Re-parse comparison**: take sanitizer output, re-parse it, and compare the executable result with the input that was cleaned
-- **Parser-repair seam**: parser repairs are the seam where cleaned markup regains active content
+- **Re-parse comparison**: take sanitizer output, re-parse it, and compare the executable result with the input that was cleaned.
+- **Parser-repair seam**: parser repairs are the seam where cleaned markup regains active content.
 
 **Render-Path Parity**
-- **Render-path comparison**: test server render, client render, and hydration for the same value; each applies different encoding
-- **Re-render clocks**: re-test across transports and re-render clocks (cached, exported, and re-fetched views)
+- **Render-path comparison**: test server render, client render, and hydration for the same value; each applies different encoding.
+- **Re-render clocks**: re-test across transports and re-render clocks (cached, exported, and re-fetched views).
 
 **Chained Impact**
-- **Impact-driven proof**: prefer an impact-driven proof - a session-bound action, exfiltration to a listener, or a chain into another class
+- **Impact-driven proof**: prefer an impact-driven proof - a session-bound action, exfiltration to a listener, or a chain into another class.
 
 **Payload Discipline**
-- **Curated payload set**: keep a small curated set per context and iterate on encoding rather than spraying catalogues
+- **Curated payload set**: keep a small curated set per context and iterate on encoding rather than spraying catalogues.
 
 **Proxy Primitives**
-- **Dom-clobbering ownership**: a markup-only injection can define or shadow a named element so a global the application trusts resolves to attacker-controlled structure; the `proxy-techniques-dom-clobbering` leaf owns that primitive plus its downstream gadget step, so name it there rather than restating it here
-- **Clobbered-value chain**: where the clobbered value later reaches a script, style, navigation, or state-changing sink, the chain continues in the class that owns that sink
+- **Dom-clobbering ownership**: a markup-only injection can define or shadow a named element so a global the application trusts resolves to attacker-controlled structure; the `proxy-techniques-dom-clobbering` leaf owns that primitive plus its downstream gadget step, so name it there rather than restating it here.
+- **Clobbered-value chain**: where the clobbered value later reaches a script, style, navigation, or state-changing sink, the chain continues in the class that owns that sink.
 
 ## Bypass Techniques
 
 **Filter and Parser Bypasses**
-- **Unclosed constructs**: unclosed constructs a matching filter leaves alone yet the parser completes
-- **Parser repairs**: parser repairs and mutation shapes the filter's grammar does not anticipate
-- **Case and encoding variants**: case, whitespace, and encoding variants that survive the filter yet still parse
-- **Element and handler variety**: element and handler variety where the obvious family is stripped
+- **Unclosed constructs**: unclosed constructs a matching filter leaves alone yet the parser completes.
+- **Parser repairs**: parser repairs and mutation shapes the filter's grammar does not anticipate.
+- **Case and encoding variants**: case, whitespace, and encoding variants that survive the filter yet still parse.
+- **Element and handler variety**: element and handler variety where the obvious family is stripped.
 
 **Runtime Policy Bypasses**
-- **Policy edges**: a sink family left uncovered, wildcard origins, and dynamic constructs the policy allows
-- **Script gadgets**: script gadgets in allowed code that turn data into execution
-- **Base retargeting**: base or relative-URL retargeting that points script loading at content the policy does not govern
-- **Defence-bypass naming**: name the defence-bypass family where the bypass is generic rather than class-specific
+- **Policy edges**: a sink family left uncovered, wildcard origins, and dynamic constructs the policy allows.
+- **Script gadgets**: script gadgets in allowed code that turn data into execution.
+- **Base retargeting**: base or relative-URL retargeting that points script loading at content the policy does not govern.
+- **Defence-bypass naming**: name the defence-bypass family where the bypass is generic rather than class-specific.
 
 **Sanitizer Configuration Abuse**
-- **Allowed-element gadgets**: allowed elements or attributes that combine into a gadget
-- **Parser-context switches**: namespace and parser-context switches the sanitizer does not model
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Allowed-element gadgets**: allowed elements or attributes that combine into a gadget.
+- **Parser-context switches**: namespace and parser-context switches the sanitizer does not model.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **Session-bound actions**: execution to session-bound actions - drive a state change the victim did not intend (compose with the CSRF class)
-- **Credential exfiltration**: execution to credential and token exfiltration through the listener
-- **Persistent foothold**: stored execution to a persistent foothold in the victim's client state
-- **Authorization effects**: execution to authorization effects where the application trusts client-readable state; the token class owns validation steps
-- **Interface impersonation**: execution to overlays and interface impersonation served from the trusted origin
-- **Self-only sink**: a self-only sink becomes a real finding when a cross-site request can drive the mutation that carries the payload; name the CSRF class at that step and re-read the false-positive verdict rather than filing self-XSS
+- **Session-bound actions**: execution to session-bound actions - drive a state change the victim did not intend (compose with the CSRF class).
+- **Credential exfiltration**: execution to credential and token exfiltration through the listener.
+- **Persistent foothold**: stored execution to a persistent foothold in the victim's client state.
+- **Authorization effects**: execution to authorization effects where the application trusts client-readable state; the token class owns validation steps.
+- **Interface impersonation**: execution to overlays and interface impersonation served from the trusted origin.
+- **Self-only sink**: a self-only sink becomes a real finding when a cross-site request can drive the mutation that carries the payload; name the CSRF class at that step and re-read the false-positive verdict rather than filing self-XSS.
 
 ## Testing Methodology
 
@@ -201,25 +200,25 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## False Positives
 
-- **Exact-context encoding**: reflected content encoded exactly for its sink context
-- **Runtime policy**: a runtime policy with nonces or hashes and no configurable sink escape
-- **Typed sinks**: enforced typed sinks with no bypassing gadget in allowed code
-- **Disabled scriptable contexts**: scriptable contexts disabled - no markup pass-through and safe URL schemes enforced
-- **Morph without execution**: sanitized output that morphs but never executes on the real render path
-- **Self-session-only execution**: execution that reproduces only in the tester's own session, with no second principal and no victim path
-- **Renderer without script**: a renderer that allows styles or links but never executes script
+- **Exact-context encoding**: reflected content encoded exactly for its sink context.
+- **Runtime policy**: a runtime policy with nonces or hashes and no configurable sink escape.
+- **Typed sinks**: enforced typed sinks with no bypassing gadget in allowed code.
+- **Disabled scriptable contexts**: scriptable contexts disabled - no markup pass-through and safe URL schemes enforced.
+- **Morph without execution**: sanitized output that morphs but never executes on the real render path.
+- **Self-session-only execution**: execution that reproduces only in the tester's own session, with no second principal and no victim path.
+- **Renderer without script**: a renderer that allows styles or links but never executes script.
 
 ## Pro Tips
 
-- **Context classification first**: start with context classification, not payload catalogues
-- **Sink instrumentation**: use sink instrumentation; it reveals flows the static source list misses
-- **Curated payload set**: keep a small curated payload set per context and iterate on encodings
-- **Defense validation**: validate defenses by configuration inspection plus negative tests
-- **Impact-driven proofs**: prefer impact-driven proofs (a session-bound action, exfiltration) over alert-style markers
-- **Active-content formats**: treat active-content document formats as first-class and test them separately from markup
-- **Render-path re-runs**: re-run tests under different render paths and transports; encoding often differs between them
-- **Policy as a feature to violate**: treat the runtime policy as a feature to violate - attempt a violation and read the report
-- **Second-principal stored tests**: test stored payloads under a second principal; persistence is the common cross-principal path
+- **Context classification first**: start with context classification, not payload catalogues.
+- **Sink instrumentation**: use sink instrumentation; it reveals flows the static source list misses.
+- **Curated payload set**: keep a small curated payload set per context and iterate on encodings.
+- **Defense validation**: validate defenses by configuration inspection plus negative tests.
+- **Impact-driven proofs**: prefer impact-driven proofs (a session-bound action, exfiltration) over alert-style markers.
+- **Active-content formats**: treat active-content document formats as first-class and test them separately from markup.
+- **Render-path re-runs**: re-run tests under different render paths and transports; encoding often differs between them.
+- **Policy as a feature to violate**: treat the runtime policy as a feature to violate - attempt a violation and read the report.
+- **Second-principal stored tests**: test stored payloads under a second principal; persistence is the common cross-principal path.
 
 ## Summary
 

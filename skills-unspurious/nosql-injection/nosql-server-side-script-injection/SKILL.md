@@ -93,8 +93,7 @@ The execution goal is record matching plus field extraction under script semanti
 - **Stored source**: stored source on view and index surfaces reaches the engine past request-time function blocklists.
 - **String splitting**: string-splitting plus concatenation inside the body reaches the engine past naive keyword matching.
 - **Encoded wrappings**: percent-encoded plus double-encoded wrappings reach the parser past filters that match only literal function text.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

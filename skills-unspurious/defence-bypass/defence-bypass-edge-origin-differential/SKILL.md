@@ -27,7 +27,7 @@ A verdict belongs to the tier that gave it, and the effect belongs to the tier t
 
 ## Detection Channels
 
-- **Channel scope**: edge-origin differentials listen to two verdicts for one request, so only the entries below are live here.
+- **Channel scope**: edge-origin differentials listen to two verdicts for one request.
 - **Enforcing refusal**: the enforcing tier's refusal on the canonical route, which proves the chain evaluated the request.
 - **Sibling pass**: a pass on a sibling route for the same effect, which shows the serving tier never consulted the chain.
 - **Route differential**: the differential between the refused canonical route and the passed sibling route at one effect, which localises the tier gap.

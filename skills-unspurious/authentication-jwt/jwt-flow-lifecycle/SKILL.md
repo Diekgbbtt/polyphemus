@@ -62,12 +62,11 @@ This variant breaks the flow and lifecycle binding while the signature routine, 
 - **Challenge and verifier bypass**: defeat challenge and verifier strength by presenting downgraded, transformed, or absent verifier shapes across runs.
 - **State and approval bypass**: defeat state and approval integrity by presenting predictable, reused, or absent state shapes and out-of-scope device approvals.
 - **Lifecycle-control bypass**: defeat rotation, reuse detection, revocation, and binding by replaying retired artifacts, replaying post-termination tokens, replaying from a second channel, and fixing session identifiers.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- **Proxy-techniques handoff**: name the proxy-techniques family at the capture-and-replay step and start here once a cross-client artifact is obtainable.
+- **Redirect and login interception handoff**: name redirect and login interception skills at the capture step and start here once a cross-client artifact is obtainable.
 - **Token theft handoff**: name token theft skills at the exfiltration step where a retired artifact is held for lifecycle replay.
 - **Signature forgery handoff**: hand signature-only findings to the signature forgery variant once the run is correctly bound and only the algorithm binding is suspect.
 - **Claims confusion handoff**: hand cross-context findings to the claims confusion variant once the run is correctly bound and only the context binding is suspect.

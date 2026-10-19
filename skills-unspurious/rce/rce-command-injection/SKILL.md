@@ -13,7 +13,7 @@ The goal is confirmed execution context that later escalates to durable control.
 
 ## Attack Surface
 
-- **Applicability**: centers on a user-influenced string that reaches an OS command wrapper or CLI parser.
+- **Applicability**: a user-influenced string reaches an OS command wrapper or CLI parser.
 - **Carrier inventory**: the carrier may be a path segment, a query value, a body field, or a header value; inventory every carrier the endpoint accepts rather than assuming the obvious parameter.
 - **Wrapper parsing**: the wrapper applies quoting, concatenation, or flag parsing before the string reaches the execution primitive.
 - **Oracle availability**: the server exposes at least one oracle per submission, such as timing, a callback arrival, or a reflected output difference.
@@ -22,7 +22,7 @@ The goal is confirmed execution context that later escalates to durable control.
 
 ## Detection Channels
 
-- **Channel scope**: command probing listens to the entries below, and only these entries are live here.
+- **Channel scope**: command probing listens to the channels below.
 - **Delay oracle**: separates execution from noise when a short gated delay probe shifts response timing past its baseline.
 - **Callback oracle**: binds one minted unique marker per probe to one inbound arrival on operated listener infrastructure.
 - **Reflected-output oracle**: separates execution from noise when response length or digest shifts with the probe result.
@@ -43,9 +43,8 @@ The goal is confirmed execution context that later escalates to durable control.
 
 ## Trust Assumptions
 
-- **The agreement**: the feature agrees that every input string stays inside its shell quoting or CLI argument role through concatenation and parsing and execution, that every template stays inert data, that every blob stays sender-faithful, that every uploaded file stays rendition-only, and that every internal service stays unreachable.
-- **The exposure**: sensitive server control leaks only when an execution primitive consumes input outside its agreed role.
-- **The failing clause**: this variant breaks the quoting-role clause because a crafted string escapes its shell quoting or CLI argument role and reaches OS execution.
+- **The agreement**: every input string stays inside its shell quoting or CLI argument role through concatenation and parsing and execution, every template stays inert data, every blob stays sender-faithful, every uploaded file stays rendition-only, and every internal service stays unreachable, and sensitive server control leaks only when an execution primitive consumes input outside its agreed role.
+- **The failing clause**: the variant breaks the quoting-role clause because a crafted string escapes its shell quoting or CLI argument role and reaches OS execution.
 
 ## Key Vulnerabilities
 
@@ -90,9 +89,8 @@ The goal is confirmed execution context that later escalates to durable control.
 - **Binary alternatives**: reach execution through absolute paths plus alternate binaries plus shell-flavour switching when one family is blocked.
 - **Layered combinations**: hand off to the defence-bypass family at the filter step rather than restating relay mechanics here.
 
-See references/command-injection-bypass-shapes.md for the per-family bypass table and the out-of-band confirmation procedure.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Bypass-shape table**: see `references/command-injection-bypass-shapes.md` for the per-family bypass table and the out-of-band confirmation procedure.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -107,12 +105,18 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 Command probing runs wrapper discovery first and everything else follows, because no oracle is meaningful without a mapped sink.
 The first bent step is P1 wrapper and CLI discovery plus shell-context probing over direct strings.
 The delta over the parent is the wrapper-specific discovery plus shell-oracle discipline that generic find-it plus oracle-it language never names.
-1. **Sink mapping** - locates every wrapper and CLI sink with its injection locus plus its quoting and flag semantics, and the step is done when every candidate sink carries a code or configuration reference tied to an injection locus.
-2. **Baseline capture** - records timing plus response length plus error class for benign input at each sink, and the step is done when every sink shows a stable baseline across repeated benign submissions.
-3. **Wrapper probing** - submits delimiter plus quoting plus flag plus expansion shapes one at a time through gated portable oracles, and the step is done when every shape at every sink shows acceptance or filtering with its oracle verdict.
-4. **Context confirmation** - reads execution user plus working directory plus shell plus confinement markers from proven sinks, and the step is done when the context record explains which commands and writes are plausible at each proven sink.
-5. **Boundary mapping** - records writable paths plus callback egress plus read locations at each proven sink, and the step is done when every writable path and every egress path is confirmed or ruled out.
-6. **Durable-control proof** - demonstrates the smallest file write or scheduled effect that proves persistence without an unnecessary shell, and the step is done when every claimed durable effect shows its artifact or is recorded as absent.
+1. **Sink mapping locates** every wrapper and CLI sink with its injection locus plus its quoting and flag semantics.
+The step is done when every candidate sink carries a code or configuration reference tied to an injection locus.
+2. **Baseline capture records** timing plus response length plus error class for benign input at each sink.
+The step is done when every sink shows a stable baseline across repeated benign submissions.
+3. **Wrapper probing submits** delimiter plus quoting plus flag plus expansion shapes one at a time through gated portable oracles.
+The step is done when every shape at every sink shows acceptance or filtering with its oracle verdict.
+4. **Context confirmation reads** execution user plus working directory plus shell plus confinement markers from proven sinks.
+The step is done when the context record explains which commands and writes are plausible at each proven sink.
+5. **Boundary mapping records** writable paths plus callback egress plus read locations at each proven sink.
+The step is done when every writable path and every egress path is confirmed or ruled out.
+6. **Durable-control proof demonstrates** the smallest file write or scheduled effect that proves persistence without an unnecessary shell.
+The step is done when every claimed durable effect shows its artifact or is recorded as absent.
 
 ## False Positives
 
@@ -124,7 +128,7 @@ The delta over the parent is the wrapper-specific discovery plus shell-oracle di
 
 ## Pro Tips
 
-- **Quiet-oracle discipline**: command probing rewards quiet oracles plus portable shapes plus small claims.
+- **Discipline**: command probing rewards quiet oracles plus portable shapes plus small claims.
 - **Oracle preference**: prefer the callback oracle first, then promote only stable positives to timing and output differencing.
 - **Gated delays**: gate every delay probe short so execution separates cleanly from network jitter.
 - **Portable shapes**: keep probe shapes portable across shell families and minimize dependencies on any single binary.

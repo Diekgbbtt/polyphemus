@@ -75,8 +75,7 @@ The goal is an objective completed through the winning path, such as a confirmat
 - **Window widening**: slow dependencies or large payloads widen the creation-to-validation gap so the list lands inside it.
 - **Guard-timing steering**: per-entity throttles, dedup keys, and guard checks are defeated at their timing step, which the parent and its siblings own; name the defence-bypass family there rather than restating it.
 - **Channel wrapping**: name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

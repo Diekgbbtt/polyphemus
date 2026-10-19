@@ -175,8 +175,7 @@ SQL injection remains one of the most durable and impactful vulnerability classe
 **Filter-Aware Substitution**
 - **Operator substitution**: substitute an equivalent operator or function when the obvious one is filtered.
 - **Expression contexts**: expression contexts carry comparisons that the top-level filter rejects.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -229,5 +228,4 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Summary
 
-SQL injection succeeds where authorization and statement construction drift from assumptions.
-Bind parameters everywhere, avoid dynamic identifiers, and validate at the exact boundary where user input meets the statement.
+SQL injection succeeds where authorization and statement construction drift from assumptions. Bind parameters everywhere, avoid dynamic identifiers, and validate at the exact boundary where user input meets the statement.

@@ -149,10 +149,8 @@ XML external entity injection is a parser-level failure: the parser resolves ref
 
 **Transclusion Fallbacks**
 - **Fallback paths**: where declaration resolution is blocked, reach the same content through include and stylesheet paths, or through an implicitly parsed container segment.
-
 - **Family hand-off**: declaration shapes that a text filter misses and encoding layers that survive one are the defence-bypass family's steps; name it there and keep the class-specific declaration grammar here.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -202,5 +200,4 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Summary
 
-XXE is eliminated at the parser: refuse caller-supplied declarations, close external resolution, bound expansion, and apply the same settings on every path that parses XML.
-One unhardened consumer is enough, and implicitly parsed container segments count as consumers.
+XXE is eliminated at the parser: refuse caller-supplied declarations, close external resolution, bound expansion, and apply the same settings on every path that parses XML. One unhardened consumer is enough, and implicitly parsed container segments count as consumers.

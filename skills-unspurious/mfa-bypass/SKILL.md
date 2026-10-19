@@ -104,8 +104,7 @@ The goal is the post-factor state, proved by reaching a resource the pre-factor 
 - **Superseded-proof acceptance**: a proof kept valid across a re-issue defeats the supersession control.
 - **Portable device trust**: a remembered-device token replayed from another context defeats a trust that was never bound to that context.
 - **Unthrottled alternate path**: the alternate path is the weakest control, so defeating it is defeating the factor.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -150,4 +149,3 @@ MFA bypass maps the state machine first and attacks the factor second, because n
 
 A second factor holds only when every sensitive transition requires it server-side, when the proof is single-use and bound to its challenge, and when every alternate path into the account is as strong as the primary one.
 Test the state machine before the proof, and treat the weakest accepted path as the factor's effective strength.
-

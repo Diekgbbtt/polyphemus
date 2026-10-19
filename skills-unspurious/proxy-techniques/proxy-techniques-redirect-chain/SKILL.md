@@ -26,7 +26,7 @@ An approval applied to a first hop covers the hop rather than the arrival. This 
 
 ## Detection Channels
 
-- **Channel scope**: redirect chains listen to the arrival rather than to the first hop, so only the entries below are live here.
+- **Channel scope**: redirect chains listen to the arrival rather than to the first hop.
 - **Second-hop arrival**: the operation arriving at the second hop, which proves the first hop forwarded it.
 - **Paired baseline**: a paired baseline where the approved first hop is reached directly and the chosen destination is reached only through the chain.
 - **Final-target action**: the final target acting on the operation the approved first hop carried.

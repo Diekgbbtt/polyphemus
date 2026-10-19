@@ -13,10 +13,10 @@ Treat every dynamic include name as untrusted until handler invocation with exec
 
 ## Attack Surface
 
-- **Applicability**: applies where user influence reaches a local include sink that resolves dynamic names into the interpreter.
-- **Content sources**: applies where wrapper handlers, template resolution, or poisonable state can supply the included content.
+- **Applicability**: user influence reaches a local include sink that resolves dynamic names into the interpreter.
+- **Content sources**: wrapper handlers, template resolution, or poisonable state can supply the included content.
 - **Filter-stage sources**: applies where a filter-style read sink lets the caller choose its transform stages, since a chain of stages can synthesise content the sink then includes.
-- **Sink variance**: varies only in which inclusion sink consumes the input and which execution oracle proves the entry.
+- **Sink variance**: the only variation is which inclusion sink consumes the input and which execution oracle proves the entry.
 
 ## Reconnaissance
 
@@ -31,9 +31,9 @@ Treat every dynamic include name as untrusted until handler invocation with exec
 
 ## Detection Channels
 
-- **Error echo**: where inclusion warnings expose canonicalized locations for a crafted include shape.
-- **Direct handler disclosure**: where a filter shape returns transformed local content for a crafted include shape.
-- **Outbound fetch receipt**: where a wrapper shape triggers a fetch that confirms handler invocation.
+- **Error echo**: inclusion warnings expose canonicalized locations for a crafted include shape.
+- **Direct handler disclosure**: a filter shape returns transformed local content for a crafted include shape.
+- **Outbound fetch receipt**: a wrapper shape triggers a fetch that confirms handler invocation.
 - **Synthesised-content execution**: where a transform chain output rather than stored content supplies the included payload.
 
 ## Adversarial Capabilities
@@ -46,15 +46,15 @@ Treat every dynamic include name as untrusted until handler invocation with exec
 
 ## Trust Assumptions
 
-- **The agreement**: when the file-operation feature executes, the server trusts that carrier-supplied names join a base location under a normalization contract. The server trusts that resolution states settle inside one intended root before any read occurs. The server trusts that request primitives read only what the join permits and that exposed readers stay unreachable to crafted names. The server trusts that sensitive file content never leaks to the sender through crafted resolution.
+- **The agreement**: the server trusts, when the file-operation feature executes, that carrier-supplied names join a base location under a normalization contract, that resolution states settle inside one intended root before any read occurs, that request primitives read only what the join permits and exposed readers stay unreachable to crafted names, and that sensitive file content never leaks to the sender through crafted resolution.
 - **The failing clause**: the local-inclusion clause: resolved names enter the local interpreter and execute included content, including content a transform chain synthesised in memory rather than stored on disk.
 
 ## Key Vulnerabilities
 
-- **Handler invocation shapes**: that route local content through filter transformation, archive fragments, inline data, and command expectation, held as <wrapper-shape>.
-- **Poison-then-include shapes**: that plant marker content into logs, session stores, and temporary staged content before inclusion, held as <poison-shape>.
-- **Temporary-race shapes**: that reference staged content in the window before relocation or scanning completes.
-- **Template-resolution shapes**: that derive rendered names from carrier-supplied render values, held as <render-shape>.
+- **Handler invocation shapes**: route local content through filter transformation, archive fragments, inline data, and command expectation, held as <wrapper-shape>.
+- **Poison-then-include shapes**: plant marker content into logs, session stores, and temporary staged content before inclusion, held as <poison-shape>.
+- **Temporary-race shapes**: reference staged content in the window before relocation or scanning completes.
+- **Template-resolution shapes**: derive rendered names from carrier-supplied render values, held as <render-shape>.
 - **Variant delta**: the delta over the parent is poison-then-include chaining with handler-execution proof, which the parent escalation step never names.
 
 ### Conversion-Chain Payload Synthesis
@@ -81,8 +81,7 @@ Treat every dynamic include name as untrusted until handler invocation with exec
 - **Relocation-timing bypass**: defeat relocation timing by addressing transient staged names before the move or scan completes.
 - **Constant-template bypass**: defeat constant-template expectations by routing render-name values into dynamic resolution with <render-shape>.
 - **Stage-limit bypass**: defeat stage-count and length limits by splitting the synthesis across several chained stages that each pass alone.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -92,11 +91,16 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Carrier inventory** - inventory inclusion carriers and record each dynamic resolution shape into the interpreter, and the step completes when every inclusion carrier has a recorded resolution shape with no unvisited include surface remaining.
-2. **Handler invocation** - invoke handlers with filter, archive-fragment, inline-data, and command-expectation shapes and record execution signals, and the step completes when every handler shape has a recorded invocation verdict across all inventoried carriers.
-3. **State poisoning** - poison appendable state and staged content with marker values and record write-and-read paths, and the step completes when every poisonable store has a recorded planted marker with a recorded retrieval path.
-4. **Bent step** - invoke handlers and wrappers and poison-then-include logs and sessions and staged files with execution proof, and the step completes when every poisoned store and handler shape has a recorded inclusion verdict with execution evidence or a recorded negative.
-5. **Chain synthesis** - synthesise through the chain: chain caller-selected transform stages on the read sink and include the chain output with execution proof, and the step completes when every chainable stage sequence has a recorded synthesis verdict with an execution oracle or a recorded transform fault.
+1. Inventory inclusion carriers and record each dynamic resolution shape into the interpreter.
+Complete when every inclusion carrier has a recorded resolution shape with no unvisited include surface remaining.
+2. Invoke handlers with filter, archive-fragment, inline-data, and command-expectation shapes and record execution signals.
+Complete when every handler shape has a recorded invocation verdict across all inventoried carriers.
+3. Poison appendable state and staged content with marker values and record write-and-read paths.
+Complete when every poisonable store has a recorded planted marker with a recorded retrieval path.
+4. Bent step: invoke handlers and wrappers and poison-then-include logs and sessions and staged files with execution proof.
+Complete when every poisoned store and handler shape has a recorded inclusion verdict with execution evidence or a recorded negative.
+5. Synthesise through the chain: chain caller-selected transform stages on the read sink and include the chain output with execution proof.
+Complete when every chainable stage sequence has a recorded synthesis verdict with an execution oracle or a recorded transform fault.
 
 ## False Positives
 

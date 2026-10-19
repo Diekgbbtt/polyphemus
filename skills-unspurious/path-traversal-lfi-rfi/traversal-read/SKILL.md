@@ -12,9 +12,9 @@ Treat every joined path as untrusted until canonical reads with in-root controls
 
 ## Attack Surface
 
-- **Applicability**: applies where user influence reaches a filesystem read sink that joins a base location with carrier-supplied names.
-- **Response signals**: applies where normalization settles before the read and the response carries content, errors, or length signals.
-- **Read-sink variance**: varies only in which read sink consumes the input and which read oracle proves the crossing.
+- **Applicability**: user influence reaches a filesystem read sink that joins a base location with carrier-supplied names.
+- **Response signals**: normalization settles before the read and the response carries content, errors, or length signals.
+- **Read-sink variance**: the only variation is which read sink consumes the input and which read oracle proves the crossing.
 
 ## Reconnaissance
 
@@ -26,9 +26,9 @@ Treat every joined path as untrusted until canonical reads with in-root controls
 
 ## Detection Channels
 
-- **Direct response disclosure**: where the body returns file content for a crafted traversal shape.
-- **Error echo**: where exception text exposes canonicalized locations for a crafted traversal shape.
-- **Masked-content shift**: where length and entity-tag values change between in-root controls and traversal candidates.
+- **Direct response disclosure**: the body returns file content for a crafted traversal shape.
+- **Error echo**: exception text exposes canonicalized locations for a crafted traversal shape.
+- **Masked-content shift**: length and entity-tag values change between in-root controls and traversal candidates.
 - **Encoded-content disclosure**: where a filter-style read returns content that decodes to valid source, which proves the read even when the raw body is not plain text.
 - **Out-of-band callback receipt**: carrying a per-sink sub-tag, which confirms a blind read and attributes it to one sink.
 
@@ -41,15 +41,15 @@ Treat every joined path as untrusted until canonical reads with in-root controls
 
 ## Trust Assumptions
 
-- **The agreement**: when the file-operation feature executes, the server trusts that carrier-supplied names join a base location under a normalization contract. The server trusts that resolution states settle inside one intended root before any read occurs. The server trusts that request primitives read only what the join permits and that exposed readers stay unreachable to crafted names. The server trusts that sensitive file content never leaks to the sender through crafted resolution.
-- **The failing clause**: the read-containment clause: joined paths resolve outside the root and disclose file content.
+- **The agreement**: the server trusts, when the file-operation feature executes, that carrier-supplied names join a base location under a normalization contract, that resolution states settle inside one intended root before any read occurs, that request primitives read only what the join permits and exposed readers stay unreachable to crafted names, and that sensitive file content never leaks to the sender through crafted resolution.
+- **The failing clause**: joined paths resolve outside the root and disclose file content.
 
 ## Key Vulnerabilities
 
-- **Traversal shapes**: that ascend past the base through relative segments, absolute roots, and mixed separators.
-- **Encoding shapes**: that survive one decoding pass through single, double, and overlong spellings held as <encoded-shape>.
-- **Dot-folding shapes**: that collapse during normalization through doubled and trailing-symbol spellings held as <dot-shape>.
-- **Mismatch shapes**: that exploit decoder disagreement through folded delimiters and re-encoded separators held as <mismatch-shape>.
+- **Traversal shapes**: ascend past the base through relative segments, absolute roots, and mixed separators.
+- **Encoding shapes**: survive one decoding pass through single, double, and overlong spellings held as <encoded-shape>.
+- **Dot-folding shapes**: collapse during normalization through doubled and trailing-symbol spellings held as <dot-shape>.
+- **Mismatch shapes**: exploit decoder disagreement through folded delimiters and re-encoded separators held as <mismatch-shape>.
 - **Variant delta**: the delta over the parent is canonical-read proof with in-root controls plus masked-content adjudication, which the parent escalation step never names.
 
 ## Advanced Techniques
@@ -67,8 +67,7 @@ Treat every joined path as untrusted until canonical reads with in-root controls
 - **Separator-filter bypass**: defeat separator filters by alternating separator spellings held as <separator-shape>.
 - **Join-binding bypass**: defeat join binding by supplying rooted names that discard the base, held as <absolute-shape>.
 - **Normalization-inconsistency bypass**: defeat inconsistent normalization by routing folded delimiters through the more permissive decoder with <mismatch-shape>.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -78,10 +77,14 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Carrier inventory** - inventory read carriers across the file-operation surface and record each join shape, and the step completes when every read carrier has a recorded join shape with no unvisited file-operation surface remaining.
-2. **Normalization probing** - probe normalization with separator, encoding, repeated-decoding, and trailing-symbol shapes and record acceptance, and the step completes when every normalization shape has a recorded acceptance verdict across all inventoried carriers.
-3. **Handler contrast** - contrast edge handling against application handling with mismatch shapes and record divergent acceptance, and the step completes when every mismatch shape has a recorded edge verdict paired with a recorded application verdict.
-4. **Bent step** - prove out-of-root reads with canonical files plus in-root controls plus masked-content adjudication, and the step completes when every traversal candidate has a paired in-root control measurement and a recorded disclosure or length-shift verdict.
+1. Inventory read carriers across the file-operation surface and record each join shape.
+Complete when every read carrier has a recorded join shape with no unvisited file-operation surface remaining.
+2. Probe normalization with separator, encoding, repeated-decoding, and trailing-symbol shapes and record acceptance.
+Complete when every normalization shape has a recorded acceptance verdict across all inventoried carriers.
+3. Contrast edge handling against application handling with mismatch shapes and record divergent acceptance.
+Complete when every mismatch shape has a recorded edge verdict paired with a recorded application verdict.
+4. Bent step: prove out-of-root reads with canonical files plus in-root controls plus masked-content adjudication.
+Complete when every traversal candidate has a paired in-root control measurement and a recorded disclosure or length-shift verdict.
 
 ## False Positives
 

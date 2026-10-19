@@ -123,8 +123,7 @@ Subdomain takeover lets an attacker serve content from a trusted name the owner 
 - **Race windows**: re-claim the exact name inside the window between deletion and re-verification.
 - **Wildcards and fallbacks**: wildcard records that expose unbounded labels under one endpoint, and fallback and multi-origin edge configurations that expose an unknown-name response.
 - **Record-type differences**: one record type may remain claimable while another stays verified; probe each independently.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

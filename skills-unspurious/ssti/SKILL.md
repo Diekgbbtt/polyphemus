@@ -152,8 +152,7 @@ Server-side template injection happens when user input reaches a template render
 - **Multi-stage pipelines**: where one renderer's output feeds another; a payload valid in both stages survives.
 - **Markup stages**: markup and rich-text stages that carry a payload through a filter to the template stage.
 - **Format-string stage**: format-string stage before the template stage: inert as a format string, live as a template.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -200,5 +199,4 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Summary
 
-Server-side template injection is the difference between a value and syntax: the payload runs on the server, in the host language, with whatever objects the renderer exposes.
-Confirm evaluation with an arithmetic differential, map the exposed namespace, and treat any caller input that reaches a renderer as source until the sandbox proves otherwise.
+Server-side template injection is the difference between a value and syntax: the payload runs on the server, in the host language, with whatever objects the renderer exposes. Confirm evaluation with an arithmetic differential, map the exposed namespace, and treat any caller input that reaches a renderer as source until the sandbox proves otherwise.

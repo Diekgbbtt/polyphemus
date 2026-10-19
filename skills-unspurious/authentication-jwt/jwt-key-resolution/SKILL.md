@@ -62,8 +62,7 @@ This variant breaks the key source binding while the signature routine, the clai
 - **Remote reference bypass**: defeat remote reference pinning by presenting a reference to the observed endpoint and minting under the hosted key.
 - **Inline key bypass**: defeat inline key rejection by presenting an embedded key structure in the header and signing with its private half.
 - **Rotation and fallback bypass**: defeat rotation and fallback controls by replaying retired keys inside the window and by presenting unknown selectors to trigger the fallback routine.
-
-When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
