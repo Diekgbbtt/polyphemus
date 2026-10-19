@@ -4,6 +4,7 @@
 *Scope: the local Steel runtime and the polymerhus browser tool. Cloud behaviour is the baseline, not the target.*
 *Sources: `docs/design/browser-cli-221-spec.md` and `browser-cli-221-decisions.md` (D16, D17); `docs/design/steel-local-deployment-359-spec.md` (D359-7); `docs/design/steel-session-lifecycle-395-decisions.md`; `docs/design/auth-store-220-decisions.md`; `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md`; `docs/design/evidence/steel-359/t395-oss-profile-research.md`.*
 *Live checks: Steel CLI 0.5.0-preview.6 help and source; Steel Python SDK 0.19.0 `SessionCreateParams`; local Steel API 0.5.3 schema and controller; `steel_exec` source; eval kali runtime.*
+*Revision note: the CLI session semantics and the cloud-profile recommendation are corrected in `steel-session-first-395.md`. The tool is moving to session-first; profiles are retired from the tool.*
 
 ## Bottom line
 
@@ -15,6 +16,7 @@ The two seams are asymmetric:
 
 - The SDK accepts `sessionContext`; the crawl path can replace the profile mount with it.
 - The CLI `start` has no `sessionContext` flag; the interactive path cannot restore state through the CLI.
+- The CLI does support live-session reuse: `start` creates or replaces, and every other command with `--session` attaches.
 
 The lowest-complexity local design is:
 
@@ -204,8 +206,9 @@ The client captures, stores atomically, releases, and restores.
 - The SDK exposes `session_context` on `SessionCreateParams`.
 - The local HTTP API accepts `sessionContext` on `POST /v1/sessions`.
 - The CLI `start` does **not** expose a session-context flag.
-- The CLI `start` always creates a fresh session; it stops an existing local daemon and recreates.
-- The CLI cannot attach to an API-created remote session.
+- The CLI `start` creates or replaces a session; it stops an existing local daemon and recreates.
+- Every other command with `--session` attaches to the live session.
+- The CLI cannot attach to an API-created remote session, but it can attach to its own live session by name.
 - Therefore `sessionContext` is seamless for the crawl provider and the state client, and **not seamless for the interactive CLI**.
 
 **Reliability**
@@ -629,6 +632,7 @@ The CLI `start` has no session-context field.
 The daemon creates the remote session itself.
 The CLI cannot attach to an API-created remote session.
 A live interactive session therefore starts fresh.
+The CLI does attach to its own live session for action commands, so live reuse works; state restore does not.
 The skill's sentence "pass the stored JSON as `sessionContext` on the next create" is not executable through the CLI.
 
 ### 5.2 Auth-store cookies for the interactive path
@@ -1075,7 +1079,7 @@ Mitigation: do not use post-start injection for secret cookies when a context cr
 - `steel browser start --help` on the eval kali lists `--profile` and `--update-profile` but no `--session-context`, `--persist`, or `--user-data-dir`.
 - The CLI source `start.rs` builds a `DaemonCreateParams` with profile fields only.
 - The daemon protocol has `profile_id` and `persist_profile` but no session context.
-- The CLI `start` always stops an existing daemon and creates a fresh session.
+- The CLI `start` always stops an existing daemon and creates a fresh session; action commands attach to the named live session.
 - The SDK `SessionCreateParams` has `session_context`.
 - The local API `sessions.schema.ts` accepts `sessionContext`.
 - The local API `SessionContextSchema` carries cookies, localStorage, sessionStorage, and indexedDB.
