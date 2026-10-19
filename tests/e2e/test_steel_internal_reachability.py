@@ -10,7 +10,7 @@ Run on a host that reaches the runtime and is on its allowlist:
     STEEL_BROWSER_API_URL=http://192.33.91.87:3000/v1 \
     STEEL_LOCAL_TARGET_URL=http://t-1fc05262.target/ \
     STEEL_API_KEY=<key> \
-    .venv/bin/python -m pytest tests/e2e/test_steel_local_reachability.py -q -s
+    .venv/bin/python -m pytest tests/e2e/test_steel_internal_reachability.py -q -s
 """
 from __future__ import annotations
 

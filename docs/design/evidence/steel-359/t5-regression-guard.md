@@ -5,7 +5,7 @@ Date: 2026-10-19. Host: the operator workstation (on the runtime allowlist), wor
 ## The guard
 
 - Contract tier: `tests/integration/test_steel_endpoint_contract.py` (4 tests).
-- Live tier: `tests/e2e/test_steel_local_reachability.py` (1 test).
+- Live tier: `tests/e2e/test_steel_internal_reachability.py` (1 test).
 
 The contract test composes the resolver, the CLI gateway's `--local` injection, and the SDK provider over one `STEEL_BROWSER_API_URL` value.
 The live test opens a real Steel session with the SDK (`base_url` plus `session.websocket_url`), navigates the internal `comfyui` target through the eval front, and asserts the final URL plus a rendered-title marker.
@@ -18,7 +18,7 @@ The live test never skips: a missing endpoint fails with a clear message.
 STEEL_BROWSER_API_URL=http://192.33.91.87:3000/v1 \
 STEEL_LOCAL_TARGET_URL=http://t-1fc05262.target/ \
 STEEL_API_KEY=<key> \
-PYTHONPATH=src .venv/bin/python -m pytest tests/e2e/test_steel_local_reachability.py -q
+PYTHONPATH=src .venv/bin/python -m pytest tests/e2e/test_steel_internal_reachability.py -q
 ```
 
 ```
@@ -35,7 +35,7 @@ Same command as above:
 
 ```
 E   steel.APIConnectionError: Connection error.
-FAILED tests/e2e/test_steel_local_reachability.py::test_local_steel_session_reaches_the_internal_target
+FAILED tests/e2e/test_steel_internal_reachability.py::test_local_steel_session_reaches_the_internal_target
 1 failed, 1 warning in 1.85s
 ```
 
@@ -43,7 +43,7 @@ FAILED tests/e2e/test_steel_local_reachability.py::test_local_steel_session_reac
 
 ```
 env -u STEEL_BROWSER_API_URL STEEL_LOCAL_TARGET_URL=http://t-1fc05262.target/ \
-  PYTHONPATH=src .venv/bin/python -m pytest tests/e2e/test_steel_local_reachability.py -q
+  PYTHONPATH=src .venv/bin/python -m pytest tests/e2e/test_steel_internal_reachability.py -q
 ```
 
 ```
