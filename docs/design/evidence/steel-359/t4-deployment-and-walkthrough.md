@@ -85,6 +85,29 @@ steel scrape http://t-1fc05262.target/ --local --json
 -> success:true, title "ComfyUI", markdown "Queue size: X ... Batch count ..."
 ```
 
+## S8 - the seam live on `dev`
+
+The feature branch was rebased onto `origin/dev` and merged into `dev` locally.
+The merged `kali/mcp_server.py` was copied into the running kali container and exercised through the real gateway function:
+
+```
+INJECTED: steel --local scrape http://t-1fc05262.target/ --json
+RETURNCODE: 0
+SUCCESS: True
+TITLE: ComfyUI
+URL: http://t-1fc05262.target/
+```
+
+The gateway added only `--local`; the CLI read `STEEL_BROWSER_API_URL` natively.
+
+E4 (cloud path unchanged): with the variable unset in kali,
+
+```
+steel browser sessions --json   -> {"data":[],"success":true}
+```
+
+E6 (durability): a marker written to `/app/.cache` survived a container restart, and `polymerhus-steel_steel-cache` is still the mounted named volume.
+
 ## The instance value
 
 `/opt/polymerhus-dev/eval/instances/eval-server-1/.env`:
