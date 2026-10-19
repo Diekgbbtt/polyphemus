@@ -92,7 +92,12 @@ from polymerhus.attack.hunting.pod.prompts import (
     load_pod_triager_skill,
 )
 from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
-from polymerhus.attack.hunting.pod.tools import command_signature, parse_curl, run_with_retry
+from polymerhus.attack.hunting.pod.tools import (
+    command_signature,
+    parse_curl,
+    replay_signature,
+    run_with_retry,
+)
 from polymerhus.attack.hunting.pod.types import (
     BUDGET_TIMEOUT,
     INFEASIBILITY_SIGNAL_CLASS,
@@ -489,6 +494,43 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         tc = state.get("tool_calls", 0) + 1  # count every call (dedup included) for G1
         variant_ref = state.get("current_variant_ref", "v0")
 
+        if step.request_ref:
+            # S5 8.5: a baseline probe is a REPLAY, not a command. The seam is
+            # the same one the production runner's replay tool rides; a missing
+            # or failing seam is an unobservable response, never a clean absence.
+            sig = replay_signature(variant_ref, step.request_ref, step.overrides)
+            if log.has_executed(sig):  # O7/C10: one execution per identical probe
+                return {"tool_calls": tc,
+                        "runner_messages": _dicts_to_lc(
+                            [{"role": "tool",
+                              "content": "TOOL RESULT: (already executed; deduped)"}])}
+            result = None
+            if replay_fn is not None:
+                try:
+                    result = await _await_seam(
+                        replay_fn, project_id or "", step.request_ref,
+                        dict(step.overrides))
+                except Exception:  # noqa: BLE001 - fail-open into an unobservable result
+                    result = None
+            status = result.get("status") if isinstance(result, dict) else None
+            artifact = result.get("artifact_id") if isinstance(result, dict) else None
+            observation = RawObservation(
+                probe_ref=sig, variant_ref=variant_ref,
+                request={"artifact_id": step.request_ref,
+                         "overrides": dict(step.overrides)},
+                status=status if isinstance(status, int) else None,
+                returncode=0 if status is not None else 1,
+                http_artifact_refs=[artifact] if isinstance(artifact, str) and artifact else [])
+            log.mark_executed(sig)
+            log.record_observation(observation)
+            result_text = (f"TOOL RESULT: status={observation.status} "
+                           f"(replayed {step.request_ref})")
+            return {"tool_calls": tc,
+                    "stretch_obs": state.get("stretch_obs", 0) + 1,
+                    "last_observation": observation.model_dump(),
+                    "runner_messages": _dicts_to_lc(
+                        [{"role": "tool", "content": result_text}])}
+
         command = step.command.strip()
         if not command:  # G2: reject a malformed tool call, do not execute
             return {"tool_calls": tc,
@@ -653,7 +695,14 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                        clean=False, init_validation=unverified)
 
     def exhausted_terminal(state: PodState) -> dict:
-        clean = _clean_from_trail(state["log"])
+        log: ExperimentLog = state["log"]
+        if not log.raw_observations:
+            # S5 8.5: no probe was derivable (the old empty-vector
+            # space-exhausted is retired). An authoring gap is impaired
+            # coverage, not target absence - `no-symptom-evidence`, clean false.
+            return _export(state, verdict="unsuccessful",
+                           reason=NO_SYMPTOM_EVIDENCE, clean=False)
+        clean = _clean_from_trail(log)
         return _export(state, verdict="unsuccessful",
                        reason=SPACE_EXHAUSTED if clean else NO_SYMPTOM_EVIDENCE, clean=clean)
 

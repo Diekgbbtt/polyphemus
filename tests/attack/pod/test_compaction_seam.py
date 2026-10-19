@@ -33,11 +33,10 @@ from polymerhus.recon.domain.types import ExecResult
 VALID_SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability",
-    "interpretation_guidance": "a 200 with a body confirms reachability",
+    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 # A symptom the symbolic recogniser cannot decide, so the triager seam runs.

@@ -25,12 +25,10 @@ pod's runner turn.
 This module is pure text plus constants - it imports nothing and performs no
 I/O (CODING_STANDARD section 6).
 
-T8 (#380): the `payload_vector_space.request_ref` mentions below are the
-retired D4 field. The pod contract re-points them to
-`provenance.baseline_ref` when T8 reduces the D4 (S5 8.5); the hunter's exec
-tool already speaks the new field. Left here until the pod's replay path is
-re-pointed, so the pod's runner prompt and this shared description change
-together.
+The baseline pointer is `provenance.baseline_ref` on the reduced D4 (T8, S5
+8.5): the hunter names the recorded artifact in the spec provenance and the pod
+replays it. The retired `payload_vector_space.request_ref` is gone from every
+description, so a model can never re-learn the stale field.
 """
 from __future__ import annotations
 
@@ -77,9 +75,9 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
     "summaries - artifact_id, project_id, created_at, method, url, host, status, "
     "status_class, http_version, request_size, response_size, timing_ms, tls, "
     "error_type, derived_from, replay_kind - and they are candidates, never a "
-    "verification. Inspect one with `get_http_artifact`, then hand its "
-    "artifact_id to the pod as `payload_vector_space.request_ref`: replay is the "
-    "pod's job, never this tool's. A missing seam, an unavailable store or a "
+    "verification. Inspect one with `get_http_artifact`, then record its "
+    "artifact_id in the spec's `provenance.baseline_ref`: replay is the pod's "
+    "job, never this tool's. A missing seam, an unavailable store or a "
     "rejected filter degrades to a denoted error object, never a raise. Every "
     "failure carries a `category` that tells you what to do: `invalid_filter` "
     "- your filter, `text`, `limit` or cursor is malformed; fix it and retry. "
@@ -97,8 +95,8 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
 
 GET_HTTP_ARTIFACT_DESCRIPTION: str = (
     "Fetch ONE recorded transaction of this project by `artifact_id` - the "
-    "inspection step of the chain. Use it before committing a candidate as "
-    "`payload_vector_space.request_ref`, and read `request.body.capture_state` "
+    "inspection step of the chain. Use it before naming a candidate as the "
+    "spec's `provenance.baseline_ref`, and read `request.body.capture_state` "
     "to decide whether the pod can replay it: only `captured` is replayable, "
     "while `omitted`/`truncated` means the bytes are not in the store (a "
     "baseline replay would have to send a bodyless request and is refused - "
@@ -117,8 +115,9 @@ GET_HTTP_ARTIFACT_DESCRIPTION: str = (
 REPLAY_HTTP_REQUEST_DESCRIPTION: str = (
     "Replay a recorded request by `artifact_id`, applying the declared "
     "deterministic overrides, and return the status observed for it. Use this "
-    "when the spec's `payload_vector_space` carries `request_ref` instead of "
-    "authoring a curl by hand: a hand-written curl carries no lineage (its "
+    "when the spec's `provenance.baseline_ref` names a recorded baseline "
+    "instead of authoring a curl by hand: a hand-written curl carries no "
+    "lineage (its "
     "`derived_from`/`replay_kind` stay null and the exchange looks like original "
     "target traffic). Overrides are a CLOSED data vocabulary - never a shell "
     "command, never an expression: `method`, `url`, `path`, `query` {name: "

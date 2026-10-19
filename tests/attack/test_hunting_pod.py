@@ -152,3 +152,63 @@ def test_the_precedence_note_does_not_leak_across_calls_on_one_pod():
     # the previous call set the flag on this same instance.
     second = pod(spec())
     assert not any("ignored" in str(item) for item in second["evidence"]["interpretations"])
+
+
+# --- the legacy deterministic pod's own replay path (its raw dict shape) -------
+
+def test_request_ref_produces_a_replay_probe():
+    def _key(override):
+        return str(sorted(override.items()))
+
+    statuses = {
+        "baseline": 403,
+        _key({"query": {"search": "'"}}): 400,
+        _key({"query": {"search": "' OR 1=1--"}}): 200,
+    }
+
+    def replay(project_id, artifact_id, overrides):
+        status = statuses[_key(overrides) if overrides else "baseline"]
+        return {"status": status, "artifact_id": artifact_id}
+
+    spec = {"d4_typed_base": {
+        "target_identity": {"url": "http://target.example/"},
+        "payload_vector_space": {
+            "request_ref": "http_01J0000000000000000000000A",
+            "mutations": [
+                {"location": "query", "name": "search", "values": ["'", "' OR 1=1--"]}
+            ],
+        }}}
+    pod = HuntingHttpPod(
+        replay_fn=replay, project_id="proj-1", transport=object()
+    )
+    out = pod(spec)
+    assert out["verdict"] == "successful"
+    assert out["evidence"]["terminal_reason"] == "symptom-confirmed"
+    assert "init_validation" not in out["evidence"]
+
+
+def test_unresolvable_request_ref_is_technical_infeasibility_not_init():
+    spec = {"d4_typed_base": {
+        "target_identity": {"url": "http://target.example/"},
+        "payload_vector_space": {
+            "request_ref": "http_01J0000000000000000000000A",
+            "mutations": [{"location": "query", "name": "q", "values": ["x"]}],
+        }}}
+    pod = HuntingHttpPod(replay_fn=lambda *a: None, project_id="proj-1")
+    out = pod(spec)
+    assert out["verdict"] == "unsuccessful"
+    assert out["evidence"]["terminal_reason"] == "technical-infeasibility"
+    assert "init_validation" not in out["evidence"]
+
+
+def test_missing_replay_capability_is_technical_infeasibility():
+    spec = {"d4_typed_base": {
+        "target_identity": {"url": "http://target.example/"},
+        "payload_vector_space": {
+            "request_ref": "http_01J0000000000000000000000A",
+            "mutations": [{"location": "query", "name": "q", "values": ["x"]}],
+        }}}
+    pod = HuntingHttpPod(project_id="proj-1")
+    out = pod(spec)
+    assert out["evidence"]["terminal_reason"] == "technical-infeasibility"
+    assert "init_validation" not in out["evidence"]

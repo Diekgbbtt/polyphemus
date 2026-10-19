@@ -1,6 +1,19 @@
 """Unit tier: the harness verification component (the pure INIT schema gate and
-the agent-output guards). No live target, no LLM, no DB."""
-from polymerhus.attack.hunting.pod.types import ProbeChain, ProbeStep
+the agent-output guards). No live target, no LLM, no DB.
+
+T8 (#381): the D4 surface is the REDUCED one (S5 8.4) - target identity,
+verification symptoms, assumptions, rationale, lineage, and provenance. The
+gate's mandatory set is exactly a non-empty `target_identity.url` and at least
+one non-blank symptom; the three retired fields are rejected as unknown.
+"""
+import pytest
+from pydantic import ValidationError
+
+from polymerhus.attack.hunting.pod.types import (
+    ProbeChain,
+    ProbeStep,
+    TestImplementationSpec as D4Spec,
+)
 from polymerhus.attack.hunting.pod.verification import (
     validate_decision,
     validate_probe_chain,
@@ -11,13 +24,44 @@ VALID_SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/",
                         "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability",
+    "provenance": {
+        "loop_id": "loop-1",
+        "unit_id": "service:web:soupmarket",
+        "canonical_class": "IDOR",
+        "web_vulnerability_class": "idor",
+    },
+}
+
+RETIRED_FIELDS = {
+    "testing_pattern": "blind-boolean",
+    "payload_vector_space": {"method": "GET", "path": "/"},
     "interpretation_guidance": "a 200 with a body confirms reachability",
 }
 
+
+# --- the reduced D4 surface (S5 8.4) ------------------------------------------
+
+def test_the_reduced_d4_round_trips():
+    model = D4Spec.model_validate(VALID_SPEC)
+    assert model.model_dump() == {**VALID_SPEC, "parent_spec_ref": None}
+
+
+def test_the_retired_d4_fields_are_rejected_as_unknown():
+    # S5 8.8: the reduced fields parse; the retired fields are rejected.
+    for retired, value in RETIRED_FIELDS.items():
+        with pytest.raises(ValidationError):
+            D4Spec.model_validate({**VALID_SPEC, retired: value})
+
+
+def test_the_gate_rejects_a_retired_field_by_name():
+    for retired, value in RETIRED_FIELDS.items():
+        violations = validate_spec({**VALID_SPEC, retired: value})
+        assert any(retired in v for v in violations), (retired, violations)
+
+
+# --- the INIT gate (S5 8.4) ---------------------------------------------------
 
 def test_valid_spec_has_no_violations():
     assert validate_spec(VALID_SPEC) == []
@@ -27,6 +71,33 @@ def test_missing_verification_symptoms_is_a_violation():
     spec = {**VALID_SPEC, "verification_symptoms": []}
     violations = validate_spec(spec)
     assert any("verification_symptoms" in v for v in violations)
+
+
+def test_blank_symptoms_only_is_a_violation():
+    spec = {**VALID_SPEC, "verification_symptoms": ["", "   "]}
+    assert any("verification_symptoms" in v for v in validate_spec(spec))
+
+
+def test_one_non_blank_symptom_is_enough():
+    spec = {**VALID_SPEC, "verification_symptoms": ["   ", "reflects the marker"]}
+    assert validate_spec(spec) == []
+
+
+def test_the_gate_collects_all_violations_in_one_rejection():
+    # The hunter corrects the spec in one pass: both mandatory violations land
+    # in the SAME rejection.
+    violations = validate_spec({"target_identity": {"url": "  "},
+                                "verification_symptoms": []})
+    assert any("target_identity" in v for v in violations)
+    assert any("verification_symptoms" in v for v in violations)
+
+
+def test_every_other_field_is_optional():
+    # Only the URL and the symptoms are mandatory: an absent rationale,
+    # assumptions, and provenance never rejects.
+    spec = {"target_identity": {"url": "http://soupmarket.shop/"},
+            "verification_symptoms": ["reflects the marker"]}
+    assert validate_spec(spec) == []
 
 
 def test_empty_target_identity_url_is_a_violation():
@@ -45,7 +116,7 @@ def test_target_identity_non_dict_is_a_violation():
 
 
 def test_target_identity_carries_the_l1_unit_id():
-    # The L1 service/system identifier must surface alongside the url (#197).
+    # The L1 service/system identifier surfaces alongside the url (#197).
     spec = {**VALID_SPEC,
             "target_identity": {"url": "http://soupmarket.shop/",
                                 "unit_id": "service:web:soupmarket"}}
@@ -56,46 +127,12 @@ def test_target_identity_carries_the_l1_unit_id():
     assert validate_spec(spec_no_unit) == []
 
 
-def test_empty_payload_vector_space_is_valid_o12():
-    # O12: an empty payload vector does NOT zero the loop - the default probe
-    # still runs, so an empty (but well-typed) vector is not a schema violation.
-    spec = {**VALID_SPEC, "payload_vector_space": {}}
-    assert validate_spec(spec) == []
+def test_a_built_model_is_also_gated():
+    model = D4Spec.model_validate(VALID_SPEC)
+    assert validate_spec(model) == []
 
 
-def test_dict_with_arbitrary_unknown_layer_keys_passes_init():
-    # Contract (#191): payload_vector_space is ONE open dict - typed canonical
-    # attributes (method/path/parameter/body) plus ANY per-attack-layer keys
-    # (origin, headers, cookies, ...). There is NO validation layer: the pod
-    # must not reject for missing canonical keys nor restrict unknown keys -
-    # the ONLY shape rule is "must be a dict".
-    spec = {**VALID_SPEC, "payload_vector_space": {
-        "method": "POST",
-        "path": "/state-change",
-        "parameter": "role",
-        "body": "role=admin",
-        "origin": "attacker.site",
-        "headers": {"X-Custom": "1"},
-        "cookies": {"session": "attacker"},
-    }}
-    assert validate_spec(spec) == []
-    # a dict missing ALL canonical keys is equally valid (no validation layer)
-    spec_no_canonical = {**VALID_SPEC, "payload_vector_space": {
-        "origin": "attacker.site", "headers": {"X-Custom": "1"}}}
-    assert validate_spec(spec_no_canonical) == []
-
-
-def test_non_dict_payload_vector_space_is_a_violation():
-    spec = {**VALID_SPEC, "payload_vector_space": ["not", "a", "dict"]}
-    assert any("payload_vector_space" in v for v in validate_spec(spec))
-
-
-def test_nl_fields_are_not_part_of_the_mandatory_typed_base():
-    # D67-10: the typed base excludes the two NL fields; their absence is not a
-    # schema violation.
-    spec = {**VALID_SPEC, "rationale": "", "interpretation_guidance": ""}
-    assert validate_spec(spec) == []
-
+# --- the agent-output guards --------------------------------------------------
 
 def test_probe_chain_needs_exactly_one_core_call():
     chain = ProbeChain(variant_ref="v0", steps=[

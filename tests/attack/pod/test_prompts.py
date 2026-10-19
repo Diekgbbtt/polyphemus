@@ -76,6 +76,37 @@ def test_runner_prompt_keeps_the_p0_falsification_semantics():
     assert "default-open" in lc or "default open" in lc  # unconfirmed-but-uncontradicted holds
 
 
+# --- T8: the reduced spec and the baseline (S5 8.4/8.5) ----------------------
+
+def test_runner_prompt_names_the_baseline_not_the_retired_vector():
+    assert "provenance.baseline_ref" in POD_RUNNER_SYSTEM
+    assert "payload_vector_space" not in POD_RUNNER_SYSTEM
+    assert "replay" in POD_RUNNER_SYSTEM.lower()      # the replay tool instruction
+
+
+def test_runner_prompt_names_the_reduced_spec_surface():
+    for token in ("target_identity", "verification_symptoms", "assumptions",
+                  "rationale", "provenance", "skill_procedure"):
+        assert token in POD_RUNNER_SYSTEM, token
+
+
+def test_runner_prompt_authors_the_first_probe_from_the_spec():
+    # S5 8.5: no probe is pre-authored by the hunter; the runner authors at
+    # least one from the spec's evidence and the target surface.
+    lc = POD_RUNNER_SYSTEM.lower()
+    assert "author" in lc
+    assert "at least one probe" in lc
+    assert "no probe is derivable" in lc or "no probe is derivable" in lc
+
+
+def test_runner_prompt_treats_an_empty_procedure_section_as_a_recorded_gap():
+    # T7's rule (S3 8.6): a section the skill does not carry stays empty and is
+    # a recorded gap, never a blocker.
+    lc = POD_RUNNER_SYSTEM.lower()
+    assert "recorded gap" in lc
+    assert "not a blocker" in lc or "never a blocker" in lc
+
+
 def test_runner_prompt_system_user_split_holds():
     # D84-10: the workflow is the SYSTEM prompt; the memory key-list rides the
     # USER opener, never the system prompt.

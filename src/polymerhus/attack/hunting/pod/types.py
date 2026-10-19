@@ -17,7 +17,12 @@ from typing import Annotated, Any, Literal, TypedDict
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from polymerhus.attack.hunting.spec_contract import (
+    SkillProcedure,
+    skill_procedure_from,
+)
 
 # --- The Q3-amended terminal_reason vocabulary (D5) ----------------------------
 SYMPTOM_CONFIRMED = "symptom-confirmed"
@@ -52,24 +57,59 @@ class TargetIdentity(BaseModel):
 
 
 class TestImplementationSpec(BaseModel):
-    """The D4 handoff (spec section 7): a core NL body over a fundamental typed
-    base. The typed base (mandatory) is everything except the two NL fields
-    (`rationale`, `interpretation_guidance`; D67-10). Fields default lenient so
-    an INIT rejection collects violations gracefully rather than raising - the
-    harness verification component (`verification.validate_spec`) is the gate."""
+    """The REDUCED D4 handoff (S5 8.4, S3 8.6): target identity, the concrete
+    observable verification symptoms, the technical assumptions the pod may
+    falsify, the vulnerability-level rationale, the variant lineage, and the
+    dispatch provenance.
 
-    # Typed base (D67-10) - the INIT schema gate ranges over these.
+    `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are
+    RETIRED - `extra="forbid"` rejects them as unknown instead of silently
+    dropping a stale hunter's fields. The declared fields default lenient so an
+    INIT rejection collects the mandatory URL/symptom violations instead of
+    raising; `verification.validate_spec` is the gate.
+
+    `provenance` carries `loop_id`, `unit_id`, `canonical_class` (the freely
+    named taxonomy class), `web_vulnerability_class` (the suite directory
+    name; empty when the class is a `suite_gap`), `baseline_ref` (optional),
+    `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded typed
+    `skill_procedure` read by the triager (S3 8.6)."""
+
     target_identity: TargetIdentity = Field(default_factory=TargetIdentity)
     verification_symptoms: list[str] = Field(default_factory=list)
-    testing_pattern: str = ""
     assumptions: list[str] = Field(default_factory=list)
-    payload_vector_space: dict = Field(default_factory=dict)
-    # NL core (D67-10) - not part of the mandatory typed base.
     rationale: str = ""
-    interpretation_guidance: str = ""
     # Variant lineage (D67-08): a derived variant records its parent + why.
     parent_spec_ref: str | None = None
     provenance: dict = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def spec_provenance(spec: dict | TestImplementationSpec | None) -> dict:
+    """The spec's provenance mapping (S3 8.6), or an empty dict.
+
+    Accepts the D4 model and the dict the graph carries, so both pod lanes read
+    the same provenance keys without duplicating the accessors."""
+    value = spec.provenance if isinstance(spec, TestImplementationSpec) \
+        else (spec.get("provenance") if isinstance(spec, dict) else None)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def baseline_ref_from_spec(spec: dict | TestImplementationSpec | None) -> str:
+    """The optional recorded-baseline artifact id (S5 8.5): the single pointer
+    that replaces the retired structured payload vector. Empty when absent."""
+    value = spec_provenance(spec).get("baseline_ref")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def skill_procedure_from_spec(
+        spec: dict | TestImplementationSpec | None) -> SkillProcedure | None:
+    """The typed seven-field `SkillProcedure` carried by the spec provenance.
+
+    The type has ONE home (`spec_contract.SkillProcedure`); this is the pod's
+    read. A missing or malformed excerpt is None - the triager records the gap
+    and falls back to the failure-mode basis (S5 8.6)."""
+    return skill_procedure_from(spec_provenance(spec))
 
 
 class ProbeStep(BaseModel):
@@ -205,8 +245,12 @@ class RunnerStep(BaseModel):
 
     thought: str = ""
     action: Literal["tool_call", "conclude"] = "conclude"
-    tool: Literal["exec", ""] = ""
+    tool: Literal["exec", "replay", ""] = ""
     command: str = ""          # the terminal command (curl, an installed tool, ...)
+    # The replay verb (S5 8.5): a baseline probe carries the artifact pointer
+    # instead of a command; the graph executes it through the replay seam.
+    request_ref: str = ""
+    overrides: dict = Field(default_factory=dict)
     kb_query: str = ""         # (retired) the symptom-technique KB query; kept for schema compat
     # conclude-only signals:
     infeasible: bool = False

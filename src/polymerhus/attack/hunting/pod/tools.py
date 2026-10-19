@@ -55,6 +55,15 @@ def command_signature(variant_ref: str, command: str) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+def replay_signature(variant_ref: str, artifact_id: str, overrides: dict) -> str:
+    """The O7/C10 dedup key for a baseline replay (S5 8.5): a replay is a probe
+    execution like any other, keyed by the artifact pointer + the closed
+    override set + the variant scope."""
+    blob = (f"{variant_ref}\x00replay\x00{artifact_id}\x00"
+            f"{json.dumps(overrides, sort_keys=True)}").encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 def default_exec_fn(
     command: str, timeout_s: int = EXEC_TIMEOUT_S, capture_context=None
 ) -> ExecResult:

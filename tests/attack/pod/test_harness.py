@@ -19,7 +19,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from polymerhus.attack.hunting.pod.context import ExperimentLog
 from polymerhus.attack.hunting.pod.harness import build_harness_middleware
-from polymerhus.attack.hunting.pod.tools import ExecTool
+from polymerhus.attack.hunting.pod.tools import ExecTool, replay_signature
 from polymerhus.recon.domain.types import ExecResult
 
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
@@ -223,3 +223,31 @@ def test_harness_is_a_pass_through_for_non_exec_tools():
     ], tools, [harness])
     texts = " ".join(str(getattr(m, "content", "")) for m in result["messages"])
     assert harness.calls == 1
+
+def test_harness_dedupes_a_repeated_baseline_replay():
+    """O7/C10 on the replay verb: an identical (artifact, overrides) replay is
+    executed once; a new artifact id still runs."""
+    from langchain_core.tools import tool
+
+    calls: list[str] = []
+    log = ExperimentLog()
+    log.mark_executed(replay_signature("v0", "http_known", {}))
+    harness = build_harness_middleware(log=log, variant_ref="v0", cap=10)
+
+    @tool
+    def replay(artifact_id: str) -> str:
+        """Replay a baseline."""
+        calls.append(artifact_id)
+        return "{}"
+
+    def call(artifact_id, cid):
+        return AIMessage(content="", tool_calls=[
+            {"name": "replay", "args": {"artifact_id": artifact_id}, "id": cid}])
+
+    _run_loop([
+        call("http_known", "c1"),    # deduped
+        call("http_known", "c2"),    # deduped
+        call("http_new", "c3"),      # executes once
+        AIMessage(content="concluded"),
+    ], [replay], [harness])
+    assert calls == ["http_new"]

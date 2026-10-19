@@ -37,7 +37,8 @@ SPEC_ID = spec_identifier("sqli", "blind")
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
+    "assumptions": ["network egress allowed"],
+    "rationale": "reachability",
 }
 
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"

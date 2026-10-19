@@ -1,7 +1,13 @@
-"""Unit tier: the helper symbolic layer - probe construction, the dedup
-signature, and the minimal symptom recogniser (the differential is gone, D84-30)."""
+"""Unit tier: the helper symbolic layer - the runner's authored probe, the dedup
+signature, and the minimal symptom recogniser (the differential is gone, D84-30).
+
+T8 (#381): with the payload vector space retired, the probe is AUTHORED from the
+reduced spec - the optional `provenance.baseline_ref` first (a replay probe),
+otherwise a GET of `target_identity.url` (S5 8.5). No probe derivable is a real
+outcome, never an invented request.
+"""
 from polymerhus.attack.hunting.pod.symbolic import (
-    default_probe_from_spec,
+    author_probe_from_spec,
     evaluate_symptom,
     probe_signature,
 )
@@ -12,51 +18,56 @@ from polymerhus.attack.hunting.pod.types import (
     SYMPTOM_CONFIRMED_CLASS,
 )
 
+BASELINE = "http_01J0000000000000000000000A"
+
 SPEC = {
-    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
+    "target_identity": {"url": "http://soupmarket.shop/",
+                        "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
+    "assumptions": ["network egress allowed"],
+    "rationale": "reachability",
+    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
+BASELINE_SPEC = {**SPEC, "provenance": {**SPEC["provenance"],
+                                        "baseline_ref": BASELINE}}
 
-def test_default_probe_built_from_vector_space():
-    chain = default_probe_from_spec(SPEC, "v0")
+
+def test_the_runner_authors_a_probe_from_the_target_identity():
+    chain = author_probe_from_spec(SPEC, "v0")
     assert chain is not None
     core = chain.steps[0]
-    assert core.role == "core" and core.method == "GET" and core.url == "/"
+    assert core.role == "core"
+    assert core.method == "GET" and core.url == "http://soupmarket.shop/"
+    assert core.request_ref == ""
+    assert chain.variant_ref == "v0" and chain.signature
 
 
-def test_empty_payload_vector_still_yields_a_default_probe_o12():
-    # O12: an empty payload vector must not zero the loop - a default probe of
-    # the target's base url (from target_identity.url, #197) is still derived.
-    chain = default_probe_from_spec({**SPEC, "payload_vector_space": {}}, "v0")
+def test_the_baseline_ref_authors_a_replay_probe():
+    # S5 8.5: when the hunter names a recorded baseline, the pod replays that
+    # artifact instead of authoring the request from scratch.
+    chain = author_probe_from_spec(BASELINE_SPEC, "v0")
     assert chain is not None
-    assert chain.steps[0].url == "http://soupmarket.shop/"
+    core = chain.steps[0]
+    assert core.role == "core" and core.request_ref == BASELINE
+    assert core.url == ""
+    assert chain.signature
+    # A replay probe and a fresh URL probe are distinct executions (O7/C10).
+    assert chain.signature != author_probe_from_spec(SPEC, "v0").signature
 
 
-def test_empty_payload_vector_without_url_identity_probes_root():
-    # A target_identity without a url (unit-id only) falls back to "/" so a bare
-    # service identity still probes root (fail-open).
-    spec = {**SPEC, "target_identity": {"unit_id": "service:web:soupmarket"},
-            "payload_vector_space": {}}
-    chain = default_probe_from_spec(spec, "v0")
-    assert chain is not None
-    assert chain.steps[0].url == "/"
-
-
-def test_non_empty_vector_missing_method_or_path_yields_no_probe():
-    # contract (#191): NO defaulting for any attribute - a NON-empty vector that
-    # does not carry the authored method AND path yields None (never an invented
-    # GET, never a url/identity-derived path); only the EMPTY dict gets the O12
-    # default probe.
-    for pvs in ({"path": "/api"}, {"method": "GET"}, {"url": "/api"}):
-        assert default_probe_from_spec({**SPEC, "payload_vector_space": pvs}, "v0") is None
+def test_no_probe_is_derivable_without_a_target_url_or_a_baseline():
+    assert author_probe_from_spec({**SPEC, "target_identity": {}}, "v0") is None
+    assert author_probe_from_spec({**SPEC, "target_identity": {"unit_id": "svc"}},
+                                  "v0") is None
+    assert author_probe_from_spec({}, "v0") is None
 
 
 def test_probe_signature_is_stable_and_variant_sensitive():
-    a = default_probe_from_spec(SPEC, "v0")
-    b = default_probe_from_spec(SPEC, "v0")
-    c = default_probe_from_spec(SPEC, "v1")
+    a = author_probe_from_spec(SPEC, "v0")
+    b = author_probe_from_spec(SPEC, "v0")
+    c = author_probe_from_spec(SPEC, "v1")
     assert probe_signature(a) == probe_signature(b)      # identical -> dedup
     assert probe_signature(a) != probe_signature(c)      # different variant -> distinct
 
