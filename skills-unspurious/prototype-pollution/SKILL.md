@@ -12,9 +12,9 @@ Prototype pollution corrupts shared object prototypes through unsafe merges of u
 ## Attack Surface
 
 **Runtimes**
-- **Browser-consumed objects**: and server-side runtimes that share prototype-based objects.
+- **Runtime objects**: browser-consumed objects and server-side runtimes that share prototype-based objects.
 - **Structured parsers**: that preserve prototype-shaped keys.
-- **Template engines**: and configuration merge utilities.
+- **Merge utilities**: template engines and configuration merge utilities.
 
 **Input Vectors**
 - **Input carriers**: structured request bodies, query strings, and form fields.
