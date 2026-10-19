@@ -88,7 +88,7 @@ Business logic flaws exploit intended functionality to violate domain invariants
 
 - **Parallel duplication**: parallelize identical operations to bypass atomic checks (create, apply, redeem, transfer)
 - **Idempotency abuse**: abuse idempotency: key scoped to path but not principal → reuse other users' keys; or idempotency stored only in cache
-- **Message reprocessing**: message reprocessing: queue workers re-run tasks on retry without idempotent guards; cause duplicate fulfillment/refund
+- **Message reprocessing**: queue workers re-run tasks on retry without idempotent guards; cause duplicate fulfillment/refund
 - **Race harness**: the synchronized burst is driven by `scripts/business-logic-race-harness`, which records each lane and re-reads the authoritative state after a settling delay, so a durable double is separated from a response echo
 
 ### Numeric and Currency
@@ -153,7 +153,7 @@ Business logic flaws exploit intended functionality to violate domain invariants
 ## Bypass Techniques
 
 - **Client recomputation**: totals, taxes, discounts computed on the client and accepted by the server
-- **Client-side gates**: client-side gates: a gate or hidden interface enforced only in the browser is bypassed by direct calls, and `proxy-techniques-dom-clobbering` covers markup that shadows a global the client trusts, so name it at the client-gate step rather than restating its mechanics
+- **Client-side gates**: a gate or hidden interface enforced only in the browser is bypassed by direct calls, and `proxy-techniques-dom-clobbering` covers markup that shadows a global the client trusts, so name it at the client-gate step rather than restating its mechanics
 - **Proxy-family naming**: name the proxy-techniques family at the channel-wrapping step for content-type switching and method alternation, rather than restating the channel tricks here.
 - **Defence-family naming**: name the defence-bypass family at the edge-versus-core step for stale gateway decisions, rather than restating the gateway differentials here.
 
