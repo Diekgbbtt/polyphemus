@@ -50,6 +50,7 @@ The exact failing clause is the storage-stability clause: the blob is planted at
 
 Plant-store-trigger sequencing writes a payload at the injection locus and separately induces deserialization at the trigger locus, correlating the delayed oracle across the gap.
 Wrapper-implicit triggering passes a path reference that a file operation consumes, using the abstract shape `[WRAPPER-PLACEHOLDER, PATH-PLACEHOLDER]` to reach rehydration without a visible unmarshal call.
+Polyglot storage survives upload inspection by carrying valid image framing plus an archive body, so the plant reaches storage as an accepted image and rehydrates on the later file operation.
 Delay and timing shape the correlation, since trigger latency separates the plant observation from the effect observation.
 The locus-splitting plant-and-trigger sequence is the delta submit-and-observe language never names.
 Each path converges on the same proof: the delayed effect attributes to the planted value and not to background activity.
@@ -60,6 +61,7 @@ Pair every plant with exactly one trigger before sending, since unattributed del
 Favour inducible triggers such as exports and cache warming over scheduled ones, since inducement shortens the correlation window.
 Tag each planted value with a unique correlator so concurrent activity cannot misattribute the callback.
 Treat wrapper-implicit shapes as trigger affinity inside this variant, resolving gadget-content disputes toward the trigger pair by first-step assignment.
+Treat every file operation on a wrapper path as a candidate trigger, since existence checks and size reads fire as readily as copies.
 
 ## Bypass Techniques
 
