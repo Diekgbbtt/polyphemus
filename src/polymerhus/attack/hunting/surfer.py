@@ -193,7 +193,7 @@ def is_hunter_session_id(session_id: str) -> bool:
 
 
 def is_pod_session_id(session_id: str) -> bool:
-    """True for a pod session (`hunting:<run_id>:pod:<config_id>:<spec_id>`)."""
+    """True for a pod session (`hunting:<run_id>:pod:<dispatch_id>:<spec_id>`)."""
     return ":pod:" in session_id
 
 

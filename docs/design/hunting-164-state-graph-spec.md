@@ -464,7 +464,11 @@ The generate and verify-claims exits are store writes and need no note.
 The spec status values are exactly `{hypothesised, ratified, dropped}`.
 `verified` and `specified` are retired.
 A spec's terminal status is `ratified`.
-The declass of a verified-unfeasible spec is `dropped`.
+The declass of an unfeasible spec is `dropped`.
+
+A WELL-FORMEDNESS "merge" is a descriptive judgement, not a status: the
+merged-away spec is `dropped` and the surviving spec is `ratified`. The store,
+the mover and the router read only the three literals above.
 
 The hunt-config lifecycle is retired with `HuntConfig`; the only live hunting status vocabulary is the hunter spec set's `{hypothesised, ratified, dropped}`.
 
@@ -483,7 +487,7 @@ The table below completes the mapping.
 | `COLLECT` | Close the collection with the instances note, then discriminate. |
 | `DISCRIMINATE` | Persist the discrimination outcome, then generate the spec set. |
 | `GENERATE` | The specs are written as `hypothesised`. Run the well-formedness check over the slice; the check absorbs the class-exhaustiveness question in its new form. |
-| `WELL-FORMEDNESS` | Well-formedness is confirmed. Record the drops and merges, then verify the claims. |
+| `WELL-FORMEDNESS` | Well-formedness is confirmed. Record the drops (a merge is a drop plus the surviving spec), then verify the claims. |
 | `VERIFY-CLAIMS` | Promote the surviving specs, declass the unfeasible ones. |
 
 The table shape is `TRANSITION_HINTS: dict[HunterPass, str]`.
@@ -580,8 +584,8 @@ The old `phase` channel, the fault lists, `current_fault`, and the old status ty
 
 ```
 START -> supervise
+supervise --state complete--> END          (checked FIRST)
 supervise --signal pending--> detect
-supervise --state complete--> END
 detect --advance/forward_jump--> advance
 detect --trail_only/none--> supervise
 advance -> supervise
@@ -589,7 +593,10 @@ supervise --no signal--> supervise  (stay; the turn carries no signal)
 ```
 
 `supervise` is the sole entry.
-It routes to `detect` when a signal is pending.
+The router checks `complete` BEFORE a pending signal: a terminal state with a
+late signal still ends the chain, so a stray signal can never re-open a
+completed pass. It routes to `detect` only when a signal is pending and the
+state is not `complete`.
 `detect` is a pure function of the signal and the current state.
 `advance` updates the state, injects the hint, records the trail, and consumes the signal.
 Every push returns to `supervise`.

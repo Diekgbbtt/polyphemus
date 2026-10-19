@@ -463,7 +463,7 @@ def _lightrag_author_tools() -> list:
     """Build the LightRAG query tool list for the author lane (lazy). Always
     attempted as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED.
     Fail-open to `[]` when the lightrag tool is unavailable (the author lane
-    then grounds on the HuntConfig alone)."""
+    then grounds on the loop payload alone)."""
     try:
         from lightrag.tool import build_lightrag_tool  # noqa: PLC0415
         return [build_lightrag_tool()]

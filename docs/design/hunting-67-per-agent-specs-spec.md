@@ -1,5 +1,11 @@
 # Hunting spec: per-agent specs (hunt-orchestrator, hunting agent, stub test-executor pod)
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 Part of [#54](https://github.com/Diekgbbtt/polyphemus/issues/54) (hunting wayfinder map, Phase-2+ concretisation).
 Resolves [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (enhancement, the graduated per-agent spec ticket).
 

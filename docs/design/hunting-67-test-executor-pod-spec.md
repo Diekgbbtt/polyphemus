@@ -4,6 +4,10 @@ Part of [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (per-agent spec
 The parent, merged spec is `docs/design/hunting-67-per-agent-specs-spec.md`; it holds the inter-agent logic (walkthrough S0-S7, domain data contracts D1-D11, interface agreements IA-1..IA-8, failure-handling canon, agent-attribute compliance).
 This document disambiguates the test-executor pod from the combined spec: everything below is the pod's contract alone, written to the depth an implementation session can build from without re-reading the parent.
 
+*T10b (#397) note.*
+The pre-redesign E2 full-chain walkthrough (candidate set -> `HuntConfig` -> hunting agents) is historical.
+The live chain is a produced loop file -> the hunter spec set -> the pod; the pod's D4 contract below is current.
+
 *Status: spec (contract), being re-specified by the #84 regrounding.
 Implementation decisions from the 2026-08-21 grilling live in `docs/design/hunting-84-regrounding-decisions.md` (D84-1..D84-25) and are authoritative over this document where they clash; this document is corrected so no clash remains.
 The regrounding reconciled the pod onto the shared session abstractions (`HuntSession`, `stateful_turn`, the #95 compaction middleware, async-native entry) and superseded the pre-regrounding scaffold's stateless seams and symbolic runner.
@@ -247,7 +251,7 @@ The per-project memory store (#137/#140) is never imported into the pod - its pa
 
 ### 8.1 Problem statement
 
-The D4 surface carries `testing_pattern`, `payload_vector_space`, and `interpretation_guidance`.
+The pre-redesign D4 surface carried `testing_pattern`, `payload_vector_space`, and `interpretation_guidance`.
 The testing pattern duplicates the class skill's procedural knowledge.
 The payload vector space pre-narrows the attack before the runner has grounded on the target.
 The interpretation guidance duplicates the rationale and the verification symptoms.
@@ -256,7 +260,7 @@ The three fields make the spec heavier without adding execution semantics.
 The triager mints a variant by declining a spec attribute.
 That mechanism assumes the spec's attributes are the discrimination space.
 The redesigned hunter discriminates on the skills-ontology entities, not on spec attributes.
-A declined attribute no longer names a meaningful variant.
+A variant basis no longer names a meaningful variant.
 
 ### 8.2 Solution
 

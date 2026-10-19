@@ -12,7 +12,7 @@ from orchestrator import api, predicates
 from orchestrator.files import (
     FileStore,
     authn_skill_path,
-    hunt_configs_dir,
+    threat_model_dir,
     hunter_test_specs_fault_dir,
 )
 
@@ -408,8 +408,19 @@ def test_hunting_entry_blocks_when_configured_premined_artifacts_are_absent(
     assert not result.ok
     assert "pre-mined" in result.reason
 
-    produced = hunt_configs_dir(tmp_path, PROJECT, "produced")
-    FileStore().write_text(produced / "unit_CWE-1_x.yaml", "id: x\n")
+    produced = threat_model_dir(tmp_path, PROJECT, "produced")
+    FileStore().write_text(
+        produced / "unit-web-x" / "unit-web-x.yaml", "state: COMPLETED\n"
+    )
+    # A model document alone is NOT dispatchable work: no loop file yet.
+    result = predicates.hunting_entry(
+        _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state
+    )
+    assert not result.ok
+
+    FileStore().write_text(
+        produced / "unit-web-x" / "loop-1.yaml", "loop:\n  id: loop-1\n"
+    )
     result = predicates.hunting_entry(
         _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state
     )
@@ -418,7 +429,7 @@ def test_hunting_entry_blocks_when_configured_premined_artifacts_are_absent(
 
 def test_hunting_entry_accepts_premined_test_specs_present(tmp_path) -> None:
     # A setup that pre-mines only test specs must still pass the gate: presence
-    # counts both the hunt-config and the test-spec produced/consumed inboxes.
+    # counts both the threat-model loop files and the test-spec inboxes.
     state = predicates.PhaseState(
         project_id=PROJECT,
         recon_run_id="r1",
@@ -431,7 +442,9 @@ def test_hunting_entry_accepts_premined_test_specs_present(tmp_path) -> None:
     )
     assert not result.ok
 
-    spec_dir = hunter_test_specs_fault_dir(tmp_path, PROJECT, "fault-a", "produced")
+    spec_dir = hunter_test_specs_fault_dir(
+        tmp_path, PROJECT, "unit-web-x__loop-1", "produced"
+    )
     FileStore().write_text(spec_dir / "s.yaml", "id: s\n")
     result = predicates.hunting_entry(
         _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state

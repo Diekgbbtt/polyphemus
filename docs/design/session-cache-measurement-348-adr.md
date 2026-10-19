@@ -1,5 +1,10 @@
 # Measurement: does #348 raise the session cache fraction enough for a 4M capped budget?
 
+*Historical measurement record.*
+The harness measured the pre-redesign hunt run and its hunt-config artifacts.
+The config family is RETIRED (T4b #387); the live pipeline is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The numbers and paths here are a record of that run, never a live dependency.
+
 **Status:** Measurement record (2026-10-09), small-n harness.
 **Informs:** the pre-eval decision on whether the #348 fix (`dev` @ `6b0c9b5`) lets a 4M `capped_tokens` budget reach the test-executor pods, or whether the analysis control plane needs a lower-level refactor.
 **Related:** `docs/design/compaction-cache-convergence-348-adr.md` (the fix), `docs/design/eval-budget-axis-adr.md` (#347, `capped_tokens = generated + uncached`).

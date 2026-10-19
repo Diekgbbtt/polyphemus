@@ -76,7 +76,7 @@ FAILURE_MODES = (
     "surface_gap",
     "spec_underspecified",
     "cap_hit",
-    "orchestrator_failed_unit-fault_binding",
+    "modeller_failed_unit-fault_binding",
 )
 # D24: the code types plus the persisted-data-layer types.
 ROOT_CAUSE_TYPES = (

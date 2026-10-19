@@ -61,7 +61,7 @@ All commands run from the polymerhus repo root.
 |---|---|
 | `PYTHONPATH=eval python3 -m orchestrator plan <setup.yaml>` | Print every instance, target, and routing command for an `EvalSetup` without executing anything (`up --dry-run` is the same). |
 | `PYTHONPATH=eval python3 -m orchestrator up <setup.yaml>` | Gate the eval-wide work items, then bring up each instance stack (worktree off `eval`, `.env` preflight, compose overlay) and its targets. Every lifecycle runs locally on the eval host (D45): `targetctl` builds/starts WebExploitBench there, and `image`/`compose` start local containers. |
-| `PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>` | Tear every target down (front, kali alias, target containers) and then every instance project (`docker compose down -v`). The instance worktree and its data root (hunt store, project/pod memory, L0+L1 graph, auth, skills) are PRESERVED - a stop/drain or an eval termination never destroys evidence. |
+| `PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>` | Tear every target down (front, kali alias, target containers) and then every instance project (`docker compose down -v`). The instance worktree and its data root (threat-model store, project/pod memory, L0+L1 graph, auth, skills) are PRESERVED - a stop/drain or an eval termination never destroys evidence. |
 | `PYTHONPATH=eval python3 -m orchestrator worktree-remove <setup.yaml>` | OPERATOR-ONLY: drop every instance worktree (and its data root). Never run by `down`; use it only to re-provision an instance from scratch. |
 | `PYTHONPATH=eval python3 -m orchestrator status <setup.yaml>` | Per-instance stack status, live kali aliases, and each target's synthetic host, front URL, and status. |
 
@@ -86,7 +86,7 @@ shape.
 | `eval/ph.py hunting launch <p>` | `hunting_run_id` (whole-pipeline hunting launch). |
 | `eval/ph.py hunting poll <p> <hunting_run_id>` | Poll to terminal. |
 | `eval/ph.py graph get <p> --out FILE` | The L0+L1 graph JSON. |
-| `eval/ev.py collect <p> <hunting_run_id> --out <dir> [--recon-run R] [--target-url U] [--challenge C]` | The evidence bundle (graph + hunt store + memories + pod artifacts + statuses + manifest). |
+| `eval/ev.py collect <p> <hunting_run_id> --out <dir> [--recon-run R] [--target-url U] [--challenge C]` | The evidence bundle (graph + threat-model store + memories + pod artifacts + statuses + manifest). |
 | `eval/cwes.yaml` | Vulnerability Type -> CWE ids. A HEURISTIC aid, never authoritative. |
 
 Env: `PH_API` (default `http://localhost:8080`); for the orchestrator
@@ -388,10 +388,10 @@ instances:
         target_run_id: jetlinks-1-run1  # optional; the artifact store middle level (#273)
         # existing_project_id: 12da8565-...  # optional; hunt a pre-recon'd project (#277)
         preloaded_hunting_artifacts:    # optional; see below
-          configs: /mnt/premined-configs          # a config file or a directory of them
-          test_specs:                             # each spec names its fault key
+          models: /mnt/premined-model                 # a unit dir, or a dir of unit dirs
+          test_specs:                             # each spec names its dispatch id
             - path: /mnt/premined-specs/unit_CWE-89_sqli.yaml
-              fault_key: unit_CWE-89_sqli
+              dispatch_id: unit_CWE-89_sqli__sqli__loop-1
         target_config:        # per-trial data only; bring-up lives in eval/targets/<dataset>/<target>.yaml
           operator_kb: eval/data/webexploitbench/jetlinks/operator_kb.md
           # target_seed defaults to this run's synthetic Host; set it only to pin.
@@ -408,23 +408,24 @@ pipeline consumes hunting artifacts only by reading its own produced/ inboxes,
 so the trial drops the operator's files exactly there before the run; there is
 no import/seed API and the trial never fabricates an artifact through the API.
 
-- `configs`: a host path to one hunt config or to a directory of them. Every
-  file lands in `data/<project_id>/hunting/orchestration/hunt_configs/produced/`.
-- `test_specs`: a list of `{path, fault_key}` entries. Each spec file (or
+- `models`: a host path to a threat-model unit directory (the model document
+  plus its `loop-<rank>.yaml` files) or to a directory of unit directories.
+  The tree lands under
+  `data/<project_id>/hunting/threat_modeller/produced/<unit_name>/`, the inbox
+  the mover's produced read drains.
+- `test_specs`: a list of `{path, dispatch_id}` entries. Each spec file (or
   directory of them) lands in
-  `data/<project_id>/hunting/hunter/test-specs/<fault_key>/produced/`, the
-  inbox the hunter's normal mover drains. A missing or path-unsafe `fault_key`
+  `data/<project_id>/hunting/hunter/test-specs/<dispatch_id>/produced/`, the
+  inbox the hunter's normal mover drains; `dispatch_id` is the loop dispatch id
+  `<unit_name>__<loop_id>` (S3 8.9). A missing or path-unsafe `dispatch_id`
   fails setup validation loud.
 
-The legacy single-string form is still accepted and means `configs` only:
-`preloaded_hunting_artifacts: /mnt/premined-configs`. The cap is **trial-scoped**:
-it counts only the configs the pipeline consumes during the trial, against a
-baseline of the consumed names already present at the trial's first hunting poll
-(persisted as `cap_baseline` in the trial record and carried across a resume). A
-pre-mined config the pipeline consumes during the run therefore counts toward the
-cap; one already in `consumed/` before the trial starts does not. A setup that
-declares `preloaded_hunting_artifacts` does not enter hunting until at least one
-artifact is present on disk.
+A pre-mined hunt config cannot seed a run: the retired `configs` key and the
+legacy bare-string form are refused loudly by the setup parser (T4b #387,
+T10b #397), and the hunting gate counts only produced/consumed loop files and
+test specs. A setup that declares `preloaded_hunting_artifacts` does not enter
+hunting until at least one live artifact is present on disk: a stale
+`hunting/orchestration/hunt_configs/` tree blocks with the retirement named.
 
 **The seeded hunting entry** (`existing_project_id`, #277). A trial may hunt
 directly against a pre-recon'd project whose L0/L1 already exists on the
@@ -509,12 +510,12 @@ grows.
 | File | What it tells you |
 |---|---|
 | `verdicts.yaml` | The oracle's per-vuln rows: `identified / partial / missed`, confidence, evidence refs with quoted passages |
-| `trial.yaml` | The trial record (#270): `trial_id`, `instance_id`/`target_id`/`target_run_id`, `start_phase`, `terminal`, the per-phase rows (`entered`, `status`, `run_id`, `blocks`, `notes`, `failure`), timings, the cap accounting (`cap`/`stop_count`/`final_count`/`overshoot`, all trial-scoped, and the `cap_baseline` it counted against), the aggregated `notes`, the version identity (`eval_sha`/`stack_fingerprint`/`trace_id`), and the `assessment`/`diagnosis` state |
+| `trial.yaml` | The trial record (#270): `trial_id`, `instance_id`/`target_id`/`target_run_id`, `start_phase`, `terminal`, the per-phase rows (`entered`, `status`, `run_id`, `blocks`, `notes`, `failure`), timings, the token accounting (`spent_tokens`, `spend_overshoot`, `spend_baseline`, `spend_by_agent`, the `usage` snapshot, and the `token_spectrum`), the aggregated `notes`, the version identity (`eval_sha`/`stack_fingerprint`/`trace_id`), and the `assessment`/`diagnosis` state |
 | `manifest.json` | What `ev.py` collected and what was absent (per-store `present` flags, statuses, KB files) |
 | `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `eval/data/webexploitbench/<target>/`), and the reverse-engineering source ledger |
 | `surface-map.md` (in `eval/data/webexploitbench/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |
 | `graph.json` | The L0+L1 graph the pipeline built |
-| `hunt_store/`, `project_memory/`, `pod_memory/` | The raw evidence the oracle judged on |
+| `threat_model_store/`, `project_memory/`, `pod_memory/` | The raw evidence the oracle judged on |
 
 #### Live pipeline status
 
@@ -525,17 +526,18 @@ grows.
 
 #### The hunting trail on disk
 
-`data/<project_id>/hunting/orchestration/hunt_configs/{produced,consumed}/` -
-the hunt configs (the file name is the config identity) and `memory.yaml`
-notes; siblings `hunter/` (test specs + notes) and `test-executor-pod/`.
+`data/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` -
+the unit's model document and its `loop-<rank>.yaml` dispatch records, plus the
+bounded notes at `data/<project_id>/hunting/threat_modeller/notes.yaml`;
+siblings `hunter/` (test specs + notes) and `test-executor-pod/`.
 
 #### Langfuse (the trajectory layer)
 
 Configured via `LANGFUSE_*` in `.env` (the stack traces by default). One trace
 per agent session, spans per loop iteration. Session ids are semantic:
-`hunting:<run_id>:orchestrator`, `hunting:<run_id>:hunt:<config_id>`,
-`hunting:<run_id>:pod:<config_id>:<spec_id>` - searchable when a verdict needs
-a closer look.
+`hunting:<run_id>:threat-modeller`, `hunting:<run_id>:hunt:<dispatch_id>`,
+`hunting:<run_id>:pod:<dispatch_id>:<spec_id>` - searchable when a verdict
+needs a closer look.
 
 #### The environment state
 
@@ -562,14 +564,16 @@ vuln of the challenge.
 Read the FULL NL content of the bundle, never filenames alone:
 
 - The minted `TestImplementationSpec` variants: `target_identity`,
-  `verification_symptoms`, `testing_pattern`, `assumptions`, `payload_vector_space`,
-  `rationale`, `interpretation_guidance`, and the variant `provenance`.
+  `verification_symptoms`, `assumptions`, `rationale`, `parent_spec_ref`, and
+  the `provenance` (loop id, unit id, canonical and web-vulnerability class,
+  baseline ref, recon refs, assumption ref, playbook, skill procedure).
 - The experiment-log slices: `raw_observations` (request, status, body, output),
   `interpretations` (classification + note), the `executed` ledger, and the
   `experiment_summary` terminal record.
-- The hunt store trail (`hunt_store/`): configs, hunts, dispatches, results,
-  back-edges, unresolved.
-- The per-project memory (`project_memory/`): configs.yaml + notes.yaml.
+- The threat-model trail (`threat_model_store/`): the per-unit model
+  documents, their `loop-<rank>.yaml` dispatch records, and notes.yaml.
+- The per-project memory (`project_memory/`): the hunter spec set
+  (`test-specs/<dispatch_id>/{produced,consumed}/`) + notes.yaml.
 - The graph (`graph.json`): L1 Services/Systems/DataItems, the cross-layer
   edges (AGGREGATES / SURFACES_AT / EVIDENCED_BY), and L0 Endpoints/Parameters.
 - The operator KB and its research notes: what the pipeline was told the
@@ -604,15 +608,17 @@ supported by the parsed evidence:
    observations resolve to `L` (the L1 unit whose AGGREGATES cover `L`'s
    endpoint, or the observed L0 endpoint set the probes actually hit).
 
-A symptom confirmed at the wrong locus or for the wrong fault class is a FALSE
-POSITIVE: record it as `partial` at most, with the mis-match explained.
+A symptom confirmed at the wrong locus or for the wrong web vulnerability class
+or fault is a FALSE POSITIVE: record it as `partial` at most, with the
+mis-match explained.
 
 #### 2.2.3 The degraded trail
 
-When the bundle has NO pod artifacts (hunting dispatch not yet wired), grade on
-the hunt store + project memory + graph: a hunt config whose fault class maps
-to `T` AND whose unit covers `L` AND a corroborating note/observation that the
-pipeline reasoned about that (unit, fault) pair. `identified` requires the
+When the bundle has NO pod artifacts (no `ratified` spec reached the pod), grade
+on the threat-model store + hunter spec set + graph: a loop whose web
+vulnerability class and fault map to `T` AND whose unit covers `L` AND a
+corroborating note/observation that the pipeline reasoned about that
+(unit, fault) pair. `identified` requires the
 corroboration; otherwise `partial` (right unit or right class, not both) or
 `missed`.
 
@@ -675,8 +681,8 @@ breakdowns.
 
 ### 2.6. Reading a verdict honestly
 
-- `identified` requires all three conjuncts (symptom confirmed + fault class +
-  locus) with quoted evidence refs. A `partial` with a matching quote is a
+- `identified` requires every conjunct (symptom confirmed + web vulnerability
+  class + fault + locus) with quoted evidence refs. A `partial` with a matching quote is a
   near-miss; a bare `identified` with no refs is a judgement to distrust.
 - The integrity rows and the `remediations` log in `trial.yaml` decide whether
   absence means anything: a trial with a dead recon run says nothing about the
@@ -731,7 +737,7 @@ loudly and leaves the server's working tree untouched.
 
 ### 2.9. Assessment dispatch and close verification
 
-The symbolic orchestrator owns the trial and the eval-close phase; the
+The eval orchestrator owns the trial and the eval-close phase; the
 assessment subagent (a background agent, D6) owns the judgment and writes
 `verdicts.yaml` only.
 Dispatch never blocks the next target; the eval-close phase is the presence
@@ -844,8 +850,8 @@ post-execution workflow:
 
 1. **execution** - `orchestrator trial` runs the phases and writes `trial.yaml`.
 2. **assessment** - a successful execution (terminal `complete`, or `stopped` at
-   the hunting cap) dispatches the assessment subagent; `verdicts.yaml` lands in
-   the trial directory.
+   the token budget) dispatches the assessment subagent; `verdicts.yaml` lands
+   in the trial directory.
 3. **diagnosis** - once the verdicts are present, the diagnoser subagent writes
    `diagnoses.yaml` for every `missed`/`partial` verdict.
 
@@ -917,20 +923,21 @@ operator's decision and clears the hold.
 
 ### 2.13. The surfer loop (background state assertion and recovery)
 
-The symbolic layer owns lifecycle (D5); the trial engine enforces the hunting cap
-and stops a run at a failed terminal. The surfer loop is the background
+The eval orchestrator owns lifecycle (D5); the trial engine enforces the token
+budget and stops a run at a failed terminal. The surfer loop is the background
 supervisor that asserts the environment state and prompts the orchestrator when
-the hunting cap is reached or an instance is in a failed state (for example LLM
-credits exhausted).
+the token budget is reached or an instance is in a failed state (for example LLM
+credits exhausted). The `cap_reached` trigger is legacy-record-only: the hunting
+cap was removed on 2026-10-05, so no new trial writes it.
 
 Each cycle asserts three things through injected seams:
 
 - the app-state surface (`GET /app-state`, with the documented postgres
   fallback) for the idle verdict; an unavailable app-state is never treated as
   idle;
-- the persisted trial records under the runs root for the cap accounting (a
-  `stop_count` at or above the cap) and a failed/interrupted run (a phase whose
-  status is `failed`/`interrupted` or that carries a `failure`);
+- the persisted trial records under the runs root for the token accounting (a
+  budget stop) and a failed/interrupted run (a phase whose status is
+  `failed`/`interrupted` or that carries a `failure`);
 - a `FailureSignal` classifier over the evidence the records carry (phase
   failures, trial notes, and any injected run-error payloads), which classifies
   credit-exhaustion-like failures.
@@ -1106,7 +1113,7 @@ belong in `surface-map.md`, never in the contract text.
    (metadata.json, verify.py, exploits/, report/). That directory is the
    SEALED ground truth the judge uses; your overview must come from the
    implementation, not from the answer key.
-2. NEVER name a vulnerability, CWE id, fault class, exploit, security
+2. NEVER name a vulnerability, CWE id, web vulnerability class or fault, exploit, security
    weakness, or any hint that the target may be seeded with one - in any of
    the three files you write. A patched route is described as the application's
    behavior, never as "a risky endpoint".

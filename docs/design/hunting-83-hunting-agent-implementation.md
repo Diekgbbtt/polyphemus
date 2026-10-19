@@ -1,5 +1,11 @@
 # Hunting agent implementation spec (#83) - cognitive architecture, verbatims, verdict semantics
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 *Status: grilling closed and ratified by the operator (2026-08-04); this document is the implementation source for ticket #83. It is NOT a replacement for the contract: `docs/design/hunting-67-hunting-agent-spec.md` remains the per-agent contract (identity, workflow, happy paths, outliers, delivery semantics, assertion catalogue). This document carries what the contract does not: the ratified prompt verbatims, the decision-tree cognitive architecture, the Q3-amended verdict semantics, the implementation decisions, the testing decisions, and the deferred risks.*
 
 **PARTIALLY SUPERSEDED 2026-10-18.** The decision-tree cognitive architecture, the typed-surface workflow, and the verdict semantics are superseded by `docs/design/hunting-67-hunting-agent-spec.md` section 8.

@@ -1,5 +1,11 @@
 # Hunting spec: the candidate-creation → projection → gate → mint rewrite
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 Part of the [`#82`](https://github.com/Diekgbbtt/polyphemus/issues/82) hunt-orchestrator lineage, continuing
 [`#110`](https://github.com/Diekgbbtt/polyphemus/issues/110) (the stateful per-fault-unit orchestration + graph engine),
 and realising the candidate-creation / projection scope opened by

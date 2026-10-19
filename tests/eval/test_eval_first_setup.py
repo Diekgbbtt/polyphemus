@@ -82,7 +82,12 @@ def _fixture_trial_dir(tmp_path):
                     "vuln_id": "comfyui-001",
                     "identified": "missed",
                     "confidence": 0.0,
-                    "matched": {"unit": "u", "fault_class": "fc", "symptom": "s"},
+                    "matched": {
+                    "unit": "service:web:viewer",
+                    "web_vulnerability_class": "path-traversal",
+                    "fault": "fault-1",
+                    "symptom": "s",
+                },
                     "eval_sha": EVAL_SHA,
                     "stack_fingerprint": FINGERPRINT,
                 }

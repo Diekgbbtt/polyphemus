@@ -1,4 +1,4 @@
-"""The trial engine (ticket #270): phases, chaining, cap, pre-mined artifacts.
+"""The trial engine (ticket #270): phases, chaining, budget, pre-mined artifacts.
 
 Every external effect is injected: the REST client (`ApiRunner`), the
 filesystem (`FileStore`), the command runner (pillar #269), the clock, and the
@@ -16,8 +16,8 @@ from orchestrator import api, routing, setup, trial
 from orchestrator.commands import Command
 from orchestrator.files import (
     FileStore,
-    hunt_configs_dir,
     hunter_test_specs_fault_dir,
+    threat_model_dir,
 )
 from orchestrator.instances import InstanceError
 from orchestrator.workitems import WorkItemGateError
@@ -47,34 +47,6 @@ class FakeClock:
 
     def sleep(self, seconds: float) -> None:
         self.t += seconds
-
-
-class SeqListFileStore(FileStore):
-    """A `FileStore` whose consumed-hunt-config listing pops a scripted sequence.
-
-    The trial-scoped poll reads the consumed listing once per iteration, so
-    scripting that listing models the baseline snapshot, the new configs a run
-    consumes, and the in-flight overshoot (R7: the listing re-read after the
-    stop differs from the one observed at it). Every other directory (and
-    `count_files`, the hunting-entry gate) reads the real tree, so a pre-mined
-    artifact's presence is asserted against the test's own files.
-    """
-
-    def __init__(self, listings, consumed_dir):
-        super().__init__()
-        self._listings = [list(names) for names in listings]
-        self._consumed = Path(consumed_dir)
-
-    def list_files(self, directory):
-        if Path(directory) != self._consumed:
-            return FileStore.list_files(self, directory)
-        if self._listings:
-            return [Path(name) for name in self._listings.pop(0)]
-        return []
-
-    def count_files(self, directory) -> int:
-        # The gate's presence check reads the real tree, never the poll script.
-        return len(FileStore.list_files(self, directory))
 
 
 class SeqUsageApi(FakeApi):
@@ -172,13 +144,6 @@ def _trial(
         runner=runner,
         clock=clock,
         sleep=clock.sleep,
-    )
-
-
-def _cap_store(tmp_path, listings, project_id: str = "pid") -> SeqListFileStore:
-    """A `SeqListFileStore` scoped to the `pid` project's consumed directory."""
-    return SeqListFileStore(
-        listings, hunt_configs_dir(tmp_path / "data", project_id, "consumed")
     )
 
 
@@ -936,9 +901,11 @@ def test_premined_artifacts_are_placed_in_produced_and_consumed_lazily(
     tmp_path,
 ) -> None:
     source = tmp_path / "premined"
-    source.mkdir()
-    (source / "unit_CWE-1_sqli.yaml").write_text("id: a\n")
-    (source / "unit_CWE-2_xss.yaml").write_text("id: b\n")
+    for unit, cls in (("unit-web-sqli", "sqli"), ("unit-web-xss", "xss")):
+        unit_dir = source / unit
+        unit_dir.mkdir(parents=True)
+        (unit_dir / f"{unit}.yaml").write_text(f"state: COMPLETED\n", encoding="utf-8")
+        (unit_dir / "loop-1.yaml").write_text(f"loop:\n  id: loop-1\n", encoding="utf-8")
 
     api_runner = FakeApi(
         {
@@ -955,30 +922,26 @@ def test_premined_artifacts_are_placed_in_produced_and_consumed_lazily(
         files=files,
         start_phase="hunting",
         project_id="pid",
-        preloaded_hunting_artifacts=setup.PreloadedArtifacts(configs=str(source)),
+        preloaded_hunting_artifacts=setup.PreloadedArtifacts(models=str(source)),
     ).run()
 
-    produced = hunt_configs_dir(tmp_path / "data", "pid", "produced")
-    assert sorted(p.name for p in files.list_files(produced)) == [
-        "unit_CWE-1_sqli.yaml",
-        "unit_CWE-2_xss.yaml",
+    produced = threat_model_dir(tmp_path / "data", "pid", "produced")
+    assert sorted(p.name for p in files.list_dirs(produced)) == [
+        "unit-web-sqli",
+        "unit-web-xss",
     ]
-    # No bespoke read path: the trial never uploaded/fabricated a config
-    # through the API - it wrote to the pipeline's own produced/ inbox.
+    assert sorted(
+        p.name for p in files.list_files(produced / "unit-web-sqli")
+    ) == ["loop-1.yaml", "unit-web-sqli.yaml"]
+    # No bespoke read path: the trial never uploaded/fabricated a model through
+    # the API - it wrote to the pipeline's own produced/ inbox.
     rendered = " ".join(c.display() for c in api_runner.calls)
     assert "CWE" not in rendered
-    assert "hunt_config" not in rendered
-
-    # The pipeline's normal lazy read moves them; the cap then counts them.
-    consumed = hunt_configs_dir(tmp_path / "data", "pid", "consumed")
-    for path in files.list_files(produced):
-        files.write_text(consumed / path.name, files.read_text(path))
-        path.unlink()
-    assert files.count_files(consumed) == 2
+    assert "threat_modeller" not in rendered
     assert record.project_id == "pid"
 
 
-def test_premined_test_specs_land_under_their_fault_key(tmp_path) -> None:
+def test_premined_test_specs_land_under_their_dispatch_id(tmp_path) -> None:
     source = tmp_path / "specs" / "unit_CWE-89_sqli.yaml"
     source.parent.mkdir()
     source.write_text("spec: a\n")
@@ -993,7 +956,9 @@ def test_premined_test_specs_land_under_their_fault_key(tmp_path) -> None:
     files = FileStore()
     preloaded = setup.PreloadedArtifacts(
         test_specs=(
-            setup.PreloadedTestSpec(path=str(source), fault_key="unit_CWE-89_sqli"),
+            setup.PreloadedTestSpec(
+                path=str(source), dispatch_id="unit-web-sqli__loop-1"
+            ),
         )
     )
 
@@ -1007,10 +972,10 @@ def test_premined_test_specs_land_under_their_fault_key(tmp_path) -> None:
     ).run()
 
     produced = hunter_test_specs_fault_dir(
-        tmp_path / "data", "pid", "unit_CWE-89_sqli", "produced"
+        tmp_path / "data", "pid", "unit-web-sqli__loop-1", "produced"
     )
     assert [p.name for p in files.list_files(produced)] == ["unit_CWE-89_sqli.yaml"]
-    # No bespoke read path: the spec lands in the pipeline's own fault-key
+    # No bespoke read path: the spec lands in the pipeline's own dispatch-id
     # produced/ inbox, and no API call references the artifact.
     rendered = " ".join(c.display() for c in api_runner.calls)
     assert "CWE" not in rendered
@@ -1019,8 +984,12 @@ def test_premined_test_specs_land_under_their_fault_key(tmp_path) -> None:
 
 def test_premined_plan_lists_both_inboxes_and_issues_no_calls(tmp_path) -> None:
     preloaded = setup.PreloadedArtifacts(
-        configs="/mnt/configs",
-        test_specs=(setup.PreloadedTestSpec(path="/mnt/a.yaml", fault_key="fault-a"),),
+        models="/mnt/models",
+        test_specs=(
+            setup.PreloadedTestSpec(
+                path="/mnt/a.yaml", dispatch_id="unit-web-sqli__loop-1"
+            ),
+        ),
     )
 
     plan = trial.Trial(
@@ -1029,9 +998,13 @@ def test_premined_plan_lists_both_inboxes_and_issues_no_calls(tmp_path) -> None:
 
     step = next(s for s in plan.steps if s.label == "pre-mined hunting artifacts")
     assert step.calls == ()
-    assert str(hunt_configs_dir(tmp_path / "data", "pid", "produced")) in step.files
+    assert str(threat_model_dir(tmp_path / "data", "pid", "produced")) in step.files
     assert (
-        str(hunter_test_specs_fault_dir(tmp_path / "data", "pid", "fault-a", "produced"))
+        str(
+            hunter_test_specs_fault_dir(
+                tmp_path / "data", "pid", "unit-web-sqli__loop-1", "produced"
+            )
+        )
         in step.files
     )
 

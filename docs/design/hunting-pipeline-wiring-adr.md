@@ -2,7 +2,7 @@
 
 Status: decided (grilling round for the hunting pipeline wiring, 2026-08-23 resolved
 EOD 2026-08-24; operator rulings recorded verbatim where they amend).
-**NOTE 2026-10-18.** The dispatch grain changes from one hunter per ratified config to one hunter per loop.
+**AMENDED 2026-10-18 (this note supersedes the per-config dispatch).** The dispatch grain changes from one hunter per ratified config to one hunter per loop.
 The per-session lifecycle, the surfer topology, and the delivery semantics are unchanged where they do not name a config.
 See `docs/design/hunting-67-threat-model-artifact-spec.md` section 8.
 

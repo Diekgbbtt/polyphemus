@@ -1,5 +1,8 @@
 # Unit threat model specification - adversarial review
 
+*Historical review snapshot (2026-10-18).*
+It records the design review at `HEAD 454233c0`; the planner-era module names it cites were renamed by T10b #397.
+
 *Review basis: worktree `/Users/diekgbbtt/.claude/worktrees/unit-threat-model`, branch `design/unit-threat-model`, `HEAD 454233c0`, working tree as read on 2026-10-18.
 The reviewed set is S1-S5 plus the impact map.
 The decision authority is the workbench plus the two ADRs, as the set states.

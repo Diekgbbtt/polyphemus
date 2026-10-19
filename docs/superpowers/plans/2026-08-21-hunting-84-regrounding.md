@@ -1,5 +1,8 @@
 # Hunting-84 Regrounding - Implementation Plan
 
+*Historical plan.*
+The pod it regrounds is BUILT, but its planner-era prompt and config vocabulary are RETIRED (T10 #383).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reground the test-executor pod onto the dev session abstractions (HuntSession + stateful_turn + compaction middleware + async-native graph) and reconcile the Q3 vocabulary, while keeping the branch fast-forwardable onto the imminent `95-context-compaction` merge.

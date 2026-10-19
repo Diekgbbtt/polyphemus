@@ -85,7 +85,7 @@ MODELLER_MODEL_KEY = "LLM_HUNTING_THREAT_MODELLER"
 # the L1 application-surface overview arrives through the same context seam once
 # its entity lands (R2-15, still a recorded gap), so neither is a tool. The
 # testing-methodology KB stays with the hunters and the pod, and the fault-KB
-# aid tool is withdrawn - fault hypothesisation is trust-model driven, never
+# aid tool is withdrawn - the fault is induced from the trust model, never
 # copied from an outside repository.
 TOOL_SURFACE: tuple[str, ...] = (
     "hunts_store", "notes", "search_http_history", "get_http_artifact", "exec",

@@ -23,8 +23,8 @@ from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.files import (
     FileStore,
     authn_skill_path,
-    hunt_configs_dir,
     hunter_test_specs_fault_dir,
+    threat_model_dir,
 )
 from orchestrator.ids import short_id
 from orchestrator.instances import InstanceError, InstancePaths
@@ -740,9 +740,9 @@ class Trial:
     def _place_premined(self, project_id: str) -> None:
         """Place pre-mined artifacts into the pipeline's own `produced/` inboxes.
 
-        No bespoke read path: hunt configs land in the hunt-config `produced/`
-        inbox and each test spec lands in its fault key's
-        `hunter/test-specs/<fault_key>/produced/` inbox, exactly where the
+        No bespoke read path: threat-model unit trees land in the threat-model
+        `produced/` inbox and each test spec lands in its dispatch id's
+        `hunter/test-specs/<dispatch_id>/produced/` inbox, exactly where the
         pipeline's lazy read looks, so the normal mover consumes them. The trial
         never uploads or fabricates an artifact through the API.
         """
@@ -1088,6 +1088,42 @@ def _premined_sources(files: FileStore, source: str) -> list[Path]:
     return [path] if files.is_file(path) else files.walk_files(path)
 
 
+def _place_model_tree(files: FileStore, source: Path, destination: Path) -> None:
+    """Copy a threat-model unit tree byte-for-byte into `destination`.
+
+    The store layout is `<unit_name>/<unit_name>.yaml` plus
+    `<unit_name>/loop-<rank>.yaml`, so the copy preserves relative paths and
+    lands exactly where the mover's produced read looks.
+    """
+    if files.is_file(source):
+        files.write_text(destination / source.name, files.read_text(source))
+        return
+    for path in files.walk_files(source):
+        relative = path.relative_to(source)
+        files.write_text(destination / relative, files.read_text(path))
+
+
+def _place_model_source(files: FileStore, source: str, produced: Path) -> None:
+    """Place one `models` source into the threat-model produced inbox.
+
+    A source is either one unit directory (copy it under its own name), a
+    directory of unit directories (copy each child under its own name), or a
+    single file (its parent directory names the unit).
+    """
+    path = Path(source)
+    if files.is_file(path):
+        unit_name = path.parent.name or path.stem
+        _place_model_tree(files, path, produced / unit_name)
+        return
+    if files.list_files(path):
+        # The source IS one unit directory: its model document and loops sit
+        # directly under it.
+        _place_model_tree(files, path, produced / path.name)
+        return
+    for unit_dir in files.list_dirs(path):
+        _place_model_tree(files, unit_dir, produced / unit_dir.name)
+
+
 def place_premined(
     files: FileStore,
     *,
@@ -1101,13 +1137,12 @@ def place_premined(
     trial bootstrap and the repair can never drift: both land in the exact
     `produced/` inbox the pipeline's lazy read drains, never a bespoke path.
     """
-    if preloaded.configs is not None:
-        produced = hunt_configs_dir(data_root, project_id, "produced")
-        for path in _premined_sources(files, preloaded.configs):
-            files.write_text(produced / path.name, files.read_text(path))
+    if preloaded.models is not None:
+        produced = threat_model_dir(data_root, project_id, "produced")
+        _place_model_source(files, preloaded.models, produced)
     for spec in preloaded.test_specs:
         produced = hunter_test_specs_fault_dir(
-            data_root, project_id, spec.fault_key, "produced"
+            data_root, project_id, spec.dispatch_id, "produced"
         )
         for path in _premined_sources(files, spec.path):
             files.write_text(produced / path.name, files.read_text(path))
@@ -1118,13 +1153,13 @@ def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:
     pre = cfg.preloaded_hunting_artifacts
     raw_project = cfg.project_id or project
     inboxes: list[str] = []
-    if pre.configs is not None:
-        inboxes.append(str(hunt_configs_dir(cfg.data_root, raw_project, "produced")))
+    if pre.models is not None:
+        inboxes.append(str(threat_model_dir(cfg.data_root, raw_project, "produced")))
     for spec in pre.test_specs:
         inboxes.append(
             str(
                 hunter_test_specs_fault_dir(
-                    cfg.data_root, raw_project, spec.fault_key, "produced"
+                    cfg.data_root, raw_project, spec.dispatch_id, "produced"
                 )
             )
         )

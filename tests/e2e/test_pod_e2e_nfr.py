@@ -40,10 +40,11 @@ def score_n1_prompt_materialization(spec: dict, trace: dict | None) -> int:
     driver's persisted spec; the plan materialization is the live-run concern)."""
     if not spec:
         return 0
-    required = ("target_identity", "verification_symptoms", "testing_pattern",
-                "assumptions", "payload_vector_space")
+    # The reduced D4 (S5 8.4): the three retired fields are not prompt material
+    # and their absence must not lower the score (T10b #397).
+    required = ("target_identity", "verification_symptoms", "assumptions")
     missing = [k for k in required if not spec.get(k)]
-    nl_missing = not spec.get("rationale") or not spec.get("interpretation_guidance")
+    nl_missing = not spec.get("rationale")
     if missing:
         return 1 if len(missing) < len(required) else 0
     if nl_missing:
@@ -197,13 +198,19 @@ def score_run(artifacts: dict) -> dict:
 # --- unit-proofs: the rubric on the HERMETIC E1 artifacts ----------------------
 
 def _hermetic_e1_spec():
-    return {"target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
+    return {"target_identity": {
+                "url": "https://soupmarket.shop/",
+                "unit_id": "service:web:soupmarket",
+            },
             "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-            "testing_pattern": "blind-boolean",
             "assumptions": ["network egress allowed"],
-            "payload_vector_space": {"method": "GET", "path": "/"},
             "rationale": "reachability probe from H1",
-            "interpretation_guidance": "a 200 with a non-empty body confirms the symptom"}
+            "provenance": {
+                "loop_id": "loop-1",
+                "unit_id": "service:web:soupmarket",
+                "canonical_class": "discovery",
+                "web_vulnerability_class": "",
+            }}
 
 
 def _hermetic_h2_env():
@@ -239,7 +246,7 @@ def test_n1_drops_when_spec_missing_attribute():
 
 
 def test_n1_zero_when_base_absent():
-    spec = {"rationale": "x", "interpretation_guidance": "y"}
+    spec = {"rationale": "x"}
     assert score_n1_prompt_materialization(spec, None) == 0
 
 

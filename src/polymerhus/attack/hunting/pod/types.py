@@ -62,10 +62,11 @@ class TestImplementationSpec(BaseModel):
     falsify, the vulnerability-level rationale, the variant lineage, and the
     dispatch provenance.
 
-    `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are
-    RETIRED - `extra="forbid"` rejects them as unknown instead of silently
-    dropping a stale hunter's fields. The declared fields default lenient so an
-    INIT rejection collects the mandatory URL/symptom violations instead of
+    The RETIRED `testing_pattern`, `payload_vector_space`, and
+    `interpretation_guidance` are rejected as unknown by `extra="forbid"`
+    instead of being silently dropped from a stale hunter's fields.
+    The declared fields default lenient so an INIT rejection collects the
+    mandatory URL/symptom violations instead of
     raising; `verification.validate_spec` is the gate.
 
     `provenance` carries `loop_id`, `unit_id`, `canonical_class` (the freely

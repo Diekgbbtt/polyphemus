@@ -1,5 +1,9 @@
 # Output contract - TestImplementationSpecs set (mock v1, 2026-10-17)
 
+*Historical prototype contract.*
+It carries the retired D4 fields (`payload_vector_space`, `interpretation_guidance`) by design of that experiment.
+The reduced D4 is S3 8.6; this mock is not a live contract.
+
 One YAML file per loop.
 The set is the loop's coverage of the slice it opened.
 

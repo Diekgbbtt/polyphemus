@@ -25,7 +25,7 @@ DATA_ROOT = Path("/instances/arm-a/data")
 # The three concrete evidence families the prompts name, in the mandatory
 # `<project_id>/`-prefixed form.
 EXAMPLE_PREFIXES = (
-    "<project_id>/hunting/orchestration/hunt_configs/",
+    "<project_id>/hunting/threat_modeller/",
     "<project_id>/hunting/hunter/test-specs/",
     "<project_id>/hunting/test-executor-pod/",
 )
@@ -54,16 +54,17 @@ def test_diagnoser_prompt_states_the_project_prefixed_evidence_contract() -> Non
 
 def test_code_resolves_every_evidence_path_under_the_project_segment() -> None:
     assert files.project_dir(DATA_ROOT, PROJECT_ID) == DATA_ROOT / PROJECT_ID
-    for side in files.HUNT_CONFIG_SIDES:
-        resolved = files.hunt_configs_dir(DATA_ROOT, PROJECT_ID, side)
+    for side in files.THREAT_MODEL_SIDES:
+        resolved = files.threat_model_dir(DATA_ROOT, PROJECT_ID, side)
         assert resolved.relative_to(DATA_ROOT) == (
-            Path(PROJECT_ID) / "hunting/orchestration/hunt_configs" / side
+            Path(PROJECT_ID) / "hunting/threat_modeller" / side
         )
-    fault = files.hunter_test_specs_fault_dir(
-        DATA_ROOT, PROJECT_ID, "ssti", "produced"
+    dispatch = files.hunter_test_specs_fault_dir(
+        DATA_ROOT, PROJECT_ID, "service-web-viewer__loop-1", "produced"
     )
-    assert fault.relative_to(DATA_ROOT) == (
-        Path(PROJECT_ID) / "hunting/hunter/test-specs/ssti/produced"
+    assert dispatch.relative_to(DATA_ROOT) == (
+        Path(PROJECT_ID)
+        / "hunting/hunter/test-specs/service-web-viewer__loop-1/produced"
     )
     assert files.pod_dir(DATA_ROOT, PROJECT_ID).relative_to(DATA_ROOT) == (
         Path(PROJECT_ID) / "hunting/test-executor-pod"

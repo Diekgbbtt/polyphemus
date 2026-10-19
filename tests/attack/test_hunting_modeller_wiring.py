@@ -19,7 +19,7 @@ import inspect
 import pytest
 
 from polymerhus.attack.hunting import runtime as hunting_runtime
-from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
+from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphView
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import threat_modeller_session_id
 from polymerhus.attack.hunting.surfer import (
@@ -350,7 +350,7 @@ def test_the_run_completes_with_one_model_and_no_planner_artifacts(
         return outcome
 
     import polymerhus.attack.hunting.actors as actors
-    import polymerhus.attack.hunting.hunt_orchestrator as planner
+    import polymerhus.attack.hunting.read_only_graph as planner
     from pathlib import Path
 
     asyncio.run(hunting_runtime.start_hunting(

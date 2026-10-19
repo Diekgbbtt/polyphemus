@@ -48,7 +48,7 @@ from tests.integration import hunting_wiring_stack as stack
 UNIT = "Service:slug:a"
 UNIT_NAME = "Service-slug-a"
 DISPATCH_ID = f"{UNIT_NAME}__loop-1"
-FAULT = "CWE-352"
+FAULT = "fault-1"
 CLASS = "CSRF"
 SPEC = "sqli"
 STRATEGY = "blind"
@@ -139,36 +139,43 @@ def _session_pause_until_registered(client, project_id: str, run_id: str,
 # =============================================================================
 
 def test_E1_whole_pipeline_happy_path(client):
-    """id: E1 - whole-pipeline happy path. The deterministic baseline: an
-    empty-batch run (`candidates: []`) reaches `complete` immediately with no
-    produced configs (real `hunting_runs` row read-back). Then a richer
-    seeded-candidate run is driven with the catalogue bootstrap fixtures (a
-    ratified config, a specified spec, an experiment-log slice) so the surfer
-    dispatches one hunter and one pod through the REAL edge; the run is polled
-    to a terminal row (complete on the happy path, fail-open otherwise) and the
-    store read-backs are asserted against the real store - never a value the
-    code under test returns."""
+    """id: E1 - whole-pipeline happy path. The deterministic baseline: a run
+    with no dispatchable model reaches `complete` immediately with no produced
+    loop files (real `hunting_runs` row read-back). Then a run seeded with a
+    `ratified` spec and an experiment-log slice is driven so the surfer
+    dispatches one pod through the REAL edge; the run is polled to a terminal
+    row (complete on the happy path, fail-open otherwise) and the store
+    read-backs are asserted against the real store - never a value the code
+    under test returns."""
     _need_pg()
-    # Baseline: empty-batch run reaches complete immediately.
+    # Baseline: a run with no dispatchable produced work reaches complete.
     base = _new_project(client, "hw-e1b")
-    r = client.post(f"/projects/{base}/hunting", json={"candidates": []})
+    r = client.post(f"/projects/{base}/hunting", json={})
     assert r.status_code == 201, r.text
     base_rid = r.json()["hunting_run_id"]
     row = stack.wait_for_hunting_run_status(base, base_rid, status="complete")
     assert row["status"] == "complete"
-    assert stack.produced_config_keys(base) == []
+    # A whole run never fabricates dispatch input: the produced loop family is
+    # empty on a project with no modeller pass.
+    assert stack.produced_loop_files(base) == []
 
-    # Richer seeded-candidate run through the REAL pod/hunter edge.
+    # Richer seeded-spec run through the REAL pod/hunter edge. Seed the
+    # COMPLETED unit threat model + its produced loop file (the dispatch
+    # record) so E1's premise is true, then the ratified spec the surfer
+    # dispatches.
     p = _new_project(client, "hw-e1")
+    stack.seed_threat_model_unit(p, unit_id=UNIT)
+    assert stack.produced_loop_files(p) == [f"{UNIT_NAME}/loop-1"], (
+        "E1 seed premise: the produced loop file must exist before launch")
     spec_file = stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    # T4b (#387): a produced hunt config is no longer dispatch input; the
-    # seeded SPEC still drives the real POD edge. A hunter is dispatched from a
-    # produced loop file (live after T6 #379), which needs the run's own
-    # modeller and the production hunter prompt work phase (T7 #380) - never a
-    # pre-seeded config.
+    # T4b (#387): the loop file is the dispatch record; the seeded SPEC still
+    # drives the real POD edge. A hunter is dispatched from a produced loop
+    # file (live after T6 #379), which needs the run's own modeller and the
+    # production hunter prompt work phase (T7 #380) - never a fabricated
+    # dispatch input.
     stack.seed_experiment_log(p, spec_id=spec_file)
-    launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    launch = client.post(f"/projects/{p}/hunting", json={})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     # The seeded pod drives REAL LLM turns + kali tool calls; on a loaded host
@@ -183,11 +190,13 @@ def test_E1_whole_pipeline_happy_path(client):
     # the run-row read-back is asserted, never a fabricated non-empty statement.
     assert term["status"] in ("complete", "failed"), term
     if term["status"] == "complete":
-        # The specified spec moved produced->consumed; the pod export + durable
-        # parent-keyed note exist. (The retired config family has no producer.)
-        assert stack.produced_config_keys(p) == []
+        # The loop file moved produced->consumed (the mover's at-least-once
+        # marker), the ratified spec moved produced->consumed, and the pod
+        # export + durable parent-keyed note exist.
+        assert f"{UNIT_NAME}/loop-1" in stack.consumed_loop_files(p), \
+            "expected the seeded loop file moved to consumed on a complete run"
         assert stack.consumed_spec_files(p, DISPATCH_ID), \
-            "expected the specified spec moved to consumed on a complete run"
+            "expected the ratified spec moved to consumed on a complete run"
         assert stack.pod_export_entries(p, spec_file), \
             "expected a durable pod export envelope on a complete run"
         notes = HunterMemoryStore().read_notes(p, parent_key=DISPATCH_ID)
@@ -201,28 +210,33 @@ def test_E1_whole_pipeline_happy_path(client):
 
 def test_E2_cross_run_produced_spec_reconciliation(client):
     """id: E2 - cross-run produced-spec reconciliation (anti-wedge regression).
-    A produced `specified` spec whose parent config was consumed by an EARLIER
-    run (no live parent) must still dispatch ONE pod through the own-STATUS
+    A produced `ratified` spec whose dispatch loop belongs to an EARLIER run
+    (no live parent session) must still dispatch ONE pod through the own-STATUS
     gate and move produced->consumed; the export is recorded durably under the
-    parent's canonical config_key; and the run reaches `complete` - NEVER
-    wedged on a stale parent-liveness check."""
+    spec's dispatch id; and the run reaches `complete` - NEVER wedged on a
+    stale parent-liveness check."""
     _need_pg()
     p = _new_project(client, "hw-e2")
     # The parent was consumed by an EARLIER run: no live parent inbox exists in
-    # THIS run. T4b (#387) retired the config family, so there is no config file
-    # to seed/consume - the parent identity is the spec's own fault_key, and the
+    # THIS run. The parent identity is the spec's own dispatch id, and the
     # durable note is keyed by it regardless of any parent session.
-    assert stack.produced_config_keys(p) == []
     assert stack.consumed_spec_files(p, DISPATCH_ID) == []
 
-    # Seed the produced `specified` spec under the consumed parent's fault_key.
+    # The earlier run consumed the parent loop file: seed the COMPLETED model,
+    # then move its loop to consumed/ through the store primitive (no live
+    # parent session in THIS run).
+    stack.seed_threat_model_unit(p, unit_id=UNIT)
+    assert stack.consume_seeded_loop(p, unit_id=UNIT) is True
+    assert stack.consumed_loop_files(p) == [f"{UNIT_NAME}/loop-1"]
+
+    # Seed the produced `ratified` spec under the dispatch id.
     spec_file = stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     assert stack.produced_spec_files(p, DISPATCH_ID) == [spec_file]
 
     # Launch a fresh whole run; the surfer must dispatch the pod (own-status
     # gate) with NO live parent and reach complete - not wedge on quiesce.
-    launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    launch = client.post(f"/projects/{p}/hunting", json={})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     term = _wait_terminal(p, rid, timeout=240)
@@ -247,7 +261,7 @@ def test_E2_cross_run_produced_spec_reconciliation(client):
 
 def test_E3_mid_flight_stop(client):
     """id: E3 - mid-flight stop. Launch a whole run that has real dispatching
-    work (a ratified config + a specified spec keep it alive mid-pass); POST
+    work (a `ratified` spec keeps it alive mid-pass); POST
     .../hunting/{id}/stop while it is mid-pass -> `{"stopping": True}`; poll the
     run row -> `stopped`; the append-only store preserves the partial trail
     (the seeded fixtures remain readable through the real stores); and the run's
@@ -257,7 +271,7 @@ def test_E3_mid_flight_stop(client):
     p = _new_project(client, "hw-e3")
     spec_file = stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    launch = client.post(f"/projects/{p}/hunting", json={})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
 
@@ -269,8 +283,7 @@ def test_E3_mid_flight_stop(client):
     assert row["status"] == "stopped"
     # The partial trail survives (append-only store): the seeded spec is still
     # readable through the real store (produced or consumed, whichever the stop
-    # caught it in). T4b (#387): the config family retired with the dispatch path.
-    assert stack.produced_config_keys(p) == []
+    # caught it in).
     spec_partial = (
         stack.produced_spec_files(p, DISPATCH_ID)
         + stack.consumed_spec_files(p, DISPATCH_ID)
@@ -299,7 +312,7 @@ def test_E4_per_session_pause_resume_mid_graph(client):
     (pod)."""
     _need_pg()
     p = _new_project(client, "hw-e4")
-    launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    launch = client.post(f"/projects/{p}/hunting", json={})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     hunter_sid = hunter_session_id(rid, DISPATCH_ID)
@@ -335,7 +348,7 @@ def test_E5_single_session_stop_does_not_end_the_run(client):
     p = _new_project(client, "hw-e5")
     spec_file = stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    launch = client.post(f"/projects/{p}/hunting", json={})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     pod_sid = pod_session_id(rid, DISPATCH_ID, spec_file)
@@ -394,21 +407,21 @@ def test_E6_modeller_only_launch_creates_no_run_row(client):
     synthetic_rid = ob["run_id"]
     assert isinstance(synthetic_rid, str) and synthetic_rid
 
-    # The orchestrator-only launch never opened a hunting_runs row.
+    # The modeller-only launch never opened a hunting_runs row.
     assert stack.hunting_run_rows(p) == [], \
-        "E6: the orchestrator-only launch must NOT create a hunting_runs row"
+        "E6: the modeller-only launch must NOT create a hunting_runs row"
     g = client.get(f"/projects/{p}/hunting/{synthetic_rid}")
     assert g.status_code == 404, \
         f"E6: synthetic run id must 404, got {g.status_code}"
 
     # A follow-up hunt enqueue is the LOUD retirement (T4b #387): it writes
-    # nothing into the retired config family.
+    # nothing into the live produced loop family.
     h = client.post(
         f"/projects/{p}/hunting/hunt",
-        json={"unit_id": UNIT, "fault_class": FAULT, "vulnerability_class": CLASS})
+        json={"unit_id": UNIT, "web_vulnerability_class": CLASS, "fault": FAULT})
     assert h.status_code == 410, h.text
     assert "retired" in h.json()["detail"].lower()
-    assert stack.produced_config_keys(p) == []
+    assert stack.produced_loop_files(p) == []
     # No run row yet even after the component launches.
     assert stack.hunting_run_rows(p) == []
 
@@ -424,15 +437,15 @@ def test_E7_one_live_run_guard(client):
     _need_pg()
     p = _new_project(client, "hw-e7")
     # Seed dispatching work (the live POD family) so the first run stays alive
-    # across the second POST. T4b (#387): the config family is not dispatch
-    # input; a hunter dispatches only from a produced loop file (T6 #379), and
-    # the production hunter prompt work phase (T7 #380) drives a live hunt.
+    # across the second POST. A hunter dispatches only from a produced loop
+    # file (T6 #379), and the production hunter prompt work phase (T7 #380)
+    # drives a live hunt.
     stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    first = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    first = client.post(f"/projects/{p}/hunting", json={})
     assert first.status_code == 201, first.text
     first_id = first.json()["hunting_run_id"]
-    second = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    second = client.post(f"/projects/{p}/hunting", json={})
     if second.status_code == 409:
         rows = stack.hunting_run_rows(p)
         assert [r["hunting_run_id"] for r in rows] == [first_id]
@@ -456,20 +469,20 @@ def test_E8_hunt_enqueue_is_retired_loudly(client):
     RETIRED with the config family: the loop file is the dispatch record and a
     live run's surfer dispatches it. The live stack answers a LOUD 410 naming
     the replacement instead of silently accepting a config into a family nothing
-    reads; nothing lands in the retired produced family. The at-most-once
+    reads; nothing lands in the live produced loop family. The at-most-once
     replay predicate retired with the enqueue (no novelty gate is left); the
     whole-run one-live-run guard keeps its own at-most-once coverage in E7.
     The eval translation is T10 (#383)."""
     _need_pg()
     p = _new_project(client, "hw-e8")
-    body = {"unit_id": UNIT, "fault_class": FAULT, "vulnerability_class": CLASS}
+    body = {"unit_id": UNIT, "web_vulnerability_class": CLASS, "fault": FAULT}
     first = client.post(f"/projects/{p}/hunting/hunt", json=body)
     assert first.status_code == 410, first.text
     assert "retired" in first.json()["detail"].lower()
     second = client.post(f"/projects/{p}/hunting/hunt", json=body)
     assert second.status_code == 410, second.text
-    assert stack.produced_config_keys(p) == [], (
-        "E8: the retired enqueue must not write the config family")
+    assert stack.produced_loop_files(p) == [], (
+        "E8: the retired enqueue must not write the produced loop family")
 
 
 # =============================================================================
@@ -488,7 +501,7 @@ def test_E9_pod_only_resume(client):
     p = _new_project(client, "hw-e9")
     spec_file = stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    launch = client.post(f"/projects/{p}/hunting", json={})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     pod_sid = pod_session_id(rid, DISPATCH_ID, spec_file)
@@ -547,9 +560,9 @@ def test_E10_process_death_orphan_reconcile(client, monkeypatch):
         f"E10: orphan run {orphan_id} not reconciled to interrupted ({rows})"
 
     # The guard is released: a fresh whole-run launch is now allowed (201).
-    # (Empty-batch quiesce can be fast - by the read-back the fresh run may
+    # (The no-dispatchable-work quiesce can be fast - by the read-back the fresh run may
     # already be terminal; that is reported, never forced to `running`.)
-    launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
+    launch = client.post(f"/projects/{p}/hunting", json={})
     assert launch.status_code == 201, launch.text
     new_rows = {r["hunting_run_id"]: r["status"] for r in stack.hunting_run_rows(p)}
     assert new_rows[launch.json()["hunting_run_id"]] in (

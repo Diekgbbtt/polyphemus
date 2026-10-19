@@ -70,7 +70,12 @@ def _missed_verdict(vuln_id: str = "v1") -> dict:
         "vuln_id": vuln_id,
         "identified": "missed",
         "confidence": 0.5,
-        "matched": {"unit": "u", "fault_class": "CWE-89", "symptom": "s"},
+        "matched": {
+                    "unit": "service:web:viewer",
+                    "web_vulnerability_class": "sql-injection",
+                    "fault": "fault-1",
+                    "symptom": "s",
+                },
         "evidence_chain": None,
         "eval_sha": "eval-sha-1",
         "stack_fingerprint": "fp-1",

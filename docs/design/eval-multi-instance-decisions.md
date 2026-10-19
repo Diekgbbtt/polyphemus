@@ -502,8 +502,12 @@ The prompt rewrite landed in `c6371f1` (#288); this change adds the missing regr
 `tests/eval/test_evidence_path_contract.py` pins each prompt's example prefixes to `orchestrator/files.py`'s resolved path shape, so the two can never drift.
 
 **Falsification checks.**
-- Both prompts carry `<project_id>/hunting/orchestration/hunt_configs/`, `<project_id>/hunting/hunter/test-specs/`, and `<project_id>/hunting/test-executor-pod/`.
-- `files.hunt_configs_dir`, `files.hunter_test_specs_fault_dir`, and `files.pod_dir` each resolve under `data_root/<project_id>/...`.
+- Both prompts carry `<project_id>/hunting/threat_modeller/`, `<project_id>/hunting/hunter/test-specs/`, and `<project_id>/hunting/test-executor-pod/`.
+- `files.threat_model_dir`, `files.hunter_test_specs_fault_dir`, and `files.pod_dir` each resolve under `data_root/<project_id>/...`.
+
+**T10b translation (#397).**
+The decision's shape stands; the example families are now `<project_id>/hunting/threat_modeller/`, `<project_id>/hunting/hunter/test-specs/`, and `<project_id>/hunting/test-executor-pod/`.
+The retired hunt-config family is no longer an evidence family.
 
 ## Round-12 decision (the trial deadline stops the active run, #338, 2026-10-07)
 

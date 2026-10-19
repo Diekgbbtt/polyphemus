@@ -81,8 +81,8 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
     )
 
     # the POSITIVE list (S2 8.2): the payload carries exactly these keys and no
-    # others - the failure modes, a narrowed vector, a `HuntConfig` and a payload
-    # vector space stay in the model (T4a review F4: `assumption` and `suite_gap`
+    # others - the failure modes, a narrowed vector, the retired `HuntConfig` and
+    # a payload vector space stay in the model (T4a review F4: `assumption` and `suite_gap`
     # were extra; `programming_fault` and the loop record already carry them)
     assert set(payload) == {
         "dispatch_id", "run_id", "loop_id", "unit_id", "unit_kind", "loop",

@@ -1,11 +1,11 @@
 """The evidence chain: resolve and validate the artifacts backing a verdict.
 
-For an `identified`/`partial` verdict the chain is the parent hunt config, the
-child `TestImplementationSpec` directory, the child experiment logs, and the
-yielded `PodExport` - plus optional phase-mapped observability reasoning refs.
-Every path is data-root-relative and must resolve on disk through the injected
-`FileStore`: a missing required element is a named validation error, never a
-silently short chain (N13/D17).
+For an `identified`/`partial` verdict the chain is the parent threat-model loop
+file, the child `TestImplementationSpec` directory, the child experiment logs,
+and the yielded `PodExport` - plus optional phase-mapped observability reasoning
+refs. Every path is data-root-relative and must resolve on disk through the
+injected `FileStore`: a missing required element is a named validation error,
+never a silently short chain (N13/D17).
 
 The reasoning seam is read-only and injected: given a trace id recorded by the
 trial it returns reasoning observations, which are mapped to the agent workflow
@@ -25,10 +25,10 @@ from typing import Callable, Mapping, Sequence
 
 from orchestrator.files import (
     FileStore,
-    hunt_configs_dir,
     hunter_test_specs_dir,
     pod_experiment_logs_dir,
     pod_spec_dir,
+    threat_model_dir,
 )
 
 # The agent workflow phases a reasoning ref maps to, in output order.
@@ -68,11 +68,17 @@ ReasoningSource = Callable[[str], Sequence[Mapping]]
 
 @dataclass(frozen=True)
 class EvidenceTarget:
-    """The identities a verdict's chain is resolved from within a project."""
+    """The identities a verdict's chain is resolved from within a project.
+
+    `unit` is the threat model's unit id; `loop_id` is the store-owned
+    `loop-<rank>` id; `dispatch_id` is the derived `<unit_name>__<loop_id>` the
+    hunter store keys the spec family by (S2 8.1, S3 8.9).
+    """
 
     project_id: str
-    hunt_config: str
-    fault_key: str
+    unit: str
+    loop_id: str
+    dispatch_id: str
     spec_id: str
     pod_export: str | None = None
     trace_id: str | None = None
@@ -82,7 +88,7 @@ class EvidenceTarget:
 class EvidenceChain:
     """The resolved, data-root-relative evidence chain of one verdict."""
 
-    hunt_config: str
+    loop: str
     spec_dir: str
     experiment_logs: tuple[str, ...]
     pod_export: str
@@ -90,7 +96,7 @@ class EvidenceChain:
 
     def to_dict(self) -> dict:
         return {
-            "hunt_config": self.hunt_config,
+            "loop": self.loop,
             "spec_dir": self.spec_dir,
             "experiment_logs": list(self.experiment_logs),
             "pod_export": self.pod_export,
@@ -134,10 +140,11 @@ def resolve_evidence(
 ) -> EvidenceChain:
     """Resolve every chain element from the data root by identity.
 
-    The hunt config is searched on both sides; the spec directory is the
-    `<fault_key>/` family; the experiment logs are every `*.yaml` slice; the
-    pod export is the named `<run_id>.yaml` or the spec's single terminal
-    record. A missing or ambiguous element raises `EvidenceError`.
+    The loop file is searched on both threat-model sides under the unit's
+    derived directory; the spec directory is the `<dispatch_id>/` family; the
+    experiment logs are every `*.yaml` slice; the pod export is the named
+    `<run_id>.yaml` or the spec's single terminal record. A missing or
+    ambiguous element raises `EvidenceError`.
 
     This is the harness-facing chain resolver (CODING_STANDARD section 12): the
     orchestrator dispatches the assessment as an external subagent, so no
@@ -148,8 +155,8 @@ def resolve_evidence(
     root = Path(data_root)
     project = target.project_id
 
-    hunt_config = _resolve_hunt_config(root, project, target.hunt_config, files)
-    spec_dir = hunter_test_specs_dir(root, project) / target.fault_key
+    loop = _resolve_loop(root, project, target.unit, target.loop_id, files)
+    spec_dir = hunter_test_specs_dir(root, project) / target.dispatch_id
     _require_dir(spec_dir, "spec_dir", files)
 
     logs_dir = pod_experiment_logs_dir(root, project, target.spec_id)
@@ -167,7 +174,7 @@ def resolve_evidence(
         reasoning = map_reasoning(reasoning_source(target.trace_id))
 
     chain = EvidenceChain(
-        hunt_config=hunt_config,
+        loop=loop,
         spec_dir=_relative(root, spec_dir),
         experiment_logs=experiment_logs,
         pod_export=pod_export,
@@ -181,7 +188,7 @@ def validate_evidence(chain: EvidenceChain, data_root: str | Path, *, files: Fil
     """Check every chain path is data-root-relative and present on disk."""
     root = Path(data_root)
     for label, path in (
-        ("hunt_config", chain.hunt_config),
+        ("loop", chain.loop),
         ("spec_dir", chain.spec_dir),
         ("pod_export", chain.pod_export),
     ):
@@ -201,17 +208,35 @@ def validate_evidence(chain: EvidenceChain, data_root: str | Path, *, files: Fil
 # --- internals ----------------------------------------------------------------
 
 
-def _resolve_hunt_config(
-    root: Path, project: str, name: str, files: FileStore
+def _unit_name(unit_id: str) -> str:
+    """The unit directory name the threat-model store derives (S2 4.2).
+
+    The store owns this symbol; the eval mirrors the same derivation
+    (`:` and `/` become `-`) so it can address the file the mover reads. The
+    eval never writes the store, so the mirrored rule is a read-only path
+    helper, not a second write authority.
+    """
+    return unit_id.replace(":", "-").replace("/", "-")
+
+
+def _resolve_loop(
+    root: Path, project: str, unit: str, loop_id: str, files: FileStore
 ) -> str:
-    stem = name[:-5] if name.endswith(".yaml") else name
+    """Resolve a produced/consumed loop file by unit and loop id.
+
+    A bare loop id and an optional `.yaml` suffix are both accepted; the file
+    must live under the unit's derived directory on one of the two sides.
+    """
+    name = loop_id if loop_id.endswith(".yaml") else f"{loop_id}.yaml"
+    unit_name = _unit_name(unit)
     for side in ("produced", "consumed"):
-        directory = hunt_configs_dir(root, project, side)
-        for path in files.glob(directory, "*.yaml"):
-            if path.name == name or path.stem == stem:
-                return _relative(root, path)
+        directory = threat_model_dir(root, project, side) / unit_name
+        matches = files.glob(directory, name)
+        if matches:
+            return _relative(root, matches[0])
     raise EvidenceError(
-        f"hunt_config: {name!r} not found in the produced/consumed inboxes"
+        f"loop: {unit}/{loop_id} not found in the threat-model produced/consumed "
+        "inboxes"
     )
 
 

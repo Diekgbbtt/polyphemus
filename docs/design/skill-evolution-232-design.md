@@ -222,12 +222,12 @@ Three hunting-scoped notes files plus a project-config file, all under the app r
  │   └── <skill>/
  ├── auth/
  └── hunting/
-     ├── orchestration/
-     │   ├── hunt_configs/{produced,consumed}/
-     │   └── notes.yaml        # orchestrator notes (config-keyed) - stay put
+     ├── threat_modeller/
+     │   ├── {produced,consumed,abandoned}/<unit_name>/
+     │   └── notes.yaml        # modeller notes (unit-keyed)
      ├── hunter/
-     │   ├── test-specs/<fault_key>/
-     │   └── notes.yaml        # hunter notes (fault-keyed) - stay put
+     │   ├── test-specs/<dispatch_id>/
+     │   └── notes.yaml        # hunter notes (dispatch-id-keyed)
      └── test-executor-pod/
          └── notes.yaml        # pod notes (spec-keyed) - stay put
 ```

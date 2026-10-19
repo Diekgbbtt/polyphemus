@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from orchestrator import cli, predicates, setup as setup_mod, trial
-from orchestrator.files import FileStore, hunt_configs_dir
+from orchestrator.files import FileStore, threat_model_dir
 from orchestrator.setup import PreloadedArtifacts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -63,31 +63,6 @@ class FakeClock:
 
     def sleep(self, seconds: float) -> None:
         self.t += seconds
-
-
-class SeqListFileStore(FileStore):
-    """A `FileStore` whose consumed-hunt-config listing pops a scripted sequence.
-
-    The trial-scoped poll reads the consumed listing once per iteration; every
-    other directory (and `count_files`, the entry gate's pre-mined presence
-    check) reads the real tree. See `test_orchestrator_trial.py` for the same
-    seam.
-    """
-
-    def __init__(self, listings, consumed_dir):
-        super().__init__()
-        self._listings = [list(names) for names in listings]
-        self._consumed = Path(consumed_dir)
-
-    def list_files(self, directory):
-        if Path(directory) != self._consumed:
-            return FileStore.list_files(self, directory)
-        if self._listings:
-            return [Path(name) for name in self._listings.pop(0)]
-        return []
-
-    def count_files(self, directory) -> int:
-        return len(FileStore.list_files(self, directory))
 
 
 def _config(tmp_path, **overrides) -> trial.TrialConfig:
@@ -220,26 +195,27 @@ def test_seeded_trial_blocks_on_a_missing_l1(tmp_path) -> None:
 
 
 def test_seeded_trial_places_premined_artifacts(tmp_path) -> None:
-    source = tmp_path / "premined"
-    source.mkdir()
-    (source / "unit_CWE-1_sqli.yaml").write_text("id: a\n")
+    source = tmp_path / "premined" / "unit-web-sqli"
+    source.mkdir(parents=True)
+    (source / "unit-web-sqli.yaml").write_text("state: COMPLETED\n", encoding="utf-8")
+    (source / "loop-1.yaml").write_text("loop:\n  id: loop-1\n", encoding="utf-8")
 
     api_runner = RecordingApi(_seeded_routes(hunting_status="complete"))
-    files = SeqListFileStore(
-        [["unit_CWE-1_sqli.yaml"]],
-        hunt_configs_dir(tmp_path / "data", SEED, "consumed"),
-    )
+    files = FileStore()
 
     record = _trial(
         tmp_path,
         api_runner,
         files=files,
-        preloaded_hunting_artifacts=PreloadedArtifacts(configs=str(source)),
+        preloaded_hunting_artifacts=PreloadedArtifacts(models=str(source)),
     ).run()
 
     assert record.terminal == "complete"
-    produced = hunt_configs_dir(tmp_path / "data", SEED, "produced")
-    assert [p.name for p in files.list_files(produced)] == ["unit_CWE-1_sqli.yaml"]
+    produced = threat_model_dir(tmp_path / "data", SEED, "produced") / "unit-web-sqli"
+    assert sorted(p.name for p in files.list_files(produced)) == [
+        "loop-1.yaml",
+        "unit-web-sqli.yaml",
+    ]
     assert set(api_runner.methods_paths).isdisjoint(_forbidden_project_calls(SEED))
 
 

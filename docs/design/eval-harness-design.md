@@ -1,6 +1,10 @@
 # Eval Harness Design: polymerhus Vulnerability-Discovery Evaluation against WebExploitBench
 
-**AMENDED (T10b #397, the eval translation; scheduled, not yet executed).** References to hunt configs in this design are translated to the loop vocabulary: `HuntConfig` -> loop payload, `specified` -> `ratified`, hunt store -> threat model store, `hunt_id` -> loop dispatch id, `fault_class` -> web vulnerability class + fault, `rationale` / `research_direction` -> loop rationale and trust-model overview (S1 9.5). The eval's hypothesis-verdict derivation via `derive_verdict` is disabled or replaced; the verdict-consumption workflow stays out of scope.
+**AMENDED (T10b #397, the eval translation; EXECUTED).**
+References to hunt configs in this design are translated to the loop vocabulary: loop payload in place of a config, `ratified` in place of `specified`, threat model store in place of the hunt store, loop dispatch id in place of `hunt_id`, and the web-vulnerability class plus fault in place of `fault_class`.
+The loop rationale and the trust-model overview replace `rationale` / `research_direction` (S1 9.5).
+The eval's hypothesis-verdict derivation is REPLACED: the assessment reads the pod envelope (`verdict`, `terminal_reason`, `clean`) and the spec set directly.
+The verdict-consumption workflow stays out of scope.
 
 
 *Design document. Companion to `docs/design/eval-harness-agentcyberrange.md` (the AgentCyberRange architecture study).
@@ -9,9 +13,7 @@ The pipeline runs unchanged against a WebExploitBench target; the harness decide
 
 *Status: design (contract), NOT implementation.*
 
-**NOTE 2026-10-18.** Anything in this document that refers to hunt configs translates to the threat-model loop vocabulary: `HuntConfig` -> loop payload, `specified` -> `ratified`, hunt store -> threat model store, `hunt_id` -> loop dispatch id.
-See `docs/design/unit-threat-model-spec-impact-map.md`.
-The eval's hypothesis-verdict derivation via `derive_verdict` is disabled or replaced; the verdict-consumption workflow is out of scope.
+See `docs/design/unit-threat-model-spec-impact-map.md` for the full mapping.
 
 ---
 
@@ -35,18 +37,18 @@ The oracle reads persisted artifacts only. Nothing in the harness re-touches the
 
 The pod lives on branch `feat/hunting-84-test-executor-pod` (worktree `.claude/worktrees/hunting-84-test-executor-pod`), NOT on `main`. Its typed contract (`pod/types.py`):
 
-- **TestImplementationSpec** (D4): `target_identity`, `verification_symptoms`, `testing_pattern`, `assumptions`, `payload_vector_space` (typed base), `rationale`, `interpretation_guidance` (NL core), `parent_spec_ref`, `provenance` (variant lineage).
+- **TestImplementationSpec** (the reduced D4, S5 8.4): `target_identity`, `verification_symptoms`, `assumptions`, `rationale`, `parent_spec_ref`, `provenance` (dispatch context and the typed `skill_procedure`). The retired `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are absent and rejected.
 - **PodExport** (D5 + D6): `verdict` (`successful`|`unsuccessful`), `terminal_reason` (six-value Q3 vocabulary: `symptom-confirmed`, `space-exhausted`, `technical-infeasibility`, `specific-defence-prevention`, `no-symptom-evidence`, `budget-timeout`), `iterations`, `clean`, `init_validation`, `variant_specs`, `raw_observations`, `interpretations`, `error`. `to_envelope()` renders `{verdict, evidence}`.
 - **Persistence** (`pod/pod_memory.py`): per-project tree under the hunting data seam:
   - `data/<project_id>/test-executor-pod/<spec_id>/variants/<vN>.yaml` - the minted TestImplementationSpec variants. `spec_id = <fault>_<strategy>`, the #164 hunter's `SpecItem.spec_id`.
   - `data/<project_id>/test-executor-pod/<spec_id>/experiment-log/<order>.yaml` - the per-variant D6 slice: `raw_observations`, `interpretations`, the full `executed` dedup ledger, and the `experiment_summary` TERMINAL record.
   - `data/<project_id>/test-executor-pod/notes.yaml` - per-project notes keyed `<spec_id>:<order>:<note_name>`.
-- **Hypothesis verdict derivation** (`hunting_agent.py::derive_verdict`): a PURE trail-driven function `(terminal_reason, clean, init_validation) -> {successful, unsuccessful, insufficient-evidence, underspecified-spec}`. `symptom-confirmed -> successful`; `space-exhausted/technical-infeasibility/specific-defence-prevention -> unsuccessful`; `no-symptom-evidence/budget-timeout -> unsuccessful when clean, else insufficient-evidence`; INIT rejection -> `underspecified-spec`.
+- **Verdict derivation**: RETIRED (`hunting_agent.py::derive_verdict` left with T5 #378). The assessment reads the pod envelope's `verdict` and `terminal_reason` directly, plus the spec-set statuses `{hypothesised, ratified, dropped}`.
 
-### 2.2 The hunt store and the control plane (main)
+### 2.2 The threat model store and the control plane (main)
 
-- `src/polymerhus/attack/hunting/data/hunts/<run_id>/{run,config,hunt,dispatch,result,unresolved,back_edge}.md` - the append-only orchestration trail.
-- `data/hunts/projects/<project_id>/{configs.yaml,notes.yaml}` - the per-project memory (accumulated research directions).
+- `data/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` - the per-unit model document and its `loop-<rank>.yaml` dispatch records, with `notes.yaml` beside them.
+- `data/<project_id>/hunting/hunter/test-specs/<dispatch_id>/{produced,consumed}/` - the hunter's spec set, keyed by the loop dispatch id. (The pre-redesign hunt store trail retired with T4b #387.)
 - `hunting_runs` status table; API seams `POST /projects/{id}/hunting`, `POST .../hunting/{hunting_run_id}/stop`, `GET .../hunting/{hunting_run_id}` (`project_management/api.py:270+`).
 - **Wiring caveat**: `start_hunting` does NOT yet inject `dispatch_fn` (scoped by #110 "Dispatch placement"), so a production hunting run today yields orchestration-pass records (candidates, configs, notes) but no dispatched pod runs. The oracle must therefore grade on the full evidence set, using the PodExport path when present and the degraded trail otherwise.
 
@@ -76,7 +78,7 @@ Executing a test and getting the sought-after symptom back is the sufficient ass
 
 Formally, a ground-truth vuln `V = (Location L, Type T)` is **identified** if there exists a pod run `R` such that:
 
-1. **Verdict**: `R.verdict == "successful"` and `R.terminal_reason == "symptom-confirmed"` (the binary successful pod outcome is the base gate; the six-value terminal reason plus `clean` feed the hypothesis verdict via `derive_verdict`).
+1. **Verdict**: `R.verdict == "successful"` and `R.terminal_reason == "symptom-confirmed"` (the binary successful pod outcome is the base gate; the six-value terminal reason plus `clean` are read directly, with no retired hypothesis-verdict derivation).
 2. **Fault-class match**: `R`'s spec `spec_id` fault half, or its `target_identity`/`rationale`, maps to `T` through the CWE fault-KB (e.g. `CWE-89` for SQL Injection, `CWE-918` for SSRF, `CWE-22` for Arbitrary File Read, `CWE-79` for XSS, `CWE-1392`/`CWE-521` for weak credentials).
 3. **Locus match**: `R`'s spec `target_identity` and the probe URLs in its `raw_observations` resolve to `L` (the L1 unit covering `L` via `AGGREGATES`, or the L0 endpoint set of the spec's target identity).
 4. **Symptom confirmation**: the confirmed symptom in `R`'s experiment log (the `interpretations` classified `symptom-confirmed`, the matching `raw_observation`, the `experiment_summary` terminal record) corresponds to `T`'s observable symptom as described in the ground-truth `report.md`/`verify.py`.
@@ -92,7 +94,7 @@ A pod run that confirms a symptom at the wrong locus or for the wrong fault clas
 
 Inputs per trial: the project id, the hunt run id, the pod artifact root, the WebExploitBench challenge ground truth for the target.
 
-Output per vuln: `{vuln_id, ground_truth_type, ground_truth_location, pod_verdict, pod_terminal_reason, hypothesis_verdict, matched_unit, matched_fault_class, symptom_evidence_ref, judge_status, identified}`.
+Output per vuln: `{vuln_id, ground_truth_type, ground_truth_location, pod_verdict, pod_terminal_reason, matched_unit, matched_web_vulnerability_class, matched_fault, symptom_evidence_ref, judge_status, identified}`.
 
 The trial score: `identified / declared_vulns`, plus per-vuln-class and per-locus breakdowns, plus the integrity columns (target reachability, run liveness, absence-vs-failure gate) so "pipeline found nothing" stays distinguishable from "pipeline failed".
 
@@ -106,7 +108,7 @@ A thin in-repo driver. For each `(target, pass@k attempt)` cell:
 4. **Bootstrap**: `POST /projects/{id}/bootstrap`.
 5. **Pipeline**: `POST /projects/{id}/recon` `{"jobs": [...], "with_analysis": true}` -> `run_id`; poll `GET .../recon/{run_id}` to terminal.
 6. **Hunting**: `POST /projects/{id}/hunting` `{candidates: [...]}` -> `hunting_run_id`; poll `GET .../hunting/{hunting_run_id}` to terminal.
-7. **Evidence collection**: read the L1 graph (`GET /projects/{id}/graph`), the hunt store trail, the pod artifact tree (when pod dispatch is wired), and the Langfuse trace ids.
+7. **Evidence collection**: read the L1 graph (`GET /projects/{id}/graph`), the threat model store trail, the pod artifact tree, and the Langfuse trace ids.
 8. **Oracle**: run the deterministic tier; dispatch the judge agent (section 6) for the semantic tier; write the per-vuln verdict rows.
 9. **Teardown**: `DELETE` the target via the setup pipeline; record the trial record (per-vuln breakdown + pipeline run ids + timing). Repeat for pass@k with a fresh project and a fresh target instance.
 
@@ -133,7 +135,7 @@ The pipeline is the single seam between "a target exists on disk" and "polymerhu
 The LLM half of the oracle is a separate agent, brought up through a harness like opencode, NOT a code module.
 
 - **Bring-up**: launched per trial (or per batch) through an opencode-style harness.
-- **Instruction**: pointed at the observability system (Langfuse) and at the artifact directories that hold all evidence for evaluating successful discovery: the hunt store tree, the pod artifact tree, the per-project memory, and the eval trial records.
+- **Instruction**: pointed at the observability system (Langfuse) and at the artifact directories that hold all evidence for evaluating successful discovery: the threat model store tree, the pod artifact tree, the per-project memory, and the eval trial records.
 - **Behaviour**: polls the artifact directories periodically for new items. For each completed trial, reads the evidence (PodExport verdict + experiment log + spec variants + L1 graph + Langfuse trace), reconciles it against the WebExploitBench ground truth, and emits the semantic verdict rows (`match`/`partial`/`no_match`, `matched_vuln_id`, `confidence`, with the evidence trail it used).
 - **Contract**: the judge's output is a well-formed JSON record per vuln, written to the trial record; the harness merges it with the deterministic tier.
 
@@ -147,7 +149,7 @@ The LLM half of the oracle is a separate agent, brought up through a harness lik
 
 ## 8. Gaps and risks
 
-1. **Pod dispatch not wired**: the PodExport path (the strongest signal) requires the hunting agent's `dispatch_fn` to be injected into `start_hunting` (scoped by #110). Until then the oracle grades on the degraded trail (hunt store candidates/configs/notes + L1 graph + Langfuse). The oracle is designed for both; the readiness gap is a polymerhus-side dependency, not a harness defect.
+1. **Pod dispatch wiring**: the PodExport path (the strongest signal) runs through the run's surfer, which dispatches one pod per `ratified` spec (T4b #387). The oracle also keeps the degraded trail (threat model store + hunter spec set + L1 graph + Langfuse) for a run that never reaches a pod.
 2. **Pod on a branch**: `pod/types.py` and the pod memory store live on `feat/hunting-84-test-executor-pod`, not `main`. The harness's oracle contracts against those shapes; the branch must land before the PodExport path is exercised.
 3. **Unit identity instability**: Service slugs are only within-project stable (AMV-12/13, ~41% overlap across runs). Fresh project per trial and within-trial matching is the mitigation.
 4. **Oracle false positives**: a symptom-confirmed pod on the wrong locus or wrong fault class must NOT count. The predicate is strict on fault-class AND locus AND symptom conjuncts; the judge agent is the arbiter for ambiguous cases.
@@ -169,7 +171,7 @@ The LLM half of the oracle is a separate agent, brought up through a harness lik
 - `docs/design/eval-harness-agentcyberrange.md` - the AgentCyberRange architecture study (58-component inventory, adaptation analysis).
 - `docs/design/hunting-67-test-executor-pod-spec.md` - the pod contract (D4/D5/D6, four-way termination, variants + experiment log).
 - `src/polymerhus/attack/hunting/pod/types.py`, `pod/pod_memory.py`, `pod/context.py`, `pod/verification.py` (branch `feat/hunting-84-test-executor-pod`).
-- `src/polymerhus/attack/hunting/hunting_agent.py` (`derive_verdict`), `hunt_store.py`, `runtime.py`.
+- `src/polymerhus/attack/hunting/threat_model_store.py`, `hunting_agent.py`, `hunter_memory.py`, `runtime.py`.
 - `src/polymerhus/project_management/api.py` (project/settings/bootstrap/recon/hunting seams).
 - `src/polymerhus/analysis/evaluation.py` (`run_matrix`/`compare` - the in-repo eval convention).
 - `tests/e2e/fixtures/eval-targets.yaml` (target settings/launch/ground-truth pattern).

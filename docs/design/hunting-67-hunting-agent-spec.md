@@ -494,6 +494,11 @@ The spec-set lifecycle is:
 - `ratified`: the surviving spec at the terminal write.
 - `dropped`: the declassed spec at the terminal write.
 
+A WELL-FORMEDNESS "merge" is a descriptive judgement, not a fourth status.
+The merged-away spec is written `dropped`; the surviving spec is `ratified`
+(possibly rewritten first). The store and the mover read only the three
+literals above.
+
 The spec body is the typed spec at every status.
 There is no separate `FaultItem` draft.
 The spec identity is the file-name stem `<fault_keyword>_<strategy_keyword>`.

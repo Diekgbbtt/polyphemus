@@ -356,7 +356,7 @@ def _read_only_l1_read(project_id: str) -> "L1ReadFn | None":
     7.1: the runtime reads the L1 inventory at run start); a failed construction
     leaves the seam None and its consumer degrades fail-open."""
     try:
-        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        from polymerhus.attack.hunting.read_only_graph import (  # noqa: PLC0415
             ReadOnlyGraphView,
         )
 
@@ -981,7 +981,7 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     `HUNTING_LIGHTRAG_TOOL` gate is REMOVED). The harness consumes the loop
     payload end to end (T6 #379). Returns `(dispatch_fn, registry)`; the caller
     reaps the registry at the session's end."""
-    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphView
     from polymerhus.attack.hunting.pod.tools import default_exec_fn
     from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
         default_http_get_fn,

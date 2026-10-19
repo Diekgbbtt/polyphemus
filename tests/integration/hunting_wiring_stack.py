@@ -5,8 +5,8 @@ The catalogue drives the hunting-wiring runtime plane under REAL production
 conditions against a live agent container (the "target"), with the live
 `hunting_runs` Postgres row (the target postgres is already up) and fixtures
 seeded through the REAL store APIs (`HunterMemoryStore`, `PodMemoryStore`;
-the retired hunt-config family is only read back physically to prove nothing
-writes it).
+the retired hunt-config family has no read-back: the threat-model produced
+loop files are read physically to prove what the run actually dispatched).
 
 Two targets selectable via `WIRING_TARGET`:
 - `sibling` (default): a distinct agent container (`agent-hw`, built FROM THIS
@@ -298,20 +298,74 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
 # --- terminal-quantity read-backs (real store reads, never the code's return) ---
 
 
-def produced_config_keys(project_id: str) -> list[str]:
-    """The retired config family's produced file stems, read straight from the
-    physical layout (T6 removed the config I/O). The live assertions use this
-    only to prove NOTHING writes the retired family; a new writer would show
-    up here."""
+def seed_threat_model_unit(project_id: str, *, unit_id: str,
+                           run_id: str = "hw-seeded") -> str:
+    """Drive a REAL `ThreatModelStore` to COMPLETED for `unit_id`, producing
+    the unit's model document and its loop files (T10b #397). The E1/E2
+    premise: a produced loop file IS the dispatch record (S2 8.4), so a
+    walkthrough that claims to seed one must actually write it."""
+    from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+    from tests.hunting_fixtures import loop_row, produce_model
+
+    produce_model(
+        ThreatModelStore(),
+        project_id=project_id,
+        unit_id=unit_id,
+        run_id=run_id,
+        loops=[loop_row()],
+    )
+    return unit_id
+
+
+def consume_seeded_loop(project_id: str, *, unit_id: str,
+                        loop_id: str = "loop-1") -> bool:
+    """Move the seeded unit's loop to consumed/ through the store primitive -
+    the earlier-run parent E2 needs (no live parent session)."""
+    from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+
+    return ThreatModelStore().consume_loop(project_id, unit_id, loop_id)
+
+
+def produced_loop_files(project_id: str) -> list[str]:
+    """The threat-model store's produced loop files, read straight from the
+    physical layout (T10b #397: the loop file is the dispatch record, S2 8.4).
+
+    The identity is `<unit_name>/<loop_id>`, so the same `loop-1` under two
+    units stays distinguishable. A live assertion reads this to prove what the
+    run actually produced; nothing about the retired config family is read."""
     from polymerhus.app.data_root import DATA_ROOT, project_dir
 
     base = (
-        project_dir(project_id, "hunting/orchestration", root=DATA_ROOT)
-        / "hunt_configs" / "produced"
+        project_dir(project_id, "hunting/threat_modeller", root=DATA_ROOT)
+        / "produced"
     )
     if not base.exists():
         return []
-    return sorted(child.stem for child in base.glob("*.yaml"))
+    return sorted(
+        f"{unit_dir.name}/{path.stem}"
+        for unit_dir in base.iterdir()
+        if unit_dir.is_dir()
+        for path in unit_dir.glob("loop-*.yaml")
+    )
+
+
+def consumed_loop_files(project_id: str) -> list[str]:
+    """The threat-model store's consumed loop files, read straight from the
+    physical layout (the mover's at-least-once marker, S2 8.4)."""
+    from polymerhus.app.data_root import DATA_ROOT, project_dir
+
+    base = (
+        project_dir(project_id, "hunting/threat_modeller", root=DATA_ROOT)
+        / "consumed"
+    )
+    if not base.exists():
+        return []
+    return sorted(
+        f"{unit_dir.name}/{path.stem}"
+        for unit_dir in base.iterdir()
+        if unit_dir.is_dir()
+        for path in unit_dir.glob("loop-*.yaml")
+    )
 
 
 def produced_spec_files(project_id: str, fault_key: str) -> list[str]:

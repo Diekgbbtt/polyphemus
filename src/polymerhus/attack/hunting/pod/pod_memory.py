@@ -60,8 +60,8 @@ from polymerhus.app.data_root import project_dir
 
 # The hunting module's data seam (D84-33): the `test-executor-pod/` bucket
 # under `DATA_ROOT/<project_id>/hunting/`, resolved through the ONE
-# `data_root.project_dir` layout owner - the sibling of the hunt store's
-# `hunting/orchestration/` and the #164 hunter's `hunting/hunter/`. No env var;
+# `data_root.project_dir` layout owner - the sibling of the threat-model
+# store's `hunting/threat_modeller/` and the #164 hunter's `hunting/hunter/`. No env var;
 # the explicit-root constructor is kept for the tests' temp stores.
 
 # The closed enum of pod note kinds (D84-28): `experiment_summary` is the ONE

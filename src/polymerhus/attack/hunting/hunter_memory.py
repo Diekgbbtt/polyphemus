@@ -10,7 +10,7 @@ per-project notes file.
 Topology under the app-owned `DATA_ROOT` (no env var; the explicit-root
 constructor is kept for tests). The store shares the ONE per-project sibling
 scheme, resolved through the single `data_root.project_dir` layout owner, with
-the threat-model store (`<project_id>/hunting/orchestration/`) and the pod
+the threat-model store (`<project_id>/hunting/threat_modeller/`) and the pod
 memory (`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
 `hunting/hunter/` bucket under the SAME `<project_id>/` tree:
 

@@ -23,10 +23,10 @@ You are out-of-band scoring, isolated from the run.
 ## How to judge
 
 Read the ground truth with `python3 eval/gt.py <ground-truth-dir> --json`.
-Read the persisted evidence under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the hunt configs under `<data_root>/<project_id>/hunting/orchestration/hunt_configs/{produced,consumed}/`, the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<fault_key>/`, and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
+Read the persisted evidence under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the unit threat models and their loop files under `<data_root>/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` (the model document and its `loop-<rank>.yaml` files), the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/` (the loop dispatch id `<unit_name>__<loop_id>`), and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
 Every one of those paths is parametrised on `<project_id>`, which you read from the `project_id` field of the trial record named in your launch command; `<data_root>` is the data root you were given.
-Apply the identification predicate: a vulnerability is `identified` only when a pod run landed `successful` with `terminal_reason = symptom-confirmed`, its fault class matches the ground-truth type, its locus matches the ground-truth location, and its experiment log shows the confirming symptom.
-A symptom confirmed at the wrong locus or for the wrong fault class is `partial` at most.
+Apply the identification predicate: a vulnerability is `identified` only when a pod run landed `successful` with `terminal_reason = symptom-confirmed`, its web vulnerability class and its fault match the ground-truth type, its locus matches the ground-truth location, and its experiment log shows the confirming symptom.
+A symptom confirmed at the wrong locus or for the wrong web vulnerability class or fault is `partial` at most.
 A vulnerability with no supporting pod evidence is `missed`.
 
 Honesty is the only rule that matters: record what the evidence shows, never what the pipeline was supposed to find.
@@ -41,9 +41,9 @@ Write a YAML list, one row per ground-truth vulnerability:
 - vuln_id: string
   identified: identified | partial | missed
   confidence: number
-  matched: {unit, fault_class, symptom}
+  matched: {unit, web_vulnerability_class, fault, symptom}
   evidence_chain:            # required for identified and partial
-    hunt_config: path        # data-root-relative; begins with the `<project_id>/` segment
+    loop: path               # data-root-relative; begins with the `<project_id>/` segment
     spec_dir: path
     experiment_logs: [path]
     pod_export: path
@@ -53,6 +53,7 @@ Write a YAML list, one row per ground-truth vulnerability:
   stack_fingerprint: string
 ```
 
+`matched.web_vulnerability_class` is the model's suite directory class; `matched.fault` is the assumption's named programming fault (its id or label).
 `evidence_chain` is required for `identified` and `partial`, and every path in it must be relative to the data root, begin with the `<project_id>/` segment, and resolve on disk.
 `eval_sha` and `stack_fingerprint` are copied verbatim from the trial record; never invent them.
 A `missed` verdict may omit `evidence_chain`.

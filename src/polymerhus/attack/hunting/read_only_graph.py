@@ -1,19 +1,20 @@
-"""The residual read-only L0/L1 graph view (the hunt-orchestrator module home).
+"""The read-only L0/L1 graph view (the residual graph seam).
 
 The hunt-orchestrator as an AGENT is retired: the threat modeller
 (`threat_modeller.py`) is the hunt's reasoning pass and the run bootstrap
-(`runtime.start_hunting`) drives it unit by unit. The config family
-(`HuntConfig` / `ConfigStatus`) and the dispatch outcome (`DispatchResult`)
-retired in T6 (#379) with the hunter's loop-payload rework; the derived config
-identity (`hunt_id_for`) retired with them. What remains in this module is the
-read-only graph seam the hunter, the pod and the modeller's grounding provider
-share:
+(`runtime.start_hunting`) drives it unit by unit. The config family and the
+dispatch outcome retired in T6 (#379) with the hunter's loop-payload rework;
+T10 (#383) removed the last planner-era aliases.
+
+T10b (#397) renamed this module from `hunt_orchestrator` to `read_only_graph`,
+its actual responsibility: the read-only L0/L1 seam the hunter, the pod and the
+modeller's grounding provider share.
 
 - `ReadOnlyGraphView` / `ReadOnlyGraphViewError` - the read-only L0/L1 graph
   seam.
 
-designed-for-removal: the module name retires with the component-name hygiene
-sweep (T10, #383). Nothing here may grow a new consumer.
+Nothing here may grow a new consumer without a named ticket; the module has no
+write path and no planner-era state.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD 6).
 """

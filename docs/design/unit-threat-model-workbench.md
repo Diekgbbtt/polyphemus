@@ -18,6 +18,10 @@ Round 12 (Q54) answered 2026-10-18: close the design residuals first; the workst
 
 ### 1.1 The system as built
 
+*Pre-redesign baseline (2026-10-15).*
+It records the pipeline the design replaces; the implementation landed in T1-T10 (#374-#383, #397).
+The `HuntConfig`/hunt-store vocabulary below is the motivating baseline, not the live contract.
+
 The polymerhus hunting pipeline turns a tested target into a queue of configured hunts.
 Recon and analysis produce the L1 substrate: Services and Systems with typed projections, service contracts, aggregated endpoints, and the trust-relevant edges among them (the DataItem layer was retired on 2026-10-15; see the fact base in section 8).
 The hunt-orchestrator consumes that substrate as a per-run planner.
@@ -694,7 +698,7 @@ Wording is drafted in the design and finalised in the prompt work phase; the ope
 **Removal scope (Q47b).** EVALUATE, CONCLUDE, and the [G] node leave the tree, and the now-unused harness surfaces are removed in this refactor: `derive_verdict` (`hunting_agent.py`; already marked STALE - its wiring lives in the out-of-scope verdict graph) and the `SpecItem.experiment_ref` pod-result link, plus the dead verdict/pod-result residue the change spec enumerates. The pod dispatch path itself stays.
 
 **Vocabulary re-derivation (Q52a).** The state values are consistent across all hunting artifacts: exactly `{hypothesised, ratified, dropped}` - the operator flags the former inconsistency as a design smell.
-`verified` is retired (there is no intermediate write during VERIFY-CLAIMS); the spec terminal status is `ratified` (not `specified`); the declass of a verified-unfeasible spec is `dropped`.
+`verified` is retired (there is no intermediate write during VERIFY-CLAIMS); the spec terminal status is `ratified` (not `specified`); the declass of an unfeasible spec is `dropped`.
 The old phases `{grounding, hypothesised, evaluating, concluded}` are re-derived onto the new state chain; the detected writes are the GENERATE draft write (`hypothesised`), the WELL-FORMEDNESS exit note, and the VERIFY-CLAIMS terminal write.
 Ripple (inside this refactor): the surfer's dispatch gate, `hunt_store`, the tool descriptions, and the tests.
 **Phase-summary note label (Q51a).** A dedicated kind `phase_summary` is added to the shared note-kinds enum; the phase rides the name (`phase:<state>`); on a loop re-iteration the same-phase note is rewritten (`update`, latest wins).
@@ -827,8 +831,8 @@ Substrate (L1 graph):
 - Operator note: the data-modeller removal is an experiment and is currently misplaced on `dev`; treat the retirement as the working base here, but expect churn.
 - `edge_degree` is computed on read and counts OUTGOING edges only; the intake today is `read_l1_inventory` (alphabetical Services then Systems) with no ranking and no score. The per-unit projection carries per-family edge counts and aggregated endpoint detail.
 
-Runtime:
-- Three agent roles with per-role gates (`#317`: orchestrator, hunter, pod); run bootstrap and the surfer are runtime infrastructure, not roles.
+Runtime (pre-redesign baseline):
+- Three agent roles with per-role gates (`#317`: orchestrator, hunter, pod; the role is `threat_modeller` since T10); run bootstrap and the surfer are runtime infrastructure, not roles.
 - One orchestrator pass per run, one actor per run on the session thread; session id `hunting:<run_id>:orchestrator`.
 - Run lifecycle: `running -> complete | stopped | failed | interrupted`; startup reconcile; quiesce = orchestrator settled + no dispatchable produced item + no live pod + no hunter mid-graph.
 - Stores: `data/<project_id>/hunting/orchestration/` with `hunt_configs/produced|consumed/` and `memory.yaml`; atomic writes (`#340`); bounded whole-file stores (`#341`); snowball bound on nested prior insights; harness-owned fields injected on the write seam.

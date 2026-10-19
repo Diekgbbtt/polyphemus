@@ -193,8 +193,9 @@ The stop is the same project-scoped call as the budget stop (`api.stop_project`,
 _Avoid_: budget, phase cap
 
 **Pre-mined hunting artifacts**:
-Operator-supplied hunt configs and hunter test specs placed before the project run starts, consumed by the pipeline's normal lazy read.
-Hunt configs land in `<data_root>/<project_id>/hunting/orchestration/hunt_configs/produced/`; each test spec carries its `fault_key` and lands in `<data_root>/<project_id>/hunting/hunter/test-specs/<fault_key>/produced/`.
+Operator-supplied threat-model units and hunter test specs placed before the project run starts, consumed by the pipeline's normal lazy read.
+A unit (its model document plus `loop-<rank>.yaml` files) lands under `<data_root>/<project_id>/hunting/threat_modeller/produced/<unit_name>/`; each test spec carries its loop dispatch id `<unit_name>__<loop_id>` and lands in `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/produced/`.
+The retired hunt-config form (`configs`, or a bare path) is refused loudly and cannot satisfy the hunting prerequisite: nothing reads the config family (T4b #387, T10b #397).
 _Avoid_: seeds, preload
 
 **Artifact store**:
@@ -256,7 +257,8 @@ The read-only branch the eval environment runs; fast-forwarded from `dev` by the
 _Avoid_: eval mirror, deploy branch
 
 **Evidence chain**:
-The per-verdict set of hunting artifacts (hunt config, `TestImplementationSpec`, experiment logs, `PodExport`) plus phase-mapped observability reasoning references that support a positive verdict.
+The per-verdict set of hunting artifacts (the threat-model loop file, the `TestImplementationSpec`, the experiment logs, the `PodExport`) plus phase-mapped observability reasoning references that support a positive verdict.
+The loop file is the parent dispatch artifact; the spec family is keyed by its dispatch id `<unit_name>__<loop_id>`.
 The reasoning references are optional and currently unproduced (designed-not-built, CODING_STANDARD section 12): the resolver's `ReasoningSource` seam is injected but no production source is wired, so a verdict's file chain alone satisfies N13. A trace id may still be supplied via `--trace-id`/`EVAL_TRACE_ID` and is carried in the trial record.
 _Avoid_: proof, references
 
@@ -267,7 +269,8 @@ Like a verdict, each record also carries the trial record's `eval_sha` and `stac
 _Avoid_: post-mortem, failure report
 
 **Failure mode**:
-The classification of why a vulnerability was not identified (e.g. `pod_notsufficient_space_coverage`, `hunter_notsufficient_tests_exploration`, `pod_diverged_trajectory`, `surface_gap`, `spec_underspecified`, `cap_hit`, `orchestrator_failed_unit-fault_binding`). Analysis-layer modes are a recorded future extension.
+The classification of why a vulnerability was not identified (e.g. `pod_notsufficient_space_coverage`, `hunter_notsufficient_tests_exploration`, `pod_diverged_trajectory`, `surface_gap`, `spec_underspecified`, `cap_hit`, `modeller_failed_unit-fault_binding`). Analysis-layer modes are a recorded future extension.
+`cap_hit` is historical: the hunting cap retired on 2026-10-05, so a new diagnosis names the token-budget stop instead.
 _Avoid_: error, reason
 
 **Surfer loop**:

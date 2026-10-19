@@ -1,11 +1,15 @@
 """The evidence-chain resolver and its observability reasoning seam (#271).
 
-The chain is resolved from the instance data root by identity: the parent hunt
-config, the child `TestImplementationSpec` directory, the child experiment logs,
-and the yielded `PodExport`. Every unresolved required element is a named
-validation error - a positive verdict with no auditable chain is refused. The
-optional Langfuse seam is injected and read-only; absent one, the reasoning
-refs stay empty.
+The chain is resolved from the instance data root by identity: the parent
+threat-model loop file, the child `TestImplementationSpec` directory, the child
+experiment logs, and the yielded `PodExport`. Every unresolved required element
+is a named validation error - a positive verdict with no auditable chain is
+refused. The optional Langfuse seam is injected and read-only; absent one, the
+reasoning refs stay empty.
+
+T10b (#397) translated the parent artifact from the retired hunt config to the
+threat-model loop file; the spec family is keyed by the loop's dispatch id
+`<unit_name>__<loop_id>` (S3 8.9).
 """
 from __future__ import annotations
 
@@ -16,10 +20,10 @@ import pytest
 from orchestrator import evidence
 from orchestrator.files import (
     FileStore,
-    hunt_configs_dir,
     hunter_test_specs_dir,
     pod_experiment_logs_dir,
     pod_spec_dir,
+    threat_model_dir,
 )
 
 
@@ -42,11 +46,10 @@ class SeamFileStore(FileStore):
 def seed_chain(tmp_path, files: FileStore, *, project: str = "pid"):
     """Create a full, resolvable chain under `tmp_path/data`; return the root."""
     root = tmp_path / "data"
-    files.write_text(
-        hunt_configs_dir(root, project, "produced") / "unit_CWE-89_sqli.yaml",
-        "id: unit_CWE-89_sqli\n",
-    )
-    spec_dir = hunter_test_specs_dir(root, project) / "unit_CWE-89_sqli"
+    unit_dir = threat_model_dir(root, project, "produced") / UNIT_NAME
+    files.write_text(unit_dir / f"{UNIT_NAME}.yaml", "state: COMPLETED\n")
+    files.write_text(unit_dir / "loop-1.yaml", "loop:\n  id: loop-1\n")
+    spec_dir = hunter_test_specs_dir(root, project) / DISPATCH_ID
     files.write_text(spec_dir / "produced" / "sqli_error.yaml", "id: sqli_error\n")
     logs = pod_experiment_logs_dir(root, project, "sqli_error")
     files.write_text(logs / "0.yaml", "order: 0\n")
@@ -56,11 +59,19 @@ def seed_chain(tmp_path, files: FileStore, *, project: str = "pid"):
     return root
 
 
+# The threat model derives the unit directory (`:` -> `-`, S2 4.2); the store
+# derives the dispatch id `<unit_name>__<loop_id>` (S2 8.1).
+UNIT = "service:web:soupmarket"
+UNIT_NAME = "service-web-soupmarket"
+DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+
+
 def _target(**overrides) -> evidence.EvidenceTarget:
     base = dict(
         project_id="pid",
-        hunt_config="unit_CWE-89_sqli",
-        fault_key="unit_CWE-89_sqli",
+        unit=UNIT,
+        loop_id="loop-1",
+        dispatch_id=DISPATCH_ID,
         spec_id="sqli_error",
         pod_export="run1",
     )
@@ -77,10 +88,12 @@ def test_resolves_every_chain_element_relative_to_the_data_root(tmp_path) -> Non
 
     chain = evidence.resolve_evidence(root, _target(), files=files)
 
-    assert chain.hunt_config == (
-        "pid/hunting/orchestration/hunt_configs/produced/unit_CWE-89_sqli.yaml"
+    assert chain.loop == (
+        "pid/hunting/threat_modeller/produced/service-web-soupmarket/loop-1.yaml"
     )
-    assert chain.spec_dir == "pid/hunting/hunter/test-specs/unit_CWE-89_sqli"
+    assert chain.spec_dir == (
+        "pid/hunting/hunter/test-specs/service-web-soupmarket__loop-1"
+    )
     assert chain.experiment_logs == (
         "pid/hunting/test-executor-pod/sqli_error/experiment-log/0.yaml",
         "pid/hunting/test-executor-pod/sqli_error/experiment-log/1.yaml",
@@ -91,34 +104,35 @@ def test_resolves_every_chain_element_relative_to_the_data_root(tmp_path) -> Non
     evidence.validate_evidence(chain, root, files=files)
 
 
-def test_hunt_config_resolves_from_the_consumed_side(tmp_path) -> None:
+def test_loop_resolves_from_the_consumed_side(tmp_path) -> None:
     files = FileStore()
     root = tmp_path / "data"
     files.write_text(
-        hunt_configs_dir(root, "pid", "consumed") / "unit_CWE-89_sqli.yaml",
-        "id: unit_CWE-89_sqli\n",
+        threat_model_dir(root, "pid", "consumed") / UNIT_NAME / "loop-1.yaml",
+        "loop:\n  id: loop-1\n",
     )
-    spec_dir = hunter_test_specs_dir(root, "pid") / "unit_CWE-89_sqli"
+    spec_dir = hunter_test_specs_dir(root, "pid") / DISPATCH_ID
     files.write_text(spec_dir / "produced" / "sqli_error.yaml", "id: s\n")
     files.write_text(pod_experiment_logs_dir(root, "pid", "sqli_error") / "0.yaml", "o: 0\n")
     files.write_text(pod_spec_dir(root, "pid", "sqli_error") / "run1.yaml", "v: s\n")
 
     chain = evidence.resolve_evidence(root, _target(), files=files)
 
-    assert chain.hunt_config == (
-        "pid/hunting/orchestration/hunt_configs/consumed/unit_CWE-89_sqli.yaml"
+    assert chain.loop == (
+        "pid/hunting/threat_modeller/consumed/service-web-soupmarket/loop-1.yaml"
     )
 
 
-def test_missing_hunt_config_is_a_validation_error(tmp_path) -> None:
+def test_missing_loop_is_a_validation_error(tmp_path) -> None:
     files = FileStore()
     root = seed_chain(tmp_path, files)
-    # Remove the hunt config from the produced side.
+    # Remove the loop file from the produced side.
     (
-        root / "pid/hunting/orchestration/hunt_configs/produced/unit_CWE-89_sqli.yaml"
+        root
+        / "pid/hunting/threat_modeller/produced/service-web-soupmarket/loop-1.yaml"
     ).unlink()
 
-    with pytest.raises(evidence.EvidenceError, match="hunt_config"):
+    with pytest.raises(evidence.EvidenceError, match="loop"):
         evidence.resolve_evidence(root, _target(), files=files)
 
 
@@ -127,18 +141,22 @@ def test_missing_spec_dir_is_a_validation_error(tmp_path) -> None:
     root = seed_chain(tmp_path, files)
 
     with pytest.raises(evidence.EvidenceError, match="spec_dir"):
-        evidence.resolve_evidence(root, _target(fault_key="unit_CWE-999_nope"), files=files)
+        evidence.resolve_evidence(
+            root, _target(dispatch_id="service-web-nope__loop-1"), files=files
+        )
 
 
 def test_require_dir_rejects_a_file_where_a_directory_is_required(tmp_path) -> None:
     files = FileStore()
     root = seed_chain(tmp_path, files)
-    # A regular file sitting where the fault-key family directory belongs.
+    # A regular file sitting where the dispatch-id family directory belongs.
     spec_root = hunter_test_specs_dir(root, "pid")
-    (spec_root / "unit_CWE-1_x").write_text("not a dir\n", encoding="utf-8")
+    (spec_root / "service-web-other__loop-1").write_text("not a dir\n", encoding="utf-8")
 
     with pytest.raises(evidence.EvidenceError, match="directory"):
-        evidence.resolve_evidence(root, _target(fault_key="unit_CWE-1_x"), files=files)
+        evidence.resolve_evidence(
+            root, _target(dispatch_id="service-web-other__loop-1"), files=files
+        )
 
 
 def test_resolve_evidence_routes_reads_through_the_file_store_seam(tmp_path) -> None:
@@ -147,7 +165,7 @@ def test_resolve_evidence_routes_reads_through_the_file_store_seam(tmp_path) -> 
 
     evidence.resolve_evidence(root, _target(), files=files)
 
-    # The hunt-config lookup and the spec-dir guard both went through the seam.
+    # The loop lookup and the spec-dir guard both went through the seam.
     assert files.glob_calls
     assert files.is_dir_calls
 
@@ -207,7 +225,7 @@ def test_validate_rejects_an_absolute_or_traversing_path(tmp_path) -> None:
     files = FileStore()
     root = seed_chain(tmp_path, files)
     chain = evidence.EvidenceChain(
-        hunt_config="/etc/passwd",
+        loop="/etc/passwd",
         spec_dir="pid/../outside",
         experiment_logs=("pid/x.yaml",),
         pod_export="pid/y.yaml",

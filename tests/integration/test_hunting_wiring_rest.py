@@ -15,7 +15,7 @@ Run modes (per `hunting_wiring_stack`):
   never errors on a broken fixture.
 - Live `hunting_runs` row assertions ride `hunting_wiring_stack.hunting_run_rows`
   / `wait_for_hunting_run_status` (real PG reads); produced/consumed
-  quantities ride `produced_config_keys` / `produced_spec_files` (real store
+  quantities ride `produced_loop_files` / `produced_spec_files` (real store
   reads) - never the code's return, so no tautology.
 
 Policy notes:
@@ -81,7 +81,7 @@ def _runtime_landed(client, project_id: str) -> bool:
 
 def _maybe_live_pod_session(client, project_id: str, *, timeout: float = 60.0):
     """Try to establish a REAL live pod session on the live stack: seed a
-    produced `specified` spec, launch a whole run (the surfer dispatches one
+    produced `ratified` spec, launch a whole run (the surfer dispatches one
     pod for the spec via the own-status gate), and wait for the constructed
     ADR Q13 pod session id to register (observable by a per-session `pause`
     returning `{"state":"held"}`).
@@ -274,10 +274,10 @@ def test_C10_modeller_launch_canonical(client):
     assert body["component"] == "threat_modeller"
     assert body["dispatched_asynchronously"] is True
     assert isinstance(body.get("run_id"), str) and body["run_id"]
-    # The pass runs asynchronously on the live stack; any produced config the
-    # real pass writes must be ratified (the produced read is real, never the
-    # return). Non-emptiness depends on the live LLM pass landing configs.
-    produced = stack.produced_config_keys(p)
+    # The pass runs asynchronously on the live stack; any produced loop files
+    # the real pass writes are read from the physical store (never the return
+    # value). Non-emptiness depends on the live LLM pass landing loops.
+    produced = stack.produced_loop_files(p)
     assert all(isinstance(_k, str) for _k in produced)
 
 
@@ -311,8 +311,8 @@ def test_C12_hunt_enqueue_is_retired_loudly(client):
     assert "retired" in detail.lower()
     assert "loop file" in detail.lower()
     assert "T10b" in detail and "#397" in detail
-    assert stack.produced_config_keys(p) == [], (
-        "the retired enqueue must not write the config family")
+    assert stack.produced_loop_files(p) == [], (
+        "the retired enqueue must not write the produced loop family")
 
 
 def test_C16_pod_resume_canonical(client):

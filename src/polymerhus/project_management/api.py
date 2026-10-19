@@ -757,7 +757,7 @@ class HuntingModellerLaunch(BaseModel):
 
 class HuntingPodLaunch(BaseModel):
     """Pod-only launch body (identity-based refactor, 2026-08-25 operator
-    ruling): the pod's ADR Q13 session id (`hunting:<run_id>:pod:<config_id>:
+    ruling): the pod's ADR Q13 session id (`hunting:<run_id>:pod:<dispatch_id>:
     <spec_id>`) to RESUME. The endpoint NEVER fabricates a produced `ratified`
     test spec into the HunterMemoryStore produced family - it resumes ONE
     held/paused pod session by posting its coroutine id; the whole-pod-component
@@ -1026,8 +1026,8 @@ async def _agent_submodule_verb(project_id: str, hunting_run_id: str, role: str,
 @router.get("/projects/{project_id}/hunting/{hunting_run_id}/agent-submodules")
 async def list_agent_submodules(project_id: str, hunting_run_id: str) -> list[dict]:
     """The run's agent sub-module roles with their states (#317): exactly the
-    three roles `orchestrator`, `hunter`, `pod`. 404 unknown run; 503 no active
-    runtime."""
+    three roles `threat_modeller`, `hunter`, `pod`. 404 unknown run; 503 no
+    active runtime."""
     await _hunting_run_or_404(hunting_run_id)
     runtime = _runtime_or_503()
     states = runtime.agent_submodule_states("hunting", hunting_run_id)

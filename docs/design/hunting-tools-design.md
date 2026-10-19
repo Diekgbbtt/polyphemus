@@ -1,6 +1,9 @@
 # Hunting tools design (draft)
 
-*Status: DRAFT - not operator-locked.* This document captures the design of the hunting module's agent tool surfaces. It is intentionally incomplete: as of this revision it covers ONLY the `graph_view` tool (the surface changed by #197); the other tools (`hunts_store`, `notes`, `kb_query`/`query_lightrag`, `exec`, `note`) are future sections and are NOT redesigned here.
+*Status: DRAFT - not operator-locked.*
+*T10b (#397) note: the orchestrator/`HuntConfig` references below are historical.*
+The modeller writes the unit threat model; the hunter spec set is keyed by the loop dispatch id.
+This document captures the design of the hunting module's agent tool surfaces. It is intentionally incomplete: as of this revision it covers ONLY the `graph_view` tool (the surface changed by #197); the other tools (`hunts_store`, `notes`, `kb_query`/`query_lightrag`, `exec`, `note`) are future sections and are NOT redesigned here.
 
 The authority for the tool-surface contracts that already exist is the per-agent lineage: `docs/design/hunting-orchestrator-candidates-rewrite-spec.md` §3.4 (the orchestrator's `hunts_store` / `notes` / `graph_view` surface), `docs/design/hunting-164-state-graph-spec.md` (the hunter's five-tool surface), and `docs/design/hunting-67-test-executor-pod-spec.md` (the pod's `exec` / `note` / `query_lightrag` surface). Where this draft and a ratified spec overlap, the ratified spec is the authority until this draft is locked.
 

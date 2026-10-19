@@ -561,7 +561,7 @@ def build_hunting_agent(
                 # never the typed `ProviderUnavailableError`, so the branch above
                 # is dead for the production hunter. Classify the raw raise at
                 # the seam exactly as the pod (`pod.py`) and the orchestrator
-                # abort (`hunt_orchestrator.py`) do, then propagate the typed
+                # abort (`read_only_graph.py`) do, then propagate the typed
                 # error so the run pauses instead of quiescing `complete` with
                 # zero specs (the trial-2 outcome). A genuine non-provider error
                 # keeps the fail-open degrade below.

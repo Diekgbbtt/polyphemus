@@ -562,8 +562,9 @@ The first documentation pass.
 ### T10b - Eval translation, e2e translation, final docs sweep
 
 Tracked on #397.
+**Status: implemented on `feat/unit-threat-model`.**
 
-**What to build.**
+**What was built.**
 The eval translation and the pre-mined config guard.
 The e2e fixture and driver translation.
 The integration hygiene.

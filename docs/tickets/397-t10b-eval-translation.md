@@ -1,6 +1,6 @@
 # #397 - T10b: eval translation, e2e translation, final docs sweep
 
-*Status: open. Split from #383 (T10a, committed as `daff1b63`). The implementation plan records both tickets.*
+*Status: implemented on `feat/unit-threat-model` (T10b). Split from #383 (T10a, committed as `daff1b63`). The implementation plan records both tickets.*
 
 ## Scope
 
@@ -26,3 +26,13 @@ deliverable. T10a deleted the gate as a forced consequence of the
 `tests/e2e/test_hunting_agent_walkthrough.py`, which was restored (it
 collects and its two carried skeletons skip) because it imports neither
 removed module.
+
+## Proposed follow-up (not built)
+
+A replacement LIVE replay-lineage gate is proposed as a separate ticket:
+it drives the production pod's recorded-baseline replay end to end against a
+live target and asserts the replayed artifact's lineage (`derived_from`,
+`replay_kind`).
+T10b does not build it.
+The production replay path keeps its unit and contract coverage in
+`tests/attack/pod/test_react_seams.py` and `tests/attack/pod/test_request_ref.py`.

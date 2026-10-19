@@ -271,7 +271,7 @@ def _guard_degraded_kb(decision: dict, log: ExperimentLog) -> dict:
 
 async def _await_seam(fn, *args):
     """Await an async seam, else offload a sync one to a worker thread - the
-    `_await_seam` pattern mirrored from `hunt_orchestrator.py` /
+    `_await_seam` pattern mirrored from `read_only_graph.py` /
     `hunting_agent.py`. `asyncio.to_thread` copies the caller's context, so the
     graph's pod-session ContextVar binding (D84-7) reaches sync seams too."""
     if inspect.iscoroutinefunction(fn):
@@ -438,7 +438,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     if memory_store is None and (production_runner or production_triager) and project_id:
         memory_store = PodMemoryStore(project_id=project_id)
     if graph_view_fn is None and project_id:
-        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        from polymerhus.attack.hunting.read_only_graph import (  # noqa: PLC0415
             ReadOnlyGraphView,
         )
 

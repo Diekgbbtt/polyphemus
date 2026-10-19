@@ -94,8 +94,8 @@ The per-project data root is `<codebase_root>/data/`, module-scoped per project:
 │       ├── scripts/
 │       └── assets/
 ├── hunting/                # the hunting module owns this
-│   ├── orchestration/      # HuntStore (configs.yaml, hunt_configs/, memory.yaml)
-│   ├── hunter/             # HunterMemoryStore (test-specs/, notes.yaml)
+│   ├── threat_modeller/    # ThreatModelStore (model documents, loop files, notes.yaml)
+│   ├── hunter/             # HunterMemoryStore (test-specs/<dispatch_id>/, notes.yaml)
 │   └── test-executor-pod/  # PodMemoryStore
 └── ...                     # recon/, analysis/ and later modules, same one-dir-per-module rule
 ```
@@ -105,7 +105,7 @@ The per-project data root is `<codebase_root>/data/`, module-scoped per project:
 A single shared app-layer module owns the data root and every scaffold directory.
 
 - `ensure_data_root()` runs at **system bootstrap** (`app.main` startup): creates `<codebase_root>/data/` if absent.
-- `ensure_project(project_id)` runs at **project creation** (`project_management` create path): creates the whole `<project_id>/` scaffold - `skills/`, `hunting/orchestration/`, `hunting/hunter/`, `hunting/test-executor-pod/`, and every later module dir - in one place.
+- `ensure_project(project_id)` runs at **project creation** (`project_management` create path): creates the whole `<project_id>/` scaffold - `skills/`, `hunting/threat_modeller/`, `hunting/hunter/`, `hunting/test-executor-pod/`, and every later module dir - in one place.
 - Both are **fail-safe** (create if not present) and **idempotent**.
 - **No module scaffolds its own directories.** After the app-owned scaffold, a module writes only the files it owns inside its already-created directory. The hunting stores therefore stop doing `mkdir` on write; the skill writer does not create directories either.
 - The `<codebase_root>/data/` tree is migrated from the current hunting-owned root (`attack/hunting/data`) to this layout, adjusting the on-disk distribution seamlessly.

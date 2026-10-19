@@ -111,7 +111,7 @@ def test_runner_graph_view_carries_the_contract_and_is_read_only(tmp_path):
     # absent seam -> the tool's own fail-open error, never a raise into the turn
     out = gv.invoke({"cypher": "MATCH (s) RETURN s", "params": {}})
     assert "error" in out
-    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphViewError
     try:
         gv.invoke({"cypher": "MATCH (s) MERGE (x)"})
         raise AssertionError("write-shaped cypher not rejected")

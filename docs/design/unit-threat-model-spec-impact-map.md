@@ -219,7 +219,7 @@ The implementation plan cuts these into the workflow tickets.
 | Surface | Impact | Action | Owner |
 |---|---|---|---|
 | `ThreatModelStore` and the model schema module (new) | The artifact, layout, commit protocol, checker, loop files | build | modeller ticket |
-| `hunt_orchestrator`, `orchestrator_graph`, `actors`, `runtime` | Planner pass replaced by the modeller pass; role and session rename; run record | build | modeller ticket |
+| `read_only_graph` (renamed from `hunt_orchestrator` by T10b #397), `orchestrator_graph`, `actors`, `runtime` | Planner pass replaced by the modeller pass; role and session rename; run record; the residual graph view renamed to its responsibility | build | modeller ticket; T10b done |
 | `hunt_store`, `hunter_memory` | The modeller config store retires; the hunter memory moves to the loop key | build | modeller and hunter tickets |
 | `surfer`, `mover` | Per-loop dispatch, the validity predicate, the pause, the quiesce, the zero-loop consume | build | wiring ticket |
 | `hunter_state`, `hunter_graph`, `hunter_tools`, `hunting_agent` | Pass FSM, spec set, set write, note kind, skill tools, removals | build | hunter harness ticket |

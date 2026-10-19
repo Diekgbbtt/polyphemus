@@ -1,10 +1,12 @@
 """The surfer loop: background state assertion and lifecycle recovery (#275, D5/D31/N17).
 
-The symbolic layer owns lifecycle (D5). The trial engine enforces the hunting cap
-and stops a run at a failed terminal; the surfer is the background supervisor
-that asserts the environment state, detects a cap-reached or failed state (a
-failed/interrupted run, or a credit-exhaustion-like failure signal), and prompts
-the orchestrator. The orchestrator decides exactly one of:
+The symbolic layer owns lifecycle (D5). The trial engine enforces the token
+budget and stops a run at a failed terminal; the surfer is the background
+supervisor that asserts the environment state, detects a budget stop, a
+failed/interrupted run, or a credit-exhaustion-like failure signal, and prompts
+the orchestrator. The `cap_reached` trigger remains only for legacy trial
+records (the hunting cap was REMOVED on 2026-10-05; no new record writes `cap`).
+The orchestrator decides exactly one of:
 
 - `terminate`: stop the in-flight run(s) cleanly through the REST seam;
 - `destroy`: tear the instance down through `instances.down`;
@@ -461,7 +463,7 @@ def phase_mappings(record: Mapping) -> tuple[Mapping, ...]:
 
 
 def cap_triggers(record: Mapping) -> list[Trigger]:
-    """Cap-reached triggers from the trial engine's own cap accounting.
+    """Cap-reached triggers from a LEGACY trial record's cap accounting.
 
     The trigger names the hunting run (`run_kind`/`run_id`) so `terminate` can
     actually stop it and so two distinct cap events in the same instance/target/

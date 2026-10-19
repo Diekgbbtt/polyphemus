@@ -133,6 +133,10 @@ export QUERY_LLM_MODEL=RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
 export QUERY_LLM_MAX_TOKENS=16384
 export PYTHONPATH=src
 
+> **Historical harness (superseded).** The snippet below drives the retired planner pass and its `HuntConfig`.
+> The live harness drives the unit threat model and dispatches a hunter per produced loop file.
+> Keep it as a record of the pre-T10 comparison, not as a runnable live recipe.
+
 .venv/bin/python - <<'PY'
 import asyncio, json, time
 from langgraph.checkpoint.memory import InMemorySaver

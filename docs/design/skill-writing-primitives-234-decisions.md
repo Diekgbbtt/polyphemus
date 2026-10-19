@@ -1,5 +1,9 @@
 # Skill-writing primitives - implementation decisions (#234)
 
+*Historical decisions (partly superseded).*
+The fixed hunting skeleton S3 named (`hunt_configs/`) retired in T4b #387, and the fault-KB was DELETED in T10 #383.
+The skill primitives remain live; the retired paths are a record.
+
 The grilled decisions behind the #234 build, recorded per the workflow (Step 2a/3).
 Base description: the body of issue #234; prior draft `progressive-skill-lifecycle-system.md` (the decision ledger the spec refines).
 Companion specs: `skills-typed-surface-spec.md` and `skill-runtime-loading-222-decisions.md` (the #222 loader/frontmatter rules, which govern).
