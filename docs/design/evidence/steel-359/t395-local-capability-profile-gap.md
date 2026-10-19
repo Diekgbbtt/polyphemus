@@ -21,7 +21,7 @@ There is no error and no profile mount.
 That silent success is the real risk.
 
 The bigger stack that owns the delta is **Steel Cloud**.
-The OSS `steel-browser` main branch has no `profiles` module.
+The OSS `steel-browser` has no profile path on any of 133 branches or 23 tags.
 The cloud Profiles API stores a User Data Directory snapshot and exposes `profileId` / `persistProfile`.
 
 ## 1. What the tool layer asks for
@@ -162,8 +162,9 @@ Steel Cloud owns the missing delta:
 - CLI `steel profile import|sync` uploads a zipped `userDataDir` to `{api_base}/profiles`; the cloud implements that route.
 - The Python SDK exposes `profile_id`, `persist_profile`, `use_proxy`, `stealth_config`, `region`, `namespace`, and the rest.
 
-The OSS `steel-browser` main branch has no `profiles` module (`api/src/modules` contains actions, cdp, files, logs, selenium, sessions only).
+The OSS `steel-browser` has no profile path on any of 133 branches or 23 tags (`api/src/modules` contains actions, cdp, files, logs, selenium, sessions only).
 So this is not a configuration gap that a local env var closes; it is a product-tier boundary.
+The full history search is in `docs/design/evidence/steel-359/t395-oss-profile-research.md`.
 
 ## 6. Impact on the tool
 
@@ -195,3 +196,84 @@ Eval instance (`ph-dd131acc`):
 - Live run: start, navigate `http://t-1fc05262.target/`, title `ComfyUI`, stop, catalogue empty.
 
 The merged repo already carries the env wiring, so a future instance worktree update includes it.
+
+## 8. Deeper OSS verification (2026-10-19)
+
+The docs' local-vs-cloud table omits profiles, which leaves the question open. The code does not.
+
+### Current OSS trees
+
+GitHub tree API, recursive, at three refs:
+
+| ref | paths | paths containing `profile` | API modules |
+|---|---|---|---|
+| `main` (`807bf294`, 2026-10-19) | 410 | 0 | actions, cdp, files, logs, selenium, sessions |
+| `v0.5.4-beta` | 406 | 0 | same |
+| `v0.5.3-beta` (the pinned image's version) | 382 | 0 | same |
+
+The current main was committed on the same day as this check.
+No profile route, page, service, schema, migration, or test path exists in any of the three trees.
+
+### The pinned image (0.5.3)
+
+The running API image is `steel-browser-api` version 0.5.3, built 2026-10-13.
+Its full `api/src` grep for `profile` returns only `utils/context.ts`, and that hit is `getProfilePath`, a helper for Chrome's `Default` / `Profile 1` directory inside a userDataDir.
+It is not a Steel profile.
+
+`GET /documentation/openapi.json` has 25 paths and zero occurrences of `profile`, `profileId`, or `persistProfile`.
+The plugin registers six route families only: actions, sessions, cdp, selenium, files, logs.
+There is no profiles module, controller, service, schema, database table, or storage bucket.
+
+The `files` module is session file upload/download under `/files`; it is not the cloud Files API.
+The `ChromeContextService` reads localStorage and sessionStorage from a userDataDir; it does not package or reload a profile.
+The `FileService` plus `archiver` can zip files; they are substrate, not a profile lifecycle.
+`session.service.ts` sets `persist` / `userDataDir` to one fixed `/app/api/user-data-dir`; it has no profile id, status, or metadata.
+
+### The cloud profile aggregate
+
+The Python SDK (0.19.0) is generated from the cloud OpenAPI.
+It exposes `/v1/profiles` (multipart `userDataDir`), `/v1/profiles/{id}` (update), and list/get.
+The profile object carries:
+
+```
+id, status (UPLOADING | READY | FAILED),
+createdAt, updatedAt, userAgent, dimensions,
+useProxyConfig, credentialsConfig, extensionIds,
+fingerprint, projectId, sourceSessionId
+```
+
+The binary `userDataDir` zip is create/update input, not a response field.
+Sessions integrate through `profileId` (load the zip into the session userDataDir) and `persistProfile` (snapshot it back on release; `409` while `UPLOADING`; project-scoped).
+That lifecycle is a Profiles module plus a ProfileService plus storage plus session hooks.
+None of those components exist in the OSS API.
+The local stack's state primitive is `sessionContext`, which carries cookies and web storage but not the full userDataDir.
+
+### Why the docs and skills do not settle it
+
+- `https://docs.steel.dev/overview/self-hosting/profiles` is empty in `llms-full.txt` (title and URL only).
+- The local-vs-cloud table omits profiles.
+- The cloud Profiles API page describes `persistProfile` / `profileId`.
+- The official `steel-developer` skill is explicitly for "Steel cloud browsers"; its API routing table maps "Persist full browser state" to the Profiles API.
+- The official `steel-reliability` feature-access reference treats profiles and credentials as cloud plan/fallback features.
+- The official `steel-browser` skill uses `--profile` without a local caveat; its troubleshooting still distinguishes cloud vs local/self-hosted.
+
+The docs are ambiguous; the code is not.
+The GHCR `latest` image pulls for the API-only and combined images ended with `unexpected EOF`, so the recursive repo trees and the running 0.5.3 image are the evidence.
+The combined image is built from the same repo tree, which has no profile path.
+
+### Full history and the near-miss
+
+The dedicated report is `docs/design/evidence/steel-359/t395-oss-profile-research.md`.
+
+It searched 133 remote branches and 23 tags:
+
+- pickaxe for `persistProfile`, `persist_profile`, `ProfileStatus`, `UPLOADING`, and `/profiles` is empty on every ref;
+- `profileId` appears in no `api/src` or `ui/src` file on any ref;
+- the only file ever named `*profile*` is `cdp.profile-lifecycle.test.ts` on the unmerged `fix/profile-restore-before-save` branch (`ff717f1`); its profiles are a test fixture, and the branch's final commit (`53f32ba`) deletes them;
+- the pinned image's `api/src` is byte-identical to current `main`;
+- `main` is 8 commits past `v0.5.4-beta`, so no tag or branch holds a deployable component;
+- commit `459be5b` ("foundation for usr-data-dir persistence") added the `persist`/`userDataDir` primitive only; no management layer followed;
+- the docs' self-hosting Profiles page is frontmatter only in `steel-dev/docs` (`content/docs/overview/self-hosting/profiles.mdx` at `c7c8883`), with no body.
+
+The docs table omission is an oversight, not permission.
+The artifact settles it.
