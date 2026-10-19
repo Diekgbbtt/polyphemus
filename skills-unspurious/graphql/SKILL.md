@@ -100,6 +100,7 @@ A subscription adds a second agreement: the connection identity stays bound to e
 - Depth: cyclic nesting that multiplies resolver calls per level
 - Amount: unbounded list arguments pulling entire collections
 - Alias amplification: many aliases of one resolver in a single request bypassing request-rate limits
+- Fragments that expand depth after the depth check counts them, including a fragment that references itself, reach the same recursion the check was meant to bound
 - A finding is a succeeded request whose latency or size explodes without depth, amount, cost, or rate bounds; prove it and stop
 
 ### Broken Authorization (Object and Function Level)
@@ -115,6 +116,7 @@ A subscription adds a second agreement: the connection identity stays bound to e
 
 - Array batches and aliases turn one HTTP request into many operations, evading per-request rate limits
 - Use them to enumerate identities, brute one-time codes or tokens, or multiply resolver cost
+- Batched aliases win only when the resolvers run concurrently, so a batch that succeeds where the same operations sent sequentially do not marks a race; name the race-conditions skill at that step
 - Sensitive mutations batched in one call carry the highest value
 
 ### Subscription Channels
@@ -155,6 +157,7 @@ A subscription adds a second agreement: the connection identity stays bound to e
 - Nested selections that reach a guarded field through an allowed parent
 - Batching to interleave a blocked operation among allowed siblings
 - A cost function that does not floor at zero lets one request refill its own budget, so a negative amount argument passes the limit check
+- Directives that change evaluation order or skip a selection, such as a conditional directive on a guarded field, move the operation past a filter that reads only the selection set
 - Field-alias introspection bypass: alias a guarded field name inside an allowed query so the response reveals whether the field resolves
 - Name the defence-bypass family at its signature-evasion step for the filter shapes, rather than restating the matcher mechanics here.
 
