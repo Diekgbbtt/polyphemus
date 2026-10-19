@@ -89,7 +89,7 @@ The cache-key mechanics stay with `proxy-techniques-cache-deception`, the contro
 
 ## Bypass Techniques
 
-Bypass shapes are tried only after the entry's key coverage is read, because a selector the key covers stores nothing.
+- **Bypass scope**: bypass shapes are tried only after the entry's key coverage is read, because a selector the key covers stores nothing.
 
 - **Unkeyed selector**: a request field, member, or cookie that shapes the body while the key omits it.
 - **Declaration gap**: a key-coverage declaration that omits a selector the response actually varies with.
@@ -102,7 +102,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Chaining Attacks
 
-A stored entry is a mechanism rather than a finding, so the delivered body hands forward to the class that owns its effect.
+- **Forward chaining scope**: a stored entry is a mechanism rather than a finding, so the delivered body hands forward to the class that owns its effect.
 
 - **Executable delivery**: `xss` where the stored body carries executable markup, because the cache delivers it to every later caller.
 - **Disclosure direction**: `information-disclosure` and its `differential-oracle-disclosure` leaf where the entry carries content produced for another caller.
@@ -125,7 +125,7 @@ Cache poisoning reads the key first and stores second, because the omission is a
 
 ## False Positives
 
-Stop when the entry reached only the caller that produced it or the body was regenerated, because neither is a poisoning delivery.
+- **Stop condition**: stop when the entry reached only the caller that produced it or the body was regenerated, because neither is a poisoning delivery.
 
 - **Key covers every selector**: a distinct entry per varied field, confirmed across the selector sweep.
 - **Unreflected input**: a selector that changes storage but never appears in the body.
@@ -136,14 +136,13 @@ Stop when the entry reached only the caller that produced it or the body was reg
 
 ## Pro Tips
 
-Cache poisoning rewards key reading plus a throwaway-key discipline plus a second-caller read.
-
-1. Read the key's coverage before crafting, because the mechanism is an omission in the key.
-2. Land every probe on a throwaway key first, since a live entry shaped early is a production incident rather than a test.
-3. Vary one selector per attempt so the omitted input is nameable.
-4. Read every entry back as a second caller, because the producing caller's read proves nothing about delivery.
-5. Record the entry's lifetime, since the window is both the exposure bound and the re-store cadence.
-6. Name the owning skill at each delegated step, and stop at the narrowest proof.
+- **Discipline**: cache poisoning rewards key reading plus a throwaway-key discipline plus a second-caller read.
+- **Key coverage first**: read the key's coverage before crafting, because the mechanism is an omission in the key.
+- **Throwaway key first**: land every probe on a throwaway key first, since a live entry shaped early is a production incident rather than a test.
+- **One selector per attempt**: vary one selector per attempt so the omitted input is nameable.
+- **Second-caller read**: read every entry back as a second caller, because the producing caller's read proves nothing about delivery.
+- **Lifetime record**: record the entry's lifetime, since the window is both the exposure bound and the re-store cadence.
+- **Delegated naming**: name the owning skill at each delegated step, and stop at the narrowest proof.
 
 ## Summary
 

@@ -94,7 +94,7 @@ The bypass mechanics stay with the skills that own them: the spread across lanes
 
 ## Bypass Techniques
 
-Bypass shapes are tried only after the burst baseline records a refusal, a challenge, or a throttle.
+- **Bypass scope**: bypass shapes are tried only after the burst baseline records a refusal, a challenge, or a throttle.
 
 - **Spread**: move the effect across a lane the counter does not observe, one lane per attempt; name `defence-bypass-throttle-evasion` at this step.
 - **Collapse**: carry many logical attempts in one counted request; name `defence-bypass-attempt-batching` at this step.
@@ -107,7 +107,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Chaining Attacks
 
-A bypassed limit is a mechanism rather than a finding, so the admitted repetition hands forward to the class that owns the outcome.
+- **Forward chaining scope**: a bypassed limit is a mechanism rather than a finding, so the admitted repetition hands forward to the class that owns the outcome.
 
 - **Credential layer**: `weak-credential-discovery` for the credential and token brute, and `crypto-weakness` where the artifact's entropy is the failing clause.
 - **Auth-adjacent flows**: `mfa-bypass` where the repeated operation is the second-factor verification step, and `account-recovery` where it is the recovery step.
@@ -130,7 +130,7 @@ Rate-limit work classifies the limit first and adjudicates the reach second, bec
 
 ## False Positives
 
-Stop when the limit held, never engaged, or the admitted repetition reaches nothing, because none of the three is a bypass.
+- **Stop condition**: stop when the limit held, never engaged, or the admitted repetition reaches nothing, because none of the three is a bypass.
 
 - **Absent limit**: no counter, threshold, or answer change at any rate, recorded with the test that showed it.
 - **Genuine enforcement**: a refusal or challenge that holds across every lane, key spelling, unit, and window.
@@ -142,14 +142,13 @@ Stop when the limit held, never engaged, or the admitted repetition reaches noth
 
 ## Pro Tips
 
-Rate-limit work rewards classification plus key reading plus the reachability math.
-
-1. Classify before concluding, because the silent state is the one that false-negatives the finding.
-2. Read the key literally, since the canonicalisation gap is often the whole bypass.
-3. Prove with the delta: the rotated run beside the un-rotated run, not one fast run.
-4. Stay inside the question, because volume spends attempts and raises the control's sensitivity.
-5. Do the math before the claim, since throughput times lifetime is the severity argument.
-6. Name the owning skill at each delegated step rather than restating its procedure.
+- **Discipline**: rate-limit work rewards classification plus key reading plus the reachability math.
+- **Classify first**: classify before concluding, because the silent state is the one that false-negatives the finding.
+- **Literal key**: read the key literally, since the canonicalisation gap is often the whole bypass.
+- **Delta proof**: prove with the delta: the rotated run beside the un-rotated run, not one fast run.
+- **Bounded volume**: stay inside the question, because volume spends attempts and raises the control's sensitivity.
+- **Math first**: do the math before the claim, since throughput times lifetime is the severity argument.
+- **Delegated naming**: name the owning skill at each delegated step rather than restating its procedure.
 
 ## Summary
 

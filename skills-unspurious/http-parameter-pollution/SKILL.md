@@ -91,7 +91,7 @@ The bypass mechanics stay with the skills that own them: the duplicate-member pr
 
 ## Bypass Techniques
 
-Bypass shapes are tried only after the canonical single-member request is baselined, because a duplicate that changes nothing is not a bypass.
+- **Bypass scope**: bypass shapes are tried only after the canonical single-member request is baselined, because a duplicate that changes nothing is not a bypass.
 
 - **Precedence shaping**: order the duplicate pair so the validator reads the approved occurrence and the consumer reads the other one.
 - **Split reassembly**: divide one effect across duplicates so each occurrence is individually benign and the sink joins them; name the `defence-bypass` family at this step.
@@ -103,7 +103,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Chaining Attacks
 
-A duplicate member is a mechanism rather than a finding, so the decision it reaches hands forward to the class that owns the consequence.
+- **Forward chaining scope**: a duplicate member is a mechanism rather than a finding, so the decision it reaches hands forward to the class that owns the consequence.
 
 - **Value layer**: `business-logic` where the duplicate decides an amount, a quantity, a price, or a quota.
 - **Destination layer**: `open-redirect` and `oauth` where the duplicate decides a destination or a redirect target.
@@ -126,7 +126,7 @@ Parameter pollution establishes the resolution rule first and exercises the deci
 
 ## False Positives
 
-Stop when the duplicate changed nothing the application decides on, because an unresolved ambiguity is not a finding.
+- **Stop condition**: stop when the duplicate changed nothing the application decides on, because an unresolved ambiguity is not a finding.
 
 - **Single-resolution readers**: every reader consumes the same occurrence, confirmed across both orderings and every shape.
 - **Rejected duplicates**: the application refuses requests carrying a repeated member, confirmed by a uniform rejection.
@@ -137,14 +137,13 @@ Stop when the duplicate changed nothing the application decides on, because an u
 
 ## Pro Tips
 
-Parameter pollution rewards precedence discipline plus a decision to reach.
-
-1. Read the readers before crafting, because the resolution rule is a property of the components rather than of the payload.
-2. Send both orderings, since one ordering names one reader only.
-3. Prefer the duplicate that reaches a decision, because an unresolved ambiguity proves nothing.
-4. Keep the two occurrences individually benign where the goal is a split, so the reassembly is the finding.
-5. Chase reflections into the links they feed, because the re-split happens at the consumer.
-6. Name the owning skill at each delegated step rather than restating its procedure.
+- **Discipline**: parameter pollution rewards precedence discipline plus a decision to reach.
+- **Reader reading**: read the readers before crafting, because the resolution rule is a property of the components rather than of the payload.
+- **Both orderings**: send both orderings, since one ordering names one reader only.
+- **Decision preference**: prefer the duplicate that reaches a decision, because an unresolved ambiguity proves nothing.
+- **Benign occurrences**: keep the two occurrences individually benign where the goal is a split, so the reassembly is the finding.
+- **Reflection chase**: chase reflections into the links they feed, because the re-split happens at the consumer.
+- **Delegated naming**: name the owning skill at each delegated step rather than restating its procedure.
 
 ## Summary
 
