@@ -22,7 +22,8 @@ The login acceptor plus the identity oracle plus the issued token ride outside t
 
 Reconnaissance inventories fetchable holders before any parsing begins.
 List every rendered page plus every linked script reachable from anonymous navigation, and record each carrier for later shape matching.
-List every guessable artifact location class that could carry credential holders, such as environment dumps plus configuration documents plus version-control remnants plus diagnostic pages.
+List every guessable artifact location class that could carry credential holders, such as environment dumps plus configuration documents plus version-control remnants plus diagnostic pages plus build and bundle artifacts.
+Treat build and bundle artifacts as holders in their own right: a published source map reconstructs the client source, an interface specification document enumerates routes, and an asset manifest or build-info file names further holders.
 Record the response status plus body size for each candidate so later triage can separate holders from misses.
 
 ## Detection Channels
@@ -33,6 +34,7 @@ Content in this variant means rendered markup plus linked scripts plus fetched a
 - Encoded-holder match inside fetched content signals a candidate that needs decoding before reuse.
 - Success status plus body-size threshold on a guessed artifact path signals a holder worth parsing.
 - Parsed holder yielding a reusable pair or token confirms the extraction.
+- A reconstructed source tree or an enumerated route set from a build or bundle artifact signals holders the served surface never named.
 
 ## Adversarial Capabilities
 
@@ -61,6 +63,8 @@ The parent names linked harvesting in one step and path guessing in another and 
 
 Read each fetched body according to its holder shape, because one parser cannot cover markup plus script plus structured artifact output.
 Match secret shapes in markup and scripts, decode encoded holders into candidate pairs, and parse structured artifact bodies into named credential fields.
+Reconstruct source from a published source map and read an interface specification document for routes, because both are holders that name further secrets rather than secrets themselves.
+Fingerprint the algorithm and entropy shape of any token-shaped holder at this step and hand the sampling and re-derivation questions to `crypto-weakness` and `crypto-predictable-token`, because a token that is not a fixed secret is judged by predictability rather than by pattern shape.
 Record every match with its carrier plus its location so confirmation can replay the exact holder.
 
 ## Chaining Attacks
