@@ -33,6 +33,7 @@ Insecure deserialization passes attacker-controlled byte streams or structured b
 - Decode candidate blobs and note the leading bytes or prefixes that mark a format family
 - Record the content type and any custom serialization declaration on the request
 - Note stack indicators that identify the runtime family behind the endpoint
+- See `references/deserialization-signatures.md` for the marker shapes behind each format family.
 
 ### Unmarshal Sink Discovery
 
@@ -168,6 +169,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 4. **Chain selection** - Match the runtime and library inventory to an available chain
 5. **Minimal proof** - Demonstrate execution or a critical logic bypass with the least destructive effect
 6. **Session focus** - Decode server-side session carriers early, since they are the highest-value sink
+
+See `references/deserialization-oracle.md` for the oracle classes and the bounded-effect discipline behind the safe-oracle step.
 
 ## Variants
 
