@@ -150,6 +150,8 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 - Name the proxy-techniques family at the channel-wrapping step for content-type switching and method alternation, rather than restating the channel tricks here.
 - Name the defence-bypass family at the edge-versus-core step for stale gateway decisions, rather than restating the gateway differentials here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Business logic + race: duplicate benefits before state updates

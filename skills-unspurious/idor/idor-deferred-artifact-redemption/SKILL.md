@@ -56,6 +56,8 @@ Vary key casing and encoding shapes on stored-link handles to probe normalizatio
 Coerce content-disposition and conditional-request shapes on retrieval while holding the handle constant, reading only the binding verdict.
 Treat cache-key confusion as defeat detail shared with the proxy-techniques family at its shared-cache step, recording only the redemption verdict here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Feed handles harvested from notifications, emails, client logs, and webhook deliveries into foreign redemption attempts.

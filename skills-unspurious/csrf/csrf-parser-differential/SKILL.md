@@ -86,6 +86,8 @@ Bypass forms stay aspects inside this variant because no value difference change
 - Duplicate-key plus collection-shape ambiguity steers the body through a lenient parser branch.
 - Referrer stripping through an empty-context navigation source presents the reconstruction without its origin context.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Reconstruction chains forward into authorization and workflow abuse because a coerced effect without a follow-up goal is only a probe.

@@ -72,6 +72,8 @@ This agreement fails at the server merge sink, where a recursive merge applies a
 **Stored triggering evades immediate inspection** by resting the payload until a background job or export pipeline merges it.
 **Operator-key overlap belongs elsewhere** by handing dollar-prefixed or dotted keys to the NoSQL-injection skill at that step.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 Shared setup runs first across merge-point mapping, canary proof, shape variation, and channel variation.

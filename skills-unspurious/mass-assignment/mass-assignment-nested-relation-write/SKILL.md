@@ -87,6 +87,8 @@ Bypass forms stay aspects inside this variant because no framing difference chan
 - Reshape the nested key across object plus dot plus bracket plus patch-path forms to reach the binder through another parser.
 - Batch smuggling never rides here, and race interleaving names the race-conditions skill at its TOCTOU step rather than restating it.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 Relation reasoning runs after the baseline is fixed, because no child verdict is meaningful without a paired control.

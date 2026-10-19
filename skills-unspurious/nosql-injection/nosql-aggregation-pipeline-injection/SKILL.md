@@ -82,6 +82,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Dotted-key versus nested-object shapes reach the builder past sanitizers that strip only one form.
 - Percent-encoded plus double-encoded stage text reaches the parser past filters that match only literal stage names.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Stages chain forward into reads because one steered stage without a follow-up read is only a probe.

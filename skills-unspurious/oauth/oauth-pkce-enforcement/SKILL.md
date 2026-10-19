@@ -82,6 +82,8 @@ Bypass forms are the check values this variant defeats, each confirmed through r
 - Replayable methods pass a server that advertises strong methods but honors weak ones.
 - Near-miss verifiers pass a comparison that normalises case or truncates before checking.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Verifier findings chain forward into credential theft because an unenforced check without a stolen credential is only a policy gap.

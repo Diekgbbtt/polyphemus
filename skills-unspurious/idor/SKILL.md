@@ -179,6 +179,8 @@ Each variant breaks one clause: the direct-binding clause, the scope-binding cla
 - Error shape often differs for owned versus foreign objects
 - Header-only and conditional requests can confirm existence without full content
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - IDOR + CSRF: force victims to trigger unauthorized changes on objects you discovered

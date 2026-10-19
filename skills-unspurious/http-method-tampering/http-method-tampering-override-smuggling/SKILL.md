@@ -62,6 +62,8 @@ The defeated control is outer-method authorization at the front gate.
 The bypass keeps the outer method gate-visible while the executor applies the smuggled verb.
 Confirm the bypass by showing the overridden effect unattainable through the outer method alone.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 A confirmed reinterpretation gap escalates into object-level or function-level access under the smuggled verb.

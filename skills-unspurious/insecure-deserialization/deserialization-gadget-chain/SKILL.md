@@ -71,6 +71,8 @@ Shift the blob across equivalent request loci when one locus is filtered and ano
 Offer alternate structural shapes where the resolver branches on shape, confirming each branch with the oracle.
 Name the defence-bypass family at steps that defeat hardened verifiers instead of restating its mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Confirmed code execution hands off to command-execution consumers for bounded impact demonstration.

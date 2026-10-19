@@ -69,6 +69,8 @@ Downgrade the binding where legacy verifiers accept weaker checks beside the cur
 Shift the blob across equivalent request loci when one locus enforces verification and another feeds the same rehydration.
 Name the defence-bypass family at steps that defeat hardened verifiers instead of restating its mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Forged identity or role state hands off to the authorization-principal skill for privilege-effect demonstration.

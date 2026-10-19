@@ -56,6 +56,8 @@ Coerce the transport framing when a first attempt is rejected, varying content t
 Pollute duplicate reference fields with both orderings and read which occurrence the service honors.
 Treat parser disagreements as defeat detail shared with the defence-bypass family at its parser step, recording only the authorization verdict here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Feed identifiers harvested from list, search, notification, and export channels into direct swaps.

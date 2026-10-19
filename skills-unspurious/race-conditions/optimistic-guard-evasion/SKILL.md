@@ -76,6 +76,8 @@ Bypass forms stay aspects inside this variant because no throttle difference cha
 - Name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
 - Name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Optimistic chains forward into impact once the stale write is durable, because a transient overwrite alone proves nothing.

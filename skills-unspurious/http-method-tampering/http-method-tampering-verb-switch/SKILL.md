@@ -62,6 +62,8 @@ The defeated control is per-method authorization on the documented verb.
 The bypass replays the sibling verb so the documented-verb check never engages.
 Confirm the bypass by comparing the sibling-verb effect against the guarded baseline.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 A confirmed dispatch gap escalates into object-level or function-level access over the exposed handler.

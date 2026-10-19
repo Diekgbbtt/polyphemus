@@ -116,6 +116,8 @@ Guardrails are probed as a control beside the model, so each shape below tests t
 - Delimiter breakout combined with a wrapped payload, so one layer clears the filter and the next delivers the instruction
 - Split requests across messages or parameters, where the filter sees fragments and the model reassembles them
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Injected content plus a tool call: the model performs the privileged action with attacker arguments

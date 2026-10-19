@@ -66,6 +66,8 @@ Defeat name checks by nesting scheme meaning where validation resolves before th
 Defeat fetcher assumptions by routing stream-handler shapes through sinks that evaluate rather than store.
 Defeat beacon blocking by keeping hosted content minimal and deterministic per candidate.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Carry confirmed remote retrieval into server-side request pivots through the companion request skill.

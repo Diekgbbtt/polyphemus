@@ -86,6 +86,8 @@ Bypass forms stay aspects inside this variant because no value difference change
 - Encoding-family switching reaches different server code paths while the replay semantics stay identical.
 - Referrer stripping through an empty-context navigation source presents the replay without its origin context.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Replay chains forward into authorization and workflow abuse because a bare state change without a follow-up goal is only a probe.

@@ -175,6 +175,8 @@ Each variant breaks one clause: the value clause, the grammar clause, the script
 - Prototype keys in structured bodies that pollute shared objects consumed by the query builder
 - Case-insensitive pattern flags that widen matches case-sensitive filters miss
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 1. **Identify query-receiving endpoints** - Login, search, filter, lookup

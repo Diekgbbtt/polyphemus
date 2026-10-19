@@ -118,6 +118,8 @@ Each variant breaks one clause: the dispatch clause, the reinterpretation clause
 - Request the guarded path directly where the edge block hides a live core route
 - Name the defence-bypass family at its signature, parser, and edge-versus-core steps for the verb-token, duplicate-input, parse-path, and core-route shapes, rather than restating those mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Method tampering plus function-level authorization: the sibling verb reaches the privileged action

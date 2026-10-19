@@ -84,6 +84,8 @@ Bypass forms are the check values this variant defeats, each confirmed through c
 - Reused carriers pass a check that never marks a value consumed.
 - Omitted or replayed identity freshness passes a check that never validates the identity-layer value.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Freshness findings chain forward into session impact because an unbound grant without a victim outcome is only a check gap.

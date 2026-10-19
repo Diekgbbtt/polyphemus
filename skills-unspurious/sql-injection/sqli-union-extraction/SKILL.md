@@ -82,6 +82,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Clause relocation through derived tables plus common table expressions hides the set-combination shape.
 - Fallback to error or blind channels applies only when filtering removes the rendered rows entirely.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Rendering chains forward into reads because an aligned channel without a follow-up read is only a probe.

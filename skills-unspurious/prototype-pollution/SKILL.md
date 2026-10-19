@@ -126,6 +126,8 @@ Each variant breaks one clause at a different consumer: browser-side routing, re
 - Normalization variants of the key that compare unequal to a filter list
 - Second-order delivery where the stored form merges after the filter stage
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Pollution to markup-sink execution on the client

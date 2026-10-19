@@ -139,6 +139,8 @@ This methodology carries the shared agreement; each class it serves states the p
 - Name the proxy-techniques family at its carrier and shared-cache steps for alternate transports, encodings, and cached responses, rather than restating those mechanics here.
 - Name the defence-bypass family at its parser step for duplicate keys, mixed case, and alias names, rather than restating the parser mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - CSRF plus authorization: force a victim to act on an object you discovered

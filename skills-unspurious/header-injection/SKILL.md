@@ -172,6 +172,8 @@ The relay mechanics these shapes work are the proxy-techniques family's relay st
 - Case mangling for filters that key off exact casing
 - Null-byte truncation inside the field name on parsers that stop at the null
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Header injection plus cache poisoning: the poisoned entry serves the injected body to every later requester

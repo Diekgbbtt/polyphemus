@@ -73,6 +73,8 @@ Read each delegation control as seizure input and proceed only where the control
 - Treat issuance restriction as a guardrail that limits certificate issuance while the delegation is triaged.
 - Treat a live authoritative answer from the owner as a stop condition that marks the delegation unclaimable.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Carry proven subzone control into trust-policy impact owned by consumer checks.

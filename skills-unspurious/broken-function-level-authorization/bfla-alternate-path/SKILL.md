@@ -65,6 +65,8 @@ Replay the action against legacy and versioned route forms until each form carri
 Vary method-override framings while keeping route and body constant, and read which framing the service honors.
 Record the middleware attribution per finding so parser-wiring gaps stay separate from route-table gaps.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 1. Build the actor-by-action matrix by enumerating each role against each privileged action, with completion when every action has an expected-role cell (procedure owned by `two-principal-authz`).

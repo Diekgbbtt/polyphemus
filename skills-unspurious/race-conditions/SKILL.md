@@ -154,6 +154,8 @@ Each variant breaks one clause: the atomicity and ordering clause, the dedup-sco
 - Name the proxy-techniques family at the channel-wrapping step for method, content-type, and endpoint switching, rather than restating the channel tricks here.
 - Name the defence-bypass family at the throttle and edge-versus-core steps for per-entity throttles and per-path guard gaps, rather than restating those mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Race plus business logic: violate invariants such as double-refund or limit slicing

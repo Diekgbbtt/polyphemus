@@ -58,6 +58,8 @@ This variant owns handler mapping discovery with language placement plus executi
 - Defeat content inspection by prefixing script content with a benign magic framing that the gate accepts and the interpreter ignores.
 - Defeat part-header trust by sending submission metadata whose declared type passes ingress while the stored object keeps its executable shape.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Chain interpreter execution into command execution by invoking processor primitives through the evaluated script context.

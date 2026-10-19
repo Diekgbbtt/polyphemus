@@ -158,6 +158,25 @@ else
   pass "no em dashes in authored Markdown"
 fi
 
+# 10. Every non-family SKILL.md that carries a `## Bypass Techniques` section
+# closes it with the canonical extended-reading pointer to the two families,
+# exactly once. The two family bundles ARE the extended reading, so they are
+# exempt.
+pointer="When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families."
+pointer_bad=""
+for f in $(grep -rlE '^## Bypass Techniques' skills-unspurious --include=SKILL.md); do
+  case "$f" in
+    skills-unspurious/defence-bypass/*|skills-unspurious/proxy-techniques/*) continue ;;
+  esac
+  if [ "$(grep -cF "$pointer" "$f")" != "1" ]; then pointer_bad="$pointer_bad $f"; fi
+done
+if [ -z "$pointer_bad" ]; then
+  pass "every class bypass section carries the extended-reading pointer once"
+else
+  printf 'FAIL  every class bypass section carries the extended-reading pointer once; offenders:%s\n' "$pointer_bad"
+  fail=1
+fi
+
 if [ "$fail" != 0 ]; then
   summary="FAILURES-PRESENT"
 elif [ "$pending_count" != 0 ]; then

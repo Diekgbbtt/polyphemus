@@ -141,6 +141,8 @@ Bypass shapes slip past a binding that is present, so each one is tried after th
 - Cached verdicts: an edge or gateway reuses a prior verification result across a change of claims or session, where the defence-bypass family owns the edge-versus-core step.
 - Transport variants: the same token replayed over a second channel or device where proof-of-possession is absent, where the proxy-techniques family owns the carrier step.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - XSS → token theft → replay across services with weak audience checks

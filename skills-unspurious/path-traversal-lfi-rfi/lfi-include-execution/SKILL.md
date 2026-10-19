@@ -67,6 +67,8 @@ Defeat name allowlists by nesting traversal meaning inside handler arguments tha
 Defeat relocation timing by addressing transient staged names before the move or scan completes.
 Defeat constant-template expectations by routing render-name values into dynamic resolution with <render-shape>.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Carry included execution into configuration recovery and template overwrite for persistence.

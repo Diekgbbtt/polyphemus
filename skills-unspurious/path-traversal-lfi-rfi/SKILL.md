@@ -133,6 +133,8 @@ Each variant breaks one clause: the confinement clause, the handler-selection cl
 - Where wrappers are disabled, substitute an alternate wrapper or scheme with the same reach
 - Where remote inclusion is blocked, poison local state and include it locally
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Traversal or inclusion to sensitive configuration, which yields further access

@@ -138,6 +138,8 @@ The non-decomposing baseline is the endpoint itself: one surface where depth, al
 - Batching to interleave a blocked operation among allowed siblings
 - Name the defence-bypass family at its signature-evasion step for the filter shapes, rather than restating the matcher mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Resolver-argument injection + the interpreter class behind the argument (query language, command, path, URL) to turn one argument into a downstream finding

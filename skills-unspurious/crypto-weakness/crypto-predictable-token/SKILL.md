@@ -86,6 +86,8 @@ Prediction defeats the strong-random-generation control by showing its output wa
 - Demonstrate short-value acceptance against a policy that promises a sufficient entropy bound.
 - Treat full uniqueness at sufficient length as a stop signal rather than a bypass.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Prediction chains forward into ownership because a predicted token without a follow-up use is only evidence.

@@ -79,6 +79,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Padding-command shapes reach the parser past trailing-syntax validation that assumes single commands.
 - Mixed text and binary framings reach the parser past checks written for one framing only.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Frames chain forward into control because one smuggled command without a follow-up read is only a probe.

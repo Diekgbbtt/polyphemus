@@ -69,6 +69,8 @@ Bypass forms stay aspects inside this variant because no encoding changes the st
 - Split duplicate header fields so the enforcing side joins them while the storing side keeps the injected member.
 - Mangle field-name casing plus truncation markers where the filter keys off exact spelling.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Splitting chains forward through the stored response because a stored field without a consumer is only persistence.

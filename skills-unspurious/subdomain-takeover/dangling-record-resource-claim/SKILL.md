@@ -74,6 +74,8 @@ Read each ownership control as claimability input and proceed only where the con
 - Treat fallback-origin exposure as the signal that an unknown-domain answer still routes to attacker content.
 - Treat issuance restriction as a guardrail that limits certificate issuance while the claim is triaged.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Carry proven control into trust-policy impact owned by consumer checks.

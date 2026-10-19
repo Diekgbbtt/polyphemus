@@ -82,6 +82,8 @@ Vary declaration encoding and newline shapes so naive declaration filters miss t
 Vary the subset declaration between peer keyword forms and internal-versus-external placement to reach the fetch path.
 Pivot between file-URI reads and internal-URL reads inside the redefinition so one blocked family still yields the other.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Hand exfiltrated internal URLs to the ssrf skill when the blind chain reaches internal control planes.

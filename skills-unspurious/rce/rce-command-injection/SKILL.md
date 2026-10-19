@@ -84,6 +84,8 @@ Encoded stagers reach execution through transport decoding that restores the pro
 Binary alternatives reach execution through absolute paths plus alternate binaries plus shell-flavour switching when one family is blocked.
 Layered combinations hand off to the defence-bypass family at the filter step rather than restating relay mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Command execution chains forward into durable control because a bare probe is only proof of context.

@@ -86,6 +86,8 @@ Bypass forms stay aspects inside this variant because no value difference change
 - Sending-scope reliance steers top-level GETs through the permitted navigation case while direct cross-site sub-requests stay blocked.
 - Referrer stripping through an empty-context navigation source presents the chain without its origin context.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Navigation chains forward into authorization and session abuse because a bare GET effect without a follow-up goal is only a probe.

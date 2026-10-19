@@ -56,6 +56,8 @@ Pollute duplicate carrier fields with both orderings to probe which occurrence w
 Treat parser coercion as the defence-bypass family's parser step, recording only the identity verdict here.
 Treat cache-key confusion across tenant headers as defeat detail shared with the proxy-techniques family at its shared-cache step.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Pivot a confirmed carrier override into direct swaps that now execute under the impersonated identity.

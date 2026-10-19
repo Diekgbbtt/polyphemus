@@ -81,6 +81,8 @@ Shape nested-redirector values that hide the internal destination one forwarding
 
 The hop chain and the destination parse comparison are the proxy-techniques family's steps; name it there and keep the class-specific pivot verdict here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Pivot the egress into internal exploitation only by handing off to the `ssrf` class at the internal-access step.

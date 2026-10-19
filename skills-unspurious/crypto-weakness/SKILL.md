@@ -136,6 +136,8 @@ Bypass shapes slip past a check that is present, so each one is tried after the 
 - Alternate identifier spellings accepted by the derivation path while the lookup stays on the canonical one.
 - Name the defence-bypass family at the normalisation, tolerant-acceptance, and spelling-folding steps, and the proxy-techniques family at the second-carrier step, rather than restating those mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Predictable recovery artifact → account takeover → durable access

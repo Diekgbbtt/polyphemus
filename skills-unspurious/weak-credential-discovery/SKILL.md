@@ -147,6 +147,8 @@ Each variant breaks one clause: the exposure clause, the default-credential clau
 - Recover claim content from padded, compressed, or segmented encodings
 - Read identifiers from visible fields where the artifact itself hides them
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Exposed secrets to authenticated access, then the classes in scope for the role the secret carried

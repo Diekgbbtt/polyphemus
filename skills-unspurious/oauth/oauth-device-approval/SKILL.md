@@ -75,6 +75,8 @@ Bypass forms are the check values this variant defeats, each confirmed through p
 - Unbound approvals pass a confirmation side that never joins the approver identity to the requester session.
 - Unverified approval screens pass an inducement where any visitor can confirm any code.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Approval findings chain forward into session theft because a polled code without victim confirmation is only a guessing statistic.

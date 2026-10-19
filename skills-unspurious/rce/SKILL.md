@@ -153,6 +153,8 @@ Each variant reaches the same failure at a different delegate: an OS wrapper, or
 
 Filter and encoding shapes are the defence-bypass family's steps; name it there rather than restating the mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Execution to durable control: file write, scheduled execution, and service restart hooks

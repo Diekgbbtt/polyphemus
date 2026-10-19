@@ -62,6 +62,8 @@ The defeated controls are preflight gating and shape-tied token or policy checks
 The bypass coerces the request into the gate-trusted simple shape so the preflight check never engages.
 Confirm the bypass by showing the simple shape executed the semantics the preflighted shape was denied.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 A confirmed shape gap chains into cross-origin state changes where the simple shape rides a benign framing.

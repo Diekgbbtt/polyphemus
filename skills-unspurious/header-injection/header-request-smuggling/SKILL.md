@@ -68,6 +68,8 @@ Bypass forms stay aspects inside this variant because no obfuscation changes the
 - Smuggle duplicate length declarations where the enforcing side reads one member while the backend reads the other.
 - Layer encoded-length forms past a filter that decodes fewer times than the framing parser.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Smuggling chains forward through the prepended request because leaked bytes without a consumer are only desynchronization.

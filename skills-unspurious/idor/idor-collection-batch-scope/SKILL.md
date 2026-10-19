@@ -56,6 +56,8 @@ Pollute duplicate paging fields with both orderings to probe which occurrence th
 Coerce serialization framings across the bulk endpoint while holding positions constant, since per-item checks often differ per stack.
 Treat race-window detail as owned by `race-conditions`, recording only the per-position authorization verdict here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Feed identifiers harvested from list and search seeders into bulk positions and import rows.

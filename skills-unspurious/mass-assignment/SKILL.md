@@ -141,6 +141,8 @@ Each variant breaks one clause: the flat-field clause, the batch-scope clause, t
 
 - Race two updates: the first sets the forbidden field, the second normalizes; the final state may retain the change
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 1. **Identify endpoints** - Create and update endpoints, including schema-layer mutations

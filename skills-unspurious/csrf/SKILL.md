@@ -176,6 +176,8 @@ Each variant breaks one clause: the proof-of-intent clause, the scoping clause, 
 - Test null-origin acceptance
 - Leverage misconfigured CORS to add custom headers that servers mistakenly treat as anti-forgery tokens
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - CSRF + IDOR: force actions on other users' resources once references are known

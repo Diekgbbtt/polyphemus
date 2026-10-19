@@ -68,6 +68,8 @@ Stagger plants across equivalent storage loci when one locus is inspected and an
 Spread trigger inducement across normal-use actions so the trigger blends with expected administrative behaviour.
 Name the defence-bypass family at steps that defeat hardened inspection instead of restating its mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Delayed code execution hands off to command-execution consumers once correlation attributes the effect to the plant.

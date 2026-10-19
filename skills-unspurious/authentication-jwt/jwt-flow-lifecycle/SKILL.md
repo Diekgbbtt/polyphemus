@@ -63,6 +63,8 @@ This variant breaks the flow and lifecycle binding while the signature routine, 
 - Defeat state and approval integrity by presenting predictable, reused, or absent state shapes and out-of-scope device approvals.
 - Defeat rotation, reuse detection, revocation, and binding by replaying retired artifacts, replaying post-termination tokens, replaying from a second channel, and fixing session identifiers.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Name the proxy-techniques family at the capture-and-replay step and start here once a cross-client artifact is obtainable.

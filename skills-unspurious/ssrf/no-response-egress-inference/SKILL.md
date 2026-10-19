@@ -71,6 +71,8 @@ Bypass forms stay aspects inside this variant because no encoding or parsing dif
 - Address encoding families such as decimal plus hex plus octal plus mapped forms reach the fetcher past a naive textual allowlist.
 - Parser differentials, redirect chains, and short-lived resolution carry an internal destination to the fetch side, and the proxy-techniques family owns those mechanics; record only the inference verdict here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Inference chains forward into reads because a map without a follow-up read is only discovery.

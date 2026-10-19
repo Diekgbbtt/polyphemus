@@ -87,6 +87,8 @@ Bypass detail rides as aspects inside this variant and cross-references the defe
 - Handler-variety shapes reach execution when one sink family blocks direct script shapes.
 - Sanitizer configuration gaps plus policy gaps plus sink-type gaps surface through sink-log positives with negative-test controls.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 DOM execution chains forward into impact once sink invocation is recorded.

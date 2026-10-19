@@ -86,6 +86,8 @@ Bypass forms are the check values this variant defeats, each confirmed through r
 - Over-requested scope passes an issuance side that grants everything asked.
 - Cross-audience tokens pass a resource side that never validates the intended audience.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Binding findings chain forward into cross-client impact because a swap without a redemption verdict is only a record gap.

@@ -148,6 +148,8 @@ Each variant breaks one clause: the external-resolution clause, the transclusion
 
 Declaration shapes that a text filter misses and encoding layers that survive one are the defence-bypass family's steps; name it there and keep the class-specific declaration grammar here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - File disclosure to credential and configuration stores, then movement to other systems

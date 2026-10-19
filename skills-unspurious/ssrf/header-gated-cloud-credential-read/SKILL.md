@@ -69,6 +69,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Address encoding families such as decimal plus hex plus octal plus mapped forms steer the gated destination past a naive textual allowlist.
 - Parser differentials, redirect chains, and short-lived resolution carry the gated destination to the fetch side, and the proxy-techniques family owns those mechanics; record only the gated verdict here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Gated reads chain forward into platform access because a credential without use is only a string.

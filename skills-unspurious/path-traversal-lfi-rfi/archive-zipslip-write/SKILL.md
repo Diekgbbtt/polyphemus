@@ -67,6 +67,8 @@ Defeat destination binding with rooted names that discard the bound destination.
 Defeat link policy by introducing alias entries that resolve outside after the check completes.
 Defeat format assumptions by repeating traversal entries across each supported archive shape.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Carry outside writes into configuration overwrite and template replacement for persistence.

@@ -77,6 +77,8 @@ Bypass forms stay aspects inside this variant because no wrapper changes the sin
 - Split-emission framing spreads one sink payload across several model outputs that merge at the sink.
 - Context-breakout shaping closes the surrounding sink template before opening the new construct.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Handling chains forward into impact because emission without sink behavior is only text.

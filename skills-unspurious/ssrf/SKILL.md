@@ -145,6 +145,8 @@ Redirect chains and destination parse differentials are the proxy-techniques fam
 **Carrier Switching**
 - Move the same destination between direct parameters, stored fields, embedded links, and derived values until one reaches the fetcher unfiltered
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - SSRF to credential services, then cloud API position: list, read, and store in the target account

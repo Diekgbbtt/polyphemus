@@ -137,6 +137,8 @@ Each variant breaks one clause: the type-resolution clause, the integrity clause
 - Type confusion: an array versus an object body reaches different decoder branches
 - Name the defence-bypass family at the encoding and framing steps for stacked layers and length-field smuggling, rather than restating those mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Deserialization plus execution: the decode runs attacker-controlled code with the application's privileges

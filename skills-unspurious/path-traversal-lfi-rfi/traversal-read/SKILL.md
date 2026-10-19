@@ -67,6 +67,8 @@ Defeat separator filters by alternating separator spellings held as <separator-s
 Defeat join binding by supplying rooted names that discard the base, held as <absolute-shape>.
 Defeat inconsistent normalization by routing folded delimiters through the more permissive decoder with <mismatch-shape>.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Carry disclosed configuration and source material into credential and secret recovery.
