@@ -67,6 +67,7 @@ Use suffixes and address tails where storage eligibility keys off the address al
 A static-looking suffix the key's allowlist omits changes storage eligibility for a dynamic response, which is the same rule read at the eligibility side.
 Where the key's rule matches the path exactly, add a field the key treats as a distinct input to force a miss, so the shaped response is fetched and stored rather than served from an existing entry.
 Treat a collapse that serves another caller as the completed probe, and record the normalisation step that caused it.
+See `references/cache-key-shaping-matrix.md` for the key-shaping shapes and their completion bars.
 
 ### Stored-Response Reads Across Callers
 

@@ -62,6 +62,7 @@ The effect is claimed only when the arrival's response is consumed by the page, 
 - The traversal reaches a redirecting endpoint whose destination is caller-influenced, and the client follows the redirect because its follower is not the caller's to control; name `proxy-techniques-redirect-chain` at this step.
 - A reflecting endpoint whose response the page consumes is the other gadget kind, because the arrival's answer is what the page renders.
 - Keep the traversal and the follow as one chain, since the traversal alone reaches an endpoint the page still treats as its own.
+See `references/cspt-gadget-chain.md` for the worked traversal-to-gadget chain.
 
 ### Response Control and Encoding Depth
 

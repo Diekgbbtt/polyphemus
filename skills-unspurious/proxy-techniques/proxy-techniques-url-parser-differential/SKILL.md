@@ -69,6 +69,7 @@ Shape trailing dots, case, width variants, numeric address forms, and encoded se
 Complete a relative value against the consumer's own base where the approver resolves it differently, and name `proxy-techniques-client-side-path-traversal` where the consumer is a client that builds its request path from the value.
 Probe the delimiter and encoded-path family per element: separators, encoded separators, dot segments, a trailing dot, case, and a terminating null or fragment, because each reader resolves the element on its own.
 Treat a decode-count disagreement on one value as the encoding differential's step rather than this one, and keep this variant on the destination's structure.
+See `references/url-parse-differential-matrix.md` for the notation family across readers.
 
 ### Server-Side URL Construction
 

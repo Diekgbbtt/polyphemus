@@ -87,6 +87,7 @@ Relay shapes are tried only after the direct route is baselined, because a chain
 - A hop that switches scheme or host family, where the follower re-applies its policy.
 - Continuation and callback values that the chain follows after the first check.
 - A logout or post-action continuation whose rule is weaker than the primary check.
+See `references/redirect-bypass-table.md` for the destination shapes and the follower kind each applies to.
 
 ## Chaining Attacks
 

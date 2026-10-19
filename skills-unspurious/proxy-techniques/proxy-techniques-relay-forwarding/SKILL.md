@@ -68,6 +68,7 @@ Send the same value under each name the path might read, because every layer may
 Where two occurrences of the same authority field are accepted, the second occurrence's precedence is a parser-confusion instance; name `defence-bypass-parser-confusion` at that step.
 Keep the value identical across families so the field is the only changed variable.
 Treat a family the origin ignores as a recorded negative rather than a dead end, and move to the next name.
+See `references/forwarded-field-families.md` for the field families by role and the layer each acts at.
 
 ### Relay Rewrite and Override
 

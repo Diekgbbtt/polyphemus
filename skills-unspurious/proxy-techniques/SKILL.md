@@ -59,6 +59,7 @@ Proxy work starts at the path, because an intermediary whose contribution is not
 - Read the intermediary's own state where it is reachable, such as a stored entry, a forwarded field set, or a stored verdict
 - Establish the arrival oracle: operated infrastructure that proves the second hop, the second carrier, or the interior destination was reached
 - Land every probe under a throwaway key where a shared cache is in the path, because a stored probe is a live entry rather than a test
+See `references/intermediary-role-map.md` for each role's caller-influenced inputs and the proof its contribution needs.
 
 ### Direct-Route Baseline
 
