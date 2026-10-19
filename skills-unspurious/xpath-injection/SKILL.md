@@ -42,18 +42,18 @@ The class owns predicate bypass, node-set widening, node-name discovery, and bli
 
 ## Detection Channels
 
-- A syntax error for an unbalanced probe where a balanced probe succeeds, which proves the expression is concatenated and parsed.
-- A differential between a true predicate and its false pair, which proves predicate control.
-- An authentication success from a predicate no literal value could satisfy, which proves the credential predicate was neutralised.
-- A node-set widening between a single-branch query and a caller-appended union, which proves path control.
-- A rendered node or a count change that carries values from outside the intended branch.
-- A value recovered character by character through string-length and substring predicates.
-- Error text naming the expression grammar or the document store, which narrows the probe set.
-- A per-identity difference in message, status, or timing under one fixed value, which proves an enumeration oracle.
+- **Unbalanced-probe error**: a syntax error for an unbalanced probe where a balanced probe succeeds, which proves the expression is concatenated and parsed.
+- **Predicate differential**: a differential between a true predicate and its false pair, which proves predicate control.
+- **Impossible success**: an authentication success from a predicate no literal value could satisfy, which proves the credential predicate was neutralised.
+- **Node-set widening**: a node-set widening between a single-branch query and a caller-appended union, which proves path control.
+- **Cross-branch node or count**: a rendered node or a count change that carries values from outside the intended branch.
+- **Character-by-character value**: a value recovered character by character through string-length and substring predicates.
+- **Grammar-naming error text**: error text naming the expression grammar or the document store, which narrows the probe set.
+- **Per-identity difference**: a per-identity difference in message, status, or timing under one fixed value, which proves an enumeration oracle.
 
 ## Adversarial Capabilities
 
-Expression injection presupposes an input that reaches the expression grammar plus a readable oracle, and it consumes both.
+- **Expression injection**: presupposes an input that reaches the expression grammar plus a readable oracle, and it consumes both.
 - **Grammar-reaching input**: reach a field whose text lands inside a predicate literal or a node-selection position.
 - **Oracle reading**: read syntax errors, status, body markers, counts, and rendered nodes as oracle answers.
 - **Balanced composition**: compose probes that keep every quote and bracket balanced, because the language offers no comment to absorb the remainder.
@@ -148,13 +148,13 @@ Context discrimination runs before probing, because the two positions accept dif
 
 ## Pro Tips
 
-1. Keep every probe balanced; the language has no comment to absorb an unclosed quote.
-2. Discriminate the context first, because payloads never transfer between a value position and a path position.
-3. Prefer length and substring predicates for extraction, and a rendered node or count for the first proof.
-4. Pair every claim with a false predicate of the same shape, because the failure response is the proof of parsing.
-5. Enumerate attributes before values, because attributes are the more frequent secret holder.
-6. Widen to a whole branch, then narrow to the smallest node that proves the scope break.
-7. Use a control node whose value is known, so a predicate that answers on it validates the oracle before any target read.
+- **Balance discipline**: keep every probe balanced; the language has no comment to absorb an unclosed quote.
+- **Context first**: discriminate the context first, because payloads never transfer between a value position and a path position.
+- **Function preference**: prefer length and substring predicates for extraction, and a rendered node or count for the first proof.
+- **False-pair pairing**: pair every claim with a false predicate of the same shape, because the failure response is the proof of parsing.
+- **Attribute enumeration**: enumerate attributes before values, because attributes are the more frequent secret holder.
+- **Widen then narrow**: widen to a whole branch, then narrow to the smallest node that proves the scope break.
+- **Known-value control**: use a control node whose value is known, so a predicate that answers on it validates the oracle before any target read.
 
 ## Summary
 

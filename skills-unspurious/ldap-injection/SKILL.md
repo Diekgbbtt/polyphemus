@@ -42,18 +42,18 @@ The class owns authentication bypass, blind attribute extraction, directory enum
 
 ## Detection Channels
 
-- A syntax error for an unbalanced bracket where a balanced probe succeeds, which proves the filter is concatenated and parsed.
-- A differential between an always-true predicate and its always-false pair, which proves predicate control.
-- An authentication success from a filter that no literal value could satisfy, which proves the credential clause was neutralised.
-- A result count or result-set change per prefix against a control prefix, which proves wildcard enumeration.
-- Error text naming the filter grammar or the directory layer, which narrows the probe set.
-- A returned attribute value recovered character by character through a boolean oracle.
-- A per-identity difference in message, status, or timing under one fixed secret, which proves an enumeration oracle.
-- An out-of-band name-resolution or directory hit from a caller-supplied referral, which proves server-side reach with zero ambiguity.
+- **Unbalanced-bracket error**: a syntax error for an unbalanced bracket where a balanced probe succeeds, which proves the filter is concatenated and parsed.
+- **Predicate differential**: a differential between an always-true predicate and its always-false pair, which proves predicate control.
+- **Impossible success**: an authentication success from a filter that no literal value could satisfy, which proves the credential clause was neutralised.
+- **Count or result-set change**: a result count or result-set change per prefix against a control prefix, which proves wildcard enumeration.
+- **Grammar-naming error text**: error text naming the filter grammar or the directory layer, which narrows the probe set.
+- **Attribute recovery**: a returned attribute value recovered character by character through a boolean oracle.
+- **Per-identity difference**: a per-identity difference in message, status, or timing under one fixed secret, which proves an enumeration oracle.
+- **Out-of-band referral hit**: an out-of-band name-resolution or directory hit from a caller-supplied referral, which proves server-side reach with zero ambiguity.
 
 ## Adversarial Capabilities
 
-Directory injection presupposes an input that reaches the directory grammar plus a readable oracle, and it consumes both.
+- **Directory injection**: presupposes an input that reaches the directory grammar plus a readable oracle, and it consumes both.
 - **Grammar-reaching input**: reach a field whose text lands inside a filter clause or a distinguished name.
 - **Oracle reading**: read syntax errors, status, body markers, counts, and timing as oracle answers.
 - **Candidate identities**: hold a candidate list of directory identities for enumeration and for bypass targeting.
@@ -155,14 +155,14 @@ Confirmation runs before enumeration, because a grammar verdict without a contro
 
 ## Pro Tips
 
-1. Capture the control response first; every later verdict is a comparison against it.
-2. Balance the presumed full filter, not the payload alone, because the application appends its own clauses.
-3. Test both interpolation contexts early; payloads never transfer between a filter and a name.
-4. Prefer a result-count or body-marker oracle over raw response size, which jitters.
-5. Keep a same-shape false control beside every claim, because the failure response is the proof of parsing.
-6. Validate a recovered value by using it, not by its shape.
-7. Keep the referral channel for blind cases; a listener hit removes the ambiguity that length inference leaves.
-8. Name the directory family before claiming a credential read; a write-only credential attribute yields nothing.
+- **Control response first**: capture the control response first; every later verdict is a comparison against it.
+- **Full-filter balance**: balance the presumed full filter, not the payload alone, because the application appends its own clauses.
+- **Both contexts early**: test both interpolation contexts early; payloads never transfer between a filter and a name.
+- **Count or marker oracle**: prefer a result-count or body-marker oracle over raw response size, which jitters.
+- **Same-shape control**: keep a same-shape false control beside every claim, because the failure response is the proof of parsing.
+- **Use-based validation**: validate a recovered value by using it, not by its shape.
+- **Referral channel**: keep the referral channel for blind cases; a listener hit removes the ambiguity that length inference leaves.
+- **Family naming**: name the directory family before claiming a credential read; a write-only credential attribute yields nothing.
 
 ## Summary
 
