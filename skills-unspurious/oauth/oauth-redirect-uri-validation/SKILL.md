@@ -13,89 +13,89 @@ The theft goal is a grant credential arriving at an attacker-controlled destinat
 
 ## Attack Surface
 
-Applicability centers on a grant flow whose authorization entry point accepts a caller-supplied callback destination.
-The registration holds one or more destination patterns per client, including prefix matches, subdomain wildcards, or multiple registered values.
-The validator that approves the destination and the consumer that later delivers to it may normalise input differently.
-Mobile dispatch transports such as custom schemes and universal links widen the acceptance set with a hijackable value.
-Client-credentials flows with no user and no destination fall outside this variant.
+- **Applicability**: centers on a grant flow whose authorization entry point accepts a caller-supplied callback destination.
+- **Registration patterns**: the registration holds one or more destination patterns per client, including prefix matches, subdomain wildcards, or multiple registered values.
+- **Validator-consumer gap**: the validator that approves the destination and the consumer that later delivers to it may normalise input differently.
+- **Mobile transports**: mobile dispatch transports such as custom schemes and universal links widen the acceptance set with a hijackable value.
+- **Out-of-scope flows**: client-credentials flows with no user and no destination fall outside this variant.
 
 ## Reconnaissance
 
-Map the destination inventory before fuzzing it.
-Catalogue every client with its grant types plus every registered callback destination pattern plus the matching rule each registration implies.
-Record the discovery document values for supported response shapes and grant types so later probes parametrise correctly.
-Probe each client with a clearly unregistered destination to learn the rejection rendering that later acceptances diverge from.
-Reconnaissance is complete when every client carries its destination list plus its baseline rejection.
+- **Destination mapping**: map the destination inventory before fuzzing it.
+- **Destination catalogue**: catalogue every client with its grant types plus every registered callback destination pattern plus the matching rule each registration implies.
+- **Discovery recording**: record the discovery document values for supported response shapes and grant types so later probes parametrise correctly.
+- **Rejection baseline**: probe each client with a clearly unregistered destination to learn the rejection rendering that later acceptances diverge from.
+- **Completion criterion**: reconnaissance is complete when every client carries its destination list plus its baseline rejection.
 
 ## Detection Channels
 
-Only the entries below fire here; freshness, verifier, binding, and approval signals belong to the sibling variants.
-- Acceptance versus rejection verdict per destination pattern, recorded across the whole matrix.
-- Validator-versus-consumer parse gap, where the approving side and the delivering side disagree on the same input.
-- Duplicate-carrier precedence, where the first and the last of two supplied destinations decide differently.
-- Consumer-confirmation capture, where a grant credential arrives at the attacker listener through an accepted destination.
-- Harvest-channel arrival, where an embedded subresource leaks the credential through the ambient referrer policy.
+- **Channel scope**: freshness, verifier, binding, and approval signals belong to the sibling variants.
+- **Verdict per pattern**: record an acceptance versus rejection verdict per destination pattern across the whole matrix.
+- **Validator-versus-consumer parse gap**: the approving side and the delivering side disagree on the same input.
+- **Duplicate-carrier precedence**: the first and the last of two supplied destinations decide differently.
+- **Consumer-confirmation capture**: a grant credential arrives at the attacker listener through an accepted destination.
+- **Harvest-channel arrival**: an embedded subresource leaks the credential through the ambient referrer policy.
 
 ## Adversarial Capabilities
 
-Validation probing presupposes destination supply plus capture operation plus registration reach, and it consumes all three.
-- Supply candidate destinations that mutate one registered pattern at a time through encoding plus suffix plus query injection.
-- Operate a capture listener that records every grant credential arrival with its full destination.
-- Register attacker-controlled suffix hosts or subdomain values where wildcard acceptance invites a claim.
-- Embed an authorized destination as a subresource to test ambient referrer leakage where policy permits.
-- Confirm mobile dispatch hijack by holding the scheme or link the target device routes to the tester.
+- **Prerequisites**: validation probing presupposes destination supply plus capture operation plus registration reach, and it consumes all three.
+- **Candidate supply**: supply candidate destinations that mutate one registered pattern at a time through encoding plus suffix plus query injection.
+- **Capture operation**: operate a capture listener that records every grant credential arrival with its full destination.
+- **Registration reach**: register attacker-controlled suffix hosts or subdomain values where wildcard acceptance invites a claim.
+- **Referrer embedding**: embed an authorized destination as a subresource to test ambient referrer leakage where policy permits.
+- **Dispatch-hijack confirmation**: confirm mobile dispatch hijack by holding the scheme or link the target device routes to the tester.
 
 ## Trust Assumptions
 
-At the moment the grant chain executes, the server trusts one binding agreement: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it.
-Sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
-This variant breaks the destination-match clause because the validator accepts a destination the legitimate client never registered while the consumer delivers the credential there.
+- **The agreement**: the callback destination, the freshness token, the single-use verifier, the client identity, and the token audience presented at each step belong to the same legitimate session and client, with each value checked at the step that consumes it.
+- **The exposure**: sensitive account access leaks only when the server delivers grant credentials through such a checked chain.
+- **The failing clause**: this variant breaks the destination-match clause because the validator accepts a destination the legitimate client never registered while the consumer delivers the credential there.
 
 ## Key Vulnerabilities
 
 ### Per-Pattern Normalisation Differentials
 
-Fuzz each registered pattern with one mutation family at a time, using shapes like `<registered-prefix><attacker-suffix>` plus encoded separators plus case plus port plus scheme-downgrade variants.
-Compare the validator verdict against the consumer delivery for the same input, because approval without delivery is only a parse curiosity.
-The parent matrix step covers only generic encoding fuzzing and cannot describe validator-versus-consumer confirmation, so this variant owns the differential procedure.
+- **Per-pattern fuzzing**: fuzz each registered pattern with one mutation family at a time, using shapes like `<registered-prefix><attacker-suffix>` plus encoded separators plus case plus port plus scheme-downgrade variants.
+- **Validator-consumer comparison**: compare the validator verdict against the consumer delivery for the same input, because approval without delivery is only a parse curiosity.
+- **Differential ownership**: the parent matrix step covers only generic encoding fuzzing and cannot describe validator-versus-consumer confirmation, so this variant owns the differential procedure.
 
 ### Duplicate-Carrier Precedence
 
-Submit the destination carrier twice with the first and the last values disagreeing, then record which occurrence each side honors.
-Treat a split verdict as a finding and treat consistent rejection of both orderings as a negative.
-The parent matrix step never names precedence, so this variant owns the ordering probe.
+- **Precedence probe**: submit the destination carrier twice with the first and the last values disagreeing, then record which occurrence each side honors.
+- **Precedence verdict**: treat a split verdict as a finding and treat consistent rejection of both orderings as a negative.
+- **Precedence ownership**: the parent matrix step never names precedence, so this variant owns the ordering probe.
 
 ### Wildcard-Claim Chaining
 
-Claim an attacker-controlled host under an accepted wildcard scope and chain the claim into a full credential delivery.
-Confirm the chain by capturing the credential at the claimed host rather than by reading the acceptance verdict alone.
-Transport values for mobile dispatch ride inside this variant as a parameter, confirmed through dispatch hijack rather than a separate procedure.
+- **Wildcard claim**: claim an attacker-controlled host under an accepted wildcard scope and chain the claim into a full credential delivery.
+- **Chain confirmation**: confirm the chain by capturing the credential at the claimed host rather than by reading the acceptance verdict alone.
+- **Transport parameter**: transport values for mobile dispatch ride inside this variant, confirmed through dispatch hijack rather than a separate procedure.
 
 ## Advanced Techniques
 
-Referrer harvesting rides here as an exfil channel rather than a separate variant.
-Mount the authorized destination as a subresource on an attacker page and harvest the credential where the ambient referrer policy carries it.
-Treat policy-dependent capture as confirmation of the same destination finding, not as a new probe kind.
-Browser-messaging delivery rides here as a second exfil channel: a flow that returns the credential into a parent-window message reaches a listener the destination check never examined, so read the listener's origin check before closing the destination finding.
-A response-carrier swap that moves the credential into a browser-readable carrier beside the registered destination rides here as the same delivery-channel value.
+- **Referrer harvesting**: rides here as an exfil channel rather than a separate variant.
+- **Subresource mounting**: mount the authorized destination as a subresource on an attacker page and harvest the credential where the ambient referrer policy carries it.
+- **Capture verdict**: treat policy-dependent capture as confirmation of the same destination finding, not as a new probe kind.
+- **Browser-messaging delivery**: rides here as a second exfil channel: a flow that returns the credential into a parent-window message reaches a listener the destination check never examined, so read the listener's origin check before closing the destination finding.
+- **Response-carrier swap**: a response-carrier swap that moves the credential into a browser-readable carrier beside the registered destination rides here as the same delivery-channel value.
 
 ## Bypass Techniques
 
-Bypass forms are the check values this variant defeats, each confirmed through delivery rather than verdict alone.
-- Trailing-separator plus case plus port plus scheme-downgrade mutations pass a textual match that never normalises.
-- Encoded-separator plus backslash plus delimiter tricks pass a validator whose parser differs from the consumer.
-- Suffix-host plus query-injection shapes pass a prefix-only comparison.
-- Duplicate carriers pass a check that reads one occurrence while delivery reads the other.
+- **Bypass scope**: bypass forms are the check values this variant defeats, each confirmed through delivery rather than verdict alone.
+- **Normalisation-evading mutations**: trailing-separator plus case plus port plus scheme-downgrade mutations pass a textual match that never normalises.
+- **Parser-differential tricks**: encoded-separator plus backslash plus delimiter tricks pass a validator whose parser differs from the consumer.
+- **Suffix-host shapes**: suffix-host plus query-injection shapes pass a prefix-only comparison.
+- **Duplicate carriers**: pass a check that reads one occurrence while delivery reads the other.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Validation findings chain forward into credential capture because an acceptance without a capture is only a parser gap.
-- Hand an accepted attacker destination to the capture listener and redeem the arriving credential as the takeover proof.
-- Hand a legitimate destination with an open-relay suffix to the open-redirect companion for exfiltration through a trusted host.
-- Hand a legitimate destination carrying active script to the cross-site-scripting companion for credential theft from the trusted page.
-- Treat analytics plus log leakage of delivered credentials as an amplifier of any confirmed acceptance.
+- **Chain scope**: validation findings chain forward into credential capture because an acceptance without a capture is only a parser gap.
+- **Accepted-destination handoff**: hand an accepted attacker destination to the capture listener and redeem the arriving credential as the takeover proof.
+- **Open-relay handoff**: hand a legitimate destination with an open-relay suffix to the open-redirect companion for exfiltration through a trusted host.
+- **Active-script handoff**: hand a legitimate destination carrying active script to the cross-site-scripting companion for credential theft from the trusted page.
+- **Leakage amplifier**: treat analytics plus log leakage of delivered credentials as an amplifier of any confirmed acceptance.
 
 ## Testing Methodology
 
@@ -109,25 +109,25 @@ Validation runs the differential matrix first and everything else follows, becau
 
 ## False Positives
 
-Stop when the evidence shows the destination check holds, because rejected matrices are only noise.
-- Consistent rejection across every mutation family with no delivery divergence.
-- Strict full-string match with unified parsing between validator and consumer.
-- Custom-scheme dispatch gated on verified ownership proof that the tester cannot supply.
-- Captured arrivals whose source matches the tester machine rather than the server, which indicate a client-side fetch made the request.
+- **Check-held stop**: stop when the evidence shows the destination check holds, because rejected matrices are only noise.
+- **Consistent rejection**: reject across every mutation family with no delivery divergence.
+- **Strict full-string match**: match strictly with unified parsing between validator and consumer.
+- **Ownership-gated dispatch**: custom-scheme dispatch gated on verified ownership proof that the tester cannot supply.
+- **Client-side arrivals**: captured arrivals whose source matches the tester machine rather than the server indicate a client-side fetch made the request.
 
 ## Pro Tips
 
-Validation rewards one mutation family at a time plus delivery confirmation.
-1. Prefer the quiet acceptance verdict first, then promote only acceptances to full capture attempts.
-2. Compare validator and consumer on the same input before claiming any bypass.
-3. Favor tiny destination mutations so each acceptance names exactly one failing pattern.
-4. Log every probe behind its pattern plus family so the matrix stays exhaustive.
-5. Stop promoting consistent rejections and record them as rejections rather than inconclusive.
+- **Discipline**: validation rewards one mutation family at a time plus delivery confirmation.
+- **Quiet-verdict preference**: prefer the quiet acceptance verdict first, then promote only acceptances to full capture attempts.
+- **Same-input comparison**: compare validator and consumer on the same input before claiming any bypass.
+- **Tiny mutations**: favor tiny destination mutations so each acceptance names exactly one failing pattern.
+- **Probe logging**: log every probe behind its pattern plus family so the matrix stays exhaustive.
+- **Rejection recording**: stop promoting consistent rejections and record them as rejections rather than inconclusive.
 
 ## Tooling
 
-Drive the grant chain by hand so every destination value stays under tester control.
-Decode arriving credential structure locally to confirm which pattern delivered what before redeeming anything.
+- **Manual chain driving**: drive the grant chain by hand so every destination value stays under tester control.
+- **Local credential decoding**: decode arriving credential structure locally to confirm which pattern delivered what before redeeming anything.
 
 ## Summary
 
