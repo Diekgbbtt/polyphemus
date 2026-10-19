@@ -126,6 +126,7 @@ The agreement also covers the tool and retrieval layers when they are reachable 
 - Model output rendered unescaped at a markup sink executes in the viewer's browser
 - Output used in a query, a command, or a redirect sink carries injection into that interpreter
 - Markup images whose URL carries context data produce a zero-click exfiltration channel at render time
+- Where the output is code a developer adopts, steering the emission toward an insecure shape is the same sink problem with a human in the loop
 
 ## Bypass Techniques
 
