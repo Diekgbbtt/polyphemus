@@ -68,6 +68,8 @@ Reflection walks enumerate host-runtime classes from any reachable object throug
 Gadget chains connect the enumerated pool to a shell-equivalent primitive by the shortest reachable call path.
 Stream-consumption wrappers capture command output where the raw execution primitive returns an opaque handle instead of text.
 Alias and indirection recovery restores reachability when direct attribute paths are denied but equivalent spellings remain.
+Length-constrained staging works a capped field in stages: confirm evaluation with the shortest probe, dump the exposed object list in one response, then select the execution index in a second probe.
+The staging order matters because the cap forbids a single full gadget, so each stage carries the shortest fragment that still answers.
 
 ## Bypass Techniques
 
@@ -113,6 +115,7 @@ Fingerprint the engine before spending requests on gadget chains because wrong-f
 Spray every framework global the knowledge base lists for the confirmed family before walking type hierarchies because the shortest chain starts from the richest object.
 Treat error text as corroboration rather than proof because verbose failures also follow from malformed but unevaluated input.
 Read generated documents and email previews with the same attention as primary responses because secondary renderers often enforce weaker controls.
+Drive a template-editor preview or save loop with a fresh request token per iteration, because the preview path renders the template without persisting and gives the cheapest repeated evaluation surface.
 
 ## Summary
 

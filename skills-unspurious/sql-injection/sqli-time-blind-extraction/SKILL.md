@@ -18,6 +18,7 @@ User input reaches SQL construction with string concatenation present and a slee
 The timing surface preserves predicate-gated delays rather than flattening every answer into uniform latency.
 Identifier versus value influence plus query shape ride inside this variant only as aspects because neither changes the gating step itself.
 DBMS dialect rides inside this variant only as function naming because renaming the delay primitive never changes the calibration procedure.
+A schema-layer resolver is a valid carrier: the delay lands inside the resolver's own statement, and the schema layer changes nothing about the gating procedure.
 
 ## Detection Channels
 

@@ -40,6 +40,7 @@ Server-side template injection happens when user input reaches a template render
 - Send one arithmetic differential per delimiter family the renderer may use; the family that evaluates returns the product while the others echo the syntax
 - Confirm with a second expression so a coincidental echo cannot pass as evaluation
 - Secondary fingerprints: comment and filter syntax differences, error text naming the engine, and scoping forms that only evaluate inside a selection scope
+- Look-alike discriminator: a probe whose result differs between string repetition and numeric coercion separates two families the delimiter probe cannot tell apart
 - Keep the probe grammar minimal; each probe is noise in logs and a wrong-family guess costs a step
 
 ### Blind Setup
@@ -85,6 +86,7 @@ Each variant reaches evaluation through a different observability: same-response
 ### Input-as-Syntax
 
 - Concatenating caller input into a template string before render, instead of passing it as a context value, turns the value into syntax
+- Expression-context break-out: when the value lands inside an existing expression rather than at a syntax boundary, the payload closes the surrounding context first and opens its own expression after it
 - Template-editor surfaces where the template source is caller-controlled are the strongest form: the payload may need to escape nothing
 - Name and selector resolution: a renderer that loads a caller-supplied template name or fragment selects content the application did not choose
 - Second-order pipelines: stored values later evaluated through a templating layer, including format-string output, markup rendered downstream, and structured document values

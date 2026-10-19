@@ -73,6 +73,13 @@ The parent store step omits search metacharacters, so this variant owns the wide
 <EXISTENCE-OPERATOR>:<FIELD>
 ```
 
+### String-Context Breakout
+
+Where the application concatenates input into a script-expression string instead of accepting an operator object, the break is a literal break inside that string.
+Fuzz the quote and metacharacter set first, then close the literal with an always-true fragment and confirm through a boolean differential.
+Extract through the same boolean oracle character by character, because the string context answers per predicate rather than per record.
+The parent grammar step lists query grammars without describing a script-string literal, so this variant owns the string-context break; hand the step to the script sibling when the value becomes an executable body rather than a literal.
+
 ### Graph Clause Control
 
 Submit pattern breaks plus union-style appends to graph query text, because concatenated patterns merge the fragment into the executed traversal.
