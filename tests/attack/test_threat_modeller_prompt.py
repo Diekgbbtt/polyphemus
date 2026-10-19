@@ -10,9 +10,9 @@ the saturation stop, and the output contract), with the retired notes
 documents' material embedded at the point of use - and the gate hints NOT in
 the system prompt (they ride the tool responses).
 
-The rename contract of S1 4.1: the role id, the session segment, the provider
-environment variable with its one-window fallback, and the accepted legacy
-segments.
+The rename contract of S1 4.1 after T10 closed the alias window: the new role
+id, the new session segment, and the new provider environment variable, with no
+fallback and no accepted legacy segment or role.
 """
 from __future__ import annotations
 

@@ -369,7 +369,7 @@ def test_hunt_launch_is_a_loud_410_and_the_enqueue_seam_is_gone():
     The endpoint stays a LOUD 410 naming the replacement, and the launcher
     seam is gone. The eval caller check (T4b): `eval/orchestrator/api.py` and
     `eval/ph.py` never call this path; the eval translation of the recorded
-    config artifacts is T10 (#383)."""
+    config artifacts is T10b (#397)."""
     from polymerhus.attack.hunting import runtime as hunting_runtime
 
     assert not hasattr(hunting_runtime, "enqueue_hunt_config"), (
@@ -384,7 +384,7 @@ def test_hunt_launch_is_a_loud_410_and_the_enqueue_seam_is_gone():
     detail = resp.json()["detail"]
     assert "retired" in detail.lower()
     assert "loop file" in detail.lower()
-    assert "T10" in detail and "#383" in detail
+    assert "T10b" in detail and "#397" in detail
 
 
 def test_pod_launch_resumes_via_the_launcher_seam(monkeypatch):

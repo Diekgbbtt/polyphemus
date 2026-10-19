@@ -20,10 +20,10 @@ Control (API):
   - per-session + module lifecycle verbs             (not used by this client)
 
 Monitoring (the orchestrator tail):
-  - designed-for-removal -> T10 (#383): the ratified-config count below reads the
+  - designed-for-removal -> T10b (#397): the ratified-config count below reads the
     RETIRED config family (T4b #387 - a live run's surfer dispatches produced loop
     files, not configs), so it always reads zero. The eval translation to the loop
-    vocabulary is T10's; until then this tail is a historical read, never a
+    vocabulary is T10b's (#397); until then this tail is a historical read, never a
     dispatch signal.
   - The ratified-config count is read from the project's HuntStore on the HOST
     path (the #234 app-owned data root), never docker exec:

@@ -67,7 +67,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Mapping
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable
 
 from polymerhus.attack.hunting.hunter_graph import build_hunter_graph
 from polymerhus.attack.hunting.hunter_memory import (
@@ -104,15 +104,6 @@ _HUNTER_ROLE = "hunting_hunter"
 # The step-budget safety bound: the turn-by-turn loop is the model's to conclude,
 # but a stalled or looping model must never pin a hunt forever (fail-open O3).
 _MAX_STEPS = 60
-
-# The D7 hypothesis verdict vocabulary (Q3-amended, implementation doc 2.3):
-# four values, derived by the harness, never by the LLM. Kept as the typed
-# vocabulary of the OUT-OF-SCOPE verdict-consumption graph; no live derivation
-# remains here (T5 #378 removed the stale `derive_verdict`).
-HypothesisVerdict = Literal[
-    "successful", "unsuccessful", "insufficient-evidence", "underspecified-spec",
-]
-
 
 # --- the turn contract (the standard tool interface, R4) ----------------------
 

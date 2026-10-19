@@ -247,7 +247,7 @@ class ThreatModelStore(BoundedRecordStore):
         per-project bucket is `<root>/<project_id>/hunting/threat_modeller/`,
         resolved through the ONE `data_root.project_dir` layout owner. The
         explicit-root constructor is kept for the tests' temp stores (the
-        the retired bounded-store precedent)."""
+        retired bounded-store precedent)."""
         self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
 
     # --- path helpers ----------------------------------------------------------

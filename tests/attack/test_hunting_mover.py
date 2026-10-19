@@ -19,10 +19,10 @@ equal inputs -> equal outputs. Pins the at-least-once protocol:
 - an empty produced set -> all-empty outputs.
 
 Also pins the session-id builders exactly as ADR Q13 spells them:
-modeller `hunting:<run_id>:threat-modeller` (the legacy `orchestrator`
-segment stays an accepted alias for one window), hunter
-`hunting:<run_id>:hunt:<config_id>`, pod
-`hunting:<run_id>:pod:<config_id>:<spec_id>`.
+modeller `hunting:<run_id>:threat-modeller` (T10 removed the planner-era
+`orchestrator` segment; there is no alias), hunter
+`hunting:<run_id>:hunt:<dispatch_id>`, pod
+`hunting:<run_id>:pod:<dispatch_id>:<spec_id>`.
 """
 import pytest
 

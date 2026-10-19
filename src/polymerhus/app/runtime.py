@@ -59,8 +59,8 @@ _AGENT_ROLES_BY_MODULE: dict[str, tuple[str, ...]] = {
     # The modeller role is the renamed `orchestrator` key (S1 4.1): an
     # agent-sub-module role TAG, not the spec's session segment
     # (`threat-modeller`, the session-id part the Q13 scheme composes in
-    # `hunting.mover`). The legacy segment still CLASSIFIES as this role for one
-    # window (`hunting.surfer.derive_thread_role`).
+    # `hunting.mover`). The legacy segment is removed (T10 #383): only
+    # `threat-modeller` classifies as this role (`hunting.surfer.derive_thread_role`).
     "hunting": ("threat_modeller", "hunter", "pod"),
 }
 

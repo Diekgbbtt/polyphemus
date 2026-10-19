@@ -159,11 +159,13 @@ def test_parse_json_object_passthrough_and_empty():
 
 def test_conciseness_directive_is_single_sourced_and_names_the_cap():
     """The canonical directive (#292) lives once in `conciseness.py` (`llm.py`
-    re-exports it) and names the ~500-char cap while covering the spec
-    `rationale` and note bodies."""
+    re-exports it) and names the ~500-char cap while covering the SPEC
+    `rationale` and note bodies. The exact field owner is pinned: the retired
+    hunt-config rationale must never reappear (T10 drift guard)."""
     d = HL.HUNTING_CONCISENESS_DIRECTIVE
     assert "500" in d
-    assert "rationale" in d
+    assert "spec `rationale`" in d
+    assert "config `rationale`" not in d
     assert "note" in d and "body" in d
 
 

@@ -60,7 +60,7 @@ services:
       LLM_CRAWLER: ${LLM_MODEL_CRAWLER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_ANALYSER: ${LLM_MODEL_ANALYSER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_HUNTING_HUNTER: ${LLM_MODEL_HUNTING_HUNTER:-opencode-go:opencode-go/deepseek-v4.1-flash}
-      LLM_HUNTING_THREAT_MODELLER: ${LLM_MODEL_HUNTING_ORCHESTRATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_HUNTING_THREAT_MODELLER: ${LLM_MODEL_HUNTING_THREAT_MODELLER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_POD_RUNNER: ${LLM_MODEL_POD_RUNNER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_POD_TRIAGER: ${LLM_MODEL_POD_TRIAGER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       # A6: models.dev cannot express this relay's true surface - live probes

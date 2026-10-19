@@ -80,7 +80,7 @@ def first_uncovered_gap(
     would loop to the budget cap without a new prediction (T10 H1). A populated
     class is covered only when the triager judged its action, technique, or
     check present in the D6 trail. An ABSENT excerpt is not a diff at all: the
-    caller records the gap and falls back to `failure-mode` (S5 8.6 step 4)."""
+    caller records the gap and falls back to `failure-mode` (S5 8.6 step 5)."""
     if procedure is None:
         return None
     for basis, field in PROCEDURE_GAP_FIELD.items():

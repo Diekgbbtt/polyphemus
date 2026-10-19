@@ -570,6 +570,14 @@ The integration hygiene.
 The remaining documentation sweep.
 The final no-live-obsolete-verbatim check.
 
+**The #196 live e2e gate disposition.** T10a deleted `tests/e2e/test_http_proxy_history.py`
+with the legacy `hunting_pod.py`. The gate exercised the retired
+`payload_vector_space.request_ref` replay path through that pod, so it could
+not survive the module removal. The production pod's replay path keeps its
+unit/contract coverage (`tests/attack/pod/test_react_seams.py`,
+`tests/attack/pod/test_request_ref.py`); a replacement LIVE replay-lineage
+gate is a separate ticket, not a T10b deliverable. Recorded here and on #397.
+
 **Acceptance criteria.**
 - The eval artifacts use the loop and spec-set vocabulary; a pre-mined config cannot pass as a satisfied prerequisite.
 - The e2e fixtures and driver use the reduced D4.

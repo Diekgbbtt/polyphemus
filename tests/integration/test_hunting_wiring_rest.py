@@ -300,7 +300,7 @@ def test_C12_hunt_enqueue_is_retired_loudly(client):
 
     C13-C15 (replay 409 / malformed 422 / unknown project 404) retired with the
     enqueue: there is no novelty gate, no body validation and no project lookup
-    left on a tombstone. The eval translation is T10 (#383)."""
+    left on a tombstone. The eval translation is T10b (#397)."""
     p = _new_project(client)
     r = client.post(
         f"/projects/{p}/hunting/hunt",
@@ -310,7 +310,7 @@ def test_C12_hunt_enqueue_is_retired_loudly(client):
     detail = r.json()["detail"]
     assert "retired" in detail.lower()
     assert "loop file" in detail.lower()
-    assert "T10" in detail and "#383" in detail
+    assert "T10b" in detail and "#397" in detail
     assert stack.produced_config_keys(p) == [], (
         "the retired enqueue must not write the config family")
 

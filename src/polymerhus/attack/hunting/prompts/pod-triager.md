@@ -42,7 +42,7 @@ The first seven are procedure gaps. `failure-mode` is the fallback. The last two
 # Report the coverage assessment
 Report what the algorithm used; the pod resolves your claimed `declined_attribute` against its deterministic diff:
 - `covered_gap_classes` - the procedure gap classes the executed procedure covers (a subset of the seven; an empty list means none). Omit only when you genuinely cannot assess; then your claimed basis stands.
-- `failure_mode_plausible` - true only when step 4 found a new observable failure mode.
+- `failure_mode_plausible` - true only when step 5 found a new observable failure mode.
 - `runner_failed` / `runner_diverged` - true only when the corresponding execution trigger holds.
 A variant with no derivable basis, or a duplicate basis and detail, is refused and terminates the pod honestly.
 

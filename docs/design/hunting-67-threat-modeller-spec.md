@@ -104,7 +104,7 @@ The agent-profile and skill-binding entries follow the new role id.
 The rename is an expand-contract pass inside this change.
 The old names remain as aliases for one change window, then are removed.
 New runs use the new session id.
-A run interrupted before the rename resumes under its recorded session id and role.
+A run interrupted before the rename does NOT resume: T10 (#383) closed the alias window, there is no recorded-id mapping back to the retired names, and no resume path is invented.
 The provider environment variable `LLM_HUNTING_ORCHESTRATOR` remained a one-window fallback for `LLM_HUNTING_THREAT_MODELLER`; T10 closed the window and removed it (no alias remains).
 
 ### 4.2 Goal
@@ -628,7 +628,7 @@ A resumed pass cannot update a completed model.
 The model document commits before the run-record update.
 On resume, the run recomputes `risk_total` from `model_sums` and the completed models, so a crash between the two writes cannot leave a stale total.
 A halted run resumes dispatch only; it does not model another unit.
-An interrupted run that predates the rename resumes under its recorded session id and role.
+An interrupted run that predates the rename does NOT resume: the alias window is closed (T10 #383) and there is no recorded-id mapping back to the retired names.
 
 ### 7.6 Dispatch sequencing
 

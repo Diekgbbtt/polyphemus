@@ -818,7 +818,7 @@ async def launch_hunt_only(project_id: str) -> dict:
     would be a silent write into a family nothing reads - the handler therefore
     refuses LOUDLY (410 Gone) and names the replacement.
 
-    The eval translation is T10 (#383): `eval/orchestrator/api.py` and
+    The eval translation is T10b (#397): `eval/orchestrator/api.py` and
     `eval/ph.py` never call this path; the eval's pre-mined hunt-config
     artifacts move to the loop vocabulary there."""
     raise HTTPException(
@@ -828,7 +828,7 @@ async def launch_hunt_only(project_id: str) -> dict:
             "the dispatch record (S2 8.4) and a live run's surfer dispatches "
             "it; launch the whole run (POST /projects/{project_id}/hunting) "
             "and the modeller produces the loop files. The eval translation "
-            "is T10 (#383)"
+            "is T10b (#397)"
         ),
     )
 

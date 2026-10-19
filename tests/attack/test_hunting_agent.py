@@ -18,10 +18,7 @@ verdict-consumption graph is out of scope and nothing live derived a verdict.
 """
 import pytest
 
-from polymerhus.attack.hunting.hunting_agent import (
-    HypothesisVerdict,
-    derive_technological_axis,
-)
+from polymerhus.attack.hunting.hunting_agent import derive_technological_axis
 from polymerhus.app.llm.providers import HUNTING_ROLES, ROLES
 
 
@@ -97,11 +94,6 @@ def test_hunting_roles_are_registered_off_app_boot():
     assert not (hunting_ids & {r.role_id for r in ROLES})  # off app boot
     assert all(r.agent_mode == "session" for r in HUNTING_ROLES)
 
-
-def test_hypothesis_verdict_vocabulary_is_four_valued():
-    assert set(HypothesisVerdict.__args__) == {
-        "successful", "unsuccessful", "insufficient-evidence", "underspecified-spec",
-    }
 
 
 # --- the skill rides the system channel (spec-vs-code divergence fix) --------
