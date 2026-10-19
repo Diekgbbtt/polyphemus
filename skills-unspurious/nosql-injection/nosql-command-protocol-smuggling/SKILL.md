@@ -13,82 +13,80 @@ The smuggling goal is command execution plus persistent store control rather tha
 
 ## Attack Surface
 
-Applicability centers on a command path whose key or value text concatenates into store-command construction.
-User input arrives as a key name or a stored value that the builder splices into a framed command stream without delimiter neutralization.
-The driver offers a parameterized command form that the code path skips in favor of string assembly.
-Filter, script, pipeline, and query-string sinks stay outside this variant and belong to their own siblings.
+- **Applicability**: centers on a command path whose key or value text concatenates into store-command construction.
+- **Input forms**: user input arrives as a key name or a stored value that the builder splices into a framed command stream without delimiter neutralization.
+- **Parameterized form**: the driver offers a parameterized command form that the code path skips in favor of string assembly.
+- **Excluded sinks**: filter, script, pipeline, and query-string sinks stay outside this variant and belong to their own siblings.
 
 ## Reconnaissance
 
-Reconnaissance maps framing behavior before any smuggling work, because each command path needs its own delimiter test.
-Inventory every endpoint whose keys or values flow into command construction, and the step completes when each candidate sink carries a named command field.
-Submit delimiter probes and record framing-error text versus silent acceptance, and the step completes when every sink carries a frame-handling verdict.
-Enumerate readable and writable key namespaces through benign reads, and the step completes when each sink carries a persistence target or a recorded absence.
+- **Reconnaissance scope**: maps framing behavior before any smuggling work, because each command path needs its own delimiter test.
+- **Sink inventory**: inventory every endpoint whose keys or values flow into command construction, and the step completes when each candidate sink carries a named command field.
+- **Delimiter probe**: submit delimiter probes and record framing-error text versus silent acceptance, and the step completes when every sink carries a frame-handling verdict.
+- **Namespace enumeration**: enumerate readable and writable key namespaces through benign reads, and the step completes when each sink carries a persistence target or a recorded absence.
 
 ## Detection Channels
 
-Injected frames confirm this variant, so only the entries below are live here.
-- Framing-error text after delimiter probes that names command or argument expectations.
-- Follow-on read showing a smuggled key with attacker-chosen content.
-- Boolean response difference between a framed multi-command attempt and its single-command control.
-- Latency or volume change from heavy scan frames across large unindexed keyspaces.
+- **Injected frames**: confirm this variant.
+- **Framing-error text**: names command or argument expectations after delimiter probes.
+- **Follow-on read**: a follow-on read shows a smuggled key with attacker-chosen content.
+- **Boolean differential**: a boolean response difference appears between a framed multi-command attempt and its single-command control.
+- **Latency signal**: a latency or volume change appears from heavy scan frames across large unindexed keyspaces.
 
 ## Adversarial Capabilities
 
-Smuggling work presupposes anonymous request ability plus follow-on read ability, and it consumes both.
-- Send frame delimiters inside keys and values and compare stream handling.
-- Read back smuggled keys to verify persistence with the smallest confirming sample.
-- Shape padding commands around the injected frame so surrounding syntax stays valid.
-- Hold an authenticated low-privilege session only where the command path requires privilege before executing.
+- **Smuggling work**: presupposes anonymous request ability plus follow-on read ability, and it consumes both.
+- **Delimiter sending**: send frame delimiters inside keys and values and compare stream handling.
+- **Persistence read-back**: read back smuggled keys to verify persistence with the smallest confirming sample.
+- **Padding shaping**: shape padding commands around the injected frame so surrounding syntax stays valid.
+- **Privileged session**: hold an authenticated low-privilege session only where the command path requires privilege before executing.
 
 ## Trust Assumptions
 
-The feature trusts user input to arrive as plain data values inside declared field shapes from request through filter construction to execution.
-The agreement holds filter shape closed to declared fields, keeps interpreter primitives unreachable, keeps stage and collection selection server-side, keeps script bodies server-authored, keeps query strings literal-bound, keeps command frames single, and keeps stored records plus store internals unexposed.
-Query answers expose only matched application records, and no predicate truth or store content leaks beyond the intended view.
-This variant breaks the frame-singularity clause because input bytes carry frame delimiters into the command stream, so crafted frames execute as additional store commands.
+- **The agreement**: the feature trusts user input to arrive as plain data values inside declared field shapes from request through filter construction to execution, the agreement holds filter shape closed to declared fields and keeps interpreter primitives unreachable, stage and collection selection server-side, script bodies server-authored, query strings literal-bound, command frames single, and stored records plus store internals unexposed, and query answers expose only matched application records while no predicate truth or store content leaks beyond the intended view.
+- **The failing clause**: this variant breaks the frame-singularity clause because input bytes carry frame delimiters into the command stream, so crafted frames execute as additional store commands.
 
 ## Key Vulnerabilities
 
 ### Frame-Delimiter Smuggling
 
-Submit frame delimiters inside a key or value so the stream parser closes the intended command early and opens an injected one, because concatenation preserves the delimiter bytes.
-Wrap the injected command with padding fragments that absorb the trailing syntax of the original command.
-The parent store step names command construction without describing delimiter framing, so this variant owns the smuggling procedure.
-```text
-<KEY><FRAME-BREAK><INJECTED-COMMAND><FRAME-BREAK><PADDING-KEY>
-<VALUE><FRAME-BREAK><INJECTED-COMMAND><FRAME-BREAK><PADDING-VALUE>
-```
+- **Delimiter smuggling**: submit frame delimiters inside a key or value so the stream parser closes the intended command early and opens an injected one, because concatenation preserves the delimiter bytes.
+- **Padding wrap**: wrap the injected command with padding fragments that absorb the trailing syntax of the original command.
+- **Smuggling procedure**: the parent store step names command construction without describing delimiter framing, so this variant owns the smuggling procedure.
+  ```text
+  <KEY><FRAME-BREAK><INJECTED-COMMAND><FRAME-BREAK><PADDING-KEY>
+  <VALUE><FRAME-BREAK><INJECTED-COMMAND><FRAME-BREAK><PADDING-VALUE>
+  ```
 
 ### Injected-Command Persistence
 
-Shape the injected frame as a write of attacker-chosen content under a marker key, because a follow-on read of that key proves execution beyond parser acceptance.
-Read the marker key once and treat present content as execution proof and absent content as a failed frame.
-The parent store step never states marker-based persistence verification, so this variant owns the persistence procedure.
+- **Marker-key write**: shape the injected frame as a write of attacker-chosen content under a marker key, because a follow-on read of that key proves execution beyond parser acceptance.
+- **Marker-key read**: read the marker key once and treat present content as execution proof and absent content as a failed frame.
+- **Persistence procedure**: the parent store step never states marker-based persistence verification, so this variant owns the persistence procedure.
 
 ### Scan-Cost Pressure
 
-Submit heavy scan frames with large membership lists against unindexed fields only within explicitly authorized scope, because linear scans convert one frame into disproportionate store work.
-Treat latency or volume change as a cost signal rather than an execution proof and confirm through marker reads.
+- **Scan-cost submission**: submit heavy scan frames with large membership lists against unindexed fields only within explicitly authorized scope, because linear scans convert one frame into disproportionate store work.
+- **Cost-signal use**: treat latency or volume change as a cost signal rather than an execution proof and confirm through marker reads.
 
 ## Bypass Techniques
 
-Bypass forms stay aspects inside this variant because no encoding difference changes the frame-splitting step itself.
-- Encoded line breaks reach the stream parser past filters that match only literal delimiter bytes.
-- Split delimiters across key and value halves reach the parser past per-field length checks that inspect each half alone.
-- Padding-command shapes reach the parser past trailing-syntax validation that assumes single commands.
-- Mixed text and binary framings reach the parser past checks written for one framing only.
+- **Bypass forms**: stay aspects inside this variant because no encoding difference changes the frame-splitting step itself.
+- **Encoded line breaks**: encoded line breaks reach the stream parser past filters that match only literal delimiter bytes.
+- **Split delimiters**: split delimiters across key and value halves reach the parser past per-field length checks that inspect each half alone.
+- **Padding-command shapes**: padding-command shapes reach the parser past trailing-syntax validation that assumes single commands.
+- **Mixed framings**: mixed text and binary framings reach the parser past checks written for one framing only.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Frames chain forward into control because one smuggled command without a follow-up read is only a probe.
-- Pivot from a smuggled write to a marker-key read for the smallest execution proof.
-- Pivot from a marker read to privilege or configuration keys for the smallest confirming escalation.
-- Pivot from framing-error text to argument expectations that sharpen the next frame.
-- Reach the command port from the interior: hand the fetch step to the `ssrf` class and the relay step to the `proxy-techniques` family rather than restating their mechanics here.
-- Stop each chain at the smallest read or reversible proof that confirms the architectural risk.
+- **Frames**: chain forward into control because one smuggled command without a follow-up read is only a probe.
+- **Execution-proof pivot**: pivot from a smuggled write to a marker-key read for the smallest execution proof.
+- **Escalation pivot**: pivot from a marker read to privilege or configuration keys for the smallest confirming escalation.
+- **Error-text pivot**: pivot from framing-error text to argument expectations that sharpen the next frame.
+- **Interior reach**: reach the command port from the interior: hand the fetch step to the `ssrf` class and the relay step to the `proxy-techniques` family rather than restating their mechanics here.
+- **Stop condition**: stop each chain at the smallest read or reversible proof that confirms the architectural risk.
 
 ## Testing Methodology
 
@@ -104,20 +102,20 @@ The delta over the parent is the frame-splitting procedure plus the padding disc
 
 ## False Positives
 
-Stop when commands answer as single framed units, because neutralized delimiters without extra execution are safe.
-- Parameterized command forms that bind keys and values outside the frame grammar, verified by code review.
-- Delimiter neutralization that strips or escapes frame bytes before stream assembly.
-- Uniform responses across framed attempts and single-command controls, which carry no execution information.
-- Marker-key absence after a framed attempt, which refutes execution rather than proving filtering alone.
+- **Stop condition**: stop when commands answer as single framed units, because neutralized delimiters without extra execution are safe.
+- **Parameterized commands**: parameterized command forms bind keys and values outside the frame grammar, verified by code review.
+- **Delimiter neutralization**: delimiter neutralization strips or escapes frame bytes before stream assembly.
+- **Uniform responses**: uniform responses across framed attempts and single-command controls carry no execution information.
+- **Marker-key absence**: marker-key absence after a framed attempt refutes execution rather than proving filtering alone.
 
 ## Pro Tips
 
-Frames reward delimiter patience plus marker discipline plus minimal writes.
-1. Prove delimiter handling with harmless frames before attempting any persistent write.
-2. Shape padding around each injected command so trailing syntax never breaks the stream.
-3. Verify every frame with one marker-key read rather than bulk extraction.
-4. Read framing-error text for argument expectations that sharpen the next frame.
-5. Keep scan-cost frames inside explicitly authorized scope and treat cost signals as secondary to marker proofs.
+- **Frames**: reward delimiter patience plus marker discipline plus minimal writes.
+- **Delimiter proof**: prove delimiter handling with harmless frames before attempting any persistent write.
+- **Padding shaping**: shape padding around each injected command so trailing syntax never breaks the stream.
+- **Marker verification**: verify every frame with one marker-key read rather than bulk extraction.
+- **Error-text reading**: read framing-error text for argument expectations that sharpen the next frame.
+- **Authorized scope**: keep scan-cost frames inside explicitly authorized scope and treat cost signals as secondary to marker proofs.
 
 ## Summary
 
