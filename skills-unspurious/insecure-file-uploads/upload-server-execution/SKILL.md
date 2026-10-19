@@ -55,6 +55,7 @@ This variant owns handler mapping discovery with language placement plus executi
 ## Bypass Techniques
 
 - Defeat extension allowlists by submitting casing and mark variants that normalize to an evaluated extension after the check.
+- Defeat name checks with double and truncated extension spellings where the storing layer normalizes after the validation point.
 - Defeat content inspection by prefixing script content with a benign magic framing that the gate accepts and the interpreter ignores.
 - Defeat part-header trust by sending submission metadata whose declared type passes ingress while the stored object keeps its executable shape.
 

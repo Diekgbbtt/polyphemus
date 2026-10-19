@@ -19,6 +19,7 @@ This variant owns trigger-job-then-read-side-effect proof with command and file-
 ## Reconnaissance
 
 - Map the pipeline from submission through storage to each converter and parser and record job triggers.
+- Record which jobs resolve external references or render embedded content, because those jobs carry the external-IO operators.
 - Probe with benign media and document-shaped files and record which jobs fire plus which derived outputs appear.
 - Record parser handling of embedded property blocks before attempting live content.
 - Capture baseline job duration with output shape so side effects stand out.
@@ -27,6 +28,8 @@ This variant owns trigger-job-then-read-side-effect proof with command and file-
 
 - Processor command output reflected in derived artifacts or error state proves operator execution.
 - Out-of-scope file content surfacing through conversion proves file-read operators.
+- Outbound fetch receipts during conversion prove the converter reached a remote resource, which the ssrf skill owns at the fetch step.
+- Script or request activity inside a rendered document proves the renderer engine executed embedded content, which the xss skill owns at the render step.
 - Job behavior deltas across probe families separate parser flaws from rendering effects.
 
 ## Adversarial Capabilities
@@ -44,12 +47,15 @@ This variant owns trigger-job-then-read-side-effect proof with command and file-
 
 - Operator execution evaluates embedded commands or pipe constructs during conversion or parsing.
 - File-read operators exfiltrate out-of-scope content into derived artifacts or error channels.
+- External-IO operators fetch remote resources or read local content during conversion, including stream demuxers that follow a manifest and a browser engine that renders a document with embedded fetches.
+- Converter-internal resource spellings name local content with no file parameter, so the reader reaches material the pipeline never intended.
 - Property-block parsing expands oversized embedded metadata until the parser exposes flaws.
 
 ## Advanced Techniques
 
 - Trigger conversion and metadata-parse jobs then confirm processor side effects such as command execution or file reads.
 - Vary operator placement across vector graphics with page-description content and embedded property blocks to find the evaluating parser.
+- Vary the carrier across a stream manifest, a concatenation list, and a rendered document to find the job that resolves external references.
 - Confirm file reads by planting unique marker content out of scope and watching for it in derived outputs.
 
 ## Bypass Techniques
@@ -57,6 +63,7 @@ This variant owns trigger-job-then-read-side-effect proof with command and file-
 - Defeat format gates by framing operator content inside an accepted container that still reaches the evaluating parser.
 - Defeat sandbox assumptions by reaching external IO or script engines the policy claims are disabled.
 - Defeat size gates by distributing abusive metadata across blocks that each pass alone and combine in the parser.
+- Defeat sandbox claims by reaching external IO through a converter-internal resource spelling rather than a file parameter, and verify the claim with a live fetch receipt instead of the configuration alone.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
@@ -73,10 +80,13 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Complete when every job has a captured baseline covering duration plus output plus error state.
 - Trigger conversion and metadata-parse jobs then confirm processor side effects such as command execution or file reads.
 - Complete when side effects are demonstrated for every job family or when sandboxed confinement with no external IO is proven.
+- Trigger the external-IO jobs and confirm fetch receipts or rendered script with a marker resource out of scope.
+- Complete when every external-IO job has a recorded fetch or render verdict or when a policy-restricted proxy proves the reach confined.
 
 ## False Positives
 
 - Exclude converters confined in locked-down sandboxes with no external IO and no script engines.
+- Exclude converters that resolve external references through a policy-restricted proxy with no reachable internal address, confirmed by live probes rather than by configuration alone.
 - Exclude pipelines that strip active content before conversion and serve only safe renderings.
 - Exclude parser errors that stay inert with no side effect beyond a failed job.
 
@@ -85,6 +95,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Keep operator probes minimal so side effects stay unambiguous.
 - Prefer transforming risky formats to safe renderings when advising the fix.
 - Verify sandbox claims with live operator probes instead of trusting configuration alone.
+- Name the ssrf skill at the fetch step and the xss skill at the render step when a job reaches beyond the conversion, rather than restating their procedures here.
 
 ## Summary
 
