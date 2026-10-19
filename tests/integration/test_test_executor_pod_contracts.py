@@ -177,10 +177,16 @@ def test_infeasibility_asserted_with_evidence():
 
 def test_budget_timeout_lands_unsuccessful(monkeypatch):
     monkeypatch.setattr("polymerhus.attack.hunting.pod.graph.HUNT_POD_MAX_ITERS", 3)
+    lap = {"n": 0}
 
     def triager(spec, obs, messages, log):
+        # A DISTINCT derived detail each lap: the S5 8.6 duplicate guard refuses
+        # a repeated (basis, detail), so a degenerate re-mint would terminate
+        # before the budget instead of exercising the cap.
+        lap["n"] += 1
         return {"classification": "symptom-absent", "action": "variant",
-                "declined_attribute": "bypass-technique", "variant_spec": dict(spec),
+                "declined_attribute": "bypass-technique",
+                "variant_spec": {**spec, "rationale": f"bypass attempt {lap['n']}"},
                 "feedback": "keep searching"}
 
     env = _run(arun_pod(SEMANTIC_SPEC, exec_fn=_exec(_ABSENT),

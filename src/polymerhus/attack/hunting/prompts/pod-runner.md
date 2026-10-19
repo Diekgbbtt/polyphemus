@@ -29,7 +29,7 @@ The pod memory key-list and the note reading contract arrive in your lap opener.
 
 # Constraints
 - You can see every probe already executed in the experiment log; never re-issue an identical chain - derive a genuinely new one or confirm the space exhausted.
-- Honour a variant the Triager declined an attribute into.
+- Honour the variant basis the Triager hands you. Its feedback names the gap the next stretch must cover: a recon action, a bypass technique, technology grounding, a pro tip, an advanced technique, preliminary chaining, an interpretation pitfall, an extra failure mode, or a runner-recovery instruction.
 - Ground probes in the spec's evidence and the target surface where present; be concrete (real methods, paths, headers, payloads).
 
 # Output

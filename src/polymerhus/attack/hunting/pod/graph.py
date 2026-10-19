@@ -112,6 +112,12 @@ from polymerhus.attack.hunting.pod.types import (
     SYMPTOM_CONFIRMED_CLASS,
     TECHNICAL_INFEASIBILITY,
     VariantSpec,
+    skill_procedure_from_spec,
+)
+from polymerhus.attack.hunting.pod.variant_basis import (
+    VARIANT_BASES,
+    is_duplicate_variant,
+    mint_variant_basis,
 )
 from polymerhus.attack.hunting.pod.verification import validate_decision, validate_spec
 
@@ -167,6 +173,65 @@ def _clean_from_trail(log: ExperimentLog) -> bool:
         if obs.status is None and (obs.returncode not in (0, None)):
             return False
     return bool(log.raw_observations)
+
+
+def _variant_coverage(decision: dict) -> list[str] | None:
+    """The triager's coverage assessment, or None when it stated none.
+
+    A malformed value is no assessment (the graph keeps the triager's claimed
+    basis rather than inventing a gap from garbage)."""
+    raw = decision.get("covered_gap_classes")
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return None
+    return [str(item) for item in raw]
+
+
+def _resolve_variant_decision(decision: dict, spec: dict,
+                              log: ExperimentLog) -> dict:
+    """Reconcile a variant decision with the S5 8.6 minting algorithm.
+
+    The typed `SkillProcedure` comes from the CURRENT spec's provenance (never
+    the store envelope). The deterministic diff fixes the basis: a failed or
+    diverged runner yields the recovery basis, else the first uncovered gap
+    class wins in table order, else a plausible failure mode carries the
+    fallback. A claimed basis the triager supplied stands only when it stated
+    no coverage assessment. A duplicate `(basis, detail)` is never re-minted:
+    the decision degrades to an honest `no-symptom-evidence` terminal."""
+    procedure = skill_procedure_from_spec(spec)
+    covered = _variant_coverage(decision)
+    computed = mint_variant_basis(
+        procedure=procedure,
+        covered=covered,
+        runner_failed=bool(decision.get("runner_failed")),
+        runner_diverged=bool(decision.get("runner_diverged")),
+        failure_mode_plausible=bool(decision.get("failure_mode_plausible")))
+    claimed = str(decision.get("declined_attribute") or "")
+    # A stated coverage assessment makes the deterministic diff authoritative;
+    # without one, the triager's claimed basis stands (never invented from a
+    # missing assessment).
+    basis = computed or (claimed if covered is None and claimed in VARIANT_BASES else "")
+    note = str(decision.get("note") or "")
+    if procedure is None:
+        # S5 8.6 step 1: an absent excerpt is a recorded gap, not a diff.
+        note = (note + " [skill-procedure excerpt absent: recorded gap]").strip()
+
+    classification = decision.get("classification") or "noise"
+    if not basis:
+        return {"classification": classification, "action": "terminate",
+                "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
+                "clean": False,
+                "note": (note + " [no variant basis derivable; degraded]").strip()}
+    derived = decision.get("variant_spec") or dict(spec)
+    if is_duplicate_variant(log.variant_specs, basis, derived):
+        return {"classification": classification, "action": "terminate",
+                "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
+                "clean": False,
+                "note": (note + f" [duplicate variant basis '{basis}'; not "
+                        "re-minted]").strip()}
+    return {**decision, "declined_attribute": basis, "variant_spec": derived,
+            "note": note}
 
 
 def _guard_degraded_kb(decision: dict, log: ExperimentLog) -> dict:
@@ -631,6 +696,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                             "action": "terminate", "verdict": "unsuccessful",
                             "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
                             "note": "triager action missing; degraded"}
+            else:
+                decision = _resolve_variant_decision(decision, spec, log)
 
         decision = _guard_degraded_kb(decision, log)
         log.record_interpretation(Interpretation(

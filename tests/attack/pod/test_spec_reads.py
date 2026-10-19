@@ -6,6 +6,7 @@ recorded baseline from `spec["provenance"]["baseline_ref"]`. A missing or
 malformed excerpt is a recorded gap (None), never a raise: the triager falls
 back to the failure-mode basis (S5 8.6).
 """
+from polymerhus.attack.hunting.pod.context import ExperimentLog
 from polymerhus.attack.hunting.pod.types import (
     TestImplementationSpec as D4Spec,
     baseline_ref_from_spec,
@@ -88,3 +89,30 @@ def test_an_absent_or_blank_baseline_is_empty():
 
 def test_spec_provenance_is_empty_for_a_malformed_value():
     assert spec_provenance({"provenance": "not a mapping"}) == {}
+
+
+# --- T9: the triager's bounded skill-procedure context (S5 8.6) ----------------
+
+def test_the_triager_context_carries_the_typed_skill_procedure():
+    """S5 8.6 step 1: the triager reads the typed excerpt from the spec
+    provenance and diffs each field against the executed procedure."""
+    ctx = ExperimentLog().triager_context(SPEC, None)
+    assert "skill procedure" in ctx.lower()
+    for field, text in PROCEDURE.items():
+        assert text in ctx, field
+    assert "recon-action" in ctx and "interpretation-pitfall" in ctx
+
+
+def test_the_triager_context_marks_an_absent_excerpt_as_a_recorded_gap():
+    ctx = ExperimentLog().triager_context({**SPEC, "provenance": {"loop_id": "loop-1"}}, None)
+    assert "recorded gap" in ctx.lower()
+    assert "failure-mode" in ctx.lower()
+
+
+def test_the_triager_context_marks_an_empty_section_uncovered():
+    spec = {**SPEC, "provenance": {
+        **SPEC["provenance"],
+        "skill_procedure": {**PROCEDURE, "pro_tips": ""}}}
+    ctx = ExperimentLog().triager_context(spec, None)
+    assert "pro-tips" in ctx
+    assert "uncovered" in ctx.lower()

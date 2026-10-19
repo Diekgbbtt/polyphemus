@@ -312,10 +312,16 @@ def test_variant_loop_records_provenance():
 
 def test_pod_budget_cap_terminates_only_the_pod(monkeypatch):
     monkeypatch.setattr("polymerhus.attack.hunting.pod.graph.HUNT_POD_MAX_ITERS", 3)
+    lap = {"n": 0}
 
     def triager(spec, obs, messages, log):
+        # A DISTINCT derived detail each lap: the S5 8.6 duplicate guard refuses
+        # a repeated (basis, detail), so a degenerate re-mint would terminate
+        # before the budget instead of exercising the cap.
+        lap["n"] += 1
         return {"classification": "symptom-absent", "action": "variant",
-                "declined_attribute": "bypass-technique", "variant_spec": dict(spec),
+                "declined_attribute": "bypass-technique",
+                "variant_spec": {**spec, "rationale": f"bypass attempt {lap['n']}"},
                 "feedback": "keep trying"}
 
     env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
@@ -352,6 +358,20 @@ def test_runner_infeasible_is_an_init_gate_with_evidence():
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
     assert any("WAF" in v for v in env["evidence"]["init_validation"])
+
+
+def test_a_productive_runner_exhaustion_lands_a_clean_space_exhausted():
+    """S5 8.5: a stretch that DID author and execute a probe, then concludes
+    exhausted with a clean trail, keeps the still-reachable clean
+    `space-exhausted` terminal (the no-probe variant is the impaired branch)."""
+    steps = [RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),
+             RunnerStep(action="conclude", exhausted=True,
+                        observation_note="no new probe derivable")]
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT), runner_step_fn=_scripted(steps),
+                        triager_fn=None, trace_fn=_no_trace))
+    assert env["evidence"]["terminal_reason"] == "space-exhausted"
+    assert env["evidence"]["clean"] is True
 
 
 def test_clean_false_when_triager_reports_defence():

@@ -161,6 +161,83 @@ def test_triager_prompt_names_its_tools():
     assert KB_TOOL in POD_TRIAGER_SYSTEM
 
 
+# --- T9: the variant-basis minting algorithm (S5 8.6) -------------------------
+
+VARIANT_BASES = (
+    "recon-action",
+    "bypass-technique",
+    "technology-grounding",
+    "pro-tips",
+    "advanced-technique",
+    "preliminary-chaining",
+    "interpretation-pitfall",
+    "failure-mode",
+    "runner-failure",
+    "runner-divergence",
+)
+
+
+def test_triager_prompt_names_all_ten_variant_bases():
+    for basis in VARIANT_BASES:
+        assert basis in POD_TRIAGER_SYSTEM, basis
+
+
+def test_triager_prompt_carries_the_first_uncovered_order():
+    lc = POD_TRIAGER_SYSTEM.lower()
+    assert "first uncovered" in lc
+    assert "table order" in lc
+    positions = [POD_TRIAGER_SYSTEM.index(b) for b in VARIANT_BASES[:7]]
+    assert positions == sorted(positions)
+
+
+def test_triager_prompt_reads_the_typed_procedure_from_the_provenance():
+    assert "provenance" in POD_TRIAGER_SYSTEM
+    assert "skill_procedure" in POD_TRIAGER_SYSTEM
+    assert "SkillProcedure" in POD_TRIAGER_SYSTEM
+
+
+def test_triager_prompt_states_the_empty_section_and_absent_excerpt_rules():
+    lc = POD_TRIAGER_SYSTEM.lower()
+    assert "empty" in lc
+    assert "uncovered" in lc
+    assert "recorded gap" in lc
+
+
+def test_triager_prompt_states_the_failure_mode_fallback():
+    lc = POD_TRIAGER_SYSTEM.lower()
+    assert "failure-mode" in lc
+    assert "verification_symptoms" in POD_TRIAGER_SYSTEM
+    assert "assumptions" in POD_TRIAGER_SYSTEM
+    assert "fallback" in lc
+
+
+def test_triager_prompt_states_the_execution_triggers():
+    lc = POD_TRIAGER_SYSTEM.lower()
+    assert "runner-failure" in lc and "failed" in lc
+    assert "runner-divergence" in lc and "diverged" in lc
+
+
+def test_triager_prompt_states_the_duplicate_guard():
+    lc = POD_TRIAGER_SYSTEM.lower()
+    assert "duplicate" in lc
+    assert "basis" in lc and "detail" in lc
+
+
+def test_triager_prompt_names_the_coverage_assessment_fields():
+    # The production tool schema carries the material the graph's deterministic
+    # diff needs, so the prompt must name every field.
+    for field in ("covered_gap_classes", "failure_mode_plausible",
+                  "runner_failed", "runner_diverged", "declined_attribute"):
+        assert field in POD_TRIAGER_SYSTEM, field
+
+
+# --- T9: the runner honours the basis, not the retired attribute decline ------
+
+def test_runner_prompt_names_the_variant_basis():
+    assert "declined an attribute into" not in POD_RUNNER_SYSTEM
+    assert "basis" in POD_RUNNER_SYSTEM.lower()
+
+
 # --- #207: the KB framing (positive methodology, never a "fault KB") -----------
 
 def test_kb_bullet_is_the_neutral_methodology_signature():

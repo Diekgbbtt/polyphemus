@@ -46,7 +46,15 @@ from polymerhus.attack.hunting.pod.types import RawObservation, RunnerStep
 class TriagerDecision(BaseModel):
     """The critic's per-lap decision: classify the stretch, then either terminate
     (a binary verdict + a Q3-amended terminal_reason + `clean`) or mine a
-    falsifiable variant (its declined attribute and derived spec)."""
+    falsifiable variant (its basis and derived spec).
+
+    The variant fields carry the S5 8.6 material the graph resolves the basis
+    from: `covered_gap_classes` is the triager's coverage assessment of the
+    executed D6 trail against the seven typed `SkillProcedure` fields (None =
+    no assessment stated), `failure_mode_plausible` is the fallback condition,
+    and the two trigger flags name a failed or diverged runner execution.
+    `declined_attribute` is the triager's claimed basis; the graph reconciles it
+    with the first-uncovered diff and records the RESOLVED basis."""
 
     classification: str = ""
     action: Literal["terminate", "variant"] = "terminate"
@@ -57,6 +65,10 @@ class TriagerDecision(BaseModel):
     declined_attribute: str = ""
     variant_spec: dict = Field(default_factory=dict)
     feedback: str = ""
+    covered_gap_classes: list[str] | None = None
+    failure_mode_plausible: bool = False
+    runner_failed: bool = False
+    runner_diverged: bool = False
 
 
 # Injected seam signatures (the graph owns the curated message lists).
