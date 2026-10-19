@@ -395,7 +395,7 @@ def test_injection_ignores_the_word_steel_inside_a_path(
         workroot, steel_stub, monkeypatch):
     # Regression: a bare `\bsteel\b` anchor matched the word inside a path
     # (`/opt/steel`, `steel-cli`) and corrupted the prefix. The anchor must be
-    # the `steel` token in command position.
+    # the `steel` binary token.
     monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
     (workroot / "steel").mkdir()
     (workroot / "steel-cli").mkdir()
@@ -407,6 +407,70 @@ def test_injection_ignores_the_word_steel_inside_a_path(
         out = _steel_exec(command=command, session_id="s1")
         assert out["returncode"] == 0, out
         assert _calls(steel_stub)[-1] == "--local browser cookies --json", command
+
+
+def test_injection_survives_launcher_prefixes(workroot, steel_stub, monkeypatch):
+    # The binary may hide behind an env assignment or an absolute path and
+    # still must receive the flag (#390 review round 2, executed forms).
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    stub_path = steel_stub.parent / "bin" / "steel"
+    for command in (
+        "env STEEL_API_KEY=k steel browser cookies --json",
+        f"{stub_path} browser cookies --json",
+    ):
+        out = _steel_exec(command=command, session_id="s1")
+        assert out["returncode"] == 0, out
+        assert _calls(steel_stub)[-1] == "--local browser cookies --json", command
+
+
+def test_local_mode_injection_shapes(monkeypatch):
+    # Direct seam check for the shapes that cannot execute in the host suite
+    # (sudo needs a password, `timeout` is GNU-only): the flag still lands on
+    # the binary and nowhere else.
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    cases = {
+        "steel browser cookies --json": "steel --local browser cookies --json",
+        "sudo steel browser cookies --json": "sudo steel --local browser cookies --json",
+        "/usr/local/bin/steel browser cookies --json":
+            "/usr/local/bin/steel --local browser cookies --json",
+        "~/.steel/bin/steel browser cookies --json":
+            "~/.steel/bin/steel --local browser cookies --json",
+        "env STEEL_API_KEY=k steel browser cookies --json":
+            "env STEEL_API_KEY=k steel --local browser cookies --json",
+        "timeout 60 steel browser cookies --json":
+            "timeout 60 steel --local browser cookies --json",
+        "cd /opt/steel && steel browser cookies --json":
+            "cd /opt/steel && steel --local browser cookies --json",
+        "cd /opt/steel-cli && steel browser cookies --json":
+            "cd /opt/steel-cli && steel --local browser cookies --json",
+        "cd /opt/steel": "cd /opt/steel",
+        # An invocation hidden in a quoted shell string is the caller's own
+        # business, exactly like script text.
+        'sh -c "steel browser cookies --json"':
+            'sh -c "steel browser cookies --json"',
+        # A caller-chosen mode or URL suppresses the injection.
+        "steel --local browser cookies --json":
+            "steel --local browser cookies --json",
+        "steel browser cookies --json --api-url http://h/v1":
+            "steel browser cookies --json --api-url http://h/v1",
+        # Every invocation in a chain gets the flag.
+        "steel browser start && steel browser cookies":
+            "steel --local browser start && steel --local browser cookies",
+    }
+    for command, expected in cases.items():
+        assert m._local_mode(command) == expected, command
+
+
+def test_injection_covers_every_invocation_in_a_chain(
+        workroot, steel_stub, monkeypatch):
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    out = _steel_exec(
+        command="steel browser start --session s1 --json && steel browser cookies --json",
+        session_id="s1")
+    assert out["returncode"] == 0, out
+    calls = [c for c in _calls(steel_stub) if "cookies" in c or "start" in c]
+    assert calls == ["--local browser start --session s1 --json",
+                     "--local browser cookies --json"], calls
 
 
 def test_script_mode_never_rewritten(workroot, steel_stub, monkeypatch):

@@ -38,19 +38,19 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 _STEEL_TOKEN = re.compile(r"\bsteel\b")
 _STEEL_VERSION_PIN = "0.4.4"
-# The `steel` binary token in COMMAND POSITION (start of the line, or after a
-# shell separator, optionally behind env assignments and `sudo`), followed by
-# whitespace or end. This is the anchor for the local-mode injection: a bare
-# `\bsteel\b` also matches the word inside a path like `/opt/steel` or
-# `steel-cli`, which would corrupt a prefixed command.
-_STEEL_COMMAND = re.compile(
-    r"(^|[;&|\n]\s*)"
-    r"((?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)"
-    r"(steel)(?=\s|$)"
-)
+# Local-mode injection helpers (#390, D359-4). The injection must land on the
+# `steel` BINARY token, not on the word inside a path (`/opt/steel`,
+# `steel-cli`). A per-segment shell word scan finds it: split on shell
+# separators, then walk the launcher prefixes (`sudo`, `env`, `nohup`,
+# `command`, `exec`), a bare `timeout <flags|duration>`, and `VAR=value`
+# assignments (quoted values included), and check that the next word is
+# `steel` or ends in `/steel`.
+_SHELL_SEPARATORS = re.compile(r"(\|\||&&|[;&|\n])")
+_LAUNCHER_WORDS = frozenset({"sudo", "env", "nohup", "command", "exec"})
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # The global mode flag the gateway injects when a self-hosted endpoint is
-# configured (#390, D359-4), and the flags a caller may already have used to
-# choose the mode or the URL (either one suppresses the injection).
+# configured, and the flags a caller may already have used to choose the mode
+# or the URL (either one suppresses the injection).
 _STEEL_ENDPOINT_ENV = "STEEL_BROWSER_API_URL"
 _STEEL_MODE_FLAG = re.compile(r"(?<!\S)--(?:local|api-url)(?=$|[=\s])")
 _START_SHAPE = re.compile(r"\bbrowser\s+start\b")
@@ -402,20 +402,69 @@ def _run_script(script: str, script_lang: str, session_id: str, timeout_s: int) 
         f.write(script)
     return _run(f"{_SCRIPT_RUNNERS[script_lang]} {shlex.quote(f.name)}", session_id, timeout_s)
 
+def _steel_binary_index(words: list[str]) -> int | None:
+    # Index of the `steel` binary token in one shell command segment, past its
+    # launcher prefixes. None when this segment does not invoke the binary.
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word in _LAUNCHER_WORDS:
+            index += 1
+            continue
+        if word == "timeout":
+            index += 1
+            while index < len(words) and (words[index].startswith("-") or words[index].isdigit()):
+                index += 1
+            continue
+        if _ASSIGNMENT.match(word):
+            quotes = word.count('"') + word.count("'")
+            index += 1
+            while quotes % 2 and index < len(words):
+                quotes += words[index].count('"') + words[index].count("'")
+                index += 1
+            continue
+        break
+    if index < len(words) and (words[index] == "steel" or words[index].endswith("/steel")):
+        return index
+    return None
+
+
+def _inject_local_command(command: str) -> str:
+    # Insert the global `--local` after every `steel` binary invocation in the
+    # command. Whitespace inside a rewritten segment is normalised to single
+    # spaces; the unset path never calls this, so the cloud command stays
+    # byte-identical.
+    parts = _SHELL_SEPARATORS.split(command)
+    for position in range(0, len(parts), 2):
+        segment = parts[position]
+        core = segment.strip()
+        if not core:
+            continue
+        words = core.split()
+        index = _steel_binary_index(words)
+        if index is None:
+            continue
+        words.insert(index + 1, "--local")
+        leading = segment[: len(segment) - len(segment.lstrip())]
+        trailing = segment[len(segment.rstrip()):]
+        parts[position] = leading + " ".join(words) + trailing
+    return "".join(parts)
+
+
 def _local_mode(command: str) -> str:
     # The CLI selects local mode only through the global `--local` flag, and it
     # reads the endpoint URL itself (native precedence step 2). When the
-    # deployment names a self-hosted runtime, inject `--local` immediately
-    # after the `steel` binary token (command position, so a path that merely
-    # contains the word "steel" is never touched). A command that already
-    # carries `--local` or `--api-url` is left untouched, and the URL text is
-    # never rewritten (#390, D359-4). Script text is not passed here: scripts
-    # stay verbatim.
+    # deployment names a self-hosted runtime, inject `--local` after each
+    # `steel` binary invocation. A command that already carries `--local` or
+    # `--api-url` is left untouched, and the URL text is never rewritten
+    # (#390, D359-4). Script text is not passed here: scripts stay verbatim,
+    # and so does an invocation hidden inside a quoted shell string (the skill
+    # states both cases pass the flag themselves).
     if not os.environ.get(_STEEL_ENDPOINT_ENV, "").strip():
         return command
     if _STEEL_MODE_FLAG.search(command):
         return command
-    return _STEEL_COMMAND.sub(r"\1\2\3 --local", command, count=1)
+    return _inject_local_command(command)
 
 
 def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh",
