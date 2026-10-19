@@ -144,6 +144,12 @@ def check_l1_surface(path: Path) -> list[str]:
         return ["l1-surface.yaml must be a mapping"]
     if not doc.get("target"):
         errors.append("l1-surface.yaml: missing 'target'")
+    if "base_url" in doc:
+        errors.append(
+            "l1-surface.yaml: 'base_url' is not allowed; a deployment address "
+            "goes stale the moment the target is redeployed, and the app "
+            "resolves the project's canonical origin "
+            "(settings.recon.target_seed) instead")
     units = doc.get("units")
     if not isinstance(units, list) or not units:
         return errors + ["l1-surface.yaml: 'units' must be a non-empty list"]
@@ -202,6 +208,69 @@ def check_l1_surface(path: Path) -> list[str]:
     return errors
 
 
+# --- Arm L (#384): the data-dependency auth context is deployment-NEUTRAL ----
+
+# A pre-built AuthContext must carry no deployment origin: a bootstrap capture
+# (host:port) goes stale the moment the target is redeployed, which is exactly
+# how the arm K white-jotter auth gateway thrashed. Paths only; the app
+# resolves the project's canonical origin (`settings.recon.target_seed`) at the
+# auth read seam, and back-fills the informational `domain` from it.
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>\\]+")
+
+
+def _absolute_urls(value, where: str):
+    """Yield `(path, url)` for every absolute URL found in a nested value."""
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            yield from _absolute_urls(nested, f"{where}.{key}")
+    elif isinstance(value, list):
+        for i, nested in enumerate(value):
+            yield from _absolute_urls(nested, f"{where}[{i}]")
+    elif isinstance(value, str):
+        match = _URL_IN_TEXT_RE.search(value)
+        if match:
+            yield where, match.group(0)
+
+
+def _credential_sets(record: dict):
+    """The credential-set mappings of one account record: the default set and
+    every `roles.<role>` set (each role maps to a credential set directly)."""
+    credentials = record.get("credentials")
+    if isinstance(credentials, dict):
+        yield "credentials", credentials
+    roles = record.get("roles")
+    if isinstance(roles, dict):
+        for role_name, role_set in roles.items():
+            if isinstance(role_set, dict):
+                yield f"roles.{role_name}", role_set
+
+
+def _auth_origin_errors(name: str, account: dict) -> list[str]:
+    """Refuse deployment origins in one data-dependency account: `login_url`
+    must be a path (resolved at read), `domain` must be absent (back-filled at
+    read), and no other attribute may carry an absolute URL with a host."""
+    errors: list[str] = []
+    for where, credentials in _credential_sets(account):
+        login_url = credentials.get("login_url")
+        if isinstance(login_url, str) and "://" in login_url:
+            errors.append(
+                f"credentials.yaml: account {name!r} {where}.login_url "
+                f"{login_url!r} is absolute; store a path such as '/api/login' "
+                f"and let the app resolve the project's canonical origin")
+        if "domain" in credentials:
+            errors.append(
+                f"credentials.yaml: account {name!r} {where}.domain is not "
+                f"allowed; the app back-fills it from the project's canonical "
+                f"origin at read")
+    for where, url in _absolute_urls(account, f"account {name!r}"):
+        if where.endswith(".login_url"):
+            continue  # the specific rule above already names this defect
+        errors.append(
+            f"credentials.yaml: {where} carries an absolute URL {url!r}; a "
+            f"data dependency stays deployment-neutral (paths only)")
+    return errors
+
+
 def check_auth(project_dir: Path) -> list[str]:
     """Presence + structural shape of the AuthContext and the authn skill.
 
@@ -248,6 +317,10 @@ def check_auth(project_dir: Path) -> list[str]:
                 validate_overview(doc)
             except AuthInvalidError as exc:
                 errors.append(f"overview.yaml: {exc}")
+            for where, url in _absolute_urls(doc, "overview"):
+                errors.append(
+                    f"overview.yaml: {where} carries an absolute URL {url!r}; "
+                    f"a data dependency stays deployment-neutral (paths only)")
 
     has_accounts = False
     if credentials.is_file():
@@ -272,6 +345,7 @@ def check_auth(project_dir: Path) -> list[str]:
                     validate_account({**acct, "origin": acct.get("origin", "operator")})
                 except AuthInvalidError as exc:
                     errors.append(f"credentials.yaml: account {name!r}: {exc}")
+                errors.extend(_auth_origin_errors(name, acct))
 
     # A target with no authentication surface legitimately records an empty
     # `accounts` and no authn skill (the eval marks its auth-bootstrap

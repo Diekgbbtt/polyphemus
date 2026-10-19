@@ -25,6 +25,7 @@ read must be the name the census already reports.
 from __future__ import annotations
 
 import copy
+import logging
 from typing import Any
 
 from langchain_core.tools import tool
@@ -37,6 +38,8 @@ from polymerhus.app.auth.store import (
     DuplicateIdentityError,
     StoreUnavailableError,
 )
+
+logger = logging.getLogger(__name__)
 
 # The single usage contract, rendered verbatim into the tool description at
 # every binding so no agent receives a divergent contract (the
@@ -311,8 +314,81 @@ def redact_auth_state(state: Any) -> dict:
     return out
 
 
+# --- #384 (arm L): the canonical-origin resolution --------------------------
+#
+# The data-dependency auth context is deployment-NEUTRAL by design: it carries
+# paths (`/api/login`), never a host, because a bootstrap capture goes stale
+# the moment the target is redeployed on a new port - the arm K white-jotter
+# auth gateway thrashed exactly there. Every READ resolves the stored paths
+# against the project's canonical origin (settings.recon.target_seed, the same
+# fact the recon pipeline probes), so the agent always reads the LIVE address
+# while the artifact never carries one.
+
+_UNSET = object()
+
+
+def _project_origin(settings_fn, project_id: str) -> str | None:
+    """The project's canonical target origin, or None when unavailable.
+
+    `settings_fn` defaults to the app's project-settings reader. Fail-open: a
+    settings read or resolution failure degrades to no resolution (stored
+    values pass through untouched) and never raises into the turn."""
+    try:
+        from polymerhus.recon.control.scope import target_origin  # noqa: PLC0415
+
+        if settings_fn is None:
+            from polymerhus.app.clients import pg  # noqa: PLC0415
+
+            settings_fn = pg.load_settings
+        return target_origin(settings_fn(project_id))
+    except Exception:  # noqa: BLE001 - fail-open, never a raise into the turn
+        logger.warning("auth_store: canonical origin resolution failed for "
+                       "project=%s", project_id, exc_info=True)
+        return None
+
+
+def _credential_sets(record: Any):
+    """The credential-set mappings of one account record: the default set and
+    every `roles.<role>` set (a role maps to a credential set directly)."""
+    if not isinstance(record, dict):
+        return
+    credentials = record.get("credentials")
+    if isinstance(credentials, dict):
+        yield credentials
+    roles = record.get("roles")
+    if isinstance(roles, dict):
+        for role_set in roles.values():
+            if isinstance(role_set, dict):
+                yield role_set
+
+
+def _resolve_canonical_origin(state: Any, origin: str | None) -> Any:
+    """Resolve deployment-neutral stored paths against the canonical origin.
+
+    Mutates the (already copied) read state in place: `login_url` gains the
+    origin when it carries no scheme, and the informational `domain` is
+    back-filled when absent. An absolute value is NEVER rewritten (agent-minted
+    live state stays as recorded); a None origin leaves everything untouched."""
+    if not origin or not isinstance(state, dict):
+        return state
+    accounts = state.get("accounts")
+    if not isinstance(accounts, dict):
+        return state
+    host = origin.split("://", 1)[1].split("/", 1)[0]
+    for record in accounts.values():
+        for credentials in _credential_sets(record):
+            login_url = credentials.get("login_url")
+            if isinstance(login_url, str) and login_url and "://" not in login_url:
+                credentials["login_url"] = (
+                    f"{origin.rstrip('/')}/{login_url.lstrip('/')}"
+                )
+            if "domain" not in credentials:
+                credentials["domain"] = host
+    return state
+
+
 def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None = None,
-                          *, read_only: bool = False):
+                          *, read_only: bool = False, settings_fn=None):
     """Build the ONE shared `auth_store` tool bound to `project_id`.
 
     `project_id` defaults to the control-plane project (`config.PROJECT_ID`,
@@ -327,12 +403,26 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
     redacted read, and `auth_readonly` for every command but `read` - refused
     before the store is touched, so no write path is reachable from this
     binding.
+
+    `settings_fn` (#384, arm L) is the injectable project-settings reader the
+    canonical-origin resolution uses (default: the app's `pg.load_settings`);
+    tests inject a literal mapping so the unit tier touches no database. The
+    resolution itself is fail-open: no seed or an unreadable settings row
+    leaves stored values exactly as recorded.
     """
     if project_id is None:
         from polymerhus.app.config import config  # noqa: PLC0415 - lazy, no env at import
 
         project_id = config.PROJECT_ID
     seam = store if store is not None else AuthStore()
+    # The canonical origin is resolved ONCE per tool instance, lazily on the
+    # first read (one settings read; None = no resolution, fail-open).
+    _origin_cell: list = [_UNSET]
+
+    def _origin_once():
+        if _origin_cell[0] is _UNSET:
+            _origin_cell[0] = _project_origin(settings_fn, project_id)
+        return _origin_cell[0]
 
     if read_only:
         @tool(args_schema=AuthStoreReadArgs)
@@ -347,8 +437,10 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
             try:
                 # Redact the WHOLE state first, project second: the projection
                 # is the store's own (#247 name canonicalisation included), so
-                # no second copy of that rule exists here.
+                # no second copy of that rule exists here. The canonical-origin
+                # resolution rides between (a host, never a secret).
                 state = redact_auth_state(seam.read(project_id, ""))
+                state = _resolve_canonical_origin(state, _origin_once())
                 return {"ok": True, "command": "read", "path": at,
                         "value": AuthStore._project(state, at)}
             except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
@@ -368,8 +460,10 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
         at = path or ""
         if command == "read":
             try:
+                state = _resolve_canonical_origin(seam.read(project_id, ""),
+                                                  _origin_once())
                 return {"ok": True, "command": "read", "path": at,
-                        "value": seam.read(project_id, at)}
+                        "value": AuthStore._project(state, at)}
             except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
                 return {"ok": False, "error": "store_unavailable",
                         "detail": f"store_unavailable: {exc}"}

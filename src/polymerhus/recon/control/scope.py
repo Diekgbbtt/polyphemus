@@ -132,6 +132,23 @@ def seed_probe_target(target: str | None) -> str:
     return f"{scheme}://{authority}" if scheme else authority
 
 
+def target_origin(settings: dict | None) -> str | None:
+    """The project's canonical target ORIGIN (`scheme://host[:port]`) from its seed.
+
+    The one fact every render seam resolves deployment-neutral stored paths
+    against (#384, arm L): the seed is the project's own target identity -
+    run-stable on the eval front (a port-free alias) and the production domain
+    elsewhere - so a stored `/api/login` becomes `<origin>/api/login` without
+    any artifact ever carrying a deployment address. A seed that carries its
+    own scheme is preserved exactly; a bare seed resolves to `http://` (the
+    eval front serves HTTP on :80). Pure and never raising: returns None for
+    an absent/empty seed."""
+    probe = seed_probe_target(resolve_seed(settings))
+    if not probe:
+        return None
+    return probe if "://" in probe else f"http://{probe}"
+
+
 def parse_scope(target: str | None) -> dict:
     """Parse a raw `target_domain` into a scope descriptor.
 
