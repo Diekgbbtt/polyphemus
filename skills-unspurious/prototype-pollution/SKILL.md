@@ -12,133 +12,133 @@ Prototype pollution corrupts shared object prototypes through unsafe merges of u
 ## Attack Surface
 
 **Runtimes**
-- Browser-consumed objects and server-side runtimes that share prototype-based objects
-- Structured parsers that preserve prototype-shaped keys
-- Template engines and configuration merge utilities
+- **Browser-consumed objects**: and server-side runtimes that share prototype-based objects.
+- **Structured parsers**: that preserve prototype-shaped keys.
+- **Template engines**: and configuration merge utilities.
 
 **Input Vectors**
-- Structured request bodies, query strings, and form fields
-- Encoded nested objects in parameter notation
-- Socket messages, schema-layer variables, and import formats
+- **Input carriers**: structured request bodies, query strings, and form fields.
+- **Encoded nested objects**: in parameter notation.
+- **Other carriers**: socket messages, schema-layer variables, and import formats.
 
 **Vulnerable Patterns**
-- Recursive merge and extend helpers: deep merge functions, framework extend calls, custom assign loops
-- Query and body parsers that build nested objects from bracketed keys
-- Routing, state hydration, and SDK configuration merges that consume shared defaults
-- Stored inputs that a later job, export pipeline, or render path merges
+- **Recursive merge and extend helpers**: deep merge functions, framework extend calls, custom assign loops.
+- **Query and body parsers**: that build nested objects from bracketed keys.
+- **Routing, state hydration, and SDK merges**: that consume shared defaults.
+- **Stored inputs**: that a later job, export pipeline, or render path merges.
 
 ## Reconnaissance
 
 ### Merge-Point Discovery
 
-- Trace every extend, merge, defaults, deep-copy, and configuration-merge call that consumes user-influenced data
-- Note parsers that build nested structures from bracketed or dotted keys
-- Note stored inputs that a background job or export merges second-order
+- **Merge-call tracing**: trace every extend, merge, defaults, deep-copy, and configuration-merge call that consumes user-influenced data.
+- **Parser noting**: note parsers that build nested structures from bracketed or dotted keys.
+- **Second-order noting**: note stored inputs that a background job or export merges second-order.
 
 ### Baseline Canary
 
-- Send a benign pollution marker under a unique key, then read an unrelated object, a later request, or a rendering path for the marker
-- Verify through response behavior, error text, or a follow-up read that shares the object state
-- A marker that never lands marks a safe merge; a marker that lands marks the candidate surface
+- **Marker sending**: send a benign pollution marker under a unique key, then read an unrelated object, a later request, or a rendering path for the marker.
+- **Verification**: verify through response behavior, error text, or a follow-up read that shares the object state.
+- **Verdict**: a marker that never lands marks a safe merge; a marker that lands marks the candidate surface.
 
 ### Shape and Channel Matrix
 
-- Enumerate the key-shape families accepted per carrier: prototype-key forms, constructor-chain forms, and encoded nested forms
-- Send the same marker over each carrier the endpoint accepts and record which merges it
+- **Shape enumeration**: enumerate the key-shape families accepted per carrier: prototype-key forms, constructor-chain forms, and encoded nested forms.
+- **Carrier sweep**: send the same marker over each carrier the endpoint accepts and record which merges it.
 
 ## Detection Channels
 
-- Follow-up reads prove corruption when a marker set through one input becomes observable through a later request or an unrelated object.
-- Routing shifts signal effect when navigation, route guards, or view selection behave differently after the marker is sent.
-- Auth-interface shifts signal effect when privilege-gated controls render, unlock, or disappear once the marker lands.
-- Rendering shifts signal effect when markup, script-loader behavior, or configuration-driven output changes in a way tied to the marker.
-- Response deltas signal effect when status codes, error text, or timing shift after the marker is sent.
-- Template output shifts signal effect when rendered server output carries the marker or a computed result tied to it.
-- Out-of-band effects prove execution when a delay or a created artifact shows a process-spawning sink consumed the polluted property.
+- **Follow-up reads**: prove corruption when a marker set through one input becomes observable through a later request or an unrelated object.
+- **Routing shifts**: signal effect when navigation, route guards, or view selection behave differently after the marker is sent.
+- **Auth-interface shifts**: signal effect when privilege-gated controls render, unlock, or disappear once the marker lands.
+- **Rendering shifts**: signal effect when markup, script-loader behavior, or configuration-driven output changes in a way tied to the marker.
+- **Response deltas**: signal effect when status codes, error text, or timing shift after the marker is sent.
+- **Template output shifts**: signal effect when rendered server output carries the marker or a computed result tied to it.
+- **Out-of-band effects**: prove execution when a delay or a created artifact shows a process-spawning sink consumed the polluted property.
 
 ## Adversarial Capabilities
 
-Prototype pollution testing presupposes a merge path that consumes user-controlled keys, a marker channel, and a consuming gadget, and it consumes all three.
-- Reach a merge, extend, or configuration path that consumes attacker-shaped keys.
-- Deliver the same key shape over every carrier the endpoint accepts.
-- Observe shared object state through an unrelated read, a later request, or a rendering path.
-- Enumerate the dependency inventory where white-box access exists and match polluted keys to consuming sinks.
-- Hold a privilege contrast where a polluted flag changes an authorization outcome.
+- **Prototype pollution testing**: presupposes a merge path that consumes user-controlled keys, a marker channel, and a consuming gadget, and it consumes all three.
+- **Merge-path reach**: reach a merge, extend, or configuration path that consumes attacker-shaped keys.
+- **Carrier delivery**: deliver the same key shape over every carrier the endpoint accepts.
+- **State observation**: observe shared object state through an unrelated read, a later request, or a rendering path.
+- **Inventory enumeration**: enumerate the dependency inventory where white-box access exists and match polluted keys to consuming sinks.
+- **Privilege contrast**: hold a privilege contrast where a polluted flag changes an authorization outcome.
 
 ## Trust Assumptions
 
-The class rests on one agreement: objects are built from the application's own defaults, and caller-supplied keys never reach the shared prototype.
-The agreement holds merged input to own, application-chosen keys, holds shared prototypes frozen or absent from merge paths, holds consuming gadgets to properties the application set itself, and holds every carrier class to the same key filtering.
-Sensitive logic and execution position leak when a caller-supplied key lands on a shared prototype that a consuming gadget reads.
-Each variant breaks one clause at a different consumer: browser-side routing, rendering, and privilege consumers, or server-side template and process-spawning consumers.
+- **The agreement**: objects are built from the application's own defaults, and caller-supplied keys never reach the shared prototype.
+- **Held clauses**: the agreement holds merged input to own, application-chosen keys, holds shared prototypes frozen or absent from merge paths, holds consuming gadgets to properties the application set itself, and holds every carrier class to the same key filtering.
+- **Leak condition**: sensitive logic and execution position leak when a caller-supplied key lands on a shared prototype that a consuming gadget reads.
+- **The failing clause**: each variant breaks one clause at a different consumer: browser-side routing, rendering, and privilege consumers, or server-side template and process-spawning consumers.
 
 ## Key Vulnerabilities
 
 ### Client-Side Effects
 
-- Privilege flags read from shared defaults grant UI or route access once polluted
-- Markup and script-loader sinks consume polluted properties and reach script execution
-- Routing, analytics, and SDK configuration read polluted defaults and change behavior
-- Trusted-content channels that also merge keys carry the same class
+- **Privilege flags**: read from shared defaults grant UI or route access once polluted.
+- **Markup and script-loader sinks**: consume polluted properties and reach script execution.
+- **Routing, analytics, and SDK configuration**: read polluted defaults and change behavior.
+- **Trusted-content channels**: that also merge keys carry the same class.
 
 ### Server-Side Merge Sinks
 
-- Deep merge and extend helpers that recurse into attacker-controlled structured input
-- Body and query parsers that construct nested objects from bracketed keys
-- Document loaders that honour prototype keys rather than constructing keyless objects
-- Parse-then-merge patterns that copy attacker input onto shared state
+- **Deep merge and extend helpers**: that recurse into attacker-controlled structured input.
+- **Body and query parsers**: that construct nested objects from bracketed keys.
+- **Document loaders**: that honour prototype keys rather than constructing keyless objects.
+- **Parse-then-merge patterns**: that copy attacker input onto shared state.
 
 ### Process and Template Chains
 
-- Polluted properties consumed by template rendering reach expression evaluation
-- Environment-like properties consumed by process spawners reach command execution
-- Module-resolution and require-path properties can redirect loading when polluted
-- Gadget availability is inventory-specific: confirm the consuming sink and its version before claiming execution
+- **Polluted properties in template rendering**: reach expression evaluation.
+- **Environment-like properties in process spawners**: reach command execution.
+- **Module-resolution and require-path properties**: can redirect loading when polluted.
+- **Gadget availability**: is inventory-specific: confirm the consuming sink and its version before claiming execution.
 
 ### Freeze and Seal Gaps
 
-- Pollution before a freeze applies to the instance but not the prototype it inherits from
-- Objects created after the merge inherit the polluted property without further input
+- **Pollution before a freeze**: applies to the instance but not the prototype it inherits from.
+- **Objects created after the merge**: inherit the polluted property without further input.
 
 ## Advanced Techniques
 
 **Second-Order and Stored Pollution**
-- Store the marker through a normal write, then trigger the merge in a background job, export, or report pipeline
-- Stored forms survive restarts of the request path and reach consumers the request never touches
+- **Stored marker**: store the marker through a normal write, then trigger the merge in a background job, export, or report pipeline.
+- **Restart survival**: stored forms survive restarts of the request path and reach consumers the request never touches.
 
 **Split and Layered Delivery**
-- Split the key shape across several parameters that merge sequentially into one object
-- Layer encoding around the key so the parser unwraps one layer and the merge unwraps the next
+- **Key splitting**: split the key shape across several parameters that merge sequentially into one object.
+- **Encoding layering**: layer encoding around the key so the parser unwraps one layer and the merge unwraps the next.
 
 **Clobbered-Global Delivery**
-- The `proxy-techniques-dom-clobbering` leaf shadows a named element so a client global the application trusts resolves to attacker-controlled markup, which carries attacker-chosen values into a configuration or merge path that accepts no structured carrier
-- Name that family at the delivery step rather than restating its markup mechanics, because the merge and its consumers stay this class's steps
+- **Clobbered globals**: the `proxy-techniques-dom-clobbering` leaf shadows a named element so a client global the application trusts resolves to attacker-controlled markup, which carries attacker-chosen values into a configuration or merge path that accepts no structured carrier.
+- **Family naming**: name that family at the delivery step rather than restating its markup mechanics, because the merge and its consumers stay this class's steps.
 
 ## Bypass Techniques
 
 **Key Shaping**
-- Substitute one prototype-key form for another when a filter removes only the obvious one
-- Chain through the constructor path when the direct prototype key is filtered
-- Nested and encoded forms that unwrap after the filter stage
+- **Prototype-key substitution**: substitute one prototype-key form for another when a filter removes only the obvious one.
+- **Constructor chaining**: chain through the constructor path when the direct prototype key is filtered.
+- **Nested and encoded forms**: unwrap after the filter stage.
 
 **Carrier Switching**
-- Move the same marker between structured body, form fields, query string, and socket messages
-- Bracket and dotted notation where parsers disagree on which is the key
+- **Marker movement**: move the same marker between structured body, form fields, query string, and socket messages.
+- **Notation disagreement**: bracket and dotted notation where parsers disagree on which is the key.
 
 **Filter Gaps**
-- Array and index shapes that reach the prototype through a different path
-- Normalization variants of the key that compare unequal to a filter list
-- Second-order delivery where the stored form merges after the filter stage
+- **Array and index shapes**: reach the prototype through a different path.
+- **Normalization variants**: of the key compare unequal to a filter list.
+- **Second-order delivery**: where the stored form merges after the filter stage.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- Pollution to markup-sink execution on the client
-- Pollution to template evaluation or process spawn on the server
-- Pollution plus schema-layer variables where a resolver passes variables into a merge
-- Pollution plus decoding of untrusted blobs where a decoded object graph merges into shared state
-- Pollution plus shared caches where polluted defaults carry into rendered output
+- **Markup-sink execution**: pollution to markup-sink execution on the client.
+- **Template and process sinks**: pollution to template evaluation or process spawn on the server.
+- **Schema-layer variables**: pollution plus schema-layer variables where a resolver passes variables into a merge.
+- **Decoded object graphs**: pollution plus decoding of untrusted blobs where a decoded object graph merges into shared state.
+- **Shared caches**: pollution plus shared caches where polluted defaults carry into rendered output.
 
 ## Testing Methodology
 
@@ -156,28 +156,29 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## False Positives
 
-- The parser strips prototype-shaped keys before the merge, so the marker never appears on the shared prototype
-- Options objects are constructed with no prototype throughout
-- The polluted key is visible in a structured echo but never merged into an object graph
-- Client-side pollution blocked by frozen prototypes in hardened consumers - verify there is no behavioral change
-- A payload filter blocks the probe and alternate encodings reproduce the filter rather than the pollution
+- **Key stripping**: the parser strips prototype-shaped keys before the merge, so the marker never appears on the shared prototype.
+- **Prototype-free options**: options objects are constructed with no prototype throughout.
+- **Echo-only visibility**: the polluted key is visible in a structured echo but never merged into an object graph.
+- **Frozen prototypes**: client-side pollution blocked by frozen prototypes in hardened consumers - verify there is no behavioral change.
+- **Probe filtering**: a payload filter blocks the probe and alternate encodings reproduce the filter rather than the pollution.
 
 ## Pro Tips
 
-1. Verify pollution with a unique canary key before attempting any execution gadget
-2. In white-box scope, grep for merge, extend, defaults, and assign calls that consume user input
-3. Check both request parsing and response-side configuration merges; second-order merges are easy to miss
-4. Server gadget chains are version-specific - confirm the package version before claiming execution
-5. Combine with template injection when polluted keys flow into rendering configuration
-6. Prefer the consumer effect as proof: a routing change, an interface shift, or an execution artifact beats a reflected marker
+- **Canary verification**: verify pollution with a unique canary key before attempting any execution gadget.
+- **Source greps**: in white-box scope, grep for merge, extend, defaults, and assign calls that consume user input.
+- **Both merge moments**: check both request parsing and response-side configuration merges; second-order merges are easy to miss.
+- **Version confirmation**: server gadget chains are version-specific - confirm the package version before claiming execution.
+- **Template combination**: combine with template injection when polluted keys flow into rendering configuration.
+- **Consumer proof**: prefer the consumer effect as proof: a routing change, an interface shift, or an execution artifact beats a reflected marker.
 
 ## Tooling
 
-Detection is mostly about key shapes plus manual verification, so use a spray harness and a gadget reference:
-- A request-spraying harness that fans the same canary key across many endpoints and carriers, then flags responses that show the pollution effect
-- Published gadget references that map polluted keys to concrete client-side sinks per library, used to turn a confirmed pollution into real impact
-- For server-side chains there is no one-click tool: enumerate the dependency inventory in white-box scope and match polluted keys to consuming sinks
+- **Detection approach**: detection is mostly about key shapes plus manual verification, so use a spray harness and a gadget reference.
+- **Spray harness**: a request-spraying harness that fans the same canary key across many endpoints and carriers, then flags responses that show the pollution effect.
+- **Gadget references**: published gadget references that map polluted keys to concrete client-side sinks per library, used to turn a confirmed pollution into real impact.
+- **Server-side chains**: for server-side chains there is no one-click tool: enumerate the dependency inventory in white-box scope and match polluted keys to consuming sinks.
 
 ## Summary
 
-Any unsafe recursive merge of user-controlled keys is a prototype pollution candidate. Filter prototype keys at every merge boundary, construct options objects without a prototype, freeze shared prototypes, and validate impact with behavioral proof rather than a reflected key.
+Any unsafe recursive merge of user-controlled keys is a prototype pollution candidate.
+Filter prototype keys at every merge boundary, construct options objects without a prototype, freeze shared prototypes, and validate impact with behavioral proof rather than a reflected key.
