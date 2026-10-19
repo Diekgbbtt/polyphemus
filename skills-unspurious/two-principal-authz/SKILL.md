@@ -154,6 +154,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Stored content plus authorization: reach another principal's data through a rendering path
 - Authorization failure plus escalation: use a vertical binding gap to reach a privileged surface, then hand token validation to the token class
 - Grant excess plus enumeration: widen a single grant into a set of reachable objects
+- Account takeover: the cross-class catalogue of primitives whose terminal proof is a second account reached from the attacker's own session is in `references/account-takeover-chains.md`, and each primitive's mechanism stays with its owning class
 
 ## Testing Methodology
 
@@ -164,6 +165,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 5. **Vary the channel** - Repeat on every transport and encoding the operation accepts
 6. **Confirm the effect** - Snapshot state before and after; the proof pair is the owner's requests plus the second principal's successful request on the owner's identifier
 7. **File on first success** - Record the confirmed cross-principal finding as soon as the second principal reaches the owner's object, rather than exploring further classes
+
+The owner-versus-second-principal replay is driven by `scripts/two-principal-swap-harness`, which records one verdict per operation, reads the masked differential where content stays hidden, and warns when the route control is not gated.
 
 ## False Positives
 
