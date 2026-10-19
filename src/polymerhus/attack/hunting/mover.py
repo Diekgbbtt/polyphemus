@@ -254,7 +254,7 @@ class TestSpecItem(ProducedItem):
     produced read already fetched (the dispatch validity gate), so the pod
     branch dispatches exactly the body that was validated."""
 
-    fault_key: str
+    hunt_key: str
     spec_file: str
     spec: Mapping[str, Any] | None = None
 
@@ -729,7 +729,6 @@ def run_delivery_tick(
     control: DispatchControlPlane,
     coro_for: Callable[[ProducedItem], Any],
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
-    hunter_payload_capable: bool = True,
 ) -> TickReport:
     """One impure mover tick: reads the produced inboxes, calls the pure
     deduction, drives the delivery against the control plane, and applies the
@@ -759,7 +758,7 @@ def run_delivery_tick(
     the loop (Q11); the mover never awaits, the control plane schedules."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
-        hunter_store=hunter_store, hunter_payload_capable=hunter_payload_capable,
+        hunter_store=hunter_store,
     )
     produced = inbox.items
     live = control.live_session_ids()
@@ -869,32 +868,26 @@ def _consume_finished_models(
 def produced_spec_body(
     hunter_store: Any,
     project_id: str,
-    fault_key: str,
+    hunt_key: str,
     spec_file: str,
 ) -> dict | None:
     """The produced spec's persisted body, or None (fail-open: a missing record
-    or an unreadable one warns and degrades - O4). The `<fault>_<strategy>` stem
-    splits on the single `_` separator (G3 keywords never contain `_`), so the
-    classifier can read the file it names. The ONE spec-body read: the produced
+    or an unreadable one warns and degrades - O4). `hunt_key` is the loop
+    dispatch id folder the spec lives under (S3 8.9) and `spec_file` the
+    derived `<fault>_<strategy>` stem; the ONE spec-body read: the produced
     read (the dispatch validity gate) and the surfer's dispatch branch both use
     it, so the work read and the dispatch read can never disagree."""
-    fault_keyword, sep, strategy_keyword = spec_file.partition("_")
-    if not sep or not fault_keyword or not strategy_keyword:
-        return None
     try:
         return hunter_store.read_spec(
-            project_id, fault_key, fault_keyword, strategy_keyword,
-            side="produced",
-        )
+            project_id, hunt_key, spec_file, side="produced")
     except Exception as exc:  # noqa: BLE001 - fail-open read (O4)
         logger.warning("mover: spec body read failed for %s (%s)", spec_file, exc)
         return None
 
 
 # The pod family's dispatch status (the spec's OWN persisted status is the
-# dispatch gate; S3 8.6's `ratified` terminal and the T6 award of the status
-# vocabulary land there).
-SPEC_DISPATCH_STATUS = "specified"
+# dispatch gate; S3 8.6/8.7's terminal `ratified` is the ratified-spec gate).
+SPEC_DISPATCH_STATUS = "ratified"
 
 
 def read_produced_inbox(
@@ -903,7 +896,6 @@ def read_produced_inbox(
     *,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
-    hunter_payload_capable: bool = True,
 ) -> ProducedInbox:
     """The produced inbox set for one tick.
 
@@ -914,11 +906,9 @@ def read_produced_inbox(
       (`models_to_consume`, the refused stems included). A loop file whose body
       fails the validity predicate, whose body the store could not parse, or
       whose model document is unreadable is refused here, so it is neither
-      dispatched nor counted as work. With `hunter_payload_capable` False (C1:
-      the run's hunter builder cannot consume the loop payload yet) the loop
-      files are not dispatch input - nothing is moved and no looped model is
-      consumed - but a loop-FREE model is still consumed as the no-dispatch
-      model (R1: the modeller's "nothing to hunt here" outcome, S2 8.4).
+      dispatched nor counted as work. A loop-FREE model is still consumed as
+      the no-dispatch model (R1: the modeller's "nothing to hunt here" outcome,
+      S2 8.4).
     - The hunter memory's produced test specs (the pod family, S3 8.7).
 
     The config family retired in T4b (#387): there is no hunt-store read and no
@@ -934,21 +924,6 @@ def read_produced_inbox(
             unit_name = str(entry.get("unit_name") or "")
             if entry.get("run_id") != run_id:
                 continue  # another run's model: its own mover dispatches it
-            if not hunter_payload_capable:
-                # C1 (T4a review): the run's hunter cannot consume the loop payload
-                # yet, so the loop family is not dispatch input - the loop files stay
-                # produced (nothing is moved) and are NOT work, so the run quiesces
-                # inert and the work survives for the run that can consume it.
-                #
-                # R1 (T4a review round 2): a loop-FREE model is different - it is the
-                # modeller's "nothing to hunt here" outcome, and its consume is the
-                # model-document move the mover owes regardless of any hunter
-                # (S2 8.4). Nothing about it is dispatchable work, so consuming it
-                # loses no C1 protection; leaving it produced would re-model the unit
-                # on every run and make the gap line lie.
-                if not entry.get("loops") and not entry.get("malformed_loops"):
-                    models_to_consume[unit_id] = ()
-                continue
             model = _entry_model(entry, threat_store, project_id, unit_id)
             refused: list[str] = [
                 str(broken.get("loop_id") or "")
@@ -1015,15 +990,15 @@ def _spec_items(
     validity predicate is the ONE loop predicate); the config family retired in
     T4b (#387) and has no read here."""
     items: list[ProducedItem] = []
-    for fault_key in hunter_store.list_fault_keys(project_id):
-        for spec_file in hunter_store.produced_spec_files(project_id, fault_key):
-            body = produced_spec_body(hunter_store, project_id, fault_key, spec_file)
+    for hunt_key in hunter_store.list_hunt_keys(project_id):
+        for spec_file in hunter_store.produced_spec_files(project_id, hunt_key):
+            body = produced_spec_body(hunter_store, project_id, hunt_key, spec_file)
             if not body or body.get("status") != SPEC_DISPATCH_STATUS:
                 continue
             items.append(TestSpecItem(
-                message_id=f"{fault_key}/{spec_file}",
-                session_id=pod_session_id(run_id, fault_key, spec_file),
-                fault_key=fault_key,
+                message_id=f"{hunt_key}/{spec_file}",
+                session_id=pod_session_id(run_id, hunt_key, spec_file),
+                hunt_key=hunt_key,
                 spec_file=spec_file,
                 spec=body,
             ))
@@ -1079,7 +1054,7 @@ def _apply_move(
         # moves the model document when this was its last produced loop file.
         return threat_store.consume_loop(project_id, item.unit_id, item.loop_id)
     if isinstance(item, TestSpecItem):
-        return hunter_store.consume_spec(project_id, item.fault_key, item.spec_file)
+        return hunter_store.consume_spec(project_id, item.hunt_key, item.spec_file)
     raise TypeError(
         f"mover: no move primitive for item {item.message_id!r} "
         f"({type(item).__name__})"

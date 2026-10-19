@@ -35,8 +35,6 @@ RUN = "run-as"
 UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
-FAULT_KEY = f"{UNIT}_{CWE}_{CLASS}"
-CONFIG_KEY = f"{UNIT}::{CWE}::{CLASS}"
 UNIT_NAME = "Service-catalogue-and-discovery"
 LOOP_ID = "loop-1"
 DISPATCH_ID = f"{UNIT_NAME}__{LOOP_ID}"
@@ -52,8 +50,8 @@ def _produce(threat):
 
 def _spec(**overrides):
     data = {
-        "spec_id": SPEC_FILE, "fault_key": FAULT_KEY,
-        "fault": {}, "strategy": "blind", "status": "specified",
+        "status": "ratified", "fault_keyword": "sqli", "strategy_keyword": "blind",
+        "verification_symptoms": ["a foreign item renders"],
     }
     data.update(overrides)
     return data
@@ -130,8 +128,7 @@ def test_C10_down_hunter_role_refuses_loop_dispatch(stores):
 
 def test_C11_down_pod_role_refuses_spec_dispatch(stores):
     threat, hunter = stores
-    hunter.write_spec(PROJECT, FAULT_KEY, fault_keyword="sqli",
-                      strategy_keyword="blind", spec=_spec())
+    hunter.write_specs(PROJECT, DISPATCH_ID, [_spec()])
     control = _RecordingControl()
     report = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
@@ -140,7 +137,7 @@ def test_C11_down_pod_role_refuses_spec_dispatch(stores):
     )
     assert control.calls == []
     assert report.refused == 1 and report.moved == 0
-    assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == [SPEC_FILE]
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == [SPEC_FILE]
 
 
 # --- C12: an up role dispatches and the session acquires the role gate --------
@@ -194,8 +191,8 @@ def test_C12_up_pod_session_acquires_the_role_gate(monkeypatch, tmp_path):
 
     async def _go():
         return await run_pod_session(
-            spec=_spec(), project_id=PROJECT, run_id=RUN, fault_key=FAULT_KEY,
-            config_key=CONFIG_KEY, spec_id=SPEC_FILE, inbox=None,
+            spec=_spec(), project_id=PROJECT, run_id=RUN, hunt_key=DISPATCH_ID,
+            spec_id=SPEC_FILE, inbox=None,
             hunter_store=hunter, gate=None, role_gate=control.gates["pod"],
             pod_builder=_pod_builder, pod_store=None,
         )
@@ -214,6 +211,6 @@ def test_derive_thread_role_maps_every_session_shape():
     # the renamed segment and its one-window legacy alias are the same role
     assert derive_thread_role(f"hunting:{r}:threat-modeller") == "threat_modeller"
     assert derive_thread_role(f"hunting:{r}:orchestrator") == "threat_modeller"
-    assert derive_thread_role(f"hunting:{r}:hunt:{FAULT_KEY}") == "hunter"
+    assert derive_thread_role(f"hunting:{r}:hunt:{DISPATCH_ID}") == "hunter"
     assert derive_thread_role(
-        f"hunting:{r}:pod:{FAULT_KEY}:{SPEC_FILE}") == "pod"
+        f"hunting:{r}:pod:{DISPATCH_ID}:{SPEC_FILE}") == "pod"

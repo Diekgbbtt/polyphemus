@@ -440,8 +440,9 @@ The spec folder and file derivation.
 The move-aware write.
 The notes `phase_summary`.
 The `skill_list` / `skill_load` binding.
-The removals: materialisation, `derive_verdict`, `SpecItem.experiment_ref`, the FaultItem draft, the old per-config key.
+The removals: materialisation, `derive_verdict`, the FaultItem draft, the old per-config key.
 The hunter-side `HuntConfig` and `DispatchResult` retirement and the fault-KB aid removal.
+(`derive_verdict` and `SpecItem.experiment_ref` were already removed in T5; T6 removes the remaining dead surface.)
 
 **Acceptance criteria.**
 - A batched `specs` write creates the set.

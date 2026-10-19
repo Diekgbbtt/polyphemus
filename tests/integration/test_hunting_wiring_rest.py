@@ -40,14 +40,11 @@ import pytest
 
 from . import hunting_wiring_stack as stack
 
-# The production fault identity conventions (G4 / ADR Q13), matching the
-# contract-tier fixtures: a CWE fault class so the `_`-joined fault_key folder
-# is representable, and a real vulnerability class so the produced config's
-# semantic key round-trips with its file name.
+# The production identity conventions, matching the contract-tier fixtures: the
+# hunter memory key is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9).
 UNIT = "Service:slug:a"
-FAULT = "CWE-352"
-CLASS = "CSRF"
-FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
+UNIT_NAME = "Service-slug-a"
+DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 
 
 def _need_stack() -> None:
@@ -93,13 +90,13 @@ def _maybe_live_pod_session(client, project_id: str, *, timeout: float = 60.0):
     live pod session can be established within the deadline - the caller
     carries with a precise reason (never fabricated)."""
     spec_file = stack.seed_test_spec(
-        project_id, fault_key=FAULT_KEY,
+        project_id, hunt_key=DISPATCH_ID,
         fault_keyword="sqli", strategy_keyword="blind")
     r = client.post(f"/projects/{project_id}/hunting", json={"candidates": []})
     if r.status_code != 201:
         return None, None
     run_id = r.json()["hunting_run_id"]
-    sid = f"hunting:{run_id}:pod:{FAULT_KEY}:{spec_file}"
+    sid = f"hunting:{run_id}:pod:{DISPATCH_ID}:{spec_file}"
     deadline = time.time() + timeout
     while time.time() < deadline:
         resp = client.post(
@@ -351,11 +348,11 @@ def test_C17_pod_resume_unregistered_404(client):
     produced family for the project."""
     _need_pg()
     p = _new_project(client)
-    sid = f"hunting:{uuid.uuid4().hex}:pod:{FAULT_KEY}:sqli_blind"
+    sid = f"hunting:{uuid.uuid4().hex}:pod:{DISPATCH_ID}:sqli_blind"
     r = client.post(f"/projects/{p}/hunting/pod", json={"session_id": sid})
     assert r.status_code == 404, r.text
     assert "no stored/paused pod session" in r.text
-    assert stack.produced_spec_files(p, FAULT_KEY) == []
+    assert stack.produced_spec_files(p, DISPATCH_ID) == []
 
 
 def test_C18_pod_resume_empty_session_422(client):
@@ -428,7 +425,7 @@ def test_C22_pause_unregistered_and_sibling_404(client):
     r1 = client.post(
         f"/projects/{p}/hunting/{rid}/sessions/{never_registered}/pause")
     assert r1.status_code == 404, r1.text
-    sibling = f"hunting:{uuid.uuid4().hex}:pod:{FAULT_KEY}:sqli_blind"
+    sibling = f"hunting:{uuid.uuid4().hex}:pod:{DISPATCH_ID}:sqli_blind"
     r2 = client.post(
         f"/projects/{p}/hunting/{rid}/sessions/{sibling}/pause")
     assert r2.status_code == 404, r2.text

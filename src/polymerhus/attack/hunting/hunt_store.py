@@ -49,7 +49,6 @@ section 6).
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -163,51 +162,6 @@ def _keys_match(record_key: str, query_key: str) -> bool:
     return (record_key == query_key
             or record_key.startswith(query_key + KEY_SEPARATOR)
             or query_key.startswith(record_key + KEY_SEPARATOR))
-
-
-def _fault_key_to_config_key(fault_key: str) -> str | None:
-    """The hunter-memory bucket folder name -> canonical `::` config_key (G4,
-    #202): a `_`-joined `<unit>_<CWE>_<class>` folder round-trips through
-    `parse_config_file_name` + `semantic_key`; a folder stored in the `::`
-    semantic-key form is returned as-is. None when the folder is not a 3-part
-    config key (a 2-part revival key is never a config key)."""
-    parsed = parse_config_file_name(f"{fault_key}.yaml")
-    if parsed is not None:
-        return semantic_key(*parsed)
-    if "::" in fault_key:
-        return fault_key if split_semantic_key(fault_key) is not None else None
-    return None
-
-
-def _prior_spec_insight(spec: dict, spec_id: str | None = None) -> dict:
-    """The shallow projection of a COMPLETED downstream TestImplementationSpec
-    (#202, I3; #313): identity + status + the discriminating test summary,
-    present-keys only - never the full record, so a config never embeds another
-    record's full content (the I3 no-snowball discipline).
-
-    A `specified` body is the typed `TestImplementationSpec` base (#313): it
-    carries no `spec_id` field, so the semantic `<fault>_<strategy>` identity is
-    the `spec_id` argument (the spec's file-name stem, the canonical identity)
-    when given, else derived from the payload's file-name identity keywords; an
-    explicit `spec_id` (the legacy hybrid body) still wins. The typed base's
-    discriminating content (`testing_pattern` / `verification_symptoms`) rides
-    the projection beside the legacy draft keys, all present-keys only."""
-    out: dict = {"kind": "prior_spec"}
-    explicit = spec.get("spec_id")
-    if explicit is not None:
-        out["spec_id"] = explicit
-    elif spec_id is not None:
-        out["spec_id"] = spec_id
-    else:
-        fault_keyword = spec.get("fault_keyword")
-        strategy_keyword = spec.get("strategy_keyword")
-        if fault_keyword and strategy_keyword:
-            out["spec_id"] = f"{fault_keyword}_{strategy_keyword}"
-    for key in ("fault_id", "status", "strategy", "spec_ref", "test",
-                "testing_pattern", "verification_symptoms", "target_identity"):
-        if spec.get(key) is not None:
-            out[key] = spec[key]
-    return out
 
 
 class DuplicateConfigError(ValueError):
@@ -549,97 +503,6 @@ class HuntStore(BoundedRecordStore):
                 return notes
             return [n for n in notes
                     if _keys_match(str(n.get("revival_key") or ""), key)]
-
-    # --- sibling hunter-memory reads (#202) ------------------------------------
-
-    def read_hunter_specs(self, project_id: str, key: str) -> list[dict]:
-        """The downstream COMPLETED TestImplementationSpecs (hunter-memory SIBLING
-        bucket, #202): the `hunter/test-specs/<fault_key>/` produced/ + consumed/
-        `status == "specified"` spec records whose config_key matches `key` (a
-        3-part semantic config_key or a 2-part revival-key prefix), each
-        shallow-projected (`_prior_spec_insight`, I3) - the config's
-        `prior_hunt_insights` (G3) source.
-
-        #313: the hunter memory is a status-varying schema - a non-`specified`
-        record is a hypothesis-only FaultItem draft, NOT a TestImplementationSpec,
-        so it is SKIPPED: a dropped/hypothesised/verified draft must never be
-        laundered into a completed downstream insight. Fail-open per record (O4):
-        a missing sibling, an unreadable file, or a non-matching folder
-        contributes nothing; never a raise into the caller."""
-        out: list[dict] = []
-        specs_dir = (
-            project_dir(project_id, "hunting/hunter", root=self._root) / "test-specs"
-        )
-        if not specs_dir.exists():
-            return out
-        for fault_dir in sorted(specs_dir.iterdir()):
-            if not fault_dir.is_dir():
-                continue
-            cfg_key = _fault_key_to_config_key(fault_dir.name)
-            if cfg_key is None or not _keys_match(cfg_key, key):
-                continue
-            for directory in (fault_dir / "produced", fault_dir / "consumed"):
-                if not directory.exists():
-                    continue
-                for path in sorted(directory.glob("*.yaml")):
-                    body = self._read_yaml(path)
-                    if body is None:
-                        continue
-                    # #313: only a `specified` record is a completed
-                    # TestImplementationSpec; a draft is hypothesis-only and is
-                    # never a downstream prior-hunt insight.
-                    if body.get("status") != "specified":
-                        continue
-                    out.append(_prior_spec_insight(body, path.stem))
-        return out
-
-    def read_hunter_notes(self, project_id: str, key: str) -> list[dict]:
-        """The Q16 durable PodExport notes (hunter-memory SIBLING bucket, #202):
-        the `hunter/notes.yaml` verdict-stub records whose fault_key matches
-        `key` (a 3-part config_key or a 2-part revival-key prefix), each
-        projected to the export envelope (`verdict` / `terminal_reason` /
-        `clean`) plus the source + run_id provenance - shallow (I3), the raw
-        evidence trail is never embedded. Fail-open per record (O4): a missing
-        sibling, an unreadable file, or a non-matching record contributes
-        nothing; never a raise into the caller."""
-        out: list[dict] = []
-        notes_file = (
-            project_dir(project_id, "hunting/hunter", root=self._root) / "notes.yaml"
-        )
-        if not notes_file.exists():
-            return out
-        try:
-            loaded = yaml.safe_load(notes_file.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            logger.warning("hunt store: unreadable hunter notes %s (%s)",
-                           notes_file, exc)
-            return out
-        records = loaded if isinstance(loaded, list) else []
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            fault_key = rec.get("fault_key")
-            cfg_key = _fault_key_to_config_key(str(fault_key)) if fault_key else None
-            if cfg_key is None or not _keys_match(cfg_key, key):
-                continue
-            prov = rec.get("provenance") or {}
-            if not prov.get("verdict_stub"):
-                continue
-            payload: dict = {"kind": "prior_verdict"}
-            for k in ("source", "run_id"):
-                if prov.get(k) is not None:
-                    payload[k] = prov[k]
-            raw = rec.get("body") or ""
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    for k in ("verdict", "terminal_reason", "clean"):
-                        if parsed.get(k) is not None:
-                            payload[k] = parsed[k]
-            except (ValueError, TypeError):
-                pass
-            out.append(payload)
-        return out
 
     def append_note(self, project_id: str, key: str, note: str) -> dict:
         """Append one note for `key`; the record keeps the natural append

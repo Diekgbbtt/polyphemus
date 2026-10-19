@@ -199,7 +199,6 @@ def _coro_for(threat_store, hunter_store, *, state=None, hunter_builder=None,
         state=state, gate=None,
         hunter_builder=hunter_builder or _hunter_builder,
         pod_builder=_pod_builder_fake, control=control,
-        hunter_payload_capable=state.hunter_payload_capable,
     )
 
 
@@ -295,7 +294,6 @@ def _tick(threat_store, hunter_store, *, control=None, state=None):
         coro_for=_coro_for(threat_store, hunter_store, control=control,
                            state=state),
         live_loop_likelihoods=state.loop_likelihoods,
-        hunter_payload_capable=state.hunter_payload_capable,
     )
 
 
@@ -658,89 +656,6 @@ def _loop_file_record(**overrides) -> dict:
     }
     record.update(overrides)
     return record
-
-
-# --- the inert production path (C1, the T4a review) -----------------------------
-
-def test_a_run_whose_builder_cannot_consume_the_payload_is_inert(
-        tmp_path, monkeypatch, caplog):
-    """C1 (CODING_STANDARD s12): between T4a and T6 the production hunter harness
-    cannot consume the loop payload, so the run must be INERT - the loop file is
-    not dispatched and not moved, the model document is not consumed, the unit is
-    NOT excluded from later intake, and the run still quiesces - with ONE
-    run-level line naming the state.
-    """
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    from tests.attack.test_hunting_modeller_wiring import (
-        RUN as WIRING_RUN,
-        _FakeControl,
-        _FakePg,
-        _noop_pod_builder,
-        _patch_pg,
-    )
-    from tests.hunting_fixtures import ScriptedModellerTurns, intake_unit
-
-    fake = _FakePg()
-    _patch_pg(monkeypatch, fake)
-    hunter = HunterMemoryStore(tmp_path / "hunter")
-    models = ThreatModelStore(tmp_path / "models")
-    control = _FakeControl()
-
-    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
-        hid = asyncio.run(hunting_runtime.start_hunting(
-            PROJECT, intake_units=[intake_unit(UNIT)],
-            modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
-            graph_read_fn=lambda cypher, params: [],
-            control=control,
-            hunter_store=hunter, threat_store=models,
-            # the PRODUCTION hunter builder: the harness that cannot consume the
-            # loop payload yet
-            pod_builder=_noop_pod_builder,
-            tick_interval=0.001,
-        ))
-
-    assert hid == WIRING_RUN
-    assert fake.statuses[-1] == (WIRING_RUN, "complete")
-    # nothing dispatched, nothing moved, nothing consumed: the work stays
-    # dispatchable for the run that CAN consume it (T4b/T6)
-    assert [sid for sid in control.started if ":hunt:" in sid] == []
-    assert [entry["loop_id"] for entry in
-            models.read_produced_loops(PROJECT)[0]["loops"]] == ["loop-1"]
-    assert models.read_completed_units(PROJECT) == []
-    # and ONE run-level line names the state: the loops are produced, the per-loop
-    # hunter harness is designed-not-built, zero hunts ran
-    gap = [record.message for record in caplog.records
-           if "designed-not-built" in record.message and "loop" in record.message]
-    assert len(gap) == 1, gap
-    assert "1 produced loop file" in gap[0] and "zero hunts" in gap[0]
-
-
-def test_a_run_whose_builder_can_consume_the_payload_dispatches(
-        threat_store, hunter_store):
-    """The same seam, a capable builder: the loop dispatches and moves as before
-    (the capability flag must not change the capable path)."""
-    from polymerhus.attack.hunting.mover import run_delivery_tick
-    from polymerhus.attack.hunting.surfer import RunDispatchState, build_run_dispatch
-
-    produce_model(threat_store)
-    state = RunDispatchState()
-    builder, seen, _snapshots = _payload_recorder()
-    control = RecordingControlPlane()
-    coro_for = build_run_dispatch(
-        project_id=PROJECT, run_id=RUN,
-        threat_store=threat_store,
-        hunter_store=hunter_store, pod_store=None, state=state, gate=None,
-        hunter_builder=builder, pod_builder=_pod_builder_fake, control=control,
-    )
-
-    report = run_delivery_tick(
-        PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store,
-        control=control, coro_for=coro_for,
-    )
-
-    assert report.admitted == 1 and report.moved == 1
-    assert control.calls == [f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-1"]
-    assert threat_store.read_produced_loops(PROJECT) == []
 
 
 def test_a_refused_dispatch_leaks_no_run_state_and_quiesces(

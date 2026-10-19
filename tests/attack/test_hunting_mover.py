@@ -191,7 +191,7 @@ def test_the_low_pause_is_per_tick_and_cross_unit():
 def test_sequence_dispatch_leaves_the_spec_family_alone():
     """The pod path stays (S3 8.7): the sequencing ranks LOOPS; a produced spec
     is not held by a higher-ranked loop file."""
-    spec = TestSpecItem(message_id="k/f.yaml", session_id="s", fault_key="k",
+    spec = TestSpecItem(message_id="k/f.yaml", session_id="s", hunt_key="k",
                         spec_file="f.yaml")
     assert sequence_dispatch([spec]) == (spec,)
 
@@ -319,9 +319,9 @@ def test_family_items_mix_in_one_deduction():
         record={},
     )
     spec = TestSpecItem(
-        message_id="Service:a_CWE-639_IDOR/sqli_blind",
-        session_id="hunting:run-1:pod:Service:a_CWE-639_IDOR:sqli_blind",
-        fault_key="Service:a_CWE-639_IDOR",
+        message_id="Service-a__loop-1/sqli_blind",
+        session_id="hunting:run-1:pod:Service-a__loop-1:sqli_blind",
+        hunt_key="Service-a__loop-1",
         spec_file="sqli_blind",
     )
     plan = deduce_delivery([loop, spec], feedback={

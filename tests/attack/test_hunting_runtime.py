@@ -430,19 +430,16 @@ def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     assert stats["quota_exhausted"] is True
 
 
-# designed-not-built -> T6 (#379): the real harness (`build_hunting_agent`)
-# still consumes a `HuntConfig`; a mover-dispatched loop payload is refused
-# loudly by `_default_hunter_builder`. The raw-raise classification at THAT
-# seam is asserted in `tests/attack/test_hunting_agent.py`, and the run-terminal
-# propagation of a dispatched hunter's provider failure in
-# `test_hunter_provider_failure_interrupts_the_run` above. The end-to-end
-# real-harness variant returns with T6, when the harness consumes the payload.
+# T6 (#379): the production harness consumes the loop payload end to end. The
+# raw-raise classification AT that seam and the end-to-end run pause are
+# asserted below (`test_the_production_hunter_seam_...`) and in
+# `test_hunter_provider_failure_interrupts_the_run` above.
 
 
 def test_build_production_hunting_agent_wires_real_seams(tmp_path):
     """The production default dispatch closure: construction is inert (no I/O,
     no LLM, no network) and returns a callable dispatch plus a reapable
-    registry, wired to the real fault-KB lookup and the real HTTP pod."""
+    registry, wired to the real graph view, exec and HTTP seams."""
     from polymerhus.attack.hunting.runtime import build_production_hunting_agent
 
     dispatch, registry = build_production_hunting_agent(
@@ -452,25 +449,41 @@ def test_build_production_hunting_agent_wires_real_seams(tmp_path):
     assert registry is not None
 
 
-def test_the_production_hunter_builder_refuses_a_loop_payload_loudly(tmp_path):
-    """T4b (#387) / T6 (#379): the production builder carries the materialised
-    loop payload only to REFUSE it loudly - the harness still consumes the
-    retired `HuntConfig`, so the refusal is the designed-not-built marker
-    naming T6. A silent config fabrication would be the failure this pins."""
+def test_the_production_hunter_builder_consumes_the_loop_payload(tmp_path):
+    """T6 (#379): the production hunter builder hands the materialised loop
+    payload straight to the harness - no refusal marker, no `consumes_loop_payload`
+    flag, no `Mapping` discrimination. The raw provider error AT the real seam
+    propagates as the typed pause cause (the #312 end-to-end variant restored
+    once the harness consumed the payload)."""
     import asyncio
 
+    from langgraph.checkpoint.memory import InMemorySaver
+
     from polymerhus.attack.hunting.runtime import (
-        HunterPayloadNotBuiltError,
         _default_hunter_builder,
+        build_production_hunting_agent,
+    )
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+    from tests.hunting_fixtures import (
+        _RaisingModel,
+        _hunter_payload,
+        _openai_rate_limit_error,
+        build_memory_store,
     )
 
-    dispatch, _registry = _default_hunter_builder(
+    assert not hasattr(_default_hunter_builder, "consumes_loop_payload")
+
+    dispatch, registry = build_production_hunting_agent(
         run_id="prod-run", project_id="p",
-        hunter_store=HunterMemoryStore(root_dir=tmp_path / "hunter"),
+        memory_store=build_memory_store(tmp_path),
+        model_factory=lambda role_id: _RaisingModel(
+            exc=_openai_rate_limit_error()),
+        checkpointer=InMemorySaver(), observe=False,
     )
-    with pytest.raises(HunterPayloadNotBuiltError) as excinfo:
-        asyncio.run(dispatch({"dispatch_id": "unit-name__loop-1"}))
-    assert "T6" in str(excinfo.value) and "#379" in str(excinfo.value)
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        asyncio.run(dispatch(_hunter_payload()))
+    assert excinfo.value.status_code == 429
+    assert registry is not None
 
 
 def test_start_hunting_fail_open_when_pg_is_unavailable(monkeypatch, caplog):

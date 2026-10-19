@@ -1,159 +1,268 @@
-"""Unit tier: the per-project hunter-memory store's move-aware spec surface (#205).
+"""Unit tier: the hunter-memory spec-set store (S3 8.6-8.9, T6 #379).
 
-Pure filesystem mechanics - no Neo4j, no LLM. Pins the #205 regression at the
-store seam, mirroring the #192 ratify-upsert regression for the hunt store
-(`tests/attack/test_hunt_store.py`): a produced-target `write_spec` whose
-identity ALREADY lives in consumed/ (the mover's at-least-once marker landed)
-is a no-op success returning the consumed Path - it never re-creates a
-produced/ copy, so produced/ and consumed/ stay mutually exclusive per name
-(G4) and the surfer's spec inbox keeps draining (the #205 race: the hunter's
-late `specified` harness write can land after the mover consumed the spec;
-without the guard the mover re-dispatches the identity every tick and the run
-hangs in `running`, F5).
+Pure filesystem mechanics - no Neo4j, no LLM. Pins the loop-driven store's
+contract: the batched `specs` set write, the `{hypothesised, ratified,
+dropped}` lifecycle, the loop dispatch store key / folder / derived file name,
+the move-aware write (the #205 rule), the reduced-D4-at-every-status body, the
+typed skill-procedure provenance, and the atomic/bounded notes surface.
 """
 from __future__ import annotations
 
 import logging
 import os
 from pathlib import Path
-from typing import Literal
 
 import pytest
 import yaml
 
 from polymerhus.attack.hunting import hunter_memory
-from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
+from polymerhus.attack.hunting.hunter_memory import (
+    DuplicateSpecError,
+    HunterMemoryStore,
+    spec_identifier,
+)
 
 PROJECT = "proj-1"
-FAULT_KEY = "Service:account-registration_CWE-266_Privilege Escalation"
+HUNT_KEY = "Service-account-registration__loop-1"
+SPEC_ID = "registration_probe"
 
 
-def _spec(**extra) -> dict:
-    """A `specified`-shape write payload carrying the lifecycle status."""
+def _spec(*, status: str = "hypothesised", fault_keyword: str = "registration",
+          strategy_keyword: str = "probe", **extra) -> dict:
+    """A reduced-D4 spec payload: the identity keywords + the status verbatim
+    plus the typed body the store persists unchanged."""
     body = {
-        "fault_id": "F1", "spec_id": "S1", "status": "specified",
-        "strategy": "probe", "fault_key": FAULT_KEY, "test": "t",
+        "status": status,
+        "fault_keyword": fault_keyword,
+        "strategy_keyword": strategy_keyword,
+        "target_identity": {"url": "http://target", "unit_id": "Service:a"},
+        "verification_symptoms": ["a foreign item renders"],
+        "assumptions": ["the ownership check is absent"],
+        "rationale": "an anonymous caller reads another user's item",
+        "parent_spec_ref": None,
+        "provenance": {"loop_id": "loop-1", "unit_id": "Service:a"},
     }
     body.update(extra)
     return body
 
 
-def _spec_file(tmp_path, side: Literal["produced", "consumed"]) -> Path:
+def _spec_file(tmp_path, side: str, spec_id: str = SPEC_ID) -> Path:
     return (
-        tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY
-        / side / "registration_probe.yaml"
+        tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / HUNT_KEY
+        / side / f"{spec_id}.yaml"
     )
 
 
-# --- #205: write_spec is move-aware (G4 mutual exclusivity) -------------------
+# --- the set write and the status lifecycle (S3 8.6-8.7) ----------------------
+
+def test_a_batched_specs_write_creates_the_whole_set(tmp_path):
+    """S3 8.7: one write carries the WHOLE set, all `hypothesised`, and the
+    store creates one file per derived identity in the loop's folder."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    written = store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="registration", strategy_keyword="probe"),
+        _spec(fault_keyword="reset", strategy_keyword="replay"),
+    ])
+    assert [spec_id for spec_id, _ in written] == ["registration_probe", "reset_replay"]
+    assert _spec_file(tmp_path, "produced", "registration_probe").is_file()
+    assert _spec_file(tmp_path, "produced", "reset_replay").is_file()
+    assert store.read_specs(PROJECT, HUNT_KEY, sides=("produced",)) == [
+        _spec(fault_keyword="registration", strategy_keyword="probe"),
+        _spec(fault_keyword="reset", strategy_keyword="replay"),
+    ]
+
+
+def test_the_terminal_write_promotes_and_declasses_in_place(tmp_path):
+    """S3 8.7: the terminal write carries the whole set - survivors `ratified`,
+    unfeasible `dropped` - and upserts each identity in place (one file per
+    identity, never a second one)."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="registration", strategy_keyword="probe"),
+        _spec(fault_keyword="reset", strategy_keyword="replay"),
+    ])
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(status="ratified", fault_keyword="registration", strategy_keyword="probe"),
+        _spec(status="dropped", fault_keyword="reset", strategy_keyword="replay",
+              verification_symptoms=[]),
+    ])
+    produced = _spec_file(tmp_path, "produced").parent
+    assert sorted(path.name for path in produced.glob("*.yaml")) == [
+        "registration_probe.yaml", "reset_replay.yaml"]
+    assert store.read_spec(PROJECT, HUNT_KEY, "registration_probe")["status"] == "ratified"
+    dropped = store.read_spec(PROJECT, HUNT_KEY, "reset_replay")
+    assert dropped["status"] == "dropped"
+    # the body is the reduced D4 at every status: no FaultItem/spec_id residue
+    assert dropped["verification_symptoms"] == []
+    assert "spec_id" not in dropped and "experiment_ref" not in dropped
+
+
+def test_a_duplicate_identity_in_one_set_is_the_dedup_signal(tmp_path):
+    """S3 8.7: a duplicate derived identity INSIDE one set is the dedup signal;
+    a rejected batch never leaves a partial set on disk."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    with pytest.raises(DuplicateSpecError):
+        store.write_specs(PROJECT, HUNT_KEY, [
+            _spec(fault_keyword="registration", strategy_keyword="probe"),
+            _spec(fault_keyword="registration", strategy_keyword="probe",
+                  status="dropped"),
+        ])
+    assert store.read_specs(PROJECT, HUNT_KEY) == []
+
+
+def test_the_payload_must_not_author_the_derived_spec_id(tmp_path):
+    """S3 8.6: the spec identity is the DERIVED file-name stem; a payload that
+    authors `spec_id` is rejected rather than persisted."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    with pytest.raises(ValueError, match="spec_id"):
+        store.write_specs(PROJECT, HUNT_KEY, [_spec(spec_id="S1")])
+
+
+def test_the_status_vocabulary_is_the_three_live_values(tmp_path):
+    """S3 8.6/S4 14.6: `{hypothesised, ratified, dropped}` everywhere; the
+    retired `verified`/`specified` values are refused by the store."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    for retired in ("verified", "specified"):
+        with pytest.raises(ValueError, match="status"):
+            store.write_specs(PROJECT, HUNT_KEY, [_spec(status=retired)])
+
+
+def test_the_file_name_is_derived_from_the_sanitised_keywords(tmp_path):
+    """S3 8.6/G3: `<fault_keyword>_<strategy_keyword>.yaml`; `_` is the one
+    separator, so `_`/`:`/path separators/control chars are replaced with `-`."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    written = store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="fault/x:csrf", strategy_keyword="probe_1"),
+    ])
+    assert written[0][0] == "fault-x-csrf_probe-1"
+    assert _spec_file(tmp_path, "produced", "fault-x-csrf_probe-1").is_file()
+    assert spec_identifier("fault/x:csrf", "probe_1") == "fault-x-csrf_probe-1"
+    with pytest.raises(ValueError):
+        store.write_specs(PROJECT, HUNT_KEY, [
+            _spec(fault_keyword="..", strategy_keyword="probe")])
+
+
+def test_the_store_key_is_the_hunt_key_folder(tmp_path):
+    """S3 8.9: the folder is `test-specs/<hunt_key>/`, where the hunt key is
+    the loop dispatch id `<unit_name>__<loop_id>`."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    expected = (
+        tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / HUNT_KEY
+        / "produced" / "registration_probe.yaml"
+    )
+    assert expected.is_file()
+    assert store.list_hunt_keys(PROJECT) == [HUNT_KEY]
+
+
+# --- the move-aware write (the #205 rule) -------------------------------------
 
 def test_produced_write_after_move_is_a_no_op_and_never_recreates(tmp_path, caplog):
-    """#205 regression, `mode="update"`: after the mover consumed the spec, the
-    hunter's late `specified` harness write (the lifecycle update) lands AFTER
-    the move. It must be a no-op success returning the durable consumed Path -
-    produced/ stays absent, so produced/ and consumed/ hold the name once (G4)
-    and the surfer's inbox drains."""
+    """#205: after the mover consumed an identity, the hunter's late terminal
+    write must be a no-op success returning the durable consumed Path -
+    produced/ stays absent, so the inbox drains and the run does not hang."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    k = dict(fault_keyword="registration", strategy_keyword="probe")
-    store.write_spec(PROJECT, FAULT_KEY, mode="create", spec=_spec(), **k)
-    assert store.consume_spec(PROJECT, FAULT_KEY, "registration_probe") is True
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    assert store.consume_spec(PROJECT, HUNT_KEY, SPEC_ID) is True
     assert not _spec_file(tmp_path, "produced").exists()
     with caplog.at_level(logging.WARNING):
-        result = store.write_spec(PROJECT, FAULT_KEY, mode="update", spec=_spec(), **k)
+        written = store.write_specs(PROJECT, HUNT_KEY, [_spec(status="ratified")])
     assert _spec_file(tmp_path, "consumed").exists()
     assert not _spec_file(tmp_path, "produced").exists()
-    assert store.produced_spec_files(PROJECT, FAULT_KEY) == []
-    assert isinstance(result, Path)
-    assert result == _spec_file(tmp_path, "consumed")
-    assert any("post-move write, #205" in r.message for r in caplog.records)
-
-
-def test_produced_create_write_after_move_is_a_no_op(tmp_path, caplog):
-    """#205 regression, `mode="create"`: the create-mode novelty gate only
-    checks the produced side, so a post-move create write previously fabricated
-    a fresh produced/ copy (the move-aware check must short-circuit BEFORE the
-    novelty gate). It is now a no-op success returning the consumed Path."""
-    store = HunterMemoryStore(root_dir=tmp_path)
-    k = dict(fault_keyword="registration", strategy_keyword="probe")
-    store.write_spec(PROJECT, FAULT_KEY, mode="create", spec=_spec(), **k)
-    assert store.consume_spec(PROJECT, FAULT_KEY, "registration_probe") is True
-    with caplog.at_level(logging.WARNING):
-        result = store.write_spec(PROJECT, FAULT_KEY, mode="create", spec=_spec(), **k)
-    assert _spec_file(tmp_path, "consumed").exists()
-    assert not _spec_file(tmp_path, "produced").exists()
-    assert store.produced_spec_files(PROJECT, FAULT_KEY) == []
-    assert isinstance(result, Path)
-    assert result == _spec_file(tmp_path, "consumed")
+    assert store.produced_spec_files(PROJECT, HUNT_KEY) == []
+    assert written == [(SPEC_ID, _spec_file(tmp_path, "consumed"))]
     assert any("post-move write, #205" in r.message for r in caplog.records)
 
 
 def test_move_aware_no_op_keeps_consume_a_noop_success(tmp_path, caplog):
-    """#205 quiesce proof: after the move-aware no-op, the next mover tick has
-    an empty produced inbox - `consume_spec` is a no-op success (never the
-    dual-sided clobber refusal), so the run reaches terminal (no re-dispatch
-    churn, no hang in `running`)."""
+    """#205 quiesce proof: after the move-aware no-op the next mover tick has an
+    empty produced inbox - `consume_spec` is a no-op success, never the
+    dual-sided clobber refusal."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    k = dict(fault_keyword="registration", strategy_keyword="probe")
-    store.write_spec(PROJECT, FAULT_KEY, mode="create", spec=_spec(), **k)
-    assert store.consume_spec(PROJECT, FAULT_KEY, "registration_probe") is True
-    store.write_spec(PROJECT, FAULT_KEY, mode="update", spec=_spec(), **k)
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    assert store.consume_spec(PROJECT, HUNT_KEY, SPEC_ID) is True
+    store.write_specs(PROJECT, HUNT_KEY, [_spec(status="ratified")])
     with caplog.at_level(logging.WARNING):
-        assert store.consume_spec(PROJECT, FAULT_KEY, "registration_probe") is True
-    assert store.produced_spec_files(PROJECT, FAULT_KEY) == []
+        assert store.consume_spec(PROJECT, HUNT_KEY, SPEC_ID) is True
+    assert store.produced_spec_files(PROJECT, HUNT_KEY) == []
     assert not any("both produced/ and consumed/" in r.message for r in caplog.records)
 
 
-# --- no regression: the ordinary sides keep their semantics ------------------
-
 def test_produced_write_still_creates_when_consumed_absent(tmp_path):
-    """A normal produced-target write with no consumed/ twin still creates the
-    produced file (create) and re-authors it in place (update) - the guard only
-    fires on a post-move write."""
+    """A normal produced-target write with no consumed twin creates the set and
+    upserts it in place - the move-aware guard only fires post-move."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    k = dict(fault_keyword="registration", strategy_keyword="probe")
-    result = store.write_spec(PROJECT, FAULT_KEY, mode="create", spec=_spec(), **k)
-    assert isinstance(result, Path)
-    assert result == _spec_file(tmp_path, "produced")
-    assert _spec_file(tmp_path, "produced").exists()
-    assert not _spec_file(tmp_path, "consumed").exists()
-    store.write_spec(PROJECT, FAULT_KEY, mode="update",
-                     spec=_spec(test="t2"), **k)
-    assert store.read_spec(PROJECT, FAULT_KEY, **k)["test"] == "t2"
-    assert store.produced_spec_files(PROJECT, FAULT_KEY) == ["registration_probe"]
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(status="ratified", rationale="amended")])
+    assert store.read_spec(PROJECT, HUNT_KEY, SPEC_ID)["rationale"] == "amended"
+    assert store.produced_spec_files(PROJECT, HUNT_KEY) == [SPEC_ID]
 
 
 def test_consumed_side_write_is_unaffected(tmp_path):
     """A `side="consumed"` write is untouched by the guard: replay still
-    overwrites the consumed record in place (the mover's at-least-once marker
-    is re-dumped, never blocked, never clobbered)."""
+    overwrites the consumed record in place."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    k = dict(fault_keyword="registration", strategy_keyword="probe")
-    store.write_spec(PROJECT, FAULT_KEY, mode="create", side="consumed",
-                     spec=_spec(), **k)
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()], side="consumed")
     assert _spec_file(tmp_path, "consumed").exists()
     assert not _spec_file(tmp_path, "produced").exists()
-    store.write_spec(PROJECT, FAULT_KEY, mode="update", side="consumed",
-                     spec=_spec(test="t2"), **k)
-    assert store.read_spec(PROJECT, FAULT_KEY, side="consumed",
-                           **k)["test"] == "t2"
+    store.write_specs(PROJECT, HUNT_KEY,
+                      [_spec(status="ratified", rationale="replay")], side="consumed")
+    assert store.read_spec(PROJECT, HUNT_KEY, SPEC_ID, side="consumed")["rationale"] \
+        == "replay"
     assert not _spec_file(tmp_path, "produced").exists()
 
 
-def test_config_key_from_fault_key_accepts_a_system_unit_with_double_colon():
-    # G4 regression (live e2e eval): the `::` semantic-key form of a System
-    # unit id (which itself contains `::`) must normalise to the same key, and
-    # the `_` folder form must round-trip to it too.
-    from polymerhus.attack.hunting.hunter_memory import config_key_from_fault_key
+# --- the read surface ---------------------------------------------------------
 
-    unit = "System:AuthorizationSystem::__singleton__"
-    key = f"{unit}::CWE-1220::Broken Function Level Authorization (BFLA)"
-    assert config_key_from_fault_key(key) == key
-    folder = (
-        "System:AuthorizationSystem::__singleton__"
-        "_CWE-1220_Broken Function Level Authorization (BFLA)"
-    )
-    assert config_key_from_fault_key(folder) == key
-    HunterMemoryStore._validate_fault_key(key)
+def test_read_specs_sides_and_status_filters(tmp_path):
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="f1", strategy_keyword="probe"),
+        _spec(fault_keyword="f2", strategy_keyword="probe", status="dropped"),
+    ])
+    assert len(store.read_specs(PROJECT, HUNT_KEY)) == 2
+    ratified = store.read_specs(PROJECT, HUNT_KEY, statuses=["ratified"])
+    assert ratified == []
+    dropped = store.read_specs(PROJECT, HUNT_KEY, statuses=["dropped"],
+                              attributes=["status"])
+    assert dropped == [{"status": "dropped"}]
+    assert store.read_spec(PROJECT, HUNT_KEY, "missing") is None
+
+
+def test_a_corrupt_spec_file_raises(tmp_path):
+    """O4: a corrupt file raises rather than silently returning an empty set
+    (the write paths rewrite whole files)."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    _spec_file(tmp_path, "produced").write_text(": : not yaml [", encoding="utf-8")
+    with pytest.raises(OSError):
+        store.read_specs(PROJECT, HUNT_KEY)
+
+
+# --- the typed skill-procedure provenance (S3 8.6, S5 8.6) --------------------
+
+def test_the_skill_procedure_provenance_round_trips(tmp_path):
+    from polymerhus.attack.hunting.spec_contract import SkillProcedure
+
+    procedure = SkillProcedure(recon_action="mine the item id",
+                               bypass_technique="swap the id")
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(provenance={**_spec()["provenance"],
+                          "skill_procedure": procedure.model_dump()})])
+    body = store.read_spec(PROJECT, HUNT_KEY, SPEC_ID)
+    assert body["provenance"]["skill_procedure"]["recon_action"] == "mine the item id"
+
+
+def test_an_over_long_skill_procedure_is_a_coded_rejection(tmp_path):
+    from polymerhus.attack.hunting.spec_contract import SkillProcedure
+
+    store = HunterMemoryStore(root_dir=tmp_path)
+    procedure = SkillProcedure(recon_action="z" * 4001)
+    with pytest.raises(ValueError, match="4000"):
+        store.write_specs(PROJECT, HUNT_KEY, [
+            _spec(provenance={"skill_procedure": procedure.model_dump()})])
 
 
 # --- #340: notes.yaml is written atomically ----------------------------------
@@ -170,16 +279,13 @@ def _tmp_leftovers(directory: Path) -> list[Path]:
 
 def _append(store: HunterMemoryStore, body: str) -> None:
     store.write_note(
-        PROJECT, action="append", fault_key=FAULT_KEY, note_name="n1",
+        PROJECT, action="append", hunt_key=HUNT_KEY, note_name="n1",
         kind="freeform", body=body,
     )
 
 
 def test_failed_notes_dump_leaves_prior_content_intact(tmp_path, monkeypatch, caplog):
-    """#340: a raising dump must never truncate notes.yaml. The old plain
-    `path.open("w")` truncated the file before dumping, so a mid-dump abort
-    left it empty/malformed and every later read raised. The atomic write
-    renders the body first, so the previous file survives untouched."""
+    """#340: a raising dump must never truncate notes.yaml."""
     store = HunterMemoryStore(root_dir=tmp_path)
     _append(store, "first")
     notes = _notes_file(tmp_path)
@@ -201,9 +307,7 @@ def test_failed_notes_dump_leaves_prior_content_intact(tmp_path, monkeypatch, ca
 
 
 def test_aborted_replace_leaves_prior_notes_intact(tmp_path, monkeypatch):
-    """#340: an abort AFTER the temp file is fully written but BEFORE the
-    `os.replace` lands leaves the previous notes.yaml intact and cleans up the
-    temp. Only the atomic rename mutates the live file."""
+    """#340: an abort before the atomic rename leaves the previous file."""
     store = HunterMemoryStore(root_dir=tmp_path)
     _append(store, "first")
     notes = _notes_file(tmp_path)
@@ -223,9 +327,8 @@ def test_aborted_replace_leaves_prior_notes_intact(tmp_path, monkeypatch):
 
 
 def test_reader_never_sees_a_partial_notes_file(tmp_path, monkeypatch):
-    """#340: a concurrent reader observes the OLD complete file for the whole
-    write, because the new content only becomes visible at the atomic rename.
-    The hook fires exactly at that boundary and records what a reader sees."""
+    """#340: a concurrent reader observes the OLD complete file until the
+    atomic rename lands."""
     store = HunterMemoryStore(root_dir=tmp_path)
     _append(store, "first")
     notes = _notes_file(tmp_path)
@@ -247,11 +350,9 @@ def test_reader_never_sees_a_partial_notes_file(tmp_path, monkeypatch):
 
 
 def test_failed_spec_dump_leaves_no_partial_file(tmp_path, monkeypatch):
-    """#340: `write_spec` writes the produced spec file the same way, so the
-    same hazard applies. A raising dump must leave no partial spec file on
-    disk (the old truncate-then-dump left an empty file the reader refused)."""
+    """#340: the batched spec write is atomic per file; a raising dump leaves
+    no partial spec file on disk."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    k = dict(fault_keyword="registration", strategy_keyword="probe")
     spec_file = _spec_file(tmp_path, "produced")
 
     def boom(*args, **kwargs):
@@ -260,7 +361,7 @@ def test_failed_spec_dump_leaves_no_partial_file(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "polymerhus.attack.hunting.hunter_memory.yaml.safe_dump", boom)
     with pytest.raises(RuntimeError):
-        store.write_spec(PROJECT, FAULT_KEY, mode="create", spec=_spec(), **k)
+        store.write_specs(PROJECT, HUNT_KEY, [_spec()])
     monkeypatch.undo()
 
     assert not spec_file.exists()
@@ -271,7 +372,7 @@ def test_failed_spec_dump_leaves_no_partial_file(tmp_path, monkeypatch):
 def _append_named(store: HunterMemoryStore, name: str, body: str = "x",
                   provenance: dict | None = None) -> None:
     store.write_note(
-        PROJECT, action="append", fault_key=FAULT_KEY, note_name=name,
+        PROJECT, action="append", hunt_key=HUNT_KEY, note_name=name,
         kind="freeform", body=body, provenance=provenance,
     )
 
@@ -281,10 +382,7 @@ def _unbounded_size(monkeypatch) -> None:
 
 
 def test_notes_file_is_bounded_by_record_count(tmp_path, monkeypatch):
-    """#341: a long run appends records forever; the store keeps only the
-    newest HUNTER_NOTES_MAX_RECORDS, so the whole-file rewrite stays O(bound)
-    and the file cannot grow without limit. The reader still sees one complete
-    parseable file."""
+    """#341: the store keeps only the newest HUNTER_NOTES_MAX_RECORDS."""
     monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 3)
     _unbounded_size(monkeypatch)
     store = HunterMemoryStore(root_dir=tmp_path)
@@ -297,10 +395,8 @@ def test_notes_file_is_bounded_by_record_count(tmp_path, monkeypatch):
 
 
 def test_notes_eviction_preserves_durable_pod_export_records(tmp_path, monkeypatch):
-    """#341: the durable prior-insight record - the Q16 pod-export stub
-    (`provenance.verdict_stub`, consumed by `HuntStore.read_hunter_notes` into
-    a config's `prior_hunt_insights`) - survives ordinary eviction. The oldest
-    REASONING notes are dropped first; the stub is kept."""
+    """#341: the Q16 pod-export stub (`provenance.verdict_stub`) survives
+    ordinary eviction; the oldest reasoning notes are dropped first."""
     monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 3)
     _unbounded_size(monkeypatch)
     store = HunterMemoryStore(root_dir=tmp_path)
@@ -313,9 +409,7 @@ def test_notes_eviction_preserves_durable_pod_export_records(tmp_path, monkeypat
 
 
 def test_notes_bound_is_absolute_when_durable_records_alone_exceed_it(tmp_path, monkeypatch):
-    """#341: the bound is absolute - when the protected durable records alone
-    exceed it, the hard ceiling still trims the oldest, so the file can never
-    grow without limit. The newest survive."""
+    """#341: the bound is absolute even when protected records alone exceed it."""
     monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 2)
     _unbounded_size(monkeypatch)
     store = HunterMemoryStore(root_dir=tmp_path)
@@ -327,10 +421,7 @@ def test_notes_bound_is_absolute_when_durable_records_alone_exceed_it(tmp_path, 
 
 
 def test_notes_file_is_bounded_by_serialized_size(tmp_path, monkeypatch):
-    """#341: the count bound alone is not enough when one record body is huge
-    (the observed pod-export stubs carry a full export log). A serialized-size
-    ceiling evicts oldest-first until the file fits, so the rewrite cost is
-    bounded by bytes, not by record count."""
+    """#341: a serialized-size ceiling evicts oldest-first until the file fits."""
     monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 10**6)
     monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_BYTES", 4000)
     store = HunterMemoryStore(root_dir=tmp_path)
@@ -344,9 +435,7 @@ def test_notes_file_is_bounded_by_serialized_size(tmp_path, monkeypatch):
 
 
 def test_a_single_oversized_record_is_kept_whole(tmp_path, monkeypatch):
-    """#341: a record larger than the whole-file ceiling is never truncated
-    (the write must land); the ceiling bounds the file EXCEPT for that one
-    in-flight record."""
+    """#341: a record larger than the ceiling is never truncated."""
     monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 10**6)
     monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_BYTES", 100)
     store = HunterMemoryStore(root_dir=tmp_path)
@@ -356,30 +445,26 @@ def test_a_single_oversized_record_is_kept_whole(tmp_path, monkeypatch):
     assert notes[0]["note_name"] == "oversized"
 
 
-
 # --- S4 14.8: the hunter-only phase-summary note kind -------------------------
 
-
 def test_phase_summary_is_a_hunter_note_kind_and_an_update_rewrites_it(tmp_path):
-    """S4 14.8/Q51a: the hunter's notes accept the `phase_summary` kind - the
-    interposed pass exit - and a loop re-iteration rewrites the SAME
-    `phase:<state>` note with `action=update` (the latest note wins)."""
+    """S4 14.8/Q51a: the phase note is written and updated on a re-iteration;
+    the name is `phase:<state>` under the bound hunt key."""
     store = HunterMemoryStore(root_dir=tmp_path)
     key = store.write_note(
-        PROJECT, action="append", fault_key=FAULT_KEY,
+        PROJECT, action="append", hunt_key=HUNT_KEY,
         note_name="phase:slice", kind="phase_summary", body="first slice")
-    assert key == f"{FAULT_KEY}:phase:slice"
+    assert key == f"{HUNT_KEY}:phase:slice"
     store.write_note(
-        PROJECT, action="update", fault_key=FAULT_KEY,
+        PROJECT, action="update", hunt_key=HUNT_KEY,
         note_name="phase:slice", kind="phase_summary", body="re-iterated slice")
-    notes = store.read_notes(PROJECT)
+    notes = store.read_notes(PROJECT, parent_key=HUNT_KEY)
     assert [n["body"] for n in notes] == ["re-iterated slice"]
     assert notes[0]["kind"] == "phase_summary"
 
 
 def test_the_phase_kind_is_hunter_only():
-    """S4 14.8: the hunt-store and pod note enums do NOT gain `phase_summary`;
-    it is the hunter's kind alone."""
+    """S4 14.8: the hunt-store and pod note enums do NOT gain `phase_summary`."""
     from polymerhus.attack.hunting.hunt_store import ProjectMemoryStore
     from polymerhus.attack.hunting.pod.pod_memory import POD_NOTE_KINDS
 

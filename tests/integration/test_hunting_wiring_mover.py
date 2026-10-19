@@ -6,7 +6,7 @@ PRODUCTION-CODE-FIRST (operator ruling "use as much as possible production
 code"): the tests drive the REAL `mover.run_delivery_tick`, the REAL
 `surfer.build_run_dispatch` `coro_for`, the REAL stores (`ThreatModelStore`,
 `HunterMemoryStore`, `PodMemoryStore`) on temp roots, the REAL
-`config_key_from_fault_key`, and the REAL `surfer.run_pod_session`. The ONLY
+and the REAL `surfer.run_pod_session`. The ONLY
 fakes sit at the two permitted seams:
 
 - the agent-seam builder coroutines (hunter / pod builders - the contract's
@@ -28,10 +28,10 @@ Predicate coverage (one `test_C<n>_...` each, id in the docstring line):
   `moved == 0`.
 - C32 double-dispatch defense: a registry-live produced item assembles no
   re-dispatch yet its move lands once.
-- C33 the identity-based-refactor regression: a produced `specified` spec with
+- C33 the identity-based-refactor regression: a produced `ratified` spec with
   an EMPTY `hunter_inboxes` still dispatches ONE pod (own-status gate) and the
   pod builder is called exactly once.
-- C34 never-disagree: a produced `specified` spec is real work to
+- C34 never-disagree: a produced `ratified` spec is real work to
   `run_work_remaining` AND `build_run_dispatch._spec_dispatch` returns a
   coroutine for it - agree by construction on the same seed.
 - C35 a produced loop file from ANOTHER run, and a malformed loop file,
@@ -53,10 +53,7 @@ import asyncio
 
 import pytest
 
-from polymerhus.attack.hunting.hunter_memory import (
-    HunterMemoryStore,
-    config_key_from_fault_key,
-)
+from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
     pod_session_id,
     run_delivery_tick,
@@ -78,12 +75,6 @@ RUN = "run-c30"
 UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
-# The production `_`-joined fault_key folder convention (G4 / ADR Q13
-# `config_id`): `<unit>_<CWE-x>_<class>`. This is the form that caught the
-# masking bug - `config_key_from_fault_key` must recover the canonical
-# `::`-joined config_key from it.
-FAULT_KEY = f"{UNIT}_{CWE}_{CLASS}"
-CONFIG_KEY = f"{UNIT}::{CWE}::{CLASS}"
 UNIT_NAME = "Service-catalogue-and-discovery"
 DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 SPEC_KEYWORD = "sqli"
@@ -106,11 +97,10 @@ def _produce(threat, *, run_id=RUN):
 
 def _spec(**overrides) -> dict:
     data = {
-        "spec_id": SPEC_FILE,
-        "fault_key": FAULT_KEY,
-        "fault": {},
-        "strategy": STRATEGY,
-        "status": "specified",
+        "status": "ratified",
+        "fault_keyword": SPEC_KEYWORD,
+        "strategy_keyword": STRATEGY,
+        "verification_symptoms": ["a foreign item renders"],
     }
     data.update(overrides)
     return data
@@ -123,11 +113,11 @@ def stores(tmp_path):
     return threat, hunter
 
 
-def _write_spec(hunter, *, fault_key=FAULT_KEY, keyword=SPEC_KEYWORD,
-                strategy=STRATEGY, status="specified") -> None:
-    hunter.write_spec(
-        PROJECT, fault_key,
-        fault_keyword=keyword, strategy_keyword=strategy, spec=_spec(status=status),
+def _write_spec(hunter, *, hunt_key=DISPATCH_ID, keyword=SPEC_KEYWORD,
+                strategy=STRATEGY, status="ratified") -> None:
+    hunter.write_specs(
+        PROJECT, hunt_key,
+        [_spec(status=status, fault_keyword=keyword, strategy_keyword=strategy)],
     )
 
 
@@ -357,7 +347,7 @@ def test_C32_live_registry_item_is_never_dispatched_twice_and_moves_once(
 def test_C33_specified_spec_with_empty_hunter_inboxes_dispatches_one_pod(
     tmp_path,
 ):
-    """id: C33 - the identity-based-refactor regression: a produced `specified`
+    """id: C33 - the identity-based-refactor regression: a produced `ratified`
     spec seeded directly (production `_`-joined fault_key) with `hunter_inboxes`
     EMPTY still dispatches ONE pod and moves produced->consumed, and the pod
     builder is called exactly once - the parent-inbox lookup must be best-effort,
@@ -368,11 +358,11 @@ def test_C33_specified_spec_with_empty_hunter_inboxes_dispatches_one_pod(
     state = RunDispatchState()   # hunter_inboxes is EMPTY - no live parent
     report, plane = _drive_running_tick(threat, hunter, state=state)
 
-    session = pod_session_id(RUN, FAULT_KEY, SPEC_FILE)
+    session = pod_session_id(RUN, DISPATCH_ID, SPEC_FILE)
     assert plane.calls == [session]
     assert report.admitted == 1 and report.moved == 1 and report.refused == 0
-    assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == []
-    assert len(hunter.read_specs(PROJECT, FAULT_KEY, sides=("consumed",))) == 1
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []
+    assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
     # the pod body ran exactly once over the real build_run_dispatch decision
     assert state.hunter_inboxes == {}       # no parent inbox was fabricated
     assert report.move_failed == 0
@@ -383,7 +373,7 @@ def test_C33_specified_spec_with_empty_hunter_inboxes_dispatches_one_pod(
 def test_C34_run_work_remaining_and_dispatch_agree_for_a_specified_spec(
     tmp_path,
 ):
-    """id: C34 - never-disagree contract: a produced `specified` spec makes
+    """id: C34 - never-disagree contract: a produced `ratified` spec makes
     `run_work_remaining` return True AND `build_run_dispatch`'s `_spec_dispatch`
     returns a coroutine for it (agree by construction) - on the same seeded
     state, before the tick."""
@@ -398,9 +388,9 @@ def test_C34_run_work_remaining_and_dispatch_agree_for_a_specified_spec(
     from polymerhus.attack.hunting.mover import TestSpecItem
 
     item = TestSpecItem(
-        message_id=f"{FAULT_KEY}/{SPEC_FILE}",
-        session_id=pod_session_id(RUN, FAULT_KEY, SPEC_FILE),
-        fault_key=FAULT_KEY,
+        message_id=f"{DISPATCH_ID}/{SPEC_FILE}",
+        session_id=pod_session_id(RUN, DISPATCH_ID, SPEC_FILE),
+        hunt_key=DISPATCH_ID,
         spec_file=SPEC_FILE,
     )
     produced = coro_for(item)
@@ -452,7 +442,7 @@ def test_C35_a_refused_loop_and_a_draft_spec_contribute_nothing(tmp_path):
     assert report.produced == 0
     # the leftovers stay on disk, never consumed, never blocking quiesce
     assert len(threat.read_produced_loops(PROJECT)) == 1
-    assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == [SPEC_FILE]
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == [SPEC_FILE]
 
 
 # --- C36 -----------------------------------------------------------------------
@@ -471,7 +461,7 @@ def test_C36_pod_completion_persists_the_export_envelope_durably(tmp_path):
     async def _pod_session():
         return await run_pod_session(
             spec=_spec(), project_id=PROJECT, run_id=run_id,
-            fault_key=FAULT_KEY, config_key=CONFIG_KEY, spec_id=SPEC_FILE,
+            hunt_key=DISPATCH_ID, spec_id=SPEC_FILE,
             inbox=None, hunter_store=hunter, gate=None,
             pod_builder=pod_builder, pod_store=pod_store,
         )
@@ -503,7 +493,7 @@ def test_C37_durable_parent_keyed_record_written_without_a_live_parent(tmp_path)
     async def _pod_session():
         return await run_pod_session(
             spec=_spec(), project_id=PROJECT, run_id=RUN,
-            fault_key=FAULT_KEY, config_key=CONFIG_KEY, spec_id=SPEC_FILE,
+            hunt_key=DISPATCH_ID, spec_id=SPEC_FILE,
             inbox=None, hunter_store=hunter, gate=None,
             pod_builder=pod_builder, pod_store=pod_store,
         )
@@ -512,10 +502,10 @@ def test_C37_durable_parent_keyed_record_written_without_a_live_parent(tmp_path)
 
     # the durable record is keyed by the parent's CANONICAL config_key (the
     # `::`-joined join key), never by the raw `_`-foldered fault_key
-    notes = hunter.read_notes(PROJECT, parent_key=CONFIG_KEY)
+    notes = hunter.read_notes(PROJECT, parent_key=DISPATCH_ID)
     assert len(notes) == 1
     record = notes[0]
-    assert CONFIG_KEY in record["key"]
+    assert DISPATCH_ID in record["key"]
     assert record["kind"] == "freeform"
     # the export payload (json-sorted dump) is inside the note body - the O16
     # amendment record, independent of any live parent (inbox was None here)
@@ -538,7 +528,7 @@ def test_C38_live_parent_inbox_receives_pod_export_before_settle_single_record(
     state = RunDispatchState()
     # a live co-running parent inbox keyed under the parent's canonical config_key
     inbox = AgentInbox()
-    state.hunter_inboxes[CONFIG_KEY] = inbox
+    state.hunter_inboxes[DISPATCH_ID] = inbox
     hunter_builder, pod_builder = _agent_seam_builders()
     run_id = "run-id-9"
 
@@ -548,7 +538,7 @@ def test_C38_live_parent_inbox_receives_pod_export_before_settle_single_record(
         # session returns/settles
         env = await run_pod_session(
             spec=_spec(), project_id=PROJECT, run_id=run_id,
-            fault_key=FAULT_KEY, config_key=CONFIG_KEY, spec_id=SPEC_FILE,
+            hunt_key=DISPATCH_ID, spec_id=SPEC_FILE,
             inbox=inbox, hunter_store=hunter, gate=None,
             pod_builder=pod_builder, pod_store=pod_store,
         )
@@ -562,8 +552,8 @@ def test_C38_live_parent_inbox_receives_pod_export_before_settle_single_record(
     assert isinstance(received, AgentMessage)
     assert received.kind == "pod_export"
     assert received.payload == envelope
-    assert received.source == pod_session_id(run_id, FAULT_KEY, SPEC_FILE)
+    assert received.source == pod_session_id(run_id, DISPATCH_ID, SPEC_FILE)
     # and the durable record is ONE per export: the live-feed consumption (the
     # idle-loop verdict stub) must NOT double-record against the pod-completion note
-    notes = hunter.read_notes(PROJECT, parent_key=CONFIG_KEY)
+    notes = hunter.read_notes(PROJECT, parent_key=DISPATCH_ID)
     assert len(notes) == 1

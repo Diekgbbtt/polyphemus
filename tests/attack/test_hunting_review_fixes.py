@@ -267,12 +267,12 @@ def _exec_probing_turns(http: bool = False):
 
 # --- the run-level reason helper ---------------------------------------------
 
-def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_path):
+def test_the_gap_reason_names_the_stuck_loop_and_is_absent_with_work(
+        tmp_path, monkeypatch):
     """`report_dispatch_gap` is the ONE predicate behind the warning: when a
-    completed model exists, nothing is dispatchable, and the run's production
-    hunter cannot consume the loop payload (C1), it names the follow-up ticket
-    (T6 #379) and the loops that wait - and returns None otherwise (a
-    dispatchable item, no completed model, a recorded dispatch)."""
+    completed model exists and nothing is dispatchable, it names the stuck
+    produced loop files - and returns None when the produced loop is
+    dispatchable work, no model completed, or a dispatch was recorded."""
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(root_dir=tmp_path / "models")
     _produce_one_loop_model(models, run_id=RUN)
@@ -280,43 +280,44 @@ def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_p
     from polymerhus.attack.hunting.surfer import RunDispatchState
 
     empty = RunDispatchState()
+    # a pending read that says "nothing dispatchable" while the loop file is
+    # still produced: the gap line names the stuck loop (a refused admission or
+    # a stopped role left it behind)
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.surfer.run_work_remaining",
+        lambda *a, **kw: False)
     reason = hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=empty, threat_store=models,
-        hunter_store=hunter, hunter_payload_capable=False)
+        state=empty, threat_store=models, hunter_store=hunter)
     assert reason is not None
-    assert "T6" in reason and "#379" in reason
     assert "1 produced loop file" in reason
+    assert "stayed undispatched" in reason
+    monkeypatch.undo()
 
-    # the SAME state with a capable builder (T6) is not a T4a gap: the loops are
-    # dispatchable work, so the line is not the designed-not-built one
-    capable = hunting_runtime.report_dispatch_gap(
+    # unpatched, the same LOOP is dispatchable work, so the gap line is not a
+    # gap at all: the run is not quiescing yet
+    assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=empty, threat_store=models,
-        hunter_store=hunter, hunter_payload_capable=True)
-    assert capable is None
+        state=empty, threat_store=models, hunter_store=hunter) is None
 
     # a degraded unit is not a produced model: no gap to report
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="degraded")],
-        state=empty, threat_store=models,
-        hunter_store=hunter, hunter_payload_capable=False) is None
+        state=empty, threat_store=models, hunter_store=hunter) is None
 
     # a hunter dispatch recorded on the run state suppresses the line
     dispatched = RunDispatchState()
     dispatched.hunter_inboxes[f"{UNIT}__loop-1"] = object()
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=dispatched, threat_store=models,
-        hunter_store=hunter, hunter_payload_capable=False) is None
+        state=dispatched, threat_store=models, hunter_store=hunter) is None
 
     # a still-dispatchable produced SPEC suppresses the line too (the pod
     # family stays live; the retired config family would no longer count)
     _write_specified_spec(hunter)
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=empty, threat_store=models,
-        hunter_store=hunter, hunter_payload_capable=False) is None
+        state=empty, threat_store=models, hunter_store=hunter) is None
 
 
 def test_a_production_builder_run_consumes_a_zero_loop_model(
@@ -344,8 +345,8 @@ def test_a_production_builder_run_consumes_a_zero_loop_model(
     models = ThreatModelStore(root_dir=tmp_path / "models")
     control = _FakeControl()
 
-    # NO hunter_builder: the run resolves the PRODUCTION one, which cannot consume
-    # the loop payload (C1) - the only production configuration there is today
+    # NO hunter_builder: the run resolves the PRODUCTION one (T6: it consumes the
+    # loop payload end to end; there is no loop here, so nothing dispatches)
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         hid = asyncio.run(hunting_runtime.start_hunting(
             PROJECT, intake_units=[intake_unit(UNIT)],
@@ -367,7 +368,6 @@ def test_a_production_builder_run_consumes_a_zero_loop_model(
              if "NOTHING is dispatchable" in record.message]
     assert lines
     assert "every model is decided" in lines[-1]
-    assert "await the per-loop hunter harness" not in lines[-1]
 
     # a later intake excludes the unit: a consumed model is decided (S2 9.3)
     from polymerhus.attack.hunting.unit_intake import freeze_intake
@@ -401,13 +401,12 @@ def _zero_loop_turns():
 
 
 def _write_specified_spec(hunter) -> None:
-    """One produced `specified` test spec (the pod family's dispatch gate) -
-    the surviving dispatchable produced family (T4b)."""
-    hunter.write_spec(
-        PROJECT, f"{UNIT}_CWE-639_IDOR", fault_keyword="sqli",
-        strategy_keyword="blind",
-        spec={"spec_id": "sqli_blind", "fault_key": f"{UNIT}_CWE-639_IDOR",
-              "fault": {}, "strategy": "blind", "status": "specified"},
+    """One produced `ratified` test spec (the pod family's dispatch gate) -
+    the surviving dispatchable produced family (S3 8.7)."""
+    hunter.write_specs(
+        PROJECT, "Service-catalogue-and-discovery__loop-1",
+        [{"status": "ratified", "fault_keyword": "sqli",
+          "strategy_keyword": "blind"}],
     )
 
 
@@ -511,9 +510,8 @@ def test_the_dispatch_gap_survives_a_transient_pending_work_read_failure(
             state=RunDispatchState(),
             threat_store=models,
             hunter_store=HunterMemoryStore(tmp_path / "hunter"),
-            hunter_payload_capable=False,
         )
 
-    assert reason is not None and "#379" in reason
+    assert reason is not None and "produced loop file" in reason
     assert any("pending-work read degraded" in record.message
                for record in caplog.records)

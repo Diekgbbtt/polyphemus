@@ -1,27 +1,28 @@
-"""The hunter's tool surface (#164, W4): the five tools the ReAct engine exposes.
+"""The hunter's tool surface (S3 8.7, T6 #379): the loop-driven hunter's tools.
 
 The surface replicates the orchestrator's minimalised tool contract
 (`docs/design/hunting-orchestrator-candidates-rewrite-spec.md` 3.4): `hunts_store`
 / `notes` / `graph_view`, read/write cmds, no back-edge tool, no budget tool,
-tool names reused verbatim (R3). The hunter adds `kb_query` and `exec` (GP8d).
-The tools are `BaseTool` subclasses per the pod's tool pattern
-(`pod/tools.py` on `feat/hunting-84-test-executor-pod`: `KbRetrieveTool` /
-`ExecTool`, `extra="forbid"` args schemas). Every tool is a seam holder: the
-injected collaborator (the `HunterMemoryStore`, the `graph_view` / `kb_query` /
-`exec` callables) is what the W5 harness binds per hunt - this module wires
-nothing into `hunting_agent.py` (W5 does the wiring, plus the `symptom_kb.py`
-retirement).
+tool names reused verbatim (R3). The hunter adds `kb_query`, `exec` (GP8d), the
+web-vulnerability suite pair `skill_list` / `skill_load` (S3 8.7), and the two
+HTTP-history reads. The tools are `BaseTool` subclasses per the pod's tool
+pattern (`pod/tools.py`: `KbRetrieveTool` / `ExecTool`, `extra="forbid"` args
+schemas). Every tool is a seam holder: the injected collaborator (the
+`HunterMemoryStore`, the `graph_view` / `kb_query` / `exec` callables, the suite
+seam) is what the harness binds per hunt - this module wires nothing into
+`hunting_agent.py`.
 
 Contract + degradation (spec 5, spec 9):
-- `hunts_store` / `notes` - the status-bearing write/read seam over
-  `HunterMemoryStore` (G8): `write` carries the fault/spec object with the
-  `status` verbatim; a duplicate `create` FAILS with the denoted `duplicate_spec`
-  dedup signal the model interprets (G4); re-authoring `update`s in place (G5);
-  both tools are BOUND to the hunt's OWN config key (`fault_key`, #298 - the
-  3-part config key, derived from the dispatched `HuntConfig` and never a
-  request field) with optional filters/projection on the read,
-  never the whole surface. Reads degrade to an empty set on failure (O4); genuine
-  write failures raise to the harness, which warns and keeps serving (O3).
+- `hunts_store` / `notes` - the spec-set write/read seam over
+  `HunterMemoryStore` (S3 8.6-8.7): `write` carries the WHOLE `specs` list,
+  each entry with its `status` (`hypothesised | ratified | dropped`) and the
+  file-name keywords; the store derives `<fault_keyword>_<strategy_keyword>`.
+  A duplicate identity inside the set is the denoted `duplicate_spec` dedup
+  signal the model interprets. Both tools are BOUND to the hunt's OWN loop
+  dispatch id (`hunt_key` = `<unit_name>__<loop_id>`, S3 8.9 - never a request
+  field) with optional filters/projection on the read, never the whole
+  surface. Reads degrade to an empty set on failure (O4); genuine write
+  failures raise to the harness, which warns and keeps serving (O3).
 - `graph_view` - the read-only L0/L1 view tool: the ONE shared tool
   (`graph_view_tool.py`), bound via `build_graph_view_tool(graph_view_fn)`
   with the full usage contract in its description. Absent or raising -> a
@@ -56,7 +57,8 @@ no driver and performs no I/O at import (CODING_STANDARD section 6).
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Literal
+from collections.abc import Callable, Sequence
+from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
 from lightrag.query_spec import QuerySpecV1
@@ -67,8 +69,8 @@ from .conciseness import append_conciseness_directive
 from .hunter_memory import (
     DuplicateSpecError,
     HunterMemoryStore,
-    STORE_SPEC_STATUSES,
 )
+from .hunter_state import SPEC_STATUSES
 from .http_history_contract import (
     GET_HTTP_ARTIFACT_DESCRIPTION,
     SEARCH_HTTP_HISTORY_DESCRIPTION,
@@ -138,15 +140,15 @@ KbQueryFn = Callable[[QuerySpecV1], dict]
 ExecFn = Callable[[str, int], ExecResult]
 
 
-# --- the harness-bound fault_key (#298, supersedes the #199 request-field gate)
+# --- the harness-bound hunt key (S3 8.9, supersedes the #298 config key) ------
 
-# The hunt's own config identity is NOT a request field: it is BOUND at the
-# tool/handle construction (the harness holds it at dispatch) so the hunter's
-# store tools can only ever address the hunt's own config. The model authors the
-# spec's `fault_keyword` / `strategy_keyword` (the produced file's identity
-# axes, flagged `vulnerability_class`-like by the operator) but never the
-# destination config key. A tool constructed without a bound key degrades to a
-# denoted invalid_args, never a silent degenerate path.
+# The hunt's own memory identity is NOT a request field: it is BOUND at the
+# tool/handle construction (the harness holds the loop payload at dispatch) so
+# the hunter's store tools can only ever address the hunt's own loop. The key is
+# the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9). The model authors each
+# spec's `fault_keyword` / `strategy_keyword` (the derived file-name identity
+# axes) but never the destination hunt key. A tool constructed without a bound
+# key degrades to a denoted invalid_args, never a silent degenerate path.
 
 # --- the coded teaching rejection (#209, shared in tool_contract) --------------
 
@@ -157,7 +159,7 @@ ExecFn = Callable[[str, int], ExecResult]
 # clause, a wrong-typed `evidence`, a stray `provenance` key) are passed to it
 # as the `extra_rejection=` callback.
 
-_HUNTER_WRITE_INTENT_FIELDS = ("spec",)
+_HUNTER_WRITE_INTENT_FIELDS = ("specs",)
 _NOTES_WRITE_INTENT_FIELDS = ("action", "note_name", "kind", "body")
 
 
@@ -206,26 +208,28 @@ def _notes_extra_rejection(tool_input: dict, errors: list) -> dict | None:
 class HuntsStoreArgs(BaseModel):
     """The `hunts_store` tool's ARGS contract: `read` / `write` cmds.
 
-    The WRITE payload is the ONE `spec` object (converged on the hunt
-    orchestrator's single-payload `hunt_config` contract, #164/#298): it
-    carries the `status` verbatim (`hypothesised | verified | dropped |
-    specified`) and the file-name identity attributes `fault_keyword` /
-    `strategy_keyword`. The symbolic layer DERIVES
-    `<fault_keyword>_<strategy_keyword>.yaml` from them, so they are never
-    separate request fields whose requiredness the surface could omit.
-    `status="hypothesised"` creates the draft (a duplicate FAILS - the novelty
-    gate, G4); every other status re-authors in place (G5). A payload missing a
-    derivation input is a coded `hunts_store_write_rejected` naming the field.
+    The WRITE payload is the WHOLE `specs` list (S3 8.6-8.7): each entry
+    carries its `status` (`hypothesised | ratified | dropped`) and the
+    file-name identity attributes `fault_keyword` / `strategy_keyword`. The
+    symbolic layer DERIVES `<fault_keyword>_<strategy_keyword>.yaml` from them,
+    so they are never separate request fields whose requiredness the surface
+    could omit. The GENERATE write is the whole set all-`hypothesised`; the
+    terminal write carries the whole set with the survivors `ratified` and the
+    unfeasible `dropped`; the hypothesised write creates and a later status
+    upserts in place. A duplicate identity inside one set is a coded
+    `duplicate_spec` dedup signal. A payload missing a derivation input is a
+    coded `hunts_store_write_rejected` naming the field. `spec_id` is DERIVED
+    (the file-name stem) and must not be authored.
 
     `read` filters by optional `statuses`/`attributes`, never the whole surface
-    (spec 5). The hunt's OWN config identity (its 3-part config key, G4/ADR
-    Q13) is BOUND at the tool construction (#298) - it is never a request field,
-    so the hunter can only address its own config.
+    (spec 5). The hunt's OWN loop dispatch id (`hunt_key`,
+    `<unit_name>__<loop_id>`, S3 8.9) is BOUND at the tool construction - it is
+    never a request field, so the hunter can only address its own loop.
 
-    The authored `spec` carries a `TestImplementationSpec` (the D4 handoff).
+    The authored spec body is the reduced D4 surface at every status (S3 8.6).
     Its `target_identity` is the target's identity object - `{"url": <base
-    url>, "unit_id": <L1 identity>}` (#197): the `url` is the base URL the pod
-    probes (author it from the projected L0 attack surface), `unit_id` the
+    url>, "unit_id": <L1 identity>}`: the `url` is the base URL the pod probes
+    (author it from the projected L0 attack surface), `unit_id` the
     kind-qualified L1 service/system identity that surfaces alongside it.
     A spec whose `target_identity.url` is absent is INIT-rejected by the pod."""
 
@@ -238,16 +242,19 @@ class HuntsStoreArgs(BaseModel):
     attributes: list[str] = Field(
         default_factory=list,
         description="Read projection: return only these attributes per spec.")
-    # -- write path (ONE payload) --------------------------------------------
-    spec: dict = Field(
-        default_factory=dict,
-        description="Write payload: the authored spec object. It MUST carry "
-                    "`status` (hypothesised | verified | dropped | specified) "
+    # -- write path (the whole set) ------------------------------------------
+    specs: list[dict] = Field(
+        default_factory=list,
+        description="Write payload: the WHOLE spec set in one call. Each entry "
+                    "MUST carry `status` (hypothesised | ratified | dropped) "
                     "and the file-name identity attributes `fault_keyword` and "
                     "`strategy_keyword`; the spec file name "
                     "`<fault_keyword>_<strategy_keyword>.yaml` is DERIVED from "
-                    "them. A payload missing one is rejected with a coded "
-                    "`hunts_store_write_rejected` error naming the field.")
+                    "them (do not author `spec_id`). A duplicate identity in "
+                    "the set is rejected with `duplicate_spec` (merge or "
+                    "refresh instead). A payload missing a required attribute "
+                    "is rejected with a coded `hunts_store_write_rejected` "
+                    "error naming the field.")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -337,35 +344,38 @@ class ExecArgs(BaseModel):
 
 
 class HuntsStoreTool(StoreToolBase):
-    """The status-bearing write/read seam over `HunterMemoryStore` (spec 5): the
-    transition verbatim lives here (`status` on the write). A duplicate `create`
-    FAILS with the denoted `duplicate_spec` dedup signal the model reflects on
-    (G4); `update` re-authors in place (G5). Reads degrade to an empty set (O4);
-    genuine write failures raise to the harness (O3); an absent store degrades
-    fail-open. #209: a call omitting the required `command` with write-intent
-    fields is a CODED teaching rejection (never a bare validation error) - the
-    binding and translation are the shared `tool_contract.StoreToolBase`."""
+    """The spec-set write/read seam over `HunterMemoryStore` (S3 8.6-8.7): the
+    lifecycle verbatim lives here (`status` on each spec of the set). A
+    duplicate identity inside one set is the denoted `duplicate_spec` dedup
+    signal the model reflects on; a re-author of an existing identity upserts
+    in place. Reads degrade to an empty set (O4); genuine write failures raise
+    to the harness (O3); an absent store degrades fail-open. #209: a call
+    omitting the required `command` with write-intent fields is a CODED
+    teaching rejection (never a bare validation error) - the binding and
+    translation are the shared `tool_contract.StoreToolBase`."""
 
     name: str = "hunts_store"
     description: str = (
-        "The hunt's status-bearing memory seam, bound to THIS hunt's own "
-        "config (you never supply the config key). Commands: read / write.\n"
-        "write takes ONE payload, `spec` - the authored spec object. It MUST "
-        "carry the status verbatim (hypothesised | verified | dropped | "
-        "specified) and the file-name identity attributes `fault_keyword` / "
-        "`strategy_keyword`; the spec file name is DERIVED from them, never "
-        "authored as a file name. status=hypothesised creates the draft - a "
-        "duplicate FAILS with a duplicate_spec dedup signal when the spec file "
-        "already exists (reflect on overlap and merge or refresh - do not "
-        "duplicate); verified / dropped / specified re-author the existing file "
-        "in place. A payload missing a required attribute is rejected with a "
-        "coded hunts_store_write_rejected error naming the field. "
+        "The hunt's spec-set memory seam, bound to THIS hunt's own loop "
+        "(you never supply the hunt key). Commands: read / write.\n"
+        "write takes the WHOLE spec set in one call, `specs` - a list whose "
+        "entries each carry the status verbatim (hypothesised | ratified | "
+        "dropped) and the file-name identity attributes `fault_keyword` / "
+        "`strategy_keyword`; each spec file name is DERIVED from its "
+        "keywords, never authored (do not send `spec_id`). The GENERATE write "
+        "carries the whole set all-hypothesised; the terminal write carries "
+        "the whole set with the survivors ratified and the unfeasible "
+        "dropped; a later status upserts each identity in place. A duplicate "
+        "identity in the set FAILS with a duplicate_spec dedup signal "
+        "(reflect on overlap and merge or refresh - do not duplicate). A "
+        "payload missing a required attribute is rejected with a coded "
+        "hunts_store_write_rejected error naming the field. "
         "The authored spec's target_identity is "
         "the target identity object: {'url': <base url>, 'unit_id': <L1 "
         "service/system identity>} - author the url from the projected L0 "
         "attack surface (read via graph_view); the pod probes that url and "
         "INIT-rejects a spec without it. read takes optional "
-        "statuses / attributes filters and returns the fault's produced specs - "
+        "statuses / attributes filters and returns the loop's produced specs - "
         "never the whole surface."
     )
     args_schema: type[BaseModel] = HuntsStoreArgs
@@ -376,11 +386,11 @@ class HuntsStoreTool(StoreToolBase):
     _as_json: bool = True
 
     def __init__(self, *, store: HunterMemoryStore | None = None,
-                 project_id: str = "", fault_key: str = "", **kwargs):
+                 project_id: str = "", hunt_key: str = "", **kwargs):
         super().__init__(**kwargs)
         self._store = store
         self._project_id = project_id
-        self._fault_key = fault_key
+        self._hunt_key = hunt_key
         self.description = append_conciseness_directive(self.description)
 
     def _unavailable(self, args: HuntsStoreArgs) -> str:
@@ -394,19 +404,19 @@ class HuntsStoreTool(StoreToolBase):
         return json.dumps({
             "ok": False,
             "error": "invalid_args",
-            "detail": "no fault_key is bound to this hunt tool (#298)",
+            "detail": "no hunt key is bound to this hunt tool (S3 8.9)",
         })
 
     def _read(self, args: HuntsStoreArgs) -> str:
         if self._store is None:
             return self._unavailable(args)
-        if not self._fault_key:
+        if not self._hunt_key:
             return json.dumps({"specs": [], "error": "invalid_args",
-                               "detail": "no fault_key is bound to this hunt "
-                                         "tool (#298)"})
+                               "detail": "no hunt key is bound to this hunt "
+                                         "tool (S3 8.9)"})
         try:
             specs = self._store.read_specs(
-                self._project_id, self._fault_key,
+                self._project_id, self._hunt_key,
                 sides=("produced",),
                 statuses=args.statuses or None,
                 attributes=args.attributes or None,
@@ -430,59 +440,71 @@ class HuntsStoreTool(StoreToolBase):
     def _write(self, args: HuntsStoreArgs) -> str:
         if self._store is None:
             return self._unavailable(args)
-        if not self._fault_key:
+        if not self._hunt_key:
             return self._unbound()
-        spec = args.spec
-        if not isinstance(spec, dict) or not spec:
+        specs = args.specs
+        if not isinstance(specs, list) or not specs:
             return self._write_rejected(
-                ["spec"],
-                "write needs the spec object carrying status + fault_keyword "
-                "+ strategy_keyword")
-        # The file-name identity is derived from the payload's own attributes
-        # (the symbolic layer owns the symbol, #164): a missing derivation
-        # input is a coded contract rejection, never a degenerate-name write.
-        missing = [f for f in ("fault_keyword", "strategy_keyword")
-                   if not spec.get(f)]
+                ["specs"],
+                "write needs the whole `specs` list; a single spec is a set "
+                "of one, each entry carrying status + fault_keyword + "
+                "strategy_keyword")
+        # The file-name identity is derived from each entry's own keywords (the
+        # symbolic layer owns the symbol): a missing derivation input is a coded
+        # contract rejection, never a degenerate-name write.
+        missing: list[str] = []
+        for index, spec in enumerate(specs):
+            if not isinstance(spec, dict):
+                return self._write_rejected(
+                    ["specs"], f"specs[{index}] is not an object")
+            if spec.get("spec_id"):
+                return self._write_rejected(
+                    ["spec_id"],
+                    f"specs[{index}] carries `spec_id`; it is a DERIVED symbol "
+                    "(the <fault_keyword>_<strategy_keyword> stem) - remove it")
+            for field in ("fault_keyword", "strategy_keyword", "status"):
+                if not spec.get(field):
+                    missing.append(f"specs[{index}].{field}")
+            if spec.get("status") and spec["status"] not in SPEC_STATUSES:
+                return self._write_rejected(
+                    [f"specs[{index}].status"],
+                    f"status must be one of {SPEC_STATUSES}; got "
+                    f"{spec.get('status')!r}")
         if missing:
             return self._write_rejected(
                 missing,
-                f"the spec payload must carry the file-name identity "
-                f"attribute(s) {', '.join(missing)}; the spec file name "
-                f"<fault_keyword>_<strategy_keyword>.yaml is DERIVED from them")
-        if spec.get("status") not in STORE_SPEC_STATUSES:
-            return self._write_rejected(
-                ["status"],
-                f"status must be one of {STORE_SPEC_STATUSES}; got "
-                f"{spec.get('status')!r}")
-        # The write mode is derived from the status (the orchestrator's
-        # status-driven write): hypothesised creates the draft (the novelty
-        # gate), every other lifecycle state re-authors in place.
-        mode = "create" if spec["status"] == "hypothesised" else "update"
+                "the spec payload must carry the file-name identity "
+                "attribute(s) and the status; the spec identity "
+                "<fault_keyword>_<strategy_keyword> is DERIVED from them")
         try:
-            path = self._store.write_spec(
-                self._project_id, self._fault_key,
-                fault_keyword=spec["fault_keyword"],
-                strategy_keyword=spec["strategy_keyword"],
-                spec=spec, mode=mode,
-            )
+            # The store derives the spec ids and applies the set lifecycle;
+            # statuses are persisted verbatim (hypothesised creates, a later
+            # status upserts in place).
+            written = self._store.write_specs(
+                self._project_id, self._hunt_key, specs)
         except DuplicateSpecError as exc:
-            # The denoted dedup signal (G4): the model reflects and merges or
+            # The denoted dedup signal: the model reflects and merges or
             # refreshes instead of duplicating - never a raise into the turn.
             return json.dumps({"ok": False, "error": "duplicate_spec",
-                               "fault_key": self._fault_key, "detail": str(exc)})
+                               "hunt_key": self._hunt_key, "detail": str(exc)})
         except ValueError as exc:
             return json.dumps({"ok": False, "error": "invalid_args",
                                "detail": str(exc)})
         # O3: any other write failure (e.g. OSError) raises to the harness, which
         # warns and keeps serving - never a silent corruption.
-        return json.dumps({"ok": True, "path": str(path),
-                           "status": spec.get("status")})
+        return json.dumps({
+            "ok": True,
+            "specs": [
+                {"spec_id": spec_id, "status": spec["status"], "path": str(path)}
+                for (spec_id, path), spec in zip(written, specs)
+            ],
+        })
 
 
 _NOTES_DESCRIPTION = append_conciseness_directive((
-    "The hunt's notes seam - one note per fault covering all decisions that "
+    "The hunt's notes seam - one note per hunt key covering all decisions that "
     "concern it, more detailed than the rationale. Commands: read / write. "
-    "Bound to THIS hunt's own config (you never supply the config key).\n"
+    "Bound to THIS hunt's own loop (you never supply the hunt key).\n"
     "A write MUST set command=\"write\" (action is the write option - "
     "append | update | delete - not the command); a read sets "
     "command=\"read\".\n"
@@ -505,27 +527,27 @@ class HunterMemoryNotesHandle:
     """The hunter seam's store handle for the shared `notes` tool.
 
     It owns the `notes.yaml` destination (via `HunterMemoryStore`) and the
-    hunt's OWN config key, BOUND at construction (#298). The shared algorithm
-    never sees a path or a store: the destination is derived from THIS handle,
-    never a request field."""
+    hunt's OWN loop dispatch id, BOUND at construction (S3 8.9). The shared
+    algorithm never sees a path or a store: the destination is derived from
+    THIS handle, never a request field."""
 
     def __init__(self, store: HunterMemoryStore | None, project_id: str,
-                 fault_key: str = ""):
+                 hunt_key: str = ""):
         self._store = store
         self._project_id = project_id
-        self._fault_key = fault_key
+        self._hunt_key = hunt_key
 
     def read(self, query) -> dict:
         if self._store is None:
             return {"command": query.command, "error": "store_unavailable",
                     "degraded": True}
-        if not self._fault_key:
+        if not self._hunt_key:
             return {"notes": [], "error": "invalid_args",
-                    "detail": "no fault_key is bound to this hunt tool (#298)"}
+                    "detail": "no hunt key is bound to this hunt tool (S3 8.9)"}
         try:
             notes = self._store.read_notes(
                 self._project_id,
-                parent_key=self._fault_key,
+                parent_key=self._hunt_key,
                 key_keyword=query.key_keyword or None,
                 body_keyword=query.body_keyword or None,
                 attributes=query.attributes or None,
@@ -538,12 +560,12 @@ class HunterMemoryNotesHandle:
         if self._store is None:
             return {"command": request.command, "error": "store_unavailable",
                     "degraded": True}
-        if not self._fault_key or not request.note_name:
+        if not self._hunt_key or not request.note_name:
             return {"ok": False, "error": "invalid_args",
-                    "detail": "write needs a bound fault_key and note_name"}
+                    "detail": "write needs a bound hunt key and note_name"}
         try:
             key = self._store.write_note(
-                self._project_id, action=request.action, fault_key=self._fault_key,
+                self._project_id, action=request.action, hunt_key=self._hunt_key,
                 note_name=request.note_name, kind=request.kind, body=request.body,
                 evidence=request.evidence, provenance=request.provenance)
         except ValueError as exc:
@@ -552,7 +574,7 @@ class HunterMemoryNotesHandle:
         # keeps serving.
         if key is None:
             return {"ok": False, "error": "note_missing",
-                    "fault_key": self._fault_key, "note_name": request.note_name}
+                    "hunt_key": self._hunt_key, "note_name": request.note_name}
         return {"ok": True, "key": key}
 
 
@@ -594,13 +616,13 @@ def _hunter_notes_kwargs(handle: HunterMemoryNotesHandle) -> dict:
 
 def notes_tool_for(*, store: HunterMemoryStore | None = None,
                    project_id: str = "",
-                   fault_key: str = "") -> StoreNotesTool:
+                   hunt_key: str = "") -> StoreNotesTool:
     """The production builder for the hunter's bound `notes` tool: the shared
     `build_notes_tool` over the hunter's store handle. The `notes.yaml`
-    destination and the hunt's own config key are derived from the handle,
-    never a request field."""
+    destination and the hunt's own loop dispatch id are derived from the
+    handle, never a request field."""
     return build_notes_tool(
-        **_hunter_notes_kwargs(HunterMemoryNotesHandle(store, project_id, fault_key))
+        **_hunter_notes_kwargs(HunterMemoryNotesHandle(store, project_id, hunt_key))
     )
 
 
@@ -622,11 +644,11 @@ class NotesTool(StoreNotesTool):
     args_schema: type[BaseModel] = NotesArgs
 
     def __init__(self, *, store: HunterMemoryStore | None = None,
-                 project_id: str = "", fault_key: str = "",
+                 project_id: str = "", hunt_key: str = "",
                  **kwargs):
         super().__init__(
             **_hunter_notes_kwargs(
-                HunterMemoryNotesHandle(store, project_id, fault_key)),
+                HunterMemoryNotesHandle(store, project_id, hunt_key)),
             **kwargs,
         )
 
@@ -660,7 +682,7 @@ class KbQueryTool(BaseTool):
         return {
             "schema_version": "lightrag-answer/v2",
             "scenario_id": spec.scenario_id,
-            "summary": "kb_query degraded - grounded on the HuntConfig alone",
+            "summary": "kb_query degraded - grounded on the loop payload alone",
             "ontology_explanations": [],
             "provenance_references": [],
             "knowledge_gaps": [f"knowledge base unavailable ({reason})"],
@@ -904,35 +926,56 @@ def build_hunter_tools(
     *,
     store: HunterMemoryStore | None = None,
     project_id: str = "",
-    fault_key: str = "",
+    hunt_key: str = "",
     graph_view_fn: GraphViewFn | None = None,
     kb_fn: KbQueryFn | None = None,
     exec_fn: ExecFn | None = None,
     http_search_fn=None,
     http_get_fn=None,
+    suite_tools: Sequence[BaseTool] = (),
+    suite_classes: Sequence[str] = (),
+    suite_read_fn: Callable[[str], str] | None = None,
+    suite=None,
 ) -> list[BaseTool]:
-    """Assemble the bound `HUNTER_TOOLS` list for the W5 `create_agent` binding.
+    """Assemble the bound hunter tool list for the harness `create_agent`
+    binding.
 
     `store` is the per-project `HunterMemoryStore` and `project_id` the hunt's
-    project (both bound here - the tool surface is per-hunt, W5); `fault_key` is
-    the hunt's OWN config key, BOUND here (#298; the harness holds it at
-    dispatch, so it is never a request field); `graph_view_fn`
-    / `kb_fn` / `exec_fn` are the injected seam bodies (each absent degrades
-    fail-open). Returns the tools in the spec's surface order: `hunts_store`
-    / `notes` / `graph_view` / `kb_query` / `exec`. `graph_view` is the ONE
+    project (both bound here - the tool surface is per-hunt); `hunt_key` is the
+    hunt's OWN loop dispatch id (`<unit_name>__<loop_id>`, S3 8.9), BOUND here
+    (the harness holds it at dispatch, so it is never a request field);
+    `graph_view_fn` / `kb_fn` / `exec_fn` are the injected seam bodies (each
+    absent degrades fail-open). The suite pair (`skill_list` / `skill_load`,
+    S3 8.7) rides the web-vulnerability suite seam: an injected `suite_tools`
+    pair wins, else the pair is built over `suite` / `suite_classes` +
+    `suite_read_fn` (an empty seam still binds the pair in its fail-open mode,
+    so the role is always enabled with an honest class-mapping contract).
+    Returns the tools in the spec's surface order: `hunts_store` / `notes` /
+    `graph_view` / `kb_query` / `exec` / `skill_list` / `skill_load` /
+    `search_http_history` / `get_http_artifact`. `graph_view` is the ONE
     shared read-only L0/L1 tool (#197, `graph_view_tool.build_graph_view_tool`)
     whose contract (schema + query-language primitives + guard + return shape +
     example) rides its description - the old local `GraphViewTool` is REMOVED."""
     from polymerhus.attack.hunting.graph_view_tool import (  # noqa: PLC0415
         build_graph_view_tool,
     )
+    from polymerhus.attack.hunting.threat_modeller_tools import (  # noqa: PLC0415
+        build_vulnerability_suite_tools,
+    )
+
+    if suite_tools:
+        skills: list[BaseTool] = list(suite_tools)
+    else:
+        skills = build_vulnerability_suite_tools(
+            classes=suite_classes, read_fn=suite_read_fn, suite=suite)
 
     return [
-        HuntsStoreTool(store=store, project_id=project_id, fault_key=fault_key),
-        notes_tool_for(store=store, project_id=project_id, fault_key=fault_key),
+        HuntsStoreTool(store=store, project_id=project_id, hunt_key=hunt_key),
+        notes_tool_for(store=store, project_id=project_id, hunt_key=hunt_key),
         build_graph_view_tool(graph_view_fn),
         KbQueryTool(kb_fn=kb_fn),
         ExecTool(exec_fn=exec_fn),
+        *skills,
         HttpHistorySearchTool(http_search_fn=http_search_fn, project_id=project_id),
         HttpHistoryGetTool(http_get_fn=http_get_fn, project_id=project_id),
     ]

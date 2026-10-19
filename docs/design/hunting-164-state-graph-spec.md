@@ -620,8 +620,8 @@ The pod dispatch path stays.
 The tool surface stays, with `skill_list` and `skill_load` added.
 
 **T5 (#378) disposition of this scope.**
-Landed: the fault lifecycle, its detector and push functions, the four push nodes, the fault lists, `current_fault`, the old phase channel, `derive_verdict`, and the five old hint constants are removed.
-Deferred to T6 (#379): `SpecItem.experiment_ref` and the store-side status vocabulary - the store keeps its four-value write gate locally (`hunter_memory.STORE_SPEC_STATUSES`) until the spec-set store rework, because `specified` is also the mover's pod-dispatch gate and dropping it alone would silently stop every pod dispatch.
+Landed: the fault lifecycle, its detector and push functions, the four push nodes, the fault lists, `current_fault`, the old phase channel, `derive_verdict`, `SpecItem.experiment_ref`, and the five old hint constants are removed.
+T6 (#379) landed the store side: the spec-set store writes the batched `specs` set under the loop dispatch key with the `{hypothesised, ratified, dropped}` vocabulary, and the mover's pod-dispatch gate is `ratified`.
 
 ### 14.12 Implementation decisions
 

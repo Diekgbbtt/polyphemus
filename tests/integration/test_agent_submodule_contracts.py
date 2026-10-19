@@ -51,8 +51,6 @@ RUN = "run-as-int"
 UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
-FAULT_KEY = f"{UNIT}_{CWE}_{CLASS}"
-CONFIG_KEY = f"{UNIT}::{CWE}::{CLASS}"
 UNIT_NAME = "Service-catalogue-and-discovery"
 DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 SPEC_FILE = "sqli_blind"
@@ -86,8 +84,8 @@ def _produce(threat):
 
 def _spec(**overrides):
     data = {
-        "spec_id": SPEC_FILE, "fault_key": FAULT_KEY,
-        "fault": {}, "strategy": "blind", "status": "specified",
+        "status": "ratified", "fault_keyword": "sqli", "strategy_keyword": "blind",
+        "verification_symptoms": ["a foreign item renders"],
     }
     data.update(overrides)
     return data
@@ -314,8 +312,7 @@ def test_C10_a_down_hunter_denies_hunter_dispatch(tmp_path):
 def test_C11_a_down_pod_denies_pod_dispatch(tmp_path):
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    hunter.write_spec("p", FAULT_KEY, fault_keyword="sqli",
-                      strategy_keyword="blind", spec=_spec())
+    hunter.write_specs("p", DISPATCH_ID, [_spec()])
     control = _RecordingControl()
     report = run_delivery_tick(
         "p", RUN, threat_store=threat, hunter_store=hunter, control=control,
@@ -324,7 +321,7 @@ def test_C11_a_down_pod_denies_pod_dispatch(tmp_path):
     )
     assert control.calls == []
     assert report.refused == 1 and report.moved == 0
-    assert hunter.produced_spec_files("p", FAULT_KEY) == [SPEC_FILE]
+    assert hunter.produced_spec_files("p", DISPATCH_ID) == [SPEC_FILE]
 
 
 class _RecordingGate:
@@ -432,7 +429,7 @@ def test_C15_the_thread_listing_shape(client, api_runtime):
         entered.set()
         await asyncio.sleep(30)
 
-    session_id = f"hunting:{RUN}:hunt:{FAULT_KEY}"
+    session_id = f"hunting:{RUN}:hunt:{DISPATCH_ID}"
     rm.schedule("hunting", live(), name=session_id)
     assert entered.wait(timeout=5)
 
@@ -481,7 +478,7 @@ def test_C17_thread_stop_resume_idempotency(client, api_runtime):
         entered.set()
         await asyncio.sleep(30)
 
-    session_id = f"hunting:{RUN}:hunt:{FAULT_KEY}"
+    session_id = f"hunting:{RUN}:hunt:{DISPATCH_ID}"
     rm.schedule("hunting", live(), name=session_id)
     assert entered.wait(timeout=5)
 

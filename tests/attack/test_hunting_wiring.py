@@ -50,22 +50,9 @@ from polymerhus.attack.hunting.threat_modeller import UnitOutcome
 from tests.hunting_fixtures import intake_unit, loop_row, produce_model
 
 UNIT = "Service:slug:a"
-# The production fault class IS a CWE id (the `_`-joined fault_key folder is
-# only parseable when the middle segment matches `CWE-\d+`, G4) - a fake
-# "fault-x" class would make the production `_`-joined form unrepresentable.
-FAULT = "CWE-352"
-CLASS = "CSRF"
-# The PRODUCTION fault_key folder form (G4/ADR Q13): `_`-joined
-# `<unit_id>_<CWE_ID>_<vulnerability_class>`, the config file-name stem the
-# hunter writes as its test-specs folder. The `::`-joined semantic config_key
-# is a DIFFERENT string - and the whole identity-based-refactor regression
-# exists to prove the mover joins the two sides on the canonical config_key
-# (this fixture previously used the `::` form, which masked the pod-dispatch
-# miss).
-FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
-CONFIG_KEY = f"{UNIT}::{FAULT}::{CLASS}"
 # The sanitised on-disk unit directory (the store's derived symbol) and the
-# per-loop dispatch identity the produced loop file IS (S2 8.4, S3 8.9).
+# per-loop dispatch identity the produced loop file IS (S2 8.4, S3 8.9). The
+# hunter memory key IS that loop dispatch id - never a config key.
 UNIT_NAME = "Service-slug-a"
 DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 RUN = "wiring-run-1"
@@ -422,8 +409,18 @@ def test_n_loops_fan_out_but_the_gate_caps_concurrent_hunters(stores, monkeypatc
     assert models.read_produced_loops(PROJECT) == []  # all three moved
 
 
-def test_specified_spec_dispatches_one_pod_through_the_same_mover(stores, monkeypatch):
-    """AC2: a hunt session writes a `specified` spec (the ratify gate for the
+def _write_ratified_spec(hunter, *, consume_me: str = "") -> None:
+    """One produced `ratified` spec under the loop dispatch id (S3 8.7): the
+    pod family's dispatch gate."""
+    hunter.write_specs(
+        PROJECT, DISPATCH_ID,
+        [{"status": "ratified", "fault_keyword": "sqli",
+          "strategy_keyword": "blind", "consume_me": consume_me}],
+    )
+
+
+def test_ratified_spec_dispatches_one_pod_through_the_same_mover(stores, monkeypatch):
+    """AC2: a hunt session writes a `ratified` spec (the terminal gate for the
     spec family); the SAME mover that dispatched the hunter dispatches ONE pod
     session under the ADR Q13 pod id, and the spec moves produced -> consumed."""
     models, hunter, pod = stores
@@ -439,19 +436,7 @@ def test_specified_spec_dispatches_one_pod_through_the_same_mover(stores, monkey
 
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
-            hunter_store.write_spec(
-                project_id, FAULT_KEY,
-                fault_keyword="sqli", strategy_keyword="blind",
-                spec={
-                    "status": "specified", "spec_id": SPEC_FILE,
-                    "fault_key": FAULT_KEY,
-                    "fault": {"fault_id": "f1", "mechanism": "m",
-                              "supports": [], "conflicts": [], "test": "t",
-                              "status": "specified"},
-                    "strategy": "blind", "spec_ref": "sr", "experiment_ref": "",
-                },
-                mode="create", side="produced",
-            )
+            _write_ratified_spec(hunter_store)
             return None
         return dispatch, None
 
@@ -472,10 +457,10 @@ def test_specified_spec_dispatches_one_pod_through_the_same_mover(stores, monkey
         hunter_builder=spec_hunts,
         pod_builder=spec_pods,
     ))
-    assert pod_calls == [(SPEC_FILE, "")]                  # the semantic spec id crossed the handoff
-    assert pod_session_id(RUN, FAULT_KEY, SPEC_FILE) in control.started
-    assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == []   # moved to consumed
-    assert len(hunter.read_specs(PROJECT, FAULT_KEY, sides=("consumed",))) == 1
+    assert pod_calls == [(SPEC_FILE, "")]                  # the derived spec id crossed the handoff
+    assert pod_session_id(RUN, DISPATCH_ID, SPEC_FILE) in control.started
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []   # moved to consumed
+    assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
 
 
 def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
@@ -497,19 +482,7 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
 
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
-            hunter_store.write_spec(
-                project_id, FAULT_KEY,
-                fault_keyword="sqli", strategy_keyword="blind",
-                spec={
-                    "status": "specified", "spec_id": SPEC_FILE,
-                    "fault_key": FAULT_KEY,
-                    "fault": {"fault_id": "f1", "mechanism": "m",
-                              "supports": [], "conflicts": [], "test": "t",
-                              "status": "specified"},
-                    "strategy": "blind", "spec_ref": "sr", "experiment_ref": "",
-                },
-                mode="create", side="produced",
-            )
+            _write_ratified_spec(hunter_store)
             return None
         return dispatch, None
 
@@ -573,15 +546,10 @@ def test_a_loop_file_from_another_run_never_dispatches_or_blocks_quiesce(
 
 # --- AC3: the idle loop consumes and records a delivered PodExport ----------
 
-def _write_spec(hunter, *, fault_key=FAULT_KEY, status: str = "specified"):
-    return hunter.write_spec(
-        PROJECT, fault_key, fault_keyword="sqli", strategy_keyword="blind",
-        spec={"spec_id": SPEC_FILE, "fault_key": fault_key,
-              "fault": {"fault_id": "f1", "mechanism": "m", "supports": [],
-                        "conflicts": [], "test": "t", "status": "specified"},
-              "strategy": "blind", "spec_ref": "sr", "experiment_ref": "",
-              "status": status},
-    )
+def _write_spec(hunter, *, hunt_key=DISPATCH_ID, status: str = "ratified"):
+    return hunter.write_specs(
+        PROJECT, hunt_key,
+        [{"status": status, "fault_keyword": "sqli", "strategy_keyword": "blind"}])
 
 
 def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypatch):
@@ -604,16 +572,7 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
 
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
-            hunter_store.write_spec(
-                project_id, FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",
-                spec={"status": "specified", "spec_id": SPEC_FILE,
-                      "fault_key": FAULT_KEY,
-                      "fault": {"fault_id": "f1", "mechanism": "m",
-                                "supports": [], "conflicts": [],
-                                "test": "t", "status": "specified"},
-                      "strategy": "blind", "spec_ref": "sr", "experiment_ref": ""},
-                mode="create", side="produced",
-            )
+            _write_ratified_spec(hunter_store)
             return None
         return dispatch, None
 
@@ -638,23 +597,22 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
     record = notes[0]
     assert record["kind"] == "freeform"
     assert record["provenance"].get("verdict_stub") is True
-    assert record["provenance"].get("source") == pod_session_id(RUN, FAULT_KEY, SPEC_FILE)
+    assert record["provenance"].get("source") == pod_session_id(RUN, DISPATCH_ID, SPEC_FILE)
     assert "the-export" in record["body"]           # the export payload was recorded
-    # the DURABLE parent-keyed record is keyed by the parent's canonical
-    # CONFIG_KEY (the `::`-joined join key), never the physical `_`-joined
-    # folder - the two sides of the cross-family join agree (identity refactor)
-    assert record["fault_key"] == CONFIG_KEY
+    # the DURABLE parent-keyed record is keyed by the parent's loop dispatch id
+    # (S3 8.9) - the spec's own folder key
+    assert record["hunt_key"] == DISPATCH_ID
     # the record is keyed <config_key>:pod-export:<spec_id> with action update:
     # the note key carries NO `:`-session-id path, and the pod session id is
     # recoverable ONLY from provenance["source"] (#199)
     assert record["note_name"] == f"pod-export:{SPEC_FILE}"
-    assert record["key"] == f"{CONFIG_KEY}:pod-export:{SPEC_FILE}"
+    assert record["key"] == f"{DISPATCH_ID}:pod-export:{SPEC_FILE}"
     assert "hunting:" not in record["key"]
-    assert pod_session_id(RUN, FAULT_KEY, SPEC_FILE) not in record["key"]
+    assert pod_session_id(RUN, DISPATCH_ID, SPEC_FILE) not in record["key"]
     # NOTHING more: the spec was consumed only by the mover (no re-dispatch),
     # and the hunter produced no further records/specs.
-    assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == []
-    assert len(hunter.read_specs(PROJECT, FAULT_KEY, sides=("consumed",))) == 1
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []
+    assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
 
 
 # --- identity-based refactor: the cross-run pod-dispatch wedge regression ------
@@ -668,7 +626,7 @@ def test_cross_run_specified_spec_dispatches_a_pod_without_a_parent(stores,
     a pod - the dispatch is gated on the spec's OWN persisted status, never on
     a chain-adjacent parent's liveness. AND the move lands (produced->consumed)
     AND the durable parent-keyed export record exists keyed by the parent's
-    canonical CONFIG_KEY, so the run can reach quiesce (never wedged).
+    canonical DISPATCH_ID, so the run can reach quiesce (never wedged).
 
     The produced spec is written DIRECTLY into the hunter store (no hunter
     dispatch this run - no produced loop file) - exactly the cross-run shape that
@@ -682,9 +640,9 @@ def test_cross_run_specified_spec_dispatches_a_pod_without_a_parent(stores,
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
-    # A produced SPECIFIED spec with NO produced/consumed parent config on disk
-    # at all - the parent was consumed by an earlier run, no hunter dispatches.
-    _write_spec(hunter, fault_key=FAULT_KEY, status="specified")
+    # A produced `ratified` spec with NO live parent hunter inbox at all - the
+    # parent hunt was consumed by an earlier run, no hunter dispatches.
+    _write_spec(hunter, hunt_key=DISPATCH_ID, status="ratified")
     pod_calls: list[str] = []
 
     async def record_pods(spec, **kw):
@@ -707,22 +665,22 @@ def test_cross_run_specified_spec_dispatches_a_pod_without_a_parent(stores,
     ))
     # the pod ran, and the spec moved produced -> consumed (the marker)
     assert pod_calls == [SPEC_FILE]
-    assert pod_session_id(RUN, FAULT_KEY, SPEC_FILE) in control.started
-    assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == []
-    assert len(hunter.read_specs(PROJECT, FAULT_KEY, sides=("consumed",))) == 1
+    assert pod_session_id(RUN, DISPATCH_ID, SPEC_FILE) in control.started
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []
+    assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
     # the DURABLE parent-keyed export record exists keyed by the canonical
-    # CONFIG_KEY (no live parent; the durable note is the only record)
+    # DISPATCH_ID (no live parent; the durable note is the only record)
     notes = hunter.read_notes(PROJECT)
     assert len(notes) == 1
-    assert notes[0]["fault_key"] == CONFIG_KEY
+    assert notes[0]["hunt_key"] == DISPATCH_ID
     assert notes[0]["provenance"].get("verdict_stub") is True
     assert notes[0]["provenance"].get("source") == pod_session_id(
-        RUN, FAULT_KEY, SPEC_FILE)
+        RUN, DISPATCH_ID, SPEC_FILE)
     assert "symptom-confirmed" in notes[0]["body"]
     # the record is keyed <config_key>:pod-export:<spec_id>: the note key
     # carries NO `:`-session-id path, the session id lives only in provenance
     assert notes[0]["note_name"] == f"pod-export:{SPEC_FILE}"
-    assert notes[0]["key"] == f"{CONFIG_KEY}:pod-export:{SPEC_FILE}"
+    assert notes[0]["key"] == f"{DISPATCH_ID}:pod-export:{SPEC_FILE}"
     assert "hunting:" not in notes[0]["key"]
     # the run reached quiesce - a produced `specified` spec can never wedge it
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
@@ -748,16 +706,7 @@ def test_run_does_not_complete_while_a_session_is_live(stores, monkeypatch):
 
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
-            hunter_store.write_spec(
-                project_id, FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",
-                spec={"status": "specified", "spec_id": SPEC_FILE,
-                      "fault_key": FAULT_KEY,
-                      "fault": {"fault_id": "f1", "mechanism": "m",
-                                "supports": [], "conflicts": [],
-                                "test": "t", "status": "specified"},
-                      "strategy": "blind", "spec_ref": "sr", "experiment_ref": ""},
-                mode="create", side="produced",
-            )
+            _write_ratified_spec(hunter_store)
             return None
         return dispatch, None
 
@@ -852,16 +801,7 @@ def test_stop_cancels_every_session_and_leaves_the_registry_empty(stores, monkey
 
     def block_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
-            hunter_store.write_spec(
-                project_id, FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",
-                spec={"status": "specified", "spec_id": SPEC_FILE,
-                      "fault_key": FAULT_KEY,
-                      "fault": {"fault_id": "f1", "mechanism": "m",
-                                "supports": [], "conflicts": [],
-                                "test": "t", "status": "specified"},
-                      "strategy": "blind", "spec_ref": "sr", "experiment_ref": ""},
-                mode="create", side="produced",
-            )
+            _write_ratified_spec(hunter_store)
             await asyncio.sleep(30)          # mid-graph forever (until stop)
             return None
         return dispatch, None
@@ -930,15 +870,10 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
 
     def draft_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
-            hunter_store.write_spec(
-                project_id, FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",
-                spec={"spec_id": SPEC_FILE, "fault_key": FAULT_KEY,
-                      "fault": {"fault_id": "f1", "mechanism": "m",
-                                "supports": [], "conflicts": [],
-                                "test": "t", "status": "hypothesised"},
-                      "strategy": "blind", "status": "hypothesised"},
-                mode="create", side="produced",
-            )
+            hunter_store.write_specs(
+                project_id, DISPATCH_ID,
+                [{"status": "hypothesised", "fault_keyword": "sqli",
+                  "strategy_keyword": "blind"}])
             return None
         return dispatch, None
 
@@ -957,5 +892,5 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
     ))
     # the hypothesised draft stayed produced but never blocked completion
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
-    assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == [SPEC_FILE]
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == [SPEC_FILE]
     assert not any(":pod:" in sid for sid in control.started)

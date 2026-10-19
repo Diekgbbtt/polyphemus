@@ -23,15 +23,15 @@ from polymerhus.attack.hunting.hunter_tools import (
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 
 PROJECT = "proj-1"
-FAULT_KEY = "Service:account-registration_CWE-266_Privilege Escalation"
+HUNT_KEY = "Service-account-registration__loop-1"
 
 
 def _notes(store, **kwargs):
-    return NotesTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY).invoke(kwargs)
+    return NotesTool(store=store, project_id=PROJECT, hunt_key=HUNT_KEY).invoke(kwargs)
 
 
 def _hunts(store, **kwargs):
-    return HuntsStoreTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY).invoke(kwargs)
+    return HuntsStoreTool(store=store, project_id=PROJECT, hunt_key=HUNT_KEY).invoke(kwargs)
 
 
 # --- #209: the coded teaching rejection --------------------------------------
@@ -47,7 +47,7 @@ def test_notes_missing_command_with_write_intent_is_a_teaching_rejection(tmp_pat
     assert out["ok"] is False
     assert out["error"] == "notes_args_rejected"
     assert "command" in out["detail"] and "write" in out["detail"]
-    assert store.read_notes(PROJECT, parent_key=FAULT_KEY) == []
+    assert store.read_notes(PROJECT, parent_key=HUNT_KEY) == []
 
 
 def test_notes_dict_evidence_is_a_teaching_rejection(tmp_path):
@@ -58,11 +58,11 @@ def test_notes_dict_evidence_is_a_teaching_rejection(tmp_path):
     out = json.loads(_notes(store, command="write", action="append",
                             note_name="n", kind="freeform",
                             body="b", evidence={"probe_refs": ["exec:SPA shell"],
-                                                "fault_key": FAULT_KEY}))
+                                                "hunt_key": HUNT_KEY}))
     assert out["ok"] is False
     assert out["error"] == "notes_args_rejected"
     assert "provenance" in out["detail"]
-    assert store.read_notes(PROJECT, parent_key=FAULT_KEY) == []
+    assert store.read_notes(PROJECT, parent_key=HUNT_KEY) == []
 
 
 def test_notes_valid_write_with_typed_provenance_lands(tmp_path):
@@ -78,7 +78,7 @@ def test_notes_valid_write_with_typed_provenance_lands(tmp_path):
                                         "verdict_stub": True,
                                         "probe_refs": ["exec:SPA shell"]}))
     assert out["ok"] is True
-    notes = store.read_notes(PROJECT, parent_key=FAULT_KEY)
+    notes = store.read_notes(PROJECT, parent_key=HUNT_KEY)
     assert len(notes) == 1
     assert notes[0]["evidence"] == "prose evidence"
     assert notes[0]["provenance"]["source"] == "pod-export"
@@ -119,60 +119,97 @@ def test_hunts_store_missing_command_with_write_intent_is_a_teaching_rejection(t
     """The same required-`command` pattern on `hunts_store` (uniform contract):
     the write payload without `command` -> coded teaching rejection."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, spec={"status": "hypothesised",
-                                         "fault_keyword": "f1",
-                                         "strategy_keyword": "probe"}))
+    out = json.loads(_hunts(store, specs=[{"status": "hypothesised",
+                                           "fault_keyword": "f1",
+                                           "strategy_keyword": "probe"}]))
     assert out["ok"] is False
     assert out["error"] == "hunts_store_args_rejected"
     assert "command" in out["detail"] and "write" in out["detail"]
-    assert store.read_specs(PROJECT, FAULT_KEY) == []
+    assert store.read_specs(PROJECT, HUNT_KEY) == []
 
 
-# --- the single-payload store write (the run-2d4a5bf9 defect) -----------------
+# --- the batched spec-set write (S3 8.6-8.7, T6) -----------------------------
 
-def test_hunts_store_write_payload_is_one_spec_object(tmp_path):
-    """The write payload is the ONE `spec` object; the file-name identity
-    (`fault_keyword` / `strategy_keyword`) and the write mode ride INSIDE it.
-    The schema exposes no separate top-level write symbols - the hunter
-    converges on the orchestrator's single-payload `hunt_config` pattern, so a
-    write-required field can never sit optional-and-unexplained on the surface.
-    """
+def test_hunts_store_write_payload_is_the_specs_list(tmp_path):
+    """S3 8.7: the write payload is the WHOLE `specs` list; the file-name
+    identity rides inside each entry. The schema exposes no separate top-level
+    write symbols and no single `spec` payload."""
     fields = HuntsStoreTool(store=None, project_id=PROJECT).args_schema.model_fields
-    assert "spec" in fields
-    for gone in ("fault_keyword", "strategy_keyword", "mode"):
+    assert "specs" in fields
+    for gone in ("spec", "fault_keyword", "strategy_keyword", "mode"):
         assert gone not in fields, gone
 
 
-def test_hunts_store_write_derives_the_file_name_from_the_spec_identity(tmp_path):
-    """The store derives `<fault_keyword>_<strategy_keyword>.yaml` in the
-    symbolic layer from the identity INSIDE the spec payload; a valid write
-    lands and the identity is not a separate request field."""
+def test_hunts_store_write_derives_the_file_names_from_the_set(tmp_path):
+    """The store derives each `<fault_keyword>_<strategy_keyword>.yaml` in the
+    symbolic layer; a batched write lands the whole set under the bound hunt
+    key and a duplicate identity is the coded dedup signal."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, command="write",
-                            spec={"status": "hypothesised",
-                                  "fault_keyword": "cwe1220-owner-binding",
-                                  "strategy_keyword": "cwe1220-owner-binding",
-                                  "fault_class": "CWE-1220"}))
+    out = json.loads(_hunts(store, command="write", specs=[
+        {"status": "hypothesised",
+         "fault_keyword": "cwe1220-owner-binding",
+         "strategy_keyword": "probe",
+         "fault_class": "CWE-1220"},
+        {"status": "hypothesised",
+         "fault_keyword": "reset-replay",
+         "strategy_keyword": "probe"},
+    ]))
     assert out["ok"] is True
-    assert out["status"] == "hypothesised"
-    specs = store.read_specs(PROJECT, FAULT_KEY)
-    assert len(specs) == 1
+    assert [entry["spec_id"] for entry in out["specs"]] == [
+        "cwe1220-owner-binding_probe", "reset-replay_probe"]
+    specs = store.read_specs(PROJECT, HUNT_KEY)
+    assert len(specs) == 2
     assert specs[0]["fault_class"] == "CWE-1220"
+
+    duplicate = json.loads(_hunts(store, command="write", specs=[
+        {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "dropped", "fault_keyword": "f1", "strategy_keyword": "probe"},
+    ]))
+    assert duplicate["ok"] is False
+    assert duplicate["error"] == "duplicate_spec"
+
+
+def test_hunts_store_terminal_write_promotes_and_declasses(tmp_path):
+    """S3 8.7: the terminal write carries the whole set with the survivors
+    `ratified` and the unfeasible `dropped`, upserting in place."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _hunts(store, command="write", specs=[
+        {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "hypothesised", "fault_keyword": "f2", "strategy_keyword": "probe"},
+    ])
+    out = json.loads(_hunts(store, command="write", specs=[
+        {"status": "ratified", "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "dropped", "fault_keyword": "f2", "strategy_keyword": "probe"},
+    ]))
+    assert out["ok"] is True
+    assert [entry["status"] for entry in out["specs"]] == ["ratified", "dropped"]
+    assert store.read_spec(PROJECT, HUNT_KEY, "f1_probe")["status"] == "ratified"
+    assert store.read_spec(PROJECT, HUNT_KEY, "f2_probe")["status"] == "dropped"
 
 
 def test_hunts_store_write_missing_identity_is_a_coded_rejection(tmp_path):
-    """The exact run-2d4a5bf9 defect: the model authored the spec but omitted
-    the second file-name keyword. The write must FAIL with a coded,
+    """A set entry missing the second file-name keyword FAILS with a coded,
     field-naming `hunts_store_write_rejected` (never a silent degenerate-name
     write, never a bare pydantic error), so the model corrects on the retry."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, command="write",
-                            spec={"status": "hypothesised",
-                                  "fault_keyword": "cwe1220-owner-binding"}))
+    out = json.loads(_hunts(store, command="write", specs=[
+        {"status": "hypothesised", "fault_keyword": "cwe1220-owner-binding"}]))
     assert out["ok"] is False
     assert out["error"] == "hunts_store_write_rejected"
-    assert out["fields"] == ["strategy_keyword"]
-    assert store.read_specs(PROJECT, FAULT_KEY) == []
+    assert "strategy_keyword" in " ".join(out["fields"])
+    assert store.read_specs(PROJECT, HUNT_KEY) == []
+
+
+def test_hunts_store_read_is_bound_to_the_loop_key(tmp_path):
+    """S3 8.9: the hunt key is BOUND at construction; the read never accepts a
+    key from the request, so the hunter can only address its own loop."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _hunts(store, command="write", specs=[
+        {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"}])
+    assert json.loads(_hunts(store, command="read"))["specs"][0]["status"] == \
+        "hypothesised"
+    assert json.loads(_hunts(store, command="read",
+                             statuses=["ratified"]))["specs"] == []
 
 
 # --- #209: the D84-22 rejected-call canon survives ----------------------------
@@ -190,9 +227,28 @@ def test_unknown_parameter_still_raises_the_rejected_call(tmp_path):
     hunts = HuntsStoreTool(store=store, project_id=PROJECT)
     with pytest.raises(ValidationError):
         hunts.invoke({"command": "write",
-                      "spec": {"status": "hypothesised",
-                               "fault_keyword": "f1",
-                               "strategy_keyword": "probe"}, "bogus": 1})
+                      "specs": [{"status": "hypothesised",
+                                 "fault_keyword": "f1",
+                                 "strategy_keyword": "probe"}], "bogus": 1})
+
+
+# --- S3 8.7: the skill pair is bound ------------------------------------------
+
+def test_build_hunter_tools_binds_the_skill_pair(tmp_path):
+    """S3 8.7: the hunter's surface carries `skill_list` / `skill_load` over the
+    web-vulnerability suite, so the loop's suite class can select the class
+    skill."""
+    from polymerhus.attack.hunting.hunter_tools import build_hunter_tools
+
+    tools = build_hunter_tools(
+        store=HunterMemoryStore(root_dir=tmp_path), project_id=PROJECT,
+        hunt_key=HUNT_KEY)
+    names = [tool.name for tool in tools]
+    assert "skill_list" in names and "skill_load" in names
+    assert names.index("skill_list") < names.index("skill_load")
+    # the always-bound fail-open pair still answers a coded gap, never a raise
+    skill_list = tools[names.index("skill_list")].invoke({})
+    assert skill_list["suite_gap"] is True
 
 
 # --- #292: the conciseness directive in the hunter tool descriptions -----------

@@ -249,12 +249,12 @@ def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
     return store.write_config(project_id, data, directory="produced")
 
 
-def seed_test_spec(project_id: str, *, fault_key: str, fault_keyword: str,
-                   strategy_keyword: str, status: str = "specified",
+def seed_test_spec(project_id: str, *, hunt_key: str, fault_keyword: str,
+                   strategy_keyword: str, status: str = "ratified",
                    **overrides) -> str:
     """Write ONE test-implementation spec through
-    `HunterMemoryStore.write_spec` (the real store API) into the produced
-    family; returns the spec file stem. `fault_key` is the 3-part config key.
+    `HunterMemoryStore.write_specs` (the real store API) into the produced
+    family; returns the spec file stem. `hunt_key` is the loop dispatch id.
 
     The seeded body MUST pass the pod's REAL INIT gate
     (`verification.validate_spec`): a `specified` spec with an empty typed base
@@ -267,24 +267,18 @@ def seed_test_spec(project_id: str, *, fault_key: str, fault_keyword: str,
     never a fabricated one)."""
     from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
     spec = {
-        "spec_id": f"{fault_keyword}_{strategy_keyword}",
-        "fault_key": fault_key, "status": status,
-        "fault": {"fault_id": "f1", "mechanism": "m", "supports": [],
-                  "conflicts": [], "test": "t"},
-        "strategy": strategy_keyword, "spec_ref": "sr", "experiment_ref": "",
+        "status": status, "fault_keyword": fault_keyword,
+        "strategy_keyword": strategy_keyword,
         "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "Service:slug:a"},
         "verification_symptoms": ["the target answers the crafted probe"],
-        "testing_pattern": "baseline-refinement",
-        "assumptions": [], "payload_vector_space": {},
-        "rationale": "seeded", "interpretation_guidance": "seeded",
+        "assumptions": ["the baseline request is replayable"],
+        "rationale": "seeded",
     }
     spec.update(overrides)
     store = HunterMemoryStore()
-    return store.write_spec(
-        project_id, fault_key, fault_keyword=fault_keyword,
-        strategy_keyword=strategy_keyword, spec=spec, mode="create",
-        side="produced",
-    ).stem
+    written = store.write_specs(
+        project_id, hunt_key, [spec], side="produced")
+    return written[0][0]
 
 
 def seed_experiment_log(project_id: str, *, spec_id: str, order: int = 1,
@@ -328,7 +322,7 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
     store = HunterMemoryStore()
     spec_id = str(source).rsplit(":", 1)[-1]
     store.write_note(
-        project_id, action="update", fault_key=config_key,
+        project_id, action="update", hunt_key=config_key,
         note_name=f"pod-export:{spec_id}", kind="freeform",
         body=str(verdict or {}), evidence="verdict-stub",
         provenance={"run_id": run_id, "source": source},

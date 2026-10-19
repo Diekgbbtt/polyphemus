@@ -4,7 +4,7 @@ The state-graph hunter's seams (spec 5, ADR R4): the per-project
 `HunterMemoryStore`, the `hunts_store` / `notes` tool seam over it, and the
 turn-by-turn ReAct host's `model_factory` (a scripted model emitting REAL tool
 calls - the standard tool interface the harness binds request-only). Owned here
-so the memory contract catalogue (C1-C22) and the harness-seam catalogue (H1-H4)
+so the memory contract catalogue (C1-C28) and the harness-seam catalogue (H1-H6)
 speak the SAME canned objects and the duplication stays in one place.
 """
 from __future__ import annotations
@@ -15,18 +15,13 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import PrivateAttr
 
-from polymerhus.attack.hunting.hunt_orchestrator import (
-    HuntConfig,
-)
-from polymerhus.attack.hunting.hunt_store import semantic_key
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunting_agent import build_sync_hunting_agent
 
 PROJECT = "proj-a"
 UNIT_ID = "Service:slug:a"
-FAULT_CLASS = "fault-x"
-VULNERABILITY_CLASS = "csrf"
-FAULT_KEY = semantic_key(UNIT_ID, FAULT_CLASS, VULNERABILITY_CLASS)
+UNIT_NAME = "Service-slug-a"
+HUNT_KEY = f"{UNIT_NAME}__loop-1"
 
 
 class _ScriptedFake(BaseChatModel):
@@ -130,45 +125,60 @@ def _answer(text):
     return {"answer": text}
 
 
-def _hunt_config(**overrides) -> HuntConfig:
-    """A canonical `HuntConfig` for the (Service:slug:a, fault-x) pair."""
-    base = HuntConfig(
-        hunt_id="hunt-1",
-        unit_id=UNIT_ID,
-        fault_class=FAULT_CLASS,
-        vulnerability_class=VULNERABILITY_CLASS,
-        rationale=f"{FAULT_CLASS} applies to {UNIT_ID} because ...",
-        research_direction="CSRF feasibility reasoning at the state-changing form locus",
-        surface_context={"cards": [], "fault_evidence": ["GET /api/a answers 200"]},
-        observed_defences=["perimeter WAF on /api/*"],
-        preconditions=["an authenticated session is obtainable"],
-        prior_hunt_insights=[],
-    )
-    return base.model_copy(update=overrides)
-
-
-def _fault(fault_id, *, status, mechanism="m", supports=None, conflicts=None,
-           test="t"):
-    """A hypothesis-draft `spec` write payload carrying the store's status
-    (the store-side lifecycle the `hunts_store` tool still validates; the
-    harness tracker no longer reads it)."""
-    return {"fault_id": fault_id, "mechanism": mechanism,
-            "supports": supports or [], "conflicts": conflicts or [],
-            "test": test, "status": status}
-
-
-def _spec(fault_id, spec_id, *, status, strategy="probe", **extra):
-    """A `specified`-write payload carrying the commit-specification fields."""
-    body = {
-        "fault_id": fault_id, "spec_id": spec_id, "status": status,
-        "strategy": strategy, "fault_key": FAULT_KEY,
-        "spec_ref": (f"data/{PROJECT}/hunter/test-specs/{FAULT_KEY}/"
-                     f"produced/{fault_id}_{strategy}.yaml"),
-        "experiment_ref": "", "mechanism": "m", "supports": ["e1"],
-        "conflicts": [], "test": "t",
+def _hunter_payload(**overrides) -> dict:
+    """The canonical loop payload the surfer materialises at dispatch (S2 8.2)
+    for the `(Service:slug:a, loop-1)` pair - the SAME key set
+    `materialise_hunter_payload` emits."""
+    payload = {
+        "dispatch_id": HUNT_KEY,
+        "run_id": "run-1",
+        "loop_id": "loop-1",
+        "unit_id": UNIT_ID,
+        "unit_kind": "service",
+        "loop": {
+            "id": "loop-1",
+            "fault_ref": "fault-1",
+            "vulnerability_ref": "v-1",
+            "canonical_class": "IDOR",
+            "web_vulnerability_class": "idor",
+            "likelihood": "high",
+            "likelihood_rationale": "An anonymous caller controls the id.",
+            "confidence": "INFERRED",
+            "evidences": [{"kind": "request", "ref": "GET /api/a"}],
+        },
+        "technical_sharpening": {
+            "interface_agreements": [{
+                "id": "ia-1",
+                "statement": "The endpoint reads the item id from the query.",
+            }],
+            "control_flows": [{"id": "cf-1"}],
+            "data_flows": [{"id": "df-1"}],
+        },
+        "trust_agreement": {
+            "id": "ta-1",
+            "statement": "The lookup trusts the caller's item id.",
+        },
+        "dynamic_state": None,
+        "programming_fault": {
+            "id": "fault-1",
+            "label": "improper authorisation on the item lookup",
+            "description": "The handler does not check item ownership.",
+        },
+        "canonical_class": "IDOR",
+        "web_vulnerability_class": "idor",
+        "evidence": [{"kind": "request", "ref": "GET /api/a"}],
+        "likelihood": "high",
+        "likelihood_rationale": "An anonymous caller controls the id.",
+        "vulnerability_rationale": "An anonymous caller reads another user's item.",
+        "confidence": "INFERRED",
+        "target_context": {
+            "unit_id": UNIT_ID,
+            "unit_kind": "service",
+            "baseline_refs": ["GET /api/a"],
+        },
     }
-    body.update(extra)
-    return body
+    payload.update(overrides)
+    return payload
 
 
 def build_memory_store(tmp_path) -> HunterMemoryStore:

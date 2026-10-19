@@ -102,20 +102,16 @@ def test_update_config_refuses_an_incomplete_identity(tmp_path):
 
 def test_write_config_derives_hunt_id_from_the_identity(tmp_path):
     # #298 Rule 1: `hunt_id` is a DERIVED symbol, never a request field. A
-    # prompt-compliant payload omits it (the agent contract says the harness
-    # derives it), so the store must set it from the validated identity - else
-    # the surfer's `HuntConfig.model_validate` refuses the config every tick
-    # and the run never quiesces (the #298 failure class, relocated).
-    from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig
-
+    # prompt-compliant payload omits it, so the store must set it from the
+    # validated identity. T6 (#379) retired the `HuntConfig` validation this
+    # test used to ride; the persisted body's derived field is asserted
+    # directly.
     store = HuntStore(tmp_path)
     body = _config()
     del body["hunt_id"]
     store.write_config(PROJECT, body)
     (stored,) = store.read_configs(PROJECT)
     assert stored["hunt_id"] == semantic_key(UNIT, CWE, CLASS)
-    # the persisted body is validatable as the HuntConfig the surfer reads
-    assert HuntConfig.model_validate(stored).hunt_id == semantic_key(UNIT, CWE, CLASS)
 
 
 def test_update_config_derives_hunt_id_from_the_identity(tmp_path):
@@ -223,18 +219,6 @@ def test_consume_config_still_refuses_a_two_part_revival_key(tmp_path):
     store.write_config(PROJECT, _config())
     with pytest.raises(ValueError):
         store.consume_config(PROJECT, f"{UNIT}::{CWE}")
-
-
-def test_fault_key_to_config_key_accepts_a_system_unit_folder(tmp_path):
-    # The hunter-memory bucket folder carries the same identity; the `::` form
-    # of a System unit must normalise to its canonical config key (and the
-    # 2-part revival key must still be refused).
-    from polymerhus.attack.hunting.hunt_store import _fault_key_to_config_key
-    unit = "System:AuthorizationSystem::__singleton__"
-    key = semantic_key(unit, CWE, CLASS)
-    assert _fault_key_to_config_key(key) == key
-    assert _fault_key_to_config_key(config_file_name(unit, CWE, CLASS)[:-5]) == key
-    assert _fault_key_to_config_key(f"{unit}::{CWE}") is None
 
 
 # --- topology: the store writes files, the app scaffold owns directories -----
@@ -623,54 +607,6 @@ def test_ambiguous_cwe_like_segments_parse_greedily(tmp_path):
     assert len(configs) == 1
     assert configs[0]["unit_id"] == unit  # the CONTENT keeps the true identity
     assert configs[0]["vulnerability_class"] == cls
-
-
-# --- #313: the prior-hunt insight reads the status-varying spec schema ---------
-
-def test_read_hunter_specs_surfaces_the_typed_specified_spec_only(tmp_path):
-    """#313 - the hunter memory is a status-varying schema: a non-`specified`
-    record is a hypothesis-only FaultItem draft; a `specified` record is the
-    typed TestImplementationSpec base. The prior-hunt insight consumer must
-    surface the COMPLETED spec's typed content (deriving the semantic
-    `<fault>_<strategy>` identity from the file-name identity) and must NOT
-    launder a dropped/hypothesised draft into a completed TestImplementationSpec
-    (AC#2)."""
-    from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-
-    hunter = HunterMemoryStore(tmp_path)
-    key = semantic_key(UNIT, CWE, CLASS)
-    hunter.write_spec(
-        PROJECT, key, fault_keyword="csrf", strategy_keyword="probe",
-        spec={
-            "target_identity": {"url": "http://t/", "unit_id": UNIT},
-            "verification_symptoms": ["foreign-origin state change accepted"],
-            "testing_pattern": "cross-site form submission",
-            "assumptions": ["authenticated session"],
-            "payload_vector_space": {"method": "POST", "path": "/x"},
-            "rationale": "r", "interpretation_guidance": "g",
-            "status": "specified",
-        },
-    )
-    hunter.write_spec(
-        PROJECT, key, fault_keyword="dropped", strategy_keyword="probe",
-        spec={"fault_id": "F9", "mechanism": "m", "supports": [], "conflicts": [],
-              "test": "t", "status": "dropped"},
-    )
-    store = HuntStore(tmp_path)
-    insights = store.read_hunter_specs(PROJECT, key)
-    # the dropped draft is NOT a completed TestImplementationSpec insight
-    assert len(insights) == 1
-    insight = insights[0]
-    assert insight["kind"] == "prior_spec"
-    assert insight["status"] == "specified"
-    # the semantic identity is DERIVED from the file-name identity keywords
-    assert insight["spec_id"] == "csrf_probe"
-    # the typed base's discriminating content rides the shallow projection
-    assert insight["testing_pattern"] == "cross-site form submission"
-    assert insight["verification_symptoms"] == ["foreign-origin state change accepted"]
-    # the evidence trail and the full record are never embedded (I3)
-    assert "supports" not in insight and "test" not in insight
-    assert "payload_vector_space" not in insight
 
 
 # --- #341: memory.yaml growth is bounded (count + size, oldest-first) --------

@@ -42,14 +42,14 @@ from polymerhus.attack.hunting.mover import (
 )
 from tests.integration import hunting_wiring_stack as stack
 
-# The production identity conventions (G4 / ADR Q13): a CWE fault class so the
-# `_`-joined fault_key folder is representable, and a real vulnerability class
-# so the produced config's semantic key round-trips with its file name.
+# The production identity conventions: the hunter memory key is the loop
+# dispatch id `<unit_name>__<loop_id>` (S3 8.9), and the CWE/class pair keys the
+# seeded spec's identity.
 UNIT = "Service:slug:a"
+UNIT_NAME = "Service-slug-a"
+DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 FAULT = "CWE-352"
 CLASS = "CSRF"
-FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
-CONFIG_KEY = f"{UNIT}::{FAULT}::{CLASS}"
 SPEC = "sqli"
 STRATEGY = "blind"
 SPEC_FILE = f"{SPEC}_{STRATEGY}"
@@ -161,7 +161,7 @@ def test_E1_whole_pipeline_happy_path(client):
     # Richer seeded-candidate run through the REAL pod/hunter edge.
     p = _new_project(client, "hw-e1")
     spec_file = stack.seed_test_spec(
-        p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
+        p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     # T4b (#387): a produced hunt config is no longer dispatch input; the
     # seeded SPEC still drives the real POD edge. A hunter is dispatched from a
     # produced loop file, which needs the run's own modeller (and the T6 #379
@@ -185,11 +185,11 @@ def test_E1_whole_pipeline_happy_path(client):
         # The specified spec moved produced->consumed; the pod export + durable
         # parent-keyed note exist. (The retired config family has no producer.)
         assert stack.produced_config_keys(p) == []
-        assert stack.consumed_spec_files(p, FAULT_KEY), \
+        assert stack.consumed_spec_files(p, DISPATCH_ID), \
             "expected the specified spec moved to consumed on a complete run"
         assert stack.pod_export_entries(p, spec_file), \
             "expected a durable pod export envelope on a complete run"
-        notes = HunterMemoryStore().read_notes(p, parent_key=CONFIG_KEY)
+        notes = HunterMemoryStore().read_notes(p, parent_key=DISPATCH_ID)
         assert notes, \
             "expected the durable parent-keyed note written at pod completion"
 
@@ -212,12 +212,12 @@ def test_E2_cross_run_produced_spec_reconciliation(client):
     # to seed/consume - the parent identity is the spec's own fault_key, and the
     # durable note is keyed by it regardless of any parent session.
     assert stack.produced_config_keys(p) == []
-    assert stack.consumed_spec_files(p, FAULT_KEY) == []
+    assert stack.consumed_spec_files(p, DISPATCH_ID) == []
 
     # Seed the produced `specified` spec under the consumed parent's fault_key.
     spec_file = stack.seed_test_spec(
-        p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    assert stack.produced_spec_files(p, FAULT_KEY) == [spec_file]
+        p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
+    assert stack.produced_spec_files(p, DISPATCH_ID) == [spec_file]
 
     # Launch a fresh whole run; the surfer must dispatch the pod (own-status
     # gate) with NO live parent and reach complete - not wedge on quiesce.
@@ -230,14 +230,14 @@ def test_E2_cross_run_produced_spec_reconciliation(client):
         f"E2 wedge regression: run ended {term['status']!r} instead of complete")
 
     # The spec dispatched through the own-status gate and moved produced->consumed.
-    assert stack.produced_spec_files(p, FAULT_KEY) == []
-    assert stack.consumed_spec_files(p, FAULT_KEY) == [spec_file]
+    assert stack.produced_spec_files(p, DISPATCH_ID) == []
+    assert stack.consumed_spec_files(p, DISPATCH_ID) == [spec_file]
     # The durable parent-keyed record exists under the parent's canonical key
     # (real hunter-memory read, independent of any live parent session).
-    notes = HunterMemoryStore().read_notes(p, parent_key=CONFIG_KEY)
+    notes = HunterMemoryStore().read_notes(p, parent_key=DISPATCH_ID)
     assert notes, "E2: no durable parent-keyed note after a complete run"
-    assert any(CONFIG_KEY in n["key"] for n in notes), \
-        f"E2: parent-keyed note not under {CONFIG_KEY}: {notes}"
+    assert any(DISPATCH_ID in n["key"] for n in notes), \
+        f"E2: parent-keyed note not under {DISPATCH_ID}: {notes}"
 
 
 # =============================================================================
@@ -255,7 +255,7 @@ def test_E3_mid_flight_stop(client):
     _need_pg()
     p = _new_project(client, "hw-e3")
     spec_file = stack.seed_test_spec(
-        p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
+        p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
@@ -271,15 +271,15 @@ def test_E3_mid_flight_stop(client):
     # caught it in). T4b (#387): the config family retired with the dispatch path.
     assert stack.produced_config_keys(p) == []
     spec_partial = (
-        stack.produced_spec_files(p, FAULT_KEY)
-        + stack.consumed_spec_files(p, FAULT_KEY)
+        stack.produced_spec_files(p, DISPATCH_ID)
+        + stack.consumed_spec_files(p, DISPATCH_ID)
     )
     assert len(spec_partial) >= 1, \
         "E3: the stopped run's partial trail vanished - expected the seeded " \
         "spec to remain readable"
     # The run's sessions were drained: pausing any session of the stopped run's
     # namespace -> 404 (no live session remains - the registry emptied).
-    dead = f"hunting:{rid}:hunt:{FAULT_KEY}"
+    dead = f"hunting:{rid}:hunt:{DISPATCH_ID}"
     probe = client.post(f"/projects/{p}/hunting/{rid}/sessions/{dead}/pause")
     assert probe.status_code == 404, \
         f"E3: expected the drained run's session to 404, got {probe.status_code}"
@@ -300,7 +300,7 @@ def test_E4_per_session_pause_resume_mid_graph(client):
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
-    hunter_sid = hunter_session_id(rid, FAULT_KEY)
+    hunter_sid = hunter_session_id(rid, DISPATCH_ID)
 
     pytest.skip(
         f"carried, blocked on T6 #379: no hunter session {hunter_sid!r} can "
@@ -332,14 +332,14 @@ def test_E5_single_session_stop_does_not_end_the_run(client):
     _need_pg()
     p = _new_project(client, "hw-e5")
     spec_file = stack.seed_test_spec(
-        p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
+        p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
-    pod_sid = pod_session_id(rid, FAULT_KEY, spec_file)
+    pod_sid = pod_session_id(rid, DISPATCH_ID, spec_file)
     pytest.skip(
         f"carried, blocked on T6 #379: the single-session-stop contract needs "
-        f"a live hunter sibling, and no hunter {hunter_session_id(rid, FAULT_KEY)!r} "
+        f"a live hunter sibling, and no hunter {hunter_session_id(rid, DISPATCH_ID)!r} "
         f"can dispatch from a pre-seeded config")
 
     # The run reaches a terminal only once the remaining sessions settle.
@@ -427,7 +427,7 @@ def test_E7_one_live_run_guard(client):
     # across the second POST. T4b (#387): the config family is not dispatch
     # input, and a hunter is inert until T6 (#379).
     stack.seed_test_spec(
-        p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
+        p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     first = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert first.status_code == 201, first.text
     first_id = first.json()["hunting_run_id"]
@@ -486,11 +486,11 @@ def test_E9_pod_only_resume(client):
     _need_pg()
     p = _new_project(client, "hw-e9")
     spec_file = stack.seed_test_spec(
-        p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
+        p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
-    pod_sid = pod_session_id(rid, FAULT_KEY, spec_file)
+    pod_sid = pod_session_id(rid, DISPATCH_ID, spec_file)
     if not _session_pause_until_registered(client, p, rid, pod_sid):
         pytest.skip(
             f"carried, blocked on: no real held pod session {pod_sid!r} within "

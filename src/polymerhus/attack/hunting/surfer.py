@@ -17,11 +17,9 @@ wiring T4 owns:
 - The run DISPATCH builders (`build_run_dispatch`): the `coro_for` seam the
   mover's `run_delivery_tick` was designed for. A produced LOOP FILE becomes ONE
   hunter session under the per-loop id `hunting:<run_id>:hunt:<dispatch_id>`
-  (S3 8.9), handed the payload materialised at dispatch time (S2 8.2) - but ONLY
-  when the run's hunter builder can consume that payload (`consumes_loop_payload`,
-  C1): a builder that cannot makes the loop family inert (no session, no move, no
-  model consume, and the loop is not dispatchable work), so no dispatchable work
-  is lost between T4a and T6. A produced dispatchable test spec becomes ONE pod
+  (S3 8.9), handed the payload materialised at dispatch time (S2 8.2) - the
+  loop dispatch path is live end to end (T6 #379). A produced dispatchable test
+  spec becomes ONE pod
   session (ADR Q13 pod session id, S3 8.7) riding the SAME mover. An item that
   is not dispatchable now - a
   `low` loop behind a higher-tier loop or a live higher session (S2 8.3), a
@@ -73,10 +71,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from polymerhus.attack.hunting.hunter_memory import (
-    HunterMemoryStore,
-    config_key_from_fault_key,
-)
+from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
 from polymerhus.attack.hunting.mover import (
     THREAT_MODELLER_SEGMENTS,
@@ -230,12 +225,6 @@ class RunDispatchState:
     hunter_inboxes: dict[str, AgentInbox] = field(default_factory=dict)
     hunters_in_graph: set[str] = field(default_factory=set)
     loop_likelihoods: dict[str, str] = field(default_factory=dict)
-    # False when the run's hunter builder cannot consume the loop payload yet
-    # (C1, T4a review): the loop family is then NOT dispatchable work - the read
-    # does not hand the loops over, nothing is moved and no model is consumed, so
-    # the run quiesces INERT instead of consuming dispatchable work with zero
-    # hunts. T6 removes this field with the marker in `_default_hunter_builder`.
-    hunter_payload_capable: bool = True
     provider_failure: ProviderUnavailableError | None = None
 
 
@@ -257,7 +246,6 @@ def run_work_remaining(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
-    hunter_payload_capable: bool = True,
 ) -> bool:
     """True when a DISPATCHABLE-NOW produced item remains for this run.
 
@@ -283,7 +271,6 @@ def run_work_remaining(
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store,
-        hunter_payload_capable=hunter_payload_capable,
     )
     if inbox.models_to_consume:
         # a produced COMPLETED valid model with no dispatchable loop left: the
@@ -331,7 +318,6 @@ async def is_run_quiesced(
     return not run_work_remaining(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, live_loop_likelihoods=state.loop_likelihoods,
-        hunter_payload_capable=state.hunter_payload_capable,
     )
 
 
@@ -363,7 +349,6 @@ def build_run_dispatch(
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
     pod_builder: Callable[..., Awaitable[dict]],
     control: Any = None,
-    hunter_payload_capable: bool = True,
 ) -> Callable[[ProducedItem], Any]:
     """Build the mover's `coro_for` seam for ONE run (ADR #169 Q11/Q13, spec
     #169 "The inbox surfer semantics"): the produced family member -> the
@@ -380,7 +365,7 @@ def build_run_dispatch(
       A model that vanished, or a stopped hunter role, yields `None` (the
       mover's refused rule - stays produced, retried next tick, never dropped).
     - `TestSpecItem` -> ONE pod session for the produced spec, ONLY when its
-      persisted `status == "specified"` (the ratified-spec gate). The pod rides
+      persisted `status == "ratified"` (the ratified-spec gate). The pod rides
       the same mover under ADR Q13's pod session id. Dispatch is gated by the
       spec's OWN persisted status - NEVER by a chain-adjacent parent's liveness
       (identity-based refactor, 2026-08-25): a produced spec whose hunt key's
@@ -451,28 +436,7 @@ def build_run_dispatch(
         session is keyed by the loop's dispatch id. The run-local registration
         (the inbox, the mid-graph key, the loop's likelihood) lands INSIDE the
         session coroutine, so a coroutine the control plane refuses - which is
-        closed without ever running - mutates nothing (T4a review I1).
-
-        C1 (the T4a code-quality review): when the run's hunter builder cannot
-        consume the loop payload yet, this path is INERT - no session, no move,
-        no model consume (the produced read does not even hand the loop over as
-        an item: `hunter_payload_capable` on the read), so the work stays
-        dispatchable for the run that can consume it and the run still quiesces.
-        The guard here is the belt-and-braces for a DIRECTLY constructed item (or
-        a stale read from another run's wiring): the read is the primary gate -
-        it is the one the work read and the quiesce share, so it must be the one
-        that decides what is dispatchable. T6 removes this branch together with
-        the `Mapping` discrimination in the production builder."""
-        if not hunter_payload_capable:
-            log_refusal_once(
-                project_id, run_id, loop_refusal_detail(
-                    "loop-payload", item.unit_name, item.loop_id),
-                "surfer: produced loop %s NOT dispatched - the per-loop hunter "
-                "harness cannot consume the loop payload yet (designed-not-built "
-                "-> T6 #379); left in produced/, not counted as dispatchable work",
-                item.message_id,
-            )
-            return None
+        closed without ever running - mutates nothing (T4a review I1)."""
         model = item.model
         if model is None and threat_store is not None:
             # A directly constructed item (or a store that does not carry the
@@ -516,7 +480,7 @@ def build_run_dispatch(
         # gate, `SPEC_DISPATCH_STATUS`); the re-read is only the belt-and-braces
         # for a directly constructed item.
         body = item.spec if item.spec is not None else produced_spec_body(
-            hunter_store, project_id, item.fault_key, item.spec_file)
+            hunter_store, project_id, item.hunt_key, item.spec_file)
         if not body or body.get("status") != SPEC_DISPATCH_STATUS:
             return None
         # #317: a stopped pod role refuses new pod dispatch (at-least-once).
@@ -524,19 +488,18 @@ def build_run_dispatch(
             return None
         # The spec's OWN persisted status gates the pod dispatch - NEVER the
         # liveness of a chain-adjacent parent (identity-based refactor,
-        # 2026-08-25): a produced `specified` spec whose parent config was
+        # 2026-08-25): a produced `ratified` spec whose parent hunt key was
         # consumed by an earlier run (no live parent inbox in THIS run) still
         # dispatches, so the never-disagree contract holds - run_work_remaining
         # and build_run_dispatch gate on the same own-status and a produced
-        # spec can never wedge the quiesce.
-        config_key = config_key_from_fault_key(item.fault_key)
-        inbox = state.hunter_inboxes.get(config_key)
+        # spec can never wedge the quiesce. The parent key IS the loop dispatch
+        # id the spec lives under (S3 8.9); no config key is derived.
+        inbox = state.hunter_inboxes.get(item.hunt_key)
         return run_pod_session(
             spec=body,
             project_id=project_id,
             run_id=run_id,
-            fault_key=item.fault_key,
-            config_key=config_key,
+            hunt_key=item.hunt_key,
             spec_id=item.spec_file,
             inbox=inbox,
             hunter_store=hunter_store,
@@ -571,10 +534,9 @@ async def run_hunter_session(
     The dispatch coroutine the mover schedules when a loop file is admitted.
 
     The payload is the ONLY input: the config bridge retired in T4b (#387).
-    The production harness still cannot consume the materialised payload (its
-    dispatch seam consumes the retired `HuntConfig`), so `_default_hunter_builder`
-    refuses it LOUDLY with `HunterPayloadNotBuiltError` - the designed-not-built
-    marker for T6 (#379), never a fabricated config.
+    T6 (#379) made the production harness consume the loop payload end to end
+    (`_default_hunter_builder` hands it straight to `build_hunting_agent`), so
+    the per-loop dispatch path is live - never a fabricated config.
 
     The run state carries the session's loop for the duration of its GRAPH
     stretch: `hunters_in_graph` holds quiesce while the hunt may still author
@@ -686,7 +648,7 @@ async def _run_hunter_idle(
                 hunt_session.role_id, hunt_session.thread_id, None,
                 checkpointer=get_session_checkpointer(),
                 inbox=inbox,
-                on_message=_verdict_stub_handler(fault_key=hunt_key),
+                on_message=_verdict_stub_handler(hunt_key=hunt_key),
                 extra_tags=[run_id],
                 usage_scope=project_id,
                 tools=binding.tools,
@@ -699,7 +661,7 @@ async def _run_hunter_idle(
         logger.warning("surfer: hunt %s idle loop degraded (%s)", hunt_key, exc)
 
 
-def _verdict_stub_handler(*, fault_key):
+def _verdict_stub_handler(*, hunt_key):
     """The ADR Q16 verdict stub (identity-based refactor, 2026-08-25): a
     delivered `PodExport` is a WITHIN-RUN LIVE FEED for the future
     verdict-processing node (D67-02/D11/D67-14) - CONSUMED ONLY, nothing more.
@@ -715,24 +677,24 @@ def _verdict_stub_handler(*, fault_key):
             logger.debug(
                 "surfer: hunt %s consumed pod_export live feed from %s "
                 "(durable record already at pod completion)",
-                fault_key, message.source,
+                hunt_key, message.source,
             )
         return None
 
     return _stub
 
 
-def _record_durable_pod_export(*, hunter_store, project_id, run_id, config_key,
+def _record_durable_pod_export(*, hunter_store, project_id, run_id, hunt_key,
                                spec_id, source, export) -> None:
     """The DURABLE parent-keyed export record (identity-based refactor,
     2026-08-25 / ADR Q16 amendment, note key pinned by #199): authored
-    deterministically at pod completion, keyed by the parent's CANONICAL
-    `config_key` - independent of any live parent session, crash-safe, never
-    lost to a live-mailbox-only path. The export envelope is recorded as a
-    freeform note on the hunter memory (the verdict-stub marker), keyed
-    `<config_key>:pod-export:<spec_id>` (the parent's config key + the
-    `pod-export:` marker + the semantic `<fault>_<strategy>` spec id), with
-    ONE current record per (config, spec): a re-export UPDATES the same key
+    deterministically at pod completion, keyed by the parent's loop dispatch id
+    (`hunt_key`, S3 8.9) - independent of any live parent session, crash-safe,
+    never lost to a live-mailbox-only path. The export envelope is recorded as
+    a freeform note on the hunter memory (the verdict-stub marker), keyed
+    `<hunt_key>:pod-export:<spec_id>` (the parent's loop key + the
+    `pod-export:` marker + the derived `<fault>_<strategy>` spec id), with
+    ONE current record per (hunt, spec): a re-export UPDATES the same key
     (one TestImplementationSpec yields at most one PodExport), and the first
     export APPENDS (the store's update-on-missing is a denoted miss, never a
     silent drop). The pod session id lives ONLY in `provenance["source"]`,
@@ -740,16 +702,16 @@ def _record_durable_pod_export(*, hunter_store, project_id, run_id, config_key,
     never re-fabricated or dropped, and the run must never wedge on the
     record."""
     note_name = f"pod-export:{spec_id}"
-    key = hunter_store.note_key(config_key, note_name)
+    key = hunter_store.note_key(hunt_key, note_name)
     try:
         existing = [
-            r for r in hunter_store.read_notes(project_id, parent_key=config_key)
+            r for r in hunter_store.read_notes(project_id, parent_key=hunt_key)
             if r.get("key") == key
         ]
         hunter_store.write_note(
             project_id,
             action="update" if existing else "append",
-            fault_key=config_key,
+            hunt_key=hunt_key,
             note_name=note_name,
             kind="freeform",
             body=json.dumps(export or {}, sort_keys=True),
@@ -763,7 +725,7 @@ def _record_durable_pod_export(*, hunter_store, project_id, run_id, config_key,
     except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
         logger.warning(
             "surfer: durable pod-export record failed for %s/%s (%s)",
-            config_key, note_name, exc,
+            hunt_key, note_name, exc,
         )
 
 
@@ -772,8 +734,7 @@ async def run_pod_session(
     spec: dict,
     project_id: str,
     run_id: str,
-    fault_key: str,
-    config_key: str,
+    hunt_key: str,
     spec_id: str,
     inbox: AgentInbox | None,
     hunter_store: HunterMemoryStore,
@@ -785,8 +746,8 @@ async def run_pod_session(
 ) -> dict:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
     injected builder; `arun_pod` in production), then record the completed
-    export DURABLY at pod completion keyed by the parent's canonical
-    `config_key` (identity-based refactor, 2026-08-25 / Q16 amendment -
+    export DURABLY at pod completion keyed by the parent's loop dispatch id
+    (`hunt_key`, S3 8.9) (identity-based refactor, 2026-08-25 / Q16 amendment -
     crash-safe, independent of any live parent session, never lost to a crash
     between dispatch and an in-memory inbox consumption), and finally deliver
     the completed export to a WITHIN-RUN co-running parent's inbox (an OPTIONAL
@@ -825,16 +786,16 @@ async def run_pod_session(
         async with _gate_or_null(role_gate):
             export = await _run()
 
-    source = pod_session_id(run_id, fault_key, spec_id)
+    source = pod_session_id(run_id, hunt_key, spec_id)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the
-    # parent's canonical config_key + the pod-export:<spec_id> marker (#199) -
-    # the single crash-safe record, independent of any live parent inbox.
+    # parent's loop dispatch id + the pod-export:<spec_id> marker (#199) - the
+    # single crash-safe record, independent of any live parent inbox.
     _record_durable_pod_export(
         hunter_store=hunter_store, project_id=project_id, run_id=run_id,
-        config_key=config_key, spec_id=spec_id, source=source, export=export,
+        hunt_key=hunt_key, spec_id=spec_id, source=source, export=export,
     )
     # The WITHIN-RUN live feed (optional): only when a co-running parent's inbox
-    # is live under the parent's config_key. Best-effort - never a gate.
+    # is live under the parent's hunt key. Best-effort - never a gate.
     if inbox is not None:
         await inbox.post(AgentMessage(
             kind="pod_export",
@@ -853,7 +814,6 @@ async def run_surfer_loop(
     control,
     coro_for: Callable[[ProducedItem], Any],
     state: RunDispatchState,
-    hunter_payload_capable: bool = True,
     tick_interval: float = DEFAULT_SURFER_TICK_INTERVAL,
 ) -> SurferReport:
     """The run-scoped inbox surfer loop (ADR Q2a): one delivery lap per tick,
@@ -883,7 +843,6 @@ async def run_surfer_loop(
             hunter_store=hunter_store,
             control=control, coro_for=coro_for,
             live_loop_likelihoods=state.loop_likelihoods,
-            hunter_payload_capable=hunter_payload_capable,
         )
         ticks += 1
         if state.provider_failure is not None:
