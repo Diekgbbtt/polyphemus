@@ -1482,6 +1482,20 @@ async def start_hunting(
                     "start_hunting: actor reap failed for %s (fail-open)",
                     hunting_run_id,
                 )
+            # The dispatch plane's refuse-once log is run-scoped (T4a review F3):
+            # the terminal clears it, so a later run re-logs the malformed file it
+            # still finds instead of inheriting this run's silence.
+            try:
+                from polymerhus.attack.hunting.mover import (  # noqa: PLC0415
+                    clear_refusal_log,
+                )
+
+                clear_refusal_log()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.warning(
+                    "start_hunting: refusal-log clear failed for %s (fail-open)",
+                    hunting_run_id,
+                )
             # #317: the run terminal reaps the run's agent sub-modules, so no
             # role handle outlives its run.
             if manager is not None:

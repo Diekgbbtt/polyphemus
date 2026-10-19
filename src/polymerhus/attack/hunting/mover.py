@@ -58,7 +58,7 @@ section 6): the active runtime resolves lazily on first control-plane use.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import AbstractSet, Any, Callable, Iterable, Mapping, Protocol, Sequence
@@ -146,6 +146,41 @@ def _require_non_empty(value: str, what: str) -> None:
         raise ValueError(f"{what} must be a non-empty string; got {value!r}")
 
 
+# --- the refuse-once log ---------------------------------------------------------
+
+# The bound on the refusal log: a refusal key is remembered so the mover's
+# per-tick re-read of the produced family never floods the log (S2 10.5's
+# log-once discipline). The set is bounded - a long-lived process must not grow
+# it without limit - and evicts the oldest key first.
+REFUSAL_LOG_LIMIT = 1024
+
+_refusal_log: dict[str, None] = {}
+
+
+def log_refusal_once(key: str, message: str, *args: Any) -> bool:
+    """Log `message` once per `key` (insertion-ordered, bounded): True when this
+    call logged, False when the key was already refused this process run.
+
+    The key MUST carry the project id (and the run): one project's refusal must
+    never silence the same loop's refusal in another project (T4a review F3).
+    Callers: the mover's loop validity predicate and malformed-file refusals, and
+    the surfer's model-context refusal."""
+    if key in _refusal_log:
+        return False
+    _refusal_log[key] = None
+    while len(_refusal_log) > REFUSAL_LOG_LIMIT:
+        _refusal_log.pop(next(iter(_refusal_log)))
+    logger.warning(message, *args)
+    return True
+
+
+def clear_refusal_log() -> None:
+    """Forget every refused key (the run terminal's cleanup hook): a refusal
+    belongs to the run that observed the malformed file, so a later run re-logs
+    it rather than inheriting this run's silence."""
+    _refusal_log.clear()
+
+
 # --- the pure item model ---------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -170,7 +205,13 @@ class ThreatLoopItem(ProducedItem):
 
     `unit_name` is the on-disk unit directory name (the store's derived symbol,
     collision-suffixed when two unit ids sanitise alike), which is the move
-    target's directory; `unit_id` is the authoritative model identity."""
+    target's directory; `unit_id` is the authoritative model identity.
+
+    `model` is the unit's model document, parsed by the produced read the item
+    came from: the payload is materialised from it at dispatch time (S2 8.2, "the
+    surfer reads the model document for the unit context"), so the dispatch needs
+    no second read. It defaults to None for a directly constructed item, which
+    then reads the store itself."""
 
     unit_id: str
     unit_name: str
@@ -178,6 +219,7 @@ class ThreatLoopItem(ProducedItem):
     dispatch_id: str
     likelihood: str
     record: Mapping[str, Any]
+    model: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -236,11 +278,13 @@ _UNIT_KINDS = tuple(kind.value for kind in UnitKind)
 
 def threat_loop_item(
     *,
+    project_id: str,
     unit_id: str,
     unit_name: str,
     loop_id: str,
     record: Any,
     run_id: str,
+    model: Mapping[str, Any] | None = None,
 ) -> ThreatLoopItem | None:
     """The ONE loop validity predicate (S2 8.1, 8.4; T4 #377): the dispatch
     record for one produced loop file, or None when the file is refused.
@@ -267,50 +311,52 @@ def threat_loop_item(
     - a nested `loop` record that is not a mapping, or carries no
       `fault_ref`/`vulnerability_ref` - the payload's anchors.
 
-    A refusal is logged ONCE per file: the mover retries the produced file every
-    tick, so a per-tick log would flood the run log."""
+    A refusal is logged ONCE per file and per project: the mover retries the
+    produced file every tick, so a per-tick log would flood the run log (and a
+    project-scoped key keeps one project's refusal from silencing another's)."""
     if not isinstance(record, Mapping):
-        return _refuse_loop(run_id, unit_name, loop_id, "the body is not a mapping")
+        return _refuse_loop(project_id, run_id, unit_name, loop_id,
+                            "the body is not a mapping")
     if record.get("run_id") != run_id:
         return _refuse_loop(
-            run_id, unit_name, loop_id,
+            project_id, run_id, unit_name, loop_id,
             f"it belongs to run {record.get('run_id')!r}",
         )
     if record.get("unit_id") != unit_id or not unit_id:
         return _refuse_loop(
-            run_id, unit_name, loop_id,
+            project_id, run_id, unit_name, loop_id,
             f"its unit_id {record.get('unit_id')!r} disagrees with the unit "
             f"directory's {unit_id!r}",
         )
     if record.get("unit_kind") not in _UNIT_KINDS:
         return _refuse_loop(
-            run_id, unit_name, loop_id,
+            project_id, run_id, unit_name, loop_id,
             f"unknown unit_kind {record.get('unit_kind')!r}",
         )
     if not is_loop_id(loop_id) or record.get("loop_id") != loop_id:
         return _refuse_loop(
-            run_id, unit_name, loop_id,
+            project_id, run_id, unit_name, loop_id,
             f"the loop id {record.get('loop_id')!r} is not the file's "
             f"{loop_id!r} of the `loop-<rank>` form",
         )
     dispatch = dispatch_id(unit_name, loop_id)
     if record.get("dispatch_id") != dispatch:
         return _refuse_loop(
-            run_id, unit_name, loop_id,
+            project_id, run_id, unit_name, loop_id,
             f"its dispatch_id {record.get('dispatch_id')!r} is not the "
             f"store-derived {dispatch!r}",
         )
     likelihood = record.get("likelihood")
     if likelihood not in _DISPATCHABLE_LIKELIHOODS:
         return _refuse_loop(
-            run_id, unit_name, loop_id,
+            project_id, run_id, unit_name, loop_id,
             f"unknown or undispatchable likelihood {likelihood!r}",
         )
     loop = record.get("loop")
     if not isinstance(loop, Mapping) or not loop.get("fault_ref") \
             or not loop.get("vulnerability_ref") or loop.get("id") != loop_id:
         return _refuse_loop(
-            run_id, unit_name, loop_id,
+            project_id, run_id, unit_name, loop_id,
             "its loop record is missing or carries no fault_ref/"
             "vulnerability_ref/loop id",
         )
@@ -323,20 +369,17 @@ def threat_loop_item(
         dispatch_id=dispatch,
         likelihood=str(likelihood),
         record=record,
+        model=model,
     )
 
 
-# The loop files already refused, so each malformed body is logged once (the
-# mover re-reads the produced family every tick).
-_REFUSED_LOOPS: set[str] = set()
-
-
-def _refuse_loop(run_id: str, unit_name: str, loop_id: str, why: str) -> None:
-    key = f"{run_id}/{unit_name}/{loop_id}"
-    if key in _REFUSED_LOOPS:
-        return None
-    _REFUSED_LOOPS.add(key)
-    logger.warning(
+def _refuse_loop(
+    project_id: str, run_id: str, unit_name: str, loop_id: str, why: str,
+) -> None:
+    """Refuse ONE produced loop file: never dispatched, never counted as work,
+    logged once per project + run + file (the mover re-reads every tick)."""
+    log_refusal_once(
+        f"loop:{project_id}:{run_id}:{unit_name}:{loop_id}",
         "mover: produced loop file %s/%s refused - %s; never dispatched and "
         "not counted as work", unit_name, loop_id, why,
     )
@@ -656,15 +699,17 @@ class RuntimeControlPlane:
 class ProducedInbox:
     """One tick's read of the produced families (the mover's inbox).
 
-    `items` are the dispatchable-gram candidates: this run's produced loop files
-    (the dispatch grain, S2 8.4) and the pod family's produced specs. Each family
-    member already passed its own validity predicate, so nothing malformed and
-    nothing from another run is in here. `finished_models` are the unit ids whose
-    produced COMPLETED valid model carries NO loop file: the mover consumes the
-    model document without a dispatch (S2 8.4)."""
+    `items` are the dispatch candidates: this run's produced loop files (the
+    dispatch grain, S2 8.4) and the pod family's produced specs. Each item already
+    passed its own validity predicate, so nothing malformed and nothing from
+    another run is in here. `models_to_consume` maps a unit id to the loop file
+    stems the read REFUSED for it: a unit with no dispatchable loop left (no loop
+    file at all, or only refused ones) is consumed as the no-dispatch model
+    (S2 8.4), with its refused files left in place - they are never pending loops,
+    so they can never wedge the run (S2 10.5)."""
 
     items: tuple[ProducedItem, ...] = ()
-    finished_models: tuple[str, ...] = ()
+    models_to_consume: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def run_delivery_tick(
@@ -767,7 +812,7 @@ def run_delivery_tick(
             move_failed += 1
 
     models_consumed = _consume_finished_models(
-        project_id, run_id, threat_store, inbox.finished_models)
+        project_id, run_id, threat_store, inbox.models_to_consume)
 
     return TickReport(
         produced=len(produced),
@@ -785,21 +830,24 @@ def _consume_finished_models(
     project_id: str,
     run_id: str,
     threat_store: Any,
-    finished_models: Sequence[str],
+    models_to_consume: Mapping[str, tuple[str, ...]],
 ) -> int:
-    """Consume the run's produced models that carry no produced loop file left
+    """Consume the run's produced models that carry no PENDING loop file left
     (S2 8.4): a zero-loop COMPLETED valid model is consumed on the mover's next
-    tick without a dispatch, and a model whose last loop file this tick admitted
-    is consumed by `consume_loop` itself. Run-scoped: another run's produced
-    model is left for that run's own mover. The store re-checks consumability
-    and the no-loop-file condition, so a model that gained a loop file between
-    the read and the move is never consumed early. Fail-open per model."""
+    tick without a dispatch, a unit whose only loop files were refused is consumed
+    the same way (S2 10.5 - a malformed file can never wedge the run), and a model
+    whose last VALID loop file this tick admitted is consumed by `consume_loop`
+    itself. Run-scoped: another run's produced model is left for that run's own
+    mover. The store re-checks consumability and the pending-loop condition, so a
+    model that gained a loop file between the read and the move is never consumed
+    early. Fail-open per model."""
     if threat_store is None:
         return 0
     consumed = 0
-    for unit_id in finished_models:
+    for unit_id, refused_loops in models_to_consume.items():
         try:
-            done = threat_store.consume_model_if_done(project_id, unit_id)
+            done = threat_store.consume_model_if_done(
+                project_id, unit_id, refused_loops=refused_loops)
         except Exception as exc:  # noqa: BLE001 - fail-open per model
             logger.warning(
                 "mover: model consume of %s failed (%s); counted, tick continues",
@@ -855,8 +903,10 @@ def read_produced_inbox(
     - The threat model store's produced loop files: ONE `ThreatLoopItem` per loop
       file of THIS run (cross-unit - the surfer reads the run's produced loops,
       never only the current unit's; S2 8.3), plus the produced units whose
-      consumable model carries no loop file (`finished_models`). A loop file
-      whose body fails the validity predicate is refused here, so it is neither
+      consumable model carries no DISPATCHABLE loop file left
+      (`models_to_consume`, the refused stems included). A loop file whose body
+      fails the validity predicate, whose body the store could not parse, or
+      whose model document is unreadable is refused here, so it is neither
       dispatched nor counted as work.
     - The hunter memory's produced test specs (the pod family, S3 8.7).
     - The hunt store's produced configs (the retiring config family: the T4b
@@ -865,24 +915,61 @@ def read_produced_inbox(
     Each item carries its Q13 session id derived on the fly from the
     memory-item keys (Q13; ADR #169)."""
     items: list[ProducedItem] = []
-    finished_models: list[str] = []
+    models_to_consume: dict[str, tuple[str, ...]] = {}
     if threat_store is not None:
         for entry in threat_store.read_produced_loops(project_id):
             unit_id = str(entry.get("unit_id") or "")
             unit_name = str(entry.get("unit_name") or "")
             if entry.get("run_id") != run_id:
                 continue  # another run's model: its own mover dispatches it
-            records = entry.get("loops") or ()
-            if not records:
-                finished_models.append(unit_id)
-            for entry_loop in records:
+            model = _entry_model(entry, threat_store, project_id, unit_id)
+            refused: list[str] = [
+                str(broken.get("loop_id") or "")
+                for broken in (entry.get("malformed_loops") or ())
+            ]
+            for loop_id in refused:
+                # the store could not hand the body over as a record: refuse it
+                # (once per project/run/file) - it is never dispatched and never
+                # a pending loop (S2 10.5)
+                log_refusal_once(
+                    f"loop-file:{project_id}:{run_id}:{unit_name}:{loop_id}",
+                    "mover: produced loop file %s/%s refused - its body is "
+                    "unreadable; left in produced/, never dispatched and not "
+                    "counted as a pending loop", unit_name, loop_id,
+                )
+            dispatchable = 0
+            if model is None:
+                # The loop file does not duplicate the model (S2 8.1): without
+                # the model there is no unit context to dispatch against. The
+                # loops are refused (once) and are NOT work, so an unreadable
+                # model can neither hot-loop the mover nor wedge the quiesce;
+                # T3's intake owns the stale-produced disposition of the unit.
+                for loop_id in _entry_loop_ids(entry):
+                    log_refusal_once(
+                        f"loop-model:{project_id}:{run_id}:{unit_name}:{loop_id}",
+                        "mover: produced loop %s/%s refused - the model "
+                        "document for %s is unreadable; not dispatched and not "
+                        "counted as work", unit_name, loop_id, unit_id,
+                    )
+                continue
+            for entry_loop in entry.get("loops") or ():
+                loop_id = str(entry_loop.get("loop_id") or "")
                 item = threat_loop_item(
-                    unit_id=unit_id, unit_name=unit_name,
-                    loop_id=str(entry_loop.get("loop_id") or ""),
-                    record=entry_loop.get("record"), run_id=run_id,
+                    project_id=project_id, unit_id=unit_id, unit_name=unit_name,
+                    loop_id=loop_id, record=entry_loop.get("record"),
+                    run_id=run_id, model=model,
                 )
                 if item is not None:
+                    dispatchable += 1
                     items.append(item)
+                else:
+                    refused.append(loop_id)
+            if dispatchable == 0:
+                # No dispatchable loop left for this unit: the model document is
+                # the run's to consume (a zero-loop model, or a unit whose only
+                # loop files are refused). The refused files stay in produced/ -
+                # they are evidence, never pending loops.
+                models_to_consume[unit_id] = tuple(sorted(set(refused)))
     if hunt_store is not None:
         for config_key, file_name in hunt_store.read_produced_configs(project_id):
             config_id = Path(file_name).stem
@@ -905,7 +992,42 @@ def read_produced_inbox(
                 spec_file=spec_file,
                 spec=body,
             ))
-    return ProducedInbox(items=tuple(items), finished_models=tuple(finished_models))
+    return ProducedInbox(
+        items=tuple(items), models_to_consume=models_to_consume,
+    )
+
+
+def _entry_loop_ids(entry: Mapping[str, Any]) -> tuple[str, ...]:
+    """Every loop file stem one produced entry reports: the records it could hand
+    over plus the malformed ones it could not."""
+    return tuple(
+        str(loop.get("loop_id") or "")
+        for loop in (entry.get("loops") or ())
+    ) + tuple(
+        str(broken.get("loop_id") or "")
+        for broken in (entry.get("malformed_loops") or ())
+    )
+
+
+def _entry_model(
+    entry: Mapping[str, Any], threat_store: Any, project_id: str, unit_id: str,
+) -> Mapping | None:
+    """The model document the produced read belongs to (S2 8.1). The store's
+    entry carries the document it already parsed; a store that does not is read
+    through `read_model` (produced first, then consumed - a consumed model is
+    still a valid context source). None = the unit has no usable model: the
+    mover refuses its loops and never counts them as work (T4a review F2)."""
+    model = entry.get("model")
+    if isinstance(model, Mapping):
+        return model
+    try:
+        return threat_store.read_model(project_id, unit_id)
+    except Exception as exc:  # noqa: BLE001 - fail-open read (O4)
+        logger.warning(
+            "mover: model read for %s degraded (%s); its loops are refused",
+            unit_id, exc,
+        )
+        return None
 
 
 def _apply_move(

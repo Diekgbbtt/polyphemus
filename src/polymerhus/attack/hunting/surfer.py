@@ -86,6 +86,7 @@ from polymerhus.attack.hunting.mover import (
     TickReport,
     orchestrator_session_id,
     pod_session_id,
+    log_refusal_once,
     read_produced_inbox,
     run_delivery_tick,
     sequence_dispatch,
@@ -338,9 +339,9 @@ def run_work_remaining(
         # read does not apply (the config's persisted status + parse).
         hunt_store=None, hunter_store=hunter_store,
     )
-    if inbox.finished_models:
-        # a produced COMPLETED valid model with no loop file: the mover consumes
-        # it on its next tick (S2 8.4), so the move itself is work
+    if inbox.models_to_consume:
+        # a produced COMPLETED valid model with no dispatchable loop left: the
+        # mover consumes it on its next tick (S2 8.4), so the move itself is work
         return True
     if sequence_dispatch(inbox.items, live_loop_likelihoods):
         return True
@@ -521,17 +522,22 @@ def build_run_dispatch(
         materialised at dispatch time from the unit's model document, the session
         is keyed by the loop's dispatch id, and the loop's likelihood is held on
         the run state while its hunter works (the low-loop sequencing, S2 8.3)."""
-        model = None
-        if threat_store is not None:
+        model = item.model
+        if model is None and threat_store is not None:
+            # A directly constructed item (or a store that does not carry the
+            # document): read it. The produced read already gates every item on a
+            # readable model, so this is the belt-and-braces path.
             model = threat_store.read_model(project_id, item.unit_id)
         if model is None:
             # The model is the payload's context (S2 8.1: the loop file does not
             # duplicate it): without it there is nothing to dispatch. The loop
-            # file stays produced (at-least-once); a model that is genuinely
-            # gone (archived, or a stale leftover) is the run record's problem,
-            # not a silent dispatch.
-            logger.warning(
-                "surfer: produced loop %s has no readable model for %s; refused",
+            # file stays produced, is NOT counted as work (the read refuses it
+            # too - T4a review F2: an unreadable model must not wedge the run),
+            # and the refusal is logged ONCE, never per tick.
+            log_refusal_once(
+                f"loop-model:{project_id}:{run_id}:{item.unit_name}:{item.loop_id}",
+                "surfer: produced loop %s refused - no readable model for %s; "
+                "never dispatched and not counted as work",
                 item.message_id, item.unit_id,
             )
             return None

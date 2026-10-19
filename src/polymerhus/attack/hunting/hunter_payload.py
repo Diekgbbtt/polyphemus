@@ -24,6 +24,10 @@ The payload carries (S2 8.2):
 It does NOT carry (S2 8.2): the failure modes, any narrowed vector or payload, a
 `HuntConfig`, or a pre-authored payload vector space. The rationale stays
 vulnerability-level, so the hunter keeps the room to engineer its own procedure.
+The key set is exactly the list above (T4a review F4): the importing assumption
+record and the loop's `suite_gap` flag are NOT separate payload fields - the
+programming fault carries the fault, and the loop record the hunter receives
+already carries `suite_gap`.
 
 PURE by construction (CODING_STANDARD s3): the model document and the loop
 record go in, one dict comes out; no I/O, no clock, no LLM. Every lookup is
@@ -165,10 +169,8 @@ def materialise_hunter_payload(
             if transition is not None or violation is not None else None
         ),
         "programming_fault": dict((assumption or {}).get("fault") or {}),
-        "assumption": dict(assumption) if assumption is not None else None,
         "canonical_class": str(loop.get("canonical_class") or ""),
         "web_vulnerability_class": str(loop.get("web_vulnerability_class") or ""),
-        "suite_gap": bool(loop.get("suite_gap", False)),
         "evidence": evidences,
         "likelihood": str(loop_file.get("likelihood") or loop.get("likelihood") or ""),
         "likelihood_rationale": str(loop.get("likelihood_rationale") or ""),

@@ -61,7 +61,7 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -491,12 +491,23 @@ class ThreatModelStore(BoundedRecordStore):
                 self._move_model_if_ready(project_id, name)
             return True
 
-    def consume_model_if_done(self, project_id: str, unit_id: str) -> bool:
+    def consume_model_if_done(
+        self, project_id: str, unit_id: str, *, refused_loops: Sequence[str] = (),
+    ) -> bool:
         """Move the unit's model document to consumed/ when it is complete,
-        valid, and has no produced loop file left (S2 8.4). A zero-loop model
-        is consumed here without a dispatch; a model with produced loops stays
-        until its last loop file is consumed (by `consume_loop`). True when the
-        model now lives in consumed/ (moved now, or already moved)."""
+        valid, and has no PENDING loop file left (S2 8.4). A zero-loop model is
+        consumed here without a dispatch; a model with produced loops stays until
+        its last loop file is consumed (by `consume_loop`). True when the model
+        now lives in consumed/ (moved now, or already moved).
+
+        `refused_loops` names the produced loop files the mover REFUSED (a
+        malformed body it can neither dispatch nor consume as a loop record,
+        S2 10.5). Those are not pending loops: counting them would leave the
+        model in produced/ forever, so the run could never quiesce (T4a review
+        F1). A refused file is left in place - it is debugging evidence, never
+        silently deleted - and the model document moves as the ONE consumption
+        marker."""
+        refused = frozenset(str(loop_id) for loop_id in refused_loops)
         with self._lock_for(project_id):
             model_path = self._find_model_path(project_id, unit_id, "produced")
             if model_path is None:
@@ -508,9 +519,18 @@ class ThreatModelStore(BoundedRecordStore):
             raw = self._load_document(model_path)
             if raw is None or not self._consumable(raw):
                 return False
-            if any(model_path.parent.glob("loop-*.yaml")):
+            if self._pending_loop_files(model_path.parent, refused):
                 return False
             return self._move_model_if_ready(project_id, model_path.parent.name)
+
+    @staticmethod
+    def _pending_loop_files(directory: Path, refused: frozenset[str]) -> list[Path]:
+        """The produced `loop-*.yaml` files that are still PENDING work: every
+        one except the mover-refused stems (S2 8.4/10.5)."""
+        return [
+            path for path in directory.glob("loop-*.yaml")
+            if path.stem not in refused
+        ]
 
     def _move_model_if_ready(self, project_id: str, unit_name: str) -> bool:
         """Move one produced model document to consumed/ when it is consumable;
@@ -555,20 +575,46 @@ class ThreatModelStore(BoundedRecordStore):
                     found.add(unit_id)
             return sorted(found)
 
+    def _read_loop_file(self, path: Path) -> tuple[str, dict | None]:
+        """One loop file's state (T4a review F1): `("record", body)` when the
+        file parses to a mapping, else `("unreadable" | "not-a-mapping", None)`.
+
+        The read is QUIET (unlike `_load_raw`): the produced read reports the
+        malformed file to its caller, which refuses it once - a per-read warning
+        here would re-log one line per tick for as long as the file lives
+        (S2 10.5's log-once discipline)."""
+        if not path.exists():
+            return "unreadable", None
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            return "unreadable", None
+        if not isinstance(loaded, dict):
+            return "not-a-mapping", None
+        return "record", loaded
+
     def read_produced_loops(self, project_id: str) -> list[dict]:
         """The mover's dispatch inbox read (S2 8.1/8.4, T4 #377): one entry per
-        PRODUCED, consumable unit - `{unit_id, unit_name, run_id, loops}` - with
-        `loops` the unit's produced loop file records in rank order, each as
-        `{loop_id, record}` (the file stem plus the record verbatim, so the
-        mover's validity predicate can check the two agree).
+        PRODUCED, consumable unit - `{unit_id, unit_name, run_id, loops,
+        malformed_loops, model}` - with `loops` the unit's produced loop file
+        records in rank order, each as `{loop_id, record}` (the file stem plus the
+        record verbatim, so the mover's validity predicate can check the two
+        agree), `malformed_loops` the file stems whose body is unreadable or not a
+        mapping, each as `{loop_id, reason}`, and `model` the document this read
+        already parsed (the mover's payload context, S2 8.2: the loop file does
+        not duplicate the model).
+
+        A malformed file is REPORTED, never dropped (T4a review F1): dropping it
+        would read as "the unit holds no loop file", the mover would consume the
+        model, and the store would refuse while the `loop-*.yaml` remains - the
+        run would never quiesce (S2 10.5). The mover refuses it once and never
+        counts it as a pending loop.
 
         The produced family only: a consumed unit is decided and never
         re-dispatched, and a model below COMPLETED or invalid is never dispatch
         input (S2 4.3, 5.7). A zero-loop consumable model IS an entry with no
-        loops - the mover consumes it without a dispatch. An unreadable loop
-        file is skipped (O4); a parseable but malformed record is returned
-        as-is, because refusing it is the mover's validity predicate, not the
-        store's read."""
+        loops and no malformed files - the mover consumes it without a
+        dispatch."""
         with self._lock_for(project_id):
             produced = self._family_dir(project_id, "produced")
             if not produced.exists():
@@ -583,19 +629,29 @@ class ThreatModelStore(BoundedRecordStore):
                 unit_id = raw.get("unit_id")
                 if not isinstance(unit_id, str) or not unit_id:
                     continue
-                loops = [
-                    {"loop_id": loop_path.stem, "record": record}
-                    for loop_path in sorted(
-                        directory.glob("loop-*.yaml"),
-                        key=lambda item: _loop_rank(item.stem),
-                    )
-                    if (record := self._load_raw(loop_path)) is not None
-                ]
+                loops: list[dict] = []
+                malformed: list[dict] = []
+                for loop_path in sorted(
+                    directory.glob("loop-*.yaml"),
+                    key=lambda item: _loop_rank(item.stem),
+                ):
+                    state, record = self._read_loop_file(loop_path)
+                    if state != "record":
+                        malformed.append({
+                            "loop_id": loop_path.stem,
+                            "reason": state,
+                        })
+                        continue
+                    loops.append({"loop_id": loop_path.stem, "record": record})
                 entries.append({
                     "unit_id": unit_id,
                     "unit_name": directory.name,
                     "run_id": raw.get("run_id") if isinstance(raw.get("run_id"), str) else "",
                     "loops": loops,
+                    "malformed_loops": malformed,
+                    # the document this read already parsed: the mover's payload
+                    # materialisation reads it (S2 8.2) without a second read
+                    "model": raw,
                 })
             return entries
 

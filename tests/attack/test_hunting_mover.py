@@ -49,6 +49,7 @@ def _item(message_id="m-1", session_id="s-1"):
 UNIT = "Service:catalogue-and-discovery"
 UNIT_NAME = "Service-catalogue-and-discovery"
 RUN = "run-1"
+PROJECT = "proj-1"
 
 
 def _loop_record(*, unit_id=UNIT, loop_id="loop-1", likelihood="high",
@@ -83,7 +84,7 @@ def _loop_record(*, unit_id=UNIT, loop_id="loop-1", likelihood="high",
 def _loop_item(*, record=None, loop_id="loop-1", likelihood="high",
                run_id=RUN, unit_id=UNIT, unit_name=UNIT_NAME) -> "ThreatLoopItem | None":
     return threat_loop_item(
-        unit_id=unit_id, unit_name=unit_name, loop_id=loop_id,
+        project_id=PROJECT, unit_id=unit_id, unit_name=unit_name, loop_id=loop_id,
         record=_loop_record(unit_id=unit_id, loop_id=loop_id,
                             likelihood=likelihood, run_id=run_id)
         if record is None else record,
@@ -176,6 +177,7 @@ def test_the_low_pause_is_per_tick_and_cross_unit():
     file is produced (cross-unit: another unit's produced high loop holds it)."""
     low = _loop_item(record=_loop_record(likelihood="low"))
     other_high = threat_loop_item(
+        project_id=PROJECT,
         unit_id="Service:other", unit_name="Service-other", loop_id="loop-1",
         record=_loop_record(
             unit_id="Service:other", dispatch_id="Service-other__loop-1"),

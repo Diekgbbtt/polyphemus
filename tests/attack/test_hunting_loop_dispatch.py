@@ -35,6 +35,19 @@ def threat_store(tmp_path):
     return ThreatModelStore(tmp_path / "threat")
 
 
+@pytest.fixture(autouse=True)
+def _fresh_refusal_log():
+    """The refuse-once log is process-global (the mover re-reads the produced
+    family every tick, so the guard must outlive one read): each test starts from
+    a clean one, so a refusal in a sibling test cannot silence this one. The run
+    terminal clears it in production."""
+    from polymerhus.attack.hunting.mover import clear_refusal_log
+
+    clear_refusal_log()
+    yield
+    clear_refusal_log()
+
+
 @pytest.fixture
 def hunter_store(tmp_path):
     return HunterMemoryStore(tmp_path / "hunter")
@@ -94,6 +107,17 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
         model, loop_file, dispatch_id=f"{UNIT_NAME}__loop-1",
     )
 
+    # the POSITIVE list (S2 8.2): the payload carries exactly these keys and no
+    # others - the failure modes, a narrowed vector, a `HuntConfig` and a payload
+    # vector space stay in the model (T4a review F4: `assumption` and `suite_gap`
+    # were extra; `programming_fault` and the loop record already carry them)
+    assert set(payload) == {
+        "dispatch_id", "run_id", "loop_id", "unit_id", "unit_kind", "loop",
+        "technical_sharpening", "trust_agreement", "dynamic_state",
+        "programming_fault", "canonical_class", "web_vulnerability_class",
+        "evidence", "likelihood", "likelihood_rationale",
+        "vulnerability_rationale", "confidence", "target_context",
+    }
     assert payload["dispatch_id"] == f"{UNIT_NAME}__loop-1"
     assert payload["loop_id"] == "loop-1"
     assert payload["unit_id"] == UNIT
@@ -242,6 +266,11 @@ def test_the_hunter_session_receives_the_materialised_payload(
 
     coro = coro_for(item)
     assert coro is not None
+    # the run state carries the loop for the graph stretch (the two fields move
+    # TOGETHER: `hunters_in_graph` is what holds quiesce, `loop_likelihoods` is
+    # what a later `low` loop waits behind)
+    assert state.loop_likelihoods == {item.dispatch_id: "high"}
+    assert set(state.loop_likelihoods) <= state.hunters_in_graph
     # Settle the hunt's idle loop up front (the run terminal's own verb): the
     # dispatched session's graph stretch runs, then its idle loop ends instead of
     # waiting for a later terminal.
@@ -365,18 +394,56 @@ def test_a_low_loop_stays_paused_while_a_higher_hunter_is_live(
         threat_store, hunter_store):
     """S2 8.3: a `low` loop dispatches only when no higher-tier loop file is
     produced AND no higher-tier hunter session is live - the run-local state is
-    the live-session half of that condition."""
+    the live-session half of that condition. The two state fields move together:
+    only a loop whose hunter is still mid-graph holds a later low loop."""
     from polymerhus.attack.hunting.surfer import RunDispatchState
 
     produce_model(threat_store, loops=[_loop_row(likelihood="low")])
     state = RunDispatchState()
+    state.hunters_in_graph.add("Service-x__loop-1")
     state.loop_likelihoods["Service-x__loop-1"] = "high"
+    assert set(state.loop_likelihoods) <= state.hunters_in_graph
 
     report = run_delivery_tick_for_state(threat_store, hunter_store, state)
 
     assert report.dispatched == 0 and report.paused == 1
     assert [e["loop_id"] for e in threat_store.read_produced_loops(PROJECT)[0]["loops"]] \
         == ["loop-1"]
+
+
+def test_a_restart_holds_a_low_loop_while_the_higher_loop_file_is_produced(
+        threat_store, hunter_store):
+    """T4a review F5: the pause's durable half is the produced higher loop file.
+    A restart (the run-local wire state is gone) with the higher loop file still
+    produced keeps the low loop paused - losing the state cannot release work past
+    a higher-ranked loop."""
+    produce_model(threat_store, loops=[_loop_row(likelihood="low"),
+                                       _loop_row(likelihood="critical")])
+    higher = f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-1"
+
+    # the higher loop's dispatch is refused, so its loop file stays produced
+    refused = RecordingControlPlane(refused={higher})
+    first = _tick(threat_store, hunter_store, control=refused)
+
+    assert refused.calls == [higher]
+    assert first.refused == 1 and first.moved == 0 and first.paused == 1
+
+    # the "restarted" run: a fresh state and a fresh tick - the higher loop file
+    # is still produced, so the low loop is still held
+    restarted_control = RecordingControlPlane()
+    second = _tick(threat_store, hunter_store, control=restarted_control)
+
+    assert restarted_control.calls == [higher]
+    assert second.admitted == 1 and second.moved == 1 and second.paused == 1
+    assert [e["loop_id"] for e in
+            threat_store.read_produced_loops(PROJECT)[0]["loops"]] == ["loop-2"]
+
+    # ... and the low loop is released once the higher one is consumed
+    third_control = RecordingControlPlane()
+    third = _tick(threat_store, hunter_store, control=third_control)
+
+    assert third_control.calls == [f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-2"]
+    assert third.admitted == 1 and third.paused == 0
 
 
 def run_delivery_tick_for_state(threat_store, hunter_store, state):
@@ -450,8 +517,215 @@ def test_a_malformed_loop_file_is_refused_without_wedging_the_quiesce(
         PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store,
         control=control, state=RunDispatchState(),
     )) is True
-    # refused, never dropped: the file is still in produced/
-    assert len(threat_store.read_produced_loops(PROJECT)[0]["loops"]) == 1
+    # the malformed body is refused, never dropped and never consumed as a loop
+    # record: it stays in produced/ as evidence while the model document moves
+    assert (tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
+            / "produced" / UNIT_NAME / "loop-1.yaml").exists()
+    assert [e["loop_id"] for e in
+            threat_store.read_produced_loops(PROJECT)] == []
+    assert [loop["loop_id"] for loop in threat_store.read_loop_files(PROJECT, UNIT)] == []
+
+
+# --- the refuse-once accounting (T4a review F2/F3) ------------------------------
+
+class _ModellessStore:
+    """The store seam's degenerate case: it hands a produced unit over but cannot
+    supply the unit's model document (a partially-wired store wrapper)."""
+
+    def __init__(self, entry):
+        self._entry = entry
+
+    def read_produced_loops(self, project_id):
+        return [self._entry]
+
+    def read_model(self, project_id, unit_id):
+        return None
+
+
+def test_a_loop_whose_model_is_unavailable_is_not_work_and_logs_once(
+        hunter_store, caplog):
+    """T4a review F2 (S2 8.1/10.5): the loop file does not duplicate the model, so
+    a produced read that cannot supply the model refuses its loops - they neither
+    dispatch nor count as work (no live-lock, no quiesce wedge), and the refusal
+    is logged ONCE across reads."""
+    from polymerhus.attack.hunting.mover import read_produced_inbox
+    from polymerhus.attack.hunting.surfer import run_work_remaining
+
+    store = _ModellessStore({
+        "unit_id": UNIT, "unit_name": UNIT_NAME, "run_id": RUN,
+        "loops": [{"loop_id": "loop-1", "record": _loop_file_record()}],
+        "malformed_loops": [],
+    })
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.mover"):
+        first = read_produced_inbox(
+            PROJECT, RUN, threat_store=store, hunter_store=hunter_store)
+        second = read_produced_inbox(
+            PROJECT, RUN, threat_store=store, hunter_store=hunter_store)
+
+    assert first.items == () and first.models_to_consume == {}
+    assert second.items == () and second.models_to_consume == {}
+    refusals = [record.message for record in caplog.records
+                if "refus" in record.message]
+    assert len(refusals) == 1, "the model-context refusal is logged once"
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=store, hunter_store=hunter_store) is False
+
+
+def test_a_model_less_item_is_refused_once_by_the_dispatch_branch(
+        hunter_store, caplog):
+    """The surfer's own model-context guard (T4a review F2): a hand-built item
+    without a model is refused on every tick without re-logging."""
+    from polymerhus.attack.hunting.mover import ThreatLoopItem
+    from polymerhus.attack.hunting.surfer import RunDispatchState, build_run_dispatch
+
+    coro_for = build_run_dispatch(
+        project_id=PROJECT, run_id=RUN, threat_store=None, hunt_store=HuntStore(),
+        hunter_store=hunter_store, pod_store=None,
+        state=RunDispatchState(), gate=None,
+        hunter_builder=_hunter_builder, pod_builder=_pod_builder_fake, control=None,
+    )
+    item = ThreatLoopItem(
+        message_id=f"{UNIT_NAME}__loop-1",
+        session_id=f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-1",
+        unit_id=UNIT, unit_name=UNIT_NAME, loop_id="loop-1",
+        dispatch_id=f"{UNIT_NAME}__loop-1", likelihood="high",
+        record=_loop_file_record(),
+    )
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.surfer"):
+        assert coro_for(item) is None
+        assert coro_for(item) is None
+
+    refusals = [record.message for record in caplog.records
+                if "refus" in record.message]
+    assert len(refusals) == 1, "the refusal is logged once, never per tick"
+
+
+def test_the_refusal_log_is_project_scoped_and_bounded(monkeypatch, caplog):
+    """T4a review F3: the refuse-once log is keyed with the project id (one
+    project's refusal never silences another's) and bounded (a long-lived process
+    cannot grow it without limit; the oldest key is evicted first)."""
+    from polymerhus.attack.hunting import mover
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.mover"):
+        assert mover.log_refusal_once("p1/r/u/loop-1", "refused %s", "one") is True
+        assert mover.log_refusal_once("p1/r/u/loop-1", "refused %s", "one") is False
+        assert mover.log_refusal_once("p2/r/u/loop-1", "refused %s", "two") is True
+
+    assert [record.message for record in caplog.records] == [
+        "refused one", "refused two",
+    ]
+
+    monkeypatch.setattr(mover, "REFUSAL_LOG_LIMIT", 2)
+    mover.clear_refusal_log()
+    assert mover.log_refusal_once("a", "x") is True
+    assert mover.log_refusal_once("b", "x") is True
+    assert mover.log_refusal_once("c", "x") is True      # evicts "a"
+    assert mover.log_refusal_once("a", "x") is True      # "a" is forgotten again
+
+
+def _loop_file_record(**overrides) -> dict:
+    """One produced loop file record exactly as the store writes it (S2 8.1)."""
+    record = {
+        "loop_id": "loop-1",
+        "unit_id": UNIT,
+        "unit_kind": "service",
+        "run_id": RUN,
+        "dispatch_id": f"{UNIT_NAME}__loop-1",
+        "likelihood": "high",
+        "loop": {
+            "id": "loop-1",
+            "fault_ref": "fault-1",
+            "vulnerability_ref": "v-1",
+            "failure_mode_refs": ["fm-1"],
+            "canonical_class": "IDOR",
+            "web_vulnerability_class": "idor",
+            "likelihood": "high",
+            "likelihood_rationale": "the item id is caller-supplied",
+            "confidence": "INFERRED",
+            "evidences": [{"kind": "request", "ref": "GET /catalogue"}],
+        },
+        "created_at": "2026-10-19T00:00:00Z",
+    }
+    record.update(overrides)
+    return record
+
+
+def _loop_path(tmp_path, *, unit_name=UNIT_NAME, loop_id="loop-1"):
+    return (tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
+            / "produced" / unit_name / f"{loop_id}.yaml")
+
+
+@pytest.mark.parametrize("body", [
+    pytest.param("{[ unparseable\n", id="unreadable-yaml"),
+    pytest.param("- just\n- a\n- list\n", id="not-a-mapping"),
+])
+def test_an_unreadable_loop_file_is_refused_and_never_wedges_the_run(
+        threat_store, hunter_store, tmp_path, caplog, body):
+    """T4a review F1 (S2 10.5): a loop file whose body cannot be read must not
+    wedge the run. It is refused ONCE, never dispatched, never counted as a
+    pending loop, and the model document is consumed as the no-dispatch model -
+    so the run reaches quiesce instead of staying `running` for ever."""
+    from polymerhus.attack.hunting.surfer import (
+        RunDispatchState,
+        is_run_quiesced,
+        run_work_remaining,
+    )
+
+    produce_model(threat_store)
+    _loop_path(tmp_path).write_text(body, encoding="utf-8")
+    control = RecordingControlPlane()
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.mover"):
+        first = _tick(threat_store, hunter_store, control=control)
+        second = _tick(threat_store, hunter_store, control=control)
+
+    assert control.calls == []
+    assert first.dispatched == 0 and first.moved == 0
+    assert first.models_consumed == 1
+    assert second.models_consumed == 0
+    assert threat_store.read_produced_loops(PROJECT) == []
+    assert threat_store.read_completed_units(PROJECT) == [UNIT]
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store) is False
+    assert asyncio.run(is_run_quiesced(
+        PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store,
+        control=control, state=RunDispatchState(),
+    )) is True
+    refusals = [record.message for record in caplog.records
+                if "loop-1" in record.message and "refus" in record.message]
+    assert len(refusals) == 1, "the refusal is logged once, never per tick"
+
+
+def test_a_malformed_loop_file_is_logged_once_across_ticks(
+        threat_store, hunter_store, tmp_path, caplog):
+    """S2 10.5's log-once discipline (T4a review F1/F3): the mover re-reads the
+    produced family every tick, so a refusal must not flood the log while its file
+    lives - here the file survives TWO ticks (the valid loop dispatches in the
+    first, the model document moves only in the second)."""
+    import yaml
+
+    produce_model(threat_store, loops=[_loop_row(likelihood="high"),
+                                       _loop_row(likelihood="high")])
+    path = _loop_path(tmp_path, loop_id="loop-2")
+    body = yaml.safe_load(path.read_text(encoding="utf-8"))
+    body["loop"] = None                      # a record the predicate refuses
+    path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+    control = RecordingControlPlane()
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.mover"):
+        first = _tick(threat_store, hunter_store, control=control)
+        second = _tick(threat_store, hunter_store, control=control)
+
+    assert control.calls == [f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-1"]
+    assert first.admitted == 1 and first.moved == 1
+    # the malformed leftover cannot hold the model: the second tick consumes it
+    assert second.moved == 0 and second.models_consumed == 1
+    assert threat_store.read_completed_units(PROJECT) == [UNIT]
+    refusals = [record.message for record in caplog.records
+                if "loop-2" in record.message and "refus" in record.message]
+    assert len(refusals) == 1, "the refusal is logged once for both ticks"
 
 
 # --- the consumption grain (S2 8.4) --------------------------------------------

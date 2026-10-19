@@ -841,6 +841,44 @@ def test_read_produced_loops_does_not_read_an_abandoned_unit(tmp_path):
     assert store.read_produced_loops(PROJECT) == []
 
 
+def test_read_produced_loops_reports_a_malformed_loop_file_instead_of_dropping_it(
+        tmp_path):
+    """S2 10.5 (T4a review F1): an unreadable or non-mapping loop file is
+    REPORTED, never silently dropped - a dropped file would read as "the unit has
+    no loops", the mover would try to consume the model, and the store would
+    refuse because a `loop-*.yaml` remains: the run then never quiesces."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store, loops=[_loop("high")])
+    unit_name = "Service-catalogue-and-discovery"
+    produced = (_threat_modeller_root(tmp_path) / "produced" / unit_name)
+    (produced / "loop-2.yaml").write_text("{[ unparseable", encoding="utf-8")
+    (produced / "loop-3.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
+
+    entry = store.read_produced_loops(PROJECT)[0]
+
+    assert [loop["loop_id"] for loop in entry["loops"]] == ["loop-1"]
+    assert [broken["loop_id"] for broken in entry["malformed_loops"]] \
+        == ["loop-2", "loop-3"]
+    assert all(broken["reason"] for broken in entry["malformed_loops"])
+
+
+def test_consume_model_if_done_ignores_the_refused_loop_files(tmp_path):
+    """S2 10.5/8.4: the model-consume gate counts only PENDING loop files - a
+    loop file the mover refused (a malformed body) can never dispatch or be
+    consumed as a loop record, so it must not hold the model document."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store, loops=[_loop("high")])
+    unit_name = "Service-catalogue-and-discovery"
+    produced = (_threat_modeller_root(tmp_path) / "produced" / unit_name)
+    (produced / "loop-2.yaml").write_text("{[ unparseable", encoding="utf-8")
+
+    # a pending loop file still holds the model; a refused one does not
+    assert store.consume_model_if_done(PROJECT, UNIT) is False
+    assert store.consume_model_if_done(
+        PROJECT, UNIT, refused_loops=("loop-1", "loop-2")) is True
+    assert store.read_completed_units(PROJECT) == [UNIT]
+
+
 def test_read_produced_units_reports_each_produced_model_and_its_run(tmp_path):
     """S2 9.3: the intake freeze reads the produced family itself - the unit id,
     the producing run, and the persisted state - so it can tell an in-flight
