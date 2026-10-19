@@ -176,7 +176,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - dangling-record-resource-claim - Claim dangling names through exact-name resource creation, including binding flows, verification gaps, race windows, and unclaimed-signature proof.
 - cdn-alternate-domain-binding - Bind a victim name as an alternate domain on attacker edge capacity, proven through edge differentials, certificate issuance, and cache-aware persistence.
 - ns-delegation-takeover - Seize orphaned delegations through expired-domain registration and authoritative hosting, proven with subzone-wide control.
-- email-dns-takeover - Claim a dangling mail-record host and publish authorising records or enable receipt, proven on the parent domain's own mail behaviour.
+- subdomain-takeover-mail-record-claim - Claim a dangling mail-record host and publish authorising records or enable receipt, proven on the parent domain's own mail behaviour.
 
 ## False Positives
 

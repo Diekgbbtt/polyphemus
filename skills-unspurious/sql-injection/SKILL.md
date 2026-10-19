@@ -204,7 +204,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - sqli-boolean-blind-extraction - Diff paired true and false responses bit by bit when no rows render and no error shows.
 - sqli-time-blind-extraction - Measure predicate-driven delays bit by bit when only response latency varies.
 - sqli-oast-exfiltration - Correlate database callbacks with per-probe labels when in-band channels stay silent.
-- sqli-second-order-injection - Plant a shaped value through a bound or escaped write, then trigger the operation that interpolates the stored text into a statement, including cross-context execution.
+- sql-injection-second-order - Plant a shaped value through a bound or escaped write, then trigger the operation that interpolates the stored text into a statement, including cross-context execution.
 
 ## False Positives
 

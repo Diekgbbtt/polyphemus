@@ -129,7 +129,7 @@ Elicitation is one procedure with the mechanism as a parameter: failure verbosit
 
 - error-verbosity-disclosure - Verbose failures disclose internals when failure output turns detailed, debug or profiler surfaces answer in production, or evaluation probes confirm a live execution context.
 - stored-artifact-disclosure - Stored artifacts disclose secrets when deployable files stay reachable, live schema interfaces enumerate hidden operations, or storage and export surfaces serve foreign data.
-- excessive-data-exposure - Single-response field over-exposure discloses internals when a serializer emits the full model, an embedded related object exceeds the caller's scope, or a selection channel admits fields no rendered view requests.
+- information-disclosure-excessive-data-exposure - Single-response field over-exposure discloses internals when a serializer emits the full model, an embedded related object exceeds the caller's scope, or a selection channel admits fields no rendered view requests.
 - differential-oracle-disclosure - Response differentials disclose state when method swaps change answers on one resource, cached responses leak across sessions, or parallel channels disagree on the same object.
 
 ## False Positives

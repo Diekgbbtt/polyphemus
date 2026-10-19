@@ -1,5 +1,5 @@
 ---
-name: excessive-data-exposure
+name: information-disclosure-excessive-data-exposure
 description: Single-response field over-exposure testing that reads an ordinary resource response against the caller's entitlement. Use when a raw response carries fields the rendered view never shows, when a serializer emits the full model, when an embedded related object exceeds the caller's scope.
 metadata:
   version: 1.0.0

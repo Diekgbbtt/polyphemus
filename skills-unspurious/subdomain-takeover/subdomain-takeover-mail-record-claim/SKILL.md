@@ -1,11 +1,11 @@
 ---
-name: email-dns-takeover
+name: subdomain-takeover-mail-record-claim
 description: Claim a dangling host that a mail-authorisation or mail-service record still names, then publish the authorising records or enable receipt so the trusted name sends or receives mail under attacker control.
 metadata:
   version: 1.0.0
 ---
 
-# Email Dns Takeover
+# Mail Record Claim
 
 A mail-authorisation record names a host whose published policy decides which infrastructure may send mail for the parent domain, and a mail-service record names the host that receives it.
 When such a record outlives the binding that owned it, the host is claimable through the ordinary dangling-record flow, and the claim carries the mail role rather than a web content role.

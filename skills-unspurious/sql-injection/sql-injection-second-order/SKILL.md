@@ -1,5 +1,5 @@
 ---
-name: sqli-second-order-injection
+name: sql-injection-second-order
 description: Second-order SQL injection through a stored value that a later operation interpolates into a statement. Use when writes bind or escape while reads re-interpolate stored text; when a plant stays inert at the door and fires at a later operation or in another identity's context.
 metadata:
   version: 1.0.0
