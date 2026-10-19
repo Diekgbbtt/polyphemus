@@ -506,6 +506,7 @@ def run_session_turn(
         if observe:
             _attach_compaction_metadata(config, middleware, thread_id)
             _attach_blackloop_metadata(config, thread_id)
+            _attach_structured_channel_metadata(config, thread_id)
         budget = _reasoning_budget_chars(reasoning_budget_chars)
         # #369: the cut's TURN scope - a turn with tools bound may emit an ACTION, and
         # a mid-flight abort would discard the round it asked for (see `_should_cut`).
@@ -610,6 +611,7 @@ async def arun_session_turn(
         if observe:
             _attach_compaction_metadata(config, middleware, thread_id)
             _attach_blackloop_metadata(config, thread_id)
+            _attach_structured_channel_metadata(config, thread_id)
         budget = _reasoning_budget_chars(reasoning_budget_chars)
         # #369: the cut's TURN scope - a turn with tools bound may emit an ACTION, and
         # a mid-flight abort would discard the round it asked for (see `_should_cut`).
@@ -879,6 +881,22 @@ def stateful_turn(
         # shape - a reasoned-but-empty result is a blackloop, never a legitimate
         # empty). Both route to the recovery generation.
         if turn.blackloop or (_is_empty_result(turn.content) and turn.reasoning):
+            # Arm L (#385): a STRUCTURED turn whose answer arrived as message
+            # TEXT is not a blackloop - the model answered, in the wrong
+            # channel. Recover it with ONE corrective re-ask that names the
+            # tool; the blackloop instruction (about unbounded thinking loops)
+            # does not apply, and its re-ask drifted to text again in arm K.
+            if not turn.blackloop and response_format is not None and schema is not None:
+                payload = _text_channel_payload(turn, schema)
+                if payload is not None:
+                    return _recover_structured_channel(
+                        role_id, thread_id, payload,
+                        checkpointer=checkpointer, response_format=response_format,
+                        system_prompt=system_prompt, model_factory=model_factory,
+                        observe=observe, middleware=middleware,
+                        reasoning_budget_chars=reasoning_budget_chars,
+                        usage_scope=usage_scope, context=context, tools=tools,
+                    )
             return _recover_blackloop(
                 role_id, thread_id, turn.reasoning,
                 checkpointer=checkpointer, response_format=response_format,
@@ -1041,6 +1059,190 @@ def _is_empty_result(content: Any) -> bool:
     if isinstance(content, (str, list, dict)):
         return not content
     return False
+
+
+# --- Arm L (#385): the structured-channel recovery ----------------------------
+#
+# The arm K white-jotter shape: under `voluntary_function_calling` the model may
+# answer with the payload as plain message TEXT instead of calling the schema
+# tool. The tool-only seam reads that as an empty structured result, and the
+# empty+reasoning signature then fired the BLACKLOOP recovery - an instruction
+# about unbounded thinking loops that does not apply, whose re-ask drifted to
+# text again, ending in a silently dropped batch (`systems_written=0`, the whole
+# typed-edge layer gone). The payload itself is schema-valid and recoverable:
+# answer it with ONE corrective turn that names the tool, and only fall back to
+# the blackloop recovery when the text is NOT uniquely parsable.
+
+_STRUCTURED_CHANNEL_INSTRUCTION = (
+    "ERROR: your previous answer wrote the required structured payload as "
+    "message TEXT instead of calling the tool. The structured-output contract "
+    "requires a TOOL CALL: call the `{tool}` tool NOW with the same JSON "
+    "payload as its arguments. Do not repeat the payload in your message text; "
+    "the tool call is the only channel the workflow reads."
+)
+
+
+def _structured_tool_name(response_format) -> str:
+    """The structured-output tool's wire name (the ToolStrategy spec name); an
+    unavailable spec falls back to a generic phrase."""
+    specs = getattr(response_format, "schema_specs", None)
+    if isinstance(specs, (list, tuple)) and specs:
+        name = getattr(specs[0], "name", None)
+        if isinstance(name, str) and name:
+            return name
+    return "the structured-output"
+
+
+def _balanced_objects(text: str) -> list[str]:
+    """Every top-level brace-balanced `{...}` span of `text`, in order. A
+    quote/escape-aware scanner: prose and fenced blocks around the payload are
+    tolerated, and a nested object belongs to its parent span."""
+    spans: list[str] = []
+    depth = 0
+    start: int | None = None
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    spans.append(text[start:i + 1])
+                    start = None
+    return spans
+
+
+def _unique_schema_payload(text: str, schema):
+    """The payload `text` carries for `schema`, or None when it is not UNIQUELY
+    parsable (the #385 guard: recover only what cannot be mistaken).
+
+    Candidates are the whole text (when it is a JSON object) plus every
+    top-level balanced object; exactly ONE may validate against the schema."""
+    candidates = []
+    stripped = (text or "").strip()
+    if stripped.startswith("{"):
+        candidates.append(stripped)
+    candidates.extend(_balanced_objects(text or ""))
+    seen: set[str] = set()
+    valid = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            valid.append(schema.model_validate_json(candidate))
+        except Exception:  # noqa: BLE001 - a non-validating candidate is not the payload
+            continue
+    return valid[0] if len(valid) == 1 else None
+
+
+def _text_channel_payload(turn: "SessionTurn", schema):
+    """The schema-valid payload the turn's OWN answer wrote as assistant text,
+    or None when the answer was a real tool round, empty, or not uniquely
+    parsable."""
+    message = None
+    for candidate in reversed(list(getattr(turn, "messages", None) or ())):
+        if isinstance(candidate, AIMessage):
+            message = candidate
+            break
+    if message is None or getattr(message, "tool_calls", None):
+        return None
+    content = getattr(message, "content", None)
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    if not isinstance(content, str) or not content.strip():
+        return None
+    return _unique_schema_payload(content, schema)
+
+
+def _recover_structured_channel(
+    role_id: str,
+    thread_id: str,
+    payload,
+    *,
+    checkpointer,
+    response_format,
+    system_prompt: str | None,
+    model_factory: ModelFactory | None,
+    observe: bool,
+    middleware: Sequence,
+    reasoning_budget_chars: int | None,
+    usage_scope: str | None = None,
+    context: dict | None = None,
+    tools: Sequence = (),
+):
+    """Arm L (#385): ONE corrective turn on the SAME thread whose previous
+    answer arrived as text, naming the structured tool.
+
+    Returns the correction turn's structured result when it lands; when the
+    correction still produces no structured result (empty or a re-cut turn),
+    the already-validated payload is ACCEPTED fail-open with a loud warning - a
+    schema-valid batch is never silently dropped. Fail-open: a correction that
+    raises also returns the payload, never a raise."""
+    tool = _structured_tool_name(response_format)
+    correction = HumanMessage(
+        content=_STRUCTURED_CHANNEL_INSTRUCTION.format(tool=tool)
+    )
+    try:
+        recovery = run_session_turn(
+            role_id, thread_id, [correction],
+            checkpointer=checkpointer, response_format=response_format,
+            system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+            middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+            usage_scope=usage_scope, context=context, tools=tools,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail-open: never a raise into the caller
+        logger.warning(
+            "stateful_turn %s structured-channel correction raised %s (%s); "
+            "accepting the parsed text-channel payload (fail-open)",
+            role_id, type(exc).__name__, exc)
+        _record_structured_channel(thread_id, "accepted_after_correction_raise")
+        return payload
+    if not recovery.blackloop and not _is_empty_result(recovery.content):
+        _record_structured_channel(thread_id, "tool_call_after_correction")
+        return recovery.content
+    logger.warning(
+        "stateful_turn %s structured-channel correction produced no structured "
+        "result (%s); accepting the parsed text-channel payload (fail-open)",
+        role_id, "re-cut" if recovery.blackloop else "empty")
+    _record_structured_channel(thread_id, "accepted_text_payload")
+    return payload
+
+
+# The structured-channel outcome is recorded per thread and surfaced onto the
+# NEXT turn's trace metadata, exactly like the blackloop record (D11 recipe):
+# the failure mode is never invisible again. Purely descriptive, never gating.
+_last_structured_channel: dict[str, dict] = {}
+
+
+def _record_structured_channel(thread_id: str, outcome: str) -> None:
+    _last_structured_channel[_as_thread_id(thread_id)] = {"outcome": outcome}
+
+
+def _attach_structured_channel_metadata(config: dict, thread_id: str) -> None:
+    """Merge the thread's last structured-channel record onto the config
+    metadata. Fail-open: no record simply omits the field."""
+    record = _last_structured_channel.get(_as_thread_id(thread_id))
+    if record is None:
+        return
+    config.setdefault("metadata", {})["structured_channel_recovery"] = record
 
 
 def _recover_blackloop(
