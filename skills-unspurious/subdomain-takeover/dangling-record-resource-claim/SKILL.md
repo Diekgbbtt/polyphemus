@@ -55,6 +55,7 @@ That trust fails at the resource-ownership clause because the dangling record st
 Exact-name creation of the released binding is the bent step the parent claim phrase cannot describe.
 Create the missing resource with the exact required name through the binding flow that owns the terminal endpoint.
 Handle website versus interface endpoints separately because claimability and fingerprints differ between them.
+Record the binding-flow family per candidate: a regional name pool that re-issues a released name to the first requester, a project namespace that re-opens after deletion, and edge capacity that re-attaches an unverified hostname are three separate claim paths.
 Hold the proof shape abstract as a minimal static page carrying <proof-token>.
 The delta over the parent is binding-flow handling plus verification-gap reading plus race-window re-claim plus website-versus-interface handling with unclaimed-text proof.
 

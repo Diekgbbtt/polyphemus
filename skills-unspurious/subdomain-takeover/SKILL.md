@@ -16,7 +16,7 @@ Subdomain takeover lets an attacker serve content from a trusted name the owner 
 - Orphaned delegations: a child zone delegated to nameservers whose domain has expired or no longer serves
 - Alternate-domain mappings on edge infrastructure that serve a name without proof of ownership
 - Decommissioned integration bindings (support, documentation, forms, marketing) still referenced by a record
-- Mail bindings pointing at a decommissioned provider: a trust surface carried without a claim procedure of its own
+- Mail bindings pointing at a decommissioned provider: selector, sender-policy, and mail-service records name a mail surface of their own beside the web-facing records
 
 **Trust Consumers**
 - Cookie scopes, origin checks, redirect allowlists, script-source policies, and certificate issuance all place trust in the name itself
@@ -26,6 +26,7 @@ Subdomain takeover lets an attacker serve content from a trusted name the owner 
 ### Enumeration Pipeline
 
 - Name inventory: certificate-transparency logs, passive DNS sources, in-house asset lists, and infrastructure-as-code outputs
+- Zone transfer where a nameserver still allows it, which returns the whole zone in one read and exposes dangling records an external enumeration would miss
 - Resolver sweep across every record type (address, canonical, delegation, mail, and verification), keeping canonical chains
 - Track NXDOMAIN versus SERVFAIL versus provider-branded error codes to locate the failure at the record, resolver, or provider layer
 - Build the record graph and collapse chains to their terminal external endpoint
@@ -36,6 +37,7 @@ Subdomain takeover lets an attacker serve content from a trusted name the owner 
 - Verification artifacts in record text that suggest a previous external binding
 - Mail records pointing at decommissioned providers
 - Records kept after a decommission, where nothing removes or re-verifies the name
+- External hosts the application itself loads from (script and resource origins): check each one's registration status and whether integrity pinning is absent, because an expired external host is a claimable dependency reached through the same claim mechanics, not a name of the target's own
 
 ### Delegation Indicators
 
@@ -103,8 +105,8 @@ Each variant breaks one clause: the dangling-record clause, the alternate-name c
 
 ### Mail Surface
 
-- Mail records pointing at a decommissioned provider name a receipt surface; the class carries it without a claim procedure of its own
-- Treat any receipt capability as an impact statement, not a claim step
+- Mail records pointing at a decommissioned provider name a mail surface of their own: a selector, sender-policy, or mail-service record whose post-claim step publishes authorising records or enables receipt rather than serving content
+- The claim mechanics are the shared dangling-record ones; only the post-claim mail step differs, and it completes on the parent domain's own mail behaviour
 
 ### Trust Consumers
 
@@ -153,9 +155,10 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Chaining Attacks
 
-- Takeover plus redirect-allowlist trust: an authorization flow sends codes or credentials to attacker-served content
+- Takeover plus redirect-allowlist trust: an authorization flow sends codes or credentials to attacker-served content, and a wildcard pattern in the allowlist turns any claimed host under it into a valid destination
 - Takeover plus session scope: the name carries a victim's session to attacker content
 - Takeover plus script-source trust: the name serves scripts into an origin that trusts it
+- Takeover plus cross-origin read policy: a claimed host inside an origin allowlist reads credentialed responses from a page it serves
 - Takeover plus edge caching: persist the response for other clients on shared capacity
 - Takeover plus mail records: messages addressed to the name become receivable, where the provider path allows
 
@@ -173,6 +176,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - dangling-record-resource-claim - Claim dangling names through exact-name resource creation, including binding flows, verification gaps, race windows, and unclaimed-signature proof.
 - cdn-alternate-domain-binding - Bind a victim name as an alternate domain on attacker edge capacity, proven through edge differentials, certificate issuance, and cache-aware persistence.
 - ns-delegation-takeover - Seize orphaned delegations through expired-domain registration and authoritative hosting, proven with subzone-wide control.
+- email-dns-takeover - Claim a dangling mail-record host and publish authorising records or enable receipt, proven on the parent domain's own mail behaviour.
 
 ## False Positives
 
