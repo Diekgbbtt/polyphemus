@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Sweep a candidate artifact location list and triage what answers.
+
+The helper replays one read-only request per candidate location from a list the
+tester supplies, then records status, size, content type, and a body digest per
+candidate. It is the fetch step of `stored-artifact-disclosure` in executable
+form: the families and the reconstruction recipes stay in the bundle's
+artifact-harvesting reference, and the triage order stays in the body.
+
+Usage:
+  artifact-sweep --base https://target.test --locations locations.txt
+  artifact-sweep --base https://target.test --locations locations.txt --execute
+  artifact-sweep --base https://target.test --locations locations.txt --execute \\
+      --follow-map --json-out sweep.json
+
+  locations.txt carries one path per line; a leading '#' comments a line out.
+
+Discipline:
+  - Dry run by default: the candidate count and the first few locations print,
+    and nothing is sent until `--execute` is given.
+  - Read-only: only GET is sent, and the request never carries a body.
+  - Bounded: `--max-requests` caps the sweep and `--delay` paces it.
+  - The digest is recorded per candidate so a later re-run can tell a rotated
+    artifact from a remediation, which is the class's rotation rule.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+
+
+def read_locations(path: str) -> list[str]:
+    with open(path, encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip() and not line.lstrip().startswith("#")]
+
+
+def digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def fetch(url: str, headers: dict[str, str], timeout: float, context: ssl.SSLContext | None) -> dict[str, object]:
+    req = urllib.request.Request(url, method="GET")
+    for key, value in headers.items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            payload = response.read()
+            return {
+                "status": response.status,
+                "size": len(payload),
+                "content_type": response.headers.get("Content-Type", ""),
+                "digest": digest(payload),
+                "redirect": response.headers.get("Location", ""),
+                "error": "",
+            }
+    except urllib.error.HTTPError as error:
+        payload = error.read()
+        return {
+            "status": error.code,
+            "size": len(payload),
+            "content_type": error.headers.get("Content-Type", "") if error.headers else "",
+            "digest": digest(payload),
+            "redirect": error.headers.get("Location", "") if error.headers else "",
+            "error": "",
+        }
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"status": 0, "size": 0, "content_type": "", "digest": "", "redirect": "", "error": str(error)}
+
+
+def classify(cell: dict[str, object]) -> str:
+    status = int(cell["status"])
+    if status == 0:
+        return "unreachable"
+    if status in (404, 410):
+        return "absent"
+    if status in (401, 403):
+        return "gated"
+    if status in range(300, 400):
+        return "redirect"
+    if status in range(200, 300):
+        if "html" in str(cell["content_type"]).lower() and int(cell["size"]) < 4096:
+            return "reachable-shell"
+        return "reachable"
+    return "error"
+
+
+def parse_header(raw: str) -> tuple[str, str]:
+    name, _, value = raw.partition(":")
+    return name.strip(), value.strip()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="target base URL")
+    parser.add_argument("--locations", required=True, help="file of candidate paths, one per line")
+    parser.add_argument("--header", action="append", default=[], help="extra request header, name: value")
+    parser.add_argument("--execute", action="store_true", help="send the probes; the default is a dry run")
+    parser.add_argument("--follow-map", action="store_true", help="also fetch the source-map location recorded in a shipped script")
+    parser.add_argument("--max-requests", type=int, default=400, help="hard cap on requests sent")
+    parser.add_argument("--timeout", type=float, default=10.0, help="per-request timeout in seconds")
+    parser.add_argument("--delay", type=float, default=0.0, help="pause between requests in seconds")
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    parser.add_argument("--json-out", help="write the per-location records to this path")
+    args = parser.parse_args(argv)
+
+    locations = read_locations(args.locations)
+    if not locations:
+        print("the locations file is empty", file=sys.stderr)
+        return 2
+    if args.follow_map:
+        locations = locations + [location + ".map" for location in locations if location.endswith(".js")]
+    print(f"sweep: {len(locations)} candidate locations")
+    print("sample: " + ", ".join(locations[:5]))
+    if not args.execute:
+        print("dry run: pass --execute to send")
+        return 0
+
+    headers = dict(parse_header(raw) for raw in args.header)
+    context = ssl._create_unverified_context() if args.insecure else None
+    records: list[dict[str, object]] = []
+    for location in locations[: args.max_requests]:
+        cell = fetch(args.base.rstrip("/") + "/" + location.lstrip("/"), headers, args.timeout, context)
+        cell["candidate"] = location
+        cell["verdict"] = classify(cell)
+        records.append(cell)
+        if args.delay:
+            time.sleep(args.delay)
+
+    print(f"\n{'location':48} {'status':6} {'size':8} {'content-type':24} verdict")
+    for row in records:
+        if row["verdict"] == "absent":
+            continue
+        print(
+            f"{row['candidate'][:48]:48} {row['status']:6} {row['size']:8} "
+            f"{str(row['content_type'])[:24]:24} {row['verdict']}"
+        )
+    live = [row for row in records if row["verdict"] in ("reachable", "reachable-shell")]
+    print(f"\nreachable: {len(live)} of {len(records)} candidates")
+    print("parse each reachable artifact before triage, and re-derive a hashed location before recording an absence")
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as handle:
+            json.dump({"base": args.base, "locations": records}, handle, indent=2)
+        print(f"wrote {args.json_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

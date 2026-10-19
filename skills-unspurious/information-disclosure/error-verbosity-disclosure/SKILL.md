@@ -65,6 +65,8 @@ Each chain stops at a reversible proof or a stated architectural risk rather tha
 4. **Read failure-adjacent metadata.** Capture tracing and timing signals emitted alongside failures. Complete when each signal is recorded as leaking or ruled uniform.
 5. **Correlate to impact.** Map each leak to versions with reachable flaws, paths enabling file access, or keys enabling control-plane access, with a minimal reversible proof or a stated risk. Complete when every recorded leak carries a proof or a risk statement.
 
+The signature families behind each trigger, and what each one reveals, are in `references/error-signature-families.md`, read beside the failure it came from.
+
 ## False Positives
 
 Generic errors with no actionable detail are not findings.

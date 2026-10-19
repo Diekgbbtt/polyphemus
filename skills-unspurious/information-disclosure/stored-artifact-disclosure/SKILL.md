@@ -24,6 +24,7 @@ Panels live in observability and administration surfaces whose gating decides wh
 Enumerate candidate artifact locations per channel before fetching them.
 Locate live schema interfaces, storage and export surfaces, and observability panels, and note each panel's gating posture.
 Record the addressing scheme each surface uses so fetching stays systematic rather than guessy.
+Sweep the candidate list with `scripts/artifact-sweep`, and read the families, the location shapes, and the reconstruction recipes in `references/artifact-harvesting.md`.
 Reconnaissance is complete when every channel has a candidate artifact list with gating notes.
 
 ## Detection Channels
@@ -52,6 +53,7 @@ The failing clause is the unreachable-deployable clause: fetched content renders
 Fetching enumerates deployables, configs, bundles, maps, listings, and panel snapshots as static retrieval.
 Parsing extracts file metadata from downloads: embedded paths, versions, keys, endpoint names, and environment values, including lazily loaded chunks and browser-side storage captured alongside the shell bundle.
 Querying asks live introspection and reflection interfaces natively to enumerate hidden or privileged operations, naming the graphql skill for paradigm-specific query shapes instead of restating them; where introspection is closed, reconstruct the schema from unknown-field suggestions and error text, one probe at a time.
+Reconstructing walks that same interface one unknown-field probe at a time where introspection is closed, driven by `scripts/schema-reconstruction`, and records each harvested name beside the probe that produced it.
 Scoping reads storage and export responses for audience, lifetime, binding, and foreign-dataset signals from the single fetched object.
 Triaging reads auth-gated observability panels per held session and records the gating posture as a secondary check.
 Noting records referrer, introspection-off, expose-header, masking, and redaction states as secondary checks inside the same procedure.
