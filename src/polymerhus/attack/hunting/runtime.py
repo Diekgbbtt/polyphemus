@@ -711,6 +711,7 @@ def report_dispatch_gap(
     threat_store=None,
     hunt_store,
     hunter_store,
+    hunter_payload_capable: bool = True,
 ) -> str | None:
     """Log and return the one-line reason a run that PRODUCED models dispatched
     nothing, or None when there is no gap.
@@ -743,7 +744,8 @@ def report_dispatch_gap(
     try:
         pending = run_work_remaining(
             project_id, run_id, threat_store=threat_store,
-            hunt_store=hunt_store, hunter_store=hunter_store)
+            hunt_store=hunt_store, hunter_store=hunter_store,
+            hunter_payload_capable=hunter_payload_capable)
     except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
         logger.warning(
             "hunting run %s: the pending-work read degraded (%s); reporting the "
@@ -752,14 +754,51 @@ def report_dispatch_gap(
         pending = False
     if pending:
         return None
-    reason = (
-        f"{len(completed)} unit model(s) produced and NOTHING is dispatchable: "
-        "the production hunter harness cannot consume the per-loop payload yet "
-        "(designed-not-built and owned by T6 #379), so this run dispatches zero "
-        "hunts"
-    )
+    loops = _produced_loop_count(threat_store, project_id, run_id)
+    if loops and not hunter_payload_capable:
+        # C1 (T4a review): the per-loop dispatch is BUILT and inert by design
+        # between T4a and T6 - the operator line must say exactly that, so a
+        # `complete` with zero hunts is never read as "the modeller found nothing".
+        reason = (
+            f"{len(completed)} unit model(s) produced and NOTHING is "
+            f"dispatchable: {loops} produced loop file(s) await the per-loop "
+            "hunter harness, which cannot consume the loop payload yet "
+            "(designed-not-built -> T6 #379); this run dispatches zero hunts"
+        )
+    elif loops:
+        reason = (
+            f"{len(completed)} unit model(s) produced and NOTHING is "
+            f"dispatchable: {loops} produced loop file(s) stayed undispatched "
+            "(a stopped role or a refused admission left them produced); this "
+            "run dispatches zero hunts"
+        )
+    else:
+        reason = (
+            f"{len(completed)} unit model(s) produced and NOTHING is "
+            "dispatchable: no dispatchable loop file was produced, and every "
+            "model is decided; this run dispatches zero hunts"
+        )
     logger.warning("hunting run %s: %s", run_id, reason)
     return reason
+
+
+def _produced_loop_count(threat_store: Any, project_id: str, run_id: str) -> int:
+    """The run's produced loop files, for the dispatch-gap line. Best-effort (a
+    read failure counts zero): the terminal path must never raise."""
+    if threat_store is None:
+        return 0
+    try:
+        return sum(
+            len(entry.get("loops") or ())
+            for entry in threat_store.read_produced_loops(project_id)
+            if entry.get("run_id") == run_id
+        )
+    except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
+        logger.warning(
+            "hunting run %s: the produced-loop count degraded (%s); reporting "
+            "zero (fail-open)", run_id, exc,
+        )
+        return 0
 
 
 async def launch_modeller(
@@ -1032,6 +1071,13 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     return _dispatch, registry
 
 
+# The production builder cannot consume the loop payload (T6 #379 reworks the
+# harness): `start_hunting` reads this flag and makes the run INERT for the loop
+# family (C1) - the loop files stay produced, nothing moves and no model is
+# consumed, so no dispatchable work is lost before T6 lands.
+_default_hunter_builder.consumes_loop_payload = False  # type: ignore[attr-defined]
+
+
 async def _default_pod_builder(spec, *, run_id, project_id, memory_store, spec_id):
     """The production pod-session builder seam (T4): `arun_pod` with the
     run's pod memory store and the semantic `<fault>_<strategy>` spec id (ADR
@@ -1267,19 +1313,27 @@ async def start_hunting(
                         role, hunting_run_id, exc,
                     )
 
-        state = RunDispatchState()
+        run_threat_store = getattr(tools, "threat_store", None) or threat_store
+        resolved_hunter_builder = hunter_builder or _default_hunter_builder
+        # C1: whether the run's hunter can consume the loop payload decides the
+        # loop family's dispatchability - a builder that cannot (the production
+        # harness until T6) leaves the run inert rather than consuming the work.
+        hunter_payload_capable = bool(
+            getattr(resolved_hunter_builder, "consumes_loop_payload", True))
+        state = RunDispatchState(hunter_payload_capable=hunter_payload_capable)
         coro_for = build_run_dispatch(
             project_id=project_id,
             run_id=hunting_run_id,
             hunt_store=hunt_store,
-            threat_store=getattr(tools, "threat_store", None) or threat_store,
+            threat_store=run_threat_store,
             hunter_store=hunter_store,
             pod_store=pod_store,
             state=state,
             gate=gate,
-            hunter_builder=hunter_builder or _default_hunter_builder,
+            hunter_builder=resolved_hunter_builder,
             pod_builder=pod_builder if pod_builder is not None else _default_pod_builder,
             control=control,
+            hunter_payload_capable=hunter_payload_capable,
         )
 
         pass_outcomes: list = []
@@ -1337,11 +1391,12 @@ async def start_hunting(
             return await run_surfer_loop(
                 project_id, hunting_run_id,
                 hunt_store=hunt_store,
-                threat_store=getattr(tools, "threat_store", None) or threat_store,
+                threat_store=run_threat_store,
                 hunter_store=hunter_store,
                 control=control,
                 coro_for=coro_for,
                 state=state,
+                hunter_payload_capable=hunter_payload_capable,
                 tick_interval=tick_interval,
             )
 
@@ -1419,9 +1474,10 @@ async def start_hunting(
                         report_dispatch_gap, project_id, hunting_run_id,
                         [outcome for batch in pass_outcomes for outcome in batch],
                         state=state,
-                        threat_store=getattr(tools, "threat_store", None) or threat_store,
+                        threat_store=run_threat_store,
                         hunt_store=hunt_store,
                         hunter_store=hunter_store,
+                        hunter_payload_capable=hunter_payload_capable,
                     )
                     status = "complete"
         except asyncio.CancelledError:
@@ -1490,7 +1546,7 @@ async def start_hunting(
                     clear_refusal_log,
                 )
 
-                clear_refusal_log()
+                clear_refusal_log(project_id, hunting_run_id)
             except Exception:  # noqa: BLE001 - teardown must never raise
                 logger.warning(
                     "start_hunting: refusal-log clear failed for %s (fail-open)",

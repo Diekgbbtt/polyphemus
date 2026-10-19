@@ -43,9 +43,11 @@ def _fresh_refusal_log():
     terminal clears it in production."""
     from polymerhus.attack.hunting.mover import clear_refusal_log
 
-    clear_refusal_log()
+    clear_refusal_log(PROJECT, RUN)
+    clear_refusal_log("gap-proj", "gap-run")   # the whole-pipeline tests' run
     yield
-    clear_refusal_log()
+    clear_refusal_log(PROJECT, RUN)
+    clear_refusal_log("gap-proj", "gap-run")
 
 
 @pytest.fixture
@@ -188,30 +190,45 @@ def _hunter_builder(*, run_id, project_id, hunter_store, **kw):
     return _dispatch, None
 
 
-def _payload_recorder():
-    """A hunter builder seam whose dispatch records the payload it receives."""
+def _payload_recorder(*, state=None):
+    """A hunter builder seam whose dispatch records the payload it receives - and,
+    when a `state` is given, the run-local registration it observes DURING the
+    graph stretch (the registration lands inside the session coroutine, T4a
+    review I1)."""
     seen: list = []
+    snapshots: list = []
 
     def builder(*, run_id, project_id, hunter_store, **kw):
         async def _dispatch(payload):
             seen.append(payload)
+            if state is not None:
+                snapshots.append((
+                    dict(state.loop_likelihoods), set(state.hunters_in_graph),
+                ))
+                # settle the idle loop up front (the run terminal's own verb): the
+                # session's graph stretch has run, so it must not wait for a later
+                # terminal - the registration (the inbox) exists by now (I1)
+                for inbox in state.hunter_inboxes.values():
+                    inbox.post_nowait(AgentMessage(kind="settle"))
 
         return _dispatch, None
 
-    return builder, seen
+    return builder, seen, snapshots
 
 
 def _coro_for(threat_store, hunter_store, *, state=None, hunter_builder=None,
               control=None):
     from polymerhus.attack.hunting.surfer import RunDispatchState, build_run_dispatch
 
+    state = state if state is not None else RunDispatchState()
     return build_run_dispatch(
         project_id=PROJECT, run_id=RUN,
         threat_store=threat_store, hunt_store=HuntStore(),
         hunter_store=hunter_store, pod_store=None,
-        state=state or RunDispatchState(), gate=None,
+        state=state, gate=None,
         hunter_builder=hunter_builder or _hunter_builder,
         pod_builder=_pod_builder_fake, control=control,
+        hunter_payload_capable=state.hunter_payload_capable,
     )
 
 
@@ -253,8 +270,8 @@ def test_the_hunter_session_receives_the_materialised_payload(
     from polymerhus.attack.hunting.surfer import RunDispatchState, build_run_dispatch
 
     produce_model(threat_store)
-    builder, seen = _payload_recorder()
     state = RunDispatchState()
+    builder, seen, snapshots = _payload_recorder(state=state)
     coro_for = build_run_dispatch(
         project_id=PROJECT, run_id=RUN,
         threat_store=threat_store, hunt_store=HuntStore(),
@@ -266,16 +283,10 @@ def test_the_hunter_session_receives_the_materialised_payload(
 
     coro = coro_for(item)
     assert coro is not None
-    # the run state carries the loop for the graph stretch (the two fields move
-    # TOGETHER: `hunters_in_graph` is what holds quiesce, `loop_likelihoods` is
-    # what a later `low` loop waits behind)
-    assert state.loop_likelihoods == {item.dispatch_id: "high"}
-    assert set(state.loop_likelihoods) <= state.hunters_in_graph
-    # Settle the hunt's idle loop up front (the run terminal's own verb): the
-    # dispatched session's graph stretch runs, then its idle loop ends instead of
-    # waiting for a later terminal.
-    item_inbox = state.hunter_inboxes[item.dispatch_id]
-    item_inbox.post_nowait(AgentMessage(kind="settle"))
+    # the dispatch seam itself registers nothing (a refused coroutine must never
+    # mutate the run state, T4a review I1)
+    assert state.loop_likelihoods == {}
+    assert state.hunters_in_graph == set()
     asyncio.run(coro)
 
     assert [p["dispatch_id"] for p in seen] == [f"{UNIT_NAME}__loop-1"]
@@ -283,7 +294,10 @@ def test_the_hunter_session_receives_the_materialised_payload(
     assert seen[0]["programming_fault"]["id"] == "fault-1"
     assert seen[0]["canonical_class"] == "IDOR"
     assert seen[0]["trust_agreement"]["id"] == "ta-1"
-    # the graph stretch is over: the loop no longer holds the sequencing
+    # DURING the graph stretch the two fields move TOGETHER (I1 + the F6
+    # invariant): `hunters_in_graph` holds quiesce, `loop_likelihoods` is what a
+    # later `low` loop waits behind - and both are released when the graph ends
+    assert snapshots == [({item.dispatch_id: "high"}, {item.dispatch_id})]
     assert state.loop_likelihoods == {}
     assert state.hunters_in_graph == set()
 
@@ -299,15 +313,25 @@ def _only_item(threat_store, hunter_store):
 
 # --- the sequencing: low loops wait (S2 8.3, S1 7.6) ---------------------------
 
-def _tick(threat_store, hunter_store, *, control=None):
+def _tick(threat_store, hunter_store, *, control=None, state=None):
     from polymerhus.attack.hunting.mover import run_delivery_tick
 
     control = control or RecordingControlPlane()
+    state = state if state is not None else _dispatch_state()
     return run_delivery_tick(
         PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store,
         control=control,
-        coro_for=_coro_for(threat_store, hunter_store, control=control),
+        coro_for=_coro_for(threat_store, hunter_store, control=control,
+                           state=state),
+        live_loop_likelihoods=state.loop_likelihoods,
+        hunter_payload_capable=state.hunter_payload_capable,
     )
+
+
+def _dispatch_state():
+    from polymerhus.attack.hunting.surfer import RunDispatchState
+
+    return RunDispatchState()
 
 
 class _RoleGateControl(RecordingControlPlane):
@@ -609,20 +633,33 @@ def test_the_refusal_log_is_project_scoped_and_bounded(monkeypatch, caplog):
     from polymerhus.attack.hunting import mover
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.mover"):
-        assert mover.log_refusal_once("p1/r/u/loop-1", "refused %s", "one") is True
-        assert mover.log_refusal_once("p1/r/u/loop-1", "refused %s", "one") is False
-        assert mover.log_refusal_once("p2/r/u/loop-1", "refused %s", "two") is True
+        assert mover.log_refusal_once("p1", "r", "u/loop-1", "refused %s", "one") is True
+        assert mover.log_refusal_once("p1", "r", "u/loop-1", "refused %s", "one") is False
+        assert mover.log_refusal_once("p2", "r", "u/loop-1", "refused %s", "two") is True
+        assert mover.log_refusal_once("p1", "r-2", "u/loop-1", "refused %s", "three") is True
 
     assert [record.message for record in caplog.records] == [
-        "refused one", "refused two",
+        "refused one", "refused two", "refused three",
     ]
 
+    # the clear is RUN-scoped: a sibling run's record is left alone
+    mover.clear_refusal_log("p1", "r")
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.mover"):
+        assert mover.log_refusal_once("p1", "r", "u/loop-1", "refused %s", "four") is True
+        assert mover.log_refusal_once("p2", "r", "u/loop-1", "refused %s", "five") is False
+
+    # bounded per run: the oldest detail is evicted first
     monkeypatch.setattr(mover, "REFUSAL_LOG_LIMIT", 2)
-    mover.clear_refusal_log()
-    assert mover.log_refusal_once("a", "x") is True
-    assert mover.log_refusal_once("b", "x") is True
-    assert mover.log_refusal_once("c", "x") is True      # evicts "a"
-    assert mover.log_refusal_once("a", "x") is True      # "a" is forgotten again
+    assert mover.log_refusal_once("p3", "r", "a", "x") is True
+    assert mover.log_refusal_once("p3", "r", "b", "x") is True
+    assert mover.log_refusal_once("p3", "r", "c", "x") is True   # evicts "a"
+    assert mover.log_refusal_once("p3", "r", "a", "x") is True   # "a" was evicted
+
+    # and bounded in the runs remembered: the oldest run's record is dropped
+    monkeypatch.setattr(mover, "REFUSAL_RUN_LIMIT", 1)
+    assert mover.log_refusal_once("p4", "r1", "a", "x") is True
+    assert mover.log_refusal_once("p4", "r2", "a", "x") is True  # evicts (p4, r1)
+    assert mover.log_refusal_once("p4", "r1", "a", "x") is True  # forgotten again
 
 
 def _loop_file_record(**overrides) -> dict:
@@ -650,6 +687,124 @@ def _loop_file_record(**overrides) -> dict:
     }
     record.update(overrides)
     return record
+
+
+# --- the inert production path (C1, the T4a review) -----------------------------
+
+def test_a_run_whose_builder_cannot_consume_the_payload_is_inert(
+        tmp_path, monkeypatch, caplog):
+    """C1 (CODING_STANDARD s12): between T4a and T6 the production hunter harness
+    cannot consume the loop payload, so the run must be INERT - the loop file is
+    not dispatched and not moved, the model document is not consumed, the unit is
+    NOT excluded from later intake, and the run still quiesces - with ONE
+    run-level line naming the state.
+    """
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from tests.attack.test_hunting_modeller_wiring import (
+        RUN as WIRING_RUN,
+        _FakeControl,
+        _FakePg,
+        _noop_pod_builder,
+        _patch_pg,
+    )
+    from tests.hunting_fixtures import ScriptedModellerTurns, intake_unit
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt = HuntStore(tmp_path / "hunts")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    models = ThreatModelStore(tmp_path / "models")
+    control = _FakeControl()
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
+        hid = asyncio.run(hunting_runtime.start_hunting(
+            PROJECT, intake_units=[intake_unit(UNIT)],
+            modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
+            graph_read_fn=lambda cypher, params: [],
+            control=control,
+            hunt_store=hunt, hunter_store=hunter, threat_store=models,
+            # the PRODUCTION hunter builder: the harness that cannot consume the
+            # loop payload yet
+            pod_builder=_noop_pod_builder,
+            tick_interval=0.001,
+        ))
+
+    assert hid == WIRING_RUN
+    assert fake.statuses[-1] == (WIRING_RUN, "complete")
+    # nothing dispatched, nothing moved, nothing consumed: the work stays
+    # dispatchable for the run that CAN consume it (T4b/T6)
+    assert [sid for sid in control.started if ":hunt:" in sid] == []
+    assert [entry["loop_id"] for entry in
+            models.read_produced_loops(PROJECT)[0]["loops"]] == ["loop-1"]
+    assert models.read_completed_units(PROJECT) == []
+    # and ONE run-level line names the state: the loops are produced, the per-loop
+    # hunter harness is designed-not-built, zero hunts ran
+    gap = [record.message for record in caplog.records
+           if "designed-not-built" in record.message and "loop" in record.message]
+    assert len(gap) == 1, gap
+    assert "1 produced loop file" in gap[0] and "zero hunts" in gap[0]
+
+
+def test_a_run_whose_builder_can_consume_the_payload_dispatches(
+        threat_store, hunter_store):
+    """The same seam, a capable builder: the loop dispatches and moves as before
+    (the capability flag must not change the capable path)."""
+    from polymerhus.attack.hunting.surfer import RunDispatchState, build_run_dispatch
+
+    produce_model(threat_store)
+    state = RunDispatchState()
+    builder, seen, _snapshots = _payload_recorder()
+    coro_for = build_run_dispatch(
+        project_id=PROJECT, run_id=RUN,
+        threat_store=threat_store, hunt_store=HuntStore(),
+        hunter_store=hunter_store, pod_store=None, state=state, gate=None,
+        hunter_builder=builder, pod_builder=_pod_builder_fake, control=None,
+    )
+
+    item = _only_item(threat_store, hunter_store)
+
+    assert coro_for(item) is not None
+
+
+def test_a_refused_dispatch_leaks_no_run_state_and_quiesces(
+        threat_store, hunter_store):
+    """I1 (the T4a code-quality review): the run-local registration lands INSIDE
+    the session coroutine, so an admission refusal - which closes the coroutine
+    without ever running it - leaks nothing. Otherwise the leaked key stays in
+    `hunters_in_graph`/`loop_likelihoods`: the quiesce never lands and a leaked
+    higher tier holds every later low loop for ever."""
+    from polymerhus.attack.hunting.surfer import (
+        RunDispatchState,
+        is_run_quiesced,
+        run_work_remaining,
+    )
+
+    produce_model(threat_store)
+    state = RunDispatchState()
+    session = f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-1"
+
+    refused = _tick(threat_store, hunter_store, control=RecordingControlPlane(
+        refused={session}), state=state)
+
+    assert refused.refused == 1 and refused.moved == 0
+    assert state.hunter_inboxes == {}
+    assert state.hunters_in_graph == set()
+    assert state.loop_likelihoods == {}
+    # the work is still produced and still dispatchable: the run is not quiesced
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store) is True
+
+    # the next tick, SAME state: the admission lands, the move lands, no leak
+    admitted = _tick(threat_store, hunter_store, control=RecordingControlPlane(),
+                     state=state)
+
+    assert admitted.admitted == 1 and admitted.moved == 1
+    assert state.hunters_in_graph == set()
+    assert state.loop_likelihoods == {}
+    assert asyncio.run(is_run_quiesced(
+        PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store,
+        control=RecordingControlPlane(), state=state,
+    )) is True
 
 
 def _loop_path(tmp_path, *, unit_name=UNIT_NAME, loop_id="loop-1"):

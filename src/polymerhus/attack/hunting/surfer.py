@@ -17,9 +17,13 @@ wiring T4 owns:
 - The run DISPATCH builders (`build_run_dispatch`): the `coro_for` seam the
   mover's `run_delivery_tick` was designed for. A produced LOOP FILE becomes ONE
   hunter session under the per-loop id `hunting:<run_id>:hunt:<dispatch_id>`
-  (S3 8.9), handed the payload materialised at dispatch time (S2 8.2); a
-  produced dispatchable test spec becomes ONE pod session (ADR Q13 pod session
-  id, S3 8.7) riding the SAME mover. An item that is not dispatchable now - a
+  (S3 8.9), handed the payload materialised at dispatch time (S2 8.2) - but ONLY
+  when the run's hunter builder can consume that payload (`consumes_loop_payload`,
+  C1): a builder that cannot makes the loop family inert (no session, no move, no
+  model consume, and the loop is not dispatchable work), so no dispatchable work
+  is lost between T4a and T6. A produced dispatchable test spec becomes ONE pod
+  session (ADR Q13 pod session id, S3 8.7) riding the SAME mover. An item that
+  is not dispatchable now - a
   `low` loop behind a higher-tier loop or a live higher session (S2 8.3), a
   stopped role, a draft spec - yields NO coroutine (the mover's
   `None`-means-refused rule): it stays in produced and the next tick
@@ -79,6 +83,8 @@ from polymerhus.attack.hunting.mover import (
     THREAT_MODELLER_SEGMENTS,
     SPEC_DISPATCH_STATUS,
     HuntConfigItem,
+    loop_refusal_detail,
+    produced_spec_body,
     ProducedInbox,
     ProducedItem,
     TestSpecItem,
@@ -226,6 +232,12 @@ class RunDispatchState:
     hunter_inboxes: dict[str, AgentInbox] = field(default_factory=dict)
     hunters_in_graph: set[str] = field(default_factory=set)
     loop_likelihoods: dict[str, str] = field(default_factory=dict)
+    # False when the run's hunter builder cannot consume the loop payload yet
+    # (C1, T4a review): the loop family is then NOT dispatchable work - the read
+    # does not hand the loops over, nothing is moved and no model is consumed, so
+    # the run quiesces INERT instead of consuming dispatchable work with zero
+    # hunts. T6 removes this field with the marker in `_default_hunter_builder`.
+    hunter_payload_capable: bool = True
     provider_failure: ProviderUnavailableError | None = None
 
 
@@ -250,8 +262,11 @@ def _read_config_body(hunt_store: HuntStore, project_id: str, key: str) -> dict 
     return records[0] if records else None
 
 
-# The keys already logged as unratifiable, so a malformed body is refused
-# LOUDLY ONCE, not once per tick (the mover retries every tick).
+# The config family's refuse-once mechanism (`_WARNED_UNRATIFIABLE`): a malformed
+# produced config is refused LOUDLY ONCE, not once per tick (the mover retries
+# every tick). It is the SECOND such log, beside the mover's run-scoped
+# `log_refusal_once` (the loop family); designed-for-removal -> T4b (#377): it
+# retires with the config family itself.
 _WARNED_UNRATIFIABLE: set[str] = set()
 
 
@@ -283,27 +298,6 @@ def _ratified_config(hunt_store: HuntStore, project_id: str, key: str):
         return None
 
 
-def _read_spec_body(
-    hunter_store: HunterMemoryStore,
-    project_id: str,
-    item: TestSpecItem,
-) -> dict | None:
-    """The produced spec's persisted body (fail-open per record - O4). The
-    `<fault>_<strategy>` stem splits on the single `_` separator (G3 keywords
-    never contain `_`), so the classifier can read the file it names."""
-    fault_keyword, sep, strategy_keyword = item.spec_file.partition("_")
-    if not sep or not fault_keyword or not strategy_keyword:
-        return None
-    try:
-        return hunter_store.read_spec(
-            project_id, item.fault_key, fault_keyword, strategy_keyword,
-            side="produced",
-        )
-    except Exception as exc:  # noqa: BLE001 - fail-open read (O4)
-        logger.warning("surfer: spec body read failed for %s (%s)", item.spec_file, exc)
-        return None
-
-
 def run_work_remaining(
     project_id: str,
     run_id: str,
@@ -312,6 +306,7 @@ def run_work_remaining(
     hunt_store: HuntStore | None = None,
     hunter_store: HunterMemoryStore,
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
+    hunter_payload_capable: bool = True,
 ) -> bool:
     """True when a DISPATCHABLE-NOW produced item remains for this run.
 
@@ -338,6 +333,7 @@ def run_work_remaining(
         # gated below by its own predicate (`_ratified_config`), which the
         # read does not apply (the config's persisted status + parse).
         hunt_store=None, hunter_store=hunter_store,
+        hunter_payload_capable=hunter_payload_capable,
     )
     if inbox.models_to_consume:
         # a produced COMPLETED valid model with no dispatchable loop left: the
@@ -395,6 +391,7 @@ async def is_run_quiesced(
     return not run_work_remaining(
         project_id, run_id, threat_store=threat_store, hunt_store=hunt_store,
         hunter_store=hunter_store, live_loop_likelihoods=state.loop_likelihoods,
+        hunter_payload_capable=state.hunter_payload_capable,
     )
 
 
@@ -427,6 +424,7 @@ def build_run_dispatch(
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
     pod_builder: Callable[..., Awaitable[dict]],
     control: Any = None,
+    hunter_payload_capable: bool = True,
 ) -> Callable[[ProducedItem], Any]:
     """Build the mover's `coro_for` seam for ONE run (ADR #169 Q11/Q13, spec
     #169 "The inbox surfer semantics"): the produced family member -> the
@@ -519,9 +517,29 @@ def build_run_dispatch(
 
     def _loop_dispatch(item: ThreatLoopItem) -> Any:
         """ONE hunter session for ONE produced loop file (S2 8.4): the payload is
-        materialised at dispatch time from the unit's model document, the session
-        is keyed by the loop's dispatch id, and the loop's likelihood is held on
-        the run state while its hunter works (the low-loop sequencing, S2 8.3)."""
+        materialised at dispatch time from the unit's model document and the
+        session is keyed by the loop's dispatch id. The run-local registration
+        (the inbox, the mid-graph key, the loop's likelihood) lands INSIDE the
+        session coroutine, so a coroutine the control plane refuses - which is
+        closed without ever running - mutates nothing (T4a review I1).
+
+        C1 (the T4a code-quality review): when the run's hunter builder cannot
+        consume the loop payload yet, this path is INERT - no session, no move,
+        no model consume (the produced read does not even hand the loop over as
+        an item: `hunter_payload_capable` on the read), so the work stays
+        dispatchable for the run that can consume it and the run still quiesces.
+        T6 removes this branch together with the `Mapping` discrimination in the
+        production builder."""
+        if not hunter_payload_capable:
+            log_refusal_once(
+                project_id, run_id, loop_refusal_detail(
+                    "loop-payload", item.unit_name, item.loop_id),
+                "surfer: produced loop %s NOT dispatched - the per-loop hunter "
+                "harness cannot consume the loop payload yet (designed-not-built "
+                "-> T6 #379); left in produced/, not counted as dispatchable work",
+                item.message_id,
+            )
+            return None
         model = item.model
         if model is None and threat_store is not None:
             # A directly constructed item (or a store that does not carry the
@@ -535,7 +553,8 @@ def build_run_dispatch(
             # too - T4a review F2: an unreadable model must not wedge the run),
             # and the refusal is logged ONCE, never per tick.
             log_refusal_once(
-                f"loop-model:{project_id}:{run_id}:{item.unit_name}:{item.loop_id}",
+                project_id, run_id, loop_refusal_detail(
+                    "loop-model", item.unit_name, item.loop_id),
                 "surfer: produced loop %s refused - no readable model for %s; "
                 "never dispatched and not counted as work",
                 item.message_id, item.unit_id,
@@ -546,14 +565,6 @@ def build_run_dispatch(
             return None
         payload = materialise_hunter_payload(
             model, item.record, dispatch_id=item.dispatch_id)
-        inbox = AgentInbox()
-        state.hunter_inboxes[item.dispatch_id] = inbox
-        state.hunters_in_graph.add(item.dispatch_id)
-        # The loop's likelihood is held for the duration of the hunter's graph:
-        # a later `low` loop waits behind it (S2 8.3). Registered HERE - the
-        # tick builds the coroutine before the control plane schedules it - so
-        # the very next tick's sequencing already sees the in-flight loop.
-        state.loop_likelihoods[item.dispatch_id] = item.likelihood
         return run_hunter_session(
             payload=payload,
             project_id=project_id,
@@ -577,9 +588,6 @@ def build_run_dispatch(
         # #317: a stopped hunter role refuses new hunter dispatch (at-least-once).
         if not _role_running("hunter"):
             return None
-        inbox = AgentInbox()
-        state.hunter_inboxes[item.config_key] = inbox
-        state.hunters_in_graph.add(item.config_key)
         return run_hunter_session(
             # designed-for-removal -> T4b (#377): the retiring config family
             # still hands its config object to the hunter seam (the harness's
@@ -600,8 +608,8 @@ def build_run_dispatch(
         # The item's body IS the validated one (the produced read's dispatch
         # gate, `SPEC_DISPATCH_STATUS`); the re-read is only the belt-and-braces
         # for a directly constructed item.
-        body = item.spec if item.spec is not None else _read_spec_body(
-            hunter_store, project_id, item)
+        body = item.spec if item.spec is not None else produced_spec_body(
+            hunter_store, project_id, item.fault_key, item.spec_file)
         if not body or body.get("status") != SPEC_DISPATCH_STATUS:
             return None
         # #317: a stopped pod role refuses new pod dispatch (at-least-once).
@@ -661,10 +669,22 @@ async def run_hunter_session(
     nothing more, so it must not hold the sequencing (or the run terminal's
     settle could never land).
 
+    The registration lands HERE, before the first await (T4a review I1): the
+    mover builds this coroutine and the control plane may REFUSE to schedule it
+    (gate full, module paused), in which case the coroutine is closed and never
+    runs - so the dispatch seam itself must not mutate run state, or the leaked
+    key would hold the quiesce and every later low loop for ever.”
+
     #317: the session acquires the MODULE gate (Q15 width bound) AND its OWN
     hunter role gate around the active stretch, so a stopped hunter role holds
     its in-flight threads at the next unit boundary (the module gate dominates
     via the role gate's parent)."""
+    state.hunter_inboxes[hunt_key] = AgentInbox()
+    state.hunters_in_graph.add(hunt_key)
+    if likelihood:
+        # only a LOOP carries a tier: the retiring config family's key must never
+        # hold a later low loop (S2 8.3)
+        state.loop_likelihoods[hunt_key] = likelihood
     registry: Any = None
     try:
         dispatch_fn, registry = hunter_builder(
@@ -916,6 +936,7 @@ async def run_surfer_loop(
     control,
     coro_for: Callable[[ProducedItem], Any],
     state: RunDispatchState,
+    hunter_payload_capable: bool = True,
     tick_interval: float = DEFAULT_SURFER_TICK_INTERVAL,
 ) -> SurferReport:
     """The run-scoped inbox surfer loop (ADR Q2a): one delivery lap per tick,
@@ -945,6 +966,7 @@ async def run_surfer_loop(
             hunter_store=hunter_store,
             control=control, coro_for=coro_for,
             live_loop_likelihoods=state.loop_likelihoods,
+            hunter_payload_capable=hunter_payload_capable,
         )
         ticks += 1
         if state.provider_failure is not None:

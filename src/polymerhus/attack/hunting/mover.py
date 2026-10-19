@@ -58,6 +58,7 @@ section 6): the active runtime resolves lazily on first control-plane use.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -148,37 +149,57 @@ def _require_non_empty(value: str, what: str) -> None:
 
 # --- the refuse-once log ---------------------------------------------------------
 
-# The bound on the refusal log: a refusal key is remembered so the mover's
-# per-tick re-read of the produced family never floods the log (S2 10.5's
-# log-once discipline). The set is bounded - a long-lived process must not grow
-# it without limit - and evicts the oldest key first.
+# The bound on the refusal log (S2 10.5's log-once discipline: the mover re-reads
+# the produced family every tick, so an unguarded refusal would log one line per
+# file per tick for as long as the file lives). The log is scoped per
+# (project, run) - one run's refusal never silences another's, and a run's record
+# is dropped at ITS terminal - and it is bounded twice: per run (the files one run
+# refuses) and in the number of runs remembered (a long-lived process). The guard
+# is locked: the mover's read and the run terminal's report both touch it, and the
+# report rides a worker thread (`asyncio.to_thread`).
 REFUSAL_LOG_LIMIT = 1024
+REFUSAL_RUN_LIMIT = 64
 
-_refusal_log: dict[str, None] = {}
+_refusal_log: dict[tuple[str, str], dict[str, None]] = {}
+_refusal_lock = threading.Lock()
 
 
-def log_refusal_once(key: str, message: str, *args: Any) -> bool:
-    """Log `message` once per `key` (insertion-ordered, bounded): True when this
-    call logged, False when the key was already refused this process run.
+def loop_refusal_detail(kind: str, unit_name: str, loop_id: str) -> str:
+    """The refusal detail for one produced loop file: `<kind>:<unit>/<loop id>`.
+    The ONE home of the detail shape, so the mover's read and the surfer's
+    dispatch branch key the SAME refusal (it must log once, not once per seam)."""
+    return f"{kind}:{unit_name}/{loop_id}"
 
-    The key MUST carry the project id (and the run): one project's refusal must
-    never silence the same loop's refusal in another project (T4a review F3).
-    Callers: the mover's loop validity predicate and malformed-file refusals, and
-    the surfer's model-context refusal."""
-    if key in _refusal_log:
-        return False
-    _refusal_log[key] = None
-    while len(_refusal_log) > REFUSAL_LOG_LIMIT:
-        _refusal_log.pop(next(iter(_refusal_log)))
+
+def log_refusal_once(
+    project_id: str, run_id: str, detail: str, message: str, *args: Any,
+) -> bool:
+    """Log `message` once per (project, run, detail): True when this call logged,
+    False when the same refusal was already logged for that run."""
+    key = (project_id, run_id)
+    with _refusal_lock:
+        seen = _refusal_log.get(key)
+        if seen is None:
+            seen = {}
+            _refusal_log[key] = seen
+        elif detail in seen:
+            return False
+        seen[detail] = None
+        while len(seen) > REFUSAL_LOG_LIMIT:
+            seen.pop(next(iter(seen)))
+        while len(_refusal_log) > REFUSAL_RUN_LIMIT:
+            _refusal_log.pop(next(iter(_refusal_log)))
     logger.warning(message, *args)
     return True
 
 
-def clear_refusal_log() -> None:
-    """Forget every refused key (the run terminal's cleanup hook): a refusal
-    belongs to the run that observed the malformed file, so a later run re-logs
-    it rather than inheriting this run's silence."""
-    _refusal_log.clear()
+def clear_refusal_log(project_id: str, run_id: str) -> None:
+    """Forget ONE run's refused keys (the run terminal's cleanup hook): a refusal
+    belongs to the run that observed the malformed file, so a later run re-logs it
+    rather than inheriting this run's silence. Clearing is run-scoped: a sibling
+    run's record is left alone."""
+    with _refusal_lock:
+        _refusal_log.pop((project_id, run_id), None)
 
 
 # --- the pure item model ---------------------------------------------------------
@@ -379,7 +400,7 @@ def _refuse_loop(
     """Refuse ONE produced loop file: never dispatched, never counted as work,
     logged once per project + run + file (the mover re-reads every tick)."""
     log_refusal_once(
-        f"loop:{project_id}:{run_id}:{unit_name}:{loop_id}",
+        project_id, run_id, loop_refusal_detail("loop", unit_name, loop_id),
         "mover: produced loop file %s/%s refused - %s; never dispatched and "
         "not counted as work", unit_name, loop_id, why,
     )
@@ -722,6 +743,7 @@ def run_delivery_tick(
     control: DispatchControlPlane,
     coro_for: Callable[[ProducedItem], Any],
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
+    hunter_payload_capable: bool = True,
 ) -> TickReport:
     """One impure mover tick: reads the produced inboxes, calls the pure
     deduction, drives the delivery against the control plane, and applies the
@@ -752,7 +774,7 @@ def run_delivery_tick(
     the loop (Q11); the mover never awaits, the control plane schedules."""
     inbox = read_produced_inbox(
         project_id, run_id, hunt_store=hunt_store, threat_store=threat_store,
-        hunter_store=hunter_store,
+        hunter_store=hunter_store, hunter_payload_capable=hunter_payload_capable,
     )
     produced = inbox.items
     live = control.live_session_ids()
@@ -897,6 +919,7 @@ def read_produced_inbox(
     hunt_store: HuntStore | None = None,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
+    hunter_payload_capable: bool = True,
 ) -> ProducedInbox:
     """The produced inbox set for one tick.
 
@@ -907,7 +930,10 @@ def read_produced_inbox(
       (`models_to_consume`, the refused stems included). A loop file whose body
       fails the validity predicate, whose body the store could not parse, or
       whose model document is unreadable is refused here, so it is neither
-      dispatched nor counted as work.
+      dispatched nor counted as work. With `hunter_payload_capable` False (C1:
+      the run's hunter builder cannot consume the loop payload yet) the loop
+      family is not read at all - its loops are not dispatch input, nothing is
+      moved and no model is consumed.
     - The hunter memory's produced test specs (the pod family, S3 8.7).
     - The hunt store's produced configs (the retiring config family: the T4b
       sweep removes this read with the config dispatch path).
@@ -916,6 +942,14 @@ def read_produced_inbox(
     memory-item keys (Q13; ADR #169)."""
     items: list[ProducedItem] = []
     models_to_consume: dict[str, tuple[str, ...]] = {}
+    if threat_store is not None and not hunter_payload_capable:
+        # C1 (T4a review): the run's hunter cannot consume the loop payload yet, so
+        # the loop family is not dispatch input at all - the loops stay produced
+        # (nothing is moved or consumed) and are NOT work, so the run quiesces
+        # inert and the work survives for the run that can consume it.
+        return ProducedInbox(items=_legacy_items(
+            project_id, run_id, hunt_store=hunt_store, hunter_store=hunter_store,
+        ))
     if threat_store is not None:
         for entry in threat_store.read_produced_loops(project_id):
             unit_id = str(entry.get("unit_id") or "")
@@ -932,7 +966,8 @@ def read_produced_inbox(
                 # (once per project/run/file) - it is never dispatched and never
                 # a pending loop (S2 10.5)
                 log_refusal_once(
-                    f"loop-file:{project_id}:{run_id}:{unit_name}:{loop_id}",
+                    project_id, run_id,
+                    loop_refusal_detail("loop-file", unit_name, loop_id),
                     "mover: produced loop file %s/%s refused - its body is "
                     "unreadable; left in produced/, never dispatched and not "
                     "counted as a pending loop", unit_name, loop_id,
@@ -946,7 +981,8 @@ def read_produced_inbox(
                 # T3's intake owns the stale-produced disposition of the unit.
                 for loop_id in _entry_loop_ids(entry):
                     log_refusal_once(
-                        f"loop-model:{project_id}:{run_id}:{unit_name}:{loop_id}",
+                        project_id, run_id,
+                        loop_refusal_detail("loop-model", unit_name, loop_id),
                         "mover: produced loop %s/%s refused - the model "
                         "document for %s is unreadable; not dispatched and not "
                         "counted as work", unit_name, loop_id, unit_id,
@@ -995,6 +1031,40 @@ def read_produced_inbox(
     return ProducedInbox(
         items=tuple(items), models_to_consume=models_to_consume,
     )
+
+
+def _legacy_items(
+    project_id: str,
+    run_id: str,
+    *,
+    hunt_store: HuntStore | None,
+    hunter_store: HunterMemoryStore,
+) -> tuple[ProducedItem, ...]:
+    """The produced items of the families that are NOT the loop family: the pod
+    family's specs and (until T4b) the retiring config family. Used when the run's
+    hunter cannot consume the loop payload (C1): the loops are then not dispatch
+    input, but the pod path (whose builder is a different seam) stays live."""
+    items: list[ProducedItem] = []
+    if hunt_store is not None:
+        for config_key, file_name in hunt_store.read_produced_configs(project_id):
+            items.append(HuntConfigItem(
+                message_id=config_key,
+                session_id=hunter_session_id(run_id, Path(file_name).stem),
+                config_key=config_key,
+            ))
+    for fault_key in hunter_store.list_fault_keys(project_id):
+        for spec_file in hunter_store.produced_spec_files(project_id, fault_key):
+            body = produced_spec_body(hunter_store, project_id, fault_key, spec_file)
+            if not body or body.get("status") != SPEC_DISPATCH_STATUS:
+                continue
+            items.append(TestSpecItem(
+                message_id=f"{fault_key}/{spec_file}",
+                session_id=pod_session_id(run_id, fault_key, spec_file),
+                fault_key=fault_key,
+                spec_file=spec_file,
+                spec=body,
+            ))
+    return tuple(items)
 
 
 def _entry_loop_ids(entry: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1068,8 +1138,11 @@ __all__ = [
     "TestSpecItem",
     "ThreatLoopItem",
     "TickReport",
+    "clear_refusal_log",
     "deduce_delivery",
     "hunter_session_id",
+    "log_refusal_once",
+    "loop_refusal_detail",
     "MODELLER_SESSION_SEGMENT",
     "MODELLER_SESSION_SEGMENT_LEGACY",
     "THREAT_MODELLER_SEGMENTS",

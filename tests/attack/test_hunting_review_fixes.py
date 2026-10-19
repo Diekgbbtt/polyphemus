@@ -41,12 +41,12 @@ STALL_TIMEOUT = 0.05
 def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
         tmp_path, monkeypatch, caplog):
     """A run that models its unit but dispatches nothing must not land
-    `complete` silently: one run-level warning names the reason (the production
-    hunter harness cannot consume the per-loop payload yet - T6 #379).
+    `complete` silently: one run-level warning names the reason.
 
     The modeller here completes a ZERO-LOOP model (every vulnerability dropped),
     so the mover consumes the model document without a dispatch (S2 8.4) and
-    nothing is ever admitted."""
+    nothing is ever admitted - the line says that, without blaming a later
+    ticket (the looping case is T4a's C1 test and the inert-builder line)."""
     from tests.attack.test_hunting_modeller_wiring import (
         RUN as WIRING_RUN,
         _FakeControl,
@@ -95,11 +95,11 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
     # the zero-loop model was consumed without a dispatch (S2 8.4)
     assert models.read_completed_units(PROJECT) == [UNIT]
     gap_lines = [record.message for record in caplog.records
-                 if "#379" in record.message]
+                 if "NOTHING is dispatchable" in record.message]
     assert gap_lines, "the run must name the dispatch gap in one warning"
     line = gap_lines[-1]
-    assert "T6" in line
-    assert "dispatchable" in line and "zero" in line and "hunt" in line
+    assert "no dispatchable loop file was produced" in line
+    assert "zero hunts" in line
 
 
 def test_a_run_with_a_dispatchable_config_does_not_claim_a_dispatch_gap(
@@ -271,33 +271,48 @@ def _exec_probing_turns(http: bool = False):
 # --- the run-level reason helper ---------------------------------------------
 
 def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_path):
-    """`report_dispatch_gap` is the ONE predicate behind the warning: it names
-    the follow-up ticket (T6 #379 - the production hunter's payload consumption)
-    when a completed model exists and nothing is dispatchable, and returns None
-    otherwise (a dispatchable item, no completed model)."""
+    """`report_dispatch_gap` is the ONE predicate behind the warning: when a
+    completed model exists, nothing is dispatchable, and the run's production
+    hunter cannot consume the loop payload (C1), it names the follow-up ticket
+    (T6 #379) and the loops that wait - and returns None otherwise (a
+    dispatchable item, no completed model, a recorded dispatch)."""
     hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
+    models = ThreatModelStore(root_dir=tmp_path / "models")
+    _produce_one_loop_model(models, run_id=RUN)
 
     from polymerhus.attack.hunting.surfer import RunDispatchState
 
     empty = RunDispatchState()
     reason = hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=empty, hunt_store=hunt, hunter_store=hunter)
+        state=empty, threat_store=models,
+        hunt_store=hunt, hunter_store=hunter, hunter_payload_capable=False)
     assert reason is not None
     assert "T6" in reason and "#379" in reason
+    assert "1 produced loop file" in reason
+
+    # the SAME state with a capable builder (T6) is not a T4a gap: the loops are
+    # dispatchable work, so the line is not the designed-not-built one
+    capable = hunting_runtime.report_dispatch_gap(
+        PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
+        state=empty, threat_store=models,
+        hunt_store=hunt, hunter_store=hunter, hunter_payload_capable=True)
+    assert capable is None
 
     # a degraded unit is not a produced model: no gap to report
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="degraded")],
-        state=empty, hunt_store=hunt, hunter_store=hunter) is None
+        state=empty, threat_store=models, hunt_store=hunt,
+        hunter_store=hunter, hunter_payload_capable=False) is None
 
     # a hunter dispatch recorded on the run state suppresses the line
     dispatched = RunDispatchState()
-    dispatched.hunter_inboxes[f"{UNIT}::fault-x::CSRF"] = object()
+    dispatched.hunter_inboxes[f"{UNIT}__loop-1"] = object()
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=dispatched, hunt_store=hunt, hunter_store=hunter) is None
+        state=dispatched, threat_store=models, hunt_store=hunt,
+        hunter_store=hunter, hunter_payload_capable=False) is None
 
     # a still-dispatchable produced item suppresses the line too
     hunt.write_config(PROJECT, {
@@ -309,7 +324,21 @@ def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_p
     })
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=empty, hunt_store=hunt, hunter_store=hunter) is None
+        state=empty, threat_store=models, hunt_store=hunt,
+        hunter_store=hunter, hunter_payload_capable=False) is None
+
+
+def _produce_one_loop_model(store, *, run_id: str, unit_id: str = UNIT):
+    """One COMPLETED valid model with one `high` loop, through the real store."""
+    from tests.hunting_fixtures import modeller_gate_payloads
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    for state in ModelState:
+        store.write_sections(
+            PROJECT, unit_id, state, modeller_gate_payloads()[state],
+            run_id=run_id,
+        )
+    return unit_id
 
 
 def test_the_sink_is_shared_by_the_surface_builder(tmp_path):
@@ -397,13 +426,17 @@ def test_the_dispatch_gap_survives_a_transient_pending_work_read_failure(
         "polymerhus.attack.hunting.surfer.run_work_remaining", _explode)
     from polymerhus.attack.hunting.surfer import RunDispatchState
 
+    models = ThreatModelStore(root_dir=tmp_path / "models")
+    _produce_one_loop_model(models, run_id=RUN)
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         reason = hunting_runtime.report_dispatch_gap(
-            "p1", RUN,
+            PROJECT, RUN,
             [UnitOutcome(unit_id=UNIT, status="completed")],
             state=RunDispatchState(),
+            threat_store=models,
             hunt_store=HuntStore(tmp_path / "hunts"),
             hunter_store=HunterMemoryStore(tmp_path / "hunter"),
+            hunter_payload_capable=False,
         )
 
     assert reason is not None and "#379" in reason

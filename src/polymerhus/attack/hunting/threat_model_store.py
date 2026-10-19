@@ -583,8 +583,6 @@ class ThreatModelStore(BoundedRecordStore):
         malformed file to its caller, which refuses it once - a per-read warning
         here would re-log one line per tick for as long as the file lives
         (S2 10.5's log-once discipline)."""
-        if not path.exists():
-            return "unreadable", None
         try:
             loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError):

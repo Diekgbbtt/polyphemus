@@ -259,6 +259,28 @@ The payload materialisation.
 - A stale loop from another run is not dispatched.
 - Tests cover the mover deduction and an integration path with the real store.
 
+**Implementation-time decisions (T4a).**
+
+- The payload path is INERT until T6 (`fixed` at the T4a code-quality review): the
+  run's hunter builder advertises `consumes_loop_payload` and `_default_hunter_builder`
+  advertises False, so the loop family is not dispatch input at all - the loop files
+  stay produced, nothing is moved and no model document is consumed, the run quiesces,
+  and `report_dispatch_gap` names the state (N produced loop files, the harness
+  designed-not-built, zero hunts). A capable builder (the tests' fakes, T6's real one)
+  dispatches as before. T6 removes the flag, the marker and the `Mapping`
+  discrimination together.
+- The spec family's dispatch status moved INTO the mover's produced read (the T4a
+  review's never-disagree contract): one read now fetches each produced spec body per
+  inward read, and the run's work read re-reads it, so a quiesce check costs one extra
+  small YAML read per produced spec. There is no status-only read in the hunter memory
+  store (a YAML body must be parsed to reach the status), so a "status without a body
+  fetch" would be the same read; this is recorded as an accepted, bounded scope change
+  (the produced spec count is per hunt) rather than a silent one. A later change may
+  give the work read the tick's already-read inbox.
+- The low-loop pause reads "live" as mid-graph (`state.hunters_in_graph`): an idle
+  hunter authors nothing more, and counting it live would hold both the low loop and
+  the quiesce, so the run terminal's settle could never land.
+
 ### T4b - Config family retirement and hunter launch re-point
 
 Tracked on #387.
@@ -329,6 +351,18 @@ The hunter-side `HuntConfig` and `DispatchResult` retirement and the fault-KB ai
 - The pod dispatch path stays.
 - The hunter tools and store no longer consume `HuntConfig`, `DispatchResult`, or the fault-KB aid.
 - Tests cover the store, the tools, the status lifecycle, and the removals.
+- The harness consumes the loop payload: the `consumes_loop_payload` flag on
+  `_default_hunter_builder` is removed together with its `Mapping` discrimination
+  and the T4a inertness marker, so the per-loop dispatch path is live end to end.
+
+**Spec note carried from T4a (the payload's transition link).**
+The stored `Violation` carries no ref to the `Transition` it bounds (S2 5.1), so
+the payload's `dynamic_state` selection is a deterministic GUESS: the mover takes
+the violation whose `maps_to_fault` is the loop's fault and the FIRST transition of
+the dynamic-state model as its transition. T6 fixes the schema link (a
+`Violation.transition_ref`, or the transition naming its violation) and the
+selection reads it; until then the payload's transition is advisory context, never
+a gate.
 
 ### T7 - Hunter production prompt work phase
 
