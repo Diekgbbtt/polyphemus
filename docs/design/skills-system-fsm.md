@@ -22,7 +22,7 @@
 | S5 | W5: artifact `skills` field, `load_skill` descriptions command, runtime rendering, agent workflows (C5, workflow ticket #236); per the 2026-10-18 ruling: the pod runner/triager prompt refactoring plus the skills loading/listing binding for all four hunting-module agents | DONE 2026-10-18: merged `ac48b90b`; the review returned BLOCKED on two majors (the hunting CONTEXT.md drift; the triager-variant skill drop), both fixed in the one fix pass; the wider suites green; `verify.sh` NO-FAILURES (1 pending: C1 families) |
 | S6 | W6: `defence-bypass` and `proxy-techniques` families (C1) + cross-reference wiring (C2) | DONE 2026-10-19: merged `155b6ed9`; the review returned CLEAR (one major scope call ruled by the operator: fix the concrete misses); `verify.sh` ALL-CHECKS-PASS (zero pending) |
 | S7 | W7: C4-full enrichment (D1a proposal report first, operator-assessed; then D1b surgical pass, D1c references/scripts) | DONE 2026-10-19: merged `e27beada`; the review returned BLOCKED on two majors (the R5 leaf renames; the README record), both fixed once; `verify.sh` ALL-CHECKS-PASS; the suite stands at 165 skills |
-| S8 | Final integration: trunk to `dev` as one PR (human-merged) | READY 2026-10-19: the trunk carries W0-W7; awaiting the operator's go to push and open the PR |
+| S8 | Final integration: trunk to `dev` as one PR (human-merged) | IN PROGRESS 2026-10-19: the operator's finalization decisions recorded (the enriched suite replaces the live catalogue root; #388 lands before the integration; the quiescence question pending); #388 dispatched; next the mount replacement, the documentation alignment, then the PR go |
 
 ## Ordering constraints
 
@@ -49,5 +49,5 @@ After each merge into the trunk: run `verify.sh`, update the completion ledger r
 - S5: COMPLETE - merged `ac48b90b` after the review BLOCKED on two majors, both fixed once (the hunting CONTEXT.md reconciliation; the triager-variant skill inheritance).
 - S6: COMPLETE - merged `155b6ed9`; review CLEAR with one operator-ruled scope call; `verify.sh` reached ALL-CHECKS-PASS.
 - S7: COMPLETE - merged `e27beada`; review BLOCKED on two majors, both fixed once; the suite stands at 165 skills.
-- S8: READY - the trunk carries W0-W7 and `verify.sh` is ALL-CHECKS-PASS; awaiting the operator's go to push `feat/skills-system` and open the final PR to `dev` (human-merged).
-- Open operator gates: the final PR go; the mounted-suite wiring decision (see the map); the layout work item (#388, deferred).
+- S8: IN PROGRESS - the trunk carries W0-W7 and `verify.sh` is ALL-CHECKS-PASS; the operator's finalization decisions are recorded; #388 (the layout normalisation) is in flight; then the mount replacement (the suite into the live root), the documentation alignment, and the PR go.
+- Open operator gates: the quiescence-question answer (see the map); the final PR go.
