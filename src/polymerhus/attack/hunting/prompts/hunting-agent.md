@@ -61,7 +61,7 @@ The tracked state moves only when a pass's own exit signal fires; an earlier pas
 
 Ground on the target surfaces first: the loop payload, the read-only L0/L1 view, and the live target.
 Then load the class skill named by the loop's suite class.
-Then consult the other sources: the methodology KB for the target's technology configurations only, the HTTP history, the notes, the previous hunt stores, and the auth context.
+Then consult the other sources: the methodology KB for the target's technology configurations only, the HTTP history, the notes, the previous spec sets, and the auth context.
 The grounding target is the technical failure modes of the trust agreement in an interface or in a state transition: what the interface or transition trusts, and which technical condition would break that trust.
 
 Grounding is explore/exploit: explore the sources until the frame is explicit, then exploit it and exit the pass.
@@ -84,7 +84,7 @@ Write `phase:slice` with the definition and why the boundary sits there.
 
 **COLLECT** - *solves: which instances can separate the specs inside the slice?*
 
-Query the methodology KB, the previous hunt stores, the notes, and the HTTP history for as many instances as possible of the axis you will discriminate on.
+Query the methodology KB, the previous spec sets, the notes, and the HTTP history for as many instances as possible of the axis you will discriminate on.
 Here the methodology KB is mined for instances, not for grounding: the grounding restriction to technology configurations does not apply to this pass.
 An instance counts only if it could separate one spec from its nearest alternative.
 Mine four families:

@@ -958,7 +958,7 @@ The bounded repairs are:
 | `env` | configuration | Re-run `eval/env_preflight.py` on the instance `.env`, then recreate the stack (`docker compose up -d --force-recreate`). |
 | `replace_artifacts` | data | Re-place the target's pre-mined hunting artifacts into the pipeline's own `produced/` inboxes (only when the target declares them). |
 
-There is deliberately no lock/lease repair: polymerhus's per-project locks are in-process `threading.Lock`s (`src/polymerhus/attack/hunting/hunt_store.py`, `src/polymerhus/app/auth/store.py`), not files or rows under the data root, so there is no stuck lock marker inside the repair's bounded scope.
+There is deliberately no lock/lease repair: polymerhus's per-project locks are in-process `threading.Lock`s (`polymerhus.app.memory.store.project_lock`, used by the hunting stores and `src/polymerhus/app/auth/store.py`), not files or rows under the data root, so there is no stuck lock marker inside the repair's bounded scope.
 A `fix` naming any other repair is escalated, never applied.
 
 After a fix the affected services are restarted (`instances.up` for the

@@ -571,6 +571,11 @@ The integration hygiene.
 The remaining documentation sweep.
 The final no-live-obsolete-verbatim check.
 
+**Pre-mined retarget hazard (T10b review).**
+The launch mints the run id, so `retarget_premined` rebinds a pre-mined tree only after `POST /hunting` returns.
+The intake freeze can observe the source run id first: a real terminal run id can be archived to `abandoned/`, while a synthetic/unknown id is treated as in-flight and survives.
+The convention is a synthetic source run id (for example `pre-mined`), never a real terminal run's id.
+
 **The #196 live e2e gate disposition.** T10a deleted `tests/e2e/test_http_proxy_history.py`
 with the legacy `hunting_pod.py`. The gate exercised the retired
 `payload_vector_space.request_ref` replay path through that pod, so it could

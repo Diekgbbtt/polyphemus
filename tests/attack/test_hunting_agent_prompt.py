@@ -131,7 +131,7 @@ def test_grounding_starts_on_the_target_then_the_skill_then_the_sources():
     assert "Then load the class skill" in grounding
     assert "methodology KB for the target's technology configurations only" in grounding
     assert "HTTP history" in grounding and "notes" in grounding
-    assert "previous hunt stores" in grounding and "auth context" in grounding
+    assert "previous spec sets" in grounding and "auth context" in grounding
     assert grounding.index("target surfaces first") < grounding.index(
         "Then load the class skill") < grounding.index("methodology KB")
 

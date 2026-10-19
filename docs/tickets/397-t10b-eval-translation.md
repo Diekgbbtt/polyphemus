@@ -36,3 +36,22 @@ live target and asserts the replayed artifact's lineage (`derived_from`,
 T10b does not build it.
 The production replay path keeps its unit and contract coverage in
 `tests/attack/pod/test_react_seams.py` and `tests/attack/pod/test_request_ref.py`.
+
+## Pre-mined retarget hazard (T10b review)
+
+The launch mints the hunting run id, so `retarget_premined` can only rebind a
+pre-mined threat-model tree AFTER `POST /hunting` returns.
+The run's intake freeze runs at boot, so it can observe the model's SOURCE run
+id before the rebind.
+
+- A source id that names a real TERMINAL run is classified `stale` by
+  `freeze_intake`; the model can be archived to `abandoned/` before the rebind.
+- A synthetic or unknown source id has no readable run status, so the freeze
+  treats it as `in-flight` and the model survives the rebind.
+
+Intended convention: a pre-mined model tree carries a SYNTHETIC source run id
+(for example `pre-mined`), never the id of a real terminal run.
+The trial rebinds both the model document and its loop files to the launched
+run id immediately after the launch returns.
+An operator copying a real terminal run's model into a pre-mined seed is
+exposed to the archive hazard and should not do it.

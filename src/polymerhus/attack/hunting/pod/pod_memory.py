@@ -4,7 +4,7 @@ The hunting test-executor's OWN memory, projected onto the operator-locked
 per-project deterministic-key pattern. One store per project under the hunting
 module's data seam, the `test-executor-pod/` sibling bucket under the SAME
 `data/<project_id>/` tree as the #164 hunter's `data/<project_id>/hunter/`
-memory and the hunt store's `data/<project_id>/orchestration/`. The store's
+memory and the threat-model store's `data/<project_id>/threat_modeller/`. The store's
 coherent per-spec layout (operator, 2026-08-24 - re-scoped
 from the T1 `experiment-logs/` body so the minted TestImplementationSpec
 variants and the per-order log slice live side by side, easily mappable):

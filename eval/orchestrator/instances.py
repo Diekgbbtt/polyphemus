@@ -54,8 +54,8 @@ def instance_data_root(instances_root: Path | str, instance_id: str) -> Path:
 
     `<instances_root>/data/<instance_id>` is a sibling of the worktree
     (`<instances_root>/<instance_id>`), so removing the worktree never touches
-    the data root - the live evidence (hunt store, project/pod memory, L0+L1
-    graph, auth, skills). It is bind-mounted into the agent container through
+    the data root - the live evidence (threat-model store, project/pod memory,
+    L0+L1 graph, auth, skills). It is bind-mounted into the agent container through
     `INSTANCE_DATA_ROOT` and is the lsyncd sync source.
     """
     return Path(instances_root) / "data" / instance_id

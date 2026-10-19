@@ -177,8 +177,14 @@ def test_E1_whole_pipeline_happy_path(client):
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     stack.seed_threat_model_unit(p, unit_id=UNIT, run_id=rid)
-    assert stack.produced_loop_files(p) == [f"{UNIT_NAME}/loop-1"], (
-        "E1 seed premise: the produced loop file must exist after launch")
+    # The live mover can consume the seeded loop in the same tick, so the
+    # premise is that the identity is SEEN on the run's side (produced or
+    # consumed), not that it is still produced at read time.
+    seeded_loop = f"{UNIT_NAME}/loop-1"
+    assert (
+        seeded_loop in stack.produced_loop_files(p)
+        or seeded_loop in stack.consumed_loop_files(p)
+    ), "E1 seed premise: the seeded loop must exist in produced/ or consumed/"
     # The seeded pod drives REAL LLM turns + kali tool calls; on a loaded host
     # that pass can take longer than the 240s default - give it an honest
     # window. Fail-open: if the live LLM pass cannot drive the edge the run

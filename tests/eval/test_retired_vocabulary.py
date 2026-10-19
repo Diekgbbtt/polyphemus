@@ -203,3 +203,66 @@ def test_the_eval_engine_has_no_fault_key_parameter() -> None:
             if "fault_key" in line and "fault_keyword" not in line:
                 offenders.append(f"{path.name}: {line.strip()}")
     assert not offenders, offenders
+
+
+# --- the live eval/hunting store sweep (T10b review residual) -----------------
+
+# A line that NAMES a retired thing and classifies it is a historical record,
+# not a live claim. The allowlist is explicit: a new line without one of these
+# markers fails the guard.
+_HISTORICAL_MARKERS = (
+    "retir",
+    "historical",
+    "deleted",
+    "legacy",
+    "removed",
+    "no runtime",
+    "no hunt-store",
+    "not read",
+    "disposed",
+    "no live claim",
+)
+
+
+def _assert_no_live_phrase(relative: str, phrase: str) -> None:
+    path = REPO_ROOT / relative
+    text = path.read_text(encoding="utf-8")
+    offenders = [
+        line.strip()
+        for line in text.splitlines()
+        if phrase in line.lower()
+        and not any(marker in line.lower() for marker in _HISTORICAL_MARKERS)
+    ]
+    assert not offenders, f"{relative}: live {phrase!r}: {offenders}"
+
+
+def test_the_live_eval_paths_name_the_threat_model_store() -> None:
+    for relative in (
+        "eval/CONTEXT.md",
+        "eval/orchestrator/instances.py",
+        "eval/OPERATOR.md",
+    ):
+        _assert_no_live_phrase(relative, "hunt store")
+        _assert_no_live_phrase(relative, "hunt_store.py")
+
+
+def test_the_live_hunting_paths_name_the_live_stores() -> None:
+    for relative in (
+        "src/polymerhus/attack/hunting/CONTEXT.md",
+        "src/polymerhus/attack/hunting/prompts/hunting-agent.md",
+        "src/polymerhus/attack/hunting/pod/pod_memory.py",
+    ):
+        _assert_no_live_phrase(relative, "hunt store")
+        _assert_no_live_phrase(relative, "hunt stores")
+
+    prompt = (
+        REPO_ROOT / "src/polymerhus/attack/hunting/prompts/hunting-agent.md"
+    ).read_text(encoding="utf-8")
+    assert "previous hunt stores" not in prompt
+    assert "previous spec sets" in prompt
+
+
+def test_the_operator_doc_points_at_the_live_project_lock() -> None:
+    text = (EVAL / "OPERATOR.md").read_text(encoding="utf-8")
+    assert "polymerhus.app.memory.store.project_lock" in text
+    _assert_no_live_phrase("eval/OPERATOR.md", "hunt_store.py")
