@@ -69,7 +69,7 @@ The poisoning goal is an attacker-influenced body served to a victim key, which 
 - **Value smuggling**: smuggle the unkeyed value through encoded plus case-varied plus whitespace-padded forms past a naive key-normalizer.
 - **Eligibility-marker flip**: flip eligibility markers in abstract form, namely shareability plus freshness-window directives, past a filter that inspects only the first directive.
 - **Fragmentation-marker variation**: vary fragmentation markers so the key computation collapses entries the filter meant to separate.
-- **Deception-suffix shaping**: suffice deception suffixes in cacheable shape past a rule that keys off the address tail alone.
+- **Deception-suffix shaping**: suffix deception suffixes in cacheable shape past a rule that keys off the address tail alone.
 - **Deception path-discrepancy sweep**: sweep the deception path-discrepancy family, namely delimiter append, encoded separator, encoded percent, null byte, fragment, dot-segment normalization, case variation, and double-encoded path, because each member moves the cache key and the origin path apart.
 - **Sibling boundary**: name the proxy-techniques family at the shared-cache keying step rather than restating its mechanics.
 - **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.

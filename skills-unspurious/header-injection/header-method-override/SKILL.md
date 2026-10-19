@@ -73,7 +73,7 @@ The overriding goal is a guarded handler reached through a safe-looking request,
 ## Chaining Attacks
 
 - **Overriding**: chains forward through the reached handler because a reroute without a follow-up action is only access.
-- **State abuse**: hand an reached state-changing handler to state abuse such as privileged mutation or configuration change.
+- **State abuse**: hand a reached state-changing handler to state abuse such as privileged mutation or configuration change.
 - **Guarded-path disclosure**: hand a disclosed guarded path to further primitive hunting inside the newly visible surface.
 - **Workflow-order abuse**: hand a bypassed method gate to workflow-order abuse where the skipped check guarded a multi-step sequence.
 
