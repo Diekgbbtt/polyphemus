@@ -53,6 +53,7 @@ Object-level authorization failures (BOLA/IDOR) lead to cross-account data expos
 
 - Logs, exports, client bundles, analytics endpoints, messages, and public activity
 - Time-derived identifiers, which may be guessable within a window
+- Harvest the corpus before any swap, and generate candidate windows around a known identifier with `scripts/idor-id-enumeration`; the sources, the extraction shapes, and the adjudication gate are in `references/identifier-harvesting.md`
 
 ## Detection Channels
 
@@ -170,6 +171,7 @@ Each variant breaks one clause: the direct-binding clause, the scope-binding cla
 **Parameter Pollution**
 - Duplicate parameters in query or body to influence server-side precedence; try both orderings
 - Mixed case and alias names so the gate and the backend disagree
+- The server-side case, where the server interpolates the caller's value into a backend URL rather than a text field, is noted in `references/server-side-parameter-pollution.md`, with the mechanism owned by `proxy-techniques-url-parser-differential`
 
 **Cache and Gateway**
 - Cache keys that omit the authorization or tenant binding, which expose cached objects to other users
@@ -210,6 +212,8 @@ Before any probe, derive the verb, path pattern, and body field names from evide
 5. **Transport variation** - Test across web, mobile, API, schema layer, socket, and RPC transports
 6. **Consistency check** - The same rule must hold regardless of transport, content-type, serialization, or gateway
 7. **Confirm the effect** - Snapshot before and after each write attempt, and the step completes when every claim carries a durable foreign-effect verdict
+
+The control-pair matrix, the reference-form probe table, and the masked-differential rules are in `references/two-account-matrix.md`, and the principal handling behind the pair stays owned by `two-principal-authz`.
 
 ## Variants
 

@@ -50,6 +50,7 @@ Add projection knobs to an authorized fetch and compare the widened response aga
 Walk each authorized parent to its children across field and edge resolvers, deciding every hop separately instead of trusting the top-level gate.
 Test the shared type explicitly: a per-type field-level check that is missing on a type nested inside an unrelated authorized query leaves the top level authorized while the nested object's fields are not.
 Multiplex foreign nodes through aliased and batched lookups in one request, including decoded global-node forms, and decide each node independently.
+Decode, swap, and re-encode an opaque node identifier offline with `scripts/idor-node-id-swap`, so a swapped node is attributable to one changed part rather than to a fresh identifier.
 
 ## Bypass Techniques
 
