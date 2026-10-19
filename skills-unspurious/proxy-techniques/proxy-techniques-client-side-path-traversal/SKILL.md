@@ -56,6 +56,7 @@ The effect is claimed only when the arrival's response is consumed by the page, 
 - A value completed against the client's own base resolves to a path outside the intended directory, because the client resolves the value rather than validating it.
 - Traversal depth is arithmetic: the number of segments above the value minus the number of upward segments yields the arriving depth.
 - Confirm the value lands in the path component, because the same value in the query string changes nothing.
+- Where the base the value completes against is a named element or a global the markup can define, markup alone supplies the base; name `proxy-techniques-dom-clobbering` at that step rather than restating the mechanism.
 
 ### Gadget Endpoint and Redirect Follow
 

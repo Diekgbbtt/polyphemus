@@ -110,7 +110,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 A bypassed limit is a mechanism rather than a finding, so the admitted repetition hands forward to the class that owns the outcome.
 
 - **Credential layer**: `weak-credential-discovery` for the credential and token brute, and `crypto-weakness` where the artifact's entropy is the failing clause.
-- **Auth-adjacent flows**: the second-factor and recovery flows, where the repeated operation is the verification or reset step.
+- **Auth-adjacent flows**: `mfa-bypass` where the repeated operation is the second-factor verification step, and `account-recovery` where it is the recovery step.
 - **Counter race**: `race-conditions` at the non-atomic counter step.
 - **Logic layer**: `business-logic` where the repetition abuses a value, a quota, or a coupon.
 - **Enforcement tier**: `defence-bypass-edge-origin-differential` where the limit exists at one tier and the effect is served at another.
