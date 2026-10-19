@@ -185,16 +185,16 @@ def test_rotation_names_the_attempt_and_leaves_attempt_zero_untouched():
 
 def test_record_transient_increments_the_counter_and_logs(monkeypatch, caplog):
     T.reset_transient_counts()
-    T.record_transient(role="hunting_orchestrator",
+    T.record_transient(role="hunting_threat_modeller",
                        model="opencode-go:deepseek-v4.1-flash",
                        conversation_id="run:hunt#r1", attempt=1, status=400,
                        body_shape="model")
-    T.record_transient(role="hunting_orchestrator",
+    T.record_transient(role="hunting_threat_modeller",
                        model="opencode-go:deepseek-v4.1-flash",
                        conversation_id="run:hunt#r2", attempt=2, status=400,
                        body_shape="model")
     counts = T.transient_counts()
-    assert counts[("hunting_orchestrator", "opencode-go:deepseek-v4.1-flash", "model")] == 2
+    assert counts[("hunting_threat_modeller", "opencode-go:deepseek-v4.1-flash", "model")] == 2
     with caplog.at_level("WARNING"):
         T.record_transient(role="triager", model="opencode-go:deepseek-v4-flash",
                            conversation_id=process_id(), attempt=1, status=400,

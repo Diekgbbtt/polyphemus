@@ -123,7 +123,7 @@ def test_triager_delta_carries_the_typed_skill_procedure(log, store, spec_id):
     delta = compose_triager_delta(log, spec, None, store=store, spec_id=spec_id, order=0)
     assert "swap the id in a signed URL" in delta
     assert "compare the owner id" in delta
-    assert "uncovered gap class" in delta.lower()   # the five empty sections
+    assert "skipped class" in delta.lower()   # the five empty sections
 
     absent = compose_triager_delta(log, SPEC, None, store=store, spec_id=spec_id, order=0)
     assert "recorded gap" in absent.lower()

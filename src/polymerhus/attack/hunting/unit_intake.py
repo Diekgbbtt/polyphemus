@@ -299,9 +299,14 @@ def freeze_intake(
         )
         destination = None
         if archive_fn is None:
+            # No archive seam is bound: an injected/intake-only call, or a
+            # caller with no produced family. The stale model is left in place
+            # and the unit is retried; the production caller
+            # (`runtime._freeze_intake`) always binds the store's
+            # `archive_unit` when a produced family exists.
             logger.warning(
-                "unit intake: %s (no archive seam: the caller owns the stale "
-                "produced directory)", reason,
+                "unit intake: %s (no archive seam bound; the stale produced "
+                "model is left in place and the unit is retried)", reason,
             )
         else:
             try:

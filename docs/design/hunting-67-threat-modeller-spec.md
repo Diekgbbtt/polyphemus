@@ -105,7 +105,7 @@ The rename is an expand-contract pass inside this change.
 The old names remain as aliases for one change window, then are removed.
 New runs use the new session id.
 A run interrupted before the rename resumes under its recorded session id and role.
-The provider environment variable `LLM_HUNTING_ORCHESTRATOR` remains a one-window fallback for `LLM_HUNTING_THREAT_MODELLER`.
+The provider environment variable `LLM_HUNTING_ORCHESTRATOR` remained a one-window fallback for `LLM_HUNTING_THREAT_MODELLER`; T10 closed the window and removed it (no alias remains).
 
 ### 4.2 Goal
 

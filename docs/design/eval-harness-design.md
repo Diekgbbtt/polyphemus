@@ -1,5 +1,8 @@
 # Eval Harness Design: polymerhus Vulnerability-Discovery Evaluation against WebExploitBench
 
+**AMENDED (T10 #383, the eval translation).** References to hunt configs in this design are translated to the loop vocabulary: `HuntConfig` -> loop payload, `specified` -> `ratified`, hunt store -> threat model store, `hunt_id` -> loop dispatch id, `fault_class` -> web vulnerability class + fault, `rationale` / `research_direction` -> loop rationale and trust-model overview (S1 9.5). The eval's hypothesis-verdict derivation via `derive_verdict` is disabled or replaced; the verdict-consumption workflow stays out of scope.
+
+
 *Design document. Companion to `docs/design/eval-harness-agentcyberrange.md` (the AgentCyberRange architecture study).
 Scope: the orchestration system, the discovery oracle, the target setup pipeline, and the judge agent for evaluating polymerhus's vulnerability-DISCOVERY capability only (no exploitation, no post-exploitation).
 The pipeline runs unchanged against a WebExploitBench target; the harness decides, from persisted evidence, whether the pipeline identified each ground-truth vulnerability.*

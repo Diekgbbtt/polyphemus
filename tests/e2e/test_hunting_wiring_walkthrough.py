@@ -374,24 +374,22 @@ def _poll_branch(project_id: str, run_id: str, *, timeout: float,
 
 
 # =============================================================================
-# E6 - orchestrator-only launch (no run row)
+# E6 - modeller-only launch (no run row)
 # =============================================================================
 
-def test_E6_orchestrator_only_launch_creates_no_run_row(client):
-    """id: E6 - orchestrator-only launch. `POST .../hunting/orchestrator`
-    `{candidates:[...]}` -> 202 (its synthetic run_id is for observability only);
-    a follow-up `POST .../hunting/hunt` answers the T4b retirement 410 (the
-    config family retired - never a silent accept); and NO `hunting_runs` row
-    was created by the orchestrator-only launch - `GET .../hunting/{synthetic_
+def test_E6_modeller_only_launch_creates_no_run_row(client):
+    """id: E6 (renamed by T10) - modeller-only launch. `POST
+    .../hunting/modeller` -> 202 (its synthetic run_id is for observability
+    only); a follow-up `POST .../hunting/hunt` answers the T4b retirement 410
+    (the config family retired - never a silent accept); and NO `hunting_runs`
+    row was created by the modeller-only launch - `GET .../hunting/{synthetic_
     run_id}` -> 404."""
     _need_pg()
     p = _new_project(client, "hw-e6")
-    o = client.post(
-        f"/projects/{p}/hunting/orchestrator",
-        json={"candidates": [{"unit_id": UNIT, "fault_class": FAULT}]})
+    o = client.post(f"/projects/{p}/hunting/modeller", json={})
     assert o.status_code == 202, o.text
     ob = o.json()
-    assert ob["component"] == "orchestrator"
+    assert ob["component"] == "threat_modeller"
     assert ob["dispatched_asynchronously"] is True
     synthetic_rid = ob["run_id"]
     assert isinstance(synthetic_rid, str) and synthetic_rid

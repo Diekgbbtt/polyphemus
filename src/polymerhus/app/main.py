@@ -73,13 +73,6 @@ async def _startup():
     # stop, or drain rather than dying with the process.
     from polymerhus.app.llm.usage import UsageStore, usage_ledger  # noqa: PLC0415
     usage_ledger().attach_store(UsageStore())
-    # #234: the fault-KB catalogue is the ONE provisioned artifact in the data
-    # root (`data/hunting/fault-kb.yaml`, copied by the image build). Verify it
-    # at boot so a broken image fails loudly here instead of hunting KB-less.
-    from polymerhus.attack.hunting.fault_kb import (  # noqa: PLC0415
-        _default_catalogue_path,
-    )
-    _default_catalogue_path()
     # Size up the default thread pool that asyncio.to_thread uses: the recon
     # pipeline offloads every blocking pod graph.invoke AND all sync pg/neo4j
     # calls onto it. The stdlib default (~cpu+4) is far too small for phase

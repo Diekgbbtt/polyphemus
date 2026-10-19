@@ -73,13 +73,12 @@ logger = logging.getLogger(__name__)
 
 # The role identity (S1 4.1, impact-map section 6): the actor/session role and
 # the LLM role id are ONE string; the provider env var is its uppercase form.
-# The SESSION segment (`threat-modeller`) and its legacy alias live with the Q13
-# scheme in `mover.py`, and the agent-sub-module role tag (`threat_modeller`, the
+# The SESSION segment (`threat-modeller`) lives with the Q13 scheme in
+# `mover.py`, and the agent-sub-module role tag (`threat_modeller`, the
 # runtime's per-role gate key) in `surfer.py`/`app/runtime.py`: three distinct
-# vocabularies the rename keeps aligned.
+# vocabularies the rename keeps aligned. The planner-era alias is removed (T10).
 MODELLER_ROLE = "hunting_threat_modeller"
 MODELLER_MODEL_KEY = "LLM_HUNTING_THREAT_MODELLER"
-MODELLER_MODEL_KEY_LEGACY = "LLM_HUNTING_ORCHESTRATOR"
 
 # The tool surface (S1 5): exactly these, nothing more. `graph_view` is not
 # bound: the unit projection read is live (T2b, `build_grounding_provider`) and
@@ -896,7 +895,6 @@ __all__ = [
     "GATE_HINTS",
     "GateWrite",
     "MODELLER_MODEL_KEY",
-    "MODELLER_MODEL_KEY_LEGACY",
     "MODELLER_ROLE",
     "ModellerTurnInput",
     "ModellerUnit",

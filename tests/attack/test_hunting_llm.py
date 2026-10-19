@@ -1,6 +1,6 @@
 """Unit tier: the hunting module's LLM bootstrap + role wiring (`attack/hunting/llm.py`, #94).
 
-The hunting roles (`hunting_orchestrator`, `hunting_hunter`) are validated at the
+The hunting roles (`hunting_threat_modeller`, `hunting_hunter`) are validated at the
 HUNTING bootstrap, never app boot (operator ruling 2026-08-06); and the
 orchestrator's `reason_fn` and the hunting agent's `author`/`judge`
 seams bind to a model through `invoke_role` on those roles. These tests exercise
@@ -159,7 +159,7 @@ def test_parse_json_object_passthrough_and_empty():
 
 def test_conciseness_directive_is_single_sourced_and_names_the_cap():
     """The canonical directive (#292) lives once in `conciseness.py` (`llm.py`
-    re-exports it) and names the ~500-char cap while covering the config
+    re-exports it) and names the ~500-char cap while covering the spec
     `rationale` and note bodies."""
     d = HL.HUNTING_CONCISENESS_DIRECTIVE
     assert "500" in d

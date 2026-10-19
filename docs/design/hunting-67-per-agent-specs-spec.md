@@ -233,7 +233,7 @@ The shared recipe (section 8): one Langfuse trace per pod run, spans per loop it
 ### 6.12 Verifiability
 
 - Unit tier: the looped state machine exercised with the tool calls mocked; each of the four termination conditions unit-tested to its binary end.
-- Integration tier: `tests/integration/test_test_executor_pod_contracts.py` - the binary terminal invariant (never a third terminal state), the variant derivation rule (a declined attribute yields a derived variant spec with provenance), the infeasibility evidence in the trail.
+- Integration tier: `tests/integration/test_test_executor_pod_contracts.py` - the binary terminal invariant (never a third terminal state), the variant derivation rule (a variant basis yields a derived variant spec with provenance), the infeasibility evidence in the trail.
 - E2E tier: `tests/e2e/test_test_executor_pod_walkthrough.py` - one trivial real run against the eval target executing a spec and returning the binary verdict.
 
 ## 7. The TestImplementationSpec structure (D67-03, D67-10)

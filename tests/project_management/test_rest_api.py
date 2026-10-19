@@ -35,7 +35,7 @@ def test_create_project_scaffolds_into_the_given_root(tmp_path, monkeypatch):
 
     assert created == [project_id]
     assert (tmp_path / "data" / project_id / "skills").is_dir()
-    assert (tmp_path / "data" / project_id / "hunting" / "orchestration").is_dir()
+    assert (tmp_path / "data" / project_id / "hunting" / "threat_modeller").is_dir()
 
 
 def test_put_settings_unknown_project_404(monkeypatch):

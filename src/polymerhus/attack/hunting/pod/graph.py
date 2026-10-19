@@ -115,6 +115,7 @@ from polymerhus.attack.hunting.pod.types import (
     skill_procedure_from_spec,
 )
 from polymerhus.attack.hunting.pod.variant_basis import (
+    PROCEDURE_GAP_BASES,
     VARIANT_BASES,
     is_duplicate_variant,
     mint_variant_basis,
@@ -179,13 +180,19 @@ def _variant_coverage(decision: dict) -> list[str] | None:
     """The triager's coverage assessment, or None when it stated none.
 
     A malformed value is no assessment (the graph keeps the triager's claimed
-    basis rather than inventing a gap from garbage)."""
+    basis rather than inventing a gap from garbage). Every token must be one of
+    the seven procedure-gap literals (T10 H4): an unknown token means the
+    assessment is not a valid subset of the table, so the whole assessment is
+    ignored instead of the unknown entries reading as "uncovered"."""
     raw = decision.get("covered_gap_classes")
     if raw is None:
         return None
     if not isinstance(raw, (list, tuple, set, frozenset)):
         return None
-    return [str(item) for item in raw]
+    tokens = [str(item) for item in raw]
+    if any(token not in PROCEDURE_GAP_BASES for token in tokens):
+        return None
+    return tokens
 
 
 def _resolve_variant_decision(decision: dict, spec: dict,
@@ -224,6 +231,11 @@ def _resolve_variant_decision(decision: dict, spec: dict,
                 "clean": False,
                 "note": (note + " [no variant basis derivable; degraded]").strip()}
     derived = decision.get("variant_spec") or dict(spec)
+    # S5 8.6 step 7: the derived spec keeps the base provenance, including the
+    # typed skill procedure. Enforced here (T10 H6) so a direct-pod spec that
+    # omits it cannot strip the next stretch's diff material.
+    if isinstance(spec.get("provenance"), dict):
+        derived = {**derived, "provenance": spec["provenance"]}
     if is_duplicate_variant(log.variant_specs, basis, derived):
         return {"classification": classification, "action": "terminate",
                 "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,

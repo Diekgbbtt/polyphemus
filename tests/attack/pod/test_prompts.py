@@ -196,10 +196,10 @@ def test_triager_prompt_reads_the_typed_procedure_from_the_provenance():
     assert "SkillProcedure" in POD_TRIAGER_SYSTEM
 
 
-def test_triager_prompt_states_the_empty_section_and_absent_excerpt_rules():
+def test_triager_prompt_states_the_skipped_section_and_absent_excerpt_rules():
     lc = POD_TRIAGER_SYSTEM.lower()
     assert "empty" in lc
-    assert "uncovered" in lc
+    assert "skipped" in lc
     assert "recorded gap" in lc
 
 

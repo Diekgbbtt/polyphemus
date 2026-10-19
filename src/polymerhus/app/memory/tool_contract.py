@@ -22,14 +22,15 @@ memory store:
 - `build_notes_tool` / `StoreNotesTool` - ONE `notes` implementation, bound at
   a seam through a caller-bound `NotesStoreHandle` and an explicit
   `NotesFieldMap` (no stringly-typed alias guessing). The filesystem
-  destination (the orchestrator `memory.yaml` via `HuntStore`, the hunter
+  destination (the threat-model phase notes via `ThreatModelStore`, the hunter
   `notes.yaml` via `HunterMemoryStore`, the analysis `memory.yaml` via its own
   store) is derived from the HANDLE and is never encoded as a request field.
 
 For `hunts_store` only the BINDING (the typed `args_schema` + the coded
 rejection + the read/write dispatch) is shared: the write algorithm itself is
-per-store (the orchestrator upserts a `HuntConfig` through `HuntStore`; the
-hunter writes a spec through `HunterMemoryStore`), so it stays in each seam's
+per-store (the modeller writes its state/section through the threat-model
+store; the hunter writes a spec through `HunterMemoryStore`), so it stays in
+each seam's
 `_read` / `_write`. Each seam keeps its OWN args schema and field map; this
 module exposes only the generic base and the generic builder.
 

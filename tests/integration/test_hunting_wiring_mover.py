@@ -77,6 +77,8 @@ RUN = "run-c30"
 UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
+OTHER_UNIT = "Service:other-bounded-context"
+OTHER_NAME = "Service-other-bounded-context"
 UNIT_NAME = "Service-catalogue-and-discovery"
 DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 SPEC_KEYWORD = "sqli"
@@ -411,40 +413,72 @@ def test_C34_run_work_remaining_and_dispatch_agree_for_a_ratified_spec(
 
 # --- C35 -----------------------------------------------------------------------
 
-def test_C35_a_refused_loop_and_a_draft_spec_contribute_nothing(tmp_path):
-    """id: C35 - a produced loop file from ANOTHER run and a malformed loop file
-    contribute NOTHING to `run_work_remaining` (False), never dispatch
+def test_C35_a_foreign_loop_and_a_draft_spec_contribute_nothing(tmp_path):
+    """id: C35 (part 1) - a produced loop file from ANOTHER run and a draft
+    spec contribute NOTHING to `run_work_remaining` (False), never dispatch
     (`build_run_dispatch` returns None / `coro_for` refused), and never block
     quiesce. T4b replaced the retired config-status predicate with the ONE loop
     validity predicate; the pod family's own status gate is asserted too."""
-    import yaml
-
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    _produce(threat, run_id="another-run")
-    # a malformed loop file of THIS run (its `loop` record is gone)
-    _produce(threat, run_id=RUN)
+    # a valid loop file belonging to ANOTHER run, under a DIFFERENT unit so it
+    # coexists with the current run's file (the previous same-unit overwrite
+    # made the "another run" case unreachable)
+    produce_model(threat, project_id=PROJECT, unit_id=OTHER_UNIT,
+                  run_id="another-run")
+    # the current run's own zero-loop model: consumed as work, never dispatched
+    produce_model(threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN)
     path = (tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
             / "produced" / UNIT_NAME / "loop-1.yaml")
-    body = yaml.safe_load(path.read_text(encoding="utf-8"))
-    body["loop"] = None
-    path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+    path.unlink()
     _write_spec(hunter, status="hypothesised")
 
-    # nothing is real work: quiesce is NOT blocked by these leftovers
+    # the current run's zero-loop model is consumable work; the foreign loop
+    # and the draft spec contribute nothing.
     assert run_work_remaining(
-        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
-
-    # and none of them dispatches: every dispatch attempt is refused (coro None)
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is True
     report = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
         control=RecordingControlPlane(), coro_for=_real_coro_for(threat, hunter),
     )
-    assert report.admitted == 0 and report.moved == 0
-    assert report.produced == 0
-    # the leftovers stay on disk, never consumed, never blocking quiesce
-    assert len(threat.read_produced_loops(PROJECT)) == 1
+    assert report.admitted == 0 and report.dispatched == 0
+    assert report.models_consumed == 1          # only the zero-loop model moved
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
+    # the foreign loop stays on disk, never consumed, never blocking quiesce
+    assert (threat._family_dir(PROJECT, "produced") / OTHER_NAME / "loop-1.yaml").exists()  # noqa: SLF001
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == [SPEC_FILE]
+
+
+def test_C35b_a_malformed_loop_is_refused_and_never_blocks_quiesce(tmp_path):
+    """id: C35 (part 2) - a malformed loop file of THIS run is refused, never
+    dispatched, and never counted as a pending loop. Its consumable model is the
+    only work: the tick moves it and quiesce clears. The malformed file stays in
+    `produced/` as evidence.
+
+    The previous version of this test mutated `body["loop"] = None`; the store
+    reads the loop record from the MODEL document, so that mutation was a no-op
+    and the malformed case was never exercised (T10 fix)."""
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    _produce(threat, run_id=RUN)
+    path = (tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
+            / "produced" / UNIT_NAME / "loop-1.yaml")
+    path.write_text("- not a mapping\n", encoding="utf-8")
+    _write_spec(hunter, status="hypothesised")
+
+    # the malformed loop contributes no DISPATCH, but the model move is work
+    report = run_delivery_tick(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        control=RecordingControlPlane(), coro_for=_real_coro_for(threat, hunter),
+    )
+    assert report.admitted == 0 and report.dispatched == 0
+    assert report.models_consumed == 1
+    # the malformed file stays in produced/ (evidence), never consumed
+    assert path.exists()
+    assert threat.read_produced_loops(PROJECT) == []
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
 
 
 # --- C36 -----------------------------------------------------------------------

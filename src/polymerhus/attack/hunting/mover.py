@@ -86,36 +86,21 @@ def _close_coro(coro: Any) -> None:
 # --- the ADR Q13 session-id scheme (pure) ---------------------------------------
 
 # The renamed session segment (S1 4.1, impact map section 6): the modeller's
-# session id segment; the legacy segment stays accepted for one window. THIS is
-# the ONE home of the segment vocabulary - `threat_modeller_session_id` and
-# `orchestrator_session_id` below build from it, and the classifier
-# (`surfer.derive_thread_role`) reads `THREAT_MODELLER_SEGMENTS`. The role tag it
-# classifies as (`surfer.THREAT_MODELLER_ROLE`) is a DIFFERENT vocabulary.
+# session id segment. THIS is the ONE home of the segment vocabulary -
+# `threat_modeller_session_id` builds from it, and the classifier
+# (`surfer.derive_thread_role`) reads it. The role tag it classifies as
+# (`surfer.THREAT_MODELLER_ROLE`) is a DIFFERENT vocabulary.
 MODELLER_SESSION_SEGMENT = "threat-modeller"
-MODELLER_SESSION_SEGMENT_LEGACY = "orchestrator"
-THREAT_MODELLER_SEGMENTS = (
-    MODELLER_SESSION_SEGMENT, MODELLER_SESSION_SEGMENT_LEGACY,
-)
 
 
 def threat_modeller_session_id(run_id: str) -> str:
-    """The ADR Q13 modeller session id, renamed in place (S1 4.1):
-    `hunting:<run_id>:threat-modeller`. The registry run name the run bootstrap
-    registers its ONE modeller pass under (session id = coroutine id = registry
-    run name, Q12)."""
+    """The ADR Q13 modeller session id: `hunting:<run_id>:threat-modeller`.
+
+    The registry run name the run bootstrap registers its ONE modeller pass
+    under (session id = coroutine id = registry run name, Q12). The legacy
+    `orchestrator` segment is removed (T10): new runs use this id only."""
     _require_non_empty(run_id, "run_id")
     return f"hunting:{run_id}:{MODELLER_SESSION_SEGMENT}"
-
-
-def orchestrator_session_id(run_id: str) -> str:
-    """The LEGACY ADR Q13 session id: `hunting:<run_id>:orchestrator`.
-
-    Kept for one change window (S1 4.1): an interrupted run recorded before the
-    rename is addressed under this id, and its live session is classified as the
-    modeller role. New runs use `threat_modeller_session_id`; the helper retires
-    with the alias."""
-    _require_non_empty(run_id, "run_id")
-    return f"hunting:{run_id}:{MODELLER_SESSION_SEGMENT_LEGACY}"
 
 
 def hunter_session_id(run_id: str, dispatch_id: str) -> str:
@@ -1100,9 +1085,6 @@ __all__ = [
     "log_refusal_once",
     "loop_refusal_detail",
     "MODELLER_SESSION_SEGMENT",
-    "MODELLER_SESSION_SEGMENT_LEGACY",
-    "THREAT_MODELLER_SEGMENTS",
-    "orchestrator_session_id",
     "threat_modeller_session_id",
     "pod_session_id",
     "read_produced_inbox",

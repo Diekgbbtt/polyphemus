@@ -22,7 +22,8 @@ wiring T4 owns:
   spec becomes ONE pod
   session (ADR Q13 pod session id, S3 8.7) riding the SAME mover. An item that
   is not dispatchable now - a
-  `low` loop behind a higher-tier loop or a live higher session (S2 8.3), a
+  `low` loop behind a higher-tier loop or a live higher-tier HUNTER session
+  (S2 8.3 - the sequencing reads that role only), a
   stopped role, a draft spec - yields NO coroutine (the mover's
   `None`-means-refused rule): it stays in produced and the next tick
   re-attempts it (at-least-once, never dropped).
@@ -74,7 +75,7 @@ from typing import Any, Awaitable, Callable
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
 from polymerhus.attack.hunting.mover import (
-    THREAT_MODELLER_SEGMENTS,
+    MODELLER_SESSION_SEGMENT,
     SPEC_DISPATCH_STATUS,
     d4_spec_body,
     loop_refusal_detail,
@@ -83,7 +84,6 @@ from polymerhus.attack.hunting.mover import (
     TestSpecItem,
     ThreatLoopItem,
     TickReport,
-    orchestrator_session_id,
     pod_session_id,
     log_refusal_once,
     read_produced_inbox,
@@ -101,13 +101,12 @@ logger = logging.getLogger(__name__)
 # `hunting:<run_id>:<segment>` shape - the first free segment).
 SURFER_SESSION_SEGMENT = "surfer"
 
-# The agent-sub-module role tag the renamed session segments classify as
+# The agent-sub-module role tag the renamed session segment classifies as
 # (#317, S1 4.1). It is the ROLE vocabulary (`app/runtime._AGENT_ROLES_BY_MODULE`
 # declares the same key beside `hunter` and `pod`), NOT the session segment: the
 # spec's session segment is `threat-modeller` (underscore-free, a session-id
-# part) and lives with the Q13 scheme in `mover.py`. `orchestrator` stays
-# accepted as the one-window legacy segment so an interrupted old run's live pass
-# is gated by the same role handle.
+# part) and lives with the Q13 scheme in `mover.py`. The planner-era
+# `orchestrator` segment is removed (T10).
 THREAT_MODELLER_ROLE = "threat_modeller"
 
 # The produced->consumed rename is the at-least-once marker (Q3), so the surfer
@@ -140,9 +139,7 @@ def derive_thread_role(session_id: str) -> str:
     """The agent role a live session id belongs to (#317), derived from the
     segment after `hunting:<run_id>:`:
 
-    - `threat-modeller` -> `THREAT_MODELLER_ROLE` (the renamed modeller pass)
-    - `orchestrator` -> `THREAT_MODELLER_ROLE` (the one-window legacy segment:
-      an interrupted old run's live pass is the same role)
+    - `threat-modeller` -> `THREAT_MODELLER_ROLE` (the modeller pass)
     - `hunt:...` -> `hunter`
     - `pod:...` -> `pod`
     - `surfer`, the outer run bootstrap (`hunting:<run_id>` / the bare run id),
@@ -152,7 +149,7 @@ def derive_thread_role(session_id: str) -> str:
     if len(parts) < 3:
         return "infra"
     segment = parts[2]
-    if segment in (THREAT_MODELLER_SEGMENTS):
+    if segment == MODELLER_SESSION_SEGMENT:
         return THREAT_MODELLER_ROLE
     if segment.startswith("hunt:"):
         return "hunter"
@@ -174,8 +171,7 @@ def is_run_session_id(session_id: str, run_id: str) -> bool:
     enumerator of the run's live sessions. Matches every shape a session of the
     run is registered under - the outer bootstrap task (`hunting:<run_id>` and
     the bare `run_id` legacy forms) and every ADR Q13 segment
-    (`hunting:<run_id>:threat-modeller|surfer|hunt:...|pod:...`, plus the
-    legacy `orchestrator` segment for one window)."""
+    (`hunting:<run_id>:threat-modeller|surfer|hunt:...|pod:...`)."""
     return (
         session_id == run_id
         or session_id == f"hunting:{run_id}"
@@ -184,13 +180,10 @@ def is_run_session_id(session_id: str, run_id: str) -> bool:
 
 
 def is_modeller_session_id(session_id: str, run_id: str) -> bool:
-    """True for the run's modelling PASS session: the renamed
-    `hunting:<run_id>:threat-modeller` (S1 4.1) and - for the one-window alias -
-    the legacy `hunting:<run_id>:orchestrator` an interrupted old run is
-    registered under."""
-    return session_id in (
-        threat_modeller_session_id(run_id), orchestrator_session_id(run_id),
-    )
+    """True for the run's modelling PASS session:
+    `hunting:<run_id>:threat-modeller` (S1 4.1). The planner-era
+    `hunting:<run_id>:orchestrator` alias is removed (T10)."""
+    return session_id == threat_modeller_session_id(run_id)
 
 
 def is_hunter_session_id(session_id: str) -> bool:
@@ -307,9 +300,8 @@ async def is_run_quiesced(
     (or dispatched) as soon as that hunter leaves its graph - so the work can
     never leak past quiesce."""
     live = {sid for sid in control.live_session_ids() if is_run_session_id(sid, run_id)}
-    # The run's modelling pass, keyed on the renamed segment (S1 4.1, T2b #386);
-    # the legacy `orchestrator` segment stays accepted for one window, so a
-    # resumed old run is never quiesced while its pass is still live.
+    # The run's modelling pass, keyed on the `threat-modeller` segment (S1 4.1);
+    # the planner-era `orchestrator` alias is removed (T10).
     if any(is_modeller_session_id(sid, run_id) for sid in live):
         return False
     if any(is_pod_session_id(sid) for sid in live):

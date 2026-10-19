@@ -19,10 +19,7 @@ from __future__ import annotations
 import pytest
 
 from polymerhus.attack.hunting.llm import _compose_modeller_prompt, _modeller_skill
-from polymerhus.attack.hunting.mover import (
-    threat_modeller_session_id,
-    orchestrator_session_id,
-)
+from polymerhus.attack.hunting.mover import threat_modeller_session_id
 from polymerhus.attack.hunting.surfer import (
     THREAT_MODELLER_ROLE,
     derive_thread_role,
@@ -31,7 +28,6 @@ from polymerhus.attack.hunting.threat_model import GATE_SECTIONS, ModelState
 from polymerhus.attack.hunting.threat_modeller import (
     GATE_HINTS,
     MODELLER_MODEL_KEY,
-    MODELLER_MODEL_KEY_LEGACY,
     MODELLER_ROLE,
     STATE_INSTRUCTIONS,
     ModellerTurnInput,
@@ -203,13 +199,12 @@ def test_the_prompt_names_the_read_command():
     assert "cmd='read'" in _modeller_skill()
 
 
-def test_the_session_segment_and_the_role_are_renamed_with_the_legacy_alias():
-    """The runtime session segment is `threat-modeller`; the recorded legacy
-    segment still classifies as the modeller role (one-window alias)."""
+def test_the_session_segment_and_the_role_are_the_new_names():
+    """T10 removed the planner-era alias: `threat-modeller` is the only
+    segment that classifies as the modeller role."""
     assert threat_modeller_session_id("r-1") == "hunting:r-1:threat-modeller"
-    assert orchestrator_session_id("r-1") == "hunting:r-1:orchestrator"
     assert derive_thread_role("hunting:r-1:threat-modeller") == THREAT_MODELLER_ROLE
-    assert derive_thread_role("hunting:r-1:orchestrator") == THREAT_MODELLER_ROLE
+    assert derive_thread_role("hunting:r-1:orchestrator") == "infra"
     assert MODELLER_ROLE == "hunting_threat_modeller"
     assert THREAT_MODELLER_ROLE == "threat_modeller"
 
@@ -245,26 +240,15 @@ def test_the_modeller_actor_speaks_on_the_renamed_role_and_thread():
     assert actor.thread_id == "r-9:hunting_threat_modeller"
 
 
-def test_the_provider_environment_variable_falls_back_to_the_legacy_key(monkeypatch):
-    """`LLM_HUNTING_THREAT_MODELLER` replaces `LLM_HUNTING_ORCHESTRATOR`, which
-    stays a one-window fallback so a deployment that has not re-issued its env
-    still resolves the role."""
-    from polymerhus.app.llm.providers import resolve_role
-
-    monkeypatch.delenv(MODELLER_MODEL_KEY, raising=False)
-    monkeypatch.setenv(MODELLER_MODEL_KEY_LEGACY, "opencode:legacy-model")
-    assert resolve_role(MODELLER_ROLE) == ("opencode", "legacy-model")
-
-    monkeypatch.setenv(MODELLER_MODEL_KEY, "opencode:new-model")
-    assert resolve_role(MODELLER_ROLE) == ("opencode", "new-model")
-
-
-def test_an_undeclared_provider_key_still_refuses(monkeypatch):
-    """The fallback never widens to an unrelated role: an unset new key without
-    the legacy key is still a fail-closed configuration error."""
+def test_the_provider_environment_variable_does_not_read_the_legacy_key(monkeypatch):
+    """T10 closed the one-window alias: `LLM_HUNTING_THREAT_MODELLER` is the
+    only accepted key. The planner-era key no longer resolves the role."""
     from polymerhus.app.llm.providers import LLMConfigError, resolve_role
 
     monkeypatch.delenv(MODELLER_MODEL_KEY, raising=False)
-    monkeypatch.delenv(MODELLER_MODEL_KEY_LEGACY, raising=False)
+    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode:legacy-model")
     with pytest.raises(LLMConfigError):
         resolve_role(MODELLER_ROLE)
+
+    monkeypatch.setenv(MODELLER_MODEL_KEY, "opencode:new-model")
+    assert resolve_role(MODELLER_ROLE) == ("opencode", "new-model")

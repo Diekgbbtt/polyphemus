@@ -4,7 +4,7 @@ Every hunting-style memory store repeats three mechanics: a per-project write
 lock serialising its check-then-write / read-modify-write critical section, an
 atomic whole-file YAML write, and a write-time record bound so a long run cannot
 grow one file without limit (#341). THIS module is the ONE home for those
-mechanics; a consuming store (hunting's `HuntStore` / `HunterMemoryStore`, and
+mechanics; a consuming store (hunting's `HunterMemoryStore` / `ThreatModelStore`, and
 the analysis memory store) subclasses `BoundedRecordStore` and keeps its own
 paths and its own read semantics - a store chooses fail-open or fail-loud on a
 corrupt file, so only the write side is shared.

@@ -82,8 +82,8 @@ def test_project_dir_is_the_one_layout_resolver(tmp_path: Path) -> None:
     root = tmp_path / "data"
 
     assert project_dir("proj-1", root=root) == root / "proj-1"
-    assert project_dir("proj-1", "hunting/orchestration", root=root) == (
-        root / "proj-1" / "hunting" / "orchestration"
+    assert project_dir("proj-1", "hunting/threat_modeller", root=root) == (
+        root / "proj-1" / "hunting" / "threat_modeller"
     )
 
 
@@ -98,7 +98,7 @@ def test_scaffold_carries_the_module_buckets(tmp_path: Path) -> None:
     writes files only, never directories."""
     project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
 
-    for rel in ("skills", "auth", "analysis", "hunting/orchestration",
+    for rel in ("skills", "auth", "analysis", "hunting/threat_modeller",
                 "hunting/hunter", "hunting/test-executor-pod"):
         assert (project_dir_ / rel).is_dir(), f"missing module bucket {rel}"
 
@@ -110,8 +110,9 @@ def test_scaffold_enumerates_the_fixed_hunting_sub_layout(tmp_path: Path) -> Non
     project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
 
     for rel in (
-        "hunting/orchestration/hunt_configs/produced",
-        "hunting/orchestration/hunt_configs/consumed",
+        "hunting/threat_modeller/produced",
+        "hunting/threat_modeller/consumed",
+        "hunting/threat_modeller/abandoned",
         "hunting/hunter/test-specs",
         "hunting/test-executor-pod",
     ):

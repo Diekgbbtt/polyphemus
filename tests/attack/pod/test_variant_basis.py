@@ -63,10 +63,16 @@ def test_the_first_uncovered_gap_class_wins_in_table_order():
     assert first_uncovered_gap(PROCEDURE, covered) == "interpretation-pitfall"
 
 
-def test_an_empty_procedure_field_is_uncovered_even_when_claimed_covered():
+def test_an_empty_procedure_field_is_a_skipped_class_not_a_gap():
+    # T10 H1: there is no authored procedure to execute or cover, so an empty
+    # section never becomes the basis and can never loop the pod.
     procedure = PROCEDURE.model_copy(update={"pro_tips": ""})
     covered = set(EXPECTED_BASES[:7])   # the triager claims everything is covered
-    assert first_uncovered_gap(procedure, covered) == "pro-tips"
+    assert first_uncovered_gap(procedure, covered) is None
+    # An empty class is skipped even when the triager did not claim it covered:
+    # the next POPULATED uncovered class still wins.
+    covered = set(EXPECTED_BASES[:7]) - {"pro-tips", "interpretation-pitfall"}
+    assert first_uncovered_gap(procedure, covered) == "interpretation-pitfall"
 
 
 def test_an_absent_procedure_excerpt_is_a_recorded_gap_not_a_diff():

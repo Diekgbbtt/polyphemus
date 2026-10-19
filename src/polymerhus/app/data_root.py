@@ -9,7 +9,6 @@ the layout is defined once and no module scaffolds its own directories:
     ├── usage/                  # the durable token-usage record (#326)
     ├── analysis/               # the analysis episodic memory (T3)
     ├── hunting/
-    │   ├── orchestration/      # HuntStore
     │   ├── hunter/             # HunterMemoryStore
     │   ├── threat_modeller/    # ThreatModelStore (produced|consumed|abandoned)
     │   └── test-executor-pod/  # PodMemoryStore
@@ -46,9 +45,6 @@ PROJECT_SCAFFOLD: tuple[str, ...] = (
     "auth",
     "usage",
     "analysis",
-    "hunting/orchestration",
-    "hunting/orchestration/hunt_configs/produced",
-    "hunting/orchestration/hunt_configs/consumed",
     "hunting/hunter",
     "hunting/hunter/test-specs",
     "hunting/test-executor-pod",

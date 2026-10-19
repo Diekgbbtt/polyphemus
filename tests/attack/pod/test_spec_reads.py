@@ -109,10 +109,10 @@ def test_the_triager_context_marks_an_absent_excerpt_as_a_recorded_gap():
     assert "failure-mode" in ctx.lower()
 
 
-def test_the_triager_context_marks_an_empty_section_uncovered():
+def test_the_triager_context_marks_an_empty_section_as_a_skipped_class():
     spec = {**SPEC, "provenance": {
         **SPEC["provenance"],
         "skill_procedure": {**PROCEDURE, "pro_tips": ""}}}
     ctx = ExperimentLog().triager_context(spec, None)
     assert "pro-tips" in ctx
-    assert "uncovered" in ctx.lower()
+    assert "skipped" in ctx.lower()

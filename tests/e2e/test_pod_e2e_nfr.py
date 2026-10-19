@@ -133,19 +133,23 @@ def score_n6_termination_persistence(env: dict) -> int:
 
 
 def score_n7_triager_reflection(variants: list[dict]) -> int:
-    """Did the triager mint a variant that CHANGED the testing procedure
-    paradigm - a different technique/vector family, not a cosmetic tweak?"""
+    """Did the triager mint a variant from a FUNDAMENTAL procedure gap - a
+    procedure-gap basis (a different recon action, bypass technique, technology
+    grounding, pro tip, advanced technique, chaining step, or interpretation
+    check) rather than a cosmetic tweak or an execution-recovery retry?"""
     if not variants:
         return 0
     if len(variants) < 2:
         return 1
-    # A paradigm-sharp change: the declined attribute is the testing_pattern or
-    # the payload_vector_space changed its family (not just a path tweak).
+    procedure_gaps = {
+        "recon-action", "bypass-technique", "technology-grounding", "pro-tips",
+        "advanced-technique", "preliminary-chaining", "interpretation-pitfall",
+    }
     for v in variants[1:]:
         declined = v.get("declined_attribute")
-        if declined == "testing_pattern":
+        if declined in procedure_gaps:
             return 3
-        if declined == "payload_vector_space":
+        if declined == "failure-mode":
             return 2
     return 1
 
@@ -289,9 +293,15 @@ def test_n5_zero_with_no_trail():
 
 
 def test_n7_triager_paradigm_shift_scores_three():
+    # T10: the basis vocabulary is the procedure diff; a procedure-gap basis is
+    # the paradigm-sharp change, `failure-mode` is the milder fallback.
     variants = [{"ref": "v0"},
-                {"ref": "v1", "declined_attribute": "testing_pattern"}]
+                {"ref": "v1", "declined_attribute": "technology-grounding"}]
     assert score_n7_triager_reflection(variants) == 3
+    assert score_n7_triager_reflection(
+        [{"ref": "v0"}, {"ref": "v1", "declined_attribute": "failure-mode"}]) == 2
+    assert score_n7_triager_reflection(
+        [{"ref": "v0"}, {"ref": "v1", "declined_attribute": "runner-failure"}]) == 1
 
 
 def test_n7_no_variant_is_zero():

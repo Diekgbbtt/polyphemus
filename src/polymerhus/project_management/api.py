@@ -745,9 +745,9 @@ async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
 # chained-dependency error. T4b (#387) retired the HUNT config enqueue with the
 # config family: the loop file is the dispatch record, so `/hunting/hunt` is a
 # loud 410 tombstone. The pod resume keeps its fail-closed 404 (no fabricated
-# `specified` spec), and the modeller pass schedules its own input.
+# `ratified` spec), and the modeller pass schedules its own input.
 
-class HuntingOrchestratorLaunch(BaseModel):
+class HuntingModellerLaunch(BaseModel):
     """Modeller-only launch body. The pass reads the L1 inventory itself (T3
     #376 retired the caller-supplied candidate batch), freezes and orders it,
     and writes its models and loop files into the project's threat model store -
@@ -758,7 +758,7 @@ class HuntingOrchestratorLaunch(BaseModel):
 class HuntingPodLaunch(BaseModel):
     """Pod-only launch body (identity-based refactor, 2026-08-25 operator
     ruling): the pod's ADR Q13 session id (`hunting:<run_id>:pod:<config_id>:
-    <spec_id>`) to RESUME. The endpoint NEVER fabricates a produced `specified`
+    <spec_id>`) to RESUME. The endpoint NEVER fabricates a produced `ratified`
     test spec into the HunterMemoryStore produced family - it resumes ONE
     held/paused pod session by posting its coroutine id; the whole-pod-component
     path remains the whole-pipeline run. No stored/paused pod session to resume
@@ -767,20 +767,19 @@ class HuntingPodLaunch(BaseModel):
     session_id: str = Field(min_length=1)
 
 
-@router.post("/projects/{project_id}/hunting/orchestrator", status_code=202)
-async def launch_orchestrator_only(project_id: str, body: HuntingOrchestratorLaunch) -> dict:
-    """The modeller-only launch (the planner-era path and label): schedule ONE
-    modelling pass through the launcher seam - no surfer, no dispatch, no run
-    (T5). The pass models the selected units into the project's threat model
-    store, where a later run's surfer dispatches the produced loops. The
-    outcome is asynchronous; the response carries the pass's run id for
-    observability. 404 unknown project; 503 fail-closed on the control plane (a
-    real LLM pass must never ride the uvicorn request loop); admission refusal
-    maps to 503.
+@router.post("/projects/{project_id}/hunting/modeller", status_code=202)
+async def launch_modeller_only(project_id: str, body: HuntingModellerLaunch) -> dict:
+    """The modeller-only launch: schedule ONE modelling pass through the
+    launcher seam - no surfer, no dispatch, no run (T5). The pass models the
+    selected units into the project's threat model store, where a later run's
+    surfer dispatches the produced loops. The outcome is asynchronous; the
+    response carries the pass's run id for observability. 404 unknown project;
+    503 fail-closed on the control plane (a real LLM pass must never ride the
+    uvicorn request loop); admission refusal maps to 503.
 
-    designed-for-removal: the `/hunting/orchestrator` path and the
-    `component: "orchestrator"` label are the planner-era wire names; they
-    retire with the component-name hygiene sweep (T10)."""
+    T10 renamed the planner-era path (`/hunting/orchestrator`) and the
+    `component: "orchestrator"` label to the modeller vocabulary; the old names
+    are removed, with no alias."""
     from polymerhus.app.clients import pg
     from polymerhus.attack.hunting import runtime as hunting_runtime
     from polymerhus.attack.hunting.mover import threat_modeller_session_id
@@ -802,7 +801,7 @@ async def launch_orchestrator_only(project_id: str, body: HuntingOrchestratorLau
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
         _admission_refused_503(exc)
     return {
-        "component": "orchestrator",
+        "component": "threat_modeller",
         "run_id": run_id,
         "dispatched_asynchronously": True,
     }
@@ -838,7 +837,7 @@ async def launch_hunt_only(project_id: str) -> dict:
 async def launch_pod_only(project_id: str, body: HuntingPodLaunch) -> dict:
     """'Pod only' (identity-based refactor, 2026-08-25 operator ruling): resume
     ONE held/paused pod session by posting its coroutine id - NEVER fabricating
-    a produced `specified` spec (the reviewer's ambiguity; the whole-pod-component
+    a produced `ratified` spec (the reviewer's ambiguity; the whole-pod-component
     path remains the whole-pipeline run). The endpoint routes through the
     `resume_pod_session` launcher seam to the SHARED control plane's per-session
     `resume_session` (module "hunting", keyed by the ADR Q13 session id).

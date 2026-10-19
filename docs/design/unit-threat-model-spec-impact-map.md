@@ -117,6 +117,19 @@ Each decision below must appear in the named spec section. The adversarial revie
 | Q52: consistent `{hypothesised, ratified, dropped}` vocabulary | S2 6.2; S3 8.6; S4 14.6 |
 | Q53: D3_HINT reframe | S4 14.7 |
 
+### 3.4 The risk-scoring research
+
+| Decision | Spec location |
+|---|---|
+| Enum `none / low / medium / high / critical` | S2 7.1 |
+| Monotonic weights | S2 7.1 |
+| No impact term | S2 7.2 |
+| `none` loops are retained but not dispatched | S2 5.6, 8.3 |
+| Threshold constant in harness configuration; calibration basis recorded | S2 7.4; S1 7.4; S2 9.2 |
+| Four reasoning factors: attack vector, attack requirements, privileges required, complexity | S2 7.2 |
+| Per-level breakdown recorded | S2 7.3, 7.4 |
+| Confidence degree as a class-assignment factor | S2 7.2 |
+
 ### 3.5 Implementation-time additions (T3, #376)
 
 These are implementation-time additions to the specs above, recorded here as
@@ -150,19 +163,6 @@ PROPOSED TICKET: **T11 (proposed, not cut) - the run resume trigger**: the
 operator verb that re-enters the run with its recorded run id, and the
 orphaned-run disposition in `reconcile_orphaned_hunting_runs` (reschedule, or
 stamp the do-not-resume cause). Blocked on the operator's trigger choice.
-
-### 3.4 The risk-scoring research
-
-| Decision | Spec location |
-|---|---|
-| Enum `none / low / medium / high / critical` | S2 7.1 |
-| Monotonic weights | S2 7.1 |
-| No impact term | S2 7.2 |
-| `none` loops are retained but not dispatched | S2 5.6, 8.3 |
-| Threshold constant in harness configuration; calibration basis recorded | S2 7.4; S1 7.4; S2 9.2 |
-| Four reasoning factors: attack vector, attack requirements, privileges required, complexity | S2 7.2 |
-| Per-level breakdown recorded | S2 7.3, 7.4 |
-| Confidence degree as a class-assignment factor | S2 7.2 |
 
 ## 4. Affected document ledger
 
@@ -293,7 +293,7 @@ These names are fixed by this spec set. Implementation must not invent alternati
 - Runtime session segment: `threat-modeller`.
 - LLM role ID: `hunting_threat_modeller`.
 - Actor/session role: `hunting_threat_modeller`.
-- The rename is an expand-contract pass inside the change: add the new names and a one-window alias for `hunting_orchestrator`, migrate the call sites, then remove the old names.
+- The rename is an expand-contract pass inside the change: add the new names and a one-window alias for `hunting_orchestrator`, migrate the call sites, then remove the old names. T10 closed the window: the old role, env key, session segment, API path and component label are removed, with no resume path.
 - Threat-model store root: `data/<project_id>/hunting/threat_modeller/` with `produced/`, `consumed/`, and `abandoned/`.
 - Unit directory: `<unit_name>/`, where `<unit_name>` sanitises `:` and `/` to `-`; a sanitised-name collision appends `-<first 8 hex of sha256(unit_id)>`.
 - Model document: `<unit_name>.yaml` inside the unit directory.
@@ -316,7 +316,7 @@ These names are fixed by this spec set. Implementation must not invent alternati
 - Default threshold: `12`.
 - Run record keys: `intake_order`, `intake_position`, `intake_excluded`, `risk_threshold`, `threshold_basis`, `risk_weights`, `risk_total`, `risk_breakdown`, `model_sums`, `crossing_unit`, `blocked_unit`, `halt`, `degraded_units`, `trajectory`.
 - The `risk_breakdown` is the sum of the per-model breakdowns.
-- The `trajectory` entry shape is `{unit_id, signal, from_state, to_state, outcome, at}`.
+- The `trajectory` entry shape is `{unit_id, signal, from_state, to_state, outcome, at, skipped}` (`skipped` is the forward jump's passed-over gates, T3 #376).
 
 ## 7. What this set does not change
 

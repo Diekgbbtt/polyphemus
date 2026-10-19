@@ -149,7 +149,7 @@ H1 - Confirmed: the spec's verification symptom is observed -> `{successful, sym
 H2 - Absent: the pattern/probe space exhausts without the symptom on an AVAILABLE knowledge base -> `{unsuccessful, space-exhausted}`, with the P3 note written. Over a degraded KB the same shape lands `{unsuccessful, no-symptom-evidence, clean=false}` (#304).
 H3 - Infeasible: unreachable target or all tools blocked -> `{unsuccessful, technical-infeasibility}` with the infeasibility in the trail.
 H4 - Capped: budget/timeout reached -> `{unsuccessful, budget-timeout}` with partial evidence.
-H5 - Variant: a declined attribute yields a derived variant spec with provenance; the loop continues; the log records both variants.
+H5 - Variant: a variant basis yields a derived variant spec with provenance; the loop continues; the log records both variants.
 H6 - Note: on P3 exhaustion the consolidated experiment summary is written to the pod experiment-memory store and the Triager reads it.
 
 ### 4.2 Outliers
@@ -194,7 +194,7 @@ C5 - Infeasibility: given an unreachable target (connection refused), exercising
 C6 - Budget/timeout: given tool calls exceeding the fixed caps, exercising degradation, the pod lands `{unsuccessful, budget-timeout}` with partial evidence.
 C7 - Retry: given a tool call failing with non-zero exit twice then succeeding, exercising degradation, the retries converge at `MAX_POD_ITERS = 3` and the run lands a binary end.
 C8 - Timeout enforcement: given a tool call hanging past `EXEC_TIMEOUT_S`, exercising degradation, the exec is aborted and the run lands a binary end within the caps.
-C9 - Variant provenance: given a declined attribute, exercising success, the experiment log contains the derived variant spec with provenance and the raw observation and interpretation entries (D6 shape).
+C9 - Variant provenance: given a variant basis, exercising success, the experiment log contains the derived variant spec with provenance and the raw observation and interpretation entries (D6 shape).
 C10 - Duplicate probe: given the same variant + payload re-decided, exercising duplicate-idempotent, exactly one execution is recorded in the log.
 C11 - Empty payload vector: given a spec with an empty payload vector space, exercising empty-valid, the Runner still probes once (or the run lands `space-exhausted` when no probe is derivable).
 C12 - Langfuse stub failure: given the observability stub raising, exercising degradation, the run completes unaffected.
@@ -436,24 +436,40 @@ The minting algorithm is:
 
 1. Read the typed `SkillProcedure` from `spec.provenance["skill_procedure"]`.
    The seven fields map to the seven procedure gap bases in table order.
-   When the excerpt is absent, record the gap and go to step 4.
+   When the excerpt is absent, record the gap and go to step 5.
    A section is covered when the executed procedure in the D6 trail contains the action, technique, or check that the section names.
    The triager judges coverage from the trail; the mapping is one-to-one.
+   An EMPTY section is a skipped class, not a coverage gap: there is no authored procedure to execute or cover, so the diff passes over it (T10 H1).
+   Treating an empty section as a gap would re-mint the same basis every lap and loop to the budget cap without a new prediction.
 2. Read the executed procedure from the D6 trail: the variant specs, the probe chains, the raw observations, the interpretations, and the pod notes.
-3. Test the seven gap classes in the table order.
+3. Test the execution triggers first.
+   When the runner failed, the basis is `runner-failure`; when it diverged completely from the spec, the basis is `runner-divergence`.
+   A failed or diverged execution has no meaningful procedure coverage, so these triggers outrank the diff (T10 H3).
+4. Test the seven populated gap classes in the table order.
    The first gap class that the executed procedure does not cover is the basis.
    The variant changes the spec to cover it.
-4. If every gap class is covered, reason on the additional observable failure modes the spec's `verification_symptoms` and `assumptions` could yield.
+5. If every populated gap class is covered, reason on the additional observable failure modes the spec's `verification_symptoms` and `assumptions` could yield.
    If a new observable failure mode is plausible, mint a `failure-mode` variant.
    The fallback uses only the material the pod holds; it does not read the modeller's failure-mode space.
-5. If the runner failed or diverged, mint `runner-failure` or `runner-divergence`.
 6. Never mint a duplicate of a basis and detail already present in the experiment log.
    The triager reads the log before deciding.
+   The detail comparison is exact text over the canonical key-sorted JSON of the derived spec: a changed field is a new variant, a re-worded but semantically identical spec is not caught (T10 H7).
 7. Record the variant with the basis in `declined_attribute`, the parent ref, and the derived spec.
+   The derived spec keeps the base `provenance`, including the typed skill procedure; the graph enforces the field (T10 H6).
 
 The triager's context carries the note, the filtered experiment log, the base spec, and the bounded skill procedure excerpt.
 The triager prompt's mining section is rewritten to the algorithm above.
 The terminal decision output is unchanged.
+
+The `space-exhausted` exhaustion rule is prompt-level, not symbolically enforced (T10 H2).
+The harness cannot decide whether a knowledge-base answer carried a precise new variant; that judgment is the triager's, and the terminal decision keeps its six-way binary vocabulary.
+The rule is stated in the triager prompt and reviewed there.
+
+The 4000-character skill-procedure bound is the HUNTER authoring seam (S3 8.6): the hunter-store write rejects an over-long excerpt.
+A spec that reaches the pod directly (a pre-mined artifact or a test fixture) is not re-validated by the pod; the diff reads only whether a field is empty and the triager's coverage claim, so the bound is documented rather than re-enforced at the pod seam (T10 H5).
+
+A HARD runner exception (an internal error, not a failed execution the triager observed) degrades the pod to `technical-infeasibility` at the run wrapper, not `runner-failure` (T10 H8).
+`runner-failure` is the triager's decision on an executed-but-failed stretch; the wrapper's fail-open terminal is an execution impossibility and never mints a variant.
 
 The pod memory variant records keep their shape.
 The `declined_attribute` field's semantics change from a declined spec attribute to the variant basis.

@@ -260,21 +260,18 @@ def test_C9_get_unknown_id_404(client):
 # REST perimeter - singular component launches (C10-C20)
 # ===========================================================================
 
-def test_C10_orchestrator_launch_canonical(client):
-    """C10: POST .../hunting/orchestrator `{candidates:[...]}` -> 202 mirror
-    shape `{component: orchestrator, run_id, dispatched_asynchronously}`.
-    The pass is a real async LLM orchestration on the live stack; the produced
-    family may or may not have ratified configs within the observation window -
-    the 202 shape is the hard contract, and any produced configs observed are
-    asserted ratified."""
+def test_C10_modeller_launch_canonical(client):
+    """C10 (renamed by T10): POST .../hunting/modeller `{}` -> 202 mirror
+    shape `{component: threat_modeller, run_id, dispatched_asynchronously}`.
+    The pass is a real async LLM modelling pass on the live stack; the produced
+    family may or may not have models within the observation window - the 202
+    shape is the hard contract."""
     _need_pg()
     p = _new_project(client)
-    r = client.post(
-        f"/projects/{p}/hunting/orchestrator",
-        json={"candidates": [{"unit_id": UNIT, "fault_class": FAULT}]})
+    r = client.post(f"/projects/{p}/hunting/modeller", json={})
     assert r.status_code == 202, r.text
     body = r.json()
-    assert body["component"] == "orchestrator"
+    assert body["component"] == "threat_modeller"
     assert body["dispatched_asynchronously"] is True
     assert isinstance(body.get("run_id"), str) and body["run_id"]
     # The pass runs asynchronously on the live stack; any produced config the
@@ -284,14 +281,12 @@ def test_C10_orchestrator_launch_canonical(client):
     assert all(isinstance(_k, str) for _k in produced)
 
 
-def test_C11_orchestrator_unknown_project_404(client):
-    """C11: orchestrator launch on an unknown project -> 404. (The control-plane
+def test_C11_modeller_unknown_project_404(client):
+    """C11: modeller launch on an unknown project -> 404. (The control-plane
     absent -> 503 half is blocked on the live sibling, exactly as C4.)"""
     _need_pg()
     bogus = f"nope-{uuid.uuid4().hex[:8]}"
-    r = client.post(
-        f"/projects/{bogus}/hunting/orchestrator",
-        json={"candidates": [{"unit_id": UNIT, "fault_class": FAULT}]})
+    r = client.post(f"/projects/{bogus}/hunting/modeller", json={})
     assert r.status_code == 404, r.text
     assert "unknown project" in r.text
 

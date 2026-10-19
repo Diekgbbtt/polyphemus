@@ -124,7 +124,7 @@ def _is_durable_prior_insight(record: dict) -> bool:
     (`provenance.verdict_stub`) is the durable pod-completion record the surfer
     writes for a parent hunt key, so it is protected from the ordinary-notes
     eviction of the `notes.yaml` bound (#341). The old
-    `HuntStore.read_hunter_notes` consumer retired with the config family; the
+    `HuntStore` consumer retired with the config family; the
     record stays the durable trail a later verdict/insight reader can use."""
     provenance = record.get("provenance")
     return bool(isinstance(provenance, dict) and provenance.get("verdict_stub"))

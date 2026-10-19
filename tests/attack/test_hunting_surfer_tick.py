@@ -33,7 +33,7 @@ Also pins the store move primitives themselves (moves + at-least-once
 idempotency + the absent-record False + the locked rename), and the real
 `RuntimeControlPlane` adapter (ModuleAdmissionRefused -> refused). The retired
 hunt-store config I/O is not exercised here (T6 removed it; the key helpers and
-the notes surface live in `test_hunt_store.py`).
+the residual note vocabulary lives in `test_hunt_store.py`).
 """
 import asyncio
 import time
@@ -120,7 +120,8 @@ def _wait_until(pred, timeout=5):
 def stores(tmp_path):
     """The two PRODUCTION stores the dispatch path reads: the threat model
     store (the produced loop files) and the hunter memory (the produced specs).
-    The HuntStore is not here: nothing on the dispatch path reads it (T4b)."""
+    The hunt store is not here: nothing on the dispatch path reads it (T4b),
+    and T10 removed its residual notes surface."""
     return (
         ThreatModelStore(tmp_path / "threat"),
         HunterMemoryStore(tmp_path / "hunter"),

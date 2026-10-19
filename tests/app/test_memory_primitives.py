@@ -11,17 +11,16 @@ from __future__ import annotations
 from polymerhus.app.memory import bounds as shared_bounds
 from polymerhus.app.memory import store as shared_store
 from polymerhus.app.memory import tool_contract as shared_contract
-from polymerhus.attack.hunting import hunter_memory, hunt_store
+from polymerhus.attack.hunting import hunter_memory
 from polymerhus.attack.hunting import tool_contract as hunting_contract
 
 
 def test_retain_bounded_records_has_a_single_definition():
-    assert hunt_store.retain_bounded_records is shared_bounds.retain_bounded_records
+    assert shared_store.retain_bounded_records is shared_bounds.retain_bounded_records
     assert not hasattr(hunter_memory, "retain_bounded_records")
 
 
 def test_hunting_stores_build_on_the_shared_bounded_store_base():
-    assert issubclass(hunt_store.HuntStore, shared_store.BoundedRecordStore)
     assert issubclass(
         hunter_memory.HunterMemoryStore, shared_store.BoundedRecordStore
     )

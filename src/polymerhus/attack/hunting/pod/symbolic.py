@@ -8,8 +8,9 @@ recogniser.
 The reduced D4 carries no structured payload vector: the runner authors the
 probe from the spec's target identity and evidence. The optional
 `provenance.baseline_ref` names one recorded artifact to replay; otherwise the
-first probe is a GET of the base URL. `mutations_from_pvs` remains the LEGACY
-deterministic `HuntingHttpPod`'s override parser (not a D4 field reader).
+first probe is a GET of the base URL. The legacy `payload_vector_space`
+mutation parser is deleted (T8/T10): a replay's overrides are authored at the
+pod's own exec tool, never read from a retired D4 field.
 
 Symbolic symptom verification is the good development direction but complex
 (operator, 2026-08-06): this recogniser covers the mechanically-checkable
@@ -69,38 +70,6 @@ def author_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
     chain = ProbeChain(variant_ref=variant_ref, steps=[step])
     chain.signature = probe_signature(chain)
     return chain
-
-
-_MUTATION_LOCATIONS = frozenset({"query", "form", "header", "headers", "cookie", "cookies", "body", "json"})
-
-
-def mutations_from_pvs(pvs: dict) -> list[dict]:
-    """Expand ``payload_vector_space.mutations`` into the closed override set.
-
-    Authored form::
-
-        mutations:
-          - location: query
-            name: search
-            values: ["'", "' OR 1=1--"]
-
-    Returns one override dict per declared value, e.g.
-    ``{"query": {"search": "'"}}``. Unknown locations are ignored (the spec is
-    an open dict; the RESOLVER only acts on the vocabulary it understands).
-    """
-    if not isinstance(pvs, dict):
-        return []
-    overrides: list[dict] = []
-    for mutation in pvs.get("mutations") or []:
-        if not isinstance(mutation, dict):
-            continue
-        location = str(mutation.get("location") or "")
-        if location not in _MUTATION_LOCATIONS:
-            continue
-        name = str(mutation.get("name") or "")
-        for value in mutation.get("values") or []:
-            overrides.append({location: {name: value}})
-    return overrides
 
 
 # --- Minimal symbolic symptom recogniser ---------------------------------------

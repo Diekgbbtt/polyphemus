@@ -41,8 +41,9 @@ def _skill_procedure_context(spec: dict) -> str:
 
     Read from the spec provenance through the ONE typed read, never the store
     envelope. An absent excerpt is a RECORDED GAP: the diff has no material and
-    the failure-mode fallback applies. An empty section is an uncovered gap
-    class in its own right (the graph's diff refuses to treat it as covered)."""
+    the failure-mode fallback applies. An empty section is a SKIPPED class, not
+    a coverage gap (T10 H1): there is no authored procedure to execute or cover,
+    so the diff passes over it and never loops on it."""
     procedure = skill_procedure_from_spec(spec)
     header = "## Skill procedure (typed excerpt from the spec provenance)"
     if procedure is None:
@@ -52,7 +53,7 @@ def _skill_procedure_context(spec: dict) -> str:
     for basis, field in PROCEDURE_GAP_FIELD.items():
         text = str(getattr(procedure, field) or "").strip()
         lines.append(f"- {basis} ({field}): "
-                     + (text if text else "(empty - recorded gap, uncovered gap class)"))
+                     + (text if text else "(empty - skipped class, not a gap)"))
     return "\n".join([header, *lines])
 
 

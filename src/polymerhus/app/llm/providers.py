@@ -477,10 +477,9 @@ class Role:
 # The `thinking` baseline is set on the agents that reason hard enough to benefit
 # (operator direction): the analysis proposers, the recon triager, and the
 # recon-orchestrator (which shares the `job_orchestrator` role, `orchestrator_agent.py`).
-# The rest stay `off`. `hunting_hunter` is `high`; `hunting_orchestrator` is `medium`
-# (its Q8 gate + D2 re-match turns are reasoning-heavy but turn-count-bounded,
-# feat/async-actor-agents); the pod's roles (`pod_runner` / `pod_triager`) are `high`
-# like the hunter (D84-1). These are TUNABLE
+# The rest stay `off`. `hunting_hunter` is `high`; `hunting_threat_modeller` is
+# `medium` (its gate turns are reasoning-heavy but turn-count-bounded); the
+# pod's roles (`pod_runner` / `pod_triager`) are `high` like the hunter (D84-1). These are TUNABLE
 # baselines; #99 makes them capability-adaptive and fail-safe per model.
 # `agent_mode="session"` marks the roles that run STATEFUL per instance (#94): the
 # per-pod triager and configurator (their own pod session thread each), the
@@ -508,24 +507,12 @@ ROLES: tuple[Role, ...] = (
 # the operator directs high-cost reasoning for the looped, feedback-driven
 # probe/interpret work.
 HUNTING_ROLES: tuple[Role, ...] = (
-    # The threat modeller (S1 4.1): the planner role renamed in place. The
-    # `hunting_orchestrator` record stays for the one-window alias - an
-    # interrupted old run resumes under its recorded role, and both keys resolve
-    # through `resolve_role`'s legacy fallback while the window is open.
+    # The threat modeller (S1 4.1): the planner role renamed in place.
     Role("hunting_threat_modeller", "LLM_HUNTING_THREAT_MODELLER", "session", "medium"),
-    Role("hunting_orchestrator", "LLM_HUNTING_ORCHESTRATOR", "session", "medium"),
     Role("hunting_hunter",       "LLM_HUNTING_HUNTER",       "session", "high"),
     Role("pod_runner",           "LLM_POD_RUNNER",           "session", "high"),
     Role("pod_triager",          "LLM_POD_TRIAGER",          "session", "high"),
 )
-
-# The one-window legacy fallback (S1 4.1): a provider environment variable
-# renamed in place reads the old key when the new one is unset, so a deployment
-# that has not re-issued its env still resolves the role. The window closes when
-# the old names are removed (the hygiene pass).
-LEGACY_MODEL_KEYS: dict[str, str] = {
-    "LLM_HUNTING_THREAT_MODELLER": "LLM_HUNTING_ORCHESTRATOR",
-}
 
 _ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
 
@@ -566,16 +553,10 @@ def resolve_role(role: str) -> tuple[str, str]:
 
     A registered role_id reads its declared `model_key` (several ids may share one,
     e.g. every analysis role -> `LLM_ANALYSER`). An UNregistered id resolves via
-    the live `LLM_{ID}` convention (e.g. `"analyser"` reads `LLM_ANALYSER`).
-
-    A RENAMED model key falls back to its recorded legacy key for one change
-    window (`LEGACY_MODEL_KEYS`): the new key wins when set, the old key keeps an
-    environment that has not been re-issued working while the alias is open."""
+    the live `LLM_{ID}` convention (e.g. `"analyser"` reads `LLM_ANALYSER`)."""
     r = _ROLE_BY_ID.get(role)
     model_key = r.model_key if r is not None else f"LLM_{role.upper()}"
     raw = os.environ.get(model_key)
-    if (not raw or ":" not in raw) and model_key in LEGACY_MODEL_KEYS:
-        raw = os.environ.get(LEGACY_MODEL_KEYS[model_key])
     if not raw or ":" not in raw:
         raise LLMConfigError(
             f"{model_key} must be set to '<provider>:<model>' (got {raw!r})"

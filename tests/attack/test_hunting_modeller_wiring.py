@@ -21,10 +21,7 @@ import pytest
 from polymerhus.attack.hunting import runtime as hunting_runtime
 from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.attack.hunting.mover import (
-    orchestrator_session_id,
-    threat_modeller_session_id,
-)
+from polymerhus.attack.hunting.mover import threat_modeller_session_id
 from polymerhus.attack.hunting.surfer import (
     RunDispatchState,
     is_modeller_session_id,
@@ -396,19 +393,18 @@ def test_the_modeller_session_id_is_the_new_segment():
     assert threat_modeller_session_id(RUN) == f"hunting:{RUN}:threat-modeller"
 
 
-def test_the_legacy_orchestrator_segment_is_accepted_as_a_resume_alias():
-    """S1 4.1/7.5: an interrupted run recorded before the rename resumes under
-    its recorded (legacy) session id - the modeller session predicate accepts
-    BOTH segments and nothing else."""
+def test_the_modeller_session_predicate_accepts_the_new_segment_only():
+    """S1 4.1: the modeller session predicate accepts the new segment and
+    nothing else. T10 removed the planner-era `orchestrator` alias."""
     assert is_modeller_session_id(threat_modeller_session_id(RUN), RUN) is True
-    assert is_modeller_session_id(orchestrator_session_id(RUN), RUN) is True
+    assert is_modeller_session_id(f"hunting:{RUN}:orchestrator", RUN) is False
     assert is_modeller_session_id(surfer_session_id(RUN), RUN) is False
 
 
-def test_the_quiesce_predicate_holds_for_a_live_legacy_pass_session(tmp_path):
-    """S1 7.5: a live pass registered under the LEGACY segment still blocks
-    quiesce; once it settles the run quiesces. Keying only the new segment would
-    quiesce a resumed old run while its pass is still running."""
+def test_a_live_planner_era_pass_session_is_not_a_component_session(tmp_path):
+    """T10: the alias is removed. A session registered under the planner-era
+    segment is not the run's modeller pass and does not hold quiesce - new runs
+    use `threat-modeller` only, and no resume path is invented."""
     hunter, _models = _stores(tmp_path)
 
     class _Control:
@@ -418,18 +414,18 @@ def test_the_quiesce_predicate_holds_for_a_live_legacy_pass_session(tmp_path):
         def live_session_ids(self):
             return set(self._live)
 
-    legacy = orchestrator_session_id(RUN)
-    control = _Control({legacy})
+    modeller = threat_modeller_session_id(RUN)
+    control = _Control({f"hunting:{RUN}:orchestrator"})
     state = RunDispatchState()
 
     assert asyncio.run(is_run_quiesced(
         PROJECT, RUN, hunter_store=hunter, control=control,
-        state=state)) is False
+        state=state)) is True
 
-    control._live = set()
+    control._live = {modeller}
     assert asyncio.run(is_run_quiesced(
         PROJECT, RUN, hunter_store=hunter, control=control,
-        state=state)) is True
+        state=state)) is False
 
 
 # --- the breaker, the provider failure and the actor teardown -----------------

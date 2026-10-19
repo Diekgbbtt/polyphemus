@@ -49,7 +49,6 @@ EXEMPT_ROLES = {
     "job_orchestrator",
     "assigner",
     "mechanism_typist",
-    "hunting_orchestrator",
     # The threat modeller (S1 5.5): no catalogue skill bears - its class
     # material is the web-vulnerability suite, and the actor arms the read-only
     # skill + auth surface explicitly.

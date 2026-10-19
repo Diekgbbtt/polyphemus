@@ -238,10 +238,10 @@ async def stop_hunting_for_provider_failure(
 
     # STOP: per-session cancel on every live COMPONENT session of the run. The
     # filter mirrors `_wait_no_run_sessions`: only the ADR Q13 component sessions
-    # (`hunting:<run_id>:threat-modeller|surfer|hunt:...|pod:...`, plus the
-    # legacy `orchestrator` segment for one window) are cancelled - never the
-    # run's outer bootstrap marker (`run_id` / `hunting:<run_id>`), which is the
-    # task RUNNING this handler (cancelling it would abort mid-stamp).
+    # (`hunting:<run_id>:threat-modeller|surfer|hunt:...|pod:...`) are cancelled -
+    # never the run's outer bootstrap marker (`run_id` / `hunting:<run_id>`),
+    # which is the task RUNNING this handler (cancelling it would abort
+    # mid-stamp).
     component_prefix = f"hunting:{hunting_run_id}:"
     for session_id in list(control.live_session_ids()):
         if not (
@@ -779,10 +779,10 @@ async def launch_modeller(
     so the per-session verbs (hold/resume/cancel, ADR Q13/Q17) address it like
     any modeller session.
 
-    designed-for-removal - the launch surface's modeller-only vocabulary (the
-    `hunting/orchestrator` endpoint path and the `orchestrator` component label
-    it acks with) retires with the component-name hygiene sweep (T10). The
-    runtime entry point itself is the modeller pass.
+    The launch surface speaks the modeller vocabulary (T10): the endpoint is
+    `POST /projects/{id}/hunting/modeller` and the response acks
+    `component: "threat_modeller"`. The runtime entry point is the modeller
+    pass.
 
     #376 intake wiring (shared with `start_hunting`): with no injected intake the
     runtime reads the project's L1 inventory (`unit_intake.read_intake` over the
@@ -888,7 +888,7 @@ async def _project_has_live_hunting_run(project_id: str, *, run_id: str | None) 
 def _cancel_run_sessions(run_id: str) -> None:
     """Cancel EVERY session of the run by session id through the shared
     control plane (ADR "Run lifecycle": stop cancels every session - the
-    orchestrator, the run-scoped surfer - itself a session - and every hunter
+    modeller, the run-scoped surfer - itself a session - and every hunter
     and pod, keyed by the Q13 ids). The outer bootstrap task (registered
     under `hunting:<run_id>` or the bare `run_id` by the launch surface) is a
     session of the run too and is cancelled with the rest. Fail-open: no
@@ -935,7 +935,7 @@ async def _wait_no_run_sessions(control, run_id: str, interval: float) -> None:
     cancels every session, and the sleeps here surface the cancellation.
 
     The wait targets the ADR Q13 component sessions ONLY
-    (`hunting:<run_id>:orchestrator|surfer|hunt:...|pod:...`), never the run's
+    (`hunting:<run_id>:threat-modeller|surfer|hunt:...|pod:...`), never the run's
     OUTER BOOTSTRAP markers (`run_id` / `hunting:<run_id>`): the bootstrap task
     that CALLS this wait is itself registered under `hunting:<run_id>`, so
     counting it would make the run wait on its OWN registry entry forever
@@ -1042,9 +1042,8 @@ async def start_hunting(
     full duration, enforces ONE live hunting run per project (refused with a
     `None` return on a second concurrent run), opens the `hunting_runs` row
     (`running`), schedules TWO sessions on the shared control plane - the
-    modeller pass (ADR Q13 id `hunting:<run_id>:threat-modeller`, the legacy
-    `orchestrator` segment still accepted as a resume alias for one window) and
-    the run-scoped inbox surfer (id `hunting:<run_id>:surfer`, ADR Q2a) - and
+    modeller pass (ADR Q13 id `hunting:<run_id>:threat-modeller`) and the
+    run-scoped inbox surfer (id `hunting:<run_id>:surfer`, ADR Q2a) - and
     then waits for quiesce: the pass has settled, the surfer has proven the
     produced dirs drained and every dispatched session (hunter, pod) settled,
     the remaining idle hunters are settled, and ONLY then is `complete`
@@ -1325,11 +1324,9 @@ async def start_hunting(
 
 
         try:
-            # The new-run session id (S1 4.1, swapped by T2b #386): the pass is
-            # registered under `hunting:<run_id>:threat-modeller`. The legacy
-            # `orchestrator` segment stays ACCEPTED (the quiesce predicate and
-            # the stop filter take both), so an interrupted old run resumes
-            # under its recorded id.
+            # The modeller pass session id (S1 4.1): the pass is registered
+            # under `hunting:<run_id>:threat-modeller`. The planner-era
+            # `orchestrator` alias is removed (T10); new runs use this id only.
             modeller_id = threat_modeller_session_id(hunting_run_id)
             surfer_id = surfer_session_id(hunting_run_id)
             # #317: the modeller pass is gated on the modeller role state. A

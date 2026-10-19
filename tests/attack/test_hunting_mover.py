@@ -35,7 +35,6 @@ from polymerhus.attack.hunting.mover import (
     d4_spec_body,
     deduce_delivery,
     hunter_session_id,
-    orchestrator_session_id,
     pod_session_id,
     sequence_dispatch,
     threat_loop_item,
@@ -348,10 +347,6 @@ def test_equal_inputs_are_deterministic_across_calls():
 
 # --- the ADR Q13 session-id scheme ----------------------------------------------
 
-def test_orchestrator_session_id_is_the_adr_shape():
-    assert orchestrator_session_id("r-9") == "hunting:r-9:orchestrator"
-
-
 def test_hunter_session_id_is_the_adr_shape():
     assert hunter_session_id("r-9", "Service-a__loop-1") == \
         "hunting:r-9:hunt:Service-a__loop-1"
@@ -363,8 +358,6 @@ def test_pod_session_id_embeds_config_and_spec():
 
 
 def test_session_ids_reject_empty_segments():
-    with pytest.raises(ValueError):
-        orchestrator_session_id("")
     with pytest.raises(ValueError):
         hunter_session_id("", "cfg-1")
     with pytest.raises(ValueError):

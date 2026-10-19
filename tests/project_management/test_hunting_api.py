@@ -457,12 +457,12 @@ def test_pod_launch_unknown_project_404(monkeypatch):
     assert called == []
 
 
-def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatch):
+def test_modeller_launch_schedules_the_pass_via_the_launcher_seam(monkeypatch):
     """The modeller-only launch schedules ONE modelling pass through the
     launcher seam under the ADR Q13 modeller session id (no surfer, no run row)
     and acks asynchronously - the pass models its selected units on the loop.
-    The `/hunting/orchestrator` path and the `orchestrator` component label are
-    the planner-era wire names (T10 hygiene); the BODY is the modeller's."""
+    T10 renamed the path and the component label to the modeller vocabulary;
+    the planner-era names are removed with no alias."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
     fake_runtime = _FakeRuntime()
     from polymerhus.attack.hunting import runtime as hunting_runtime
@@ -476,25 +476,25 @@ def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatc
 
     monkeypatch.setattr(hunting_runtime, "launch_modeller", record_pass)
 
-    resp = client.post("/projects/p1/hunting/orchestrator", json={})
+    resp = client.post("/projects/p1/hunting/modeller", json={})
 
     assert resp.status_code == 202
     body = resp.json()
-    assert body["component"] == "orchestrator"
+    assert body["component"] == "threat_modeller"
     assert body["dispatched_asynchronously"] is True
     assert body["run_id"]
     assert fake_runtime.scheduled == [
         f"hunting:{body['run_id']}:threat-modeller"]
 
 
-def test_orchestrator_launch_fails_closed_503_without_control_plane(monkeypatch):
-    """The orchestrator pass is a real LLM stretch: fail-closed 503 while the
+def test_modeller_launch_fails_closed_503_without_control_plane(monkeypatch):
+    """The modeller pass is a real LLM stretch: fail-closed 503 while the
     control plane has not landed, never booted on the request loop."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
     from polymerhus.attack.hunting import runtime as hunting_runtime
     monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: None)
 
-    resp = client.post("/projects/p1/hunting/orchestrator", json={})
+    resp = client.post("/projects/p1/hunting/modeller", json={})
 
     assert resp.status_code == 503
 

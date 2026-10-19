@@ -231,9 +231,6 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # The critic never touches the target: its KB reads are context reads
     # (D84-27), so only the retrieval discipline bears.
     "pod_triager": ("lightrag-query",),
-    # The gate/ratify/match decisions run over candidate material; no knowledge
-    # skill bears.
-    "hunting_orchestrator": (),
     # The threat modeller (S1 5.5): no catalogue skill bears on the job - its
     # class material is the web-vulnerability SUITE, bound through the
     # modeller's own `skill_list` / `skill_load` pair - so the roster declares it

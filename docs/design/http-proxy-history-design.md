@@ -1,5 +1,8 @@
 # HTTP Proxy History (#196) — Design and walkthrough
 
+**AMENDED (T8 #381; carried by T10 #383).** The HTTP-history chain ends at `provenance.baseline_ref`, the single optional baseline pointer on the spec. The retired `payload_vector_space.request_ref` never names the baseline again. The capture, replay, lineage, and sanitisation contracts in this document stand.
+
+
 This is the **only** design document for the HTTP proxy history. It replaces the decision
 record, the two previous walkthroughs, the 2026-09-12 spec, the TDD plans and the operations
 page: everything that had been scattered has been merged here, together with the real state of

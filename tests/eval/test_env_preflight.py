@@ -221,20 +221,11 @@ def test_real_overlay_required_set_matches_the_no_default_contract(
         encoding="utf-8"
     )
     hard_reads = set(re.findall(r'os\.environ\["([A-Za-z_][A-Za-z0-9_]*)"\]', config_src))
-    from polymerhus.app.llm.providers import (
-        HUNTING_ROLES,
-        LEGACY_MODEL_KEYS,
-        ROLES,
-    )
+    from polymerhus.app.llm.providers import HUNTING_ROLES, ROLES
 
-    # A renamed model key with a one-window legacy fallback is not itself a hard
-    # requirement: `resolve_role` reads the recorded legacy key when the new one
-    # is unset, so an overlay that sets the legacy key satisfies the role. The
-    # fallback target stays required; the new key becomes required when the
-    # alias window closes (the hygiene pass).
-    role_keys = {
-        role.model_key for role in ROLES + HUNTING_ROLES
-    } - set(LEGACY_MODEL_KEYS)
+    # T10 closed the one-window alias: every role's declared model key is a hard
+    # requirement, with no legacy fallback.
+    role_keys = {role.model_key for role in ROLES + HUNTING_ROLES}
     assert hard_reads == {
         "NEO4J_URI",
         "NEO4J_USER",
@@ -455,7 +446,7 @@ def test_real_example_as_key_source(tmp_path: Path, preflight) -> None:
         "LLM_JOB_ORCHESTRATOR=opencode:manual/test\n"
         "LLM_CRAWLER=opencode:manual/test\n"
         "LLM_ANALYSER=opencode:manual/test\n"
-        "LLM_HUNTING_ORCHESTRATOR=opencode:manual/test\n"
+        "LLM_HUNTING_THREAT_MODELLER=opencode:manual/test\n"
         "LLM_HUNTING_HUNTER=opencode:manual/test\n"
         "LLM_POD_RUNNER=opencode:manual/test\n"
         "LLM_POD_TRIAGER=opencode:manual/test\n",

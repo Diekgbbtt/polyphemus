@@ -75,16 +75,17 @@ def first_uncovered_gap(
     """The first procedure-gap class the executed procedure does not cover.
 
     Iterates the seven fields in the S5 8.6 table order. A field the skill left
-    EMPTY is a recorded gap and an uncovered class regardless of the triager's
-    coverage claim (an empty section can never be covered); otherwise the class
-    is covered only when the triager judged its action, technique, or check
-    present in the D6 trail. An ABSENT excerpt is not a diff at all: the caller
-    records the gap and falls back to `failure-mode` (S5 8.6 step 1)."""
+    EMPTY is a SKIPPED class, not a gap: there is no authored procedure for the
+    triager to execute or the variant to cover, so re-minting it every lap
+    would loop to the budget cap without a new prediction (T10 H1). A populated
+    class is covered only when the triager judged its action, technique, or
+    check present in the D6 trail. An ABSENT excerpt is not a diff at all: the
+    caller records the gap and falls back to `failure-mode` (S5 8.6 step 4)."""
     if procedure is None:
         return None
     for basis, field in PROCEDURE_GAP_FIELD.items():
         if not str(getattr(procedure, field)).strip():
-            return basis
+            continue
         if basis not in covered:
             return basis
     return None
@@ -99,13 +100,14 @@ def mint_variant_basis(
         failure_mode_plausible: bool = False) -> VariantBasis | None:
     """The basis the triager's variant decision must carry (S5 8.6).
 
-    The execution triggers come first: a failed or diverged runner never yields
-    a meaningful procedure diff, so its recovery basis is the variant. Then the
-    seven gap classes in table order - the first uncovered class wins. When the
-    excerpt is absent, the gap is recorded and the path goes straight to the
-    failure-mode fallback. `covered=None` means the triager stated no coverage
-    assessment, so no deterministic gap exists; the caller keeps the triager's
-    own valid basis. `None` means no basis is derivable."""
+    The execution triggers come first (S5 8.6 steps 3): a failed or diverged
+    runner never yields a meaningful procedure diff, so its recovery basis is
+    the variant. Then the seven populated classes in table order - the first
+    uncovered class wins; an empty class is skipped. When the excerpt is absent,
+    the gap is recorded and the path goes straight to the failure-mode fallback.
+    `covered=None` means the triager stated no coverage assessment, so no
+    deterministic gap exists; the caller keeps the triager's own valid basis.
+    `None` means no basis is derivable."""
     if runner_diverged:
         return RUNNER_DIVERGENCE
     if runner_failed:
@@ -131,7 +133,13 @@ def is_duplicate_variant(prior: Iterable[VariantSpec], basis: str, spec: dict) -
     """Whether `(basis, detail)` is already in the experiment log (S5 8.6 step
     6): a basis and its derived spec already recorded is never re-minted. The
     detail is the derived spec itself - the `VariantSpec.spec` payload - so the
-    guard reads the log the triager already holds."""
+    guard reads the log the triager already holds.
+
+    The comparison is EXACT TEXT over the canonical key-sorted JSON (S5 8.6):
+    two semantically equivalent specs with different key order compare equal,
+    while a changed field does not. A re-worded but semantically identical spec
+    is NOT caught; the guard's intent is to stop a literal re-mint, not to
+    semantic-diff the triager's prose."""
     detail = variant_detail(spec)
     return any(v.declined_attribute == basis and variant_detail(v.spec) == detail
                for v in prior)

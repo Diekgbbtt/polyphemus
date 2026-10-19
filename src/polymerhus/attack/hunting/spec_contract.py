@@ -59,7 +59,8 @@ class SkillProcedure(BaseModel):
 
     Each field carries the loaded class skill's text for that procedure
     section. Fields default to the empty string so a partial skill still
-    round-trips; the triager treats an empty field as an uncovered gap."""
+    round-trips; the triager treats an empty field as a SKIPPED class, not a
+    coverage gap (there is no authored procedure to execute or cover)."""
 
     recon_action: str = ""
     bypass_technique: str = ""

@@ -173,28 +173,11 @@ class ThreatModellerSession:
 
     The modeller is the run-scoped parent of the hunting effort and models one
     L1 unit at a time on this thread, so its checkpointed memory carries the
-    run's reasoning across units. The role id is the renamed
-    `hunting_threat_modeller`; `HuntingOrchestratorSession` below is the
-    one-window legacy address of the same run-scoped pass."""
+    run's reasoning across units. The role id is `hunting_threat_modeller`
+    (S1 4.1; the planner-era alias is removed)."""
 
     run_id: str
     role_id: str = "hunting_threat_modeller"
-
-    @property
-    def thread_id(self) -> str:
-        return _compose(self.run_id, role_id=self.role_id)
-
-
-@dataclass(frozen=True)
-class HuntingOrchestratorSession:
-    """The LEGACY run-scoped session address (one-window alias, S1 4.1).
-
-    An interrupted run recorded before the rename resumes under this address and
-    its recorded `hunting_orchestrator` role; new runs use
-    `ThreatModellerSession`. The class retires with the role alias."""
-
-    run_id: str
-    role_id: str = "hunting_orchestrator"
 
     @property
     def thread_id(self) -> str:

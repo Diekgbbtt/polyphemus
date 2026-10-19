@@ -94,18 +94,49 @@ def test_the_graph_mints_the_first_uncovered_gap_as_the_basis():
     assert variants[1]["declined_attribute"] == "technology-grounding"
 
 
-def test_an_empty_procedure_section_wins_over_the_fallback():
+def test_an_empty_procedure_section_is_skipped_not_minted():
+    # T10 H1: an empty section is a skipped class. Even when the triager claims
+    # full coverage, the diff never loops on the empty pro-tips section; the
+    # plausible failure mode is the only derivable variant.
     spec = {**SPEC, "provenance": {
         **SPEC["provenance"],
         "skill_procedure": {**PROCEDURE, "pro_tips": ""}}}
-    derived = {**spec, "rationale": "run the untried pro tip"}
+    derived = {**spec, "rationale": "test one more observable failure mode"}
     env = _drive([
-        _variant(declined_attribute="failure-mode",
+        _variant(declined_attribute="pro-tips",
                  covered_gap_classes=sorted(ALL_GAPS),
                  failure_mode_plausible=True, variant_spec=derived),
         TERMINATE,
     ], spec=spec)
+    assert env["evidence"]["variant_specs"][1]["declined_attribute"] == "failure-mode"
+
+
+def test_an_unknown_coverage_token_invalidates_the_assessment():
+    # T10 H4: an unknown token is not a subset of the seven-class table, so the
+    # assessment is ignored and the triager's claimed basis stands (rather than
+    # the garbage token reading as an uncovered class).
+    env = _drive([
+        _variant(declined_attribute="pro-tips",
+                 covered_gap_classes=["not-a-gap-class"],
+                 variant_spec={**SPEC, "rationale": "use the pro tip"}),
+        TERMINATE,
+    ])
     assert env["evidence"]["variant_specs"][1]["declined_attribute"] == "pro-tips"
+
+
+def test_a_derived_spec_keeps_the_base_provenance():
+    # T10 H6 / S5 8.6 step 7: the graph restores the base provenance even when
+    # the triager's derived spec omits it, so the next stretch keeps its diff
+    # material.
+    omitting = {"rationale": "test one more observable failure mode"}
+    env = _drive([
+        _variant(covered_gap_classes=sorted(ALL_GAPS),
+                 failure_mode_plausible=True, variant_spec=omitting),
+        TERMINATE,
+    ])
+    record = env["evidence"]["variant_specs"][1]
+    assert record["spec"]["provenance"] == SPEC["provenance"]
+    assert record["spec"]["rationale"] == omitting["rationale"]
 
 
 def test_a_fully_covered_procedure_mints_a_failure_mode_variant():

@@ -34,7 +34,7 @@ You navigate the decision tree below: moving back to an earlier pass is normal r
   A loop whose slice stays thin, whose class skill is missing, or whose probes are blocked is a normal outcome: keep the set, record the drops and the residual gaps, and let the terminal write land.
   Never manufacture a confirmation to avoid an empty result.
 
-Hunting-artifact conciseness (binding): cap every config `rationale` and every note body (`note` / `body`) at roughly 500 characters, and write assertive, specific prose carrying only the essential information in meaningful concrete language - no filler, no restated context, no hedging, no narrative around the load-bearing fact.
+Hunting-artifact conciseness (binding): cap every spec `rationale` and every note body (`note` / `body`) at roughly 500 characters, and write assertive, specific prose carrying only the essential information in meaningful concrete language - no filler, no restated context, no hedging, no narrative around the load-bearing fact.
 
 ## The tree
 

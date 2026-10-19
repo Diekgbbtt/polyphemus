@@ -1,5 +1,8 @@
 # TypeSafe System One Use-Case Evaluation for polymerhus
 
+**AMENDED (unit threat model; carried by T10 #383).** The D4 field list cited in this evaluation predates the REDUCED D4 (S5 8.4): `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are retired. The statefulness analysis stands as a 2026-09-17 evaluation, not a live contract.
+
+
 *Status: RESEARCH/EVALUATION, 2026-09-17. This document is a proposal, not a ratified decision. No design spec is amended by it. Where a use case below would contradict a ratified spec, the conflict is flagged explicitly by spec name.*
 
 ## 1. Scope and method
