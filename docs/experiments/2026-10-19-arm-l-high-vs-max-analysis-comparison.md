@@ -25,6 +25,8 @@ The question: which residual well-formedness gains are owned by the analysis pip
 
 The max arm is better on this target, but narrowly.
 Its advantage comes from two things: a live auth-state differential that produced direct evidence about the session gate, and wording that satisfies the GT's keyword-conjunction statements.
+The traces support this mechanism reading.
+They do not exclude the one uncontrolled input (the recon insight text) as a contributing cause.
 The analysis pipeline owns 5 stable misses that neither thinking level fixes.
 Closing those 5 items would move the max arm to about 0.813 (0.716 + 0.097).
 The high arm reaches the same point when the E3 description rule also recovers its 2 run-specific S2/S4 items.
@@ -128,7 +130,7 @@ The high resolved it from the worked examples: "Example 3 uses FRONTED_BY for CD
 Example 8 uses FRONTED_BY for ReverseProxy.
 So FRONTED_BY for the reverse proxy."
 The max resolved it from the parenthetical mapping: "Mapping: CDN -> FRONTED_BY, WAF -> PROTECTED_BY, reverse proxy/gateway -> ROUTED_BY."
-Both are valid vocabulary, and no GT item depends on the label.
+Both readings are consistent with the skill text as written, and no GT item depends on the label.
 But the prompt is internally inconsistent: the positional mapping says reverse proxy -> ROUTED_BY while Example 8 links FRONTED_BY from a ReverseProxy.
 This is a prompt contradiction, not a thinking difference.
 A graph consumer that filters on `FRONTED_BY` sees completely different answers per run.
@@ -283,6 +285,7 @@ Miss inventory by owner (17 high / 15 max):
 
 Projection: fixing the 5 stable analysis-owned items moves the max arm to about 0.813 (0.716 + 0.097).
 The high arm reaches about 0.794 with the same fixes (0.697 + 0.097), and about 0.813 once the E3 description rule also recovers its 2 run-specific S2/S4 items.
+These are additive estimates from the fixed corpus; they ignore interactions between fixes.
 The recon and instrument items sit outside the analysis pipeline and are tracked separately.
 
 ## Residual enhancement room (analysis-owned) and the experiments
