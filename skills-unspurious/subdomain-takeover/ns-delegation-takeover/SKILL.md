@@ -13,75 +13,75 @@ The impact goal is full subzone control with trusted-origin serving plus session
 
 ## Attack Surface
 
-Delegate applies where a child zone is delegated to nameservers no owner still operates.
-Delegate applies where the nameserver domain has expired or no longer hosts authoritative answers.
-Delegate applies where control of the delegated label decides every host below it.
-Delegate varies only in which nameserver domain is expirable and which subzone records prove control.
+- **Applicability**: a child zone is delegated to nameservers no owner still operates.
+- **Nameserver expiry**: the nameserver domain has expired or no longer hosts authoritative answers.
+- **Label control**: control of the delegated label decides every host below it.
+- **Variation**: the delegation varies only in which nameserver domain is expirable and which subzone records prove control.
 
 ## Reconnaissance
 
-Inventory candidate names from transparency logs plus passive resolution history plus asset records plus infrastructure outputs.
-Record each candidate with its source and keep every delegation chain traced from parent to child zone.
-Trace each child-zone delegation to its nameserver domain and check expiry plus liveness signals.
-Probe authoritative answers for delegation responsiveness plus record correctness plus subzone coverage.
-Complete the survey when every delegated label carries a recorded nameserver chain with expiry and liveness verdicts.
+- **Candidate inventory**: inventory candidate names from transparency logs plus passive resolution history plus asset records plus infrastructure outputs.
+- **Candidate record**: record each candidate with its source and keep every delegation chain traced from parent to child zone.
+- **Delegation tracing**: trace each child-zone delegation to its nameserver domain and check expiry plus liveness signals.
+- **Authoritative probing**: probe authoritative answers for delegation responsiveness plus record correctness plus subzone coverage.
+- **Survey completion**: complete the survey when every delegated label carries a recorded nameserver chain with expiry and liveness verdicts.
 
 ## Detection Channels
 
-Delegate listens to delegation-liveness evidence, so only the entries below are live here.
-- Delegation trace showing a child zone cut to nameservers outside owner control.
-- Nameserver-domain expiry signal showing the domain is released or awaiting release.
-- Authoritative liveness gap showing no working answers from the delegated servers.
-- Subzone-wide proof showing published records resolving across hosts below the label.
+- **Channel scope**: the delegation listens to delegation-liveness evidence.
+- **Delegation trace**: a delegation trace shows a child zone cut to nameservers outside owner control.
+- **Nameserver-domain expiry signal**: a nameserver-domain expiry signal shows the domain is released or awaiting release.
+- **Authoritative liveness gap**: an authoritative liveness gap shows no working answers from the delegated servers.
+- **Subzone-wide proof**: subzone-wide proof shows published records resolving across hosts below the label.
 
 ## Adversarial Capabilities
 
-Delegate presupposes domain registration plus authoritative hosting plus zone publishing, and it consumes all three.
-- Register the expired nameserver domain through a standard registrar flow.
-- Host authoritative nameservers that answer for the delegated label.
-- Publish records that control hosts across the delegated subzone.
-- Observe expiry timing plus liveness gaps plus propagation across resolvers.
-- Hold authorization to attempt the registration and stop at a live-delegation finding.
+- **Prerequisites**: the delegation presupposes domain registration plus authoritative hosting plus zone publishing, and it consumes all three.
+- **Domain registration**: register the expired nameserver domain through a standard registrar flow.
+- **Authoritative hosting**: host authoritative nameservers that answer for the delegated label.
+- **Zone publishing**: publish records that control hosts across the delegated subzone.
+- **Signal observation**: observe expiry timing plus liveness gaps plus propagation across resolvers.
+- **Authorization boundary**: hold authorization to attempt the registration and stop at a live-delegation finding.
 
 ## Trust Assumptions
 
-When the subdomain feature executes, DNS is trusted to point only at owned resources and the platform is trusted to bind a name only to its owning account and delegations are trusted to stay live under owner control and alternate names are trusted to stay bound to their owning distribution.
-Sensitive content and session trust leak only through a name that still resolves to attacker-controlled content.
-That trust fails at the delegation-liveness clause because the child zone still delegates to expired nameservers that accept outside registration and authoritative hosting.
+- **The agreement**: when the subdomain feature executes, DNS is trusted to point only at owned resources and the platform is trusted to bind a name only to its owning account and delegations are trusted to stay live under owner control and alternate names are trusted to stay bound to their owning distribution.
+- **The exposure**: sensitive content and session trust leak only through a name that still resolves to attacker-controlled content.
+- **The failing clause**: the agreement fails at the delegation-liveness clause because the child zone still delegates to expired nameservers that accept outside registration and authoritative hosting.
 
 ## Key Vulnerabilities
 
-Expired-domain registration with authoritative hosting is the bent step the parent creation phrase cannot describe.
-Register the expired nameserver domain that the delegation still names.
-Host authoritative servers and publish records that answer for every host below the delegated label.
-Hold the proof shape abstract as subzone records resolving to content carrying <proof-token>.
-The delta over the parent is delegation tracing plus expiry and liveness checks with registration plus authoritative hosting and subzone-wide proof.
+- **Expired-domain registration**: expired-domain registration with authoritative hosting is the bent step the parent creation phrase cannot describe.
+- **Registration step**: register the expired nameserver domain that the delegation still names.
+- **Authoritative publishing**: host authoritative servers and publish records that answer for every host below the delegated label.
+- **Proof shape**: hold the proof shape abstract as subzone records resolving to content carrying <proof-token>.
+- **Variant delta**: the delta over the parent is delegation tracing plus expiry and liveness checks with registration plus authoritative hosting and subzone-wide proof.
 
 ## Advanced Techniques
 
-Anchor proof on subzone breadth rather than one hostname because delegation control covers the whole label.
-Treat child-zone cuts as authority boundaries because delegated answers outrank parent records.
-Treat propagation delay as confirmation input because resolver caches converge on the new authoritative answers over time.
-Confirm control only through multiple hosts below the label resolving to published records with <proof-token> evidence.
-Monitor transparency logs for unexpected issuance on subzone names during the proof window.
+- **Proof anchoring**: anchor proof on subzone breadth rather than one hostname because delegation control covers the whole label.
+- **Authority boundaries**: treat child-zone cuts as authority boundaries because delegated answers outrank parent records.
+- **Propagation delay**: treat propagation delay as confirmation input because resolver caches converge on the new authoritative answers over time.
+- **Control confirmation**: confirm control only through multiple hosts below the label resolving to published records with <proof-token> evidence.
+- **Issuance monitoring**: monitor transparency logs for unexpected issuance on subzone names during the proof window.
 
 ## Bypass Techniques
 
-Read each delegation control as seizure input and proceed only where the control permits.
-- Treat missing registry lock or expiry as the signal that the nameserver domain is registrable.
-- Treat lifeless authoritative answers as the signal that no owner still serves the delegation.
-- Treat issuance restriction as a guardrail that limits certificate issuance while the delegation is triaged.
-- Treat a live authoritative answer from the owner as a stop condition that marks the delegation unclaimable.
+- **Bypass scope**: read each delegation control as seizure input and proceed only where the control permits.
+- **Missing registry lock**: treat missing registry lock or expiry as the signal that the nameserver domain is registrable.
+- **Lifeless authoritative answers**: treat lifeless authoritative answers as the signal that no owner still serves the delegation.
+- **Issuance restriction**: treat issuance restriction as a guardrail that limits certificate issuance while the delegation is triaged.
+- **Live authoritative answer**: treat a live authoritative answer from the owner as a stop condition that marks the delegation unclaimable.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Carry proven subzone control into trust-policy impact owned by consumer checks.
-- Carry subzone content into allowlisted redirect and callback abuse across delegated hosts.
-- Carry subzone scripts into policy and script-source trust abuse.
-- Carry subzone responses into scoped-cookie and cross-origin pivot below the label.
-- Name the request-forgery companion at the fetch step rather than restating its procedure here.
+- **Chain scope**: carry proven subzone control into trust-policy impact owned by consumer checks.
+- **Redirect and callback abuse**: carry subzone content into allowlisted redirect and callback abuse across delegated hosts.
+- **Policy and script-source abuse**: carry subzone scripts into policy and script-source trust abuse.
+- **Cookie and origin pivot**: carry subzone responses into scoped-cookie and cross-origin pivot below the label.
+- **Companion-skill reference**: name the request-forgery companion at the fetch step rather than restating its procedure here.
 
 ## Testing Methodology
 
@@ -94,20 +94,20 @@ Delegate runs enumeration plus delegation tracing plus liveness checking plus au
 
 ## False Positives
 
-Stop when the evidence shows a live or guarded delegation.
-- Delegations whose nameservers still answer authoritatively for the child zone.
-- Nameserver domains that remain registered and unexpirable by outside parties.
-- Resolver failures caused by transient outage rather than orphaned delegation.
-- Catch-all answers from parent infrastructure that mimic subzone control.
+- **Stop condition**: stop when the evidence shows a live or guarded delegation.
+- **Live delegation**: delegations whose nameservers still answer authoritatively for the child zone.
+- **Registered nameserver domain**: nameserver domains that remain registered and unexpirable by outside parties.
+- **Transient resolver failure**: resolver failures caused by transient outage rather than orphaned delegation.
+- **Parent catch-all answers**: catch-all answers from parent infrastructure that mimic subzone control.
 
 ## Pro Tips
 
-Delegate rewards careful tracing plus broad proof plus clean teardown.
-1. Trace the full parent-to-child delegation chain before judging any expiry signal.
-2. Prefer a minimal static proof page carrying <proof-token> served across several subzone hosts.
-3. Record expiry state plus authoritative answers plus propagation per attempt.
-4. Release the registered domain and remove authoritative hosting immediately after proof completes.
-5. Treat any live authoritative answer from the owner as critical stop evidence.
+- **Discipline**: the delegation rewards careful tracing plus broad proof plus clean teardown.
+- **Chain tracing**: trace the full parent-to-child delegation chain before judging any expiry signal.
+- **Minimal proof page**: prefer a minimal static proof page carrying <proof-token> served across several subzone hosts.
+- **State recording**: record expiry state plus authoritative answers plus propagation per attempt.
+- **Clean teardown**: release the registered domain and remove authoritative hosting immediately after proof completes.
+- **Live-answer stop evidence**: treat any live authoritative answer from the owner as critical stop evidence.
 
 ## Summary
 

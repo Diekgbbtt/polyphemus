@@ -29,20 +29,20 @@ This variant owns the post-claim step the web-content claim cannot describe: pub
 
 ## Detection Channels
 
-- A provider unclaimed-resource response for a mail-record host, which is the claimable signal for this variant.
-- A certificate naming the provider default rather than the mail-record host, which corroborates an external binding.
-- The parent domain's published policy naming a host that no longer resolves to an owned resource.
-- A message that passes the parent domain's authorisation checks after the claimed host publishes its records, which proves send authority.
-- A message addressed to the trusted name arriving at the claimed host, which proves receipt.
-- The claimed host serving a unique proof marker, which separates control from a provider default page.
+- **Unclaimed-resource response**: a provider unclaimed-resource response for a mail-record host, which is the claimable signal for this variant.
+- **Provider-default certificate**: a certificate naming the provider default rather than the mail-record host, which corroborates an external binding.
+- **Stale policy host**: the parent domain's published policy names a host that no longer resolves to an owned resource.
+- **Send-authority verdict**: a message that passes the parent domain's authorisation checks after the claimed host publishes its records, which proves send authority.
+- **Receipt delivery**: a message addressed to the trusted name arriving at the claimed host, which proves receipt.
+- **Unique proof marker**: the claimed host serves a unique proof marker, which separates control from a provider default page.
 
 ## Adversarial Capabilities
 
-- Operate an account on the provider a mail record points at, able to create the exact required host.
-- Publish records for the claimed host where the provider path allows it.
-- Hold a mailbox or forwarding configuration on the claimed host to receive messages addressed to the trusted name.
-- Send and read mail from the parent domain's perspective, so the authentication verdict on a delivered message is observable.
-- Confirm scope before any claim step, and revert the claim and its records after the proof completes.
+- **Provider account**: operate an account on the provider a mail record points at, able to create the exact required host.
+- **Record publication**: publish records for the claimed host where the provider path allows it.
+- **Receipt configuration**: hold a mailbox or forwarding configuration on the claimed host to receive messages addressed to the trusted name.
+- **Send-and-read ability**: send and read mail from the parent domain's perspective, so the authentication verdict on a delivered message is observable.
+- **Scope and revert discipline**: confirm scope before any claim step, and revert the claim and its records after the proof completes.
 
 ## Trust Assumptions
 
@@ -114,21 +114,21 @@ Claim runs mail-record enumeration plus resolution plus fingerprinting plus auth
 
 ## False Positives
 
-- An unclaimed host whose provider enforces ownership verification before binding, confirmed by a refused claim.
-- A record that points at a live, owned resource, confirmed by a certificate and content that match the owner.
-- A provider default response served from a live resource rather than an unclaimed binding.
-- A parent domain that publishes no authorising records, so a claim over the host authorises nothing.
-- A message that arrives without the claim, because the parent domain's policy was already permissive.
-- A delivery refused at the receiving side for an unrelated reason, which is not evidence about the claim.
+- **Enforced verification**: an unclaimed host whose provider enforces ownership verification before binding, confirmed by a refused claim.
+- **Live owned resource**: a record that points at a live, owned resource, confirmed by a certificate and content that match the owner.
+- **Live-resource default**: a provider default response served from a live resource rather than an unclaimed binding.
+- **No authorising records**: a parent domain that publishes no authorising records, so a claim over the host authorises nothing.
+- **Pre-existing permissive policy**: a message that arrives without the claim, because the parent domain's policy was already permissive.
+- **Unrelated refusal**: a delivery refused at the receiving side for an unrelated reason, which is not evidence about the claim.
 
 ## Pro Tips
 
-1. Enumerate the mail records as their own pass; the web-facing enumeration misses selector and include hosts.
-2. Read the parent domain's published policy before claiming, because the post-claim proof depends on it.
-3. The post-claim publication is the proof for send authority; a claimed host alone proves nothing about mail.
-4. Take the receipt completion where publication is blocked, and keep the two completions apart in the report.
-5. Record the claim chain and revert everything immediately, because a standing authorising record is a live capability.
-6. Treat the mail surface as a lifecycle problem: remove or re-verify the record at decommission time, on every record family.
+- **Separate mail pass**: enumerate the mail records as their own pass; the web-facing enumeration misses selector and include hosts.
+- **Policy-first reading**: read the parent domain's published policy before claiming, because the post-claim proof depends on it.
+- **Publication as proof**: the post-claim publication is the proof for send authority; a claimed host alone proves nothing about mail.
+- **Narrower completion**: take the receipt completion where publication is blocked, and keep the two completions apart in the report.
+- **Immediate revert**: record the claim chain and revert everything immediately, because a standing authorising record is a live capability.
+- **Lifecycle discipline**: treat the mail surface as a lifecycle problem: remove or re-verify the record at decommission time, on every record family.
 
 ## Summary
 
