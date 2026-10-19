@@ -13,62 +13,62 @@ The override goal is a visible behavior change against developer intent that lat
 
 ## Attack Surface
 
-Applicability centers on an LLM-backed feature reachable through direct conversational input in the attacker's own session.
-The feature accepts free-text turns that are merged into a single prompt alongside developer instructions.
-No ingested third-party content and no victim trigger is required for this variant.
-A tool layer or output sink may exist downstream, but this variant proves only the chat-behavior override itself.
+- **Applicability**: centers on an LLM-backed feature reachable through direct conversational input in the attacker's own session.
+- **Merge behavior**: the feature accepts free-text turns that are merged into a single prompt alongside developer instructions.
+- **Exclusions**: no ingested third-party content and no victim trigger is required for this variant.
+- **Proof scope**: a tool layer or output sink may exist downstream, but this variant proves only the chat-behavior override itself.
 
 ## Reconnaissance
 
-Override work starts by mapping what the model obeys before sending any attack text.
-- Enumerate every direct prompt entry where attacker text merges with developer instructions.
-- Record the model's declared capabilities plus refusal baseline plus boilerplate phrasing.
-- Note guard placement and whether moderation shares the model or sits outside it.
-- List downstream tools and sinks only to scope follow-up variants, since this variant stops at behavior proof.
+- **Behavior mapping**: override work starts by mapping what the model obeys before sending any attack text.
+- **Entry enumeration**: enumerate every direct prompt entry where attacker text merges with developer instructions.
+- **Capability baseline**: record the model's declared capabilities plus refusal baseline plus boilerplate phrasing.
+- **Guard placement**: note guard placement and whether moderation shares the model or sits outside it.
+- **Follow-up scoping**: list downstream tools and sinks only to scope follow-up variants, since this variant stops at behavior proof.
 
 ## Detection Channels
 
-Override listens to chat behavior, so only the entries below are live here.
-- Behavior change against developer intent confirms the model followed attacker instructions.
-- Refusal-pattern shift across repeated turns signals a guardrail boundary rather than a pass.
-- Absence of change after override plus breakout plus wrapped attempts records a resisted probe.
-- Non-reproducible compliance across runs marks chatter rather than a finding.
+- **Channel scope**: override listens to chat behavior, so only the entries below are live here.
+- **Behavior change**: behavior change against developer intent confirms the model followed attacker instructions.
+- **Refusal-pattern shift**: refusal-pattern shift across repeated turns signals a guardrail boundary rather than a pass.
+- **Resisted probe**: absence of change after override plus breakout plus wrapped attempts records a resisted probe.
+- **Non-reproducible compliance**: non-reproducible compliance across runs marks chatter rather than a finding.
 
 ## Adversarial Capabilities
 
-Override presupposes direct chat submission in the attacker's own session, and it consumes that access.
-- Submit arbitrary text turns in the attacker's own session without needing a victim.
-- Shape replacement instructions that compete with developer instructions in the merged prompt.
-- Close surrounding framing and open a new instruction block through delimiter confusion.
-- Wrap payloads in encoding or obfuscation forms to probe filter strength.
-- Repeat turns across a session to test multi-turn instruction persistence.
+- **Prerequisites**: override presupposes direct chat submission in the attacker's own session, and it consumes that access.
+- **Turn submission**: submit arbitrary text turns in the attacker's own session without needing a victim.
+- **Replacement shaping**: shape replacement instructions that compete with developer instructions in the merged prompt.
+- **Delimiter confusion**: close surrounding framing and open a new instruction block through delimiter confusion.
+- **Payload wrapping**: wrap payloads in encoding or obfuscation forms to probe filter strength.
+- **Multi-turn repetition**: repeat turns across a session to test multi-turn instruction persistence.
 
 ## Trust Assumptions
 
-The feature executes under an agreement that the model separates instructions from data, treats chat input as untrusted data, holds tool choice plus arguments to developer intent, keeps hidden system text undisclosed, and emits only sink-safe output.
-Sensitive application behavior changes only when developer instructions direct them.
-This variant breaks the instruction-separation clause because attacker chat text is executed as instructions in the attacker's own turns.
+- **The agreement**: the feature executes under an agreement that the model separates instructions from data, treats chat input as untrusted data, holds tool choice plus arguments to developer intent, keeps hidden system text undisclosed, and emits only sink-safe output.
+- **The behavior bound**: sensitive application behavior changes only when developer instructions direct them.
+- **The failing clause**: this variant breaks the instruction-separation clause because attacker chat text is executed as instructions in the attacker's own turns.
 
 ## Key Vulnerabilities
 
 ### Instruction Replacement
 
-Send replacement directives inside the attacker's own turns that compete with the developer instructions in the merged prompt.
-Use placeholder-shaped directive blocks rather than literal command text, and vary the framing across attempts.
-The parent direct-probe step names only generic overriding and cannot describe turn-scoped behavior proof, so this variant owns the replacement procedure.
+- **Replacement directives**: send replacement directives inside the attacker's own turns that compete with the developer instructions in the merged prompt.
+- **Directive shaping**: use placeholder-shaped directive blocks rather than literal command text, and vary the framing across attempts.
+- **Procedure ownership**: the parent direct-probe step names only generic overriding and cannot describe turn-scoped behavior proof, so this variant owns the replacement procedure.
 
 ### Delimiter Breakout
 
-Close the application's surrounding framing with a placeholder closer, then open a new instruction block in the same turn.
-Vary the closer shape across attempts because one framing style never covers every merge template.
-Treat a behavior change after the closer as a positive and treat unchanged framing as a resisted probe.
+- **Framing closure**: close the application's surrounding framing with a placeholder closer, then open a new instruction block in the same turn.
+- **Closer variation**: vary the closer shape across attempts because one framing style never covers every merge template.
+- **Breakout verdict**: treat a behavior change after the closer as a positive and treat unchanged framing as a resisted probe.
 
 ### Wrapped Smuggling
 
-Wrap the replacement or breakout shape in encoding plus obfuscation plus translation forms to test filter strength.
-Combine each wrapper with a delimiter breakout because filters often inspect only one layer.
-Present the instruction in the target template's own syntax, such as a role-marked document fragment or a tag-shaped block, so the merged prompt reads it as structure rather than as data.
-Record which wrapper family passes and which the guard stops, since wrapper strength is an aspect of this variant rather than its own finding.
+- **Wrapper stacking**: wrap the replacement or breakout shape in encoding plus obfuscation plus translation forms to test filter strength.
+- **Breakout combination**: combine each wrapper with a delimiter breakout because filters often inspect only one layer.
+- **Template-syntax delivery**: present the instruction in the target template's own syntax, such as a role-marked document fragment or a tag-shaped block, so the merged prompt reads it as structure rather than as data.
+- **Wrapper verdict**: record which wrapper family passes and which the guard stops, since wrapper strength is an aspect of this variant rather than its own finding.
 
 ## Advanced Techniques
 
@@ -77,23 +77,23 @@ Record which wrapper family passes and which the guard stops, since wrapper stre
 
 ## Bypass Techniques
 
-Bypass forms stay aspects inside this variant because no wrapper changes the override step itself.
-- Encoding wrappers transform the instruction shape past a textual input filter.
-- Encoded, transposed, or substituted-alphabet forms of a blocked phrase pass a keyword matcher, so probe the matcher beside the model.
-- Character-substitution wrappers alter surface form while preserving model readability.
-- Translation wrappers shift the instruction into another language form the filter misses.
-- Multi-turn laundering splits one blocked request across several turns that merge in context.
-- Role-play framing wraps the same instruction in a hypothetical the guard misclassifies.
+- **Bypass scope**: bypass forms stay aspects inside this variant because no wrapper changes the override step itself.
+- **Encoding wrappers**: encoding wrappers transform the instruction shape past a textual input filter.
+- **Matcher probing**: encoded, transposed, or substituted-alphabet forms of a blocked phrase pass a keyword matcher, so probe the matcher beside the model.
+- **Character-substitution wrappers**: character-substitution wrappers alter surface form while preserving model readability.
+- **Translation wrappers**: translation wrappers shift the instruction into another language form the filter misses.
+- **Multi-turn laundering**: multi-turn laundering splits one blocked request across several turns that merge in context.
+- **Role-play framing**: role-play framing wraps the same instruction in a hypothetical the guard misclassifies.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Override chains forward into proofs because chat compliance alone is only behavior.
-- Hand a stable override to context-leakage for hidden-text extraction through verbatim-repeat requests.
-- Hand a stable override to tool-abuse for privileged calls with attacker-chosen arguments.
-- Hand a stable override to output-handling for sink-bearing emission and renderer proof.
-- Treat guardrail bypassability discovered here as confirmation discipline inside each follow-up.
+- **Chain scope**: override chains forward into proofs because chat compliance alone is only behavior.
+- **Leakage handoff**: hand a stable override to context-leakage for hidden-text extraction through verbatim-repeat requests.
+- **Tool handoff**: hand a stable override to tool-abuse for privileged calls with attacker-chosen arguments.
+- **Handling handoff**: hand a stable override to output-handling for sink-bearing emission and renderer proof.
+- **Confirmation discipline**: treat guardrail bypassability discovered here as confirmation discipline inside each follow-up.
 
 ## Testing Methodology
 
@@ -106,21 +106,21 @@ Override runs direct turns first and everything else follows, because no sink pr
 
 ## False Positives
 
-Stop when the evidence shows words without effect, because chatter without a behavior change is not a finding.
-- The model describing an override it never performs in subsequent behavior.
-- Hallucinated instruction text that matches no real developer directive.
-- Single-run compliance that never reproduces across repeated turns.
-- Properly refused turns where the refusal boundary holds across wrappers.
-- Sandbox-scoped compliance with no reachable tool, sink, or hidden text behind it.
+- **Stop rule**: stop when the evidence shows words without effect, because chatter without a behavior change is not a finding.
+- **Described override**: the model describing an override it never performs in subsequent behavior.
+- **Hallucinated instruction text**: hallucinated instruction text that matches no real developer directive.
+- **Single-run compliance**: single-run compliance that never reproduces across repeated turns.
+- **Held refusal boundary**: properly refused turns where the refusal boundary holds across wrappers.
+- **Sandbox-scoped compliance**: sandbox-scoped compliance with no reachable tool, sink, or hidden text behind it.
 
 ## Pro Tips
 
-Override rewards placeholder shapes plus repetition plus wrapper layering.
-1. Prefer abstract directive shapes first, then promote only stable positives to wrapped forms.
-2. Vary the delimiter closer per merge template rather than reusing one framing style.
-3. Combine each wrapper with a breakout because single-layer probes undertest filters.
-4. Log every turn behind its wrapper family so pass and stop verdicts stay attributable.
-5. Stop promoting non-reproducible compliance and record it as chatter rather than impact.
+- **Shape discipline**: override rewards placeholder shapes plus repetition plus wrapper layering.
+- **Staged promotion**: prefer abstract directive shapes first, then promote only stable positives to wrapped forms.
+- **Closer variation**: vary the delimiter closer per merge template rather than reusing one framing style.
+- **Wrapper combination**: combine each wrapper with a breakout because single-layer probes undertest filters.
+- **Attribution logging**: log every turn behind its wrapper family so pass and stop verdicts stay attributable.
+- **Chatter stopping**: stop promoting non-reproducible compliance and record it as chatter rather than impact.
 
 ## Summary
 

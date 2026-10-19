@@ -13,81 +13,81 @@ The handling goal is proven rendering, execution, forwarding, or exfiltration ra
 
 ## Attack Surface
 
-Applicability centers on an LLM-backed feature whose output flows into an interpreting sink.
-The sink renders markup, runs statements, follows links, or forwards content to another system.
-Delivery may arrive through direct turns or planted content, since delivery is an aspect carried inside this variant.
-A sink transcript or otherwise observable sink behavior is required for this variant.
+- **Applicability**: centers on an LLM-backed feature whose output flows into an interpreting sink.
+- **Sink behaviors**: the sink renders markup, runs statements, follows links, or forwards content to another system.
+- **Delivery paths**: delivery may arrive through direct turns or planted content, since delivery is an aspect carried inside this variant.
+- **Evidence requirement**: a sink transcript or otherwise observable sink behavior is required for this variant.
 
 ## Reconnaissance
 
-Handling work starts by mapping the output path before coaxing any sink-bearing text.
-- Enumerate every sink the model output reaches, such as renderers plus statement runners plus link followers plus forwarders.
-- Record the encoding or sanitization applied between the model and each sink.
-- Note which sink identity is under test per run, since sink identity is an aspect carried inside this variant.
-- List the sink transcript source that will confirm rendering, execution, or forwarding.
+- **Output-path mapping**: handling work starts by mapping the output path before coaxing any sink-bearing text.
+- **Sink enumeration**: enumerate every sink the model output reaches, such as renderers plus statement runners plus link followers plus forwarders.
+- **Encoding recording**: record the encoding or sanitization applied between the model and each sink.
+- **Sink identity**: note which sink identity is under test per run, since sink identity is an aspect carried inside this variant.
+- **Transcript source**: list the sink transcript source that will confirm rendering, execution, or forwarding.
 
 ## Detection Channels
 
-Handling listens to sink behavior, so only the entries below are live here.
-- Rendered script execution or dispatched request at the sink confirms a handling positive.
-- Outbound request carrying context data to an attacker-observable destination confirms an exfiltration channel.
-- Name-resolution queries whose labels carry context data confirm an exfiltration channel where full egress is filtered.
-- Sink transcript showing the emitted markup or statements confirms the emission reached the sink.
-- Properly encoded output at the sink confirms a negative even when the model emitted a suspicious shape.
+- **Channel scope**: handling listens to sink behavior, so only the entries below are live here.
+- **Rendered execution**: rendered script execution or dispatched request at the sink confirms a handling positive.
+- **Outbound exfiltration**: outbound request carrying context data to an attacker-observable destination confirms an exfiltration channel.
+- **Name-resolution exfiltration**: name-resolution queries whose labels carry context data confirm an exfiltration channel where full egress is filtered.
+- **Transcript emission**: sink transcript showing the emitted markup or statements confirms the emission reached the sink.
+- **Proper encoding**: properly encoded output at the sink confirms a negative even when the model emitted a suspicious shape.
 
 ## Adversarial Capabilities
 
-Handling presupposes prompt influence plus sink reachability, and it consumes both.
-- Submit coaxing text through direct turns or through planted ingested content.
-- Elicit markup, statement, or link bearing output shapes through placeholder-structured requests.
-- Vary the emission shape per sink identity under test.
-- Inspect the sink transcript plus rendered behavior for execution evidence.
-- Operate an observable destination to receive exfiltrated values where the run permits it.
+- **Prerequisites**: handling presupposes prompt influence plus sink reachability, and it consumes both.
+- **Coaxing submission**: submit coaxing text through direct turns or through planted ingested content.
+- **Emission elicitation**: elicit markup, statement, or link bearing output shapes through placeholder-structured requests.
+- **Emission variation**: vary the emission shape per sink identity under test.
+- **Evidence inspection**: inspect the sink transcript plus rendered behavior for execution evidence.
+- **Destination operation**: operate an observable destination to receive exfiltrated values where the run permits it.
 
 ## Trust Assumptions
 
-The feature executes under an agreement that the model separates instructions from data, treats ingested content as untrusted data, holds tool choice plus arguments to developer intent, keeps hidden system text undisclosed, and emits only sink-safe output.
-Sensitive application behavior changes only when developer instructions direct them.
-This variant breaks the sink-safe-output clause because model-emitted markup plus statements plus links render, execute, forward, or exfiltrate at the sink.
+- **The agreement**: the feature executes under an agreement that the model separates instructions from data, treats ingested content as untrusted data, holds tool choice plus arguments to developer intent, keeps hidden system text undisclosed, and emits only sink-safe output.
+- **The behavior bound**: sensitive application behavior changes only when developer instructions direct them.
+- **The failing clause**: this variant breaks the sink-safe-output clause because model-emitted markup plus statements plus links render, execute, forward, or exfiltrate at the sink.
 
 ## Key Vulnerabilities
 
 ### Markup Emission
 
-Coax placeholder-shaped markup from the model that the downstream renderer interprets.
-Vary the markup shape per renderer under test because one shape never covers every sink.
-The parent output-handling step names only generic emission and cannot describe sink-proven rendering, so this variant owns the emission procedure.
+- **Markup coaxing**: coax placeholder-shaped markup from the model that the downstream renderer interprets.
+- **Shape variation**: vary the markup shape per renderer under test because one shape never covers every sink.
+- **Procedure ownership**: the parent output-handling step names only generic emission and cannot describe sink-proven rendering, so this variant owns the emission procedure.
 
 ### Statement Emission
 
-Coax placeholder-shaped statements that a downstream statement runner or forwarder interprets.
-Confirm interpretation in the sink transcript rather than in chat text, because emitted text without sink behavior proves nothing.
-Treat encoded or neutralised statements at the sink as a negative even when the emission looked suspicious.
+- **Statement coaxing**: coax placeholder-shaped statements that a downstream statement runner or forwarder interprets.
+- **Transcript confirmation**: confirm interpretation in the sink transcript rather than in chat text, because emitted text without sink behavior proves nothing.
+- **Neutralised verdict**: treat encoded or neutralised statements at the sink as a negative even when the emission looked suspicious.
 
 ### Exfiltration Emission
 
-Coax placeholder-shaped link or embed constructs that cause the sink to request an observable destination with context data attached.
-Where full egress is filtered, a name-resolution query whose labels carry the data still leaves the boundary, so test the resolution channel beside the request channel.
-Confirm the outbound request carries the expected value before claiming an exfiltration channel.
-Treat a markdown-image pattern that reaches a renderer as handling here, since the proving artifact is the rendered request rather than a tool log.
+- **Embed coaxing**: coax placeholder-shaped link or embed constructs that cause the sink to request an observable destination with context data attached.
+- **Resolution channel**: where full egress is filtered, a name-resolution query whose labels carry the data still leaves the boundary, so test the resolution channel beside the request channel.
+- **Value confirmation**: confirm the outbound request carries the expected value before claiming an exfiltration channel.
+- **Markdown-image rule**: treat a markdown-image pattern that reaches a renderer as handling here, since the proving artifact is the rendered request rather than a tool log.
 
 ## Bypass Techniques
 
-Bypass forms stay aspects inside this variant because no wrapper changes the sink step itself.
-- Encoding wrappers disguise the emission shape past output-side filters.
-- Markup variation rotates tag and attribute forms when one shape is neutralised.
-- Split-emission framing spreads one sink payload across several model outputs that merge at the sink.
-- Context-breakout shaping closes the surrounding sink template before opening the new construct.
+- **Bypass scope**: bypass forms stay aspects inside this variant because no wrapper changes the sink step itself.
+- **Encoding wrappers**: encoding wrappers disguise the emission shape past output-side filters.
+- **Markup variation**: markup variation rotates tag and attribute forms when one shape is neutralised.
+- **Split-emission framing**: split-emission framing spreads one sink payload across several model outputs that merge at the sink.
+- **Context-breakout shaping**: context-breakout shaping closes the surrounding sink template before opening the new construct.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Handling chains forward into impact because emission without sink behavior is only text.
-- Hand a rendered-script positive to a stored-content finding where the sink persists the output.
-- Hand an exfiltration positive to indirect-injection-plant where the leaked value seeds the next plant.
-- Hand a statement-runner positive to tool-abuse where the executed statement reaches a privileged tool.
-- Treat encoding gaps found here as the output-side intelligence every sibling variant reuses.
+- **Chain scope**: handling chains forward into impact because emission without sink behavior is only text.
+- **Stored-content handoff**: hand a rendered-script positive to a stored-content finding where the sink persists the output.
+- **Plant handoff**: hand an exfiltration positive to indirect-injection-plant where the leaked value seeds the next plant.
+- **Tool handoff**: hand a statement-runner positive to tool-abuse where the executed statement reaches a privileged tool.
+- **Encoding intelligence**: treat encoding gaps found here as the output-side intelligence every sibling variant reuses.
 
 ## Testing Methodology
 
@@ -100,22 +100,22 @@ Handling runs emission first and everything else follows, because no impact clai
 
 ## False Positives
 
-Stop when the evidence shows suspicious text without sink behavior, because emission without interpretation is not a finding.
-- Model output the sink properly encodes or sanitizes before rendering or running.
-- Emitted shapes that never reach a sink transcript or observable sink behavior.
-- Exfiltration-shaped output whose outbound request never arrives at the observable destination.
-- Single-run rendering that never reproduces across repeated emissions.
-- Sandbox-rendered output with no sensitive data or action reachable behind it.
+- **Stop rule**: stop when the evidence shows suspicious text without sink behavior, because emission without interpretation is not a finding.
+- **Properly encoded output**: model output the sink properly encodes or sanitizes before rendering or running.
+- **Unreached emission**: emitted shapes that never reach a sink transcript or observable sink behavior.
+- **Undelivered exfiltration**: exfiltration-shaped output whose outbound request never arrives at the observable destination.
+- **Single-run rendering**: single-run rendering that never reproduces across repeated emissions.
+- **Sandbox-rendered output**: sandbox-rendered output with no sensitive data or action reachable behind it.
 
 ## Pro Tips
 
-Handling rewards sink-first thinking plus emission variety plus encoding checks.
-1. Chase the sink on every probe because an emission is only critical where interpretation happens.
-2. Vary the emission shape per sink identity rather than reusing one markup form.
-3. Test image and embed rendering explicitly because it is a classic zero-click exfil channel.
-4. Confirm each positive against the encoding path so neutralised output never ships as a finding.
-5. Log each emission behind its sink plus shape so rendered and neutralised verdicts stay separable.
-6. Sub-tag every emission and callback so the firing sink stays attributable when several sinks share one run.
+- **Sink-first discipline**: handling rewards sink-first thinking plus emission variety plus encoding checks.
+- **Sink chasing**: chase the sink on every probe because an emission is only critical where interpretation happens.
+- **Emission variation**: vary the emission shape per sink identity rather than reusing one markup form.
+- **Image testing**: test image and embed rendering explicitly because it is a classic zero-click exfil channel.
+- **Encoding confirmation**: confirm each positive against the encoding path so neutralised output never ships as a finding.
+- **Verdict separation**: log each emission behind its sink plus shape so rendered and neutralised verdicts stay separable.
+- **Sub-tagging**: sub-tag every emission and callback so the firing sink stays attributable when several sinks share one run.
 
 ## Summary
 

@@ -12,107 +12,105 @@ Applications that pass untrusted input into a model prompt are vulnerable to pro
 ## Attack Surface
 
 **Direct Injection**
-- Chat interfaces, assistants, transform features (summarize, translate, rewrite), search, support agents
+- **Direct surfaces**: chat interfaces, assistants, transform features (summarize, translate, rewrite), search, support agents
 
 **Indirect Injection**
-- Content the model ingests: pages, documents, messages, retrieved corpus entries, file names, markup metadata, image descriptions, code comments
+- **Ingested content**: pages, documents, messages, retrieved corpus entries, file names, markup metadata, image descriptions, code comments
 
 **Tool and Agent Layer**
-- Function calling, plugins, code execution, query and fetch tools, file access, browsing, messaging actions
+- **Tool surfaces**: function calling, plugins, code execution, query and fetch tools, file access, browsing, messaging actions
 - **Tool-server endpoints**: a tool layer reachable as its own endpoint, where tools are listed and called directly and the model is bypassed
 
 **Retrieval Layer**
-- The corpus store behind retrieval, reachable on its own beside the chat path, with its own scoping and identifier space
+- **Corpus store**: the corpus store behind retrieval, reachable on its own beside the chat path, with its own scoping and identifier space
 
 **Output Sinks**
-- Model output rendered as markup, used in a query or command, or followed as a redirect or link
+- **Output sinks**: model output rendered as markup, used in a query or command, or followed as a redirect or link
 
 ## Reconnaissance
 
 ### Identify the Surface
 
-- Where does user input enter a prompt: direct chat, or content the model ingests
-- What can the model reach: the retrieved corpus, tools, function schemas, memory, other tenants' data
-- Enumerate the tool layer as its own endpoint where it is reachable: a listing operation that returns every tool with its input schema, and a call path per tool
-- Enumerate the retrieval layer: which corpus, namespace, and record identifiers the store exposes beside the chat path
-- Where does output go: rendered markup, a downstream API, another agent
-- Is there a moderation or guard layer, and is it in-band (the same model) or out-of-band
+- **Prompt entry points**: where does user input enter a prompt: direct chat, or content the model ingests
+- **Model reach**: what can the model reach: the retrieved corpus, tools, function schemas, memory, other tenants' data
+- **Tool-layer enumeration**: enumerate the tool layer as its own endpoint where it is reachable: a listing operation that returns every tool with its input schema, and a call path per tool
+- **Retrieval-layer enumeration**: enumerate the retrieval layer: which corpus, namespace, and record identifiers the store exposes beside the chat path
+- **Output destinations**: where does output go: rendered markup, a downstream API, another agent
+- **Guard layer**: is there a moderation or guard layer, and is it in-band (the same model) or out-of-band
 
 ### Fingerprint the Rules
 
-- Ask the model to repeat its instructions verbatim, or to output everything above the first user message
-- Observe refusal patterns and boilerplate to infer the system prompt and the guardrail boundary
+- **Verbatim-repeat requests**: ask the model to repeat its instructions verbatim, or to output everything above the first user message
+- **Refusal observation**: observe refusal patterns and boilerplate to infer the system prompt and the guardrail boundary
 
 ## Detection Channels
 
-- Behaviour change against developer intent, which confirms the model followed attacker instructions.
-- Refusal-pattern shift across repeated turns, which signals a guardrail boundary rather than a pass.
-- Absence of change after override, breakout, and wrapped attempts, which records a resisted probe.
-- Non-reproducible compliance across runs, which marks chatter rather than a finding.
-- Disclosed hidden text matching ground truth, which confirms an extraction positive.
-- Hallucinated instruction text that matches no ground truth, which marks a negative.
-- Tool-schema disclosure in the response, which confirms schema extraction even without a call.
-- Behaviour change in the victim's session against developer intent, which confirms planted text executed.
-- Retrieved-content citation that surfaces the planted record, which confirms the seeding path works.
-- Tool call performed in the victim's context with planted arguments, which confirms cross-domain steering.
-- Absence of execution after retrieval, which confirms the plant was treated as data.
-- Rendered script execution or a dispatched request at the sink, which confirms a handling positive.
-- Sink transcript showing the emitted markup or statements, which confirms the emission reached the sink.
-- Properly encoded output at the sink, which confirms a negative even when the model emitted a suspicious shape.
-- An outbound request carrying context data to an attacker-observable destination, which confirms an exfiltration channel.
-- A tool call with attacker-chosen arguments, which confirms a steering positive.
-- An invocation log entry binding one call to its arguments, which confirms the chained path.
-- A state change or exfiltration observable downstream, which confirms the call took effect.
-- Absence of a call after steering, which confirms the model treated the content as words.
+- **Behaviour change**: behaviour change against developer intent, which confirms the model followed attacker instructions.
+- **Refusal-pattern shift**: refusal-pattern shift across repeated turns, which signals a guardrail boundary rather than a pass.
+- **Absence of change**: absence of change after override, breakout, and wrapped attempts, which records a resisted probe.
+- **Non-reproducible compliance**: non-reproducible compliance across runs, which marks chatter rather than a finding.
+- **Disclosed hidden text**: disclosed hidden text matching ground truth, which confirms an extraction positive.
+- **Hallucinated instruction text**: hallucinated instruction text that matches no ground truth, which marks a negative.
+- **Tool-schema disclosure**: tool-schema disclosure in the response, which confirms schema extraction even without a call.
+- **Victim-session behaviour change**: behaviour change in the victim's session against developer intent, which confirms planted text executed.
+- **Retrieved-content citation**: retrieved-content citation that surfaces the planted record, which confirms the seeding path works.
+- **Victim-context tool call**: tool call performed in the victim's context with planted arguments, which confirms cross-domain steering.
+- **Absence of execution**: absence of execution after retrieval, which confirms the plant was treated as data.
+- **Sink execution**: rendered script execution or a dispatched request at the sink, which confirms a handling positive.
+- **Sink transcript**: sink transcript showing the emitted markup or statements, which confirms the emission reached the sink.
+- **Proper encoding**: properly encoded output at the sink, which confirms a negative even when the model emitted a suspicious shape.
+- **Outbound context request**: an outbound request carrying context data to an attacker-observable destination, which confirms an exfiltration channel.
+- **Attacker-argument tool call**: a tool call with attacker-chosen arguments, which confirms a steering positive.
+- **Invocation-log entry**: an invocation log entry binding one call to its arguments, which confirms the chained path.
+- **Downstream state change**: a state change or exfiltration observable downstream, which confirms the call took effect.
+- **Absence of a call**: absence of a call after steering, which confirms the model treated the content as words.
 - **Unattributed tool call**: a tool call the invocation log cannot bind to a model turn, which proves the tool endpoint is reachable directly.
 - **Retrieval-layer read**: corpus content or record metadata returned to a caller the retrieval layer does not scope, which proves the isolation gap.
 - **Lifecycle-state acceptance**: a call accepted in a state the interface agreement forbids, which proves the state-transition trust gap.
 
 ## Adversarial Capabilities
 
-Model testing presupposes prompt control, a victim context the content can reach, and observation of what the model does, and it consumes all three.
-- Send arbitrary text through the direct input and through every ingest path the application exposes.
-- Plant content the model will later retrieve or read: documents, corpus entries, file names, metadata fields.
-- Hold a victim session and trigger the retrieval or summarization action that detonates the plant.
-- Observe tool invocations, their arguments, and downstream effects in logs or in state.
-- Read the sink for each output class: rendered markup, generated queries, emitted links.
-- Send the same probe repeatedly to separate a reproducible effect from run-to-run variance.
-- Call the tool endpoint and the retrieval store directly, without a model turn, where either interface is reachable.
-- Hold a second clean session to prove a persistent plant survived the first conversation.
+- **Prerequisites**: model testing presupposes prompt control, a victim context the content can reach, and observation of what the model does, and it consumes all three.
+- **Text submission**: send arbitrary text through the direct input and through every ingest path the application exposes.
+- **Content planting**: plant content the model will later retrieve or read: documents, corpus entries, file names, metadata fields.
+- **Victim trigger**: hold a victim session and trigger the retrieval or summarization action that detonates the plant.
+- **Invocation observation**: observe tool invocations, their arguments, and downstream effects in logs or in state.
+- **Sink reading**: read the sink for each output class: rendered markup, generated queries, emitted links.
+- **Repetition**: send the same probe repeatedly to separate a reproducible effect from run-to-run variance.
+- **Direct layer calling**: call the tool endpoint and the retrieval store directly, without a model turn, where either interface is reachable.
+- **Second clean session**: hold a second clean session to prove a persistent plant survived the first conversation.
 
 ## Trust Assumptions
 
-The class rests on one agreement: text the model ingests is data, and the model's output is data for whoever consumes it.
-The agreement holds developer instructions and ingested content in separate trust domains, holds the guard layer to a decision independent of the model's own compliance, holds tool arguments to values the application authorizes, and holds output to encoding at the sink.
-Sensitive position leaks when a clause fails: the model treats content as instruction, the guard approves what the model was persuaded of, a tool call runs with attacker arguments, or the sink renders the output as live markup.
-Each variant breaks one clause: the instruction-domain clause, the guard-independence clause, the tool-authorization clause, the retrieval-trigger clause, or the sink-encoding clause.
-The agreement also covers the tool and retrieval layers when they are reachable on their own: each lifecycle transition keeps the identity and permission decisions the previous one established, and the declared tool interface is the interface the server enforces.
+- **The agreement**: the class rests on one agreement: text the model ingests is data, and the model's output is data for whoever consumes it. The agreement holds developer instructions and ingested content in separate trust domains, holds the guard layer to a decision independent of the model's own compliance, holds tool arguments to values the application authorizes, and holds output to encoding at the sink. Sensitive position leaks when a clause fails: the model treats content as instruction, the guard approves what the model was persuaded of, a tool call runs with attacker arguments, or the sink renders the output as live markup.
+- **The failing clause**: each variant breaks one clause: the instruction-domain clause, the guard-independence clause, the tool-authorization clause, the retrieval-trigger clause, or the sink-encoding clause.
+- **Direct-layer agreement**: the agreement also covers the tool and retrieval layers when they are reachable on their own: each lifecycle transition keeps the identity and permission decisions the previous one established, and the declared tool interface is the interface the server enforces.
 
 ## Key Vulnerabilities
 
 ### Direct Instruction Override
 
-- Inline override: text claiming to supersede earlier instructions, a fabricated role marker, or a delimiter that closes the application's data block and opens a new instruction block
-- Instruction laundering across turns, where a request split across messages passes individually
-- See `references/llm-injection-payloads.md` for the phrase families behind override, breakout, extraction, and exfiltration shapes.
+- **Inline override**: text claiming to supersede earlier instructions, a fabricated role marker, or a delimiter that closes the application's data block and opens a new instruction block
+- **Instruction laundering**: instruction laundering across turns, where a request split across messages passes individually
+- **Payload reference**: see `references/llm-injection-payloads.md` for the phrase families behind override, breakout, extraction, and exfiltration shapes.
 
 ### Indirect Cross-Domain Injection
 
-- Hide instructions in ingested content the victim later asks about: metadata fields, comments, alternate text, document properties
-- Seeding an entry the retriever surfaces for a target query, so retrieval itself becomes the trigger
-- Instructions that direct a follow-on action, such as calling a messaging or fetch tool with attacker arguments
+- **Content hiding**: hide instructions in ingested content the victim later asks about: metadata fields, comments, alternate text, document properties
+- **Retrieval seeding**: seeding an entry the retriever surfaces for a target query, so retrieval itself becomes the trigger
+- **Follow-on action**: instructions that direct a follow-on action, such as calling a messaging or fetch tool with attacker arguments
 
 ### Hidden-Context and Data Leakage
 
-- Extract the system prompt, hidden context, tool schemas, or other users' data present in context
-- Verbatim-repeat framing and span-extraction framing are the two reliable shapes
-- Treat memory and multi-tenant corpora as attacker-readable until proven otherwise
+- **Hidden-text extraction**: extract the system prompt, hidden context, tool schemas, or other users' data present in context
+- **Framing shapes**: verbatim-repeat framing and span-extraction framing are the two reliable shapes
+- **Memory and corpora**: treat memory and multi-tenant corpora as attacker-readable until proven otherwise
 
 ### Tool and Function-Call Abuse
 
-- Steer the model into calling a privileged tool with attacker-chosen arguments
-- Argument injection into query, fetch, or command tools the model can reach
-- Chain injected content into a call, then confirm the call in the invocation log
+- **Call steering**: steer the model into calling a privileged tool with attacker-chosen arguments
+- **Argument injection**: argument injection into query, fetch, or command tools the model can reach
+- **Call chaining**: chain injected content into a call, then confirm the call in the invocation log
 
 ### Tool-Server Lifecycle and Interface Agreement
 
@@ -124,34 +122,34 @@ The agreement also covers the tool and retrieval layers when they are reachable 
 
 ### Insecure Output Handling
 
-- Model output rendered unescaped at a markup sink executes in the viewer's browser
-- Output used in a query, a command, or a redirect sink carries injection into that interpreter
-- Markup images whose URL carries context data produce a zero-click exfiltration channel at render time
-- Where the output is code a developer adopts, steering the emission toward an insecure shape is the same sink problem with a human in the loop
+- **Unescaped markup**: model output rendered unescaped at a markup sink executes in the viewer's browser
+- **Downstream interpreters**: output used in a query, a command, or a redirect sink carries injection into that interpreter
+- **Markup images**: markup images whose URL carries context data produce a zero-click exfiltration channel at render time
+- **Adopted code**: where the output is code a developer adopts, steering the emission toward an insecure shape is the same sink problem with a human in the loop
 
 ## Bypass Techniques
 
-Guardrails are probed as a control beside the model, so each shape below tests the guard rather than the model.
-- Role-play and hypothetical framing, and wrappers that present the request as an authorized test
-- Instruction laundering across turns, so each turn looks benign alone
-- Encoding and obfuscation: alternate alphabets, homoglyphs, invisible characters, translation into another language, and wrapped forms
-- Invisible tag-plane codepoints, zero-width characters, and bidirectional controls carry an instruction past a text filter while the model still consumes them
-- Encoded, transposed, or substituted-alphabet forms of a blocked phrase pass a keyword matcher, so probe the matcher beside the model
-- Delimiter breakout combined with a wrapped payload, so one layer clears the filter and the next delivers the instruction
-- Split requests across messages or parameters, where the filter sees fragments and the model reassembles them
-- See `scripts/tag-plane-smuggle.py` for the tag-plane encoder and decoder behind the invisible-codepoint shape.
+- **Bypass scope**: guardrails are probed as a control beside the model, so each shape below tests the guard rather than the model.
+- **Framing**: role-play and hypothetical framing, and wrappers that present the request as an authorized test
+- **Instruction laundering**: instruction laundering across turns, so each turn looks benign alone
+- **Encoding and obfuscation**: alternate alphabets, homoglyphs, invisible characters, translation into another language, and wrapped forms
+- **Invisible codepoints**: invisible tag-plane codepoints, zero-width characters, and bidirectional controls carry an instruction past a text filter while the model still consumes them
+- **Matcher probing**: encoded, transposed, or substituted-alphabet forms of a blocked phrase pass a keyword matcher, so probe the matcher beside the model
+- **Delimiter breakout**: delimiter breakout combined with a wrapped payload, so one layer clears the filter and the next delivers the instruction
+- **Split requests**: split requests across messages or parameters, where the filter sees fragments and the model reassembles them
+- **Encoder reference**: see `scripts/tag-plane-smuggle.py` for the tag-plane encoder and decoder behind the invisible-codepoint shape.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-- Injected content plus a tool call: the model performs the privileged action with attacker arguments
-- Injected content plus a retrieved corpus: seeding one entry detonates on every future retrieval for that query
-- Injection plus an output sink: the emitted markup fires in another user's browser or reaches a downstream interpreter
-- Injection plus memory or cross-tenant context: one tenant's planted text surfaces in another tenant's answer
-- Leakage plus a fetch tool: the extracted context is carried out through an outbound request
-- Capability classes chain in order: content ingestion, memory or corpus persistence, tool invocation, privilege escalation, and outbound exfiltration
-- A direct tool-server call plus a privileged tool: the chain needs no model turn, so name the tool-server block at the entry step
+- **Tool-call chain**: injected content plus a tool call: the model performs the privileged action with attacker arguments
+- **Retrieval chain**: injected content plus a retrieved corpus: seeding one entry detonates on every future retrieval for that query
+- **Sink chain**: injection plus an output sink: the emitted markup fires in another user's browser or reaches a downstream interpreter
+- **Cross-tenant chain**: injection plus memory or cross-tenant context: one tenant's planted text surfaces in another tenant's answer
+- **Exfiltration chain**: leakage plus a fetch tool: the extracted context is carried out through an outbound request
+- **Capability ordering**: capability classes chain in order: content ingestion, memory or corpus persistence, tool invocation, privilege escalation, and outbound exfiltration
+- **Direct tool-server chain**: a direct tool-server call plus a privileged tool: the chain needs no model turn, so name the tool-server block at the entry step
 
 ## Testing Methodology
 
@@ -175,23 +173,23 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## False Positives
 
-- The model saying it will do something with no privileged sink or tool to actually do it
-- Refusals, or hallucinated instruction text that matches no ground truth
-- Output that is properly encoded before reaching a markup, query, or command sink
-- Behaviour that does not reproduce across runs, which is variance rather than a bypass
-- Sandboxed tools with no access to sensitive data or actions
-- A tool endpoint that refuses direct calls and requires a model-mediated invocation, confirmed by uniform refusals without a turn
+- **Words without a sink**: the model saying it will do something with no privileged sink or tool to actually do it
+- **Refusals and hallucinations**: refusals, or hallucinated instruction text that matches no ground truth
+- **Properly encoded output**: output that is properly encoded before reaching a markup, query, or command sink
+- **Non-reproducing behaviour**: behaviour that does not reproduce across runs, which is variance rather than a bypass
+- **Sandboxed tools**: sandboxed tools with no access to sensitive data or actions
+- **Model-mediated-only endpoint**: a tool endpoint that refuses direct calls and requires a model-mediated invocation, confirmed by uniform refusals without a turn
 
 ## Pro Tips
 
-1. Treat in-band guardrails as bypassable and focus on the capability and sink behind the model
-2. Indirect injection is the higher-severity, under-tested vector; always test content the model ingests, not only the chat input
-3. Chase the sink: an injection is critical only when it reaches a tool, another system, or an unescaped renderer
-4. Markup image rendering is a classic zero-click exfiltration channel; test it explicitly
-5. Keep a ground-truth pair for every leakage probe so hallucinated text is discarded immediately
-6. Encode and obfuscate to probe filter strength, then combine with delimiter breakout
-7. Confirm real, reproducible impact; model chatter is not a finding
-8. Probe the tool and retrieval layers directly where they are reachable, because the model is optional there and the server owns the checks
+- **Guardrail posture**: treat in-band guardrails as bypassable and focus on the capability and sink behind the model
+- **Indirect first**: indirect injection is the higher-severity, under-tested vector; always test content the model ingests, not only the chat input
+- **Sink chasing**: chase the sink: an injection is critical only when it reaches a tool, another system, or an unescaped renderer
+- **Markup rendering**: markup image rendering is a classic zero-click exfiltration channel; test it explicitly
+- **Ground-truth pairing**: keep a ground-truth pair for every leakage probe so hallucinated text is discarded immediately
+- **Obfuscation probing**: encode and obfuscate to probe filter strength, then combine with delimiter breakout
+- **Reproducible impact**: confirm real, reproducible impact; model chatter is not a finding
+- **Direct-layer probing**: probe the tool and retrieval layers directly where they are reachable, because the model is optional there and the server owns the checks
 
 ## Summary
 
