@@ -84,13 +84,31 @@ Errors are typed, so a caller can distinguish "released but state lost" from "re
 The design is deliberately a caller-owned file store, not a server-side profile: the OSS API has no profile routes, and inventing one would fork the cloud contract.
 The store path is the caller's policy: the `steel-cache` volume for a deployment-level store, or the session workdir for a per-flow store.
 
-## 5. Residuals
+## 5. Local capability boundary: profiles are cloud-only
+
+The local OSS API has no profile store.
+`POST /v1/sessions` strips `profileId` and `persistProfile`; `GET`/`POST /v1/profiles` answer 404.
+The CLI keeps a client-side name-to-id map, so `profile list` works, but a local `start --profile` succeeds without mounting anything.
+The SDK returns `profile_id=None` even when the caller sends one.
+The same silent strip applies to `stealthConfig`, `solveCaptcha`, `useProxy`, `region`, and `namespace`.
+
+`persist: true` is not a profile substitute: it resolves to one fixed `/app/api/user-data-dir` on the container overlay, shared by every persistent session and absent from the durable volume.
+An explicit `userDataDir` is not honored as a path; any value selects that fixed directory.
+`sessionContext` remains the supported local state path.
+
+The interactive client is cloud-designed for profiles (the skill's `--profile`/`--update-profile` and `profile-mount.sh`), and so is the crawl provider's `profile_id`.
+`profile-mount.sh` now probes `/v1/profiles` and refuses a runtime that answers 404, instead of printing a false success.
+The crawl provider still degrades silently; a local capability guard is a follow-up item.
+
+The full matrix, wire capture, and cloud comparison are in `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md`.
+
+## 6. Residuals
 
 - The API still ignores create-time `timeout` and reports `0`; that is upstream steel-dev/steel-browser#350 and is orthogonal to this fix (the CLI pin handles the client side, D359-10).
 - Session state is only as fresh as the last capture; a capture after a navigation is required for localStorage and sessionStorage.
 - The container init fixes reaping, not browser crashes; a crashed browser still surfaces through the release/health path.
 
-## 6. Test tiers
+## 7. Test tiers
 
 - Unit: `tests/test_steel_session_state.py` (MockTransport; order, release-always, typed errors, resolver), `tests/test_steel_cli_scaffold.py` (scaffold fidelity, variadic fold).
 - Integration: `tests/integration/test_steel_session_state_http.py` (a localhost stub API runs create, capture, teardown, restore over real HTTP).

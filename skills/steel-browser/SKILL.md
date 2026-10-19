@@ -3,13 +3,14 @@ name: steel-browser
 description: >-
   Operate a real Steel browser through the `steel_exec` gateway: named
   sessions, navigation, ref-based interaction, waiting, inline JS, cookie and
-  storage reads, one-shot scraping, bounded spidering, and profile mounts,
-  against the Steel cloud or a self-hosted local runtime.
+  storage reads, one-shot scraping, bounded spidering, and cloud profile mounts,
+  against the Steel cloud or a self-hosted local runtime with session-context
+  state.
   Use when a target needs JavaScript rendering, element-level interaction, a form
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '1.11'
+  version: '1.12'
 ---
 
 # Steel browser operation
@@ -37,6 +38,8 @@ The pinned CLI is 0.5.0-preview.6, the first release whose daemon maps the local
 `--session-timeout` is therefore enforced by the daemon, and the local runtime releases the session when the daemon exits.
 The local API itself still ignores a create-time timeout (upstream issue #350), so the server does not expire a session on its own.
 
+**Profiles are cloud-only.** The local API has no `/v1/profiles` route and its create schema strips `profileId` and `persistProfile`, so a local `start --profile` succeeds without mounting anything; `steel profile list` only reads the CLI's own name-to-id mapping. For local state, capture `GET /v1/sessions/<id>/context` while the session is live, store it, then release, and pass the stored JSON as `sessionContext` on the next create. The evidence is `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md`.
+
 ## The path: survey, open, mount, operate, close
 
 A spine with an open middle - pick the path the goal needs, not a fixed sequence.
@@ -53,7 +56,7 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
 `start` silently attaches to a live name, so check the catalogue first: `steel_exec` refuses a command-mode start on a catalogued name with `<name> is already used`, and a script holds its own check.
 `remainingMs` on receipt sits below what you asked for - provisioning spends the session clock.
 
-**Mount a profile (optional).** `start --profile <name>` mounts server-side identity and state; read-only by default, `--update-profile` accumulates it back on release. There is no state-poll primitive, so prove a mount with a settle pause then a navigation - an unverified mount never passes a verdict. One live session per profile holds the last writer.
+**Mount a profile (optional, cloud only).** `start --profile <name>` mounts server-side identity and state; read-only by default, `--update-profile` accumulates it back on release. On the local OSS runtime this call is a no-op: use `sessionContext` capture and restore instead (see the local runtime note). There is no state-poll primitive, so prove a mount with a settle pause then a navigation - an unverified mount never passes a verdict. One live session per profile holds the last writer.
 
 **Operate.** Any web-interaction operation or client-side browser-state inspection: the command families below proxy to the CDP API, and they are the taught subset, not an allowlist - `steel_exec` routes on the `steel` token, so any `steel browser` subcommand runs. Choose each operation's shape:
 - **single** - one atomic act whose result is the answer; no sequencing, no ref to discover.
@@ -125,7 +128,7 @@ The `steel scrape` and `steel profile` families are sessionless and carry only `
 - Batch: `batch [OPTIONS] -- "cmd" "cmd" ...` (options such as `--bail` precede the `--`; each element carries its own boundary when variadic).
 - One-shot scraping (no session): `steel scrape <url> [--format html|readability|cleaned_html|markdown] [--pdf] [--screenshot] [--use-proxy]`.
 - Spidering: enumerate links with `eval`, `navigate` per link, both capped.
-- Profiles: `steel profile list|import|sync|delete`; mount through `start --profile`.
+- Profiles (cloud only): `steel profile list|import|sync|delete`; mount through `start --profile`. The local OSS runtime has no profile store.
 
 ## References
 

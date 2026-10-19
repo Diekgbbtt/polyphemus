@@ -3,6 +3,9 @@
 # Read-only by default; set WRITE=1 to accumulate state back on release.
 # There is no CLI state poll, so a mount is proven by a settle pause plus a
 # navigation, never by a READY field (none exists in `steel profile list`).
+# CLOUD ONLY: the local OSS runtime has no profile store; its create schema
+# strips profileId/persistProfile. The capability probe below refuses a
+# runtime that answers /v1/profiles with 404 instead of reporting a false mount.
 # Runnable verbatim through steel_exec(script=<text>, script_lang="sh") or `bash <file>`.
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
@@ -17,6 +20,18 @@ SESSION_NAMED=0
 if [ -z "$PROFILE" ]; then
   echo "usage: PROFILE=<profile-name> [WRITE=1] bash $0" >&2
   exit 2
+fi
+
+# Capability probe: a self-hosted runtime that has no /v1/profiles cannot mount
+# a profile, and a create would silently succeed without one.
+if [ -n "${STEEL_BROWSER_API_URL:-}" ]; then
+  _profiles_code=$(curl -sS -o /dev/null -w '%{http_code}' -m 10 \
+    -H "Steel-Api-Key: ${STEEL_API_KEY:-}" \
+    "${STEEL_BROWSER_API_URL%/}/profiles" 2>/dev/null || echo "000")
+  if [ "$_profiles_code" = "404" ]; then
+    echo "refused: this runtime has no profile store (/v1/profiles 404); use sessionContext capture/restore" >&2
+    exit 2
+  fi
 fi
 
 release() {

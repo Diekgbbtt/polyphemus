@@ -235,6 +235,7 @@ _Avoid_: procedural prose in the store (steps live in the skill, facts live in t
 **Browser-profile reference** (`steel: {profile}`):
 The minimal durable Steel profile key on an account record: the next agent rebinds the same profile through its browser tool, secrets never touching the store.
 Since #223 the key is project-scoped (`<project_id>-<account>`, D223-14); the browser path mints through `steel start --profile <key> --update-profile` and persists the key plus extracted tokens back to the record; a missing or unauthenticated mount fail-opens into sign-in with the account asserted `not_valid`, never a silent anonymous turn.
+Cloud only: the local OSS runtime has no profile store, so a local mount is a no-op; the local state path is `sessionContext` (#395).
 _Avoid_: storing browser state itself (only the key lives here).
 
 **Concrete snapshot** (`snapshot: {headers, cookies, params, captured_at}`):
@@ -268,6 +269,7 @@ _Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 **Auth feed** (#223 T4 #243, D223-19):
 How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the persisted Steel profile key (`extra["steel_profile"]`, mounted read-only at Steel session creation via the SDK `profile_id`) plus the cookie subset seeding the browser context for the agent-driven crawl; nothing for non-auth jobs. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
+On a self-hosted local runtime the profile key is not honored; the cookie subset and `sessionContext` carry auth state (D17 amendment, #395).
 _Avoid_: threading material through the pipeline state (the identifier rides; the projection resolves per phase).
 
 **Authn loop** (the auth gateway, #223):
@@ -352,6 +354,7 @@ _Avoid_: the leading-options habit, a hand-maintained flag denylist, reordering 
 
 **Browser profiles**:
 Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by NAME, read-only first, and logs in only when the mount does not yield the authenticated landing, so the warm identity is written back on the account's own profile (D237-15).
+Cloud only: the local OSS runtime has no profile store; the local deployment uses `sessionContext` capture/restore and never treats a local mount as evidence (#395).
 _Avoid_: duplicating #220's profile vocabulary.
 
 **Steel endpoint** (`STEEL_BROWSER_API_URL`):

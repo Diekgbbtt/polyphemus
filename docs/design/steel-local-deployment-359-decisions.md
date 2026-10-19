@@ -32,7 +32,8 @@ _Consequence_: the configuration value must serve any reader (the CLI today, an 
 Deploy the API image only.
 Do not deploy the `ui` container; do not publish 5173.
 Publish the Sessions API (3000). Keep the Chrome debug port (9223) container-internal, because the CLI's CDP connect URL rides the API WebSocket on 3000.
-Persist state on a durable volume mounted at `/app/.cache` (profiles, snapshots, session state).
+Persist the browser cache and caller-owned artifacts on a durable volume mounted at `/app/.cache`.
+The local API has no profile store; its default Chrome user-data-dir is `/tmp/steel-chrome`, and session state is carried explicitly through `sessionContext` (D359-11).
 Pin the image by digest; never deploy `latest`.
 The declared artifact is a compose file in the repository (D359-9).
 
@@ -78,6 +79,7 @@ Recorded for #245, without a public-egress proxy:
 - Managed CAPTCHA handling: not available; it stays excluded by operator ruling (D237-15).
 - The Credentials API: not supported in Steel Local.
 - The Files API: not supported in Steel Local.
+- The Profiles API: not available. `profileId` and `persistProfile` are stripped from the create body and `/v1/profiles` is absent; local state rides `sessionContext` (D359-11, #395).
 - Concurrency: 1 (one session at a time).
 - Extensions load by build-time injection under `api/src/extensions/`, not by API call.
 

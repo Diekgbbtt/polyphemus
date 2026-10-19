@@ -27,7 +27,7 @@ The client choice is deliberately neutral: whether the recon browser phase drive
 5. As the operator, I want the Steel SDK consumer to read the same value, so that `steel_crawl` and the CLI never disagree about the endpoint.
 6. As the operator, I want the runtime deployed as the API container alone, so that the stack stays minimal and reproducible and no dashboard or UI ships.
 7. As the operator, I want the API port reachable only from the polymerhus stack and my admin address, so that an unauthenticated browser service is not open to the internet.
-8. As the operator, I want durable browser state (profiles, snapshots, sessions) on a persistent volume, so that state survives a container restart.
+8. As the operator, I want durable application state (the browser cache and caller-owned artifacts) on a persistent volume, and session state carried explicitly through `sessionContext`, so that state survives a container restart without an implicit profile.
 9. As the operator, I want the whole deployment pinned by digest in the repository, so that it is reproducible and revertible.
 10. As the operator, I want the local runtime to reach the eval front's internal target, so that a browser session lands on a rendered internal page.
 11. As the operator, I want the portability boundary recorded, so that I know which cloud capabilities do not travel to the local runtime.
@@ -56,7 +56,7 @@ The client choice is deliberately neutral: whether the recon browser phase drive
 
 ### The portability boundary (#245)
 
-Recorded as D359-7: no Steel-managed residential proxies, no dedicated IPs, no managed CAPTCHA handling, no Credentials API, no Files API, concurrency 1, extensions by build-time injection.
+Recorded as D359-7: no Steel-managed residential proxies, no dedicated IPs, no managed CAPTCHA handling, no Credentials API, no Files API, no Profiles API (local state is `sessionContext`), concurrency 1, extensions by build-time injection.
 The internal-reachability case needs no public-egress proxy: the runtime egresses from the operator's network.
 
 ### Documentation

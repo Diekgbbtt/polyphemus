@@ -15,3 +15,13 @@ def test_skill_names_the_endpoint_value_and_the_local_flag():
     assert "--local" in text
     # Scripts are never rewritten, so the skill must say they pass it themselves.
     assert "Script text is never rewritten" in text or "script must pass `--local` itself" in text
+
+
+def test_skill_marks_profiles_cloud_only_on_the_local_runtime():
+    # #395: the local API strips profileId/persistProfile, so a local
+    # --profile mount is a no-op. The skill must say so and name the local
+    # state path (sessionContext) instead.
+    text = SKILL.read_text(encoding="utf-8")
+    assert "Profiles are cloud-only" in text
+    assert "sessionContext" in text
+    assert "t395-local-capability-profile-gap.md" in text
