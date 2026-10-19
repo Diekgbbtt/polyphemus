@@ -94,6 +94,7 @@ The agreement also covers the tool and retrieval layers when they are reachable 
 
 - Inline override: text claiming to supersede earlier instructions, a fabricated role marker, or a delimiter that closes the application's data block and opens a new instruction block
 - Instruction laundering across turns, where a request split across messages passes individually
+- See `references/llm-injection-payloads.md` for the phrase families behind override, breakout, extraction, and exfiltration shapes.
 
 ### Indirect Cross-Domain Injection
 
@@ -138,6 +139,7 @@ Guardrails are probed as a control beside the model, so each shape below tests t
 - Encoded, transposed, or substituted-alphabet forms of a blocked phrase pass a keyword matcher, so probe the matcher beside the model
 - Delimiter breakout combined with a wrapped payload, so one layer clears the filter and the next delivers the instruction
 - Split requests across messages or parameters, where the filter sees fragments and the model reassembles them
+- See `scripts/tag-plane-smuggle.py` for the tag-plane encoder and decoder behind the invisible-codepoint shape.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
