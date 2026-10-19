@@ -434,7 +434,7 @@ instance, instead of creating a project and running recon/analysis. Set
 `EVAL_EXISTING_PROJECT_ID`); `start_phase` is then `hunting` by construction. The
 trial makes no call that creates or mutates the project and runs no scaffold: it
 asserts the project exists and that its L1 carries services, places any
-pre-mined artifacts, and enters hunting with the cap. A missing project or an L1
+pre-mined artifacts, and enters hunting. A missing project or an L1
 with zero services blocks with a named reason; there is no fallback to creating a
 project. The volume transfer, the verification queries, and the `target_seed`
 update are documented in `eval/SEEDED-L0L1.md`, with the committed example
@@ -599,9 +599,10 @@ supported by the parsed evidence:
    raw observation, the experiment summary). Executing a test and getting the
    sought-after symptom back IS the sufficient assertion that the vulnerability
    was exercised.
-2. **Fault class**: the confirmed symptom and the spec's content (rationale,
-   testing pattern, payloads, observations) correspond to `T` (use `cwes.yaml`
-   for the vocabulary bridge, and the report/verify blobs under
+2. **Web vulnerability class and fault**: the confirmed symptom and the
+   spec's content (rationale, assumptions, observations, and the provenance's
+   class/fault) correspond to `T` (use `cwes.yaml` for the vocabulary bridge,
+   and the report/verify blobs under
    `~/WebExploitBench/<target>/vulnerability/<id>/` for the ground-truth
    symptom description).
 3. **Locus**: the spec's `target_identity` and the probe URLs in the raw
@@ -962,7 +963,7 @@ A `fix` naming any other repair is escalated, never applied.
 
 After a fix the affected services are restarted (`instances.up` for the
 data-layer repairs, the recreate for `env`) and the trial is resumed at its
-recorded phase - the first phase that did not cleanly complete (a cap-stopped
+recorded phase - the first phase that did not cleanly complete (a budget-stopped
 hunting run resumes hunting, a failed recon resumes recon). The resumed trial
 record carries the surfer intervention in its `notes`.
 

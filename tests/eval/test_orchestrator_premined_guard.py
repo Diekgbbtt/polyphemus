@@ -17,7 +17,7 @@ import pytest
 from orchestrator import predicates, setup
 from orchestrator.files import (
     FileStore,
-    hunter_test_specs_fault_dir,
+    hunter_test_specs_family_dir,
     retired_hunt_configs_dir,
     threat_model_dir,
 )
@@ -121,7 +121,7 @@ def test_a_model_document_alone_does_not_satisfy_the_gate(tmp_path) -> None:
 
 def test_a_premined_test_spec_satisfies_the_gate(tmp_path) -> None:
     files = FileStore()
-    spec_dir = hunter_test_specs_fault_dir(
+    spec_dir = hunter_test_specs_family_dir(
         tmp_path, PROJECT, "unit-web-x__loop-1", "produced"
     )
     files.write_text(spec_dir / "sqli.yaml", "status: ratified\n")

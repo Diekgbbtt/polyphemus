@@ -224,8 +224,10 @@ def analysis_status(project_id: str, run_id: str) -> ApiCall:
     return ApiCall("GET", f"/projects/{project_id}/analysis/{run_id}")
 
 
-def launch_hunting(project_id: str, candidates=None) -> ApiCall:
-    return ApiCall("POST", f"/projects/{project_id}/hunting", {"candidates": candidates or []})
+def launch_hunting(project_id: str) -> ApiCall:
+    """Open one whole hunting run. The body is empty: the run's input is its
+    L1 INTAKE (S1 7.1), and the retired candidate batch is gone."""
+    return ApiCall("POST", f"/projects/{project_id}/hunting", {})
 
 
 def hunting_status(project_id: str, hunting_run_id: str) -> ApiCall:

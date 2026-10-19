@@ -71,9 +71,9 @@ instances:
         # the heaviest observed full run and does not stop a trial instantly
         # (#347).
         token_budget: 200000000
-        # The hunting cap, counted from the consumed hunt-configs directory
-        # (pre-mined files included). 10 configs bounds a 6-vuln challenge.
-        # preloaded_hunting_artifacts is omitted: no pre-mined artifacts.
+        # The hunting cap was REMOVED (2026-10-05); the token budget above is
+        # the only trial-wide bound. preloaded_hunting_artifacts is omitted:
+        # no pre-mined artifacts.
         target_config:
           # eval/data/webexploitbench/comfyui/ is the committed per-target
           # operator KB; the harness reads only operator_kb.md. The target

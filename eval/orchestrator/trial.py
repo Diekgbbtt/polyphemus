@@ -1,4 +1,4 @@
-"""The trial engine: phase entry, chaining, launch/poll, and the hunting cap.
+"""The trial engine: phase entry, chaining, launch/poll, and the token budget.
 
 A `Trial` drives one `TargetRun` on one instance from a phase entry to
 terminal: bootstrap the project (settings, `AuthContext`, L1 scaffold,
@@ -23,7 +23,7 @@ from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.files import (
     FileStore,
     authn_skill_path,
-    hunter_test_specs_fault_dir,
+    hunter_test_specs_family_dir,
     threat_model_dir,
 )
 from orchestrator.ids import short_id
@@ -383,7 +383,7 @@ class TrialPlan:
 
 
 class Trial:
-    """One trial: bootstrap, phase entry, launch/poll, cap, and the record."""
+    """One trial: bootstrap, phase entry, launch/poll, budget, and the record."""
 
     def __init__(
         self,
@@ -853,6 +853,17 @@ class Trial:
         if not gate.ok:
             return PhaseRecord(phase="hunting", blocks=list(gate.blocks)), None
         run_id = api.hunting_run_id_of(self._call(api.launch_hunting(state.project_id)))
+        # The launch mints the run id; a pre-mined model placed before it still
+        # carries the source's run id. Rebind it before the first mover tick,
+        # or the run-scoped produced read (S2 8.3) would leave it inert.
+        if self.config.preloaded_hunting_artifacts is not None:
+            retarget_premined(
+                self._files,
+                data_root=self.config.data_root,
+                project_id=state.project_id,
+                preloaded=self.config.preloaded_hunting_artifacts,
+                run_id=run_id,
+            )
         result = self._poll_hunting(state.project_id, run_id)
         phase = PhaseRecord(
             phase="hunting",
@@ -1103,25 +1114,66 @@ def _place_model_tree(files: FileStore, source: Path, destination: Path) -> None
         files.write_text(destination / relative, files.read_text(path))
 
 
-def _place_model_source(files: FileStore, source: str, produced: Path) -> None:
-    """Place one `models` source into the threat-model produced inbox.
+def _model_units(files: FileStore, source: str) -> list[tuple[Path, str]]:
+    """The `(source path, unit name)` pairs a `models` source contributes.
 
-    A source is either one unit directory (copy it under its own name), a
-    directory of unit directories (copy each child under its own name), or a
-    single file (its parent directory names the unit).
+    A source is either one unit directory (its model document and loops sit
+    directly under it), a directory of unit directories (each child is a unit),
+    or a single file (its parent directory names the unit).
     """
     path = Path(source)
     if files.is_file(path):
-        unit_name = path.parent.name or path.stem
-        _place_model_tree(files, path, produced / unit_name)
-        return
+        return [(path, path.parent.name or path.stem)]
     if files.list_files(path):
-        # The source IS one unit directory: its model document and loops sit
-        # directly under it.
-        _place_model_tree(files, path, produced / path.name)
+        return [(path, path.name)]
+    return [(unit_dir, unit_dir.name) for unit_dir in files.list_dirs(path)]
+
+
+def _place_model_source(files: FileStore, source: str, produced: Path) -> None:
+    """Place one `models` source into the threat-model produced inbox."""
+    for path, unit_name in _model_units(files, source):
+        _place_model_tree(files, path, produced / unit_name)
+
+
+def retarget_premined(
+    files: FileStore,
+    *,
+    data_root: str | Path,
+    project_id: str,
+    preloaded: PreloadedArtifacts,
+    run_id: str,
+) -> None:
+    """Bind the placed pre-mined models to the run that will dispatch them.
+
+    The mover's produced read is run-scoped (S2 8.3): a model and its loop
+    files carry the run id they were authored for, and another run's loop file
+    is never dispatched. A pre-mined tree therefore has to be rebound to the
+    run id the launch actually minted, after the launch returns and before the
+    run's first mover tick. Both the model document (the produced-read filter)
+    and every loop file (the dispatch validity predicate) carry `run_id`.
+    """
+    if preloaded.models is None or not run_id:
         return
-    for unit_dir in files.list_dirs(path):
-        _place_model_tree(files, unit_dir, produced / unit_dir.name)
+    import yaml
+
+    produced = threat_model_dir(data_root, project_id, "produced")
+    for _source, unit_name in _model_units(files, preloaded.models):
+        unit_dir = produced / unit_name
+        paths = [unit_dir / f"{unit_name}.yaml"]
+        paths.extend(files.glob(unit_dir, "loop-*.yaml"))
+        for path in paths:
+            if not files.is_file(path):
+                continue
+            try:
+                document = yaml.safe_load(files.read_text(path))
+            except yaml.YAMLError:
+                continue
+            if not isinstance(document, dict) or document.get("run_id") == run_id:
+                continue
+            document["run_id"] = run_id
+            files.write_text_atomic(
+                path, yaml.safe_dump(document, sort_keys=False)
+            )
 
 
 def place_premined(
@@ -1141,7 +1193,7 @@ def place_premined(
         produced = threat_model_dir(data_root, project_id, "produced")
         _place_model_source(files, preloaded.models, produced)
     for spec in preloaded.test_specs:
-        produced = hunter_test_specs_fault_dir(
+        produced = hunter_test_specs_family_dir(
             data_root, project_id, spec.dispatch_id, "produced"
         )
         for path in _premined_sources(files, spec.path):
@@ -1158,7 +1210,7 @@ def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:
     for spec in pre.test_specs:
         inboxes.append(
             str(
-                hunter_test_specs_fault_dir(
+                hunter_test_specs_family_dir(
                     cfg.data_root, raw_project, spec.dispatch_id, "produced"
                 )
             )

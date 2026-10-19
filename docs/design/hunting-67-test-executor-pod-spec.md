@@ -210,11 +210,11 @@ C15 - Tool-contract validation: given a tool call with a wrong parameter, exerci
 
 E1 - One trivial real run: grounds merged spec 6.12 and H1.
 Entry seam: the IA-3 handoff (a fixture `TestImplementationSpec`).
-Input: a spec with target identity `"service:web:soupmarket"`, verification symptom "HTTP 200 with a non-empty body on GET /", testing pattern (open NL) "blind-boolean", assumptions ["network egress allowed"], payload vector space `{method: GET, path: "/"}`, rationale + interpretation guidance set.
+Input: a spec with `target_identity = {url: "https://soupmarket.shop/", unit_id: "service:web:soupmarket"}`, `verification_symptoms = ["HTTP 200 with a non-empty body on GET /"]`, `assumptions = ["network egress allowed"]`, and a rationale set - the REDUCED D4 (S5 8.4), with no retired testing-pattern/vector/interpretation fields.
 Live edge: the eval target `soupmarket.shop` (the `juice-shop-remote` target in `tests/e2e/fixtures/eval-targets.yaml`), live HTTP mode.
 Path: INIT validates -> RUNNER STRETCH (ReAct; the Runner's first turn issues the default probe -> EXECUTE -> OBSERVE) -> symbolic symptomatic classification OR the Triager -> TERMINAL.
 Terminal: exactly one verdict `{successful, symptom-confirmed, iterations >= 1}` and an experiment log with at least one raw observation.
-Observed: the hunt-store stub record and the response status read back from the tool call log.
+Observed: the hunter spec-set record and the response status read back from the tool call log.
 E1 is a REAL pod run via `arun_pod` (D84-24): it exercises the ReAct runner, the KB tool binding, and the `exec` tool against the live target. The pre-regrounding symbolic runner is removed.
 Yields: `tests/e2e/test_test_executor_pod_walkthrough.py::test_trivial_real_run`. Mechanisable in this ticket segment (the pod and the target are both real; the pod LLM is wired in the in-network e2e stack).
 Living-doc caveat: `tests/e2e/fixtures/eval-targets.yaml` does NOT exist in the repo yet - E1 is currently hermetically mechanised (the production lane over a fake model/exec/KB, #158), with the live edge pending a wired in-network target.

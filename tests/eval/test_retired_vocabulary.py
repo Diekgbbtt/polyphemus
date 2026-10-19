@@ -99,3 +99,107 @@ def test_the_eval_setup_has_no_retired_configs_field() -> None:
     fields = set(setup.PreloadedArtifacts.__dataclass_fields__)
     assert "models" in fields
     assert "configs" not in fields
+
+
+# --- the live docs/setups sweep (T10b review AC5) -----------------------------
+
+def test_the_eval_setups_carry_no_live_hunting_cap_claim() -> None:
+    setups = sorted((EVAL / "setups").glob("*.yaml"))
+    assert setups
+    for path in setups:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            lowered = line.lower()
+            if "hunting cap" in lowered:
+                assert "removed" in lowered or "no hunting cap" in lowered, (
+                    f"{path.name}: stale hunting-cap claim: {line.strip()}"
+                )
+            assert "consumed hunt config" not in lowered, path.name
+            assert "consumed hunt-config" not in lowered, path.name
+            assert "consumed config" not in lowered, path.name
+
+
+def test_the_operator_doc_carries_no_live_retired_vocabulary() -> None:
+    text = (EVAL / "OPERATOR.md").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        lowered = line.lower()
+        if "hunting cap" in lowered:
+            assert "removed" in lowered or "legacy" in lowered, line.strip()
+        assert "hunt store" not in lowered, line.strip()
+        assert "fault class" not in lowered, line.strip()
+        assert "consumed hunt config" not in lowered, line.strip()
+
+
+def test_the_hunts_store_glossary_entry_names_the_live_stores() -> None:
+    text = (REPO_ROOT / "src" / "polymerhus" / "attack" / "hunting" / "CONTEXT.md").read_text(
+        encoding="utf-8"
+    )
+    start = text.index("- **hunts_store tool**")
+    end = text.index("\n- **notes tool**", start)
+    entry = text[start:end]
+    assert "ThreatModelStore" in entry
+    assert "HunterMemoryStore" in entry
+    assert "config store tool" not in entry
+    assert "fault_class" not in entry
+    assert "produced/consumed config files" not in entry
+
+
+def test_the_pod_e1_walkthrough_uses_the_reduced_d4() -> None:
+    text = (
+        REPO_ROOT / "docs" / "design" / "hunting-67-test-executor-pod-spec.md"
+    ).read_text(encoding="utf-8")
+    start = text.index("E1 - One trivial real run")
+    end = text.index("\nE2 - Full chain", start)
+    section = text[start:end]
+    for term in ("testing_pattern", "payload_vector_space", "interpretation_guidance"):
+        assert term not in section, term
+    assert "target_identity" in section
+    assert "verification_symptoms" in section
+
+
+def test_the_observability_recipe_names_live_hunting_tracing() -> None:
+    text = (REPO_ROOT / "docs" / "design" / "observability-recipe.md").read_text(
+        encoding="utf-8"
+    )
+    for line in text.splitlines():
+        lowered = line.lower()
+        if "retired" in lowered or "historical" in lowered or "dead" in lowered:
+            continue
+        for dead in (
+            "hunt_orchestrator.py",
+            "orchestrator_tracing.py",
+            "orchestrator_gate_span",
+            "trace_gate_step",
+        ):
+            assert dead not in line, line.strip()
+    assert "hunting_tracing.py" in text
+
+
+def test_the_eval_spec_family_helper_uses_the_dispatch_id() -> None:
+    import re
+
+    text = (EVAL / "orchestrator" / "files.py").read_text(encoding="utf-8")
+    assert re.search(r"\bfault_key\b", text) is None
+    assert "hunter_test_specs_family_dir" in text
+    assert "dispatch_id" in text
+
+
+def test_the_eval_engine_carries_no_live_hunting_cap_claim() -> None:
+    for path in sorted(EVAL.rglob("*.py")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            lowered = line.lower()
+            if "hunting cap" not in lowered:
+                continue
+            assert (
+                "removed" in lowered or "legacy" in lowered
+            ), f"{path.name}: {line.strip()}"
+
+
+def test_the_eval_engine_has_no_fault_key_parameter() -> None:
+    # The hunter store key is the loop dispatch id; the retired `fault_key`
+    # folder is never a live eval path.
+    offenders = []
+    for path in sorted(EVAL.rglob("*.py")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "fault_key" in line and "fault_keyword" not in line:
+                offenders.append(f"{path.name}: {line.strip()}")
+    assert not offenders, offenders

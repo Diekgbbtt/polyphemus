@@ -3,8 +3,8 @@
 The trial reads the persisted-state predicates (the authn skill bundle, the
 pre-mined threat-model loops) and writes its own bootstrap state through one
 `FileStore`. It is the injectable filesystem seam: tests pass a temp-rooted
-instance or a subclass that scripts the consumed-count sequence to model the
-cap race (R7). The layout helpers mirror the app's own `<data_root>` layout
+instance or a subclass that scripts the produced/consumed reads. The layout
+helpers mirror the app's own `<data_root>` layout
 (`src/polymerhus/app/data_root.py`), so the harness and the pipeline address
 the SAME produced/consumed inbox - never a bespoke copy.
 
@@ -85,16 +85,17 @@ def retired_hunt_configs_dir(
 def hunter_test_specs_dir(data_root: str | Path, project_id: str) -> Path:
     """`<data_root>/<project_id>/hunting/hunter/test-specs`: the spec families.
 
-    Each child is a `<fault_key>/` folder holding the produced/consumed
+    Each child is a `<dispatch_id>/` folder (the loop dispatch id
+    `<unit_name>__<loop_id>`) holding the produced/consumed
     `TestImplementationSpec` files (mirrors `hunter_memory.py`, #234).
     """
     return project_dir(data_root, project_id) / "hunting" / "hunter" / "test-specs"
 
 
-def hunter_test_specs_fault_dir(
-    data_root: str | Path, project_id: str, fault_key: str, side: str
+def hunter_test_specs_family_dir(
+    data_root: str | Path, project_id: str, dispatch_id: str, side: str
 ) -> Path:
-    """`<hunter_test_specs_dir>/<fault_key>/<side>`: one spec family's one inbox.
+    """`<hunter_test_specs_dir>/<dispatch_id>/<side>`: one spec family's one inbox.
 
     The pipeline's lazy read looks exactly here, so a pre-mined spec lands in
     the same produced/ inbox the mover drains - never a bespoke path.
@@ -103,7 +104,7 @@ def hunter_test_specs_fault_dir(
         raise ValueError(
             f"hunter test-spec side must be one of {HUNTER_TEST_SPEC_SIDES}, got {side!r}"
         )
-    return hunter_test_specs_dir(data_root, project_id) / fault_key / side
+    return hunter_test_specs_dir(data_root, project_id) / dispatch_id / side
 
 
 def pod_dir(data_root: str | Path, project_id: str) -> Path:

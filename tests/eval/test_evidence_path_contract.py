@@ -59,7 +59,7 @@ def test_code_resolves_every_evidence_path_under_the_project_segment() -> None:
         assert resolved.relative_to(DATA_ROOT) == (
             Path(PROJECT_ID) / "hunting/threat_modeller" / side
         )
-    dispatch = files.hunter_test_specs_fault_dir(
+    dispatch = files.hunter_test_specs_family_dir(
         DATA_ROOT, PROJECT_ID, "service-web-viewer__loop-1", "produced"
     )
     assert dispatch.relative_to(DATA_ROOT) == (

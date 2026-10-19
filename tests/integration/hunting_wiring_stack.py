@@ -299,11 +299,16 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
 
 
 def seed_threat_model_unit(project_id: str, *, unit_id: str,
-                           run_id: str = "hw-seeded") -> str:
+                           run_id: str) -> str:
     """Drive a REAL `ThreatModelStore` to COMPLETED for `unit_id`, producing
     the unit's model document and its loop files (T10b #397). The E1/E2
     premise: a produced loop file IS the dispatch record (S2 8.4), so a
-    walkthrough that claims to seed one must actually write it."""
+    walkthrough that claims to seed one must actually write it.
+
+    `run_id` is REQUIRED and must be the run that will dispatch the loop: the
+    mover's produced read is run-scoped (S2 8.3), so a seed under any other id
+    stays inert. E1 passes the launched run id; E2 passes the earlier run id it
+    is modelling."""
     from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
     from tests.hunting_fixtures import loop_row, produce_model
 

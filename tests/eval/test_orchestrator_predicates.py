@@ -13,7 +13,7 @@ from orchestrator.files import (
     FileStore,
     authn_skill_path,
     threat_model_dir,
-    hunter_test_specs_fault_dir,
+    hunter_test_specs_family_dir,
 )
 
 
@@ -442,7 +442,7 @@ def test_hunting_entry_accepts_premined_test_specs_present(tmp_path) -> None:
     )
     assert not result.ok
 
-    spec_dir = hunter_test_specs_fault_dir(
+    spec_dir = hunter_test_specs_family_dir(
         tmp_path, PROJECT, "unit-web-x__loop-1", "produced"
     )
     FileStore().write_text(spec_dir / "s.yaml", "id: s\n")

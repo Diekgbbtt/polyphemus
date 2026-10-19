@@ -160,13 +160,11 @@ def test_E1_whole_pipeline_happy_path(client):
     assert stack.produced_loop_files(base) == []
 
     # Richer seeded-spec run through the REAL pod/hunter edge. Seed the
-    # COMPLETED unit threat model + its produced loop file (the dispatch
-    # record) so E1's premise is true, then the ratified spec the surfer
-    # dispatches.
+    # ratified spec + experiment log first (the pod work keeps the run alive
+    # while the loop is seeded), launch, then seed the COMPLETED unit threat
+    # model under the LAUNCHED run id (S2 8.3: the mover's read is run-scoped,
+    # so a pre-launch placeholder id would be inert).
     p = _new_project(client, "hw-e1")
-    stack.seed_threat_model_unit(p, unit_id=UNIT)
-    assert stack.produced_loop_files(p) == [f"{UNIT_NAME}/loop-1"], (
-        "E1 seed premise: the produced loop file must exist before launch")
     spec_file = stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     # T4b (#387): the loop file is the dispatch record; the seeded SPEC still
@@ -178,6 +176,9 @@ def test_E1_whole_pipeline_happy_path(client):
     launch = client.post(f"/projects/{p}/hunting", json={})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
+    stack.seed_threat_model_unit(p, unit_id=UNIT, run_id=rid)
+    assert stack.produced_loop_files(p) == [f"{UNIT_NAME}/loop-1"], (
+        "E1 seed premise: the produced loop file must exist after launch")
     # The seeded pod drives REAL LLM turns + kali tool calls; on a loaded host
     # that pass can take longer than the 240s default - give it an honest
     # window. Fail-open: if the live LLM pass cannot drive the edge the run
@@ -225,7 +226,7 @@ def test_E2_cross_run_produced_spec_reconciliation(client):
     # The earlier run consumed the parent loop file: seed the COMPLETED model,
     # then move its loop to consumed/ through the store primitive (no live
     # parent session in THIS run).
-    stack.seed_threat_model_unit(p, unit_id=UNIT)
+    stack.seed_threat_model_unit(p, unit_id=UNIT, run_id="hw-e2-earlier")
     assert stack.consume_seeded_loop(p, unit_id=UNIT) is True
     assert stack.consumed_loop_files(p) == [f"{UNIT_NAME}/loop-1"]
 

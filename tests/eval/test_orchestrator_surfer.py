@@ -1,7 +1,7 @@
 """The surfer loop (#275, D5/D31/N17).
 
 The surfer asserts instance state in the background and prompts the orchestrator
-on a cap-reached or failed state; the orchestrator decides terminate, destroy or
+on a legacy cap-reached or failed state; the orchestrator decides terminate, destroy or
 a bounded fix-and-restart, or escalates into a hold. Every effect is injected -
 the state source, the decider agent turn, the command runner, the REST client,
 the repair kit, the trial resumer, the clock, and the hold state - so the loop is
@@ -1168,7 +1168,7 @@ def test_two_cycles_on_the_same_terminal_state_act_once(tmp_path) -> None:
 
 
 def test_a_second_distinct_trigger_is_handled_too(tmp_path) -> None:
-    # Two real triggers on one state: a failed hunting run and a cap-reached
+    # Two real triggers on one state: a failed hunting run and a legacy cap-reached
     # run. Both name a run, so `terminate` stops both; the second cycle is a
     # no-op because both identities were recorded.
     state = alignment.AlignmentState(tmp_path / "alignment.yaml")

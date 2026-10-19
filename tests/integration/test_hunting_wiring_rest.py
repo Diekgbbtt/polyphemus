@@ -278,7 +278,15 @@ def test_C10_modeller_launch_canonical(client):
     # the real pass writes are read from the physical store (never the return
     # value). Non-emptiness depends on the live LLM pass landing loops.
     produced = stack.produced_loop_files(p)
-    assert all(isinstance(_k, str) for _k in produced)
+    # The read-back identity is `<unit_name>/loop-<rank>` (S2 8.4). The pass is
+    # asynchronous, so non-emptiness depends on the live LLM pass; what is
+    # asserted is the exact identity shape and its uniqueness, never a type
+    # check the helper's f-string already implies.
+    assert len(produced) == len(set(produced)), produced
+    for identity in produced:
+        unit_name, _, loop_id = identity.partition("/")
+        assert unit_name and loop_id.startswith("loop-"), identity
+        assert loop_id.removeprefix("loop-").isdigit(), identity
 
 
 def test_C11_modeller_unknown_project_404(client):
