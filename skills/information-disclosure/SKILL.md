@@ -2,7 +2,7 @@
 name: information-disclosure
 description: Information disclosure testing covering error messages, debug endpoints, metadata leakage, and source exposure
 metadata:
-  version: '1.0'
+  version: 1.0.0
 ---
 
 # Information Disclosure
@@ -11,174 +11,147 @@ Information leaks accelerate exploitation by revealing code, configuration, iden
 
 ## Attack Surface
 
-- Errors and exception pages: stack traces, file paths, SQL, framework versions
-- Debug/dev tooling reachable in prod: debuggers, profilers, feature flags
-- DVCS/build artifacts and temp/backup files: .git, .svn, .hg, .bak, .swp, archives
-- Configuration and secrets: .env, phpinfo, appsettings.json, Docker/K8s manifests
-- API schemas and introspection: OpenAPI/Swagger, GraphQL introspection, gRPC reflection
-- Client bundles and source maps: webpack/Vite maps, embedded env, `__NEXT_DATA__`, static JSON
-- Headers and response metadata: Server/X-Powered-By, tracing, ETag, Accept-Ranges, Server-Timing
-- Storage/export surfaces: public buckets, signed URLs, export/download endpoints
-- Observability/admin: /metrics, /actuator, /health, tracing UIs (Jaeger, Zipkin), Kibana, Admin UIs
-- Directory listings and indexing: autoindex, sitemap/robots revealing hidden routes
+- **Errors and exception pages**: stack traces, file paths, query fragments, component versions.
+- **Debug and diagnostic tooling reachable in production**: debuggers, profilers, feature flags.
+- **Build artifacts**: version-control and build artifacts, plus temp and backup files produced by editors and deploy scripts.
+- **Configuration and secret stores reachable over HTTP**: environment files, status dumps, deployment manifests.
+- **Interface descriptions and schema interfaces**: aPI documents, schema introspection, service reflection.
+- **Client bundles and source maps**: build maps, embedded environment values, serialized page data, static data files.
+- **Headers and response metadata**: server and platform banners, tracing identifiers, validators, range and timing fields.
+- **Storage and export surfaces**: public buckets, signed URLs, export and download endpoints.
+- **API response bodies**: ordinary resource responses whose field sets may exceed the caller's entitlement, including embedded related objects and expansion results.
+- **Observability and administrative surfaces**: metrics, health and actuator paths, tracing consoles, admin views.
+- **Directory listings and indexing**: autoindex, sitemaps and crawl directives revealing hidden routes.
 
-## High-Value Surfaces
+## Reconnaissance
 
-### Errors and Exceptions
+### Channel Map
 
-- SQL/ORM errors: reveal table/column names, DBMS, query fragments
-- Stack traces: absolute paths, class/method names, framework versions, developer emails
-- Template engine probes: `{{7*7}}`, `${7*7}` identify templating stack
-- JSON/XML parsers: type mismatches leak internal model names
+- **Channel enumeration**: enumerate every channel that renders content: web, API, schema layer, socket, RPC, mobile, background jobs, exports, and the cache in front.
+- **Rendering-path recording**: per channel, record the rendering path and the hardening headers so inconsistency between channels is visible later.
+- **Reach recording**: note which channels are reachable anonymously, as an owner, and as a non-owner.
 
-### Debug and Env Modes
+### Artifact Enumeration
 
-- Debug pages: Django DEBUG, Laravel Telescope, Rails error pages, Flask/Werkzeug debugger, ASP.NET customErrors Off
-- Profiler endpoints: `/debug/pprof`, `/actuator`, `/_profiler`, custom `/debug` APIs
-- Feature/config toggles exposed in JS or headers
+- **Artifact sweep**: sweep for deployable artifacts: version-control folders, editor backups, archives, configuration dumps, build maps, and interface documents.
+- **Crawl-directive following**: follow crawl directives and listing surfaces for route names that were meant to stay unreferenced.
+- **Candidate recording**: record one candidate location per artifact family before probing further.
 
-### DVCS and Backups
+### Differential Harness
 
-- DVCS: `/.git/` (HEAD, config, index, objects), `.svn/entries`, `.hg/store` → reconstruct source and secrets
-- Backups/temp: `.bak`/`.old`/`~`/`.swp`/`.swo`/`.tmp`/`.orig`, db dumps, zipped deployments
-- Build artifacts: dist artifacts containing `.map`, env prints, internal URLs
+- **Identity-contrast baseline**: the same resource fetched as anonymous, as owner, and as non-owner.
+- **Response normalization**: normalize each response on status, body length, validators, and headers so later comparisons rest on digests rather than eyeballing.
+- **Control requests**: keep one never-touched control request per channel for ambient comparison.
 
-### Configs and Secrets
+## Detection Channels
 
-- Classic: web.config, appsettings.json, settings.py, config.php, phpinfo.php
-- Containers/cloud: Dockerfile, docker-compose.yml, Kubernetes manifests, service account tokens
-- Credentials and connection strings; internal hosts and ports; JWT secrets
+- **Verbose failure content**: stack traces, file paths, query fragments, and component versions inside failure responses.
+- **Evaluation probe output**: evaluation-probe output that confirms a live execution context behind the error renderer.
+- **Adjacent metadata deltas**: timing and metadata deltas adjacent to the failure that narrate handling the trigger did not intend to expose.
+- **Method-swap deltas**: method-swap deltas where a header-only answer diverges from the full answer on existence or state.
+- **Conditional-replay deltas**: conditional-replay deltas where revalidation outcomes diverge on existence or state for the same principal.
+- **Second-session serving**: second-session serving where a foreign session receives content the first session keyed.
+- **Per-channel field extras**: per-channel field extras where parallel representations of one object disagree on fields or hardening.
+- **Secret strings**: secret strings and internal hostnames inside fetched dumps, snapshots, and panel output.
+- **Parsed file metadata**: parsed file metadata from downloads: paths, versions, keys, and endpoint names the artifact carries.
+- **Operation listings**: operation listings from live schema interfaces that name hidden or privileged operations.
+- **Scope signals**: scope, audience, lifetime, and foreign-dataset signals read from a single storage or export response.
+- **Excess sensitive fields**: excess sensitive fields in a single ordinary response to the entitled caller, where the emitted field set exceeds what the caller's scope renders.
+- **Pre-redirect body leak**: a leak inside the body of a redirect response, read before the redirect is followed.
 
-### API Schemas and Introspection
+## Adversarial Capabilities
 
-- OpenAPI/Swagger: `/swagger`, `/api-docs`, `/openapi.json` — enumerate hidden/privileged operations
-- GraphQL: introspection enabled; field suggestions; error disclosure via invalid fields
-- gRPC: server reflection exposing services/messages
+- **Prerequisites**: disclosure testing presupposes identity contrast, artifact fetching, and failure induction, and it consumes all three.
+- **Identity sessions**: hold anonymous, owner, and non-owner sessions so every rendering can be compared across identities.
+- **Channel reach**: request one resource through every channel the target exposes, including caches in front.
+- **Failure induction**: induce failures deliberately: malformed types, boundary values, missing parameters, alternate content types.
+- **Artifact fetching**: fetch candidate artifacts by guessing deployable locations and by following listing surfaces.
+- **Single and paired reads**: read both single responses and response pairs, since some leaks appear only in the contrast.
+- **Temporal snapshots**: snapshot the same object over time to catch stale entries.
 
-### Client Bundles and Maps
+## Trust Assumptions
 
-- Source maps (`.map`) reveal original sources, comments, and internal logic
-- Client env leakage: `NEXT_PUBLIC_`/`VITE_`/`REACT_APP_` variables; embedded secrets
-- `__NEXT_DATA__` and pre-fetched JSON can include internal IDs, flags, or PII
-
-### Headers and Response Metadata
-
-- Fingerprinting: Server, X-Powered-By, X-AspNet-Version
-- Tracing: X-Request-Id, traceparent, Server-Timing, debug headers
-- Caching oracles: ETag/If-None-Match, Last-Modified/If-Modified-Since, Accept-Ranges/Range
-
-### Storage and Exports
-
-- Public object storage: S3/GCS/Azure blobs with world-readable ACLs or guessable keys
-- Signed URLs: long-lived, weakly scoped, re-usable across tenants
-- Export/report endpoints returning foreign data sets or unfiltered fields
-
-### Observability and Admin
-
-- Metrics: Prometheus `/metrics` exposing internal hostnames, process args
-- Health/config: `/actuator/health`, `/actuator/env`, Spring Boot info endpoints
-- Tracing UIs: Jaeger/Zipkin/Kibana/Grafana exposed without auth
-
-### Cross-Origin Signals
-
-- Referrer leakage: missing/weak referrer policy leading to path/query/token leaks to third parties
-- CORS: overly permissive Access-Control-Allow-Origin/Expose-Headers revealing data cross-origin; preflight error shapes
-
-### File Metadata
-
-- EXIF, PDF/Office properties: authors, paths, software versions, timestamps, embedded objects
-
-### Cloud Storage
-
-- S3/GCS/Azure: anonymous listing disabled but object reads allowed; metadata headers leak owner/project identifiers
-- Pre-signed URLs: audience not bound; observe key scope and lifetime in URL params
+- **The trust premise**: the class rests on one agreement: every channel renders exactly what the caller is entitled to see, and any state the caller is not entitled to see renders opaquely.
+- **The agreement**: it holds each response to the caller's identity scope, holds each response field set to the caller's entitlement scope, holds failure paths to output without internals, holds artifact locations out of reach of unentitled callers, and holds cache keys to include identity.
+- **The exposure**: sensitive position leaks when one rendering clause fails: a failure narrates internals, a deployable stays reachable, a field set exceeds the caller's entitlement, a cache serves one identity's content to another, or two channels disagree about the same object.
+- **The failing clause**: each variant breaks one clause: the failure-rendering clause, the artifact-scoping clause, the field-scope clause, or the pair-consistency clause.
 
 ## Key Vulnerabilities
 
 ### Differential Oracles
 
-- Compare owner vs non-owner vs anonymous for the same resource
-- Track: status, length, ETag, Last-Modified, Cache-Control
-- HEAD vs GET: header-only differences can confirm existence
-- Conditional requests: 304 vs 200 behaviors leak existence/state
+- **Role comparison**: compare owner versus non-owner versus anonymous for the same resource.
+- **Field tracking**: track status, length, validators, and cache-control fields.
+- **Header-only pairs**: header-only requests beside full requests: header-only differences can confirm existence.
+- **Conditional requests**: conditional requests: revalidation outcomes leak existence and state.
 
-### CDN and Cache Keys
+### Cache and Key Composition
 
-- Identity-agnostic caches: CDN/proxy keys missing Authorization/tenant headers
-- Vary misconfiguration: user-agent/language vary without auth vary leaks content
-- 206 partial content + stale caches leak object fragments
+- **Identity-agnostic caches**: keys missing the authorization or tenant binding.
+- **Key-variation misconfiguration**: varying on client shape without varying on identity.
+- **Partial and stale entries**: partial-content and stale entries leaking object fragments.
 
 ### Cross-Channel Mirroring
 
-- Inconsistent hardening between REST, GraphQL, WebSocket, and gRPC
-- SSR vs CSR: server-rendered pages omit fields while JSON API includes them
+- **Inconsistent hardening**: inconsistent hardening between surfaces: the same object rendered with different fields per channel.
+- **Rendering asymmetry**: server-rendered pages omitting fields that the structured interface includes, and the reverse.
 
-## Triage Rubric
+### Field-Set Over-Exposure
 
-- **Critical**: Credentials/keys; signed URL secrets; config dumps; unrestricted admin/observability panels
-- **High**: Versions with reachable CVEs; cross-tenant data; caches serving cross-user content
-- **Medium**: Internal paths/hosts enabling LFI/SSRF pivots; source maps revealing hidden endpoints
-- **Low**: Generic headers, marketing versions, intended documentation without exploit path
+- **Field-set comparison**: compare the emitted field set of an ordinary response against the fields the caller's scope renders, and classify any excess by sensitivity.
+- **Embedded-object comparison**: read embedded related objects with their own comparison, because a shared type can render fields beyond the caller's scope.
 
-## Exploitation Chains
+### Data Channels Without Execution
 
-### Credential Extraction
-- DVCS/config dumps exposing secrets (DB, SMTP, JWT, cloud)
-- Keys → cloud control plane access
+- **No-execution channels**: a stylesheet-injection channel leaks values through rendering alone, with no script execution; the proxy-techniques family owns the mechanism, so this class names `proxy-techniques-css-injection` at the no-execution disclosure step rather than restating it.
+- **Embedded values**: client bundles, browser storage, and serialized page data carry embedded values, read in place with masking and redaction states recorded as held controls.
 
-### Version to CVE
-1. Derive precise component versions from headers/errors/bundles
-2. Map to known CVEs and confirm reachability
-3. Execute minimal proof targeting disclosed component
+## Chaining Attacks
 
-### Path Disclosure to LFI
-1. Paths from stack traces/templates reveal filesystem layout
-2. Use LFI/traversal to fetch config/keys
-
-### Schema to Auth Bypass
-1. Schema reveals hidden fields/endpoints
-2. Attempt requests with those fields; confirm missing authorization
+- **Artifact to credentials**: configuration dumps and deploy artifacts expose keys for databases, mail, tokens, and cloud control planes.
+- **Version to known flaw**: derive precise component versions from banners, errors, and bundles, map them to known issues, and confirm reachability.
+- **Path to file read**: paths from traces and templates reveal the layout, and an inclusion primitive then fetches configuration or keys.
+- **Schema to authorization bypass**: an interface listing hidden fields and routes, whose absence of checks is then confirmed by direct requests.
+- **Disclosure to authorization**: a leaked header name, hidden route, or internal field that a bypass accepts feeds the authorization classes, which own the access verdict.
 
 ## Testing Methodology
 
-1. **Build channel map** - Web, API, GraphQL, WebSocket, gRPC, mobile, background jobs, exports, CDN
-2. **Establish diff harness** - Compare owner vs non-owner vs anonymous; normalize on status/body length/ETag/headers
-3. **Trigger controlled failures** - Malformed types, boundary values, missing params, alternate content-types
-4. **Enumerate artifacts** - DVCS folders, backups, config endpoints, source maps, client bundles, API docs
-5. **Correlate to impact** - Versions→CVE, paths→LFI/RCE, keys→cloud access, schemas→auth bypass
+Elicitation is one procedure with the mechanism as a parameter: failure verbosity triggers a rendering, the artifact channel fetches and reads stored content, the field-scope channel reads one ordinary response against the caller's entitlement, and the oracle channel compares two responses. Each variant instantiates one parameter value.
 
-## Validation
+1. **Establish the differential harness** - Normalize status, length, validators, and headers across anonymous, owner, and non-owner; the step completes when the harness reports a stable baseline per channel
+2. **Trigger controlled failures** - Malformed types, boundary values, missing parameters, alternate content types; the step completes when each channel carries an error-verbosity verdict
+3. **Fetch and read artifacts** - Retrieve each candidate deployable and read its content for secrets, paths, versions, and endpoint names; the step completes when every candidate carries a content verdict
+4. **Read response field sets against entitlement** - Extract the emitted field set of each ordinary response, compare it against the fields the caller's scope renders, and classify any excess by sensitivity; the step completes when every in-scope resource carries a field-set verdict
+5. **Correlate to a chain** - Map each leak to credentials, known flaws, file reads, or bypasses; the step completes when every leak carries a chain verdict or a no-chain verdict
+6. **Rule out intentional disclosure** - Compare each candidate against published documentation and public-by-design surfaces; the step completes when every candidate carries a final verdict
 
-1. Provide raw evidence (headers/body/artifact) and explain exact data revealed
-2. Determine intent: cross-check docs/UX; classify per triage rubric
-3. Attempt minimal, reversible exploitation or present a concrete step-by-step chain
-4. Show reproducibility and minimal request set
-5. Bound scope (user, tenant, environment) and data sensitivity classification
+## Variants
+
+- error-verbosity-disclosure - Verbose failures disclose internals when failure output turns detailed, debug or profiler surfaces answer in production, or evaluation probes confirm a live execution context.
+- stored-artifact-disclosure - Stored artifacts disclose secrets when deployable files stay reachable, live schema interfaces enumerate hidden operations, or storage and export surfaces serve foreign data.
+- information-disclosure-excessive-data-exposure - Single-response field over-exposure discloses internals when a serializer emits the full model, an embedded related object exceeds the caller's scope, or a selection channel admits fields no rendered view requests.
+- differential-oracle-disclosure - Response differentials disclose state when method swaps change answers on one resource, cached responses leak across sessions, or parallel channels disagree on the same object.
 
 ## False Positives
 
-- Intentional public docs or non-sensitive metadata with no exploit path
-- Generic errors with no actionable details
-- Redacted fields that do not change differential oracles
-- Version banners with no exposed vulnerable surface and no chain
-- Owner-visible-only details that do not cross identity/tenant boundaries
-
-## Impact
-
-- Accelerated exploitation of RCE/LFI/SSRF via precise versions and paths
-- Credential/secret exposure leading to persistent external compromise
-- Cross-tenant data disclosure through exports, caches, or mis-scoped signed URLs
-- Privacy/regulatory violations and business intelligence leakage
+- **Public documentation**: intentional public documentation or non-sensitive metadata with no exploitation path.
+- **Generic errors**: generic errors with no actionable detail.
+- **Redacted fields**: redacted fields that do not change a differential or oracle.
+- **Version banners**: version banners with no reachable vulnerable surface and no chain.
+- **Owner-visible details**: owner-visible details that do not cross an identity or tenant boundary.
+- **Rotated artifacts**: a previously recorded artifact location that now answers not-found: content-hashed build artifacts rotate on every deploy, so the absence is a new build rather than remediation; re-derive the live hash before each verdict.
 
 ## Pro Tips
 
-1. Start with artifacts (DVCS, backups, maps) before payloads; artifacts yield the fastest wins
-2. Normalize responses and diff by digest to reduce noise when comparing roles
-3. Hunt source maps and client data JSON; they often carry internal IDs and flags
-4. Probe caches/CDNs for identity-unaware keys; verify Vary includes Authorization/tenant
-5. Treat introspection and reflection as configuration findings across GraphQL/gRPC
-6. Mine observability endpoints last; they are noisy but high-yield in misconfigured setups
-7. Chain quickly to a concrete risk and stop—proof should be minimal and reversible
+- **Artifacts first**: start with artifacts before payloads; deployable files and maps yield the fastest wins.
+- **Digest diffing**: normalize responses and diff by digest to reduce noise when comparing identities.
+- **Source-map hunting**: hunt source maps and serialized page data; they often carry internal identifiers and flags.
+- **Cache-key probing**: probe caches for identity-unaware keys; verify the key variation covers identity and tenant.
+- **Introspection as configuration**: treat introspection and reflection as configuration findings across schema and RPC surfaces.
+- **Observability last**: mine observability endpoints last; they are noisy but high-yield when misconfigured.
+- **Minimal proofs**: chain quickly to a concrete risk and keep the proof minimal and reversible.
+- **Artifact re-derivation**: re-derive a content-hashed artifact location before each verdict, because a recorded location that now answers not-found is a new build rather than remediation.
+- **Triage ladder**: triage ladder for findings: credentials and control-plane keys first; then cross-tenant data and caches serving foreign content; then internal paths and maps that enable inclusion or fetch pivots; then banners and intended documentation with no path.
 
 ## Summary
 

@@ -9,23 +9,34 @@ See `docs/design/jobs-tools-skills-taxonomy.md` for the full jobs/tools/skills m
 ## Layout
 
 ```
-skills/<skill-name>/SKILL.md
+skills/<skill-name>/SKILL.md                     # a flat product/corpus skill or a suite group parent
+skills/<group>/<leaf>/SKILL.md                   # a suite variant (level 2)
 skills/meta/<meta-skill-name>/SKILL.md
 ```
 
-Flat: one directory per skill, `name` == directory. There are no module-routing layers, with one structural family: the meta family under `skills/meta/`.
-The nested-catalogue mount (W4, `SkillCatalogue`) serves the well-formed suite (`skills-unspurious/`), not this directory: it indexes `<group>/<leaf>/SKILL.md` under the logical root `web-vulnerability-testing/` and reports flat leaf names.
+The live root carries three layers:
+
+- The well-formed web-vulnerability-testing suite, in nested groups: a class or technique-family parent at level 1 and its variants at level 2 (41 groups: 39 classes and the `defence-bypass` and `proxy-techniques` families; 165 skills).
+  The stream that produced it is W0-W7; its records live in `skills-unspurious/`.
+- The remaining flat product and corpus skills: the six anatomy skills (`authorization-pyramid`, `lightrag-query`, `steel-browser`, `webapp-clientside-semantic-model`, `webpage-analysis`, `webpage-profile`) and the corpus's non-suite tool, technology, and Windows skills.
+  The corpus's 30 flat vulnerability classes were superseded by the suite's enriched groups (the mount replacement), so those class directories are now group parents.
+- The meta family under `skills/meta/`, whose path-shaped names are part of the loader contract.
+
 Role prompts are NOT skills and do not live here: each role's system prompt lives with its owning module in a `prompts/` dir (`src/polymerhus/recon/domain/prompts/`, `src/polymerhus/recon/crawl/prompts/`, `src/polymerhus/attack/hunting/prompts/`, `src/polymerhus/analysis/prompts/`) and is read directly by its module (fail-closed, memoized, no cross-module imports).
 The meta family (`skills/meta/`) holds the skills exempt from the usage-protocol append, by a path rule (`is_meta_skill`: any loader path under `skills/meta/`), never a per-skill list: the two protocol/authoring skills `meta/meta-write-skill` (authoring rules) and `meta/meta-usage-skill` (usage protocol), plus task-specific meta-authoring skills such as `meta/authn-skill-writing`.
 
 ## Loader contract (`src/polymerhus/app/llm/skills.py::skill_for`)
 
-`skill_for(name)` loads `skills/<name>/SKILL.md` (e.g. `webpage-profile`, `lightrag-query`).
-It strips the YAML frontmatter, caches the body, and degrades to the caller-supplied fallback on a missing or unreadable file.
+`skill_for(name)` resolves the loader name through the lazy live-root `SkillCatalogue` over `skills/` (W4, now the default): a flat skill loads by its directory name, a suite leaf loads by its flat leaf name whichever group holds it, and the meta family keeps its path-shaped name (`meta/meta-usage-skill`).
+It strips the YAML frontmatter, caches the body, and degrades to the caller-supplied fallback on a missing or unreadable bundle.
 Only on-demand skill readers call it; no role prompt loads through here.
-A second catalogue can be mounted as an index over an explicit root (`SkillCatalogue`, W4): the well-formed suite's nested layout (`<group>/<leaf>/SKILL.md`, `skills-unspurious/`) then resolves by flat leaf name whichever group holds it, reports leaf names only, refuses a duplicate name loudly with both colliding paths named, and resolves `references/` and `scripts/` inside the owning leaf at either level (rules R1-R4 and R8 in `docs/design/skills-taxonomy.md`).
-Mounting never repoints this directory: the flat layout and the meta family's path-shaped names above are unchanged, and `skill_for`/`list_skills`/`skill_meta`/`validate_skill` follow a mount only when a caller passes it (`catalogue=`).
-No agent surface binds a mount today: `load_skill` and the L1 index read this catalogue only.
+
+The catalogue indexes levels 1 and 2 and reports loader names only: a level-2 bundle under a group parent is a variant and reports its flat leaf (R3); a level-2 bundle under a plain namespace directory (the `meta/` family) keeps its path-shaped name, so the path-based meta rule still holds.
+It refuses a duplicate name loudly with both colliding paths named (R4), refuses a `SKILL.md` outside the two catalogue levels (R2), and resolves `references/` and `scripts/` inside the owning leaf at either level (R8; rules R1-R4 and R8 in `docs/design/skills-taxonomy.md`).
+`skill_for`/`list_skills`/`skill_meta`/`validate_skill` share that one index, so the loader, the data-section reads, and validation cannot disagree.
+
+An explicit catalogue remains an index over an explicit root: `SkillCatalogue(root)` mounts any tree, and a call passing `catalogue=` resolves through that mount instead of the live root (`skill_for(name, catalogue=...)`, `list_skills(catalogue=...)`, and so on).
+Mounting one never changes the live root's index.
 
 ## Runtime loading (`build_load_skill_tool()::load_skill`)
 
@@ -84,9 +95,39 @@ Agent owners collect the surface through `skill_agent_binding(role_id)`: it retu
 Two tiers. L1 discovery: every agent that BINDS the skill surface carries its BOUNDED skill set's frontmatters in its system message (one `- name: description` line per skill under a header naming `load_skill` as the L2 move), rendered by the shared `dynamic_prompt` middleware from the SAME store seam the loader uses - the per-project bundle first, then the shared catalogue - never hand-written, so it cannot drift from what resolves, and each line's `description` is the skill's frontmatter text verbatim. A project-authored skill (e.g. `authn`) is collected only when its bundle exists at the designed data-dir location `<data_root>/<project_id>/skills/<name>/SKILL.md`, so a bundle that is missing or not at that location never renders in the index. The bounded set is DECLARED once per role in `ROLE_SKILLS` (`app/llm/skills.py`) and travels in the native invocation context alongside the project id (`context={"skills": [...], "project_id": "..."}`); without a project id the render is catalogue-only. A role with no bearing skill is declared EXEMPT and binds nothing at all, and an undeclared role id is refused. L2 activation: the agent calls `load_skill` for a listed skill when its discipline bears on the turn; the result re-enters context through the native tool loop, no custom forwarding.
 The roster is a bounded set in the same sense as a role's tool surface: only the skills whose discipline bears on that role's turn, never the whole catalogue - and an exemption rather than an empty index, so no agent pays for a surface it cannot use. A stale or forgotten roster entry fails the suite (`test_every_declared_role_skill_resolves_in_the_catalogue`, `test_every_tool_calling_role_declares_its_skill_set`, `test_the_roster_is_exactly_the_bound_plus_the_exempt_roles`), never a run.
 
+## The web-vulnerability-testing suite
+
+The suite produced by the W0-W7 stream now lives at this live root; `skills-unspurious/` keeps its records only.
+
+**Authorities.** `docs/design/skills-variant-boundary.md` is the variant boundary (how a class decomposes, the decision procedure, the explicit non-discriminators).
+`docs/design/skills-ontology.md` is the ontology and section contract (the two layers, the canonical layout, the entity-to-section mapping).
+`docs/design/skills-taxonomy.md` is the naming and taxonomy spec (the logical root, group levels, flat-leaf loader identity, global name uniqueness, the leaf naming convention, the suite map).
+Every naming or placement question is answered there.
+
+**Taxonomy and naming.** The nested path is the taxonomy target (`web-vulnerability-testing -> <class> -> <variant>`, folded under the parent class directory).
+A class or family parent is a level-1 group directory carrying its own `SKILL.md`; a variant is a level-2 leaf (`<group>/<variant>/SKILL.md`).
+A family leaf is named `<family>-<discriminator>` (rule R5), where the discriminator is the variant's first bent step.
+The loader name of a skill is its flat leaf sub-directory (R3); its frontmatter `name` equals that directory, and the global name space is unique (R4).
+`references/` and `scripts/` resolve inside the owning leaf, at level 1 or level 2 (R8).
+
+**What is there.** 165 skills across 41 groups: 39 classes (30 decomposed class parents plus 9 that stand as one skill) and the `defence-bypass` and `proxy-techniques` families.
+The 30 class parents each carry a `## Variants` line set equal to their own leaves (R9); `graphql` stands as one skill with no `## Variants` (R10).
+The families carry 16 variant leaves between them (`defence-bypass` 7, `proxy-techniques` 9).
+The suite map in `docs/design/skills-taxonomy.md` is the authoritative placement; the counts and the enrichment record are in `skills-unspurious/INVENTORY.md`, `skills-unspurious/DECOMPOSITION-REPORT.md`, and `skills-unspurious/SCREAMING-REPORT.md`.
+
+**Conventions.** No em dashes; plain dashes.
+In authored Markdown, one full sentence per line.
+Skills stay abstract: no concrete product, version, endpoint, host, parameter, or payload literal; concrete assets are parametrised at runtime from the attack-surface graph, the knowledge base, and the HTTP history.
+Duplicated content becomes a cross-reference, never a copy.
+Skills must not specify identified vulnerabilities.
+
+**Checks and records.** The suite-scoped machine checks live in `skills-unspurious/_completion/verify.sh` and target the 41 group directories under this root (the layout scan, R9/R10, the family prefix rule, the extended-reading pointer, the frontmatter name==directory sweep, and the em-dash scan).
+The script does not scan the non-suite live-root skills, which keep their old layouts.
+The stream records (`_analysis/`, `_authoring/`, `_migration/`, `INVENTORY.md`, `DECOMPOSITION-REPORT.md`, `SCREAMING-REPORT.md`) and the script stay in `skills-unspurious/`.
+
 ## Data section
 
-Every `skills/*/SKILL.md` carries a machine-readable frontmatter contract so the tool can index, validate, and report what was loaded.
+Every `SKILL.md` under the live root (flat or nested) carries a machine-readable frontmatter contract so the tool can index, validate, and report what was loaded.
 Mandatory: `name` (non-empty string, EQUAL to the skill's directory), `description` (non-empty string: what the skill does + when to use it), `metadata` (string map carrying non-empty `version`).
 No other top-level keys and no structured `inputs`: the body describes invocation context better than a schema stub.
 Conformance is enforced by `tests/recon/test_skill_data_section.py::test_every_repo_skill_conforms_to_data_section`, which sweeps the catalogue and fails on any offender.
@@ -106,6 +147,6 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 | `meta/meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
 | `meta/authn-skill-writing` | **authored** | authoring a project's per-project `authn` skill: posture probe, sign-in/sign-up execution, and the store/skill two-plane split |
 
-The catalogue additionally carries the 63-skill external corpus moved in-repo flat (#232 D232-12), all governed by the same data-section conformance sweep.
+The catalogue additionally carries the suite's 165 nested skills (above) and the external corpus's remaining 33 non-suite skills moved in-repo flat (#232 D232-12), all governed by the same data-section conformance sweep.
 
 Roadmap detail + priorities: `docs/design/jobs-tools-skills-taxonomy.md` section 6.

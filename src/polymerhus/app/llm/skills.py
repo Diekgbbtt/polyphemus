@@ -15,16 +15,18 @@ module in a `prompts/` dir and is read directly (fail-closed) - see
 `skills/README.md`. Only genuine progressive-disclosure skills live under
 `skills/` and load through here.
 
-W4 mounts the nested suite catalogue: `SkillCatalogue` indexes one EXPLICIT
-root by the flat leaf name of every `SKILL.md`-bearing directory (a level-1
-group parent or a level-2 variant), under the suite's logical root
-`web-vulnerability-testing/` - an identity that never enters a reported name.
-The mount refuses a duplicate name loudly (both colliding paths named) and
-resolves `references/`-`scripts/` inside the owning leaf at either level
-(taxonomy spec section 6, rules R1-R4 and R8). The live catalogue root `skills/`
-is never repointed: a mount is an explicit index over an explicit path, and
-`skill_for`/`list_skills`/`skill_meta`/`validate_skill` follow one only when a
-caller passes it.
+W4 mounts the nested suite catalogue: `SkillCatalogue` indexes one root by the
+flat leaf name of every `SKILL.md`-bearing directory (a level-1 group parent or
+a level-2 variant), under the suite's logical root `web-vulnerability-testing/`
+- an identity that never enters a reported name. The mount refuses a duplicate
+name loudly (both colliding paths named) and resolves `references/`-`scripts/`
+inside the owning leaf at either level (taxonomy spec section 6, rules R1-R4 and
+R8). The mount replacement made the live root `skills/` the suite's home: the
+DEFAULT resolution of `skill_for`/`list_skills`/`skill_meta`/`validate_skill`
+is a lazy `SkillCatalogue` over `_SKILLS_ROOT`, so a nested leaf resolves by
+its flat name with no caller plumbing. An explicit `catalogue=` mount still
+wins when passed, and the live root also carries the flat product skills and
+the path-shaped `meta/` family (the namespaced names keep their paths).
 
 #222 makes the single loader agent-reachable: `build_load_skill_tool()` builds
 the ONE shared `load_skill` tool, which calls `skill_for` internally, so
@@ -92,11 +94,11 @@ _SKILLS_ROOT = Path(__file__).resolve().parents[4] / "skills"
 LOGICAL_SUITE_ROOT = "web-vulnerability-testing"
 
 # Cache keyed by `(root, name, fallback)`: the same leaf name read from two
-# catalogues (the live root and a mounted suite) is two distinct requests, so a
-# mounted suite can never serve the live catalogue's body or the reverse. It is
-# also keyed by `fallback`: the same missing skill read with two different
-# fallbacks is two distinct requests, so an earlier cached miss can never
-# override the fallback a later caller asked for.
+# catalogues (the live root and an explicitly mounted one) is two distinct
+# requests, so a mounted catalogue can never serve the live root's body or the
+# reverse. It is also keyed by `fallback`: the same missing skill read with two
+# different fallbacks is two distinct requests, so an earlier cached miss can
+# never override the fallback a later caller asked for.
 _CACHE: dict[tuple[str, str, str], str] = {}
 
 
@@ -156,59 +158,60 @@ def skill_for(
     fallback: str = "",
     catalogue: "SkillCatalogue | None" = None,
 ) -> str:
-    """Return the skill body at `skills/<name>/SKILL.md`, YAML frontmatter
-    stripped and cached. `name` is the flat skill name (e.g. 'webpage-profile',
-    'lightrag-query'; the live catalogue's meta family stays path-shaped:
-    'meta/meta-usage-skill'). On a missing or unreadable file, degrade to
+    """Return the named skill body, YAML frontmatter stripped and cached. `name`
+    is the loader name (`webpage-profile`, `lightrag-query`, a suite leaf such
+    as `jwt-claims-confusion`; the `meta/` family keeps its path shape:
+    `meta/meta-usage-skill`). On a missing or unreadable bundle, degrade to
     `fallback` (default '') and cache that, so a missing mount degrades
     gracefully instead of crashing the caller.
 
-    `catalogue` mounts another catalogue (W4): the read then resolves the flat
-    leaf through that index, so a nested suite skill loads by its leaf name
-    alone. The default (`None`) keeps the live root, so nothing changes when no
-    catalogue is mounted."""
+    The default resolves through the lazy live-root catalogue (`skills/`), so
+    the suite's nested leaves load by their flat leaf name. `catalogue` selects
+    an EXPLICIT mount (W4): the read then resolves through that index, and an
+    explicit mount still wins over the live root."""
     if catalogue is not None:
         return catalogue.read(name, fallback=fallback)
-    return _read_cached(
-        _SKILLS_ROOT, name, _SKILLS_ROOT / name / "SKILL.md", fallback
-    )
+    return _live_catalogue().read(name, fallback=fallback)
 
 
 def clear_cache() -> None:
-    """Drop the skill cache (test/hot-reload seam) - every catalogue's."""
+    """Drop the skill cache (test/hot-reload seam) - every catalogue's, the
+    lazy live-root index included, so a newly added skill is re-indexed."""
     _CACHE.clear()
+    _reset_live_catalogue()
 
 
 def list_skills(catalogue: "SkillCatalogue | None" = None) -> list[str]:
-    """Index the skill catalogue: the sorted flat skill names (the directory
-    carrying each `SKILL.md` directly under `skills/`). With `catalogue` given,
-    the mount's index is reported instead: the sorted LEAF names of every
-    `SKILL.md`-bearing directory at level 1 or 2, never a path and never the
-    logical root (R1/R3)."""
+    """Index the skill catalogue: the sorted loader names of every
+    `SKILL.md`-bearing directory under the live root `skills/` (a level-1 flat
+    skill or group parent, a level-2 variant). With `catalogue` given, the
+    explicit mount's index is reported instead. A level-2 namespaced skill (the
+    `meta/` family) keeps its path-shaped name, so the path-based meta rule
+    still holds; the logical root never appears (R1/R3)."""
     if catalogue is not None:
         return catalogue.list_skills()
-    return sorted(
-        str(p.parent.relative_to(_SKILLS_ROOT))
-        for p in _SKILLS_ROOT.rglob("SKILL.md")
-        if p.is_file()
-    )
+    return _live_catalogue().list_skills()
 
 
-# --- The mounted nested catalogue (W4, taxonomy spec section 6) ----------------
+# --- The nested catalogue (W4, taxonomy spec section 6; the mount replacement) -
 #
-# The live catalogue root (`_SKILLS_ROOT`) is a flat directory whose names are
-# the directory names, path-shaped for the `meta/` family - other streams own
-# it, and mounting the suite must not repoint it. The nested suite is therefore
-# consumed as a MOUNT: `SkillCatalogue` indexes one explicit root
-# (`skills-unspurious/` in the repo) and resolves the suite's flat leaves.
+# The live catalogue root (`_SKILLS_ROOT`) now carries the suite's nested groups
+# (a class or family parent at level 1, its variants at level 2) beside the
+# flat product skills and the `meta/` family. Production therefore resolves it
+# through ONE catalogue: `SkillCatalogue` lazily indexes the live root as the
+# DEFAULT, so `skill_for`, `list_skills`, `skill_meta`, `validate_skill`, the
+# store seam, the L1 index, and the artifact-declared task skills all follow
+# the same index. An explicit `catalogue=` mount is still an index over an
+# explicit root and still wins when passed.
 #
-# The index is built once per mount (the snapshot a caller mounts), and every
-# name it reports is the containing directory name of a SKILL.md, so
-# `web-vulnerability-testing/` (the logical root, R1) can never appear in a
-# name and no reporter ever emits a path. Three defects are loud at mount time,
-# because each one would otherwise hide a skill or load the wrong bundle:
-# a duplicate leaf name (R4), a SKILL.md outside the two catalogue levels
-# (R2), and a bundle directory carrying the logical root's name (R1).
+# The index is built once per snapshot (the live snapshot is rebuilt by
+# `clear_cache`, the test/hot-reload seam), and every name it reports is the
+# containing directory name of a SKILL.md - except a level-2 bundle under a
+# plain namespace directory (`meta/`), whose loader name keeps the path. Three
+# defects are loud at mount time, because each one would otherwise hide a skill
+# or load the wrong bundle: a duplicate leaf name (R4), a SKILL.md outside the
+# two catalogue levels (R2), and a bundle directory carrying the logical root's
+# name (R1).
 
 
 class DuplicateSkillNameError(ValueError):
@@ -235,8 +238,8 @@ class SkillLayoutError(ValueError):
 
 
 class SkillCatalogue:
-    """The mounted catalogue index (W4): one explicit root, indexed by the flat
-    leaf name of every `SKILL.md`-bearing directory.
+    """The catalogue index (W4): one root, indexed by the flat leaf name of
+    every `SKILL.md`-bearing directory.
 
     Mounting is an identity (R1): `logical_root` names the whole catalogue and
     defaults to the suite's (`LOGICAL_SUITE_ROOT`); it never appears in a
@@ -245,7 +248,13 @@ class SkillCatalogue:
     first defect, so a catalogue that would resolve ambiguously never loads.
     A missing root mounts as an empty catalogue: reads degrade to their
     fallback exactly like `skill_for`. Import performs no I/O; the scan is the
-    explicit mount call, and the index is the snapshot a caller mounts."""
+    explicit mount call, and the index is the snapshot a caller mounts.
+
+    A level-2 bundle whose parent carries its own `SKILL.md` is a suite variant
+    and keeps the flat leaf identity (R3). A level-2 bundle under a plain
+    namespace directory is a namespaced skill (`meta/` on the live root): its
+    loader name is the root-relative path, so `is_meta_skill` and the declared
+    `meta/...` names keep resolving."""
 
     def __init__(
         self, root: str | Path, *, logical_root: str = LOGICAL_SUITE_ROOT
@@ -271,7 +280,14 @@ class SkillCatalogue:
     def _index(self) -> dict[str, Path]:
         """The name -> bundle-directory index over levels 1 and 2, walked in
         sorted (deterministic) order so the reported FIRST duplicate is stable:
-        the earlier path in walk order is `first`."""
+        the earlier path in walk order is `first`.
+
+        The loader name of a level-2 bundle whose parent is itself a group
+        parent (`SKILL.md`-bearing) is the flat leaf, the suite's variant
+        identity (R3). A level-2 bundle under a plain namespace directory is a
+        namespaced skill (`meta/` on the live root): its loader name keeps the
+        path, so the path-based meta rule and the declared `meta/...` names
+        keep resolving."""
         bundles: dict[str, Path] = {}
         for skill_file in sorted(self._root.rglob("SKILL.md"), key=str):
             if not skill_file.is_file():
@@ -284,13 +300,15 @@ class SkillCatalogue:
                     f"{depth}; a SKILL.md is a level-1 group parent or a "
                     "level-2 variant (taxonomy spec R2)"
                 )
-            name = bundle.name
-            if name == self._logical_root:
+            if bundle.name == self._logical_root:
                 raise SkillLayoutError(
                     f"skill_layout: {bundle} carries the logical root's name "
                     f"{self._logical_root!r}; the root is an identity, never a "
                     "skill name (taxonomy spec R1)"
                 )
+            name = bundle.name
+            if depth == 2 and not (bundle.parent / "SKILL.md").is_file():
+                name = "/".join(bundle.relative_to(self._root).parts)
             first = bundles.get(name)
             if first is not None:
                 raise DuplicateSkillNameError(name, first, bundle)
@@ -300,13 +318,16 @@ class SkillCatalogue:
     # -- reads: the same fail-open contract as the flat loader -----------------
 
     def list_skills(self) -> list[str]:
-        """The catalogue's sorted flat leaf names (R3): the containing directory
-        of every indexed `SKILL.md`, never a path, never the logical root."""
+        """The catalogue's sorted loader names: the containing directory of
+        every indexed `SKILL.md` (the flat leaf, R3); a namespaced skill (the
+        `meta/` family) keeps its path-shaped root-relative name. Never the
+        logical root."""
         return sorted(self._bundles)
 
     def read(self, name: str, *, fallback: str = "") -> str:
         """The named skill's body, frontmatter stripped and cached: the flat
-        leaf resolves whichever group holds it (R3). An unknown name degrades to
+        leaf resolves whichever group holds it (R3), and a namespaced skill
+        resolves by its path-shaped name. An unknown name degrades to
         `fallback` (default ''), never a raise - the same fail-open contract
         `skill_for` states."""
         bundle = self._bundles.get(name)
@@ -342,6 +363,52 @@ class SkillCatalogue:
         if bundle is None:
             return None
         return bundle / target
+
+
+# The live-root catalogue is built LAZILY on the first read: the import stays
+# I/O-free (CODING_STANDARD section 6). `_LIVE_CATALOGUE_ROOT` records the root
+# the snapshot indexes, so a test or a hot reload that repoints `_SKILLS_ROOT`
+# rebuilds instead of serving a stale index; the lock keeps two first readers
+# from racing the scan. A malformed live tree degrades to an empty catalogue
+# with one loud log rather than raising into an agent turn - the fail-open
+# contract every read states (the repo checks and tests still fail the defect).
+_LIVE_CATALOGUE_LOCK = threading.Lock()
+_LIVE_CATALOGUE: "SkillCatalogue | None" = None
+_LIVE_CATALOGUE_ROOT: Path | None = None
+
+
+def _live_catalogue() -> "SkillCatalogue":
+    """The lazily mounted catalogue over the live root (the mount replacement):
+    the DEFAULT resolution behind `skill_for`, `list_skills`, and `skill_meta`.
+    Built once per root snapshot (rebuilt after `clear_cache`). A root whose
+    tree fails to mount is logged and replaced by an empty catalogue, so every
+    read degrades to its fallback instead of crashing an agent turn."""
+    global _LIVE_CATALOGUE, _LIVE_CATALOGUE_ROOT
+    root = Path(_SKILLS_ROOT)
+    with _LIVE_CATALOGUE_LOCK:
+        if _LIVE_CATALOGUE is None or _LIVE_CATALOGUE_ROOT != root:
+            try:
+                catalogue = SkillCatalogue(root)
+            except (OSError, ValueError):
+                logger.exception(
+                    "skill loader: the live catalogue at %s failed to mount; "
+                    "every skill read degrades to its fallback",
+                    root,
+                )
+                catalogue = SkillCatalogue(root / ".unmounted")
+            _LIVE_CATALOGUE = catalogue
+            _LIVE_CATALOGUE_ROOT = root
+        return _LIVE_CATALOGUE
+
+
+def _reset_live_catalogue() -> None:
+    """Drop the live-root snapshot (the `clear_cache` half): the next read
+    re-scans, so a newly added skill is indexed and a repointed root is
+    followed."""
+    global _LIVE_CATALOGUE, _LIVE_CATALOGUE_ROOT
+    with _LIVE_CATALOGUE_LOCK:
+        _LIVE_CATALOGUE = None
+        _LIVE_CATALOGUE_ROOT = None
 
 
 # The single usage contract, rendered verbatim into the tool description at
@@ -965,24 +1032,20 @@ def build_load_skill_tool(
 
 
 def skill_meta(name: str, *, catalogue: "SkillCatalogue | None" = None) -> dict:
-    """Return the skill's data section: the parsed YAML frontmatter mapping at
-    `skills/<name>/SKILL.md` (`{}` when the file is missing, has no frontmatter,
-    or the frontmatter does not parse to a mapping - never a raise). With
-    `catalogue` given, the data section is read from that mount's resolved
-    leaf."""
+    """Return the skill's data section: the parsed YAML frontmatter mapping of
+    the named bundle (`{}` when the bundle is missing, has no frontmatter, or
+    the frontmatter does not parse to a mapping - never a raise). The default
+    resolves through the live-root catalogue, so a nested suite leaf is read
+    through its indexed bundle; with `catalogue` given, the data section is read
+    from that explicit mount instead."""
     if catalogue is not None:
         return catalogue.meta(name)
-    path = _SKILLS_ROOT / name / "SKILL.md"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return {}
-    return _parse_frontmatter(text) or {}
+    return _live_catalogue().meta(name)
 
 
-# The data-section contract (A3, Agent Skills spec subset): every
-# `skills/<name>/SKILL.md` carries YAML frontmatter with `name` (EQUAL to the
-# skill directory - the loader path is the index key, the frontmatter name the
+# The data-section contract (A3, Agent Skills spec subset): every bundled
+# `SKILL.md` carries YAML frontmatter with `name` (EQUAL to the skill
+# directory - the loader path is the index key, the frontmatter name the
 # reported identity, and the two must agree), `description` (non-empty: what the
 # skill does + when to use it), and a `metadata` string map carrying `version`
 # (non-empty). Structured `inputs` do NOT live in frontmatter - the body

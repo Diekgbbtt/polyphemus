@@ -22,7 +22,7 @@
 | S5 | W5: artifact `skills` field, `load_skill` descriptions command, runtime rendering, agent workflows (C5, workflow ticket #236); per the 2026-10-18 ruling: the pod runner/triager prompt refactoring plus the skills loading/listing binding for all four hunting-module agents | DONE 2026-10-18: merged `ac48b90b`; the review returned BLOCKED on two majors (the hunting CONTEXT.md drift; the triager-variant skill drop), both fixed in the one fix pass; the wider suites green; `verify.sh` NO-FAILURES (1 pending: C1 families) |
 | S6 | W6: `defence-bypass` and `proxy-techniques` families (C1) + cross-reference wiring (C2) | DONE 2026-10-19: merged `155b6ed9`; the review returned CLEAR (one major scope call ruled by the operator: fix the concrete misses); `verify.sh` ALL-CHECKS-PASS (zero pending) |
 | S7 | W7: C4-full enrichment (D1a proposal report first, operator-assessed; then D1b surgical pass, D1c references/scripts) | DONE 2026-10-19: merged `e27beada`; the review returned BLOCKED on two majors (the R5 leaf renames; the README record), both fixed once; `verify.sh` ALL-CHECKS-PASS; the suite stands at 165 skills |
-| S8 | Final integration: trunk to `dev` as one PR (human-merged) | IN PROGRESS 2026-10-19: the operator's finalization decisions recorded (the enriched suite replaces the live catalogue root; #388 lands before the integration; the quiescence question pending); #388 dispatched; next the mount replacement, the documentation alignment, then the PR go |
+| S8 | Final integration: trunk to `dev` as one PR (human-merged) | IN PROGRESS 2026-10-19: the operator's finalization decisions recorded (the enriched suite replaces the live catalogue root; #388 landed; the quiescence question pending); the mount replacement is LANDED (the suite's 41 groups at `skills/`, the live-root catalogue the default resolution, the checks retargeted, the READMEs and docs updated); next the documentation alignment, then the PR go |
 
 ## Ordering constraints
 
@@ -40,14 +40,15 @@
 
 After each merge into the trunk: run `verify.sh`, update the completion ledger rows with pasted output, update the map's status rows, and record the transition here. Any FAIL or review BLOCK holds the state and is reported to the operator with the evidence.
 
-## Current pointers (2026-10-18)
+## Current pointers (2026-10-19)
 
-- Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: the W7 merge `e27beada`; contains W0 landing, W0/W1 completion, W2 cortex, W3, W4, W5, W6, W7 (165 suite skills).
+- Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: `562c9f5b` (#388 close-out) plus the mount-replacement commit; contains W0 landing, W0/W1 completion, W2 cortex, W3, W4, W5, W6, W7 (165 suite skills), and the mount replacement.
 - S2: COMPLETE - all three residual items merged after their single review rounds (W2, W0, W1).
 - S3: COMPLETE - both rounds answered and recorded (`skill-evolution-w3-decisions.md`, D-W3-1..D-W3-8); merged `b42a19d9` after review CLEAR with the one fix pass absorbed.
 - S4: COMPLETE - the W4 mount seam merged after review CLEAR (`7ac935d6`).
 - S5: COMPLETE - merged `ac48b90b` after the review BLOCKED on two majors, both fixed once (the hunting CONTEXT.md reconciliation; the triager-variant skill inheritance).
 - S6: COMPLETE - merged `155b6ed9`; review CLEAR with one operator-ruled scope call; `verify.sh` reached ALL-CHECKS-PASS.
 - S7: COMPLETE - merged `e27beada`; review BLOCKED on two majors, both fixed once; the suite stands at 165 skills.
-- S8: IN PROGRESS - the trunk carries W0-W7 and `verify.sh` is ALL-CHECKS-PASS; the operator's finalization decisions are recorded; #388 (the layout normalisation) is in flight; then the mount replacement (the suite into the live root), the documentation alignment, and the PR go.
+- S8: IN PROGRESS - the trunk carries W0-W7 and `verify.sh` is ALL-CHECKS-PASS; the operator's finalization decisions are recorded; #388 (the layout normalisation) landed; the mount replacement (the suite into the live root) is COMPLETE (see below); next the documentation alignment, then the PR go.
+- Mount replacement: COMPLETE 2026-10-19 - the suite's 41 group directories (39 classes, 2 families; 165 skills) moved into `skills/`; the corpus's 30 flat vulnerability classes are superseded; `SkillCatalogue` over the live root is the DEFAULT resolution (explicit `catalogue=` still wins); the checks target the live-root groups; `skills/README.md` merged, `skills-unspurious/README.md` reduced to the records note; `verify.sh` ALL-CHECKS-PASS and the seam/catalogue/artifact-skill suites green.
 - Open operator gates: the quiescence-question answer (see the map); the final PR go.

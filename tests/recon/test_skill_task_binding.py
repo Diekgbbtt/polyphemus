@@ -193,6 +193,21 @@ def test_an_artifact_named_skill_renders_verbatim_with_the_baseline() -> None:
         assert f"- {name}: {skill_meta(name)['description']}" in rendered
 
 
+def test_an_artifact_named_suite_leaf_renders_verbatim() -> None:
+    """The mount replacement: a nested suite leaf (level 2) is an artifact-legal
+    name and resolves through the live catalogue like any flat skill."""
+    binding = skill_agent_binding(
+        "pod_runner", task_skills=["sql-injection-second-order"]
+    )
+
+    assert "sql-injection-second-order" in binding.context["skills"]
+    rendered = _render(binding.middleware[0], context=binding.context)
+    assert (
+        f"- sql-injection-second-order: "
+        f"{skill_meta('sql-injection-second-order')['description']}" in rendered
+    )
+
+
 def test_a_project_bundle_skill_named_by_an_artifact_renders(tmp_path) -> None:
     """#236's render-path criterion: a skill that exists ONLY as a per-project
     bundle resolves through the SAME store seam the loader uses (project

