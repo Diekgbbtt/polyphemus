@@ -58,11 +58,24 @@ _POOL_MAX = 24
 # a stateful turn puts in its checkpoint state, keyed `(module, name)` so the
 # allow-list can name a CONSUMER context's type without `app` importing it (analysis
 # reads app; app must never read analysis). Under `LANGGRAPH_STRICT_MSGPACK=true` an
-# unlisted type is BLOCKED at load (`msgpack_blocked`) - a resumed turn silently loses
-# the value - so every structured-output envelope a workflow persists is listed here.
-# The streamed L0 proposers persist no bespoke envelope, so this family is empty on
-# the L0 trunk; the service-sourced experiment appends its `AnalysisTurn` here.
-_ALLOWED_MSGPACK_MODULES: tuple[tuple[str, str], ...] = ()
+# unlisted type is BLOCKED at load (`msgpack_blocked`) and silently degrades to a
+# plain `dict` - a resumed turn loses the entity's type - so every structured-output
+# envelope a workflow persists is listed here. The arm L white-jotter trials
+# (2026-10-19) observed each entry below blocked in production, one structured
+# response at a time; `tests/test_llm_checkpoints_serde_allowlist.py` pins the
+# round-trip of the whole family through the ONE serde.
+_ALLOWED_MSGPACK_MODULES: tuple[tuple[str, str], ...] = (
+    # analysis: the proposers' structured batch (assigner + mechanism typist)
+    ("polymerhus.analysis.analyser_types", "L1DeltaBatch"),
+    # recon: the auth gateway verdict and the pod observation batch
+    ("polymerhus.recon.control.authn_loop", "GatewayVerdict"),
+    ("polymerhus.recon.domain.pod", "_ObservationBatch"),
+    # hunting: the pod triager's per-lap decision and the orchestrator's phases
+    ("polymerhus.attack.hunting.pod.agents", "TriagerDecision"),
+    ("polymerhus.attack.hunting.hunt_orchestrator", "GateDecision"),
+    ("polymerhus.attack.hunting.hunt_orchestrator", "NoteDecision"),
+    ("polymerhus.attack.hunting.hunt_orchestrator", "RatifyDecision"),
+)
 
 
 def checkpoint_serde() -> Any:

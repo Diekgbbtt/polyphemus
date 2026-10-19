@@ -478,8 +478,8 @@ def test_flush_all_indexes_covers_every_live_module(monkeypatch):
 
 
 def test_checkpoint_serde_constructs() -> None:
-    # The L0 trunk persists no bespoke envelope, so the allow-list family is empty;
-    # the ONE serde still constructs and every construction point uses it.
+    # The ONE serde constructs and carries the persisted-envelope allow-list;
+    # every construction point uses it.
     serde = C.checkpoint_serde()
     assert serde is not None
 
