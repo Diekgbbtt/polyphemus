@@ -101,7 +101,7 @@ fi
 # that has no children (R10). The class-children count is a floor: the ratified
 # floor is 101 (B1) and later authoring grows it, so the check pairs the floor
 # with the per-parent sweep instead of freezing the number. Name == directory is
-# swept for every level-2 skill, family leaves included.
+# swept for every SKILL.md, the level-1 parents included (R3).
 class_children=$(find skills-unspurious -mindepth 3 -maxdepth 3 -name SKILL.md \
   -not -path 'skills-unspurious/defence-bypass/*' \
   -not -path 'skills-unspurious/proxy-techniques/*' | wc -l | tr -d ' ')
@@ -164,11 +164,11 @@ while IFS= read -r f; do
     printf '      name mismatch: %s (name=%s)\n' "$f" "$name"
     mismatch=1
   fi
-done < <(find skills-unspurious -mindepth 3 -maxdepth 3 -name SKILL.md)
+done < <(find skills-unspurious -name SKILL.md)
 if [ "$mismatch" = "0" ]; then
-  pass "every child frontmatter name equals its directory"
+  pass "every SKILL.md frontmatter name equals its directory"
 else
-  failed "every child frontmatter name equals its directory"
+  failed "every SKILL.md frontmatter name equals its directory"
 fi
 
 # 9. No em dashes in authored Markdown (U+2014, built from bytes to avoid a literal).
