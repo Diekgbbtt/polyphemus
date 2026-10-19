@@ -67,6 +67,8 @@ The delta over the parent is poison-then-include chaining with handler-execution
 - **Execution proof**: include the chain output as if it were stored content and confirm execution, since a transformed read alone only proves the read.
 - **Disjointness**: transformed content that is only read stays with the handler-invocation shapes above; this variant owns the case where the chain output is executed.
 
+See `references/filter-chain-synthesis.md` for the stage-chaining workflow, its length budget, and the blind-target variant.
+
 ## Advanced Techniques
 
 Chain poisoning before inclusion by planting a marker, then invoking the poisoned store through the inclusion sink.

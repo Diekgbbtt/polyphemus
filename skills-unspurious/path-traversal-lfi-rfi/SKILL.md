@@ -141,6 +141,8 @@ Each variant breaks one clause: the confinement clause, the handler-selection cl
 - Defeat canonical-path allow-lists through alias and link names the resolution admits without leaving the permitted prefix
 - Defeat a resolution that runs after the read by reaching a sink whose canonicalization completes later than the operation it guards
 
+See `references/traversal-encoding-matrix.md` for the encoding families, the hop discipline, and the high-value read targets behind each probe.
+
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
