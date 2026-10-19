@@ -41,9 +41,9 @@ retired the stale `derive_verdict` (S4 14.11).
 Retired here (R1, spec 8): the prompt-composed `dispatch_fn` and its `kb` /
 `pod` / `author` / `judge` seams. The back-edge is cut completely (GP5) and
 replaced by the `exec` tool; the exec tool is UNBOUNDED at the harness level
-(R2b) with the partition guard (Q8): exec never produces the hypothesis
-verdict - the pod remains the only source of experimental evidence for the
-committed hypothesis.
+(R2b) with the partition guard (Q8): exec probes inform the assumption check
+and never manufacture a symptom - the test-executor pod remains the only
+source of experimental evidence for a ratified spec.
 
 Everything external is a typed seam, injected at construction: the `graph_view` /
 `kb_query` / `exec` tool bodies, the per-project `HunterMemoryStore`, the session
@@ -129,9 +129,10 @@ HypothesisVerdict = Literal[
 # --- the stable system prompt (single-sourced from the SKILL.md) ---------------
 
 # The stable system prompt is read directly from this module's `prompts/` dir:
-# `hunting-agent.md` (the decision tree, loop discipline, working set) plus its
-# companion `examples.md` (the off-path worked examples Example 2-4 the main
-# body points at), concatenated into ONE prompt. Memoized on first call (no
+# `hunting-agent.md` (the role, the loop ontology, the discipline, the decision
+# tree, the eight passes, the spec body, and the tools) plus its companion
+# `examples.md` (the off-path worked examples Example 2-4 the main body points
+# at), concatenated into ONE prompt. Memoized on first call (no
 # import-time I/O). A missing prompt file is a
 # defect: FAIL-CLOSED (raise), so the harness never starts a hunt without its
 # prompt. The harness serves it as `system_prompt=` on EVERY `arun_session_turn`
@@ -222,14 +223,13 @@ _STEP_PROTOCOL = (
     "rejected). The harness executes the tool and returns its result as the "
     "next message. A result may carry a <phase-transition-hint> - follow it as "
     "the next reasoning phase.\n"
-    "- Conclude the hunt when the candidate set is exhausted or you judge every "
-    "candidate processed: reply with a plain message carrying the final "
-    "rationale (no tool call).\n"
-    "Never invent tool results. Never declare a hypothesis verified without "
-    "evidence you actually hold. PARTITION GUARD: the exec tool never produces "
-    "the hypothesis verdict - the pod remains the only source of experimental "
-    "evidence for the committed hypothesis; exec results only inform your "
-    "reasoning."
+    "- Conclude with a plain message carrying the final rationale (no tool "
+    "call) only when the terminal spec-set write has landed or no pass has "
+    "work left; the terminal write itself ends the hunt.\n"
+    "Never invent tool results. Never claim an assumption falsified without a "
+    "probe result you actually hold. PARTITION GUARD: exec probes inform the "
+    "assumption check and never manufacture a symptom - the test-executor pod "
+    "remains the only source of experimental evidence for a ratified spec."
 )
 
 # The tool surface the model requests against (Template reuse): derived from the

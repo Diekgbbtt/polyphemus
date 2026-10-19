@@ -183,7 +183,7 @@ def test_skill_includes_the_off_path_examples_companion():
 
     skill = _load_hunting_agent_skill()
     assert "Hunting-agent worked examples" in skill
-    assert "Example 2 - coverage re-entry" in skill
+    assert "Example 2 - well-formedness re-entry" in skill
     assert "Example 4 - worst case" in skill
     assert "read `examples.md`" not in skill
 

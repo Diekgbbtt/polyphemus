@@ -45,8 +45,9 @@ Contract + degradation (spec 5, spec 9):
   `timeout_s`; calls an injected `exec_fn(command, timeout_s) -> ExecResult`
   seam (absent -> a denoted fail-open error). UNBOUNDED at the harness level -
   the model decides when to probe (R2b).
-  The PARTITION GUARD (Q8): exec never produces the hypothesis verdict; the pod
-  remains the only source of experimental evidence for the committed hypothesis.
+  The PARTITION GUARD (Q8): exec probes inform the assumption check and never
+  manufacture a symptom; the pod remains the only source of experimental
+  evidence for a ratified spec.
 
 Exposed as the `BaseTool` subclasses `HuntsStoreTool` / `NotesTool` /
 `KbQueryTool` / `ExecTool` (plus the shared `graph_view` tool from
@@ -364,8 +365,9 @@ class HuntsStoreTool(StoreToolBase):
         "`strategy_keyword`; each spec file name is DERIVED from its "
         "keywords, never authored (do not send `spec_id`). The GENERATE write "
         "carries the whole set all-hypothesised; the terminal write carries "
-        "the whole set with the survivors ratified and the unfeasible "
-        "dropped; a later status upserts each identity in place. A duplicate "
+        "the whole set with the survivors ratified and the unfeasible or "
+        "absorbed specs dropped; a later status upserts each identity in "
+        "place. A duplicate "
         "identity in the set FAILS with a duplicate_spec dedup signal "
         "(reflect on overlap and merge or refresh - do not duplicate). A "
         "payload missing a required attribute is rejected with a coded "
@@ -790,25 +792,26 @@ def _note_seam_gap(tool, detail: str) -> None:
 
 
 class ExecTool(BaseTool):
-    """The Kali-container exec tool (R2, spec 5): the back-edge replacement for
-    cheap claim-verification probes inside VERIFY-CLAIMS. `EXEC_TIMEOUT_S` per
-    call; the model chooses the command and an optional shorter `timeout_s`.
-    UNBOUNDED at the harness level - the model decides when to probe (R2b). The
-    PARTITION GUARD: exec never produces the hypothesis verdict - the pod remains
-    the ONLY source of experimental evidence for the committed hypothesis."""
+    """The Kali-container exec tool (R2, spec 5): cheap assumption-falsification
+    probes inside VERIFY-CLAIMS. `EXEC_TIMEOUT_S` per call; the model chooses
+    the command and an optional shorter `timeout_s`. UNBOUNDED at the harness
+    level - the model decides when to probe (R2b). The PARTITION GUARD: exec
+    probes inform the assumption check and never manufacture a symptom - the
+    pod remains the ONLY source of experimental evidence for a ratified spec."""
 
     name: str = "exec"
     description: str = (
         "Run a command on the target's Kali execution surface: cheap "
-        "claim-verification probes inside the ReAct loop (curl for HTTP probes, "
-        "read-only inspection). Each call is bounded by EXEC_TIMEOUT_S (an "
-        "optional shorter timeout_s is accepted). The probe frequency is "
-        "unbounded - you decide when to probe. PARTITION GUARD: exec never "
-        "produces the hypothesis verdict - the pod remains the only source of "
-        "experimental evidence for the committed hypothesis; exec results only "
-        "inform your reasoning, never the committed hypothesis's evidence. If "
-        "the spec's provenance carries a `baseline_ref`, do NOT re-create that "
-        "request by hand here: a hand-written curl loses the replay lineage "
+        "assumption-falsification probes inside VERIFY-CLAIMS (curl for HTTP "
+        "probes, read-only inspection). Each call is bounded by EXEC_TIMEOUT_S "
+        "(an optional shorter timeout_s is accepted). The probe frequency is "
+        "unbounded - you decide when to probe. A probe tries to contradict a "
+        "load-bearing assumption (technique feasibility, chained "
+        "preliminary-vulnerability feasibility, technology-configuration "
+        "evidence); it never probes a payload vector and never manufactures a "
+        "symptom. If the spec's provenance carries a `baseline_ref`, do NOT "
+        "re-create that request by hand here: a hand-written curl loses the "
+        "replay lineage "
         "(derived_from / replay_kind stay null and the artifact looks like "
         "original traffic) - the pod's baseline replay path is what preserves "
         "it.\n\n"

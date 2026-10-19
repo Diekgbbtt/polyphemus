@@ -1,83 +1,99 @@
 # Hunting-agent worked examples: the off-path shapes
 
-Read this section when the run leaves the straight path - on a coverage
-re-entry, an INIT rejection, or total blockage. Example 1 (the confirmed
-straight path) is above in the main body; these three cover the branches.
-Imitate the REASONING SHAPE, never the domain.
+Read this section when the run leaves the straight path - a well-formedness
+re-entry, a falsifying probe, or a degraded run. Example 1 (the straight path)
+is above in the main body; these three cover the branches. Imitate the
+REASONING SHAPE, never the domain.
 
-### Example 2 - coverage re-entry, then an exec probe
-
-```
-GROUND: same pair, but the surface shows a JS-driven state-changing
-flow and the KB has not been consulted yet.
-[D1]: sufficient knowledge and coverage - answer YES, proceed directly.
-DECOMPOSE/GENERATE: H1-H3 as example 1.
-[D2]: NOT exhaustive - the candidates only cover server-side token
-mechanics; the JS-driven flow suggests client-side token generation,
-a specific fault the class also contains. Coverage fails.
-RE-ENTRY: QUERY on (fault-x, web-app axis) -> retrieval adds specific
-fault (d) "client-side generated token with server-side blind
-acceptance", symptoms {token generated in JS, token submitted from a
-second endpoint}, techniques {drive the JS flow, intercept the submit
-target}, defence {same-origin checks on the submit endpoint}.
-Re-DECOMPOSE: (d) enters the set.
-GENERATE: H4: token generated client-side, blindly accepted - Supports:
-the JS flow matches the retrieved symptom; Conflicts: none; Test:
-intercept the form's real submit target, submit without the token.
-[D2] now: fixed-point reached.
-DISCRIMINATE/VERIFY-CLAIMS/RANK/COMMIT: ROOT = H4 (the JS flow makes
-server-side-only hypotheses weakly supported).
-SPEC-WRITE: verification symptom "state-changing request accepted from
-the intercepted submit target without the client-generated token".
-EVALUATE: pod returns {unsuccessful, technical-infeasibility}: the HTTP
-tool cannot drive the JS flow; the trail carries the infeasibility
-assertion, not a clean symptom-absent.
-[D5]: meaningful insight - yes, a tool-reach gap, not a refutation.
-Target-knowledge gaps are resolved inside the loop: exec probes the
-client-side flow (the form's real submit target, the token source) and
-returns a second endpoint carrying no CSRF token. Re-enter
-VERIFY-CLAIMS with the probe evidence; RANK/COMMIT unchanged.
-EVALUATE (revised dispatch): symptom confirmed.
-[D5]: meaningful insight - yes. Close the candidate and move to the
-next (or conclude). No verdict derives here - the harness idles; the
-probe result is in the trail for the future verdict-consumption graph.
-```
-
-### Example 3 - INIT rejection, re-authoring (the one re-authoring pass)
+### Example 2 - well-formedness re-entry, then a merge
 
 ```
-Sub-loop: [G] H2 testable. COMMIT/SPEC-WRITE dispatch the spec.
-Pod rejects the spec at INIT validation.
-INIT validation evidence: "verification_symptoms references an
-unobservable surface (the response body is not in the tool registry's
-reach for this target); payload_vector_space contains a method the
-target does not expose".
-Re-author (one pass): decline exactly the failing attributes - narrow
-the verification symptom to the observable status-code surface; drop
-the unsupported method from the payload vector space; keep everything
-that passed.
-Re-dispatch: pod accepts at INIT; runs; returns {successful,
-symptom-confirmed}.
-No verdict derives here: the harness lands the hunt idle. (If the
-re-authored spec is rejected again: land with the validation evidence
-and close - the hunt does not re-author a third time.)
+GROUNDING: the same report loop; the target surfaces now show a second route,
+GET /reports/{id}/export, that also carries the report id. Class skill idor
+loaded; the methodology KB answers the object-store configuration only.
+Failure modes: the download ownership check, the export ownership check, the
+signed-URL tenant scope. phase:grounding.
+SLICE: report-id authorisation across the download and export routes; boundary
+on the effective request item (the report id) and the delivery behaviour
+(direct file versus signed-URL redirect). phase:slice.
+COLLECT: direct download, signed-URL redirect, and a share-minted URL as an
+advanced technique. phase:collect.
+DISCRIMINATE: authorisation source x delivery route; narrow on the report id,
+broad on the routes. phase:discriminate.
+GENERATE: two specs - direct download and signed-URL redirect; the share-minted
+URL folds into the signed-URL spec, which owns the same authorisation source.
+One hunts_store write, all hypothesised.
+WELL-FORMEDNESS: the export route is a new instance the collection missed;
+[D2] re-enters the reasoning at COLLECT.
+Update phase:collect with action=update (the export route and its own
+authorisation branch). Re-generate: a second hunts_store write, all
+hypothesised, upserting the two identities in place and adding the export
+spec. The tracked state stays WELL-FORMEDNESS throughout.
+Then merge: the direct-download spec and the export spec differ only by route
+while the authorisation variable is the same, so the direct-download identity
+widens to name both routes and the export identity is absorbed. Record the
+merge and its reason in phase:well_formedness; the terminal write carries the
+absorbed identity as dropped.
+Coverage basis: both routes are named in the merged spec and the signed-URL
+region keeps its own spec. No proof of exhaustiveness is claimed. Exit note.
+VERIFY-CLAIMS: probe the assumption "a viewer can mint a signed URL for a
+report it can read" - exec the share route; 403. That mechanism is absent, so
+the signed-URL spec is unfeasible. Probe the object-store configuration
+evidence: an unsigned request for the prefix returns 403, so the signed URL is
+the only delivery. The merged direct-route spec survives.
+Terminal write: the whole set in one hunts_store call; the widened direct-route
+spec ratified, the signed-URL spec and the absorbed export identity dropped.
+COMPLETE.
+```
+
+### Example 3 - a falsifying probe that runs out of insight
+
+```
+GROUNDING/SLICE/COLLECT/DISCRIMINATE/GENERATE: the four specs stand
+hypothesised after one set write; the advanced technique depends on an
+administrative overlay route that the target surfaces do not list.
+WELL-FORMEDNESS: the four sub-slices are disjoint and the slice's regions are
+each owned; the overlay spec is flagged as conditional on the probe. Exit note.
+VERIFY-CLAIMS: the assumption is "the overlay route exists and accepts an
+authenticated request". Probe it with exec - the response is a generic error
+page carrying neither the route nor a default-route absence marker.
+No meaningful insight: the probe cannot contradict the requirement, and the
+meaningful-insight guard ends the evaluation. Do not retry with a different
+path. The probe iterations move no tracked state.
+This was an assumption probe, not a payload probe: it tested the feasibility
+of the technique, never whether a payload fires.
+Terminal write: the whole set in one hunts_store call; all four specs
+ratified, with the unresolved overlay assumption recorded as visible
+uncertainty in phase:well_formedness. Nothing is dropped, because no
+technical infeasibility was shown.
+COMPLETE.
 ```
 
 ### Example 4 - worst case, graceful degradation
 
 ```
-GROUND: a hostile pair; one candidate verifiable, its test technically
-unfeasible (all paths WAF-blocked).
-D1/D2: coverage reached; DISCRIMINATE..RANK order the candidates.
-Sub-loop:
-  H1: dispatched; every pod variant lands unfeasible or strongly
-  blocked; [D5] no meaningful insight in the returned evidence -> close
-  H1 with its trail.
-  H2: [G] passes; dispatched; clean symptom-absent -> refuted -> close.
-  H3: [G] dropped - the distinguishing evidence against H1 was
-  disproven by H1's trail, no testable mechanism remains.
-All candidates closed, none successful.
-CONCLUDE: hunt lands unsuccessful with the attempted hypotheses'
-evidence trail; the feedback carries the blocking assertions and why
-each hypothesis was unverifiable - never empty.
+GROUNDING: loop-2 names a class whose skill is absent from the suite; the
+methodology KB returns empty and the target front answers 504 for every probe.
+The 504 family means the target's upstream is down or restarting, not that the
+routes are absent: stop probing, record the unavailability, and do not loop.
+Gaps recorded in phase:grounding: class skill absent, KB empty, target
+temporarily unavailable. Grounding is weaker; it still proceeds. phase:grounding.
+SLICE: the region the trust agreement opens on the item lookup, bounded by the
+two routes the target surfaces already show. phase:slice.
+COLLECT: instances from the target surfaces and the notes only - the KB
+contributes none. phase:collect.
+DISCRIMINATE: the collected routes separate the specs; the narrow/broad
+trade-off is stated. phase:discriminate.
+GENERATE: two specs, all hypothesised, the structural reasoning carried in the
+rationale because the class skill is absent; the skill_procedure excerpt is
+empty per field, which is a recorded gap, not a failure.
+WELL-FORMEDNESS: coverage is partial over the technology-specific region the
+KB would have named. Record the residual gap and the coverage basis; the set
+stays hypothesised. phase:well_formedness.
+VERIFY-CLAIMS: the probes cannot run while the target is unavailable, so the
+assumptions stay visibly unchecked. Fail-open and loose: no falsification is
+invented, and no retry is made against a 5xx.
+Terminal write: the whole set in one hunts_store call; both specs ratified
+with their uncertainty, none dropped - no technical infeasibility was proved.
+COMPLETE: the hunt lands with a usable, honestly degraded set.
 ```
