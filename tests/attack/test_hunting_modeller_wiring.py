@@ -20,7 +20,6 @@ import pytest
 
 from polymerhus.attack.hunting import runtime as hunting_runtime
 from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
-from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
     orchestrator_session_id,
@@ -162,8 +161,9 @@ async def _noop_pod_builder(spec, **kw):
 
 
 def _stores(tmp_path):
-    return (HuntStore(tmp_path / "hunts"),
-            HunterMemoryStore(tmp_path / "hunter"),
+    """The two stores the dispatch path reads: the hunter memory and the threat
+    model store. The hunt store retired with the config family (T4b)."""
+    return (HunterMemoryStore(tmp_path / "hunter"),
             ThreatModelStore(root_dir=tmp_path / "models"))
 
 
@@ -177,7 +177,7 @@ def test_start_hunting_models_each_distinct_unit_in_a_deterministic_order(
     renamed `threat-modeller` segment."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
     control = _FakeControl()
     seen: list[tuple[str, str, str]] = []
 
@@ -193,7 +193,7 @@ def test_start_hunting_models_each_distinct_unit_in_a_deterministic_order(
         intake_units=[intake_unit(UNIT_B), intake_unit(UNIT_A), intake_unit(UNIT_B)],
         modeller_pass_fn=recording_pass,
         control=control,
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -214,7 +214,7 @@ def test_the_l1_inventory_supplies_the_intake_order(tmp_path, monkeypatch):
     The retired FaultSource selection has no call site."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
     seen: list[str] = []
 
     async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
@@ -246,7 +246,7 @@ def test_the_l1_inventory_supplies_the_intake_order(tmp_path, monkeypatch):
         PROJECT, intake_read_fn=read,
         modeller_pass_fn=recording_pass,
         control=_FakeControl(),
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -289,13 +289,13 @@ def test_a_launched_unit_writes_its_model_through_the_real_store(
     valid model with its produced loop file."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
         PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
         control=_FakeControl(),
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -317,7 +317,7 @@ def test_the_launched_pass_grounds_on_the_live_unit_projection(
     survives and is reported on the unit's outcome."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
     turns = ScriptedModellerTurns()
 
     asyncio.run(hunting_runtime.start_hunting(
@@ -325,7 +325,7 @@ def test_the_launched_pass_grounds_on_the_live_unit_projection(
         modeller_kwargs={"turn_fn": turns},
         graph_read_fn=build_hunting_l1(),
         control=_FakeControl(),
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -344,7 +344,7 @@ def test_the_run_completes_with_one_model_and_no_planner_artifacts(
     planner entry points and prompt are gone."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
     outcomes: list = []
 
     async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
@@ -360,13 +360,15 @@ def test_the_run_completes_with_one_model_and_no_planner_artifacts(
         PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_pass_fn=recording_pass,
         control=_FakeControl(),
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
 
     assert all(isinstance(outcome, UnitOutcome) for outcome in outcomes)
-    assert hunt.read_configs(PROJECT) == []          # no planner artifact
+    # the retired config family has no producer left in the runtime (T4b): the
+    # only artifact family this run can write is the threat model store's
+    assert not hasattr(hunting_runtime, "enqueue_hunt_config")
     for gone in ("arun_orchestration", "run_orchestration", "OrchestratorTools",
                  "mint_hunt_config", "GateDecision", "OrchestratorReport"):
         assert not hasattr(planner, gone), f"the planner's {gone} must be gone"
@@ -407,7 +409,7 @@ def test_the_quiesce_predicate_holds_for_a_live_legacy_pass_session(tmp_path):
     """S1 7.5: a live pass registered under the LEGACY segment still blocks
     quiesce; once it settles the run quiesces. Keying only the new segment would
     quiesce a resumed old run while its pass is still running."""
-    hunt, hunter, _models = _stores(tmp_path)
+    hunter, _models = _stores(tmp_path)
 
     class _Control:
         def __init__(self, live):
@@ -421,12 +423,12 @@ def test_the_quiesce_predicate_holds_for_a_live_legacy_pass_session(tmp_path):
     state = RunDispatchState()
 
     assert asyncio.run(is_run_quiesced(
-        PROJECT, RUN, hunt_store=hunt, hunter_store=hunter, control=control,
+        PROJECT, RUN, hunter_store=hunter, control=control,
         state=state)) is False
 
     control._live = set()
     assert asyncio.run(is_run_quiesced(
-        PROJECT, RUN, hunt_store=hunt, hunter_store=hunter, control=control,
+        PROJECT, RUN, hunter_store=hunter, control=control,
         state=state)) is True
 
 
@@ -442,7 +444,7 @@ def test_a_provider_caused_pass_abort_persists_interrupted(tmp_path, monkeypatch
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
 
     async def provider_abort(project_id, run_id, unit_id, tools, **kwargs):
         raise ThreatModellerDegradedError(
@@ -455,7 +457,7 @@ def test_a_provider_caused_pass_abort_persists_interrupted(tmp_path, monkeypatch
         PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_pass_fn=provider_abort,
         control=_FakeControl(),
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -476,7 +478,7 @@ def test_a_non_provider_pass_abort_fails_the_run(tmp_path, monkeypatch):
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
 
     async def poisoned_abort(project_id, run_id, unit_id, tools, **kwargs):
         raise ThreatModellerDegradedError(
@@ -487,7 +489,7 @@ def test_a_non_provider_pass_abort_fails_the_run(tmp_path, monkeypatch):
         PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_pass_fn=poisoned_abort,
         control=_FakeControl(),
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -500,7 +502,7 @@ def test_the_run_terminal_reaps_the_modeller_actor(tmp_path, monkeypatch):
     only there), so no actor and no per-run thread outlives its run."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
     reaped: list[str] = []
 
     from polymerhus.attack.hunting import threat_modeller as tm
@@ -517,7 +519,7 @@ def test_the_run_terminal_reaps_the_modeller_actor(tmp_path, monkeypatch):
         PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
         control=_FakeControl(),
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -578,7 +580,7 @@ def test_the_modeller_pass_is_serial_per_run(tmp_path, monkeypatch):
     models ONE unit at a time - a second pass never overlaps the first."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
     control = _FakeControl()
     live: list[str] = []
     overlaps: list[str] = []
@@ -595,7 +597,7 @@ def test_the_modeller_pass_is_serial_per_run(tmp_path, monkeypatch):
         PROJECT, intake_units=[intake_unit(UNIT_A), intake_unit(UNIT_B)],
         modeller_pass_fn=slow_pass,
         control=control,
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -611,7 +613,7 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
     models unit after unit without stranding its tools."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt, hunter, models = _stores(tmp_path)
+    hunter, models = _stores(tmp_path)
     built: list[str] = []
 
     class _FakeActor:
@@ -648,7 +650,7 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
         PROJECT, intake_units=[intake_unit(UNIT_A), intake_unit(UNIT_B)],
         modeller_kwargs={"actor_factory": _FakeActor},
         control=_FakeControl(),
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))

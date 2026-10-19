@@ -55,10 +55,10 @@ idle-loop distinction the quiesce predicate needs (a hunter whose graph is
 still running may yet author a produced spec; an idling one cannot), and
 `loop_likelihoods` is the live-loop half of the low-loop sequencing (S2 8.3).
 
-designed-for-removal -> T4b (#377): the config family (`HuntConfigItem`,
-`_ratified_config`, the `hunt_store` reads) is still wired here because the
-surfer dispatches it today; the loop file is the dispatch record (S2 8.2: no
-`HuntConfig`), and the family retires with the T4b sweep.
+T4b (#387) retired the config family from this module: there is no
+`HuntConfigItem` branch, no ratified-config predicate and no hunt-store read.
+The loop file is the dispatch record (S2 8.2: no `HuntConfig`); a hunter is
+dispatched per produced loop file and handed the materialised payload.
 
 This module performs no I/O at import (CODING_STANDARD section 6): the session
 seams (`run_session_agent`, `HuntSession`, the checkpointer) resolve lazily on
@@ -73,7 +73,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import (
     HunterMemoryStore,
     config_key_from_fault_key,
@@ -82,10 +81,8 @@ from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
 from polymerhus.attack.hunting.mover import (
     THREAT_MODELLER_SEGMENTS,
     SPEC_DISPATCH_STATUS,
-    HuntConfigItem,
     loop_refusal_detail,
     produced_spec_body,
-    ProducedInbox,
     ProducedItem,
     TestSpecItem,
     ThreatLoopItem,
@@ -201,7 +198,8 @@ def is_modeller_session_id(session_id: str, run_id: str) -> bool:
 
 
 def is_hunter_session_id(session_id: str) -> bool:
-    """True for a hunter session (`hunting:<run_id>:hunt:<config_id>`)."""
+    """True for a hunter session
+    (`hunting:<run_id>:hunt:<dispatch_id>`, the loop dispatch id)."""
     return ":hunt:" in session_id
 
 
@@ -214,9 +212,9 @@ def is_pod_session_id(session_id: str) -> bool:
 class RunDispatchState:
     """The run-local wire state the surfer and the bootstrap share (single
     worker loop - no lock). `hunter_inboxes` maps the dispatched item's memory
-    key (a loop dispatch id, or a config key until the config family retires)
-    to the AgentInbox its pod exports are delivered into (built at hunter
-    dispatch, before any of its specs can exist); `hunters_in_graph` is the set
+    key (the loop dispatch id) to the AgentInbox its pod exports are delivered
+    into (built at hunter dispatch, before any of its specs can exist);
+    `hunters_in_graph` is the set
     of those keys whose hunter is still running its ReAct graph - the
     mid-graph vs idle-loop distinction the quiesce predicate needs (a mid-graph
     hunter may still author produced specs). `loop_likelihoods` is the subset
@@ -252,58 +250,11 @@ class SurferReport:
     quiesced: bool = False
 
 
-def _read_config_body(hunt_store: HuntStore, project_id: str, key: str) -> dict | None:
-    """The produced config's persisted body (fail-open per record - O4)."""
-    try:
-        records = hunt_store.read_configs_by_key(project_id, key)
-    except Exception as exc:  # noqa: BLE001 - fail-open read (O4)
-        logger.warning("surfer: config body read failed for %s (%s)", key, exc)
-        return None
-    return records[0] if records else None
-
-
-# The config family's refuse-once mechanism (`_WARNED_UNRATIFIABLE`): a malformed
-# produced config is refused LOUDLY ONCE, not once per tick (the mover retries
-# every tick). It is the SECOND such log, beside the mover's run-scoped
-# `log_refusal_once` (the loop family); designed-for-removal -> T4b (#377): it
-# retires with the config family itself.
-_WARNED_UNRATIFIABLE: set[str] = set()
-
-
-def _ratified_config(hunt_store: HuntStore, project_id: str, key: str):
-    """The produced config as a validated `HuntConfig`, or None.
-
-    This is the ONE validity predicate shared by `run_work_remaining` and
-    `_config_dispatch`, so the quiesce check and the dispatch decision can never
-    disagree: a config is dispatchable work ONLY when it is `status == "ratified"`
-    AND parses as a `HuntConfig`. A `ratified` config that fails validation (a
-    malformed body the write seam should have prevented) is NOT dispatchable work
-    - it is refused and left in produced/ (at-least-once), never counted as
-    pending, so it can neither hot-loop the mover nor wedge the run's quiesce
-    (the deadlock class the #298 write-seam validation closed on the write side).
-    The refusal is logged once per key."""
-    body = _read_config_body(hunt_store, project_id, key)
-    if not body or body.get("status") != "ratified":
-        return None
-    from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig  # noqa: PLC0415
-    try:
-        return HuntConfig.model_validate(body)
-    except Exception as exc:  # noqa: BLE001 - a malformed body is refused, never dispatched
-        if key not in _WARNED_UNRATIFIABLE:
-            _WARNED_UNRATIFIABLE.add(key)
-            logger.warning(
-                "surfer: produced config %s not ratifiable (%s); refused "
-                "(not counted as work)", key, exc,
-            )
-        return None
-
-
 def run_work_remaining(
     project_id: str,
     run_id: str,
     *,
     threat_store: Any = None,
-    hunt_store: HuntStore | None = None,
     hunter_store: HunterMemoryStore,
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
     hunter_payload_capable: bool = True,
@@ -319,8 +270,10 @@ def run_work_remaining(
       is produced and no higher-tier hunter session is live, S2 8.3);
     - a produced COMPLETED valid model with no loop file (the mover consumes it
       on its next tick, S2 8.4) - the model document move IS work;
-    - a produced spec carrying the pod family's dispatch status;
-    - (until the config family retires) a produced dispatchable config.
+    - a produced spec carrying the pod family's dispatch status.
+
+    The config family retired in T4b (#387): there is no produced-config clause
+    here - a hunt config is not dispatch input at all, so it is not work.
 
     A malformed or foreign loop file contributes NOTHING (the validity
     predicate refuses it in the read), so it can never wedge the run's quiesce;
@@ -329,26 +282,14 @@ def run_work_remaining(
     `is_run_quiesced` holds on the mid-graph clause in that window."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
-        # the loop family and the pod family only: the retiring config family is
-        # gated below by its own predicate (`_ratified_config`), which the
-        # read does not apply (the config's persisted status + parse).
-        hunt_store=None, hunter_store=hunter_store,
+        hunter_store=hunter_store,
         hunter_payload_capable=hunter_payload_capable,
     )
     if inbox.models_to_consume:
         # a produced COMPLETED valid model with no dispatchable loop left: the
         # mover consumes it on its next tick (S2 8.4), so the move itself is work
         return True
-    if sequence_dispatch(inbox.items, live_loop_likelihoods):
-        return True
-    # designed-for-removal -> T4b (#377): the retiring config family keeps its
-    # own persisted-status gate (the same predicate its dispatch branch applies)
-    # until the config dispatch path retires with the loop file.
-    if hunt_store is not None:
-        for key, _name in hunt_store.read_produced_configs(project_id):
-            if _ratified_config(hunt_store, project_id, key) is not None:
-                return True
-    return False
+    return bool(sequence_dispatch(inbox.items, live_loop_likelihoods))
 
 
 async def is_run_quiesced(
@@ -356,7 +297,6 @@ async def is_run_quiesced(
     run_id: str,
     *,
     threat_store: Any = None,
-    hunt_store: HuntStore | None = None,
     hunter_store: HunterMemoryStore,
     control,
     state: RunDispatchState,
@@ -389,7 +329,7 @@ async def is_run_quiesced(
     if state.hunters_in_graph:
         return False
     return not run_work_remaining(
-        project_id, run_id, threat_store=threat_store, hunt_store=hunt_store,
+        project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, live_loop_likelihoods=state.loop_likelihoods,
         hunter_payload_capable=state.hunter_payload_capable,
     )
@@ -415,7 +355,6 @@ def build_run_dispatch(
     *,
     project_id: str,
     run_id: str,
-    hunt_store: HuntStore | None = None,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any,
@@ -440,10 +379,6 @@ def build_run_dispatch(
       the duration of its graph so a later `low` loop waits behind it (S2 8.3).
       A model that vanished, or a stopped hunter role, yields `None` (the
       mover's refused rule - stays produced, retried next tick, never dropped).
-    - `HuntConfigItem` -> ONE hunter session for the produced config, but ONLY
-      when its persisted `status == "ratified"`.
-      designed-for-removal -> T4b (#377): the config family retires; the loop
-      file is the dispatch record.
     - `TestSpecItem` -> ONE pod session for the produced spec, ONLY when its
       persisted `status == "specified"` (the ratified-spec gate). The pod rides
       the same mover under ADR Q13's pod session id. Dispatch is gated by the
@@ -502,11 +437,6 @@ def build_run_dispatch(
     def coro_for(item: ProducedItem) -> Any:
         if isinstance(item, ThreatLoopItem):
             return _loop_dispatch(item)
-        # designed-for-removal -> T4b (#377): the produced config family retires
-        # with the loop file's dispatch record; it stays only while the config
-        # dispatch path is still live.
-        if isinstance(item, HuntConfigItem):
-            return _config_dispatch(item)
         if isinstance(item, TestSpecItem):
             return _spec_dispatch(item)
         logger.warning(
@@ -581,32 +511,6 @@ def build_run_dispatch(
             hunter_builder=hunter_builder,
         )
 
-    def _config_dispatch(item: HuntConfigItem) -> Any:
-        # hypothesised draft / dropped config / unratifiable body: not
-        # dispatchable, at-least-once (stays in produced/, never counted as work
-        # by `run_work_remaining` - the SAME `_ratified_config` predicate).
-        config = _ratified_config(hunt_store, project_id, item.config_key)
-        if config is None:
-            return None
-        # #317: a stopped hunter role refuses new hunter dispatch (at-least-once).
-        if not _role_running("hunter"):
-            return None
-        return run_hunter_session(
-            # designed-for-removal -> T4b (#377): the retiring config family
-            # still hands its config object to the hunter seam (the harness's
-            # config consumption is the T6 rework); the loop path hands the
-            # materialised payload. Nothing new may take this bridge.
-            payload=config,
-            project_id=project_id,
-            run_id=run_id,
-            hunt_key=item.config_key,
-            hunter_store=hunter_store,
-            state=state,
-            gate=gate,
-            role_gate=_role_gate("hunter"),
-            hunter_builder=hunter_builder,
-        )
-
     def _spec_dispatch(item: TestSpecItem) -> Any:
         # The item's body IS the validated one (the produced read's dispatch
         # gate, `SPEC_DISPATCH_STATUS`); the re-read is only the belt-and-braces
@@ -648,22 +552,29 @@ def build_run_dispatch(
 
 async def run_hunter_session(
     *,
-    payload: Any,
+    payload: Mapping[str, Any],
     project_id: str,
     run_id: str,
     hunt_key: str,
+    likelihood: str,
     hunter_store: HunterMemoryStore,
     state: RunDispatchState,
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
     role_gate: Any = None,
-    likelihood: str = "",
 ) -> None:
     """ONE hunter session (ADR Q13 hunter id `hunting:<run_id>:hunt:<hunt_key>`,
-    S3 8.9): the build-to-END ReAct graph on the hunt's own thread - handed the
-    loop PAYLOAD, never a config - gate-bounded (Q15), then the IDLE LOOP over
-    the run's inbox (ADR "Agent idle state", verdict handling stubbed - Q16). The
-    dispatch coroutine the mover schedules when a loop file is admitted.
+    S3 8.9): the build-to-END ReAct graph on the hunt's own thread - handed
+    the loop PAYLOAD materialised at dispatch time (S2 8.2) and the loop's
+    likelihood, never a config - gate-bounded (Q15), then the IDLE LOOP over
+    the run's inbox (ADR "Agent idle state", verdict handling stubbed - Q16).
+    The dispatch coroutine the mover schedules when a loop file is admitted.
+
+    The payload is the ONLY input: the config bridge retired in T4b (#387).
+    The production harness still cannot consume the materialised payload (its
+    dispatch seam consumes the retired `HuntConfig`), so `_default_hunter_builder`
+    refuses it LOUDLY with `HunterPayloadNotBuiltError` - the designed-not-built
+    marker for T6 (#379), never a fabricated config.
 
     The run state carries the session's loop for the duration of its GRAPH
     stretch: `hunters_in_graph` holds quiesce while the hunt may still author
@@ -684,10 +595,10 @@ async def run_hunter_session(
     via the role gate's parent)."""
     state.hunter_inboxes[hunt_key] = AgentInbox()
     state.hunters_in_graph.add(hunt_key)
-    if likelihood:
-        # only a LOOP carries a tier: the retiring config family's key must never
-        # hold a later low loop (S2 8.3)
-        state.loop_likelihoods[hunt_key] = likelihood
+    # every hunter session now comes from a loop file, so it always carries the
+    # loop's tier: a later lower loop waits behind it for the graph stretch
+    # (S2 8.3)
+    state.loop_likelihoods[hunt_key] = likelihood
     registry: Any = None
     try:
         dispatch_fn, registry = hunter_builder(
@@ -937,7 +848,6 @@ async def run_surfer_loop(
     project_id: str,
     run_id: str,
     *,
-    hunt_store: HuntStore | None = None,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     control,
@@ -969,7 +879,7 @@ async def run_surfer_loop(
     while True:
         last_tick = run_delivery_tick(
             project_id, run_id,
-            hunt_store=hunt_store, threat_store=threat_store,
+            threat_store=threat_store,
             hunter_store=hunter_store,
             control=control, coro_for=coro_for,
             live_loop_likelihoods=state.loop_likelihoods,
@@ -987,7 +897,7 @@ async def run_surfer_loop(
             and last_tick.models_consumed == 0
             and await is_run_quiesced(
                 project_id, run_id,
-                threat_store=threat_store, hunt_store=hunt_store,
+                threat_store=threat_store,
                 hunter_store=hunter_store,
                 control=control, state=state,
             )

@@ -387,7 +387,62 @@ def modeller_gate_payloads() -> dict:
     }
 
 
-# --- the run intake fixtures (T3, #376) ---------------------------------------
+# --- the produced-model fixtures (T4b, #387) ------------------------------------
+#
+# The ONE home of the produced-model ladder: a test that needs a dispatchable
+# loop file drives the REAL store, never a copied per-file helper.
+
+def produce_model(
+    store,
+    *,
+    project_id: str,
+    unit_id: str,
+    run_id: str,
+    loops=None,
+) -> str:
+    """Drive a REAL `ThreatModelStore`'s five gates to COMPLETED for `unit_id` -
+    the produced COMPLETED valid model the mover dispatches from.
+
+    The one home of the worked example's ladder (T4b #387 lifted it out of the
+    per-file test helpers, so the retired-config tests could be re-pointed at the
+    same produced model): `loops` overrides the COMPLETED write's loop rows
+    (the sequencing fixtures). The gate payloads are a KNOWN-GOOD literal
+    (`modeller_gate_payloads`), never derived from the code under test."""
+    payloads = modeller_gate_payloads()
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    for state in ModelState:
+        sections = dict(payloads[state])
+        if state is ModelState.COMPLETED and loops is not None:
+            sections["loops"] = loops
+        store.write_sections(project_id, unit_id, state, sections, run_id=run_id)
+    return unit_id
+
+
+def loop_row(**overrides) -> dict:
+    """One COMPLETED-write loop row (the shared worked example): one `high`
+    loop over fault-1 / v-1 / fm-1. `overrides` carry the sequencing fixtures'
+    likelihood (or a distinct loop's rows)."""
+    row = {
+        "fault_ref": "fault-1",
+        "vulnerability_ref": "v-1",
+        "failure_mode_refs": ["fm-1"],
+        "canonical_class": "IDOR",
+        "web_vulnerability_class": "idor",
+        "likelihood": "high",
+        "likelihood_rationale": "The item id is attacker-controlled and unauthenticated.",
+        "risk_factors": {
+            "attack_vector": "network",
+            "attack_requirements": "none",
+            "privileges_required": "none",
+            "complexity": "low",
+        },
+        "confidence": "INFERRED",
+        "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
+    }
+    row.update(overrides)
+    return row
+
 
 def intake_unit(unit_id: str, *, live_edges: int = 0, endpoints: int = 0):
     """One frozen intake unit (S1 7.1): the run bootstrap's `intake_units` seam.

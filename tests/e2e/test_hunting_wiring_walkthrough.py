@@ -35,7 +35,6 @@ import uuid
 
 import pytest
 
-from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
     hunter_session_id,
@@ -163,9 +162,10 @@ def test_E1_whole_pipeline_happy_path(client):
     p = _new_project(client, "hw-e1")
     spec_file = stack.seed_test_spec(
         p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    stack.seed_hunt_config(
-        p, unit_id=UNIT, fault_class=FAULT, vulnerability_class=CLASS,
-        status="ratified")
+    # T4b (#387): a produced hunt config is no longer dispatch input; the
+    # seeded SPEC still drives the real POD edge. A hunter is dispatched from a
+    # produced loop file, which needs the run's own modeller (and the T6 #379
+    # payload harness) - never a pre-seeded config.
     stack.seed_experiment_log(p, spec_id=spec_file)
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
@@ -182,8 +182,8 @@ def test_E1_whole_pipeline_happy_path(client):
     # the run-row read-back is asserted, never a fabricated non-empty statement.
     assert term["status"] in ("complete", "failed"), term
     if term["status"] == "complete":
-        # The ratified config moved produced->consumed; the specified spec moved
-        # produced->consumed; the pod export + durable parent-keyed note exist.
+        # The specified spec moved produced->consumed; the pod export + durable
+        # parent-keyed note exist. (The retired config family has no producer.)
         assert stack.produced_config_keys(p) == []
         assert stack.consumed_spec_files(p, FAULT_KEY), \
             "expected the specified spec moved to consumed on a complete run"
@@ -207,15 +207,10 @@ def test_E2_cross_run_produced_spec_reconciliation(client):
     wedged on a stale parent-liveness check."""
     _need_pg()
     p = _new_project(client, "hw-e2")
-    # The parent config is written and consumed by an EARLIER run (no live
-    # parent): seed it ratified, then move it produced->consumed through the
-    # REAL single-owner move so the produced set is empty and no parent is live.
-    config_key = stack.seed_hunt_config(
-        p, unit_id=UNIT, fault_class=FAULT, vulnerability_class=CLASS,
-        status="ratified")
-    assert config_key == CONFIG_KEY
-    consumed_now = HuntStore().consume_config(p, CONFIG_KEY)
-    assert consumed_now is True, "expected the parent config consumed via the real store"
+    # The parent was consumed by an EARLIER run: no live parent inbox exists in
+    # THIS run. T4b (#387) retired the config family, so there is no config file
+    # to seed/consume - the parent identity is the spec's own fault_key, and the
+    # durable note is keyed by it regardless of any parent session.
     assert stack.produced_config_keys(p) == []
     assert stack.consumed_spec_files(p, FAULT_KEY) == []
 
@@ -261,9 +256,6 @@ def test_E3_mid_flight_stop(client):
     p = _new_project(client, "hw-e3")
     spec_file = stack.seed_test_spec(
         p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    stack.seed_hunt_config(
-        p, unit_id=UNIT, fault_class=FAULT, vulnerability_class=CLASS,
-        status="ratified")
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
@@ -274,17 +266,17 @@ def test_E3_mid_flight_stop(client):
 
     row = stack.wait_for_hunting_run_status(p, rid, status="stopped")
     assert row["status"] == "stopped"
-    # The partial trail survives (append-only store): the seeded config/spec are
-    # still readable through the real stores (produced or consumed, whichever
-    # the stop caught them in).
-    partial = stack.produced_config_keys(p)
+    # The partial trail survives (append-only store): the seeded spec is still
+    # readable through the real store (produced or consumed, whichever the stop
+    # caught it in). T4b (#387): the config family retired with the dispatch path.
+    assert stack.produced_config_keys(p) == []
     spec_partial = (
         stack.produced_spec_files(p, FAULT_KEY)
         + stack.consumed_spec_files(p, FAULT_KEY)
     )
-    assert len(partial) + len(spec_partial) >= 1, \
+    assert len(spec_partial) >= 1, \
         "E3: the stopped run's partial trail vanished - expected the seeded " \
-        "config/spec to remain readable"
+        "spec to remain readable"
     # The run's sessions were drained: pausing any session of the stopped run's
     # namespace -> 404 (no live session remains - the registry emptied).
     dead = f"hunting:{rid}:hunt:{FAULT_KEY}"
@@ -298,26 +290,22 @@ def test_E3_mid_flight_stop(client):
 # =============================================================================
 
 def test_E4_per_session_pause_resume_mid_graph(client):
-    """id: E4 - per-session pause/resume mid-graph. Launch a whole run with a
-    seeded ratified config so ONE real hunter session dispatches; discover its
-    ADR Q13 id (`hunting:<run_id>:hunt:<config_id>`); pause it -> `held`; resume
-    it -> `resumed`; then poll the run to its terminal `complete` (quiesce
-    reached). Carried with a precise reason when no live hunter session registers
-    within the window (never fabricated)."""
+    """id: E4 - per-session pause/resume mid-graph. Carried, blocked on T6
+    (#379): the per-loop hunter session id is derived from the produced loop
+    file (`<unit_name>__<loop_id>`), and no hunter dispatches until the harness
+    consumes the loop payload. The per-session verbs themselves keep their own
+    coverage in C19-C22 (pod sessions and the modeller pass) and E9 (pod)."""
     _need_pg()
     p = _new_project(client, "hw-e4")
-    stack.seed_hunt_config(
-        p, unit_id=UNIT, fault_class=FAULT, vulnerability_class=CLASS,
-        status="ratified")
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     hunter_sid = hunter_session_id(rid, FAULT_KEY)
 
-    if not _session_pause_until_registered(client, p, rid, hunter_sid):
-        pytest.skip(
-            f"carried, blocked on: no real hunter session {hunter_sid!r} "
-            f"registered within the observation window (never fabricated)")
+    pytest.skip(
+        f"carried, blocked on T6 #379: no hunter session {hunter_sid!r} can "
+        f"dispatch from a pre-seeded config (the loop payload harness is "
+        f"designed-not-built)")
     pause = client.post(
         f"/projects/{p}/hunting/{rid}/sessions/{hunter_sid}/pause")
     assert pause.status_code == 200, pause.text
@@ -336,38 +324,23 @@ def test_E4_per_session_pause_resume_mid_graph(client):
 # =============================================================================
 
 def test_E5_single_session_stop_does_not_end_the_run(client):
-    """id: E5 - single-session stop does not end the run. Seed a ratified config
-    AND a specified spec so two sessions (a hunter and a pod) are live; stop ONE
-    pod session -> 200 `{"state":"stopping"}`; THE CONTRACT: the `hunting_runs`
-    row must STAY `running` (a single-session stop never auto-terminalises the
-    run). The run then reaches a terminal only once the remaining sessions
-    settle - assert the exact observed branch: either `complete` (all others
-    settle) or `running` while sessions remain mid-flight, and document it."""
+    """id: E5 - single-session stop does not end the run. Carried, blocked on
+    T6 (#379): the contract needs a hunter AND a pod session live at once (one
+    stopped, the sibling keeping the run alive), and no hunter dispatches until
+    the harness consumes the loop payload. The single-session stop verb keeps
+    its own coverage in C22 and E9 (the pod session, the surviving family)."""
     _need_pg()
     p = _new_project(client, "hw-e5")
     spec_file = stack.seed_test_spec(
         p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    stack.seed_hunt_config(
-        p, unit_id=UNIT, fault_class=FAULT, vulnerability_class=CLASS,
-        status="ratified")
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     pod_sid = pod_session_id(rid, FAULT_KEY, spec_file)
-    if not _session_pause_until_registered(client, p, rid, pod_sid):
-        pytest.skip(
-            f"carried, blocked on: no real pod session {pod_sid!r} registered "
-            f"within the observation window (never fabricated)")
-
-    stop = client.post(f"/projects/{p}/hunting/{rid}/sessions/{pod_sid}/stop")
-    assert stop.status_code == 200, stop.text
-    assert stop.json()["state"] == "stopping"
-
-    # THE CONTRACT: the run row is NOT terminalised by a single-session stop
-    # while other live sessions remain.
-    rows = {r["hunting_run_id"]: r["status"] for r in stack.hunting_run_rows(p)}
-    assert rows.get(rid) == "running", \
-        f"E5 contract breached: a single-session stop ended the run ({rows})"
+    pytest.skip(
+        f"carried, blocked on T6 #379: the single-session-stop contract needs "
+        f"a live hunter sibling, and no hunter {hunter_session_id(rid, FAULT_KEY)!r} "
+        f"can dispatch from a pre-seeded config")
 
     # The run reaches a terminal only once the remaining sessions settle.
     branch = _poll_branch(p, rid, timeout=240)
@@ -405,8 +378,8 @@ def _poll_branch(project_id: str, run_id: str, *, timeout: float,
 def test_E6_orchestrator_only_launch_creates_no_run_row(client):
     """id: E6 - orchestrator-only launch. `POST .../hunting/orchestrator`
     `{candidates:[...]}` -> 202 (its synthetic run_id is for observability only);
-    `POST .../hunting/hunt` then enqueues the ratified config (202); a ratified
-    config file EXISTS in produced via the real store; and NO `hunting_runs` row
+    a follow-up `POST .../hunting/hunt` answers the T4b retirement 410 (the
+    config family retired - never a silent accept); and NO `hunting_runs` row
     was created by the orchestrator-only launch - `GET .../hunting/{synthetic_
     run_id}` -> 404."""
     _need_pg()
@@ -428,14 +401,14 @@ def test_E6_orchestrator_only_launch_creates_no_run_row(client):
     assert g.status_code == 404, \
         f"E6: synthetic run id must 404, got {g.status_code}"
 
-    # A follow-up hunt enqueue produces the ratified config in produced.
+    # A follow-up hunt enqueue is the LOUD retirement (T4b #387): it writes
+    # nothing into the retired config family.
     h = client.post(
         f"/projects/{p}/hunting/hunt",
         json={"unit_id": UNIT, "fault_class": FAULT, "vulnerability_class": CLASS})
-    assert h.status_code == 202, h.text
-    assert h.json()["enqueued_key"] == CONFIG_KEY
-    produced = stack.produced_config_keys(p)
-    assert CONFIG_KEY in produced
+    assert h.status_code == 410, h.text
+    assert "retired" in h.json()["detail"].lower()
+    assert stack.produced_config_keys(p) == []
     # No run row yet even after the component launches.
     assert stack.hunting_run_rows(p) == []
 
@@ -450,10 +423,11 @@ def test_E7_one_live_run_guard(client):
     row is the guard); exactly ONE `running` row via `hunting_run_rows`."""
     _need_pg()
     p = _new_project(client, "hw-e7")
-    # Seed dispatching work so the first run stays alive across the second POST.
-    stack.seed_hunt_config(
-        p, unit_id=UNIT, fault_class=FAULT, vulnerability_class=CLASS,
-        status="ratified")
+    # Seed dispatching work (the live POD family) so the first run stays alive
+    # across the second POST. T4b (#387): the config family is not dispatch
+    # input, and a hunter is inert until T6 (#379).
+    stack.seed_test_spec(
+        p, fault_key=FAULT_KEY, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     first = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert first.status_code == 201, first.text
     first_id = first.json()["hunting_run_id"]
@@ -476,21 +450,25 @@ def test_E7_one_live_run_guard(client):
 # E8 - at-most-once replay
 # =============================================================================
 
-def test_E8_at_most_once_replay(client):
-    """id: E8 - at-most-once replay. The same `POST .../hunting/hunt` body twice
-    -> first 202 enqueued, second 409 (the storage novelty gate); the produced
-    config count for that identity is exactly 1."""
+def test_E8_hunt_enqueue_is_retired_loudly(client):
+    """id: E8 (re-pointed by T4b #387) - the hunter-only hunt-config enqueue
+    RETIRED with the config family: the loop file is the dispatch record and a
+    live run's surfer dispatches it. The live stack answers a LOUD 410 naming
+    the replacement instead of silently accepting a config into a family nothing
+    reads; nothing lands in the retired produced family. The at-most-once
+    replay predicate retired with the enqueue (no novelty gate is left); the
+    whole-run one-live-run guard keeps its own at-most-once coverage in E7.
+    The eval translation is T10 (#383)."""
     _need_pg()
     p = _new_project(client, "hw-e8")
     body = {"unit_id": UNIT, "fault_class": FAULT, "vulnerability_class": CLASS}
     first = client.post(f"/projects/{p}/hunting/hunt", json=body)
-    assert first.status_code == 202, first.text
-    assert first.json()["enqueued"] is True
+    assert first.status_code == 410, first.text
+    assert "retired" in first.json()["detail"].lower()
     second = client.post(f"/projects/{p}/hunting/hunt", json=body)
-    assert second.status_code == 409, second.text
-    assert "already enqueued" in second.text
-    assert stack.produced_config_keys(p) == [CONFIG_KEY], \
-        "E8: replay must keep the produced config count at exactly ONE"
+    assert second.status_code == 410, second.text
+    assert stack.produced_config_keys(p) == [], (
+        "E8: the retired enqueue must not write the config family")
 
 
 # =============================================================================

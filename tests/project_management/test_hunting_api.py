@@ -358,71 +358,33 @@ def test_hunting_launch_during_shutdown_window_is_a_503_not_a_500(monkeypatch):
         rm.shutdown()
 
 
-# --- T5: singular component launches (enqueue, never a dependency error) ------
+# --- T5 singular launches: the hunt enqueue is RETIRED (T4b, #387) ------------
 
-def test_hunt_launch_enqueues_via_the_launcher_seam(monkeypatch):
-    """Hunter-only launch routes through the launcher seam (the recording
-    stub): the endpoint enqueues the wire config into the project's HuntStore
-    via `enqueue_hunt_config` and acks asynchronously - it never boots a
-    hunter itself, never opens a run row."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    recorded: list[tuple] = []
+def test_hunt_launch_is_a_loud_410_and_the_enqueue_seam_is_gone():
+    """T4b (#387): the hunter-only enqueue retires with the config family.
 
-    def record(project_id, config):
-        recorded.append((project_id, config))
-        return f"{config.unit_id}::{config.fault_class}::{config.vulnerability_class}"
-
+    A produced hunt config is no longer dispatch input (S2 8.2/8.4: the loop
+    file is the dispatch record, and a live run's surfer dispatches it), so the
+    wire path must NEVER silently accept a config into a family nothing reads.
+    The endpoint stays a LOUD 410 naming the replacement, and the launcher
+    seam is gone. The eval caller check (T4b): `eval/orchestrator/api.py` and
+    `eval/ph.py` never call this path; the eval translation of the recorded
+    config artifacts is T10 (#383)."""
     from polymerhus.attack.hunting import runtime as hunting_runtime
-    monkeypatch.setattr(hunting_runtime, "enqueue_hunt_config", record)
 
-    resp = client.post("/projects/p1/hunting/hunt", json={
-        "unit_id": "Service:slug:a", "fault_class": "fault-x",
-        "vulnerability_class": "CSRF", "research_direction": "rd",
-    })
+    assert not hasattr(hunting_runtime, "enqueue_hunt_config"), (
+        "the config enqueue seam retired with the config family")
 
-    assert resp.status_code == 202
-    body = resp.json()
-    assert body["component"] == "hunt" and body["enqueued"] is True
-    assert body["dispatched_asynchronously"] is True
-    assert body["enqueued_key"] == "Service:slug:a::fault-x::CSRF"
-    (pid, config) = recorded[0]
-    assert pid == "p1"
-    assert config.unit_id == "Service:slug:a"
-    assert config.fault_class == "fault-x"
-    assert config.vulnerability_class == "CSRF"
-    assert config.research_direction == "rd"
-
-
-def test_hunt_launch_derives_hunt_id_ignoring_caller_fields(monkeypatch):
-    """#300: `hunt_id` is DERIVED from the identity (never a caller field), so a
-    caller-supplied `hunt_id` cannot diverge from the store-derived id; the
-    #202-removed slots (`adversarial_capabilities` / `assumptions` /
-    `technique_primitives`) are gone from the wire model."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunt_orchestrator import hunt_id_for
-    from polymerhus.project_management.api import HuntingHuntLaunch
-
-    recorded: list = []
-    monkeypatch.setattr(
-        hunting_runtime, "enqueue_hunt_config",
-        lambda pid, config: recorded.append(config) or "k",
-    )
-
-    # a stale caller body: a fabricated `hunt_id` plus the removed #202 slots
     resp = client.post("/projects/p1/hunting/hunt", json={
         "unit_id": "Service:slug:a", "fault_class": "CWE-352",
-        "vulnerability_class": "CSRF", "hunt_id": "caller-supplied",
-        "adversarial_capabilities": ["x"], "assumptions": ["y"],
-        "technique_primitives": ["z"],
+        "vulnerability_class": "CSRF",
     })
 
-    assert resp.status_code == 202, resp.text
-    config = recorded[0]
-    assert config.hunt_id == hunt_id_for("Service:slug:a", "CWE-352", "CSRF")
-    for gone in ("hunt_id", "adversarial_capabilities", "assumptions",
-                 "technique_primitives"):
-        assert gone not in HuntingHuntLaunch.model_fields
+    assert resp.status_code == 410, resp.text
+    detail = resp.json()["detail"]
+    assert "retired" in detail.lower()
+    assert "loop file" in detail.lower()
+    assert "T10" in detail and "#383" in detail
 
 
 def test_pod_launch_resumes_via_the_launcher_seam(monkeypatch):
@@ -523,69 +485,6 @@ def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatc
     assert body["run_id"]
     assert fake_runtime.scheduled == [
         f"hunting:{body['run_id']}:threat-modeller"]
-
-
-def test_hunt_launch_never_fabricates_a_dependency_error_without_a_run(monkeypatch):
-    """The hunter-only enqueue succeeds with NO live run and NO control plane
-    (the control plane is not gated for an enqueue - only the whole launch
-    and the orchestrator pass schedule): the config waits in produced,
-    at-least-once, until a run's surfer admits it. No chained-dependency
-    error is ever fabricated."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    _patch_control_plane(monkeypatch, None)  # no control plane at all
-    recorded = []
-    monkeypatch.setattr(
-        hunting_runtime, "enqueue_hunt_config",
-        lambda pid, config: recorded.append(pid) or "k",
-    )
-
-    resp = client.post("/projects/p1/hunting/hunt", json={
-        "unit_id": "Service:slug:a", "fault_class": "fault-x",
-        "vulnerability_class": "CSRF",
-    })
-
-    assert resp.status_code == 202
-    assert recorded == ["p1"]
-
-
-def test_hunt_launch_unknown_project_404(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    called = []
-    monkeypatch.setattr(
-        hunting_runtime, "enqueue_hunt_config",
-        lambda pid, config: called.append(pid) or "k",
-    )
-
-    resp = client.post("/projects/nope/hunting/hunt", json={
-        "unit_id": "u", "fault_class": "f",
-    })
-
-    assert resp.status_code == 404
-    assert called == []
-
-
-def test_hunt_launch_replayed_enqueue_is_refused_409(monkeypatch):
-    """At-most-once on the enqueue (T5 AC4): the storage novelty gate
-    (`DuplicateConfigError` - a config identity already produced or consumed)
-    maps to 409 for a replayed enqueue - duplicate requests cannot
-    double-dispatch agents."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunt_store import DuplicateConfigError
-
-    def already_enqueued(pid, config):
-        raise DuplicateConfigError("already exists in produced/")
-
-    monkeypatch.setattr(hunting_runtime, "enqueue_hunt_config", already_enqueued)
-
-    resp = client.post("/projects/p1/hunting/hunt", json={
-        "unit_id": "u", "fault_class": "f", "vulnerability_class": "CSRF",
-    })
-
-    assert resp.status_code == 409
-    assert "already enqueued" in resp.json()["detail"]
 
 
 def test_orchestrator_launch_fails_closed_503_without_control_plane(monkeypatch):

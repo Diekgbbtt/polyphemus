@@ -299,69 +299,28 @@ def test_C11_orchestrator_unknown_project_404(client):
     assert "unknown project" in r.text
 
 
-def test_C12_hunt_enqueue_canonical(client):
-    """C12: POST .../hunting/hunt canonical `{unit_id, fault_class,
-    vulnerability_class}` -> 202 `{component: hunt, enqueued: True,
-    enqueued_key, dispatched_asynchronously}`; the enqueued config EXISTS under
-    produced/ with `status == ratified` (real store read, never the return).
-    #300: a caller-supplied `hunt_id` (and the removed #202 slots) cannot
-    diverge - the persisted config's `hunt_id` is the DERIVED identity."""
-    _need_pg()
+def test_C12_hunt_enqueue_is_retired_loudly(client):
+    """C12 (re-pointed by T4b #387): the hunter-only hunt-config enqueue RETIRED
+    with the config family - a produced loop file is the dispatch record and a
+    live run's surfer dispatches it. The wire path must never silently accept a
+    config into a family nothing reads: the live stack answers a LOUD 410 naming
+    the replacement, and nothing lands in the retired produced family.
+
+    C13-C15 (replay 409 / malformed 422 / unknown project 404) retired with the
+    enqueue: there is no novelty gate, no body validation and no project lookup
+    left on a tombstone. The eval translation is T10 (#383)."""
     p = _new_project(client)
     r = client.post(
         f"/projects/{p}/hunting/hunt",
         json={"unit_id": UNIT, "fault_class": FAULT,
-              "vulnerability_class": CLASS,
-              "hunt_id": "caller-supplied",
-              "adversarial_capabilities": ["x"], "assumptions": ["y"],
-              "technique_primitives": ["z"]})
-    assert r.status_code == 202, r.text
-    body = r.json()
-    assert body["component"] == "hunt"
-    assert body["enqueued"] is True
-    assert body["dispatched_asynchronously"] is True
-    key = body["enqueued_key"]
-    assert key == f"{UNIT}::{FAULT}::{CLASS}"
-    produced = stack.produced_config_keys(p)
-    assert key in produced
-    assert stack.produced_config_body(p, key)["hunt_id"] == key
-
-
-def test_C13_hunt_enqueue_replay_409(client):
-    """C13: the same hunt enqueue replayed (same identity) -> 409 `this hunt
-    config is already enqueued (at-most-once)`; produced count stays ONE (the
-    novelty gate is idempotent)."""
-    _need_pg()
-    p = _new_project(client)
-    body = {"unit_id": UNIT, "fault_class": FAULT,
-            "vulnerability_class": CLASS}
-    first = client.post(f"/projects/{p}/hunting/hunt", json=body)
-    assert first.status_code == 202, first.text
-    second = client.post(f"/projects/{p}/hunting/hunt", json=body)
-    assert second.status_code == 409, second.text
-    assert "already enqueued" in second.text
-    assert stack.produced_config_keys(p) == [f"{UNIT}::{FAULT}::{CLASS}"]
-
-
-def test_C14_hunt_enqueue_malformed_422(client):
-    """C14: hunt enqueue with missing `unit_id` / `fault_class` -> 422; nothing
-    written (produced family stays empty)."""
-    p = _new_project(client)
-    r = client.post(
-        f"/projects/{p}/hunting/hunt", json={"vulnerability_class": CLASS})
-    assert r.status_code == 422, r.text
-
-
-def test_C15_hunt_enqueue_unknown_project_404(client):
-    """C15: hunt enqueue on an unknown project -> 404."""
-    _need_pg()
-    bogus = f"nope-{uuid.uuid4().hex[:8]}"
-    r = client.post(
-        f"/projects/{bogus}/hunting/hunt",
-        json={"unit_id": UNIT, "fault_class": FAULT,
               "vulnerability_class": CLASS})
-    assert r.status_code == 404, r.text
-    assert "unknown project" in r.text
+    assert r.status_code == 410, r.text
+    detail = r.json()["detail"]
+    assert "retired" in detail.lower()
+    assert "loop file" in detail.lower()
+    assert "T10" in detail and "#383" in detail
+    assert stack.produced_config_keys(p) == [], (
+        "the retired enqueue must not write the config family")
 
 
 def test_C16_pod_resume_canonical(client):

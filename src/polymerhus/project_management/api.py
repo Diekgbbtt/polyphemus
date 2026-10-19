@@ -742,11 +742,10 @@ async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
 # One endpoint per component that ENQUEUES into the component's handoff family
 # so the run-scoped inbox surfer's mover dispatches it on the next tick - a
 # singular launch never BOOTS a component directly and never fabricates a
-# chained-dependency error: the enqueue succeeds with or without a live run /
-# orchestrator and the component consumes its inbox asynchronously (a queued
-# item stays in produced until admitted - the at-least-once protocol). The
-# storage-layer novelty gates (`DuplicateConfigError` / `DuplicateSpecError`,
-# ADR G4) are the server-side at-most-once marker for a replayed enqueue (409).
+# chained-dependency error. T4b (#387) retired the HUNT config enqueue with the
+# config family: the loop file is the dispatch record, so `/hunting/hunt` is a
+# loud 410 tombstone. The pod resume keeps its fail-closed 404 (no fabricated
+# `specified` spec), and the modeller pass schedules its own input.
 
 class HuntingOrchestratorLaunch(BaseModel):
     """Modeller-only launch body. The pass reads the L1 inventory itself (T3
@@ -754,23 +753,6 @@ class HuntingOrchestratorLaunch(BaseModel):
     and writes its models and loop files into the project's threat model store -
     this endpoint schedules the pass, it never fakes the pass's output.
     """
-
-
-class HuntingHuntLaunch(BaseModel):
-    """Hunter-only launch body: ONE produced RATIFIED hunt config to enqueue
-    into the project's HuntStore produced family (the mover's hunter-dispatch
-    input). Only the identity triple plus the orientation prose surface; the
-    `hunt_id` is DERIVED from the identity (#298/#300), never a caller field,
-    and the #202-removed slots (`adversarial_capabilities` / `assumptions` /
-    `technique_primitives`) are gone. The rest of the `HuntConfig` parameter
-    set (surface context, preconditions, prior-hunt insights) keeps its
-    defaults."""
-
-    unit_id: str
-    fault_class: str
-    vulnerability_class: str = ""
-    research_direction: str = ""
-    rationale: str = ""
 
 
 class HuntingPodLaunch(BaseModel):
@@ -826,52 +808,30 @@ async def launch_orchestrator_only(project_id: str, body: HuntingOrchestratorLau
     }
 
 
-@router.post("/projects/{project_id}/hunting/hunt", status_code=202)
-async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
-    """'Hunter only': enqueue ONE produced RATIFIED hunt config into the
-    project's HuntStore produced family so the run's inbox surfer dispatches
-    one hunter on the next tick (T5). The enqueue is a store write - it
-    succeeds with or without a live run or orchestrator (the config waits in
-    produced, at-least-once), so a chained-dependency error is never
-    fabricated. A REPLAYED enqueue whose config identity already exists (a
-    duplicate file in produced/ or consumed/) is refused 409 - the storage
-    novelty gate is the server-side at-most-once marker. 404 unknown project."""
-    from polymerhus.app.clients import pg
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        HuntConfig,
-        hunt_id_for,
-    )
-    from polymerhus.attack.hunting.hunt_store import DuplicateConfigError
+@router.post("/projects/{project_id}/hunting/hunt", status_code=410)
+async def launch_hunt_only(project_id: str) -> dict:
+    """RETIRED (T4b #387): the hunter-only hunt-config enqueue.
 
-    if not await asyncio.to_thread(pg.project_exists, project_id):
-        raise HTTPException(status_code=404, detail="unknown project")
+    A hunter is no longer dispatched from an enqueued `HuntConfig`: the dispatch
+    grain is the produced LOOP FILE (S2 8.4), which the modeller writes from the
+    unit's threat model, and a live run's surfer dispatches it. There is nothing
+    an API caller can enqueue into that topology, so accepting the old body
+    would be a silent write into a family nothing reads - the handler therefore
+    refuses LOUDLY (410 Gone) and names the replacement.
 
-    config = HuntConfig(
-        hunt_id=hunt_id_for(
-            body.unit_id, body.fault_class, body.vulnerability_class,
+    The eval translation is T10 (#383): `eval/orchestrator/api.py` and
+    `eval/ph.py` never call this path; the eval's pre-mined hunt-config
+    artifacts move to the loop vocabulary there."""
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "the hunt-config enqueue is retired (T4b #387): the loop file is "
+            "the dispatch record (S2 8.4) and a live run's surfer dispatches "
+            "it; launch the whole run (POST /projects/{project_id}/hunting) "
+            "and the modeller produces the loop files. The eval translation "
+            "is T10 (#383)"
         ),
-        unit_id=body.unit_id,
-        fault_class=body.fault_class,
-        vulnerability_class=body.vulnerability_class,
-        rationale=body.rationale,
-        research_direction=body.research_direction,
     )
-    try:
-        key = await asyncio.to_thread(
-            hunting_runtime.enqueue_hunt_config, project_id, config
-        )
-    except DuplicateConfigError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail=f"this hunt config is already enqueued (at-most-once): {exc}",
-        ) from exc
-    return {
-        "component": "hunt",
-        "enqueued": True,
-        "enqueued_key": key,
-        "dispatched_asynchronously": True,
-    }
 
 
 @router.post("/projects/{project_id}/hunting/pod", status_code=202)

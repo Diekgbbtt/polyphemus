@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 
 from polymerhus.attack.hunting import runtime as hunting_runtime
-from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from polymerhus.attack.hunting.threat_modeller import (
@@ -28,7 +27,11 @@ from polymerhus.attack.hunting.threat_modeller import (
 )
 from polymerhus.attack.hunting.threat_modeller_tools import ModellerTools
 
-from tests.hunting_fixtures import ScriptedModellerTurns, intake_unit
+from tests.hunting_fixtures import (
+    ScriptedModellerTurns,
+    intake_unit,
+    produce_model,
+)
 
 PROJECT = "gap-proj"
 RUN = "gap-run"
@@ -59,7 +62,6 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(root_dir=tmp_path / "models")
     payloads = modeller_gate_payloads()
@@ -85,7 +87,7 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
             modeller_kwargs={"turn_fn": ScriptedModellerTurns(payloads=payloads)},
             graph_read_fn=lambda cypher, params: [],
             control=_FakeControl(),
-            hunt_store=hunt, hunter_store=hunter, threat_store=models,
+            hunter_store=hunter, threat_store=models,
             hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
             tick_interval=0.001,
         ))
@@ -102,10 +104,12 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
     assert "zero hunts" in line
 
 
-def test_a_run_with_a_dispatchable_config_does_not_claim_a_dispatch_gap(
+def test_a_run_with_dispatchable_loop_work_does_not_claim_a_dispatch_gap(
         tmp_path, monkeypatch, caplog):
-    """A pre-produced ratified config IS dispatchable work: the run must not
-    claim the T4 gap (the warning is conditional on nothing dispatchable)."""
+    """A produced loop file IS dispatchable work (S2 8.4): the run must not
+    claim the dispatch gap (the warning is conditional on nothing
+    dispatchable). The retired config family is not dispatch input at all, so a
+    leftover produced config can no longer suppress the line (T4b #387)."""
     from tests.attack.test_hunting_modeller_wiring import (
         _FakeControl,
         _FakePg,
@@ -116,16 +120,9 @@ def test_a_run_with_a_dispatchable_config_does_not_claim_a_dispatch_gap(
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(root_dir=tmp_path / "models")
-    hunt.write_config(PROJECT, {
-        "hunt_id": f"{UNIT}::fault-x::CSRF", "unit_id": UNIT,
-        "fault_class": "fault-x", "vulnerability_class": "CSRF",
-        "status": "ratified",
-        # the seeds the ratified-config validity predicate requires
-        "rationale": "r", "research_direction": "rd",
-    })
+    produce_model(models, project_id=PROJECT, unit_id=UNIT, run_id=RUN)
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         asyncio.run(hunting_runtime.start_hunting(
@@ -133,7 +130,7 @@ def test_a_run_with_a_dispatchable_config_does_not_claim_a_dispatch_gap(
             modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
             graph_read_fn=lambda cypher, params: [],
             control=_FakeControl(),
-            hunt_store=hunt, hunter_store=hunter, threat_store=models,
+            hunter_store=hunter, threat_store=models,
             hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
             tick_interval=0.001,
         ))
@@ -276,7 +273,6 @@ def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_p
     hunter cannot consume the loop payload (C1), it names the follow-up ticket
     (T6 #379) and the loops that wait - and returns None otherwise (a
     dispatchable item, no completed model, a recorded dispatch)."""
-    hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(root_dir=tmp_path / "models")
     _produce_one_loop_model(models, run_id=RUN)
@@ -287,7 +283,7 @@ def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_p
     reason = hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
         state=empty, threat_store=models,
-        hunt_store=hunt, hunter_store=hunter, hunter_payload_capable=False)
+        hunter_store=hunter, hunter_payload_capable=False)
     assert reason is not None
     assert "T6" in reason and "#379" in reason
     assert "1 produced loop file" in reason
@@ -297,13 +293,13 @@ def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_p
     capable = hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
         state=empty, threat_store=models,
-        hunt_store=hunt, hunter_store=hunter, hunter_payload_capable=True)
+        hunter_store=hunter, hunter_payload_capable=True)
     assert capable is None
 
     # a degraded unit is not a produced model: no gap to report
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="degraded")],
-        state=empty, threat_store=models, hunt_store=hunt,
+        state=empty, threat_store=models,
         hunter_store=hunter, hunter_payload_capable=False) is None
 
     # a hunter dispatch recorded on the run state suppresses the line
@@ -311,20 +307,15 @@ def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_p
     dispatched.hunter_inboxes[f"{UNIT}__loop-1"] = object()
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=dispatched, threat_store=models, hunt_store=hunt,
+        state=dispatched, threat_store=models,
         hunter_store=hunter, hunter_payload_capable=False) is None
 
-    # a still-dispatchable produced item suppresses the line too
-    hunt.write_config(PROJECT, {
-        "hunt_id": f"{UNIT}::fault-x::CSRF", "unit_id": UNIT,
-        "fault_class": "fault-x", "vulnerability_class": "CSRF",
-        "status": "ratified",
-        # the seeds the ratified-config validity predicate requires
-        "rationale": "r", "research_direction": "rd",
-    })
+    # a still-dispatchable produced SPEC suppresses the line too (the pod
+    # family stays live; the retired config family would no longer count)
+    _write_specified_spec(hunter)
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
-        state=empty, threat_store=models, hunt_store=hunt,
+        state=empty, threat_store=models,
         hunter_store=hunter, hunter_payload_capable=False) is None
 
 
@@ -345,11 +336,10 @@ def test_a_production_builder_run_consumes_a_zero_loop_model(
         _noop_pod_builder,
         _patch_pg,
     )
-    from tests.hunting_fixtures import ScriptedModellerTurns, intake_unit
+    from tests.hunting_fixtures import ScriptedModellerTurns
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(root_dir=tmp_path / "models")
     control = _FakeControl()
@@ -362,7 +352,7 @@ def test_a_production_builder_run_consumes_a_zero_loop_model(
             modeller_kwargs={"turn_fn": _zero_loop_turns()},
             graph_read_fn=lambda cypher, params: [],
             control=control,
-            hunt_store=hunt, hunter_store=hunter, threat_store=models,
+            hunter_store=hunter, threat_store=models,
             pod_builder=_noop_pod_builder,
             tick_interval=0.001,
         ))
@@ -410,17 +400,21 @@ def _zero_loop_turns():
     return ScriptedModellerTurns(payloads=payloads)
 
 
-def _produce_one_loop_model(store, *, run_id: str, unit_id: str = UNIT):
-    """One COMPLETED valid model with one `high` loop, through the real store."""
-    from tests.hunting_fixtures import modeller_gate_payloads
-    from polymerhus.attack.hunting.threat_model import ModelState
+def _write_specified_spec(hunter) -> None:
+    """One produced `specified` test spec (the pod family's dispatch gate) -
+    the surviving dispatchable produced family (T4b)."""
+    hunter.write_spec(
+        PROJECT, f"{UNIT}_CWE-639_IDOR", fault_keyword="sqli",
+        strategy_keyword="blind",
+        spec={"spec_id": "sqli_blind", "fault_key": f"{UNIT}_CWE-639_IDOR",
+              "fault": {}, "strategy": "blind", "status": "specified"},
+    )
 
-    for state in ModelState:
-        store.write_sections(
-            PROJECT, unit_id, state, modeller_gate_payloads()[state],
-            run_id=run_id,
-        )
-    return unit_id
+
+def _produce_one_loop_model(store, *, run_id: str, unit_id: str = UNIT):
+    """This module's binding of the SHARED produced-model fixture."""
+    return produce_model(
+        store, project_id=PROJECT, unit_id=unit_id, run_id=run_id)
 
 
 def test_the_sink_is_shared_by_the_surface_builder(tmp_path):
@@ -516,7 +510,6 @@ def test_the_dispatch_gap_survives_a_transient_pending_work_read_failure(
             [UnitOutcome(unit_id=UNIT, status="completed")],
             state=RunDispatchState(),
             threat_store=models,
-            hunt_store=HuntStore(tmp_path / "hunts"),
             hunter_store=HunterMemoryStore(tmp_path / "hunter"),
             hunter_payload_capable=False,
         )

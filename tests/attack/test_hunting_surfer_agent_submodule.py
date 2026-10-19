@@ -12,14 +12,14 @@ import asyncio
 
 import pytest
 
-from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting import mover as mover_mod
 from polymerhus.attack.hunting import surfer as surfer_mod
 from polymerhus.attack.hunting.mover import (
-    HuntConfigItem,
+    read_produced_inbox,
     run_delivery_tick,
 )
+from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from polymerhus.attack.hunting.surfer import (
     RunDispatchState,
     build_run_dispatch,
@@ -28,6 +28,8 @@ from polymerhus.attack.hunting.surfer import (
     run_pod_session,
 )
 
+from tests.hunting_fixtures import produce_model
+
 PROJECT = "proj-as"
 RUN = "run-as"
 UNIT = "Service:catalogue-and-discovery"
@@ -35,17 +37,17 @@ CWE = "CWE-639"
 CLASS = "IDOR"
 FAULT_KEY = f"{UNIT}_{CWE}_{CLASS}"
 CONFIG_KEY = f"{UNIT}::{CWE}::{CLASS}"
+UNIT_NAME = "Service-catalogue-and-discovery"
+LOOP_ID = "loop-1"
+DISPATCH_ID = f"{UNIT_NAME}__{LOOP_ID}"
+HUNTER_SESSION = mover_mod.hunter_session_id(RUN, DISPATCH_ID)
 SPEC_FILE = "sqli_blind"
 
 
-def _config(**overrides):
-    data = {
-        "hunt_id": "hunt-1", "unit_id": UNIT, "fault_class": CWE,
-        "status": "ratified", "vulnerability_class": CLASS,
-        "rationale": "r", "research_direction": "rd",
-    }
-    data.update(overrides)
-    return data
+def _produce(threat):
+    """One produced COMPLETED valid model with its loop file (S2 8.1)."""
+    return produce_model(
+        threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN)
 
 
 def _spec(**overrides):
@@ -98,12 +100,12 @@ class _RecordingControl:
 
 @pytest.fixture
 def stores(tmp_path):
-    return HuntStore(tmp_path / "hunts"), HunterMemoryStore(tmp_path / "hunter")
+    return ThreatModelStore(tmp_path / "threat"), HunterMemoryStore(tmp_path / "hunter")
 
 
-def _coro_for(hunt, hunter, state, control):
+def _coro_for(threat, hunter, state, control):
     return build_run_dispatch(
-        project_id=PROJECT, run_id=RUN, hunt_store=hunt, hunter_store=hunter,
+        project_id=PROJECT, run_id=RUN, threat_store=threat, hunter_store=hunter,
         pod_store=None, state=state, gate=None, control=control,
         hunter_builder=_hunter_builder, pod_builder=_pod_builder,
     )
@@ -111,28 +113,29 @@ def _coro_for(hunt, hunter, state, control):
 
 # --- C10/C11: a down role refuses dispatch, the item stays produced ----------
 
-def test_C10_down_hunter_role_refuses_config_dispatch(stores):
-    hunt, hunter = stores
-    hunt.write_config(PROJECT, _config())
+def test_C10_down_hunter_role_refuses_loop_dispatch(stores):
+    threat, hunter = stores
+    _produce(threat)
     control = _RecordingControl()
     report = run_delivery_tick(
-        PROJECT, RUN, hunt_store=hunt, hunter_store=hunter,
-        control=control, coro_for=_coro_for(hunt, hunter, RunDispatchState(),
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        control=control, coro_for=_coro_for(threat, hunter, RunDispatchState(),
                                             _RoleControl(down={"hunter"})),
     )
     assert control.calls == []           # no coroutine was even admitted
     assert report.refused == 1 and report.moved == 0 and report.admitted == 0
-    assert [k for k, _ in hunt.read_produced_configs(PROJECT)] == [CONFIG_KEY]
+    assert [entry["loop_id"] for entry in
+            threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
 
 
 def test_C11_down_pod_role_refuses_spec_dispatch(stores):
-    hunt, hunter = stores
+    threat, hunter = stores
     hunter.write_spec(PROJECT, FAULT_KEY, fault_keyword="sqli",
                       strategy_keyword="blind", spec=_spec())
     control = _RecordingControl()
     report = run_delivery_tick(
-        PROJECT, RUN, hunt_store=hunt, hunter_store=hunter,
-        control=control, coro_for=_coro_for(hunt, hunter, RunDispatchState(),
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        control=control, coro_for=_coro_for(threat, hunter, RunDispatchState(),
                                             _RoleControl(down={"pod"})),
     )
     assert control.calls == []
@@ -163,16 +166,14 @@ def test_C12_up_hunter_dispatches_and_acquires_the_role_gate(monkeypatch, tmp_pa
         return None
 
     monkeypatch.setattr(surfer_mod, "_run_hunter_idle", _noop_idle)
-    hunt = HuntStore(tmp_path / "hunts")
+    threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
+    _produce(threat)
     state = RunDispatchState()
-    coro_for = _coro_for(hunt, hunter, state, control)
-    item = HuntConfigItem(
-        message_id=f"{FAULT_KEY}.yaml",
-        session_id=mover_mod.hunter_session_id(RUN, FAULT_KEY),
-        config_key=CONFIG_KEY,
-    )
-    hunt.write_config(PROJECT, _config())
+    coro_for = _coro_for(threat, hunter, state, control)
+    item = read_produced_inbox(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter).items[0]
+    assert item.message_id == DISPATCH_ID
     coro = coro_for(item)
     assert coro is not None            # up role -> a session coroutine
     asyncio.run(coro)

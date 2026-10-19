@@ -148,36 +148,6 @@ def schedule_hunting(coro: Coroutine[Any, Any, Any], *, name: str) -> Any:
     return runtime.schedule("hunting", coro, name=name)
 
 
-def enqueue_hunt_config(project_id: str, config, *, hunt_store=None) -> str:
-    """The hunter-ONLY launch seam (T5, ADR #169 Q4/Q6): enqueue ONE produced
-    RATIFIED hunt config into the project's HuntStore `produced/` family - the
-    inbox-surfer mover's hunter-dispatch input. The run-scoped surfer picks it
-    up on the next tick and dispatches one hunter; a config waits in produced
-    (at-least-once) until a run's live surfer admits it, so the enqueue NEVER
-    fabricates a chained-dependency error (no orchestrator, no live run
-    required). `status` is forced to `ratified` - the enqueue injects a
-    dispatchable config, and the mover only dispatches ratified configs. A
-    config whose file-name identity already exists in produced/ or consumed/
-    raises `DuplicateConfigError` - the storage-layer novelty gate is the
-    server-side at-most-once marker for the item (a replayed enqueue is the
-    API's 409). Returns the config's semantic key.
-
-    Blocking file I/O: the API offloads via `asyncio.to_thread`. Write failure
-    raises to the caller (O3 - warned and counted), never a silent drop.
-    `hunt_store` injectable per s6 (tests use a temp-root store)."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        HuntConfig,
-    )
-    from polymerhus.attack.hunting.hunt_store import HuntStore  # noqa: PLC0415
-
-    payload = (
-        config.model_dump() if isinstance(config, HuntConfig) else dict(config)
-    )
-    payload = {**payload, "status": "ratified"}
-    store = hunt_store if hunt_store is not None else HuntStore()
-    return store.write_config(project_id, payload, directory="produced")
-
-
 # The provider-pause keys the run row's stats carry (#331). The stats merge is
 # ADDITIVE, so nothing ever clears them: a resumed run that completes must NULL
 # them explicitly, or the eval keeps reading a stale `interrupt_reason` for a run
@@ -709,7 +679,6 @@ def report_dispatch_gap(
     *,
     state,
     threat_store=None,
-    hunt_store,
     hunter_store,
     hunter_payload_capable: bool = True,
 ) -> str | None:
@@ -744,7 +713,7 @@ def report_dispatch_gap(
     try:
         pending = run_work_remaining(
             project_id, run_id, threat_store=threat_store,
-            hunt_store=hunt_store, hunter_store=hunter_store,
+            hunter_store=hunter_store,
             hunter_payload_capable=hunter_payload_capable)
     except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
         logger.warning(
@@ -1039,10 +1008,11 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     `HUNTING_LIGHTRAG_TOOL` gate is REMOVED). Returns `(dispatch_fn, registry)`;
     the caller reaps the registry at the session's end.
 
-    A loop PAYLOAD is refused with `HunterPayloadNotBuiltError` (the T6 marker
-    above): the harness still consumes a `HuntConfig`, so passing a payload
-    through would dispatch a hunt against the wrong shape. The retiring config
-    family passes its config object verbatim and runs as before."""
+    A loop PAYLOAD is refused LOUDLY with `HunterPayloadNotBuiltError` (the
+    T6 marker above): the harness still consumes a `HuntConfig`, so passing a
+    payload through would dispatch a hunt against the wrong shape. T4b (#387)
+    retired the config bridge, so this loud refusal is the ONLY path the
+    production builder takes for mover-dispatched work until T6."""
     from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
     from polymerhus.attack.hunting.pod.tools import default_exec_fn
     from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
@@ -1104,7 +1074,6 @@ async def start_hunting(
     control: Any = None,
     gate: Any = None,
     tick_interval: float | None = None,
-    hunt_store: Any = None,
     hunter_store: Any = None,
     pod_store: Any = None,
     hunter_builder: Callable[..., Any] | None = None,
@@ -1134,9 +1103,11 @@ async def start_hunting(
     progressive halt), writing each unit's threat model through the store and
     the run record onto the run row. `failed` persists when a session was not
     admitted or a collaborator degrades. The run-scoped surfer dispatches one
-    hunter per ratified config and one pod per specified spec through the mover,
-    and the hunt sessions idle-loop over their inboxes (verdict handling
-    stubbed, ADR Q16) - the whole pipeline is observable through this coroutine.
+    hunter per produced loop file (the loop payload materialised at dispatch
+    time, S2 8.2) and one pod per specified spec through the mover, and the hunt
+    sessions idle-loop over their inboxes (verdict handling stubbed, ADR Q16) -
+    the whole pipeline is observable through this coroutine. T4b (#387) retired
+    the config family: there is no config input and no hunt-store threading.
 
     The INTERLEAVE (S1 7.3): the pass and the surfer are independent sessions,
     so the surfer moves and dispatches produced loop files while the pass models
@@ -1149,11 +1120,12 @@ async def start_hunting(
     `risk_total`, and never re-sorts or re-freezes the intake. A halted record
     resumes as halted, so a resumed halted run dispatches and models nothing.
 
-    designed-not-built - T4 (#377): the modeller's produced LOOP FILES are not
-    dispatchable yet (no path translates a loop into a hunt config), so a run
-    with no pre-produced config models its units and dispatches zero hunts.
-    `report_dispatch_gap` logs that state as one run-level line instead of
-    letting it pass as a silent `complete`.
+    designed-not-built - T6 (#379): the per-loop dispatch (a produced loop file
+    -> a hunter session) is BUILT (T4a #377), but the production hunter harness
+    cannot consume the loop payload yet, so the run is INERT for the loop family
+    (C1): it models its units, leaves the loop files produced, and dispatches
+    zero hunts. `report_dispatch_gap` logs that state as one run-level line
+    instead of letting it pass as a silent `complete`.
 
     Fail-open: a collaborator failure (PG row, default tools, a session's
     admission, the run itself) degrades to a terminal status - this coroutine
@@ -1162,7 +1134,7 @@ async def start_hunting(
 
     Injectable seams (CODING_STANDARD s6): `control` is the session-capable
     control plane (`RuntimeControlPlane` default), `gate` the hunting dispatch
-    gate (Q15), `hunt_store` / `hunter_store` / `pod_store` the memory stores,
+    gate (Q15), `hunter_store` / `pod_store` the memory stores,
     `threat_store` / `graph_read_fn` the modeller's store and its grounding read
     seam, `tools` the whole modeller tool seam, `modeller_pass_fn` /
     `modeller_kwargs` the pass body and its turn seam, `hunter_builder` /
@@ -1177,7 +1149,6 @@ async def start_hunting(
     the project's memory-store folders."""
     async with hunting_module_context():
         from polymerhus.app.clients import pg  # noqa: PLC0415
-        from polymerhus.attack.hunting.hunt_store import HuntStore  # noqa: PLC0415
         from polymerhus.attack.hunting.hunter_memory import (  # noqa: PLC0415
             HunterMemoryStore,
         )
@@ -1249,9 +1220,8 @@ async def start_hunting(
 
         # The stores (s6: injectable, real defaults). The pod store is the
         # per-project root (D84-33); the explicit-root constructors are kept
-        # for the tests.
-        if hunt_store is None:
-            hunt_store = HuntStore()
+        # for the tests. The hunt store retired with the config family (T4b) -
+        # the run has no config input family left to read.
         if hunter_store is None:
             hunter_store = HunterMemoryStore()
         if pod_store is None:
@@ -1324,7 +1294,6 @@ async def start_hunting(
         coro_for = build_run_dispatch(
             project_id=project_id,
             run_id=hunting_run_id,
-            hunt_store=hunt_store,
             threat_store=run_threat_store,
             hunter_store=hunter_store,
             pod_store=pod_store,
@@ -1390,7 +1359,6 @@ async def start_hunting(
         async def _surfer_loop():
             return await run_surfer_loop(
                 project_id, hunting_run_id,
-                hunt_store=hunt_store,
                 threat_store=run_threat_store,
                 hunter_store=hunter_store,
                 control=control,
@@ -1424,7 +1392,7 @@ async def start_hunting(
             surfer_id = surfer_session_id(hunting_run_id)
             # #317: the modeller pass is gated on the modeller role state. A
             # stopped role does not launch the pass (the run still runs its
-            # surfer, so pre-produced configs can dispatch).
+            # surfer, so already-produced loop files can dispatch).
             # A pass session REFUSED by admission is different: the pre-change
             # rule holds - the run fails and the surfer is NOT started (a
             # surfer with no pass is never spun up).
@@ -1475,7 +1443,6 @@ async def start_hunting(
                         [outcome for batch in pass_outcomes for outcome in batch],
                         state=state,
                         threat_store=run_threat_store,
-                        hunt_store=hunt_store,
                         hunter_store=hunter_store,
                         hunter_payload_capable=hunter_payload_capable,
                     )

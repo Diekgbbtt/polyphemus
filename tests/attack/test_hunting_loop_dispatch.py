@@ -17,12 +17,12 @@ import asyncio
 import pytest
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from polymerhus.app.llm.actor import AgentMessage
 
-from tests.hunting_fixtures import modeller_gate_payloads
+from tests.hunting_fixtures import loop_row as _loop_row
+from tests.hunting_fixtures import produce_model as _produce_model
 
 PROJECT = "proj-loop"
 RUN = "run-loop-1"
@@ -56,40 +56,11 @@ def hunter_store(tmp_path):
 
 
 def produce_model(store, *, unit_id=UNIT, run_id=RUN, loops=None) -> str:
-    """Drive the REAL store's five gates to COMPLETED for `unit_id` - the
-    produced COMPLETED valid model the surfer dispatches from. `loops` overrides
-    the COMPLETED write's loop rows (the sequencing fixtures)."""
-    payloads = modeller_gate_payloads()
-    from polymerhus.attack.hunting.threat_model import ModelState
-
-    for state in ModelState:
-        sections = dict(payloads[state])
-        if state is ModelState.COMPLETED and loops is not None:
-            sections["loops"] = loops
-        store.write_sections(PROJECT, unit_id, state, sections, run_id=run_id)
-    return unit_id
-
-
-def _loop_row(**overrides) -> dict:
-    row = {
-        "fault_ref": "fault-1",
-        "vulnerability_ref": "v-1",
-        "failure_mode_refs": ["fm-1"],
-        "canonical_class": "IDOR",
-        "web_vulnerability_class": "idor",
-        "likelihood": "high",
-        "likelihood_rationale": "The item id is attacker-controlled and unauthenticated.",
-        "risk_factors": {
-            "attack_vector": "network",
-            "attack_requirements": "none",
-            "privileges_required": "none",
-            "complexity": "low",
-        },
-        "confidence": "INFERRED",
-        "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
-    }
-    row.update(overrides)
-    return row
+    """This module's binding of the SHARED produced-model fixture
+    (`tests.hunting_fixtures.produce_model`): the project/run/unit defaults
+    stay here, the five-gate ladder has one home."""
+    return _produce_model(
+        store, project_id=PROJECT, unit_id=unit_id, run_id=run_id, loops=loops)
 
 
 # --- the payload (S2 8.2) ------------------------------------------------------
@@ -223,7 +194,7 @@ def _coro_for(threat_store, hunter_store, *, state=None, hunter_builder=None,
     state = state if state is not None else RunDispatchState()
     return build_run_dispatch(
         project_id=PROJECT, run_id=RUN,
-        threat_store=threat_store, hunt_store=HuntStore(),
+        threat_store=threat_store,
         hunter_store=hunter_store, pod_store=None,
         state=state, gate=None,
         hunter_builder=hunter_builder or _hunter_builder,
@@ -274,7 +245,7 @@ def test_the_hunter_session_receives_the_materialised_payload(
     builder, seen, snapshots = _payload_recorder(state=state)
     coro_for = build_run_dispatch(
         project_id=PROJECT, run_id=RUN,
-        threat_store=threat_store, hunt_store=HuntStore(),
+        threat_store=threat_store,
         hunter_store=hunter_store, pod_store=None,
         state=state, gate=None,
         hunter_builder=builder, pod_builder=_pod_builder_fake, control=None,
@@ -604,7 +575,7 @@ def test_a_model_less_item_is_refused_once_by_the_dispatch_branch(
     from polymerhus.attack.hunting.surfer import RunDispatchState, build_run_dispatch
 
     coro_for = build_run_dispatch(
-        project_id=PROJECT, run_id=RUN, threat_store=None, hunt_store=HuntStore(),
+        project_id=PROJECT, run_id=RUN, threat_store=None,
         hunter_store=hunter_store, pod_store=None,
         state=RunDispatchState(), gate=None,
         hunter_builder=_hunter_builder, pod_builder=_pod_builder_fake, control=None,
@@ -711,7 +682,6 @@ def test_a_run_whose_builder_cannot_consume_the_payload_is_inert(
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(tmp_path / "models")
     control = _FakeControl()
@@ -722,7 +692,7 @@ def test_a_run_whose_builder_cannot_consume_the_payload_is_inert(
             modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
             graph_read_fn=lambda cypher, params: [],
             control=control,
-            hunt_store=hunt, hunter_store=hunter, threat_store=models,
+            hunter_store=hunter, threat_store=models,
             # the PRODUCTION hunter builder: the harness that cannot consume the
             # loop payload yet
             pod_builder=_noop_pod_builder,
@@ -758,7 +728,7 @@ def test_a_run_whose_builder_can_consume_the_payload_dispatches(
     control = RecordingControlPlane()
     coro_for = build_run_dispatch(
         project_id=PROJECT, run_id=RUN,
-        threat_store=threat_store, hunt_store=HuntStore(),
+        threat_store=threat_store,
         hunter_store=hunter_store, pod_store=None, state=state, gate=None,
         hunter_builder=builder, pod_builder=_pod_builder_fake, control=control,
     )
@@ -996,7 +966,6 @@ def test_a_whole_run_dispatches_the_modelled_loop(tmp_path, monkeypatch):
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(tmp_path / "models")
     control = _FakeControl()
@@ -1006,7 +975,7 @@ def test_a_whole_run_dispatches_the_modelled_loop(tmp_path, monkeypatch):
         modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
         graph_read_fn=lambda cypher, params: [],
         control=control,
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -1035,7 +1004,6 @@ def test_a_whole_run_consumes_a_zero_loop_model_without_a_dispatch(
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(tmp_path / "models")
     control = _FakeControl()
@@ -1045,7 +1013,7 @@ def test_a_whole_run_consumes_a_zero_loop_model_without_a_dispatch(
         modeller_kwargs={"turn_fn": _zero_loop_turns()},
         graph_read_fn=lambda cypher, params: [],
         control=control,
-        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -1080,6 +1048,8 @@ def _zero_loop_turns():
 def _produce_zero_loop_model(store, *, unit_id=UNIT):
     """The zero-loop COMPLETED valid model: every vulnerability dropped (S2
     5.7's only loop-free shape), so no loop file is emitted."""
+    from tests.hunting_fixtures import modeller_gate_payloads
+
     payloads = modeller_gate_payloads()
     from polymerhus.attack.hunting.threat_model import ModelState
 

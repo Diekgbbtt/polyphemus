@@ -1,14 +1,12 @@
-"""T5: the singular-launch launcher seams at the runtime tier - enqueue hunt
-configs / test specs into the per-project produced families and the
-modeller-only pass (tracker #174; spec #169 "Singular component launches";
-ADR #169 Q4/Q6).
+"""T5: the singular-launch launcher seams at the runtime tier - the pod
+resume seam and the modeller-only pass (tracker #174; spec #169 "Singular
+component launches"; ADR #169 Q4/Q6).
 
-The seams are asserted directly through temp-root stores, no live run and no
-live control plane: an enqueued config comes back RATIFIED (the mover's
-hunter-dispatch gate), an enqueued spec comes back SPECIFIED (the mover's
-pod-dispatch gate), a replay of the same identity raises the storage novelty
-gate (the server-side at-most-once marker), and the modeller-only pass models
-its selected units under the run's module context. No LLM, no DB, no process.
+T4b (#387) retired the hunt-config enqueue with the config family: the loop
+file is the dispatch record, so `enqueue_hunt_config` is GONE and the API path
+is a loud 410 tombstone (asserted in `tests/project_management/test_hunting_api.py`).
+The remaining seams are asserted directly through temp-root stores, no live run
+and no live control plane. No LLM, no DB, no process.
 """
 from __future__ import annotations
 
@@ -17,12 +15,7 @@ import asyncio
 import pytest
 
 from polymerhus.attack.hunting import runtime as hunting_runtime
-from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig
 from polymerhus.attack.hunting.threat_modeller import UnitOutcome
-from polymerhus.attack.hunting.hunt_store import (
-    DuplicateConfigError,
-    HuntStore,
-)
 
 from tests.hunting_fixtures import intake_unit
 
@@ -33,39 +26,11 @@ FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
 RUN = "modeller-only-run"
 
 
-def _config() -> HuntConfig:
-    return HuntConfig(
-        hunt_id=UNIT,
-        unit_id=UNIT,
-        fault_class=FAULT,
-        vulnerability_class=CLASS,
-        rationale="r",
-        research_direction="rd",
-    )
-
-
-def test_enqueue_hunt_forces_ratified_and_round_trips_as_dispatchable(tmp_path):
-    store = HuntStore(tmp_path / "hunts")
-
-    key = hunting_runtime.enqueue_hunt_config("p1", _config(), hunt_store=store)
-
-    assert key == f"{UNIT}::{FAULT}::{CLASS}"
-    produced = store.read_produced_configs("p1")
-    assert [k for k, _n in produced] == [key]
-    # the persisted body round-trips as a model-valid RATIFIED config - exactly
-    # what the surfer's `build_run_dispatch` dispatches a hunter for
-    body = store.read_configs_by_key("p1", key)[0]
-    assert body["status"] == "ratified"
-    assert HuntConfig.model_validate(body).status == "ratified"
-
-
-def test_enqueue_hunt_replay_refused_by_the_novelty_gate(tmp_path):
-    store = HuntStore(tmp_path / "hunts")
-    hunting_runtime.enqueue_hunt_config("p1", _config(), hunt_store=store)
-
-    with pytest.raises(DuplicateConfigError):
-        hunting_runtime.enqueue_hunt_config("p1", _config(), hunt_store=store)
-    assert len(store.read_produced_configs("p1")) == 1  # nothing double-written
+def test_the_hunt_config_enqueue_seam_is_retired():
+    """T4b (#387): the config enqueue retired with the config family - the loop
+    file is the dispatch record (S2 8.4), and the API path is a loud 410
+    tombstone (never a silent accept into a family nothing reads)."""
+    assert not hasattr(hunting_runtime, "enqueue_hunt_config")
 
 
 def test_resume_pod_resumes_one_session_by_its_id(tmp_path):
@@ -130,7 +95,6 @@ def test_launch_modeller_drives_the_pass_under_the_module_context(tmp_path):
     once per selected distinct unit and returns its outcome. The launch
     succeeds without any control plane (the coroutine is what the launcher
     seam schedules)."""
-    hunt_store = HuntStore(tmp_path / "hunts")
     reports: list[tuple[str, str, str]] = []
 
     async def _pass(project_id, run_id, unit_id, tools, **kw):
@@ -147,8 +111,8 @@ def test_launch_modeller_drives_the_pass_under_the_module_context(tmp_path):
     # the intake order: live L1 edge count descending, then unit id
     assert reports == [("p1", RUN, "Service:a"), ("p1", RUN, "Service:b")]
     assert [outcome.unit_id for outcome in outcomes] == ["Service:a", "Service:b"]
-    # no run row was opened or written by the pass (no pg accessors touched)
-    assert not hunt_store.read_produced_configs("p1")
+    # no run row was opened or written by the pass (no pg accessors touched):
+    # the launcher only runs the pass body
 
 
 def test_launch_modeller_never_raises_through_the_control_plane(tmp_path):

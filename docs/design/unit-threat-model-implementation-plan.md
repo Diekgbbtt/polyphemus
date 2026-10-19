@@ -301,6 +301,49 @@ Update `CONTEXT.md` and `CONTEXT-MAP.md`.
 - The hunter launch carries the loop payload or refuses loudly with the T6 marker.
 - The re-pointed tests pass.
 
+**Implementation-time decisions (T4b).**
+
+- The API disposition is RETIRE, with a loud tombstone: `POST /hunting/hunt`
+  answers 410 Gone naming the loop-file replacement and the T10 translation, and
+  `enqueue_hunt_config` is deleted. The eval check: `eval/orchestrator/api.py`
+  and `eval/ph.py` never call the path (they launch the whole run), so no eval
+  behaviour breaks; `eval/hunting_ctl.py` mentions it only in its docstring, and
+  its ratified-config tail reads the retired family (recorded there as a T10
+  translation). A re-point to the produced loop's dispatch id was rejected: the
+  loop identity is store-derived per run, and a caller-supplied identity cannot
+  name one without fabricating a model.
+- The hunter launch carries the loop payload only: the config bridge
+  (`payload=config`) retired with `_config_dispatch`, `run_hunter_session` takes
+  a `Mapping` payload and the loop's likelihood, and the production
+  `_default_hunter_builder` keeps its loud `HunterPayloadNotBuiltError` (the T6
+  #379 marker) - no silent config fabrication anywhere.
+- The `hunt_store` parameter is gone from `run_delivery_tick`,
+  `read_produced_inbox`, `_apply_move`, `run_work_remaining`, `is_run_quiesced`,
+  `build_run_dispatch`, `run_surfer_loop`, `report_dispatch_gap` and
+  `start_hunting`. `HuntStore` itself stays as a module (`semantic_key` and the
+  key helpers are still live on the hunter/pod identity path); its config I/O has
+  no dispatch consumer, and its data disposition is T6/T10's.
+- The carry-forward `_WARNED_UNRATIFIABLE` (the config family's SECOND
+  refuse-once log, beside the mover's run-scoped `log_refusal_once`) retired with
+  the config path it guarded - the mover's `log_refusal_once` is the only
+  refusal log left on the dispatch path (the loop family's). The unused
+  `ProducedInbox` import in `surfer.py` is gone.
+- The shared `produce_model` fixture (plus `loop_row`) lives in
+  `tests/hunting_fixtures.py`; the loop-dispatch tier binds it locally, and the
+  re-pointed config-tier tests call the shared helper, never a copied ladder.
+- Live-tier carry-forward: E4 and E5 (the hunter pause/resume and the
+  single-session-stop contract) need a live hunter session, which cannot
+  dispatch from a pre-seeded config any more and cannot dispatch from a loop
+  until T6's payload harness - they carry with a precise T6 skip. E1/E2/E3/E6/
+  E7/E8 are re-pointed (the pod family and the whole-run guard stay live; the
+  retired enqueue is a 410).
+- Eval translation (T10, #383): `eval/orchestrator/trial.py::place_premined`
+  writes pre-mined hunt configs into `hunt_configs/produced/`, a family the
+  mover no longer reads, and `eval/orchestrator/predicates.py` / `setup.py` carry
+  the same `preloaded_hunting_artifacts.configs` shape. T10 translates those to
+  the loop vocabulary (or a whole-run seeding seam) and sweeps the prompt/doc
+  mentions.
+
 ### T5 - Hunter harness pass FSM
 
 **What to build.**

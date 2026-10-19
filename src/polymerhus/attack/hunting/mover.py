@@ -17,9 +17,8 @@ orchestration in different functions, one file like the curators):
   plane (the T2 shared `RuntimeManager.schedule` with the session-id-as-name
   rule - `RuntimeControlPlane`, injectable per s6), and applies the
   produced->consumed moves through the stores' single-owner primitives
-  (`ThreatModelStore.consume_loop` / `HunterMemoryStore.consume_spec` and -
-  while the config family retires - `HuntStore.consume_config`). It does NO
-  reasoning of its own - every decision is in the deduction.
+  (`ThreatModelStore.consume_loop` / `HunterMemoryStore.consume_spec`). It does
+  NO reasoning of its own - every decision is in the deduction.
 
 The dispatch grain is the LOOP FILE (S2 8.4): one produced loop file is one
 `ThreatLoopItem`, whose `message_id` IS the store-derived dispatch id
@@ -27,7 +26,9 @@ The dispatch grain is the LOOP FILE (S2 8.4): one produced loop file is one
 (`hunting:<run_id>:hunt:<dispatch_id>`, S3 8.9). The loop file's move to
 `consumed/` IS the admission marker, and the store moves the unit's model
 document with its LAST loop file; a zero-loop produced COMPLETED valid model is
-consumed by the mover without a dispatch.
+consumed by the mover without a dispatch. The config family retired in T4b
+(#387): the mover reads produced loop files and produced specs, never a hunt
+config.
 
 The at-least-once protocol (Q3):
 
@@ -61,7 +62,6 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import AbstractSet, Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from polymerhus.attack.hunting.threat_model import Likelihood, UnitKind
@@ -241,19 +241,6 @@ class ThreatLoopItem(ProducedItem):
     likelihood: str
     record: Mapping[str, Any]
     model: Mapping[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class HuntConfigItem(ProducedItem):
-    """A produced hunt config (the retiring config family, T2b/T3 wiring).
-
-    designed-for-removal -> T4b (#377): the loop file is the dispatch record
-    (S2 8.2: no `HuntConfig`), so this family, its `HuntStore.consume_config`
-    move, and the surfer's config branch retire with the T4b sweep. It stays
-    until then ONLY because the surfer still dispatches the family; nothing new
-    may consume it."""
-
-    config_key: str
 
 
 @dataclass(frozen=True)
@@ -737,7 +724,6 @@ def run_delivery_tick(
     project_id: str,
     run_id: str,
     *,
-    hunt_store: HuntStore | None = None,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     control: DispatchControlPlane,
@@ -751,9 +737,8 @@ def run_delivery_tick(
     `deduce_delivery` / `sequence_dispatch`.
 
     Protocol per lap:
-    1. Read the produced inbox (the threat model store's loop files, the hunter
-       memory's test specs, and - until the config family retires - the hunt
-       store's configs) plus the live registry session ids.
+    1. Read the produced inbox (the threat model store's loop files and the
+       hunter memory's test specs) plus the live registry session ids.
     2. Apply the sequencing filter: a `low` loop file waits while a higher-tier
        loop file is produced or a higher-tier hunter session is live (S2 8.3).
     3. Deduce with empty feedback -> the items `to_dispatch` this lap.
@@ -773,7 +758,7 @@ def run_delivery_tick(
     Returns the `TickReport`. This function is synchronous: the runtime owns
     the loop (Q11); the mover never awaits, the control plane schedules."""
     inbox = read_produced_inbox(
-        project_id, run_id, hunt_store=hunt_store, threat_store=threat_store,
+        project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, hunter_payload_capable=hunter_payload_capable,
     )
     produced = inbox.items
@@ -819,7 +804,7 @@ def run_delivery_tick(
     for item in plan.to_move:
         try:
             done = _apply_move(
-                project_id, item, hunt_store=hunt_store, threat_store=threat_store,
+                project_id, item, threat_store=threat_store,
                 hunter_store=hunter_store,
             )
         except Exception as exc:  # noqa: BLE001 - fail-open per record
@@ -916,7 +901,6 @@ def read_produced_inbox(
     project_id: str,
     run_id: str,
     *,
-    hunt_store: HuntStore | None = None,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     hunter_payload_capable: bool = True,
@@ -936,14 +920,13 @@ def read_produced_inbox(
       consumed - but a loop-FREE model is still consumed as the no-dispatch
       model (R1: the modeller's "nothing to hunt here" outcome, S2 8.4).
     - The hunter memory's produced test specs (the pod family, S3 8.7).
-    - The hunt store's produced configs (the retiring config family: the T4b
-      sweep removes this read with the config dispatch path).
+
+    The config family retired in T4b (#387): there is no hunt-store read and no
+    `HuntConfigItem` - a produced hunt config is not dispatch input at all.
 
     Each item carries its Q13 session id derived on the fly from the
     memory-item keys (Q13; ADR #169)."""
-    items: list[ProducedItem] = list(_legacy_items(
-        project_id, run_id, hunt_store=hunt_store, hunter_store=hunter_store,
-    ))
+    items: list[ProducedItem] = list(_spec_items(hunter_store, project_id, run_id))
     models_to_consume: dict[str, tuple[str, ...]] = {}
     if threat_store is not None:
         for entry in threat_store.read_produced_loops(project_id):
@@ -1021,26 +1004,17 @@ def read_produced_inbox(
     )
 
 
-def _legacy_items(
+def _spec_items(
+    hunter_store: HunterMemoryStore,
     project_id: str,
     run_id: str,
-    *,
-    hunt_store: HuntStore | None,
-    hunter_store: HunterMemoryStore,
 ) -> tuple[ProducedItem, ...]:
-    """The produced items of the families that are NOT the loop family: the pod
-    family's specs and (until T4b) the retiring config family. The read appends
-    them ALWAYS, then adds the loop items conditionally (C1: when the run's hunter
-    cannot consume the loop payload, the loops are not dispatch input, but the pod
-    path - whose builder is a different seam - stays live). One block, one home."""
+    """The produced items of the POD family: one `TestSpecItem` per produced
+    spec whose persisted status is the pod dispatch gate. The loop family is
+    added by `read_produced_inbox` itself (its read is run-scoped and its
+    validity predicate is the ONE loop predicate); the config family retired in
+    T4b (#387) and has no read here."""
     items: list[ProducedItem] = []
-    if hunt_store is not None:
-        for config_key, file_name in hunt_store.read_produced_configs(project_id):
-            items.append(HuntConfigItem(
-                message_id=config_key,
-                session_id=hunter_session_id(run_id, Path(file_name).stem),
-                config_key=config_key,
-            ))
     for fault_key in hunter_store.list_fault_keys(project_id):
         for spec_file in hunter_store.produced_spec_files(project_id, fault_key):
             body = produced_spec_body(hunter_store, project_id, fault_key, spec_file)
@@ -1093,7 +1067,6 @@ def _apply_move(
     project_id: str,
     item: ProducedItem,
     *,
-    hunt_store: HuntStore | None = None,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
 ) -> bool:
@@ -1105,8 +1078,6 @@ def _apply_move(
         # The loop file's move IS the admission marker (S2 8.4); the store also
         # moves the model document when this was its last produced loop file.
         return threat_store.consume_loop(project_id, item.unit_id, item.loop_id)
-    if isinstance(item, HuntConfigItem):
-        return hunt_store.consume_config(project_id, item.config_key)
     if isinstance(item, TestSpecItem):
         return hunter_store.consume_spec(project_id, item.fault_key, item.spec_file)
     raise TypeError(
@@ -1120,7 +1091,6 @@ __all__ = [
     "DispatchControlPlane",
     "DispatchFeedback",
     "HIGHER_TIERS",
-    "HuntConfigItem",
     "ProducedInbox",
     "ProducedItem",
     "RuntimeControlPlane",
