@@ -11,83 +11,82 @@ A name that is resolved twice can answer differently each time. This variant mak
 
 ## Attack Surface
 
-Resolution rebinding applicability centers on a destination that is resolved after it is approved, on a name whose answer the caller can change.
-The surface holds lookups separated by a check, records with short lifetimes, wildcard and fallback answers, and connectors that resolve independently of the component that validated the destination.
-A path that pins the resolution to the approved address, and a connector that connects to the validated value rather than to the name, both close the surface.
-A destination supplied as a literal address rides outside this variant, because there is no lookup to answer twice.
+- **Applicability**: centers on a destination that is resolved after it is approved, on a name whose answer the caller can change.
+- **Surface composition**: lookups separated by a check, records with short lifetimes, wildcard and fallback answers, and connectors that resolve independently of the component that validated the destination.
+- **Closing factors**: a path that pins the resolution to the approved address, and a connector that connects to the validated value rather than to the name, both close the surface.
+- **Out-of-scope variant**: a destination supplied as a literal address rides outside this variant, because there is no lookup to answer twice.
 
 ## Reconnaissance
 
-Rebinding maps the lookups before crafting, because the mechanism lives between two resolutions of one name.
-- Trace the destination from the approving component to the connector and count the lookups on the way.
-- Record the record lifetime, the caching behaviour of each resolver, and the fallback answer for unknown names.
-- Establish the refusal baseline with a literal address the check rejects, so a later arrival is attributable to the second answer.
-- Note which connector the second lookup reaches, because only that connector's resolution behaviour matters.
+- **Reconnaissance scope**: rebinding maps the lookups before crafting, because the mechanism lives between two resolutions of one name.
+- **Lookup tracing**: trace the destination from the approving component to the connector and count the lookups on the way.
+- **Record lifetime**: record the record lifetime, the caching behaviour of each resolver, and the fallback answer for unknown names.
+- **Refusal baseline**: establish the refusal baseline with a literal address the check rejects, so a later arrival is attributable to the second answer.
+- **Connector identification**: note which connector the second lookup reaches, because only that connector's resolution behaviour matters.
 
 ## Detection Channels
 
-Rebinding listens to the two answers of one name, so only the entries below are live here.
-- The second answer differing from the first, which proves the name was rebound between lookups.
-- An arrival at operated infrastructure in place of the approved destination, which proves the connection used the second answer.
-- A paired baseline where the same name reaches two different targets across one operation.
-- The interior service or origin acting on the operation the approved name carried.
-- A negative that holds across every lookup pair and lifetime, which reads as a pinned resolution.
+- **Channel scope**: rebinding listens to the two answers of one name, so only the entries below are live here.
+- **Divergent answers**: the second answer differing from the first, which proves the name was rebound between lookups.
+- **Operated arrival**: an arrival at operated infrastructure in place of the approved destination, which proves the connection used the second answer.
+- **Paired baseline**: a paired baseline where the same name reaches two different targets across one operation.
+- **Interior action**: the interior service or origin acting on the operation the approved name carried.
+- **Pinned resolution**: a negative that holds across every lookup pair and lifetime, which reads as a pinned resolution.
 
 ## Adversarial Capabilities
 
-Rebinding presupposes a controllable answer plus a lookup gap plus an arrival oracle, and it consumes all three.
-- Control the answer of one name, with a lifetime short enough to change between the two lookups.
-- Hold an arrival oracle at the second answer's address, so the connection is provable rather than inferred.
-- Read the approving component's verdict and the connector's destination separately.
-- Repeat the pair across lifetimes, because a resolver cache can collapse the two lookups into one.
+- **Prerequisites**: rebinding presupposes a controllable answer plus a lookup gap plus an arrival oracle, and it consumes all three.
+- **Answer control**: control the answer of one name, with a lifetime short enough to change between the two lookups.
+- **Arrival oracle**: hold an arrival oracle at the second answer's address, so the connection is provable rather than inferred.
+- **Separate readings**: read the approving component's verdict and the connector's destination separately.
+- **Pair repetition**: repeat the pair across lifetimes, because a resolver cache can collapse the two lookups into one.
 
 ## Trust Assumptions
 
-The destination check trusts that the address it approved is the address the connection uses.
-The agreement holds the name to one resolution from the approving lookup to the connecting lookup, holds every resolver on the path to the same answer, and holds the connector to the value the check consumed.
-This variant breaks the resolution clause because the connector resolves the name again after the check, so the approved address and the connected address differ.
-The arrival is claimed only when both answers are recorded for one operation, because one answer alone cannot show a rebind.
+- **The agreement**: the destination check trusts that the address it approved is the address the connection uses, holds the name to one resolution from the approving lookup to the connecting lookup, holds every resolver on the path to the same answer, and holds the connector to the value the check consumed.
+- **The failing clause**: this variant breaks the resolution clause because the connector resolves the name again after the check, so the approved address and the connected address differ.
+- **Claim discipline**: the arrival is claimed only when both answers are recorded for one operation, because one answer alone cannot show a rebind.
 
 ## Key Vulnerabilities
 
 ### Lookup-Count Gaps
 
-Count the resolutions between the check and the connection, because each additional lookup is a chance for the answer to change.
-Frame the gap as a race between a validating lookup and a fetching lookup: the check resolves once and the fetch re-resolves, so the answer only has to change inside that interval.
-Repeat the lookup pair until the race is won, because a resolver cache can collapse the two lookups into one answer on any single attempt.
-Prefer the connector that resolves independently, since a connector fed the validated value resolves nothing.
-The parent path-mapping step covers one destination value and cannot describe a name answered twice, so this variant owns the lookup-count procedure.
+- **Lookup count**: count the resolutions between the check and the connection, because each additional lookup is a chance for the answer to change.
+- **Lookup race**: frame the gap as a race between a validating lookup and a fetching lookup: the check resolves once and the fetch re-resolves, so the answer only has to change inside that interval.
+- **Pair repetition**: repeat the lookup pair until the race is won, because a resolver cache can collapse the two lookups into one answer on any single attempt.
+- **Independent connector**: prefer the connector that resolves independently, since a connector fed the validated value resolves nothing.
+- **Ownership**: the parent path-mapping step covers one destination value and cannot describe a name answered twice, so this variant owns the lookup-count procedure.
 
 ### Record Lifetime Control
 
-Serve an answer with a lifetime short enough to change between the approving and the connecting lookup.
-Confirm the resolver's caching behaviour first, because a cache that outlives the check collapses the two lookups into one answer.
-Treat an answer that survives both lookups as a pinned resolution rather than a rebind.
+- **Short lifetime**: serve an answer with a lifetime short enough to change between the approving and the connecting lookup.
+- **Cache confirmation**: confirm the resolver's caching behaviour first, because a cache that outlives the check collapses the two lookups into one answer.
+- **Pinned resolution**: treat an answer that survives both lookups as a pinned resolution rather than a rebind.
 
 ### Address Family Answers
 
-Point the second answer at the reach the operation needs, including families the approving check treats as external and the connector treats as interior.
-Keep the first answer benign and the second minimal, because the first answer is the one the check reads.
-Confirm the arrival out of band, since a connection that never happened is not a rebind.
+- **Second answer**: point the second answer at the reach the operation needs, including families the approving check treats as external and the connector treats as interior.
+- **Benign first answer**: keep the first answer benign and the second minimal, because the first answer is the one the check reads.
+- **Out-of-band confirmation**: confirm the arrival out of band, since a connection that never happened is not a rebind.
 
 ## Bypass Techniques
 
-Relay shapes are tried only after the direct route is baselined, because a name that never rebound carried nothing.
+- **Bypass scope**: relay shapes are tried only after the direct route is baselined, because a name that never rebound carried nothing.
 
-- A name whose answer changes between the approving and the connecting lookup.
-- A lifetime short enough to expire inside the gap between the two lookups.
-- A wildcard or fallback answer that covers the label the operation uses.
-- An answer-name family whose first answer is benign and whose second answer is the operated reach, kept as a pattern rather than a concrete name.
-- Address families that the approving check and the connector classify differently.
-- Repeated pairs across lifetimes, because a resolver cache can collapse the lookups.
+- **Changing answer**: a name whose answer changes between the approving and the connecting lookup.
+- **Short lifetime**: a lifetime short enough to expire inside the gap between the two lookups.
+- **Wildcard answer**: a wildcard or fallback answer that covers the label the operation uses.
+- **Answer-name family**: an answer-name family whose first answer is benign and whose second answer is the operated reach, kept as a pattern rather than a concrete name.
+- **Address families**: address families that the approving check and the connector classify differently.
+- **Repeated pairs**: repeated pairs across lifetimes, because a resolver cache can collapse the lookups.
 
 ## Chaining Attacks
 
-Rebinding chains forward into the class that owns the effect, because a changed answer is only the first hop.
-- Hand the reached destination to the class that owns the effect, and prove the class-specific consequence there.
-- Chain into a forwarded hop, because the second answer can itself be a redirecting destination.
-- Chain into the destination parse differential where the approved and connected values also parse differently.
-- Name the class at its own step rather than restating its procedure here.
+- **Chain scope**: rebinding chains forward into the class that owns the effect, because a changed answer is only the first hop.
+- **Effect hand-off**: hand the reached destination to the class that owns the effect, and prove the class-specific consequence there.
+- **Forwarded hop**: chain into a forwarded hop, because the second answer can itself be a redirecting destination.
+- **Parse-differential stack**: chain into the destination parse differential where the approved and connected values also parse differently.
+- **Own-step naming**: name the class at its own step rather than restating its procedure here.
 
 ## Testing Methodology
 
@@ -102,23 +101,22 @@ Rebinding baselines the pair first and answers second, because a single lookup c
 
 ## False Positives
 
-Stop when the resolution stayed pinned, because one answer across both lookups is not a rebind.
+- **Stop condition**: stop when the resolution stayed pinned, because one answer across both lookups is not a rebind.
 
-- A connector fed the validated value, which resolves nothing and connects to the approved address.
-- A resolver cache that outlives the check, confirmed by one answer across the pair.
-- An arrival whose source is the tester's client rather than the target's connector.
-- A destination supplied as a literal address, which has no lookup to answer twice.
-- A simulator that answers the second lookup itself without a real connection.
+- **Validated-value connector**: a connector fed the validated value, which resolves nothing and connects to the approved address.
+- **Outliving cache**: a resolver cache that outlives the check, confirmed by one answer across the pair.
+- **Tester-side arrival**: an arrival whose source is the tester's client rather than the target's connector.
+- **Literal destination**: a destination supplied as a literal address, which has no lookup to answer twice.
+- **Simulator**: a simulator that answers the second lookup itself without a real connection.
 
 ## Pro Tips
 
-Rebinding rewards lookup counting plus lifetime control.
-
-1. Count the lookups before crafting, because each one is a chance for the answer to change.
-2. Keep the first answer benign and the second minimal, since the check reads the first.
-3. Confirm the resolver's caching behaviour, because a cache can collapse the pair into one answer.
-4. Prove the arrival out of band, since an unproved connection is not a rebind.
-5. Hand the reached destination to the class that owns the effect, and stop at the narrowest proof.
+- **Discipline**: rebinding rewards lookup counting plus lifetime control.
+- **Lookup count**: count the lookups before crafting, because each one is a chance for the answer to change.
+- **Benign first answer**: keep the first answer benign and the second minimal, since the check reads the first.
+- **Cache confirmation**: confirm the resolver's caching behaviour, because a cache can collapse the pair into one answer.
+- **Out-of-band proof**: prove the arrival out of band, since an unproved connection is not a rebind.
+- **Effect hand-off**: hand the reached destination to the class that owns the effect, and stop at the narrowest proof.
 
 ## Summary
 
