@@ -36,20 +36,20 @@ The goal is a message the application's own template never described: an extra r
 
 ## Detection Channels
 
-- A delivered message carries a header field the input never named, which is the primary signal.
-- An extra recipient receives a copy of a message the application addressed to someone else.
-- The delivered body differs from the template the application composed, which signals a structure override.
-- A mail-command transcript or error text shows the input reached the command channel rather than a header value.
-- The envelope recipient differs from the visible recipient, which shows the transport accepted a value the application never wrote.
-- A message arrives at an address the application never accepted as input, which proves transport-level acceptance.
+- **Injected header field**: a delivered message carries a header field the input never named, which is the primary signal.
+- **Extra recipient**: an extra recipient receives a copy of a message the application addressed to someone else.
+- **Body override**: the delivered body differs from the template the application composed, which signals a structure override.
+- **Command-channel transcript**: a mail-command transcript or error text shows the input reached the command channel rather than a header value.
+- **Envelope divergence**: the envelope recipient differs from the visible recipient, which shows the transport accepted a value the application never wrote.
+- **Unaccepted-address arrival**: a message arrives at an address the application never accepted as input, which proves transport-level acceptance.
 
 ## Adversarial Capabilities
 
-- Hold a reachable mailbox or listener that receives what the target sends, and read the raw message including its full header block.
-- Supply values through every input that reaches a message field, one field per attempt.
-- Supply line-break and field-boundary encodings in the forms the decoding path produces.
-- Trigger the flow repeatedly so each attempt carries its own baseline comparison.
-- Read the transport transcript or delivery error where the flow exposes one.
+- **Reachable mailbox or listener**: hold a reachable mailbox or listener that receives what the target sends, and read the raw message including its full header block.
+- **Field-level input control**: supply values through every input that reaches a message field, one field per attempt.
+- **Encoding supply**: supply line-break and field-boundary encodings in the forms the decoding path produces.
+- **Repeated triggering**: trigger the flow repeatedly so each attempt carries its own baseline comparison.
+- **Transcript reading**: read the transport transcript or delivery error where the flow exposes one.
 
 ## Trust Assumptions
 
@@ -124,21 +124,21 @@ Injection reads the delivered message first and mutates one field second, becaus
 
 ## False Positives
 
-- A message that arrives only because the tester's own address stood in the recipient field, with no injected field in the raw message.
-- A display name that looks like a header in the rendered view while the raw message shows a single header field.
-- A transport or relay that rewrites the message after the application composed it, which normalizes the injected structure.
-- A bounce or delivery-status message that mirrors the submitted value without executing it.
-- A mail client that renders a header-looking line inside the body, which is presentation rather than injection.
-- A refused attempt reported by the flow as success, where the raw message shows the value stayed data.
+- **Tester's own address**: a message that arrives only because the tester's own address stood in the recipient field, with no injected field in the raw message.
+- **Rendered-view illusion**: a display name that looks like a header in the rendered view while the raw message shows a single header field.
+- **Transport rewriting**: a transport or relay that rewrites the message after the application composed it, which normalizes the injected structure.
+- **Bounce mirroring**: a bounce or delivery-status message that mirrors the submitted value without executing it.
+- **Client rendering**: a mail client that renders a header-looking line inside the body, which is presentation rather than injection.
+- **Reported success**: a refused attempt reported by the flow as success, where the raw message shows the value stayed data.
 
 ## Pro Tips
 
-1. Read the raw message, never the rendered one, because structure effects are invisible in a rendered view.
-2. Keep one field per attempt so the effect attributes to exactly one input.
-3. Test the display name, the subject, and the reply path, not only the recipient address.
-4. Record the encoding that produced the effect, because the same field may refuse one form and accept another.
-5. Trigger the flow from a clean session per attempt, so a cached or queued message never masquerades as a fresh effect.
-6. Stop at the narrowest proof: one injected field in one delivered message is enough.
+- **Raw-message reading**: read the raw message, never the rendered one, because structure effects are invisible in a rendered view.
+- **One field per attempt**: keep one field per attempt so the effect attributes to exactly one input.
+- **Field breadth**: test the display name, the subject, and the reply path, not only the recipient address.
+- **Encoding record**: record the encoding that produced the effect, because the same field may refuse one form and accept another.
+- **Clean session per attempt**: trigger the flow from a clean session per attempt, so a cached or queued message never masquerades as a fresh effect.
+- **Narrowest proof**: stop at the narrowest proof: one injected field in one delivered message is enough.
 
 ## Summary
 
