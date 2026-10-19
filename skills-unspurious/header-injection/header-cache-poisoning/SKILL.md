@@ -23,6 +23,7 @@ Line-break framing payloads never ride here, and proto-host link building that b
 Inventory narrows to the key-versus-content split plus the signals that expose it.
 Map cache-signal headers in abstract form, namely age plus hit-or-miss plus key-status indicators, across repeated requests to learn the caching layer and its key behavior.
 Find inputs that move the body without moving the key by flipping headers plus parameters and diffing bodies beside signal values.
+See references/unkeyed-input-families.md for the component families to sweep against the key.
 Record eligibility plus fragmentation behavior per sub-shape before sweeping, so each sweep starts from a mapped baseline.
 
 ## Detection Channels

@@ -151,6 +151,8 @@ Each variant breaks one clause: the atomicity and ordering clause, the dedup-sco
 - Wire-capture validation: confirm the flush landed as one segment carrying every final frame, because a merely pipelined burst reads as a race attempt without the tightness
 - Connection warming: pre-establish sessions, cookies, and transport state to remove jitter
 
+See references/race-single-packet.md for the staging-and-flush template and the window-estimation decision tree.
+
 **Isolation-Level Exploitation**
 - Exploit read-committed and repeatable-read anomalies: phantoms and non-serializable sequences
 - Upsert races: naive existence checks lose to proper unique constraints, so target the naive shape

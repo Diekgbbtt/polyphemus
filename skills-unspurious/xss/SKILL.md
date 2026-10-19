@@ -36,6 +36,8 @@ Cross-site scripting is attacker-controlled input that reaches a render or execu
 - Trace each source to every sink that renders or evaluates it, including deferred, retrieval, and re-render paths
 - Instrument markup-insertion and evaluation sinks to log which values reach them
 
+See references/source-sink-families.md for the source and sink family lists with the context-to-encoding matrix.
+
 ### Context Classification
 
 - Classify each sink: markup node, quoted or unquoted attribute, URL slot, script string, evaluator, style, or active-content document node

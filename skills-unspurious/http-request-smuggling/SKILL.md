@@ -28,6 +28,8 @@ HTTP request smuggling exploits disagreements between a front-end proxy and a ba
 - Chunk size obfuscation through whitespace, tab, case, or invalid extensions
 - Header-block and frame boundaries where reassembly order differs between hops
 
+See references/smuggling-carrier-families.md for the carriers a smuggled prefix can ride and each carrier's prerequisite.
+
 ## Reconnaissance
 
 ### Map the Chain
@@ -138,6 +140,8 @@ To force the declaration disagreement, vary the encoding declaration itself:
 - Duplicate encoding fields, where the back-end uses the last and the front-end the first
 - A line break injected into a preceding field value, so the declaration arrives only at the back-end
 - Case variation and obsolete folding forms accepted by one hop and normalized by the other
+
+See references/declaration-pair-matrix.md for the pair cells and the leftover accounting.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 

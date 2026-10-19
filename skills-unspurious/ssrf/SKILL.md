@@ -147,6 +147,8 @@ Redirect chains and destination parse differentials are the proxy-techniques fam
 - Parser-confusion address shapes: a userinfo split, a fragment before the host, an encoded separator, and a backslash before the host move the parse between the check and the connection
 - Edge-versus-origin path confusion: the edge and the origin normalise the path differently, so the approved address and the fetched path diverge, with the comparison owned by the proxy-techniques family at its destination-parser step
 
+See references/address-notation-bypass.md for the notation families with the check each one defeats.
+
 **Relay Mechanics**
 - Short-lived resolution, redirect chains, and destination parse differentials are generic relay steps, and the proxy-techniques family owns them; name it at the hop rather than restating the mechanics here
 

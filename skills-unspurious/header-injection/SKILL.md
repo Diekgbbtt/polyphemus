@@ -135,6 +135,7 @@ The forwarding family is informational: no protocol guarantee says who set it. A
 - Address families under several names: spray all of them, since each layer may read a different one
 
 The relay mechanics these shapes work are the proxy-techniques family's relay step; name it there and keep the header-shape detail here.
+See references/forwarded-field-families.md for the family list with its per-family consumer and read-out.
 
 ### Content-Type and Encoding Confusion
 
