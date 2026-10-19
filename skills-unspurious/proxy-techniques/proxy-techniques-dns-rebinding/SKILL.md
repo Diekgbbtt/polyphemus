@@ -53,6 +53,8 @@ The arrival is claimed only when both answers are recorded for one operation, be
 ### Lookup-Count Gaps
 
 Count the resolutions between the check and the connection, because each additional lookup is a chance for the answer to change.
+Frame the gap as a race between a validating lookup and a fetching lookup: the check resolves once and the fetch re-resolves, so the answer only has to change inside that interval.
+Repeat the lookup pair until the race is won, because a resolver cache can collapse the two lookups into one answer on any single attempt.
 Prefer the connector that resolves independently, since a connector fed the validated value resolves nothing.
 The parent path-mapping step covers one destination value and cannot describe a name answered twice, so this variant owns the lookup-count procedure.
 
@@ -75,6 +77,7 @@ Relay shapes are tried only after the direct route is baselined, because a name 
 - A name whose answer changes between the approving and the connecting lookup.
 - A lifetime short enough to expire inside the gap between the two lookups.
 - A wildcard or fallback answer that covers the label the operation uses.
+- An answer-name family whose first answer is benign and whose second answer is the operated reach, kept as a pattern rather than a concrete name.
 - Address families that the approving check and the connector classify differently.
 - Repeated pairs across lifetimes, because a resolver cache can collapse the lookups.
 

@@ -1,6 +1,6 @@
 ---
 name: proxy-techniques-url-parser-differential
-description: Destination parse differential where two components read one destination value differently, covering authority boundary gaps when separators or userinfo split the parse, duplicate destination precedence when each component reads a different occurrence, and notation folding when case, trailing dots, or encoded separators resolve on one side only.
+description: Destination parse differential where two components read one destination value differently, covering authority boundary gaps when separators or userinfo split the parse, duplicate destination precedence when each component reads a different occurrence, notation folding when case, trailing dots, or encoded separators resolve on one side only, and server-side URL construction when a builder interpolates the value into a backend destination.
 metadata:
   version: 1.0.0
 ---
@@ -31,6 +31,7 @@ Destination parse differentials listen to the two targets one value yields, so o
 - An arrival at a target the approver never named, which proves the consuming parse won.
 - A paired baseline where the direct destination and the shaped value reach different targets across one operation.
 - The full chain recorded with each reader's derived target, which shows where the parses diverged.
+- A definition or route error naming a backend destination the caller never sent, which proves the value reached a URL builder rather than a text validator.
 - A negative that holds across every shaped element, which reads as readers that parse identically.
 
 ## Adversarial Capabilities
@@ -65,8 +66,20 @@ Treat a consumer that reads the same occurrence as the approver as a stop condit
 ### Notation and Relative Folding
 
 Shape trailing dots, case, width variants, numeric address forms, and encoded separators, because one side folds or decodes what the other reads as data.
-Complete a relative value against the consumer's own base where the approver resolves it differently.
+Complete a relative value against the consumer's own base where the approver resolves it differently, and name `proxy-techniques-client-side-path-traversal` where the consumer is a client that builds its request path from the value.
+Probe the delimiter and encoded-path family per element: separators, encoded separators, dot segments, a trailing dot, case, and a terminating null or fragment, because each reader resolves the element on its own.
 Treat a decode-count disagreement on one value as the encoding differential's step rather than this one, and keep this variant on the destination's structure.
+
+### Server-Side URL Construction
+
+Where a component interpolates the caller's value into a backend destination, the builder is a second reader: a fragment or terminator inside the value ends the path the builder meant to append, and traversal segments move within the backend destination.
+Treat the constructed backend destination as the consumer's parse, and read what the builder emitted rather than what the caller sent.
+An API-definition error, a route-not-found error, or an unexpected backend path in a response is the observable that the value reached a server-side URL router rather than a text validator.
+Confirm the derived backend destination out of band where the response reflects nothing, because the builder's own answer names only the builder.
+
+### Cache-Versus-Origin Normalisation
+
+Where a cache and an origin resolve one path differently, the disagreement is the same two-reader parse gap on a normalising reader; name `proxy-techniques-cache-deception` at its key step rather than restating the key mechanics here.
 
 ## Bypass Techniques
 
@@ -77,6 +90,7 @@ Relay shapes are tried only after the direct route is baselined, because a value
 - Trailing dots, case, width variants, and numeric address forms that equalize differently.
 - Encoded separators resolved by the consumer after the approver read them as data.
 - Relative and scheme-relative values completed against the consumer's own base.
+- A value interpolated into a server-side destination, where a fragment or terminator ends the built path and traversal segments move within it.
 
 ## Chaining Attacks
 

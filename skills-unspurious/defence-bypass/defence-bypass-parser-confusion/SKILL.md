@@ -1,6 +1,6 @@
 ---
 name: defence-bypass-parser-confusion
-description: Parser confusion bypass between two readers of one request, covering duplicate member precedence when the control reads one occurrence and the sink another, framing and content-type reading when each side consumes a different representation, and verb or location re-reading when the gate checks a member the executor overrides.
+description: Parser confusion bypass between two readers of one request, covering duplicate member precedence when the control reads one occurrence and the sink another, framing and content-type reading when each side consumes a different representation, framing-declaration obfuscation when a normalising front end re-derives the boundary, and verb or location re-reading when the gate checks a member the executor overrides.
 metadata:
   version: 1.0.0
 ---
@@ -22,6 +22,7 @@ Parser confusion maps the readers before crafting, because the disagreement live
 - List the components that read the request and note which member each one consumes for the same effect.
 - Establish the refusal baseline with the canonical single-member request, so a later pass is attributable to the second reading.
 - Probe precedence by duplicating one member with two values and reading which value each layer acts on.
+- Rank the readers by strictness where possible, because a lenient reader accepts a structure the strict one rejects and that pair is the gap.
 - Note the transit tiers that re-frame the request, because a re-framed request re-reads every member it re-emits.
 
 ## Detection Channels
@@ -31,6 +32,8 @@ Parser confusion listens to the two readings of one request, so only the entries
 - A pass for the same effect in a duplicated or re-framed request, which shows the readers consumed different members.
 - The differential between the refused canonical request and the passed re-read request at one member, which localises the disagreement.
 - The effect appearing at the sink through a member the control's reading did not cover.
+- A response stored under a different member's key than the one sent, which proves the executor applied an override.
+- A timing differential between a normal request and a re-framed one, which confirms a boundary disagreement when both answers look alike.
 - The sink's own error class, which names the member the sink actually consumed.
 
 ## Adversarial Capabilities
@@ -54,17 +57,20 @@ The pass is claimed only when both readings are recorded, because one reading al
 
 Send one member twice with two distinguishable values, because the gate often reads the first occurrence while the sink reads the last.
 Vary the ordering across attempts so each reader's precedence is established rather than assumed.
+Establish the precedence rule from the reader inventory: first-occurrence, last-occurrence, list-collecting, and joined forms are the four rules a reader can apply, and the response names the rule each reader follows.
 The parent craft step covers one value at one position and cannot describe two consumers of one member, so this variant owns the precedence procedure.
 
 ### Representation and Framing Reading
 
 Re-present the same effect under a second content type or framing declaration, because some paths validate only the representation they expect.
+Obfuscate the framing declaration itself so a normalising front end re-derives the boundary differently: a separator or whitespace variant before the declaration's value, a folded continuation, a case variant, or a second declaration of the same framing, because the front end's normalisation decides which form it evaluates.
 Re-derive the request through the transit tier where one exists, since the emitted framing may no longer match the received one.
 Treat a representation the sink decodes differently from the control as the completed probe.
 
 ### Verb and Location Re-reading
 
 Restate the verb or the route through an override member, because the gate often evaluates the declared verb while the executor applies the override.
+The override positions are the declared-verb field, the routed-path field, and the form member that names a verb, and each is honoured by a different executor.
 Move the same value to a second location that a sibling path reads without the check, and confirm which location the sink consumed.
 Treat a location whose second path skips the check as the bypass, and keep the effect identical to the canonical request.
 

@@ -53,8 +53,16 @@ The arrival is claimed only when the chain is recorded in full, because a single
 ### Hop Approval Gaps
 
 Place the approved destination at the first hop and the chosen target at the next, because the check runs before the follow.
+Where the check's own trusted destination is itself a redirecting endpoint, place that endpoint first, so the approved value performs the forward and the approval covers the hop.
+Where a second component applies its own destination filter to the followed value, clear that filter with the approved first hop and let the onward hop carry the arrival past it.
 Confirm the check's position in the chain first, since a check after the follow carries the approval all the way.
 The parent path-mapping step covers one destination and cannot describe an approval that covers a hop, so this variant owns the hop-approval procedure.
+
+### Follower Kinds
+
+A client library that follows a redirect by default is a follower the caller does not control, so the follow happens where no server-side location header is available to inspect; name `proxy-techniques-client-side-path-traversal` at the client-request step.
+A client-side navigation sink fed by a URL source is a follower that emits no server-side location header at all, so the chain's arrival is visible only in the browser.
+Treat a follower that re-validates each hop as a recorded negative rather than a dead end, and look for the follower that does not.
 
 ### Nested and Chained Hops
 
@@ -73,6 +81,8 @@ Confirm the switched hop at the sink, because a scheme switch the follower refus
 Relay shapes are tried only after the direct route is baselined, because a chain the check never inspected carried nothing.
 
 - An approved first destination that forwards to a destination under control.
+- The check's own trusted redirecting endpoint as the first hop, so the approved value performs the forward.
+- A destination value shaped with userinfo, a protocol-relative form, a backslash, an encoded separator, a null or fragment terminator, or a look-alike host family, so the approver reads the approved destination.
 - Two or more hops, so the arrival sits deeper than the check's view.
 - A hop that switches scheme or host family, where the follower re-applies its policy.
 - Continuation and callback values that the chain follows after the first check.

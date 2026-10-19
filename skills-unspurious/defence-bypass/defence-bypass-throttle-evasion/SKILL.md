@@ -1,6 +1,6 @@
 ---
 name: defence-bypass-throttle-evasion
-description: Throttle evasion where a limit counts one dimension and the effect moves in another, covering dimension gaps when a per-entity limit meets a multi-identity or multi-path effect, propagation gaps when a burst outruns the counter or the window, and partial limits when the control throttles without ever blocking.
+description: Throttle evasion where a limit counts one dimension and the effect moves in another, covering dimension gaps when a per-entity limit meets a multi-identity or multi-path effect, key canonicalisation when the counter keys a literal the backend folds, propagation gaps when a burst outruns the counter or the window, silent throttling when the limit answers while dropping the effect, and partial limits when the control throttles without ever blocking.
 metadata:
   version: 1.0.0
 ---
@@ -14,13 +14,16 @@ A limit counts one dimension, and the effect can move in another. This variant r
 Throttle evasion applicability centers on a limit that stands between repeated attempts and the effect they accumulate.
 The surface holds per-entity attempt counters, per-path and per-endpoint limits, windowed quotas, lockout thresholds, and challenge responses that gate further attempts.
 A limit scoped to one dimension while the effect is reachable from several, and a counter that propagates slower than the effect accumulates, both widen the surface.
+The operation's own field validation must be satisfied before a concurrent payload reaches the counting layer, because a request the operation rejects never reaches the counter.
 A limit that blocks the first attempt rides outside this variant, because there is no second attempt to spread.
 
 ## Reconnaissance
 
 Throttle evasion baselines the accounting before spreading, because a limit that never engaged cannot be evaded.
 - Send a short burst of identical attempts and record whether the limit engages, how it answers, and after how many attempts.
+- Classify the limit into one of four states before spreading: hard lockout, soft source throttle, challenge injection, or silent shadow-throttle, because an admit status alone does not mean no limit.
 - Record the dimension the counter observes: a principal, a session, an address, a path, a connection, or a window.
+- Record whether the counter keys the identifier's literal spelling or the canonical value the backend resolves, because the gap between the two is a counted-dimension gap.
 - Probe each path to the effect separately, because enforcement often differs across paths.
 - Note whether the limit blocks or only slows, and whether a challenge replaces the refusal after the threshold.
 
@@ -31,6 +34,8 @@ Throttle evasion listens to the counter beside the effect, so only the entries b
 - A pass for the same effect spread across identities, paths, or windows, which shows the counter observed a different dimension.
 - The differential between the refused tight burst and the passed spread attempts at one effect, which localises the counted dimension.
 - An attempt counter that does not move while the effect accumulates, which proves the accounting dimension is unwatched.
+- A uniform admit answer while the known-good value stops being accepted, which is the silent-throttle signal.
+- The delta between the rotated run and the un-rotated run, which is the proof of a source-field bypass rather than a fast run.
 - The effect appearing at the sink while the limit's verdict stayed silent or slowed only.
 - The sink's own error class, which separates a throttled attempt from a refused one.
 
@@ -54,6 +59,8 @@ The spread is claimed only against the recorded refusal of the tight burst, beca
 ### Counted-Dimension Gaps
 
 Spread the effect across the dimension the counter does not observe: several identities under a per-session limit, several paths under a per-endpoint limit, or several addresses under a per-client one.
+Fold the identifier where the counter keys its literal spelling and the backend resolves the canonical value, because case, whitespace, encoding, and suffix variants each mint a fresh key for one entity.
+Where the counter counts requests and the backend iterates one payload into several operations, the counting unit itself is the gap; name `defence-bypass-attempt-batching` at that step.
 Probe each path to the effect separately, because enforcement often differs across the paths that reach one operation.
 The parent accounting-baseline step covers one lane's answer and cannot describe one effect spread across lanes, so this variant owns the spread procedure.
 
@@ -75,7 +82,10 @@ Bypass shapes slip past a limit that is present, so each one is tried after the 
 - Identity, session, and address rotation under a per-entity counter.
 - Path and endpoint rotation under a per-route counter.
 - Bursts timed inside the counter's propagation gap.
+- Identifier canonicalisation variants that mint a fresh key for one entity while the backend resolves the same value.
+- Concurrent attempts inside a window whose rule counts outcomes within a time span rather than attempts at a rate.
 - Attempts aligned to window edges so one effect consumes two windows.
+- A batch envelope the counter counts once while the backend iterates it; name `defence-bypass-attempt-batching` at that step.
 - Continued attempts at the rate a partial limit admits.
 
 ## Chaining Attacks

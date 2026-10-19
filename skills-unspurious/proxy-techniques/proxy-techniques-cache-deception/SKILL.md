@@ -1,6 +1,6 @@
 ---
 name: proxy-techniques-cache-deception
-description: Shared-cache key confusion where a stored response reaches a caller it was not produced for, covering unkeyed input when a selector shapes the body but not the key, key normalisation and fragmentation when the key collapses entries it should separate, and stored-response reads when one caller reads an entry produced for another.
+description: Shared-cache key confusion where a stored response reaches a caller it was not produced for, covering unkeyed input when a selector shapes the body but not the key, stored failure and permission classes when the entry carries an error or a verdict, key normalisation and fragmentation when the key collapses entries it should separate, eligibility suffixes when a static-looking tail decides storage, and stored-response reads when one caller reads an entry produced for another.
 metadata:
   version: 1.0.0
 ---
@@ -28,6 +28,7 @@ Cache deception reads the key before crafting, because the mechanism is an omiss
 
 Cache deception listens to the stored entry and its key, so only the entries below are live here.
 - A shared cache serving a response to a later caller under a key the caller influenced or reads.
+- The cache's own status and age fields, which name the cache, the entry's state, and its lifetime.
 - A paired baseline where the same operation differs with and without the cache in the path.
 - The stored entry read back under a key that omits an identity binding, which proves the entry reaches another caller.
 - The effect of the stored body on a caller who never sent the shaping input.
@@ -53,6 +54,9 @@ The reach is claimed only when a second caller reads the entry, because the firs
 ### Unkeyed Input to a Keyed Response
 
 Find the selector that shapes the body while the key ignores it, and store a body the origin would produce only for the shaping request.
+A response class is a selector too: a failure produced from attacker input is stored under a healthy request's key, so a later caller reaches a failed response for a working operation.
+A header the key omits is the same clause with a different carrier, and a permission field produced for a shaping value is served to later callers as the origin's own verdict.
+A duplicate member the parser reads and the key omits, and a body carried on a read-only verb whose parameters the key ignores, are the same omission in a structural form.
 Vary one selector per attempt and re-read the entry each time, because storage eligibility and key coverage are decided separately.
 The parent intermediary-characterisation step covers what a hop forwards and cannot describe a key that omits a selector, so this variant owns the key-coverage procedure.
 
@@ -60,12 +64,15 @@ The parent intermediary-characterisation step covers what a hop forwards and can
 
 Shape separators, casing, and fragmentation markers that the key's normalisation collapses, so entries the origin meant to separate share one key.
 Use suffixes and address tails where storage eligibility keys off the address alone, because eligibility and key identity are different rules.
+A static-looking suffix the key's allowlist omits changes storage eligibility for a dynamic response, which is the same rule read at the eligibility side.
+Where the key's rule matches the path exactly, add a field the key treats as a distinct input to force a miss, so the shaped response is fetched and stored rather than served from an existing entry.
 Treat a collapse that serves another caller as the completed probe, and record the normalisation step that caused it.
 
 ### Stored-Response Reads Across Callers
 
 Read a stored entry as a second caller where the key omits the identity binding, because a stored response outlives the session that produced it.
 Hold a second session and request the entry with the key the first caller named.
+Record the entry's lifetime and age fields, because the storage window bounds the reach and is the report's exposure evidence.
 Treat an entry reachable only by the producing caller as a private entry rather than a deception.
 
 ## Bypass Techniques
@@ -76,6 +83,9 @@ Relay shapes are tried only after the direct route is baselined, because a cache
 - Separators, casing, and fragmentation markers the key's normalisation collapses.
 - Address tails and suffixes that change an entry's storage eligibility or reach.
 - Key-variation and accept fields that select between stored entries.
+- A field the key treats as a distinct input, added to force a miss so the shaped response is fetched and stored.
+- A stored failure or permission class the key did not separate from the healthy or permitted case.
+- A key-coverage declaration that omits a selector the response varies with, read as the control to defeat.
 - A second caller or session reading an entry produced for another.
 
 ## Chaining Attacks
