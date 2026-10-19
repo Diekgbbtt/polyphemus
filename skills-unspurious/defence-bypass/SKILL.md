@@ -1,6 +1,6 @@
 ---
 name: defence-bypass
-description: Defence bypass testing for the control between the caller's input and the effect, covering matcher gaps when a filter lists shapes, decode disagreements when a pipeline normalises the value, structural re-reading when a component reads one member, permit enumeration gaps when a policy lists what may run, tier gaps when one layer holds the verdict, and accounting gaps when a limit counts one dimension.
+description: Defence bypass testing for the control between the caller's input and the effect, covering matcher gaps when a filter lists shapes, decode disagreements when a pipeline normalises the value, structural re-reading when a component reads one member, permit enumeration gaps when a policy lists what may run, tier gaps when one layer holds the verdict, and accounting gaps when a limit counts one dimension or one request unit.
 metadata:
   version: 1.0.0
 ---
@@ -50,6 +50,8 @@ Bypass work starts at the control, because a defeat claimed without the control'
 ### Control Fingerprinting
 
 - Fingerprint each control from its own signals: refusal bodies and status classes, challenge responses, shared-edge markers, added latency on a rejected request, and error classes that differ from the sink's
+- Record the control's own identifying marker in its denial signal, because the marker names the control kind before any craft
+- Identify the control kind from its behaviour: a matcher over literal shapes, a normalising pipeline, a behavioural detector, or a policy engine, because the mechanism follows the control rather than the payload
 - Establish the oracle: a benign request the control admits and a hostile request it denies at the same position, so a later differential attributes to the control rather than to the sink
 - Map the tier: read one request at the enforcing layer and at the serving layer, and record which layer answered
 
@@ -64,6 +66,7 @@ Bypass work starts at the control, because a defeat claimed without the control'
 The family listens to the control's own verdict beside the sink's effect, so every entry below is live wherever a control sits.
 
 - The control's denial signal on a probe: a refusal status, a block body, a challenge, or a sanitised response, which proves the control evaluated the input.
+- The control's own identifying marker inside that denial signal, which fingerprints the control kind rather than the sink.
 - A pass after a denial for the same effect, which shows the rule was stepped around rather than satisfied.
 - The effect appearing at the sink while the control's verdict stayed silent, which is the primary bypass signal.
 - A differential between the denied shape and the passed shape at one input position, which localises the rule the control applies.
@@ -89,7 +92,7 @@ Bypass testing presupposes a control oracle plus request-shaping freedom plus re
 ## Trust Assumptions
 
 Every control rests on one agreement: it stands between the caller's input and the effect, and it evaluates the same value, in the same reading, against the same rule, at the same tier, on every attempt, before the effect consumes it.
-The agreement holds the control's reading of a value to the sink's reading, holds the rule set to every spelling of the effect, holds the permit to every route to the capability, holds the verdict to the tier that serves the effect, and holds the accounting to every dimension the effect can move in.
+The agreement holds the control's reading of a value to the sink's reading, holds the rule set to every spelling of the effect, holds the permit to every route to the capability, holds the verdict to the tier that serves the effect, and holds the accounting to every dimension the effect can move in and to the unit it counts.
 Each variant breaks one clause: the reading clause, the enumeration clause, the permit clause, the tier clause, or the accounting clause.
 Sensitive effects leak when a clause fails, because the control then reports a verdict on a request the sink never consumed in that shape.
 
@@ -130,6 +133,10 @@ Sensitive effects leak when a clause fails, because the control then reports a v
 **Tier Mapping Before Crafting**
 - Determine which tier decides and which tier serves before shaping anything, because the mechanism follows the gap.
 
+**Mechanism Order**
+- Order the attempts from the cheapest signal to the most specific: the control's fingerprint, then its decoding, then the protocol-level shape, then the parser quirk, then the rule-specific gap, because each step narrows the next one.
+See `references/control-bypass-evaluation-order.md` for the attempt order and the control-kind selection behind it.
+
 **One Variable Per Attempt**
 - Change one thing per attempt and record the control's verdict on both sides, so the admitting rule is attributable.
 
@@ -149,6 +156,8 @@ Bypass shapes slip past a control that is present, so each one is tried after th
 - Permit probing: an unlisted route to the capability the policy meant to prevent.
 - Tier comparison: one request sent against the enforcing tier and the serving tier.
 - Accounting spread: the same effect moved across the dimension the limit counts.
+- Accounting collapse: many logical attempts carried in one counted request, where the limit counts the request and the backend iterates the payload.
+- Ordered escalation: fingerprint the control, then its decoding, then the protocol-level shape, then the parser quirk, then the rule-specific gap, because a failed attempt still narrows the next one.
 
 ## Chaining Attacks
 
@@ -169,10 +178,10 @@ Bypass work runs the control first and the effect second, because an unattribute
 3. **Establish the oracle** - a known-denied probe and a known-admitted control, and the step completes when a differential attributes to the control rather than to the sink.
 4. **Map the tier** - which tier decides and which tier serves, and the step completes when one verdict is read at both tiers.
 5. **Baseline the accounting** - a short burst against the limit, and the step completes when the limit's response, threshold, and counted dimension are recorded, or its absence is recorded with the test that showed it.
-6. **Select the mechanism** - the mechanism the control's kind admits, and the step completes when the selection names the clause it breaks.
+6. **Select the mechanism** - the mechanism the control's kind admits, ordered from fingerprint to decoding to protocol to parser quirk to rule-specific gap, and the step completes when the selection names the clause it breaks and the order the attempts follow.
 7. **Craft one variable** - one shape change per attempt with the control's verdict recorded before and after, and the step completes when the attempt carries its verdict pair.
 8. **Confirm the effect at the sink** - the smallest effect that proves the input arrived in a shape the control did not evaluate, and the step completes when the effect reproduces and the control's post-state is recorded.
-9. **Attribute and stop** - separate the bypass from an absent control and from a class-specific gap, and the step completes when the narrowest proof carries its attribution.
+9. **Attribute and stop** - separate the bypass from an absent control and from a class-specific gap, and the step completes when the narrowest proof carries its attribution and the refused original beside the passed shape is recorded as the proof pair.
 
 ## Variants
 
@@ -182,6 +191,7 @@ Bypass work runs the control first and the effect second, because an unattribute
 - defence-bypass-allowance-gap - Reach a capability through a route the permit, policy, or confinement enumeration omits.
 - defence-bypass-edge-origin-differential - Compare the enforcing tier's verdict with the serving tier's, and reach the effect where the verdict is not recomputed.
 - defence-bypass-throttle-evasion - Move the effect across the dimension a limit does not count, inside the window the limit watches.
+- defence-bypass-attempt-batching - Collapse many logical attempts into one counted request, so the limit counts the request while the backend iterates the payload.
 
 ## False Positives
 

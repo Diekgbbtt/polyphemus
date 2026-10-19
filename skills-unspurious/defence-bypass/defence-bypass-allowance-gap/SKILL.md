@@ -1,6 +1,6 @@
 ---
 name: defence-bypass-allowance-gap
-description: Allowance gap bypass where a permit enumerates what may happen, covering policy gaps when a directive or source list leaves a route to execution, sanitiser enumeration gaps when allowed elements or attributes combine into the effect, and confinement gaps when a declared restriction has an unlisted route to the same capability.
+description: Allowance gap bypass where a permit enumerates what may happen, covering policy gaps when a directive or source list leaves a route to execution, sanitiser enumeration gaps when allowed elements or attributes combine into the effect, secret permit values when the key the policy relies on can be read or reused, and confinement gaps when a declared restriction has an unlisted route to the same capability.
 metadata:
   version: 1.0.0
 ---
@@ -14,6 +14,7 @@ A permit that enumerates what may happen is defeated by every route to the capab
 Allowance gap applicability centers on a permit that lists what may execute, what may be read across origins, or which primitives remain available inside a restriction.
 The surface holds policy directive and source lists, sanitiser element and attribute allowlists, confinement claims that disable a primitive, allowlisted operator or name subsets, and delegate or converter policies.
 A permit whose list is broader than the author intended, and a restriction whose enforcement is narrower than its declaration, both widen the surface.
+The capability is often browser-confined and gated by a declarative permit, so the surface holds a policy the browser itself enforces rather than a server-side check.
 A permit that enumerates nothing rides outside this variant, because there is no enumeration to exceed.
 
 ## Reconnaissance
@@ -53,8 +54,20 @@ The pass is claimed only against the recorded refusal of the forbidden route, be
 ### Policy Allowance Gaps
 
 Read the policy's directive and source lists for the route they leave open: a permissive directive, a wildcard source, a missing restriction, or an allowed dynamic construct that reaches execution.
+Enumerate the allowed primitives that combine into the withheld capability: an allowed data endpoint that returns an executable response, an allowed callback name the page invokes, an allowed element that a helper turns into execution, and an allowed indirection to a denied attribute.
+Where the permit is an origin list, test the list's pattern rather than its intent: a missing separator, a missing end anchor, an unescaped dot, a prefix-only match, and the browser's own character handling are routes the list does not cover.
+Where the permit is a path list, test the path's spelling rather than its text: case, dot segments, encoded separators, parameter separators, and trailing characters all reach the protected path through a form the rule does not match.
 Prefer the route the policy itself admits, because it needs no second bypass behind it.
 The parent mechanism-selection step covers one control kind and cannot describe a capability reached through the permit's own allowance, so this variant owns the enumeration procedure.
+See `references/permit-enumeration-matrix.md` for the route inventory across permit kinds.
+See `references/cors-misconfiguration.md` for the cross-origin read permit and `references/csp-bypass.md` for the browser-confined script permit.
+
+### Secret Permit Values
+
+Some permits rely on a value meant to stay secret: a per-response key, a hash of the permitted content, or a token bound to the page.
+Leak the value through a channel the permit does not watch, because the key's confidentiality is the permit's assumption rather than its rule; name `proxy-techniques-css-injection` where the channel is a stylesheet and `proxy-techniques-dom-clobbering` where markup redefines the value the page reads.
+Reuse the value across the contexts the permit meant to separate: a second page, a second request, or a second response that carries the same key.
+Where the permit's own text is attacker-influenced, a reflected value can add a directive the permit never listed, so the policy admits a route its author never wrote.
 
 ### Sanitiser Enumeration Gaps
 
@@ -74,6 +87,9 @@ Bypass shapes slip past a permit that is present, so each one is tried after the
 - Permissive directives and wildcard sources the policy itself admits.
 - Combinations of individually allowed elements or attributes that reach the withheld effect.
 - Context and namespace switches the sanitiser does not model.
+- An origin or path list whose pattern admits a look-alike value or an unlisted spelling.
+- A permit that validates only when its member is present, or one that matches a prefix of the value rather than the whole value.
+- A token value the permit relies on, leaked through an unwatched channel, reused across the contexts it should separate, or accepted in a permissive format.
 - Substitute primitives, wrappers, and delegates with the same reach as a restricted one.
 - Routes to the capability through a sibling interface the permit never enumerated.
 

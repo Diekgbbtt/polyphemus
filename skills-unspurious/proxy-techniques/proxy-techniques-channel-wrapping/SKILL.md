@@ -1,6 +1,6 @@
 ---
 name: proxy-techniques-channel-wrapping
-description: Channel wrapping where one operation travels in a second carrier, covering carrier substitution when a sibling content type, verb, transport, or endpoint reaches the same effect, guard parity gaps when the sibling carrier carries a weaker check, second-channel replay when a captured request is re-presented elsewhere, and capture positions when the exact request shape is observed before it is re-sent.
+description: Channel wrapping where one operation travels in a second carrier, covering carrier substitution when a sibling content type, verb, transport, endpoint, protocol version, or batch envelope reaches the same effect, guard parity gaps when the sibling carrier carries a weaker check or escapes a per-request guard, second-channel replay when a captured request is re-presented elsewhere, and capture positions when the exact request shape is observed before it is re-sent.
 metadata:
   version: 1.0.0
 ---
@@ -28,6 +28,8 @@ Channel wrapping enumerates the carriers before crafting, because the mechanism 
 
 Channel wrapping listens to the carrier the guard does not watch, so only the entries below are live here.
 - The operation arriving through a sibling carrier while the primary carrier stays refused.
+- The sibling carrier returning another principal's data while the primary carrier stays refused, which is the primary wrap signal.
+- A front tier that accepts a newer protocol and downgrades it for the origin, which proves a protocol-version carrier exists.
 - The captured request shape matching the re-presented shape field by field.
 - A paired baseline where one identical operation passes on one carrier and fails on another.
 - The effect appearing through a carrier whose guard is absent or weaker.
@@ -53,19 +55,28 @@ The pass is claimed only against the recorded refusal on the primary carrier, be
 ### Carrier Substitution
 
 Reach the effect through a sibling content type, serialisation, verb, or endpoint, because each carrier is parsed and guarded on its own.
+A protocol version is a carrier: a request that carries no framing declarations at all, a newer protocol the front tier accepts and downgrades, and an alternate framing each reach the origin through a shape the inspecting component does not parse.
+A value carried in a location the guard does not inspect is the same substitution with the location as the carrier, because the guard parses the body and the location while the sink reads another.
+A batch envelope whose inner operations the guard does not parse is a carrier on its own, because the outer shape passes and the inner operations arrive unexamined.
 Keep the operation identical across carriers so the carrier is the only changed variable.
 The parent mechanism-selection step covers one carrier and cannot describe one operation through several, so this variant owns the carrier-substitution procedure.
+See `references/carrier-substitution-matrix.md` for the carrier family table and the parity check.
+See `references/tier-route-inventory.md` for the sibling-route and version inventory that reaches one operation.
 
 ### Guard Parity Gaps
 
 Compare the guard on each carrier, because a sibling carrier often carries a weaker check or none.
+A check bound to one content type is skipped by the same operation re-encoded into a sibling type, because the guard reads the declared type rather than the consumed body.
+A persistent second channel bypasses a guard and an accounting rule that both watch requests rather than the channel, so the effect travels while neither the check nor the counter fires.
 Prefer the carrier whose check is absent rather than weaker, since the effect then needs no second bypass behind it.
 Treat an upgrade-shaped or informational path as a sibling carrier whose check differs from the primary path's.
 
 ### Second-Channel Replay
 
 Re-present a captured request through a second channel, session, or device where the identity binding is carrier-specific.
+A signed message replayed inside its validity window or in a second session proves the signature is bound neither to the principal nor to the freshness window, because a binding that held would refuse the replay.
 Change one binding element per attempt: the channel, the session, or the device.
+An upgrade-shaped handshake the front tier and the origin read differently opens a carrier the front tier stops parsing, so the inspecting component and the terminating component disagree about where the request ends.
 Treat a channel where proof-of-possession is absent as the completed probe.
 
 ### Capture and Re-present
@@ -81,6 +92,10 @@ Relay shapes are tried only after the direct route is baselined, because a carri
 - Sibling content types and serialisations of one body, where each path validates one representation.
 - Alternate verbs and override members for one route.
 - Second transports, endpoints, and upgrade-shaped paths whose checks differ.
+- A protocol version the front tier accepts and the origin parses differently.
+- A value carried in a location the guard does not inspect.
+- A batch envelope whose inner operations the guard does not parse.
+- A persistent second channel that escapes a per-request guard and its accounting.
 - Second sessions, channels, and devices for one identity.
 - A captured request re-presented unchanged through a carrier the guard does not watch.
 

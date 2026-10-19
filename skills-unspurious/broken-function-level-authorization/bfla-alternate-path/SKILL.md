@@ -14,6 +14,8 @@ The leading word is alternate: every probe replays one privileged action through
 
 Alternate applies where one privileged action is reachable through more than one route, method framing, parser handler, or service entry point.
 The alternate may be a legacy or versioned route, a method alias or override framing, a sibling content-type handler with its own middleware, or a core service entry reachable around an edge gate.
+Version forms count as alternates too: an old or deprecated version of one action frequently keeps the weaker middleware the current version dropped.
+Where the stack carries proxy path-override headers, the edge can rewrite the route before the application sees it, which makes the override a candidate alternate rather than a separate class.
 Trust direction and impact severity change reporting only, so escalation, state-change, and configuration effects share this one procedure.
 Parser encoding labels alone never define the attempt; only a middleware gap between handler chains brings a case into this variant.
 
@@ -21,6 +23,8 @@ Parser encoding labels alone never define the attempt; only a middleware gap bet
 
 Map every route and framing that reaches each privileged action before replaying anything.
 Collect interface documents, client bundles, prior HTTP history, and gateway routing notes until each action owns a list of candidate aliases, legacy versions, and method framings.
+Inventory the version surface explicitly, then behaviourally diff each old version against the current one on authorization, validation, and rate-limit strength, because a regression shows only in the diff.
+The tier inventory that supplies these alternates, with its route families and version forms, is owned by `proxy-techniques-channel-wrapping`; the enforcement verdict per form is recorded here.
 Diff the middleware chain per route and per parser handler until the permissive chains are named.
 Confirm the proper-role baseline succeeds on the primary path before judging any alternate attempt.
 
@@ -47,6 +51,8 @@ The agreement fails when the check lives only on the primary route or edge gate 
 
 Middleware-stack diffing plus alias, shadow-route, parser-specific, and direct-to-core resubmission is the bent step this variant owns over the parent.
 Resubmit each privileged action through every alias and legacy route with the same body, and record which chain authorized the call.
+Resubmit the action through every path-normalisation form (case variation, dot segments, encoded separators, delimiter insertion, trailing dot or extension, double encoding), because each form may reach a different route entry than the primary spelling.
+Diff each version of the action behaviourally against the current one on authorization, validation, and rate-limit strength, since a regression surfaces only in the comparison rather than in a single version.
 Resubmit through each sibling parser handler, since one permissive chain among strict siblings is the gap this variant hunts.
 Resubmit around the edge gate toward the core entry where exposure permits, and treat the edge-versus-core reach as the defence-bypass family's invoked step while recording only the authorization verdict here.
 The parent exercise step covers transports and method overrides but never describes chain diffing or shadow resubmission, so this variant owns that procedure.
@@ -71,7 +77,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 1. Build the actor-by-action matrix by enumerating each role against each privileged action, with completion when every action has an expected-role cell (procedure owned by `two-principal-authz`).
 2. Establish principals by acquiring one working session per matrix role, with completion when each role issues an authenticated baseline (procedure owned by `two-principal-authz`).
-3. Diff enforcement chains by comparing middleware per route and per parser handler, with completion when every alternate form of each action names its chain.
+3. Diff enforcement chains by comparing middleware per route, per parser handler, and per version, with completion when every alternate form and version of each action names its chain.
 4. Replay through alternates by resubmitting each privileged action via alias, shadow route, method framing, and sibling parser handler beside its primary-path control, with completion when every alternate form carries a lower-role attempt beside a proper-role control.
 5. Reach around the edge by resubmitting toward the core entry where exposure permits, with completion when each edge-blocked action shows whether the core entry re-checks.
 6. Confirm the effect by comparing state snapshots and audit entries across the pair, with completion when every positive shows a privileged change rather than a status artifact alone.

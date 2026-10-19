@@ -22,7 +22,7 @@ Forwarding-alias trust for allowlist or scheme decisions belongs to header-host-
 
 Inventory narrows to method-gated handlers plus rewrite-aware routers.
 List state-changing endpoints reachable by safe methods and record which unsafe methods the gate refuses directly.
-Probe override-header support with abstract alias shapes, namely the primary override form plus its common alias forms, and probe rewrite-header support with the original-address form plus the rewrite-address form.
+Probe override-header support with abstract alias shapes, namely the primary override form plus its common alias forms, and probe rewrite-header support with the original-address form plus the rewrite-address form plus the alias-rewrite form.
 Determine routing-versus-authorization order by pairing each header with a guarded endpoint and recording whether the reroute or the refusal wins.
 
 ## Detection Channels
@@ -58,6 +58,7 @@ Treat consistently ordered enforcement as the boundary, because overriding resol
 ### Rewrite-Header Path Change After The Check
 
 Pair a public-path request with a rewrite header naming a guarded path, and confirm the guarded content serves while the direct guarded request stays refused.
+Diff the reroute response against the edge-blocked direct request for the same path, so the reroute is attributable to the header rather than assumed from a status change.
 This variant solely owns rewrite-after-auth proof on rewrite-capable stacks, where the address check runs against the original path and the handler runs against the rewritten one.
 Name alias-spoof decision flips at this step rather than restating them, since header-host-forward-spoof owns forwarding-alias mapping without path rewriting.
 

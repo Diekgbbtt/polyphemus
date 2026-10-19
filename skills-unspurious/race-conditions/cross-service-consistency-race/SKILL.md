@@ -60,6 +60,7 @@ The parent identify-reads-writes step locates reads by store and cannot describe
 
 Provoke a timeout to force the producer to redeliver, because retry-driven duplication is the second bent behavior.
 Submit placeholder shape `<distributed-workflow-payload>` with a slow-dependent leg and observe whether each redelivery commits a fresh side effect.
+Probe queue multiplicity separately: where several workers consume one queue, one published message can be picked up more than once, so count the durable effects against the publish count.
 Treat one retry yielding one extra durable write as storm evidence and treat deduped redelivery as a clean consumer.
 
 ### Compensation-Without-Prevention Triggering

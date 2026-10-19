@@ -1,6 +1,6 @@
 ---
 name: defence-bypass-encoding-differential
-description: Encoding differential bypass between the checking side and the consuming side of one value, covering decode-count gaps when each hop decodes a different number of times, folding gaps when normalisation maps two spellings onto one value, and truncation or padding forms when the accepting side tolerates a shortened value.
+description: Encoding differential bypass between the checking side and the consuming side of one value, covering decode-count gaps when each hop decodes a different number of times, folding gaps when normalisation maps two spellings onto one value, coercion or notation equivalence when a comparison folds a value the sink treats as distinct, and truncation or padding forms when the accepting side tolerates a shortened value.
 metadata:
   version: 1.0.0
 ---
@@ -30,6 +30,7 @@ Encoding differentials listen to the two readings of one value, so only the entr
 - The control's refusal on the plainly decoded value, which proves the comparison engaged.
 - A pass for the same effect in a layered or folded form, which shows the two sides decoded the value differently.
 - The differential between the refused plain form and the passed encoded form at one position, which localises the decode step.
+- The control normalising the value before it evaluates its rule, which localises the step where the two readings diverge.
 - The effect appearing at the sink in the hostile reading while the control's verdict reports the benign one.
 - The sink's own error class or decoded output, which names the reading the sink actually consumed.
 
@@ -54,13 +55,24 @@ The differential is claimed only when both readings are recorded, because one re
 
 Find the hop count at which the layered form reads as data on one side and as syntax on the other, because each decode step moves the boundary.
 Layer one encoding step per attempt and stop at the step where the effect appears, since further layers usually only re-encode the value.
+Select the encoding depth against the checker's own depth: equal-level encoding, over-encoding one element, and padding with segments the checker decodes away all keep the checker's reading benign while the consumer's reading moves.
 The parent oracle step covers a single reading of the value and cannot describe two readings of one byte string, so this variant owns the decode-count procedure.
+See `references/encoding-layer-matrix.md` for the encode-depth and notation families behind the procedure.
+See `scripts/decode-count-probe.sh` for the layer-one-step-at-a-time probe with its depth guard.
 
 ### Folding and Normalisation Gaps
 
 Shape casing, width, and normalisation equivalents that map onto the approved value on one side and onto a distinct value on the other.
 Confirm which side folds, because a comparison that folds admits spellings the sink still treats as distinct.
 Treat a fold that both sides apply identically as a stop condition rather than a bypass.
+Coercion-equivalent forms are the folding family of a comparison: a numeric-looking string, an empty or null value, a boolean spelling, a single value and its list-wrapped form, and a zero value can each equal the approved value on one side while remaining distinct on the other.
+Read whether the comparison is loose or strict before crafting, because a strict comparison closes the coercion family and leaves only the notation and decode gaps.
+
+### Notation and Address Folding
+
+Shape a value's notation so one side folds it onto the approved value and the other connects or resolves the same text differently: decimal, octal, and hexadecimal address forms, short and mapped address forms, and trailing-dot or width variants.
+Treat notation folding as a folding gap rather than a decode gap, because the text is well formed on both sides and only the resolution differs.
+Confirm the resolved value on the consuming side, because a notation both sides resolve alike carries nothing.
 
 ### Overlong and Truncation Forms
 
@@ -75,6 +87,9 @@ Bypass shapes slip past a comparison that is present, so each one is tried after
 - Mixed encodings inside one value, so one side reads a separator the other side reads as data.
 - Overlong and separator-equivalent spellings that resolve after the comparison.
 - Case, width, and normalisation equivalents where one side folds and the other does not.
+- Coercion-equivalent forms where one side's comparison folds them and the other's does not.
+- Address and numeric notation forms that resolve differently on each side of the comparison.
+- A declared character-set parameter that makes the checking side read a different byte string than the consumer.
 - Padded and truncated forms where the accepting side tolerates a shortened value.
 
 ## Chaining Attacks

@@ -33,6 +33,7 @@ SQL injection remains one of the most durable and impactful vulnerability classe
 - Identify the operation shape (read, insert, update, delete) and which clauses are present
 - Determine whether input lands in an identifier position or a value position; the escape rules differ
 - Note ordering, arity, and paging behavior that reveal the underlying statement before any payload is sent
+- Treat authenticated-only surfaces as first-class targets: internal tooling often runs an over-privileged account, and edge controls frequently whitelist authenticated traffic
 
 ### Error Fingerprinting
 
@@ -131,6 +132,7 @@ Each variant breaks one clause on a different channel: rendering, shaping, truth
 
 - Dangerous fragments: raw filter and sort helpers, and string interpolation into filter, membership, and ordering clauses
 - Identifier interpolation: table and column names taken from user input
+- Builder-carried identifiers: structured keys used as column aliases, and mapper filters forwarded into expression-shaped operators, reach interpolation through the builder rather than through a value position
 - Document operator passthrough: containment and array operators exposed by the mapper with raw fragments
 - Parameter mismatch: partial binding where operators or lists remain interpolated
 
@@ -150,10 +152,6 @@ Each variant breaks one clause on a different channel: rendering, shaping, truth
 **Query-Shape Smuggling**
 - Use subselects, derived tables, and common table expressions to hide payload shape where filters block direct clause placement
 - Relocate the injection into a nested scope the filter does not cover
-
-**Second-Order Injection**
-- Store a shaped value through a normal write, then trigger the statement that interpolates it
-- Second-order paths frequently lack the filtering applied at the front door
 
 **Metadata-First Extraction**
 - Establish version, user, and database name first: they decide which primitive family is available
@@ -206,6 +204,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - sqli-boolean-blind-extraction - Diff paired true and false responses bit by bit when no rows render and no error shows.
 - sqli-time-blind-extraction - Measure predicate-driven delays bit by bit when only response latency varies.
 - sqli-oast-exfiltration - Correlate database callbacks with per-probe labels when in-band channels stay silent.
+- sql-injection-second-order - Plant a shaped value through a bound or escaped write, then trigger the operation that interpolates the stored text into a statement, including cross-context execution.
 
 ## False Positives
 

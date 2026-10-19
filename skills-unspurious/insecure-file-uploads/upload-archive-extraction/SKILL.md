@@ -44,6 +44,7 @@ This variant owns extract-then-locate-outside proof with symlink and nesting plu
 
 - Traversal extraction writes entries whose paths resolve outside the intended root.
 - Link-escape extraction follows link-shaped entries to targets outside the intended root.
+- Link-preserving formats escape through a link entry plus a follow-on write even where entry names are sanitized, so test the format that keeps links first-class beside the one that drops them.
 - Exhaustion extraction expands nested or high-ratio content until processing resources stall.
 
 ## Advanced Techniques
@@ -56,6 +57,7 @@ This variant owns extract-then-locate-outside proof with symlink and nesting plu
 
 - Defeat path validation with encoded and normalized entry paths that resolve outside the root after the check.
 - Defeat link policy by submitting link-shaped entries where the extractor honors links instead of dropping them.
+- Defeat link-dropping sanitizers by switching to a format that stores links as first-class entries, then pairing the link with a follow-on write.
 - Defeat size gates by splitting abusive content across nested layers that each pass alone and expand together.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.

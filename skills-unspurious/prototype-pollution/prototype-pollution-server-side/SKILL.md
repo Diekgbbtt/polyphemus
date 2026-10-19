@@ -24,6 +24,7 @@ The result turns an unsafe recursive merge into server-side code execution.
 **Response deltas signal effect** when status codes, error text, or timing shift after the marker is sent.
 **Template output shifts signal effect** when rendered server output carries the marker or a computed result tied to it.
 **Out-of-band effects prove execution** when a delay or a created artifact shows a process-spawning sink consumed the polluted property.
+**Non-execution consumer effects prove impact without a gadget** when a coercion method raises at an unrelated conversion point or a serialization option changes the encoding of a response or artifact, which confirms denial of service or disclosure rather than template or process execution.
 
 ## Adversarial Capabilities
 
@@ -44,6 +45,8 @@ This agreement fails at the server merge sink, where a recursive merge applies a
 **Unsafe merge sinks fold attacker keys** into live server objects without key filtering.
 **Unsafe loader sinks feed the same procedure** when structured file-import loaders preserve prototype-path keys into the merge.
 **Gadget chains yield server-side execution** when polluted properties flow into template output functions, process-spawning options, and module paths.
+**Other consumers reach denial of service and disclosure** through the same merged keys: a polluted coercion method raises during string conversion of a runtime value, and a polluted serialization option changes how a response or artifact is encoded so a reflected surface carries data the caller should not read.
+**Validation consumers flip a verdict** when a schema validator reads a polluted property, such as a permissive default that lets a field the schema would refuse pass, which turns pollution into an input-validation bypass.
 **Payload shapes stay abstract** with placeholders denoting the prototype-link key, the intermediate key, the prototype-name key, the marker key, and the marker value.
 **Direct wrappers nest the marker pair** under the prototype-link key.
 ```json

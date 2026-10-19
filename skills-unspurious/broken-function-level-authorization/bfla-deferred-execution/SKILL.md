@@ -19,6 +19,7 @@ Synchronous first-pass invocation stays outside this variant; only execution sep
 ## Reconnaissance
 
 Map every deferred step that can cause a privileged effect before replaying anything.
+Include multi-step workflows whose transitions each carry their own check, because a transition that carries none is the same missing-check family reached without waiting: record its verdict here and leave the first-pass case to the parent.
 Collect interface documents, client bundles, prior HTTP history, and approval transcripts until each job, approval, webhook, and queue endpoint owns a creation-to-execution chain.
 Record which steps name an actor check and which stay silent, since the silent step is the candidate.
 Confirm the allowed-actor baseline completes the chain before judging any cross-actor replay.

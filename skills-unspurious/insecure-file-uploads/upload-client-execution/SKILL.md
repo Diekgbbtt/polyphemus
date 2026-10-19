@@ -27,6 +27,7 @@ This variant owns serving-header adjudication with reflection and sniffing analy
 
 - Script fire in the browser under the served context proves client execution.
 - Served type with disposition and sniffing-guard state adjudicates whether inline rendering was server-set or reflected.
+- Same-origin serving beside a sandboxed or separate-domain rendering context adjudicates whether the served object carries the application's origin authority or only a display context.
 - Previewer rendering of stored properties proves document-property script delivery.
 
 ## Adversarial Capabilities

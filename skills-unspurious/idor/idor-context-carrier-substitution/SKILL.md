@@ -26,6 +26,7 @@ Trace one queued or worker-consumed flow end to end before probing, until the re
 ## Detection Channels
 
 A privileged response that follows a contradictory header while the token stays constant signals header precedence failure.
+A per-resource short-lived token accepted for a foreign object signals format-only validation rather than object binding.
 A token scoped for one service that a second service accepts signals missing audience binding.
 Divergent results for the same reference under swapped carriers decide the finding without reading further.
 An async effect applied to a foreign object after gateway passage signals context loss in the consumer.
@@ -47,6 +48,7 @@ The agreement fails when the service resolves identity from a surrounding channe
 Identity-source precedence probing with audience binding checks is the bent step this variant owns over the parent.
 Supply gateway-trusted headers that contradict token claims, varying presence, removal, and override independently, and record which source the service treats as the actor.
 Replay a token scoped for one service against a second service sharing verification, and test whether audience and claims checks reject it.
+Reuse a per-resource short-lived token across principals, because a path that validates only the token's format and lifetime accepts any well-formed token for any object.
 Resubmit an authorized request through the queue or worker path and verify whether the consumer re-checks authorization before applying the effect.
 
 ## Bypass Techniques

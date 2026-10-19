@@ -29,6 +29,8 @@ Reconnaissance is complete when every resource carries its method, conditional, 
 Method-swap deltas where a header-only answer diverges from the full answer on existence or state.
 Conditional-replay deltas where revalidation outcomes diverge on existence or state for the same principal.
 Second-session serving where a foreign session receives poisoned or fragment-reassembled content the first session keyed.
+An origin-versus-cache path-normalization disagreement, where the cached key does not match the resource the origin served.
+A body that carries content before the redirect fires, read without following the redirect.
 Per-channel field extras where parallel representations of the same object disagree on fields or hardening.
 Only channels carried by two-response comparison fire here; cross-role renderings belong to two-principal-authz and single-response content belongs to the sibling variants.
 
@@ -50,6 +52,8 @@ The failing clause is the agreement-of-indistinguishables clause: the pair diver
 Method swapping replays a header-only request against the full request on the same resource as the same principal to confirm existence or state.
 Conditional replaying resubmits validators to read revalidation outcomes as existence or state signals.
 Key manipulating submits identity-varying input that leaves the cache key unchanged, then confirms a second session is served foreign content with fragment reassembly.
+Cache-deception forcing makes a dynamic or authenticated response cacheable under a static-looking key (path extension, delimiter, or normalization form), then reads it without credentials; the proxy-techniques family owns the generic cache mechanics and this oracle records only the serving verdict.
+Cache-miss forcing uses a cache-busting query value rather than a cache-control header, because intermediaries frequently ignore the header while honouring the key.
 Mirroring requests the same object across API flavors, socket transports, and rendering paths and records per-channel field extras with hardening deltas.
 Checking records redaction-holds and key-correctness states as secondary aspects inside the same oracle rather than standalone defeats.
 
@@ -80,6 +84,8 @@ Single responses that already disclose without comparison belong to the sibling 
 Normalize both answers and diff by digest so boilerplate never poses as signal.
 Hold the principal constant across each pair: same-principal discipline is what separates this oracle from role comparison.
 Confirm cache effects with a true second session rather than a header tweak in one session.
+Probe under a throwaway cache-busting key and never store under the live key, so the probe itself does not become the incident.
+Read a redirect's body before following it, because content frequently rides in the body that the redirect discards.
 Treat one field extra as a pivot: its name scopes the next mirror to request.
 
 ## Summary

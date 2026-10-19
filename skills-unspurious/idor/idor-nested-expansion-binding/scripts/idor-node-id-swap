@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Decode, re-encode, and swap an opaque global-node identifier offline.
+
+A global node lookup resolves any typed object by an encoded identifier, and the
+encoding is frequently a reversible concatenation of a type name and the raw
+object identifier. The helper makes that structure visible, swaps the object part
+for a foreign one, and prints the re-encoded identifier plus a JSON body
+skeleton, so the replay step of `idor-nested-expansion-binding` needs no manual
+decoding. It never sends a request and never reads the target: the query shapes
+themselves stay owned by the `graphql` skill.
+
+Usage:
+  idor-node-id-swap --decode '<encoded node identifier>'
+  idor-node-id-swap --decode '<encoded node identifier>' --swap-id '<foreign id>'
+  idor-node-id-swap --encode --type Order --id 48291
+  idor-node-id-swap --encode --type Order --id 48291 --aliases 3 --node-field node
+
+Discipline:
+  - Offline and read-only: no network access at all, so the helper is safe to run
+    against any corpus.
+  - The decoded parts print beside the re-encoded value, so a swap is attributable
+    to one changed part rather than to a fresh identifier.
+  - The alias skeleton is a shape, not a payload: the query text belongs to the
+    `graphql` skill and the target's own dialect.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import sys
+
+
+def b64decode(raw: str) -> bytes:
+    padded = raw + "=" * (-len(raw) % 4)
+    return base64.b64decode(padded)
+
+
+def b64encode(payload: bytes) -> str:
+    return base64.b64encode(payload).decode("ascii")
+
+
+def decode_node(raw: str) -> tuple[str, str] | None:
+    """Split an encoded node identifier into its type part and its object part."""
+    try:
+        text = b64decode(raw).decode("utf-8", errors="strict")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    for separator in (":", "|", "/", "_"):
+        if separator in text:
+            head, _, tail = text.partition(separator)
+            if head and tail:
+                return head, tail
+    return None
+
+
+def encode_node(node_type: str, node_id: str, separator: str) -> str:
+    return b64encode(f"{node_type}{separator}{node_id}".encode("utf-8"))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--decode", help="an encoded node identifier to split")
+    parser.add_argument("--swap-id", help="replace the decoded object part with this value")
+    parser.add_argument("--swap-type", help="replace the decoded type part with this value")
+    parser.add_argument("--encode", action="store_true", help="encode the --type and --id pair instead")
+    parser.add_argument("--type", default="", help="node type for encoding")
+    parser.add_argument("--id", default="", help="object identifier for encoding")
+    parser.add_argument("--separator", default=":", help="separator between the type and object parts")
+    parser.add_argument("--aliases", type=int, default=0, help="print a JSON body skeleton with this many alias keys")
+    parser.add_argument("--node-field", default="id", help="field name the node identifier is carried in")
+    args = parser.parse_args(argv)
+
+    if args.encode:
+        if not args.type or not args.id:
+            print("--encode needs --type and --id", file=sys.stderr)
+            return 2
+        encoded = encode_node(args.type, args.id, args.separator)
+        print(f"type={args.type} id={args.id}")
+        print(f"encoded={encoded}")
+        if args.aliases:
+            print(alias_skeleton(args.node_field, args.aliases))
+        return 0
+
+    if not args.decode:
+        print("pass --decode with an encoded identifier, or --encode with --type and --id", file=sys.stderr)
+        return 2
+    parts = decode_node(args.decode)
+    if parts is None:
+        print("the identifier did not decode into a type part and an object part", file=sys.stderr)
+        print("try --separator with the separator the target uses", file=sys.stderr)
+        return 1
+    node_type, node_id = parts
+    print(f"type={node_type}")
+    print(f"object={node_id}")
+    if args.swap_id or args.swap_type:
+        swapped_type = args.swap_type or node_type
+        swapped_id = args.swap_id or node_id
+        print(f"swapped type={swapped_type} object={swapped_id}")
+        print(f"swapped={encode_node(swapped_type, swapped_id, args.separator)}")
+        print("replay the swapped identifier beside the owner's control and read the per-node verdict")
+    if args.aliases:
+        print(alias_skeleton(args.node_field, args.aliases))
+    return 0
+
+
+def alias_skeleton(node_field: str, aliases: int) -> str:
+    """One JSON body skeleton with aliased node lookups, so several principals'
+    nodes are decided inside a single request."""
+    query = " ".join(f"a{index}: node({node_field}: \"<id{index}>\") {{ id }}" for index in range(1, aliases + 1))
+    return json.dumps({"query": "query { " + query + " }"}, indent=2)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

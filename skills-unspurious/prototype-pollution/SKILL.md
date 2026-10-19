@@ -110,6 +110,10 @@ Each variant breaks one clause at a different consumer: browser-side routing, re
 - Split the key shape across several parameters that merge sequentially into one object
 - Layer encoding around the key so the parser unwraps one layer and the merge unwraps the next
 
+**Clobbered-Global Delivery**
+- The `proxy-techniques-dom-clobbering` leaf shadows a named element so a client global the application trusts resolves to attacker-controlled markup, which carries attacker-chosen values into a configuration or merge path that accepts no structured carrier
+- Name that family at the delivery step rather than restating its markup mechanics, because the merge and its consumers stay this class's steps
+
 ## Bypass Techniques
 
 **Key Shaping**

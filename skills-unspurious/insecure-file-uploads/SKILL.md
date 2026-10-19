@@ -13,6 +13,7 @@ Upload surfaces are high risk: server-side execution, script delivery in the bro
 
 - Web, mobile, and API uploads, including direct-to-cloud flows and resumable multipart protocols
 - Media and document pipelines: converters, renderers, metadata parsers, office and archive expanders
+- Compound document containers: office and archive formats are nested containers whose inner markup a second component parses, so the xxe class owns the entity step while this class owns the pipeline step
 - Administrative and bulk importers, archive uploads, report and template uploads, rich-text attachments
 - Serving paths: the application itself, object storage, an edge cache, message attachments, previews and thumbnails
 
@@ -51,6 +52,7 @@ Upload surfaces are high risk: server-side execution, script delivery in the bro
 - Processor command output reflected in derived artifacts or error state, which proves operator execution.
 - Out-of-scope file content surfacing through conversion, which proves file-read operators.
 - Job behaviour deltas across probe families, which separate parser flaws from rendering effects.
+- **Renderer-side receipt**: an outbound request or a script fire observed while a document renders, which proves a renderer engine reached beyond the uploaded content.
 - Post-gate objects served with an attacker-steered type or disposition, which proves late-control bypass.
 - Pre-verdict accessibility followed by a quarantine transition, which proves timing-gap exposure.
 - Serving-header comparison across initiation and finalization, which proves finalize-swap acceptance.
@@ -96,6 +98,8 @@ Each variant breaks one clause: the placement clause, the render clause, the ext
 ### Toolchain Exploitation
 
 - Crafted images and documents invoking external operators or reading local files during conversion
+- **Renderer engines**: document-to-image and screenshot services run a browser that fetches remote URLs, reads local paths, and may execute script inside the rendered document; name the ssrf skill at the fetch step and the xss skill at the script step
+- **Stream demuxers**: converters that follow a stream manifest or a concatenation list fetch remote content as part of the conversion, which turns an ordinary media file into a fetch carrier
 - Metadata blocks sized or shaped to trigger parser flaws in the extraction stage
 - Derived outputs that carry the operator side effect into a served artifact
 
@@ -151,6 +155,7 @@ Each variant breaks one clause: the placement clause, the render clause, the ext
 
 - Double extensions, mixed case, hidden dotfiles, repeated dots, and long paths ending in an allowed suffix
 - Divergence between the name in the multipart part and the name carried in the parameters, plus duplicate parameters where the later wins
+- See `references/upload-bypass-matrix.md` for the bypass families and the expected verdicts behind each probe.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
@@ -176,7 +181,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - upload-server-execution - Place uploaded content where the server interpreter executes it, through stored executable shapes and handler-mapping placement.
 - upload-client-execution - Render stored uploads as script in the browser, through inline serving and missing sniffing guards.
 - upload-archive-extraction - Prove traversal writes or link escapes during extraction, including compression-ratio abuse.
-- upload-toolchain-execution - Trigger converters and metadata parsers into executing embedded operators, with derived artifacts as evidence.
+- upload-toolchain-execution - Trigger converters, metadata parsers, and renderer engines into executing embedded operators or fetching external content, with derived artifacts as evidence.
 - upload-pipeline-deferred-trust - Prove late control points bypass earlier validation, through finalize swaps, client-set headers on direct-to-cloud flows, and pre-verdict fetching.
 
 ## False Positives

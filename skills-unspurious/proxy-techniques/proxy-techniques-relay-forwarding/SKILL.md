@@ -1,6 +1,6 @@
 ---
 name: proxy-techniques-relay-forwarding
-description: Relay-field forwarding where an intermediary supplies the authority, the client address, the scheme, or the destination and the origin trusts it, covering forwarded-value trust when a supplied value is read as the origin's own observation, field family spraying when several names carry one value, and relay rewrite when a supplied override reaches a decision made earlier.
+description: Relay-field forwarding where an intermediary supplies the authority, the client address, the scheme, or the destination and the origin trusts it, covering forwarded-value trust when a supplied value is read as the origin's own observation, construction decisions when the supplied value reaches a link or an identity document, field family spraying when several names carry one value, and relay rewrite when a supplied override reaches a decision made earlier.
 metadata:
   version: 1.0.0
 ---
@@ -28,6 +28,7 @@ Relay forwarding maps the fields before crafting, because the mechanism is a val
 
 Relay forwarding listens to the origin's decision on a supplied value, so only the entries below are live here.
 - The origin acting on a value the caller supplied through the relay's own fields.
+- A reflected supplied value that reached no decision, because a reflection alone is not trust; require the origin's effect or an out-of-band callback before claiming it.
 - An arrival whose source is the intermediary rather than the caller, which separates a relay effect from a client-side request.
 - A paired baseline where the same request differs only by the relay field it carries.
 - A message or link the origin built from a forwarded value, which proves the value reached a construction decision.
@@ -53,14 +54,21 @@ The effect is claimed only when the origin's decision is read, because the relay
 ### Forwarded-Value Trust
 
 Supply the authority, the client address, or the scheme through the relay's fields, and read whether the origin uses the supplied value where it should use its own observation.
+Separate the two layers before composing anything: an authority field that selects the upstream produces a routing effect, while a path-override field that restates the routed path produces a rewrite effect, and the two act at different layers and never compose into one request, so each is probed alone.
+The construction decisions a supplied value reaches are the artefacts the origin builds: a recovery or invitation link, a canonical or share URL, and an identity document's issuer or discovery value, each carrying the supplied value to a consumer that trusts it.
+A rate limiter or an allowlist that reads a client-supplied source field makes its decision on an observation the caller authored, which is the same trust at an accounting or permit step.
+A trailing port or a userinfo split resolves the supplied value to the approved host on one reader and to another on the second; name `proxy-techniques-url-parser-differential` at that step.
+Where the response reflects nothing, prove the origin resolved the supplied value with an out-of-band fetch of the supplied host, because a blind case carries no reflection to read.
 Prefer the decision the value reaches directly, such as an allowlist, a secure-transport check, or a link the origin builds.
 The parent path-mapping step covers what a hop forwards and cannot describe an origin that trusts the forwarded value, so this variant owns the forwarded-value procedure.
 
 ### Field Family Spraying
 
 Send the same value under each name the path might read, because every layer may key on a different field for one meaning.
+Where two occurrences of the same authority field are accepted, the second occurrence's precedence is a parser-confusion instance; name `defence-bypass-parser-confusion` at that step.
 Keep the value identical across families so the field is the only changed variable.
 Treat a family the origin ignores as a recorded negative rather than a dead end, and move to the next name.
+See `references/forwarded-field-families.md` for the field families by role and the layer each acts at; the same-named note under the `header-injection` class keeps the per-family consumer map and the probe discipline for the class-side handoffs.
 
 ### Relay Rewrite and Override
 
@@ -73,6 +81,8 @@ Treat a rewrite the origin applies before its decision as a recorded negative.
 Relay shapes are tried only after the direct route is baselined, because an origin that reads its own observation carried nothing.
 
 - An authority value supplied through the relay's own fields.
+- A supplied value that reaches a construction decision: a recovery or invitation link, a canonical or share URL, or an identity document's issuer or discovery value.
+- A source field a limiter or an allowlist reads as the peer's own address.
 - A client-address value that a boundary check reads as the peer.
 - A scheme value that a transport check reads as the connection's.
 - The same value sprayed across every field family the path may read.

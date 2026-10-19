@@ -70,7 +70,14 @@ Treat a recomputed child field as a guarded attempt rather than a success.
 
 Carry dot or bracket paths plus sparse or patch path strings plus GraphQL nested inputs as defeat detail inside this variant.
 Hold the child-scope verdict constant across every shape, because reshaping reaches the same binder through another framing.
+Try the array-for-scalar form and the unexpected-key form against each child path, since a binder that rejects the plain shape frequently accepts the wrapped one.
 Batch payloads never ride here, and any nested relation inside a batch belongs to the combined sibling.
+
+### Navigation-Property Expansion
+
+Where the interface exposes a navigation-property expansion on a query, test the joined entity separately, because authorization decorators frequently cover the top-level entity set while the joined entity carries no scope check of its own.
+Judge the joined entity against caller scope with its own read and its own write attempt, rather than inheriting the verdict of the parent set.
+Name the interface dialect at the query-shape step rather than restating its query language here.
 
 ## Advanced Techniques
 

@@ -1,13 +1,13 @@
 ---
 name: insecure-deserialization
-description: Insecure deserialization testing across runtime languages covering gadget chains, type confusion, and safe validation
+description: Insecure deserialization testing across runtime languages covering gadget chains, type confusion, interpolation-triggered remote lookup, and safe validation
 metadata:
   version: 1.0.0
 ---
 
 # Insecure Deserialization
 
-Insecure deserialization passes attacker-controlled byte streams or structured blobs to a native unmarshal function, enabling remote code execution, authentication bypass, and logic manipulation through lifecycle hooks and gadget chains. Test any endpoint accepting serialized objects, session blobs, or opaque binary tokens.
+Insecure deserialization passes attacker-controlled byte streams or structured blobs to a native unmarshal function, enabling remote code execution, authentication bypass, and logic manipulation through lifecycle hooks and gadget chains. Test any endpoint accepting serialized objects, session blobs, or opaque binary tokens. Interpolated references reach the same outcome without any blob, so the class also covers a reference value the runtime resolves into a remote load.
 
 ## Attack Surface
 
@@ -17,6 +17,7 @@ Insecure deserialization passes attacker-controlled byte streams or structured b
 - Self-executing encodings, which run code during the decode itself by design
 - Integrity-gated state blobs: session carriers, view-state style tokens, and stored descriptors
 - Wrapper-triggered implicit deserialization, where a path reference causes a metadata read
+- Interpolation and lookup sinks: ordinary fields whose value the runtime resolves as a lookup directive, fetching a remote class or resource with no serialized blob in play
 - Nested envelopes: compressed and encoded layers around any of the above
 
 **Input locations**
@@ -32,11 +33,13 @@ Insecure deserialization passes attacker-controlled byte streams or structured b
 - Decode candidate blobs and note the leading bytes or prefixes that mark a format family
 - Record the content type and any custom serialization declaration on the request
 - Note stack indicators that identify the runtime family behind the endpoint
+- See `references/deserialization-signatures.md` for the marker shapes behind each format family.
 
 ### Unmarshal Sink Discovery
 
 - Trace every unmarshal entry point in the codebase back to its input source
 - List the sinks reachable from user-influenced data: parameter decoders, session loaders, message consumers, file-operation paths
+- List interpolation and lookup sinks that resolve a reference value into a remote load, beside the byte-stream decoders
 - Note which sinks run behind an integrity check and which accept unsigned input
 
 ### Trigger Mapping
@@ -60,6 +63,8 @@ Insecure deserialization passes attacker-controlled byte streams or structured b
 - Timing correlation between plant, trigger, and callback, which attributes the effect to the paired loci.
 - File-operation trigger signals, which confirm a path reference reached implicit deserialization.
 - Job and administrative invocation records, which confirm the trigger ran after the plant landed.
+- **Lookup-resolution receipt**: an outbound name-resolution or fetch receipt tied to a crafted field value, which confirms an interpolated reference reached a remote loader.
+- **Response-class differential**: binding-failure text beside state-invalid text, which separates a rejected binding from a rejected payload shape.
 
 ## Adversarial Capabilities
 
@@ -69,6 +74,7 @@ Deserialization testing presupposes control over the input bytes, knowledge of t
 - Run a no-effect oracle first: a callback or delay that proves the decode happens.
 - Read stack traces and rejection text to orient the next mutation.
 - Hold a second principal where the forged state controls identity or role.
+- Host a reachable lookup target that serves the attacker's class or records the resolution, where an interpolation sink is in play.
 - Match the runtime and library inventory of the target before assembling a chain.
 
 ## Trust Assumptions
@@ -115,6 +121,13 @@ Each variant breaks one clause: the type-resolution clause, the integrity clause
 - The trigger is any file operation: existence check, size read, copy, or upload
 - The blob itself can be uploaded or stored as an ordinary file
 
+### Interpolation-Triggered Remote Lookup
+
+- **Reference in an ordinary field**: a string carrying a lookup directive in a field the runtime interpolates, such as a logged value or a templated name, causes a remote resolution and a class load with no serialized blob in play
+- **Remote basis fetch**: the resolved reference names attacker-controlled material over a resolution protocol, so the loader fetches and instantiates it inside the application's own process
+- **No chain required**: this path needs no gadget inventory, so test it beside the byte-stream decoders rather than after them
+- The parent byte-stream description cannot cover a reference-triggered load, so this block owns the interpolation procedure while the object-graph variants stay disjoint
+
 ## Advanced Techniques
 
 **Signed Blob Bypass**
@@ -135,6 +148,7 @@ Each variant breaks one clause: the type-resolution clause, the integrity clause
 - Alternative parameters that store the same session value, where some paths decode without the check
 - Switching the content type or the parameter location between requests
 - Type confusion: an array versus an object body reaches different decoder branches
+- **Allow-list assembly**: defeat a type allow-list by assembling the chain from types the list still admits, and treat a decoder that admits only primitive structures as the closing control
 - Name the defence-bypass family at the encoding and framing steps for stacked layers and length-field smuggling, rather than restating those mechanics here.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
@@ -145,15 +159,18 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Deserialization plus authorization bypass: a forged signed state carrier mints identity or role claims
 - Deserialization plus deferred trigger: the planted blob detonates in an administrative export or batch job
 - Deserialization plus file operations: a wrapper path turns an ordinary read into a decode
+- Interpolation lookup plus a fetch or a load: name the ssrf skill where the resolution basis travels over a fetch, and the rce family where the loaded material executes
 
 ## Testing Methodology
 
-1. **Find sinks** - Locate decode and unmarshal calls on user-influenced data
+1. **Find sinks** - Locate decode and unmarshal calls on user-influenced data, including interpolation and lookup sinks that resolve a reference value into a remote load
 2. **Confirm format** - Leading bytes, error stack traces, and stack fingerprints
-3. **Safe oracle** - A callback or delay before any effect payload
+3. **Safe oracle** - A callback or delay before any effect payload, or a lookup-resolution receipt where the sink is interpolation-driven
 4. **Chain selection** - Match the runtime and library inventory to an available chain
 5. **Minimal proof** - Demonstrate execution or a critical logic bypass with the least destructive effect
 6. **Session focus** - Decode server-side session carriers early, since they are the highest-value sink
+
+See `references/deserialization-oracle.md` for the oracle classes and the bounded-effect discipline behind the safe-oracle step.
 
 ## Variants
 
@@ -168,6 +185,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Inputs parsed into plain maps without object construction
 - Deserialization inside an isolated sandbox with no network or execution primitives, verified thoroughly
 - Error text naming a serialization class where the input never reaches the unmarshal call (dead path)
+- **Local-only resolution**: an interpolated reference that resolves to a local constant or a disabled loader, with no remote fetch and no class load
 
 ## Pro Tips
 
@@ -177,7 +195,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 4. In white-box work, trace from the unmarshal call backwards to its input source
 5. Integrity verification disabled on legacy deployments is still common; test it early
 6. Keep the proof bounded and reversible, and stop at the first confirmed decode or claim
+7. Test interpolation and lookup sinks separately from byte-stream decoders; they carry no object graph and need no chain inventory
 
 ## Summary
 
-Treat every deserialization of untrusted data as critical. Safe patterns validate a schema without type polymorphism, resolve no attacker-named types, verify an integrity binding before decode, and keep lifecycle hooks unreachable from decoded data. Prove impact with a callback or a bounded effect, not with an error stack trace alone.
+Treat every deserialization of untrusted data as critical. Safe patterns validate a schema without type polymorphism, resolve no attacker-named types, verify an integrity binding before decode, keep lifecycle hooks unreachable from decoded data, and resolve no attacker-named reference in an interpolated field. Prove impact with a callback or a bounded effect, not with an error stack trace alone.

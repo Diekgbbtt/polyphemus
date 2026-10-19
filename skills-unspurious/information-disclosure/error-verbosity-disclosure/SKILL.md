@@ -14,6 +14,7 @@ This variant reads that channel: it triggers controlled failures, enumerates deb
 
 Triggerability lives wherever the target renders a failure: error pages, exception renderers, input validators, and content negotiation handlers.
 Verbosity lives in debug and development tooling left reachable in production: interactive debuggers, profilers, trace viewers, and feature flag endpoints.
+The debug surface carries families beyond the failure path: environment and configuration dumps, memory and heap dumps, logger control endpoints, route and mapping listings, trace and error recorders, version and build-info endpoints, and diagnostic consoles.
 Adjacency lives in failure-adjacent metadata: tracing headers and server timing signals emitted alongside the failure response.
 
 ## Reconnaissance
@@ -27,6 +28,7 @@ Reconnaissance is complete when each reachable surface has a recorded baseline f
 
 Stack traces, file paths, query fragments, and framework versions inside failure responses.
 Evaluation probe output that confirms a live execution context behind the error renderer.
+A failure path that executes the action instead of only narrating it, which reads as fail-open rather than disclosure and needs its own effect proof.
 Timing and metadata deltas adjacent to the failure that narrate handling the trigger did not intend to expose.
 Only channels carried by triggered failure output fire here; fetched artifact content and two-response differentials belong to the sibling variants.
 
@@ -44,8 +46,8 @@ The failing clause is the generic-output clause: triggered failures render verbo
 
 ## Key Vulnerabilities
 
-Triggering submits each malformed class the surface accepts: wrong types, boundary values, missing fields, and unexpected content shapes.
-Enumeration walks debug and profiler surfaces beyond the failure path: interactive debuggers, profilers, trace viewers, and flag endpoints probed for live answers.
+Triggering submits each malformed class the surface accepts: wrong types, malformed bodies, missing fields, oversized fields, boundary-length values, null-byte shapes, and unexpected content types, one assumption broken per attempt so the failing assumption is attributable.
+Enumeration walks the debug surface families beyond the failure path: interactive debuggers, profilers, trace viewers, flag endpoints, environment and configuration dumps, memory and heap dumps, logger controls, route and mapping listings, and version and build-info endpoints, each probed for a live answer.
 Probing submits evaluation markers with known answers to learn whether an execution context sits behind the renderer.
 Reading captures failure-adjacent tracing and timing metadata while it stays trigger-adjacent rather than a standalone channel.
 
@@ -62,6 +64,8 @@ Each chain stops at a reversible proof or a stated architectural risk rather tha
 3. **Enumerate debug and profiler surfaces.** Walk interactive debuggers, profilers, trace viewers, and flag endpoints, and read evaluation-oracle probes with known-answer markers over parent step P3, which names malformed-input triggering but never names debug enumeration or evaluation oracles. Complete when every enumerated surface has answered or refused and each probe outcome is recorded.
 4. **Read failure-adjacent metadata.** Capture tracing and timing signals emitted alongside failures. Complete when each signal is recorded as leaking or ruled uniform.
 5. **Correlate to impact.** Map each leak to versions with reachable flaws, paths enabling file access, or keys enabling control-plane access, with a minimal reversible proof or a stated risk. Complete when every recorded leak carries a proof or a risk statement.
+
+The signature families behind each trigger, and what each one reveals, are in `references/error-signature-families.md`, read beside the failure it came from.
 
 ## False Positives
 

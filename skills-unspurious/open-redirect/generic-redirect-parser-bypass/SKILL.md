@@ -71,6 +71,7 @@ Require absolute secure destinations and refuse relative-escape shapes and unkno
 Script-assigned destinations fail when user input flows into the navigation call without the same canonical check.
 Meta refresh destinations fail when the refresh target carries an unvalidated value.
 Router navigation fails when the route argument is read from attacker-influenced state.
+Prove a client-side vector explicitly by tracing one parameter value into the navigation call and recording the external destination the client reaches, because no server verdict fires for a dispatch that never leaves the page.
 Apply the same single-parser exact-origin check on the client before navigation.
 
 ## Advanced Techniques

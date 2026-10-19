@@ -12,7 +12,7 @@ Business logic flaws exploit intended functionality to violate domain invariants
 ## Attack Surface
 
 - Financial logic: pricing, discounts, payments, refunds, credits, chargebacks
-- Account lifecycle: signup, upgrade/downgrade, trial, suspension, deletion
+- Account lifecycle: signup, upgrade/downgrade, trial, suspension, deletion, and referral or reward grants
 - Authorization-by-logic: feature gates, role transitions, approval workflows
 - Quotas/limits: rate/usage limits, inventory, entitlements, seat licensing
 - Multi-tenant isolation: cross-organization data or action bleed
@@ -81,18 +81,22 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 - Skip or reorder steps via direct API calls; verify the server enforces preconditions on each transition
 - Replay prior steps with altered parameters (swap price after approval but before capture)
 - Split a single constrained action into many sub-actions under the threshold (limit slicing)
+- Move the identity between domains after creation (register under an allowed domain, then change the identity to a privileged one) and verify each transition re-checks the domain rules
+- Drop a selection step whose absence leaves a privileged default, such as a skipped role-selection request that leaves the highest role in place
 
 ### Concurrency and Idempotency
 
 - Parallelize identical operations to bypass atomic checks (create, apply, redeem, transfer)
 - Abuse idempotency: key scoped to path but not principal → reuse other users' keys; or idempotency stored only in cache
 - Message reprocessing: queue workers re-run tasks on retry without idempotent guards; cause duplicate fulfillment/refund
+- The synchronized burst is driven by `scripts/business-logic-race-harness`, which records each lane and re-reads the authoritative state after a settling delay, so a durable double is separated from a response echo
 
 ### Numeric and Currency
 
 - Floating point vs decimal rounding; rounding/truncation favoring the attacker at boundaries
 - Cross-currency arbitrage: buy in one currency, refund in another at stale rates; tax rounding per-item vs per-order
 - Negative amounts, zero-price, free-shipping thresholds, minimum/maximum guardrails
+- The probe set, the recomputation oracle, and the failure-mode index behind these cases are in `references/value-probe-set.md`
 
 ### Quotas, Limits, and Inventory
 
@@ -109,6 +113,8 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 
 - Feature flags enforced client-side or at the edge but not in core services; toggle names guessed or falling back to default-enabled
 - Role transitions leaving stale capabilities (retain premium after downgrade; retain admin endpoints after demotion)
+- Invitation and delegation abuse: an inviter grants a role above its own ceiling; the authorization-principal step is owned by `two-principal-authz` and the function-level verdict by `broken-function-level-authorization`, so record only the logic delta here
+- A dual-use endpoint whose privileged branch does not require the current credential, only an earlier step's approval; the authorization verdict belongs to the classes above
 
 ## Advanced Techniques
 
@@ -147,6 +153,7 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 ## Bypass Techniques
 
 - Client recomputation: totals, taxes, discounts computed on the client and accepted by the server
+- Client-side gates: a gate or hidden interface enforced only in the browser is bypassed by direct calls, and `proxy-techniques-dom-clobbering` covers markup that shadows a global the client trusts, so name it at the client-gate step rather than restating its mechanics
 - Name the proxy-techniques family at the channel-wrapping step for content-type switching and method alternation, rather than restating the channel tricks here.
 - Name the defence-bypass family at the edge-versus-core step for stale gateway decisions, rather than restating the gateway differentials here.
 
@@ -165,6 +172,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 3. **Test transitions** - Step skipping, repetition, reordering, late mutation
 4. **Introduce variance** - Time, concurrency, channel (mobile/web/API/schema layer), content-types
 5. **Validate persistence boundaries** - All services, queues, and jobs re-enforce invariants
+
+Alternate transition orders are replayed by `scripts/business-logic-step-skip`, which records each order's outcome and the state read beside it, so an accepted skip is attributable to the missing guard.
 
 ## Variants
 

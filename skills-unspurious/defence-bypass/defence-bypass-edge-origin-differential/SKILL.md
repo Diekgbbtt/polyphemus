@@ -23,6 +23,7 @@ Edge-origin differentials compare tiers before crafting, because the gap is betw
 - Enumerate the routes that reach the same effect, and note which of them carry the current chain.
 - Establish the refusal baseline at the enforcing tier, so a later pass is attributable to the serving tier.
 - Record the lifetime and the key of any stored verdict, because a decision that outlives its request is the differential.
+- Compare each route's answer with and without authentication, because the two answers read each tier's scope rather than one tier's rule.
 
 ## Detection Channels
 
@@ -30,8 +31,9 @@ Edge-origin differentials listen to two verdicts for one request, so only the en
 - The enforcing tier's refusal on the canonical route, which proves the chain evaluated the request.
 - A pass on a sibling route for the same effect, which shows the serving tier never consulted the chain.
 - The differential between the refused canonical route and the passed sibling route at one effect, which localises the tier gap.
-- A stale or cached verdict applied to a changed request, which proves the decision was not recomputed.
+- A stale or cached verdict applied to a changed request, such as a changed method, which proves the decision was not recomputed.
 - The effect appearing at the serving tier while the enforcing tier's verdict stayed silent.
+- The enforcing tier's own marker absent from a response the serving tier produced, which localises the tier that answered.
 - The sink's own error class, which names the tier that answered.
 
 ## Adversarial Capabilities
@@ -54,18 +56,23 @@ The pass is claimed only when both verdicts are recorded for one request, becaus
 ### Route and Chain Divergence
 
 Reach one effect through a sibling route, a legacy form, or a versioned path that does not carry the current chain, because the route table and the middleware wiring often diverge.
+Enumerate the shadow and deprecated route families explicitly: an older version of the same operation, an alternate host family or device subdomain, and a legacy path alias, because the enforcement was wired to the current route only.
+Where a rule is scoped to a path, reach the protected path through a spelling the rule does not match while the router still resolves it: case, dot segments, encoded separators, and trailing characters.
+Where the enforcing tier skips a request it believes to be internal, the asserting field itself is the route past the chain, so test the claim the field makes rather than the path.
 Vary the framing of the same route where the wiring binds a check to one framing only.
+A path-override field reaches the route the enforcing tier denied; name `proxy-techniques-relay-forwarding` at that step rather than restating its procedure here.
 The parent tier-mapping step covers one route's verdict and cannot describe two routes to one effect, so this variant owns the route-divergence procedure.
 
 ### Verdict Reuse Across Requests
 
 Replay a request under a stored verdict with one property changed, because a cached or stale decision is applied to requests it never evaluated.
-Change the session, the identity, or the target under an unchanged decision, one property per attempt.
+Change the session, the identity, the target, or the method under an unchanged decision, one property per attempt.
 Treat a second property that the stored verdict still admits as the completed probe.
 
 ### Scope Divergence Between Tiers
 
 Compare what each tier evaluates: the front tier often covers the address, the method, or the path while the serving tier applies the identity-bound rule.
+Where the rule covers one verb, reach the same handler through a sibling verb the rule never evaluated.
 Send the same effect through the tier that evaluates less and record which tier answered.
 Treat a scope the enforcing tier never read as the bypass, and keep the effect identical across the two attempts.
 

@@ -149,6 +149,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - SSRF → fetch private JWKS → sign tokens accepted by internal services
 - Host header poisoning → OIDC redirect_uri poisoning → code capture
 - IDOR in sessions/impersonation endpoints → mint tokens for other users
+- Open redirect or an on-domain fetch path → satisfy a host-allowlisted key reference so the key fetch resolves to the attacker key document; name `open-redirect` at the redirect step and `ssrf` at the fetch step rather than restating either procedure here
 
 ## Testing Methodology
 

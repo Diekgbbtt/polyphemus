@@ -27,6 +27,7 @@ Inference listens to side channels rather than bodies, so only the entries below
 - Response-size difference separates a reachable fetch from a refused one.
 - Error-class difference separates timeout versus reset versus transport failure.
 - Presence-header difference separates otherwise uniform responses.
+- Distinct status on a link-local address, namely a gate response where every other candidate returns a uniform body, which proves reach to a non-internet-routable address.
 - Timeout-derived port map records one reachability verdict per probed port.
 
 ## Adversarial Capabilities
@@ -62,6 +63,7 @@ Treat a consistent class change as a positive and treat uniform randomness as in
 ### Timeout Binary-Search Port Mapping
 
 Build the port map by sweeping candidate ports under short connect and read budgets and recording one verdict per port.
+Anchor the sweep with a known-open and a known-closed control point, so each candidate's verdict reads against a calibrated pair rather than an absolute timing.
 Narrow each open-versus-filtered boundary by halving the timeout window around the differing samples.
 Blind translated craft plus blind gated sequencing stay secondary here, reusing the same inference oracle without adding their own steps.
 

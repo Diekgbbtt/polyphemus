@@ -30,6 +30,7 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 **Sinks**
 - Download, export, preview, report, log, and template parameters that join user input into a path
 - Upload and conversion pipelines: image and document renderers, thumbnailers, office converters
+- Non-parameter sinks: converter-internal resource spellings and archive extractors that resolve content with no file parameter in play
 - Archive extract endpoints, import jobs, and background workers
 - Server-side template rendering with dynamic template selection
 - Reverse proxies and static file servers in front of application handlers
@@ -39,6 +40,7 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 ### Surface Map
 
 - Parameter names: file, path, template, include, page, view, download, export, report, log, dir, theme, lang
+- Non-parameter read surfaces: converter-internal resource spellings and extractor paths that resolve content with no file parameter
 - Upload and conversion pipelines: renderers, thumbnailers, office converters
 - Archive extract endpoints and background jobs; imports of archive formats
 - Server-side template rendering with dynamic template names, themes, and plugins
@@ -66,6 +68,8 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 - Direct handler disclosure where a wrapper or filter shape returns transformed local content for a crafted include shape.
 - Outbound fetch receipt where a wrapper or hosted content shape triggers a fetch that confirms handler invocation.
 - Direct deterministic output where the response carries a hosted marker as evaluation evidence.
+- Encoded-content disclosure where a filter-style read returns content that decodes to valid source, which proves the read even when the raw body is not plain text.
+- Out-of-band callback receipt carrying a per-sink sub-tag, which confirms a blind read and attributes it to one sink.
 - Outside-write evidence where post-extract listings reveal files beyond the destination for a crafted archive shape.
 - Follow-up read evidence where a subsequent read retrieves content from the outside location.
 
@@ -133,6 +137,12 @@ Each variant breaks one clause: the confinement clause, the handler-selection cl
 - Where wrappers are disabled, substitute an alternate wrapper or scheme with the same reach
 - Where remote inclusion is blocked, poison local state and include it locally
 
+**Resolution Gaps**
+- Defeat canonical-path allow-lists through alias and link names the resolution admits without leaving the permitted prefix
+- Defeat a resolution that runs after the read by reaching a sink whose canonicalization completes later than the operation it guards
+
+See `references/traversal-encoding-matrix.md` for the encoding families, the hop discipline, and the high-value read targets behind each probe.
+
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
@@ -144,7 +154,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Testing Methodology
 
-1. **Inventory file operations** - Downloads, previews, templates, logs, exports and imports, report engines, uploads, archive extractors
+1. **Inventory file operations** - Downloads, previews, templates, logs, exports and imports, report engines, uploads, archive extractors, and non-parameter read surfaces in converters and extractors
 2. **Identify input joins** - Path joins, include and template loads, resource fetchers, extract destinations
 3. **Probe normalization** - Separators, encodings, double decodes, case, trailing dots and slashes
 4. **Compare behaviors** - Front-end versus application resolution order
@@ -154,7 +164,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 ## Variants
 
 - traversal-read - Read out-of-root files where file-operation carriers join input into filesystem reads, including masked responses adjudicated by length.
-- lfi-include-execution - Include local files into a handler through dynamic names, wrapper schemes, and poisonable local state.
+- lfi-include-execution - Include local files into a handler through dynamic names, wrapper schemes, poisonable local state, and conversion-chain synthesis from a read-only filter primitive.
 - rfi-remote-include - Fetch hosted content through remote-scheme inclusion, gated by scheme policy and proven by outbound callbacks.
 - archive-zipslip-write - Write outside extract destinations through crafted archive entries, confirmed by listings and follow-up reads.
 

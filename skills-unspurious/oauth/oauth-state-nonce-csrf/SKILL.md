@@ -33,6 +33,7 @@ Only the entries below fire here; destination, verifier, binding, and approval s
 - Reuse-oracle acceptance, where a previously consumed freshness value succeeds a second time.
 - Scope-escape verdict, where a freshness token binds to no session or to the wrong verifier.
 - Identity-freshness replay, where an identity assertion with an injected or repeated freshness value is still honored.
+- Silent re-authentication, where a no-prompt authorization request completes inside a live victim session without an interaction, which signals a silent-auth path and a session-fixation precondition.
 
 ## Adversarial Capabilities
 

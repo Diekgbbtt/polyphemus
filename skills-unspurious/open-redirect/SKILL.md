@@ -89,6 +89,7 @@ Each variant breaks one clause: the canonicalization clause, the whole-destinati
 - Script navigation built from a parameter, including router push and replace calls
 - Meta refresh targets built from input
 - Client-side routers that treat a supplied path as an external destination
+- Hostile markup that clobbers a named element or a trusted global the client script reads as its navigation destination, so the dispatch resolves elsewhere; name `proxy-techniques-dom-clobbering` at that step rather than restating the mechanism here
 
 ### Absolute URL Construction
 
@@ -112,6 +113,7 @@ Each variant breaks one clause: the canonicalization clause, the whole-destinati
 
 - Embedded subresources leak the destination or a credential through the referrer policy
 - Fragments and query strings survive the redirect and reach the attacker endpoint
+- A style channel reads a destination or credential value out of the rendered page one character at a time where markup is injectable; name `proxy-techniques-css-injection` at the harvesting step rather than restating the mechanism here
 
 ## Bypass Techniques
 
@@ -123,6 +125,7 @@ Each variant breaks one clause: the canonicalization clause, the whole-destinati
 - Encoded and double-encoded separators, resolved after validation
 - Full-width dots and numeric address forms that the validator treats as untrusted-looking text
 - Scheme case variation and scheme-relative forms
+- A reflected destination value that reaches a response-header context can inject a location header; name `header-injection` at the injection step rather than restating the line-break mechanics here
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
@@ -132,6 +135,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Open redirect plus a server-side fetcher: the allowlisted redirector becomes a route to internal targets
 - Open redirect plus phishing: the trusted link carries the victim through a trusted origin before landing elsewhere
 - Open redirect plus a subresource embed: the destination or credential leaves through the referrer
+- Open redirect plus session fixation: the victim is forced through a login endpoint with a pre-set session, so the login completes into the attacker's session; name `csrf-login-fixation` at the planting step rather than restating its procedure here
 
 ## Testing Methodology
 

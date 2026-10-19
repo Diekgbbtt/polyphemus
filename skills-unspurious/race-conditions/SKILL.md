@@ -35,6 +35,17 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 - Watch for concurrency markers: version fields, conditional-request headers, and update timestamps
 - Examine idempotency-key support: scope (path versus principal), lifetime, and persistence (cache versus authoritative store)
 - Map cross-service steps: when state is written versus published, and which retries and compensation paths exist
+- Look for client-side-only guards: a disabled control, an optimistic interface state set before the server confirms, and sequential awaited calls without locking all signal that the protection never reached the server
+
+### Window Estimation
+
+- Time the operation single, then sequential, then concurrent: if the concurrent pair is no faster the backend serialises and the window is closed, and if it is faster estimate the window width before choosing a synchronisation primitive
+- Widen the window deliberately with large payloads or slow dependencies only after the estimate shows a narrow but real gap
+
+### White-Box Read-Then-Write Mapping
+
+- For source-available targets, grep for reads that precede writes without a lock or an atomic statement, and for writes without a unique constraint or transaction
+- Rank the hits by whether a caller can reach both sides of the gap, because an unreachable window is not a finding
 
 ### Signals
 
@@ -64,6 +75,7 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 - Audit records out of order across services with the dependent action timestamped before the authoritative write.
 - Missing or duplicate correlation identifiers across the trace of one intent.
 - Duplicate downstream writes where one worker retry produces a second persistent side effect.
+- Synchronised flush landed as one segment carrying every final frame, which proves the burst arrived in one window rather than merely pipelined.
 
 ## Adversarial Capabilities
 
@@ -127,13 +139,19 @@ Each variant breaks one clause: the atomicity and ordering clause, the dedup-sco
 ### Auth Flows
 
 - Concurrent consumption of one-time tokens (recovery codes, magic links) to mint multiple sessions
+- Two requests issued inside one generation tick can collide on the same issued value when the token derives from a coarse timestamp, so the second request consumes the first one's token rather than only racing its consumption
 - Verify that consumption is atomic
 
 ## Advanced Techniques
 
 **Precision Synchronization**
 - Multiplexed connections over one warmed session and last-byte synchronization: hold requests open and release the final byte simultaneously
+- Single-packet attack: buffer all but the final byte of every request on one connection, then release the final bytes in a single write, so the server reads them as one segment
+- First-sequence synchronization: where the needed request count exceeds what one packet carries, synchronise the first sequence numbers across several connections and fragment each request so the final frames still arrive together
+- Wire-capture validation: confirm the flush landed as one segment carrying every final frame, because a merely pipelined burst reads as a race attempt without the tightness
 - Connection warming: pre-establish sessions, cookies, and transport state to remove jitter
+
+See references/race-single-packet.md for the staging-and-flush template and the window-estimation decision tree.
 
 **Isolation-Level Exploitation**
 - Exploit read-committed and repeatable-read anomalies: phantoms and non-serializable sequences
@@ -151,6 +169,7 @@ Each variant breaks one clause: the atomicity and ordering clause, the dedup-sco
 ## Bypass Techniques
 
 - Send bursts before counters propagate, and keep the final write in a duplicate-capable phase
+- Read the control set before choosing the burst: per-entity rate limits, dedup keys, unique constraints, short windows, queue serialisation, and in-process mutexes each close one shape, so record which control is present and target the shape it leaves open
 - Name the proxy-techniques family at the channel-wrapping step for method, content-type, and endpoint switching, rather than restating the channel tricks here.
 - Name the defence-bypass family at the throttle and edge-versus-core steps for per-entity throttles and per-path guard gaps, rather than restating those mechanics here.
 
@@ -176,6 +195,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 ## Variants
 
 - idempotency-dedup-bypass - Bypass deduplication through key reuse and store-lag windows, then prove a second effect landed while the response claimed suppression.
+- race-conditions-partial-construction - Synchronise a list of different requests into one window so an object is used while its creation sequence is still in flight, then complete the objective through the winning path.
 - optimistic-guard-evasion - Evade concurrency guards by omitting tokens or replaying stale versions, then confirm an overwrite or lost update across unevenly enforcing paths.
 - single-request-fanout - Multiply effects inside one request through batched operations, hidden duplicates, and persistent-channel emits.
 - cross-service-consistency-race - Exploit write-versus-publish ordering across services through visibility lag, retry storms, and compensation gaps.

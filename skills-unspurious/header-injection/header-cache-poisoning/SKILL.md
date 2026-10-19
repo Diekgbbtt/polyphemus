@@ -23,6 +23,7 @@ Line-break framing payloads never ride here, and proto-host link building that b
 Inventory narrows to the key-versus-content split plus the signals that expose it.
 Map cache-signal headers in abstract form, namely age plus hit-or-miss plus key-status indicators, across repeated requests to learn the caching layer and its key behavior.
 Find inputs that move the body without moving the key by flipping headers plus parameters and diffing bodies beside signal values.
+See references/unkeyed-input-families.md for the component families to sweep against the key.
 Record eligibility plus fragmentation behavior per sub-shape before sweeping, so each sweep starts from a mapped baseline.
 
 ## Detection Channels
@@ -52,12 +53,14 @@ This variant breaks the cache-key clause because unkeyed input shapes a cached b
 ### Unkeyed Reflection Into Cached Bodies
 
 Reflect an unkeyed header or parameter value into the stored body while the key stays fixed, then confirm a clean replay serves the influenced body.
+Reflect a cross-origin request origin into an allow-origin value that the cache stores, so later callers receive the permissive value without sending the origin themselves.
 The parent split step names only body-versus-key finding, so this variant owns the sub-shape sweep plus eligibility handling that turns one reflection into five storable primitives.
 Treat correctly keyed personalization as the boundary, because keyed variation is intended behavior rather than poisoning.
 
 ### Fragmentation Plus Eligibility Plus Deception Shapes
 
 Sweep fragmentation games that over-split or under-split the key space, proto-host URL building that plants attacker destinations in cached links, eligibility flips that convert private entries to shared ones, and deception-suffixed public addresses that store authenticated bodies under cacheable shapes.
+Carry fat-request shapes whose body the backend processes while the cache keys on the address alone, forwarded-port and method-override shapes where the cache keys one method's address while the backend answers another, and cached error responses produced from attacker input that later callers then receive.
 Handle eligibility explicitly per sub-shape, since a stored entry that never becomes shareable is only a private reflection.
 Name link-only proto-host bending at this step rather than restating it, since header-host-forward-spoof owns the link oracle without the cache store.
 
@@ -68,6 +71,7 @@ Bypass forms stay aspects inside this variant because no spelling changes the cl
 - Flip eligibility markers in abstract form, namely shareability plus freshness-window directives, past a filter that inspects only the first directive.
 - Vary fragmentation markers so the key computation collapses entries the filter meant to separate.
 - Suffice deception suffixes in cacheable shape past a rule that keys off the address tail alone.
+- Sweep the deception path-discrepancy family, namely delimiter append, encoded separator, encoded percent, null byte, fragment, dot-segment normalization, case variation, and double-encoded path, because each member moves the cache key and the origin path apart.
 - Name the proxy-techniques family at the shared-cache keying step rather than restating its mechanics.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
@@ -84,7 +88,7 @@ Poisoning chains forward through the stored body because a stored entry without 
 Poisoning runs split-finding before sweeping and clean replay last, because attacker-visible reflection without victim serving is only noise.
 1. **Map key behavior** - record cache-signal values plus key composition across repeated requests, and the step completes when every signal reads stable with its baseline.
 2. **Find the split** - flip candidate inputs and diff bodies beside signal values, and the step completes when each body-moving but key-ignored input carries a recorded split verdict.
-3. **Sweep sub-shapes** - replay unkeyed plus fragmentation plus proto-host plus eligibility plus deception shapes one at a time, and the step completes when every shape carries a stored-or-clean verdict with its samples.
+3. **Sweep sub-shapes** - replay unkeyed plus fragmentation plus proto-host plus eligibility plus deception shapes one at a time under a fresh throwaway key, and the step completes when every shape carries a stored-or-clean verdict with its samples.
 4. **Confirm by clean replay** - replay the victim address from a second session with no attack headers, and the step completes when the served body shows attacker influence or the entry is ruled out with its evidence.
 5. **Bound eligibility** - record the shareability plus freshness behavior of each confirmed entry, and the step completes when every entry shows who can receive it and for how long.
 
@@ -100,7 +104,7 @@ Stop when the evidence shows the influenced body never leaves the attacker sessi
 
 Poisoning rewards split-finding patience over sweep speed, because the unkeyed input is the whole finding.
 1. Prefer the body-moving but key-ignored input hunt first, since every sub-shape follows from it.
-2. Favor one sub-shape per probe so each stored entry attributes cleanly.
+2. Favor one sub-shape per probe so each stored entry attributes cleanly, and probe under a fresh throwaway key so a live victim key is never poisoned during the sweep.
 3. Confirm through the second clean session before claiming impact, since attacker-session visibility proves nothing.
 4. Watch eligibility signals beside bodies, because a stored-but-private entry is not a victim finding.
 5. Hand link-only proto-host results to the spoofing sibling where no cache store backs them.

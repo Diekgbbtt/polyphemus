@@ -54,6 +54,8 @@ The exact failing clause is the unsigned-graph clause: the blob arrives without 
 Chain assembly matches the fingerprinted library inventory to a reusable class path and binds it behind the no-exec gate.
 Type-named construction injects an attacker-chosen type through a discriminator field with property placeholders, using the abstract shape `[TYPE-DISCRIMINATOR, TYPE-NAME-PLACEHOLDER, PROPERTY-PLACEHOLDER]`.
 Self-executing encodings run at decode time without inventory matching, using the abstract shape `[EXEC-DIRECTIVE-PLACEHOLDER, ARGUMENT-PLACEHOLDER]`.
+A name-resolution-only gadget is the cheapest liveness probe, because it needs no code execution and no response reading, so it gates every later chain.
+Interpolation-triggered lookup resolves a reference value into a remote load with no object graph in play; the parent lookup block owns the reference shape while this variant owns the graph assembly.
 The oracle-gated assembly spanning matched and selection-free formats is the delta generic confirm-and-pick language never names.
 Each construction path converges on the same gate: no callback or delay confirmation means no effect-bearing payload.
 

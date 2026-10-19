@@ -45,6 +45,7 @@ This variant breaks the claims and context binding while the signature routine, 
 ## Key Vulnerabilities
 
 - Issuer and audience gaps accept tokens minted for a foreign issuer, a neighboring audience, or a neighboring tenant.
+- Cross-tenant claim swap: the tenant, organisation, or workspace claim alone decides the data scope, so a claim set naming another tenant reaches that tenant's data.
 - Privilege trust re-derives authorization from presented scope or role claims without server-side confirmation, so edited privilege verifies.
 - Lifetime gaps accept expired or premature tokens through missing enforcement or through overly tolerant clock skew.
 - Token type confusion accepts one token kind where another is required, including access for identity shapes and outer for inner shapes in nested orderings.

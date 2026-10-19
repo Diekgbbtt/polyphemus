@@ -18,6 +18,8 @@ The write entry accepts attacker-influenced input through a direct field or an i
 The retrieval view renders the persisted value through server markup or through a client sink without requiring same-response reflection.
 The viewing principal may be the writer or a different principal who later opens the persisted record.
 Inline file serving with an active content type rides inside this variant as a stored specialisation with content-type plus disposition plus sniffing checks.
+A blind write entry carries the value into a log, error, or metadata surface that an operator view renders later, so the retrieval path may be invisible from the writer's side.
+A cache layer converts a reflected value into a stored one when an unkeyed input shapes a cached body for later callers, with the cache mechanics staying with the header-injection cache leaf.
 Transport repetition across direct calls plus query APIs plus socket channels plus event streams plus background workers rides as a secondary matrix for write and retrieval.
 Any persistence boundary belongs here even when the retrieval sink is a client sink.
 
@@ -36,6 +38,7 @@ Stored confirmation listens at retrieval time, so only the entries below are liv
 - Retrieval-response reflection shows the persisted marker rendering at a later view rather than in the write response.
 - Policy violation report fired at the retrieval view binds execution to the persisted render.
 - Stored artifact observation records the persisted probe instance plus any inline file served with an active content type.
+- Delayed callback carrying the per-payload marker from a browser user agent, which proves victim execution of a blind stored value rather than a backend fetch of the same value.
 - Sanitizer-output morph sample shows retrieval rendering turning sanitized markup into executable markup.
 
 ## Adversarial Capabilities
@@ -128,6 +131,7 @@ Stored work rewards pair discipline plus small probe sets plus retrieval-side pa
 3. Keep a small curated probe set per retrieval context and iterate with encoding variants.
 4. Re-parse sanitizer output at retrieval time because morphing only shows in the second parse.
 5. Record one retrieval verdict per transport path so the matrix shows which paths persist.
+6. Plant blind-carrier probes early and keep the listener open across the retrieval delay, because a stored value can surface hours or days after the write.
 
 ## Tooling
 

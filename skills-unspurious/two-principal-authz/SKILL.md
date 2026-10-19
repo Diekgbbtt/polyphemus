@@ -45,6 +45,7 @@ Use this methodology for any mutating or access-controlled operation: one princi
 ### Baseline Matrix
 
 - For each operation, record the expected outcome for owner, second principal, and any privileged role
+- Record the matrix before any test and keep it as the reusable artifact the later verdicts cite, so every cell is a stated expectation rather than a remembered one
 - Note enforcement differences per channel before testing, because protections often differ by path
 
 ## Detection Channels
@@ -58,6 +59,8 @@ Use this methodology for any mutating or access-controlled operation: one princi
 - One channel enforces while another refuses or accepts, which proves enforcement is not uniform.
 - An action succeeds with the grant token alone and no other credential, which reads as a token-scope gap.
 - A cross-tenant or cross-role reference resolves to the wrong scope.
+- A mandatory-field or validation error that names a business field proves the request reached the logic layer without an authorization check, which reads as an auth-bypass signal.
+- An identifier that still passes after the principal that owns it was removed, revoked, or downgraded, which reads as a temporal binding gap.
 - An empty result or null for the owner's object, which reads as silent enforcement rather than exposure.
 
 ## Adversarial Capabilities
@@ -66,6 +69,7 @@ Two-principal authorization testing presupposes two identities, owner-created ob
 - Register or obtain two principals, plus a privileged identity where vertical access is in scope.
 - Create and own objects under the first principal, and capture the identifiers the application returns.
 - Hold the owner's grant flows and the token or link each issues.
+- Hold a harvested identifier corpus from other surfaces before any swap, so the attempt uses real identifiers rather than guesses.
 - Replay every operation under the second principal's session with the owner's identifiers.
 - Compare the second principal's responses by status, size, validator, and timing whenever the content stays masked.
 - Snapshot state before and after each write so a durable foreign effect is attributable.
@@ -84,6 +88,7 @@ This methodology carries the shared agreement; each class it serves states the p
 - The operation resolves the identifier without checking that the caller owns or may act on it
 - Batch, bulk, and import paths validate only the first element or skip create-time checks
 - Alternate value types for one identifier reach a differently enforced lookup
+- Paired arguments bind separately: where one request names a source and a destination, test which member carries the check, because a validated destination beside an unchecked source is the common asymmetry
 
 ### Grant Scope Excess
 
@@ -111,6 +116,7 @@ This methodology carries the shared agreement; each class it serves states the p
 **Matrix Discipline**
 - Build the subject-object-action matrix first, and add operations as they are discovered; a missing cell is an untested claim
 - Test each cell with a control pair: the owner's request and the second principal's request under identical shaping
+- Extend the control pair to whole route families: establish one endpoint that is demonstrably gated on the same stack, then compare a sibling route family against it, so a differing response is attributable to the binding rather than to the stack
 
 **Identifier Collection**
 - Harvest identifiers from list, search, export, notification, and message surfaces rather than brute-forcing them
@@ -148,6 +154,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Stored content plus authorization: reach another principal's data through a rendering path
 - Authorization failure plus escalation: use a vertical binding gap to reach a privileged surface, then hand token validation to the token class
 - Grant excess plus enumeration: widen a single grant into a set of reachable objects
+- Account takeover: the cross-class catalogue of primitives whose terminal proof is a second account reached from the attacker's own session is in `references/account-takeover-chains.md`, and each primitive's mechanism stays with its owning class
 
 ## Testing Methodology
 
@@ -158,6 +165,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 5. **Vary the channel** - Repeat on every transport and encoding the operation accepts
 6. **Confirm the effect** - Snapshot state before and after; the proof pair is the owner's requests plus the second principal's successful request on the owner's identifier
 7. **File on first success** - Record the confirmed cross-principal finding as soon as the second principal reaches the owner's object, rather than exploring further classes
+
+The owner-versus-second-principal replay is driven by `scripts/two-principal-swap-harness`, which records one verdict per operation, reads the masked differential where content stays hidden, and warns when the route control is not gated.
 
 ## False Positives
 

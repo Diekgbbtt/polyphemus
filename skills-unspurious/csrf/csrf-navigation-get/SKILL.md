@@ -84,6 +84,7 @@ Bypass forms stay aspects inside this variant because no value difference change
 - Token absence plus cross-request reuse plus query-carried tokens steer the chained navigation past a weak proof-of-intent check.
 - Null plus missing plus cross-origin header values steer the navigation past a weak origin or referrer check.
 - Sending-scope reliance steers top-level GETs through the permitted navigation case while direct cross-site sub-requests stay blocked.
+- A cookie-refresh grace window re-admits a top-level navigation after a fresh cookie is issued, so the scoping clause weakens at refresh time.
 - Referrer stripping through an empty-context navigation source presents the chain without its origin context.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.

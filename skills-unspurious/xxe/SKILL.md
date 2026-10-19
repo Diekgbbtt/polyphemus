@@ -30,10 +30,12 @@ XML external entity injection is a parser-level failure: the parser resolves ref
 - Enumerate every parsing consumer per endpoint, upload path, background job, converter, and third-party parser
 - Record which carrier reaches which consumer, and whether parsing happens inline or deferred
 - Note pipeline stages that reparse: a document accepted at the front door may be parsed again later with different settings
+- Content-type negotiation: replay a structured body under an XML content type, and the reverse, because a parser frequently hides behind a neighbouring content type
 
 ### Capability Probes
 
 - Declaration acceptance: whether a document type declaration is honoured at all
+- Inline-entity pre-flight: declare an internal entity, reference it, and confirm expansion; when a harmless internal entity does not expand, external resolution will not work either
 - Resolution: whether external general entities resolve, and whether external parameter entities plus remotely held definitions resolve
 - Egress: whether the parser can reach network destinations, and whether the network stays closed while the filesystem is readable
 - Transclusion: whether include elements and stylesheet document fetches resolve where declaration resolution is blocked
@@ -83,6 +85,7 @@ Each variant breaks one clause: the external-resolution clause, the transclusion
 - General-entity references resolve to local files and interior destinations when the parser is unhardened, with the value landing in the response or a derived artifact
 - Parameter entities extend the reach: the document fetches an externally held definition, which itself defines further references
 - Wrapper and scheme families extend a resolved fetch, so handler support decides which destinations answer
+- Interior mapping: a distinct reference per port or per interior address, with timing or error class as the oracle, maps reachable destinations without a response body
 - Stored documents parsed by a later job carry the same reach behind a deferred trigger
 
 ### Blind Exfiltration
@@ -95,6 +98,7 @@ Each variant breaks one clause: the external-resolution clause, the transclusion
 
 - Include elements resolve local and remote content where declaration resolution is disabled, and they carry their own fetch semantics
 - Stylesheet processing resolves document references at transform time, which reaches files and interior destinations through a path declarations cannot use
+- Transform-time execution: a transform processor that exposes an extension runs host code, so a submitted stylesheet reaches execution rather than only transclusion
 - Implicit parses: container documents and embedded segments open the same reach with no declaration at all
 
 ### Expansion
@@ -172,6 +176,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - blind-parameter-entity-oob-exfiltration - Chain a held external definition with two-stage reference redefinition and a callback destination when no response carries the value.
 - transclusion-without-entity-resolution - Reach local and remote content through include elements, submitted stylesheets, and implicitly parsed container segments where declaration resolution is blocked.
 - entity-expansion-denial-of-service - Amplify nested definitions to exhaust shared processing paths, observed as latency, memory, and timeout growth under small document growth.
+- xxe-local-dtd-error-exfiltration - Repurpose a definition document already installed on the host and force a read value into a parse error when remote resolution stays closed.
 
 ## False Positives
 
@@ -179,6 +184,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Filters and sandboxes that emit the reference text literally without any IO
 - Mocks and stubs that simulate success without network or filesystem access
 - Documents parsed only on the client, with no server-side parse
+- Structure injection where declarations are stripped: element or attribute injection and section-boundary manipulation alter the parsed tree without resolving anything, which is a markup-shape finding rather than external resolution
 - Parse errors with no IO evidence behind them
 - A callback that arrives from a different source than the consumer's egress path
 

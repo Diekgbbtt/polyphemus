@@ -14,6 +14,7 @@ The goal is confirmed execution context that later escalates to durable control.
 ## Attack Surface
 
 Applicability centers on a user-influenced string that reaches an OS command wrapper or CLI parser.
+The carrier may be a path segment, a query value, a body field, or a header value; inventory every carrier the endpoint accepts rather than assuming the obvious parameter.
 The wrapper applies quoting, concatenation, or flag parsing before the string reaches the execution primitive.
 The server exposes at least one oracle per submission, such as timing, a callback arrival, or a reflected output difference.
 Metacharacter break-out, argument and flag injection, and builtin and path confusion all ride this same surface as aspects.
@@ -27,6 +28,8 @@ Callback oracle binds one minted unique marker per probe to one inbound arrival 
 Reflected-output oracle separates execution from noise when response length or digest shifts with the probe result.
 Quoting-break error class separates a live wrapper from inert handling when delimiter acceptance changes status text or timing class.
 Flag-acceptance signal separates a live CLI sink from a plain string sink when option-shaped input alters behavior without executing.
+Argument-derived file echo: error text carries a line from a file the argument list named, which proves an argument-driven read.
+Redirected-output surfacing: the operation's output appears at a fetchable path, which proves execution plus a write primitive.
 Context-confirmation read discloses the execution user plus working directory plus shell plus confinement markers once execution is proven.
 
 ## Adversarial Capabilities
@@ -62,6 +65,8 @@ Probe option acceptance by submitting option-shaped and path-shaped values and w
 An option shape carries an option prefix plus an attacker-chosen value into the argument vector.
 A filename shape carries a path separator plus an attacker-chosen destination into a file-writing flag.
 An environment shape carries an expansion reference that the runtime resolves before the command runs.
+An argument-file shape carries a prefix that makes the CLI read further arguments from a file, which turns argument injection into an arbitrary file read when the error text echoes the arguments.
+An array-argument shape carries the operation plus its arguments as separate list members, which avoids shell quoting altogether where the wrapper accepts a list.
 
 ### Path and Builtin Confusion
 
@@ -79,10 +84,13 @@ Container and cluster expansion hands off to post-exploitation at the durable-co
 
 Bypass forms stay aspects inside this variant because no encoding difference changes the wrapper-discovery step itself.
 Encoding differentials reach alternate parsers through case, comment, and normalization differences that the wrapper resolves.
-Whitespace and token tricks reach the shell past naive filters through separator substitutes plus quote-split tokens plus staged variable building.
+Whitespace and token tricks reach the shell past naive filters through separator substitutes plus quote-split tokens plus staged variable building plus brace expansion plus redirection in place of a space plus wildcard execution plus a caret-style escape on the Windows-style family.
+Path-component substitution extracts one character from an existing variable when the separator itself is filtered, so the operation path is assembled from environment material.
 Encoded stagers reach execution through transport decoding that restores the probe shape after the filter.
 Binary alternatives reach execution through absolute paths plus alternate binaries plus shell-flavour switching when one family is blocked.
 Layered combinations hand off to the defence-bypass family at the filter step rather than restating relay mechanics here.
+
+See references/command-injection-bypass-shapes.md for the per-family bypass table and the out-of-band confirmation procedure.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 

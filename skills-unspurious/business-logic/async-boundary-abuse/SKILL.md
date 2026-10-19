@@ -30,6 +30,7 @@ Document tenant scoping per write path so every later bleed verdict has a baseli
 
 Abuse listens for unvalidated downstream effects, so only the entries below are live here.
 - Downstream side effect without origin success, such as compensation executing absent its original commit.
+- An external confirmation accepted as authoritative without origin authentication, where a forged success signal commits the effect.
 - Retried worker duplicate where one retry produces a second durable write.
 - Between-call mutation signal where the downstream record reflects the altered figure rather than the validated one.
 - Cross-tenant visible state where one organization action mutates another tenant record.
@@ -56,11 +57,13 @@ This variant breaks the downstream re-enforcement clause because services queues
 
 Alter the validated figure in transit between the checking service and the committing service.
 Confirm the downstream record against the validated figure rather than against the request echo, because the echo reflects the first service only.
+Test the multi-entry case: where one logical write lands as several separate statements (a debit, a credit, and a fee written one by one), the window between the first and the last statement is the mutation window.
 The parent boundary step covers only verifying that boundaries re-enforce and cannot describe mutating between the check and the commit, so this variant owns the mutation procedure.
 
 ### Independent Compensation and Retry Triggering
 
 Invoke compensation flows without their origin success and replay worker retries without idempotent guards.
+Supply a forged external confirmation where the provider signal carries no signature or origin authentication, and read whether the downstream effect commits on that signal alone.
 Treat an executing compensation absent origin success as a saga-gap positive and treat a second durable write per retry as a guard positive.
 Test outbox plus inbox plus cron plus backfill paths separately, because each path carries its own guard logic.
 

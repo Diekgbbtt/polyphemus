@@ -14,6 +14,7 @@ Server-side request forgery lets the server reach networks and services the call
 **Fetch Sinks**
 - Outbound fetchers, previewers, importers, exporters, webhook testers, and link expanders that take a destination from the caller
 - Protocol-translating services: document and media renderers, archive expanders, validators, and converters that fetch on behalf of another format
+- Renderer and headless-browser sinks execute caller-authored markup, so the caller supplies code rather than a destination; the renderer then fetches, reads interior content, and can exfiltrate it out of band, which stays an aspect inside this class rather than a variant of its own
 
 **Indirect Carriers**
 - Stored links: profiles, avatars, signatures, and notification targets rendered or fetched later
@@ -22,6 +23,7 @@ Server-side request forgery lets the server reach networks and services the call
 
 **Less Obvious**
 - Schema-layer resolvers that fetch by argument
+- Tool-mediated fetches: a model-driven fetch or browse tool consumes an instruction and reaches an interior destination, which composes with the `llm-prompt-injection` class rather than restating it here
 - Background crawlers, queue workers, and sync jobs that consume attacker-influenced references
 - Service-to-service hops through relays, gateways, and sidecars that forward caller-supplied destinations
 
@@ -40,10 +42,12 @@ Server-side request forgery lets the server reach networks and services the call
 - Redirect following: single-hop, multi-hop, and scheme switches across the chain
 - Request shaping: whether the sink lets the caller influence the method, headers, or body of its own request
 - Parse behaviour: the canonical form the validation side reads versus the form the fetch side resolves
+- Read settlement: fetch a known external body first and check whether the upstream body returns, so blind versus full-read is settled before severity is assigned
 
 ### Oracle Setup
 
 - Mint a unique token per probe and confirm listener infrastructure receives arrivals before sending any effect payload
+- Attribute per parameter: one fresh token per candidate field, one request each, and a negative control, so an unvisited field is recorded as evidence rather than assumed silent
 - Measure a response-time baseline and record length and validator values for a control destination
 - Calibrate error classes against known-open and known-closed control points so a differential is attributable
 
@@ -97,6 +101,7 @@ Each variant breaks one clause: the canonical-address clause, the hop clause, th
 ### Redirect and Parser Differentials
 
 - An approval applied before redirect following lets a controlled hop land on an interior destination
+- A registered interior component that returns a redirect with elevated credentials makes the aggregation layer itself fetch the interior target, so the trusted redirector rather than the caller becomes the fetcher
 - Validation and fetch sides disagreeing on scheme, host, port, path, or encoding
 - Front-end and client-library parsing differences that open a connection the front end never approved
 
@@ -138,6 +143,11 @@ Redirect chains and destination parse differentials are the proxy-techniques fam
 
 **Address Encoding**
 - Decimal, octal, and hexadecimal notations, IPv6 and mapped forms, and mixed notation the parser accepts
+- Wrapped and encoded destinations: a blob carried in the path or a double-encoded host reaches the fetch after the filter's decode passes, and the number of decode passes before the fetch is the bug
+- Parser-confusion address shapes: a userinfo split, a fragment before the host, an encoded separator, and a backslash before the host move the parse between the check and the connection
+- Edge-versus-origin path confusion: the edge and the origin normalise the path differently, so the approved address and the fetched path diverge, with the comparison owned by the proxy-techniques family at its destination-parser step
+
+See references/address-notation-bypass.md for the notation families with the check each one defeats.
 
 **Relay Mechanics**
 - Short-lived resolution, redirect chains, and destination parse differentials are generic relay steps, and the proxy-techniques family owns them; name it at the hop rather than restating the mechanics here
@@ -159,7 +169,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 ## Testing Methodology
 
 1. **Inventory surfaces** - Every caller-influenced destination across request, stored, derived, and background carriers
-2. **Establish the oracle** - Callback infrastructure first, with one token per probe and listener preflight
+2. **Establish the oracle** - Callback infrastructure first, with one fresh token per candidate parameter plus a negative control and listener preflight
 3. **Interior addressing** - Loopback, private, link-local, and mapped address families plus hostname resolution
 4. **Handler variation** - Non-HTTP schemes where the sink supports them, or the recorded absence of each
 5. **Parser differentials** - Front-end approval versus fetch-side canonical form, with the comparison owned by the proxy-techniques family at its destination-parser step
@@ -182,6 +192,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Blocked egress showing uniform errors across every destination and handler
 - Callbacks whose source is the tester's own client rather than the target's egress path
 - Static responses driven by the parser rather than by a live connection attempt
+- A destination echoed back inside an error, help, or validation string, which proves formatting rather than a fetch and is the most common mis-report
 
 ## Pro Tips
 

@@ -75,6 +75,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 Translation chains forward into execution because a crafted grammar without a state change is only a probe.
 - Pivot from a reachable in-memory store to a scheduled task entry, then to command execution.
+- Keep the store write and the scheduled trigger as two separately confirmed steps, because a written entry that never fires proves storage rather than execution.
 - Pivot from a reachable gateway interface to a constructed request record, then to process creation.
 - Pivot from a reachable container or orchestration endpoint to token or secret discovery, then to lateral movement.
 - Hand a translated read that stays blind to the inference variant for oracle confirmation.

@@ -13,17 +13,21 @@ The spoofing goal is token-bearing links pointed at attacker infrastructure plus
 
 ## Attack Surface
 
-Applicability centers on two oracles fed by one header family.
+Applicability centers on the oracles fed by one header family.
 The first oracle is a link-generating flow that builds absolute destinations from the Host value, such as a credential-reset flow or a delegation-callback flow or a canonical-link tag.
+A second link-generating oracle is a discovery document that republishes issuer plus endpoint addresses, because every consumer of that document inherits the forged authority without a further request.
 The second oracle is an access-controlled endpoint that trusts a non-rewrite forwarding alias for allowlist or scheme decisions.
-Rewrite headers that change the path after the check belong to header-method-override, so they never ride here.
+An authority that selects the upstream the front end forwards to is a third, routing-shaped value: the parent authority step is accurate for it, and the interior-body read that follows escalates to the `ssrf` class rather than staying here.
+Routing and path rewriting act at different layers and never compose, so a rewrite-shaped result belongs to header-method-override even when the two arrive in one request.
 
 ## Reconnaissance
 
 Inventory narrows to the Host-family surface plus the flows that consume it.
 Send Host and the forwarding alias for host with swapped values and record which one wins in emitted links plus log entries plus redirects.
 Spray each non-Host non-rewrite alias with a forged value and record the per-alias decision delta on allowlist-gated plus scheme-gated endpoints.
-Enumerate the host-shape edges in abstract form, namely bracketed-literal form plus trailing-dot form plus port-confusion form, and record which shapes the parser accepts.
+Enumerate the host-shape edges in abstract form, namely bracketed-literal form plus trailing-dot form plus port-confusion form plus trailing-port form plus userinfo-split form plus suffixed-host form, and record which shapes the parser accepts.
+Read a discovery document back after each forged submission, because a republished issuer or endpoint address proves the document consumed the forgery.
+Record the virtual-host read-out per forged value, namely a status or size delta that names the default host and the interior hosts behind the edge.
 
 ## Detection Channels
 
@@ -31,6 +35,8 @@ Spoofing listens to links plus decisions, so only the entries below are live her
 - Emitted link destination carrying an attacker host proves the URL builder consumed the forgery.
 - Out-of-band arrival of a token-bearing link at attacker infrastructure confirms the emitted destination leaves the building.
 - Auth decision flip with and without a forged forwarding alias binds the probe to the access check.
+- Republished issuer or endpoint address in a discovery document proves a second link-generating consumer inherited the forgery.
+- Virtual-host enumeration read-out, namely a status or size delta per forged value, names the default host and the interior hosts behind the edge.
 - Per-alias decision map records one allowlist plus scheme verdict per alias with its negative control.
 
 ## Adversarial Capabilities
@@ -65,6 +71,8 @@ The parent spray step covers only single-alias submission, so this variant owns 
 
 Bypass forms stay aspects inside this variant because no spelling changes the precedence or mapping oracle itself.
 - Shape bracketed-literal plus trailing-dot plus port-confusion host forms past a naive host equality check.
+- Split the authority on userinfo and suffix the host so a substring or prefix comparison reads a permitted name inside a hostile one.
+- Send an absolute request target whose authority differs from the field, so the enforcing layer and the link builder read different members.
 - Mangle alias casing where the filter keys off exact spelling while the consumer folds case.
 - Duplicate the Host field so the enforcing side reads one member while the builder reads the other.
 - Layer encoded-dot plus encoded-port forms past a filter that decodes fewer times than the builder.
@@ -81,7 +89,7 @@ Spoofing chains forward through the bent link or the opened endpoint because a b
 ## Testing Methodology
 
 Spoofing runs precedence comparison before capture and per-alias mapping before claims, because single submissions cannot attribute the trusting consumer.
-1. **Inventory consuming flows** - list every link-generating flow plus every alias-trusting guarded endpoint, and the step completes when no flow or endpoint lacks a recorded consumer.
+1. **Inventory consuming flows** - list every link-generating flow plus every discovery document that republishes addresses plus every alias-trusting guarded endpoint, and the step completes when no flow, document, or endpoint lacks a recorded consumer.
 2. **Compare precedence** - send Host and the forwarding alias for host with swapped values plus each host-shape edge, and the step completes when every emitted link plus redirect plus log entry names its winning source.
 3. **Capture out of band** - drive each link flow with a forged Host and record the arrival outside the application, and the step completes when every emitted destination shows its host plus its token material.
 4. **Map per-alias decisions** - replay each non-rewrite alias with forged values against each guarded endpoint beside a clean negative control, and the step completes when every alias carries an allowlist plus scheme verdict.

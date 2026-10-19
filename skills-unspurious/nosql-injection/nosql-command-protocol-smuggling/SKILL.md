@@ -87,6 +87,7 @@ Frames chain forward into control because one smuggled command without a follow-
 - Pivot from a smuggled write to a marker-key read for the smallest execution proof.
 - Pivot from a marker read to privilege or configuration keys for the smallest confirming escalation.
 - Pivot from framing-error text to argument expectations that sharpen the next frame.
+- Reach the command port from the interior: hand the fetch step to the `ssrf` class and the relay step to the `proxy-techniques` family rather than restating their mechanics here.
 - Stop each chain at the smallest read or reversible proof that confirms the architectural risk.
 
 ## Testing Methodology

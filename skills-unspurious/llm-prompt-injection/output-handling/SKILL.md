@@ -31,6 +31,7 @@ Handling work starts by mapping the output path before coaxing any sink-bearing 
 Handling listens to sink behavior, so only the entries below are live here.
 - Rendered script execution or dispatched request at the sink confirms a handling positive.
 - Outbound request carrying context data to an attacker-observable destination confirms an exfiltration channel.
+- Name-resolution queries whose labels carry context data confirm an exfiltration channel where full egress is filtered.
 - Sink transcript showing the emitted markup or statements confirms the emission reached the sink.
 - Properly encoded output at the sink confirms a negative even when the model emitted a suspicious shape.
 
@@ -66,6 +67,7 @@ Treat encoded or neutralised statements at the sink as a negative even when the 
 ### Exfiltration Emission
 
 Coax placeholder-shaped link or embed constructs that cause the sink to request an observable destination with context data attached.
+Where full egress is filtered, a name-resolution query whose labels carry the data still leaves the boundary, so test the resolution channel beside the request channel.
 Confirm the outbound request carries the expected value before claiming an exfiltration channel.
 Treat a markdown-image pattern that reaches a renderer as handling here, since the proving artifact is the rendered request rather than a tool log.
 
@@ -113,6 +115,7 @@ Handling rewards sink-first thinking plus emission variety plus encoding checks.
 3. Test image and embed rendering explicitly because it is a classic zero-click exfil channel.
 4. Confirm each positive against the encoding path so neutralised output never ships as a finding.
 5. Log each emission behind its sink plus shape so rendered and neutralised verdicts stay separable.
+6. Sub-tag every emission and callback so the firing sink stays attributable when several sinks share one run.
 
 ## Summary
 

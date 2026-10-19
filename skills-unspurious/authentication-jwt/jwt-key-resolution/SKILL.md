@@ -44,7 +44,7 @@ This variant breaks the key source binding while the signature routine, the clai
 
 ## Key Vulnerabilities
 
-- Selector injection steers key lookup outside the intended store or into attacker-influenced lookup logic.
+- Selector injection steers key lookup outside the intended store or into attacker-influenced lookup logic: a record-store query, a command sink, or a fetch sink, each a separate family to probe.
 - Remote key reference abuse hosts the verification key material at an observed endpoint that the server fetches and trusts without pinning.
 - Inline key embedding supplies the verification key inside the token header where the verifier prefers it over its configured keys.
 - Cache and fallback flaws accept retired keys during rollover, accept any matching key shape without selector pinning, or succeed verification when the selector is unknown or absent.

@@ -1,6 +1,6 @@
 ---
 name: defence-bypass-signature-evasion
-description: Signature evasion past a matcher's rule set, covering token splitting and separator substitutes when the list matches literal keywords, comment and whitespace insertion when the list matches contiguous shapes, and equivalent operators when the list matches only the obvious spelling.
+description: Signature evasion past a matcher's rule set, covering token splitting and separator substitutes when the list matches literal keywords, comment and whitespace insertion when the list matches contiguous shapes, equivalent operators when the list matches only the obvious spelling, and depth padding or alternate grammar forms when the matcher counts nesting or lists one element spelling.
 metadata:
   version: 1.0.0
 ---
@@ -31,6 +31,7 @@ Signature evasion listens to the matcher's rule set rather than to the sink's be
 - A pass for the same effect in a second spelling, which shows the rule was stepped around rather than satisfied.
 - The differential between the refused spelling and the passed spelling at one position, which localises the axis the list misses.
 - The effect appearing at the sink while the refusal signal stays silent.
+- A refusal for a spelling that passed moments earlier, which reads as a rule set growing between attempts rather than as a dead end.
 - The sink's own error class, which separates a bypassed matcher from a request the sink itself rejected.
 
 ## Adversarial Capabilities
@@ -55,6 +56,7 @@ A pass is claimed only against the recorded refusal, because a spelling that was
 Split a denied token into fragments the sink reassembles and the list does not match, because the matcher reads a contiguous literal.
 Rejoin the fragments through a concatenation form the sink evaluates, and confirm the rejoin at the sink rather than at the matcher.
 The parent craft step covers only one variable per attempt and cannot describe reassembly, so this variant owns the fragmentation procedure.
+The reassembly set includes quote insertion inside the token and an evaluated substitution that emits the token at the sink, because the matcher reads the spelling while the sink reads the value.
 
 ### Separator and Whitespace Gaps
 
@@ -67,6 +69,13 @@ Treat a whitespace form that survives the matcher and parses at the sink as the 
 Reach the same operation through a sibling operator, an alias, or a second name the list does not carry.
 Prefer the alias whose effect is identical at the sink, so the bypass needs no second procedure behind it.
 Treat a refused sibling as a rule-set growth signal rather than as a dead end, and move to the next equivalent form.
+In a query or expression grammar, vary the operator's spelling, its case, and its encoding, and try an obscure sibling operator that reaches the same evaluation, because the rule set usually lists the obvious operator only.
+
+### Depth-Counting and Grammar Gaps
+
+Where the matcher counts depth or nesting, pad the value with segments the matcher decodes away so its count stays inside its bound while the sink's own depth leaves it.
+Enumerate the grammar's alternate tags, handlers, and attribute forms where the matcher lists one spelling of an element, because each alternate reaches the same parse.
+Keep the effect identical across the alternates, so a refused alternate is attributable to the rule set rather than to a broken request.
 
 ## Bypass Techniques
 
@@ -76,6 +85,10 @@ Bypass shapes slip past a matcher that is present, so each one is tried after th
 - Token splitting with reassembly at the sink, where the matcher has no grammar to reassemble.
 - Sibling operators and aliases for a denied name, where the list carries one spelling of the operation.
 - Fragmenting a multi-part signature across request positions that the sink joins.
+- The ordered axis sweep: casing, single encoding, double encoding, escape sequences, entity forms, and overlong forms, because the cheapest axis that admits the shape is the finding.
+- A control-kind split: a rule-set gap is defined against a signature matcher, while a behavioural or anomaly detector calls for a baseline deviation rather than a new spelling.
+See `references/matcher-axis-matrix.md` for the axis list and the order the axes are swept in.
+See `scripts/axis-probe.sh` for the one-axis-per-attempt probe loop.
 
 ## Chaining Attacks
 

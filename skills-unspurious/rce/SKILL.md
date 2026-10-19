@@ -34,12 +34,14 @@ Remote code execution leads to full server control when input reaches code execu
 ### Sink Inventory
 
 - Enumerate every delegate that receives user-influenced content: command wrappers, template rendering, decoder entry points, file converters, report generators, plugin hooks
+- Treat utility-style surfaces as applicability signals: network diagnostics, file conversion, archive utilities, and report generators that build a shell string for the caller
 - For each sink, note whether input arrives as data, as an argument, or as file content
 - Trace stored inputs that a batch job or pipeline later evaluates
 
 ### Baseline and Oracle Setup
 
 - Mint a unique callback marker per probe and confirm listener infrastructure receives DNS and HTTP arrivals before any effect payload
+- Where only name-resolution egress survives, carry the result in an encoded label of the callback name so the arrival returns data rather than mere liveness
 - Measure a response-time baseline so a gated delay is attributable
 - Record output length and digest for plain-control requests so a reflected-output differential is calibrated
 
@@ -89,10 +91,12 @@ Each variant reaches the same failure at a different delegate: an OS wrapper, or
 - Quoting breaks: alternate quotes and escapes that end the quoted segment early
 - Path and builtin confusion: absolute paths, alternative tools, and wrapper invocations that reach the shell anyway
 - Evasion: whitespace alternatives, token splitting, variable building, and encoded stagers
+- Body-to-parser matching: match the body encoding to the parser the endpoint reads, because a structured body against a form parser yields a silent false negative with a plausible success status, and the probe must be re-encoded before any conclusion is drawn
 
 ### Evaluation and Template Sinks
 
 - Template rendering that evaluates caller-supplied expressions reaches the host language and process interfaces
+- A header-delivered expression evaluated during routing runs before the authorization filter, so the sink executes on a path the caller never authenticated for
 - Minimal probes reveal engine identity; the engine family decides the path from expression to execution
 - Template selection from user input converts a name into file selection; combine with the traversal class where it does
 
@@ -151,6 +155,11 @@ Each variant reaches the same failure at a different delegate: an OS wrapper, or
 **Delegate Substitution**
 - Where the primary delegate is filtered, reach the same operation through a converter, pipeline, or internal service
 
+**Indirection and Token Shaping**
+- Reach the same operation through a language-level indirection when its name is filtered, because a send or call primitive resolves the name at runtime
+- Shape whitespace alternatives past a token filter: field separators, brace expansion, redirection in place of a space, wildcard expansion, and quote splitting
+- Decode a staged token at execution time so the filter never reads the plain operation string
+
 Filter and encoding shapes are the defence-bypass family's steps; name it there rather than restating the mechanics here.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
@@ -161,6 +170,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Fetch translation to an internal execution interface, which converts SSRF into execution
 - Execution to credential and token stores, then movement to other systems
 - Upload pipelines to conversion delegates, where the front door accepts the file the delegate evaluates
+- Treat an execution primitive as two halves: one that puts bytes on the host and one that interprets them, so name the `sql-injection`, `insecure-file-uploads`, `prototype-pollution`, and `xxe` classes at the steps that supply each half rather than restating their mechanics here
 
 ## Testing Methodology
 

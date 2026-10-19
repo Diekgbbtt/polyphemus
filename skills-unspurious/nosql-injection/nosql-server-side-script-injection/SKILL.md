@@ -31,6 +31,7 @@ Script evaluation confirms this variant, so only the entries below are live here
 - Enablement-state answer distinguishing an open engine gate from a closed one.
 - Driver error and validation text after malformed function bodies.
 - Sleep-driven latency differential between a truth branch that pauses and one that returns immediately.
+- A key-set probe that answers per candidate field name rather than per value, which exposes the schema behind the query.
 - Boolean response, status, or redirect difference between a matching function body and a non-matching one.
 
 ## Adversarial Capabilities
@@ -79,6 +80,13 @@ The parent store list never states script-source control, so this variant owns t
 Branch the function body on a blind predicate with a pause primitive on the truth arm, because a latency gap answers one bit per request where content stays uniform.
 Repeat each pair until the gap stabilises across samples and treat jitter without separation as inconclusive rather than negative.
 The parent script step names sleep timing without stating repetition discipline, so this variant owns the timing procedure.
+
+### Field and Schema Enumeration
+
+Enumerate field names rather than values: a predicate over the document key set answers whether a candidate field exists, which maps the schema before any value is read.
+Walk the key set character by character through the same boolean oracle, because a field name is as extractable as a field value.
+Treat the key set as the first extraction target on an unknown document shape, so later reads name live fields instead of guessing them.
+The parent blind step extracts values only, so this variant owns the field-name and schema enumeration procedure.
 
 ## Bypass Techniques
 

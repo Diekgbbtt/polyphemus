@@ -65,6 +65,7 @@ Treat a second commit that lands only under tight synchronization as window evid
 ### Response-Versus-Effect Dedup Forensics
 
 Confirm every suspected double in the authoritative ledger rather than in the response body, because application dedup can drop only the response while side effects still occur.
+Treat partial fulfilment as a double too: one lane can return an error while both effects commit, so read the ledger rather than the pair of responses.
 Re-read balances plus entitlements plus fulfillment records after a settling delay and require the double to persist.
 Treat doubles visible only in transient responses as inconclusive rather than positive.
 

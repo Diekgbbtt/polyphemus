@@ -84,6 +84,7 @@ Bypass forms stay aspects inside this variant because no value difference change
 - Token absence plus cross-request reuse plus cross-session reuse plus untied scope steer the reconstructed body past a weak proof-of-intent check.
 - Null plus missing plus cross-origin header values steer the reconstructed body past a weak origin or referrer check.
 - Duplicate-key plus collection-shape ambiguity steers the body through a lenient parser branch.
+- A path-scope mismatch steers the token check: the token scope is matched on the pre-normalisation path while execution uses the post-normalisation path.
 - Referrer stripping through an empty-context navigation source presents the reconstruction without its origin context.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.

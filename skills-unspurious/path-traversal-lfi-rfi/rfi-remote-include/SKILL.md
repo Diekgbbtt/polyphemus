@@ -64,6 +64,7 @@ Escalate from fetch confirmation to evaluation proof only after the outbound ora
 Defeat scheme allowlists by spelling remote meaning across handler and encoded scheme shapes held as <remote-shape>.
 Defeat name checks by nesting scheme meaning where validation resolves before the fetcher decodes.
 Defeat fetcher assumptions by routing stream-handler shapes through sinks that evaluate rather than store.
+Defeat appended-extension enforcement by terminating the name with a query or fragment delimiter where the fetcher truncates at it.
 Defeat beacon blocking by keeping hosted content minimal and deterministic per candidate.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.

@@ -22,6 +22,7 @@ Unsigned graphs without any binding belong to the gadget-chain variant, and stor
 Hunt state blobs that carry a signature segment alongside opaque content.
 Map the verifier by tampering one byte and recording accept, reject, or silent-fallback behaviour.
 Probe for unsigned fallback paths by removing the signature segment and resubmitting the blob.
+Distinguish a signed-but-readable blob from an encrypted one before choosing strip versus recover, because the strip path only exists where the payload stays readable.
 Collect binding facts such as algorithm hints, key-roll indicators, and claim fields into the runtime knowledge base.
 Stop hunting only when every reachable state blob has an accept, reject, or fallback observation recorded.
 
@@ -32,11 +33,14 @@ Unsigned-fallback acceptance confirms a keyless path exists beside the signed on
 Re-signed blob acceptance confirms a recovered or guessed secret binds correctly.
 Local re-verification success predicts server acceptance before the minted blob is sent.
 Claim-reflecting behaviour confirms the forged state took effect after acceptance.
+- **Signed-only adjudication**: a readable payload beside a signature segment separates a signed-but-readable blob from an encrypted one.
+- **Response-class differential**: a binding-failure message beside a state-invalid message separates a rejected binding from a rejected payload shape.
 
 ## Adversarial Capabilities
 
 This variant presupposes the ability to submit state blobs at reachable request loci.
 It runs offline secret search against captured blobs with local re-verification before touching the server.
+It recovers the binding secret from a known plaintext pair where both the blob and its plaintext are in hand.
 It strips signature segments to test keyless acceptance paths without any secret.
 It mints claim-bearing blobs that encode a chosen identity or role once the binding is broken.
 
@@ -50,7 +54,9 @@ The exact failing clause is the signature-binding clause: the binding rests on a
 ## Key Vulnerabilities
 
 Weak-secret recovery searches the binding secret offline, re-verifies each candidate locally, and re-signs a minted state blob with the recovered value.
+Known-plaintext recovery shortens the search where a captured blob and its plaintext are both in hand, since the pair constrains the secret directly.
 Signature stripping removes the binding segment and submits the content alone, reaching the unsigned fallback the verifier silently accepts.
+Parse-before-verify ordering lets a legacy parser resolve some blob shapes before the binding check completes, so acceptance follows the shape rather than the key and neither recovery nor removal is needed.
 Claim minting encodes a chosen identity or role into the abstract shape `[CLAIM-PLACEHOLDER, BINDING-PLACEHOLDER]` once either path breaks the layer.
 The key-centric recovery and keyless-removal procedure is the delta chain-matching language cannot express.
 Each path converges on the same proof: the server accepts the minted blob and reflects its claims.
@@ -59,6 +65,7 @@ Each path converges on the same proof: the server accepts the minted blob and re
 
 Search the secret offline with local re-verification first, since server-side guessing burns budget and risks lockout.
 Decide strip before resign on every target, since a keyless path removes the need for any secret work.
+Probe the parser order with a small payload-shape matrix and read the response class, since a binding-failure message beside a state-invalid message separates the two parse paths.
 Choose claims for identity or role effect and keep the minted effect minimal and reversible.
 Hand brute-force sub-steps to the crypto-weakness skill where secret search mechanics are owned instead of restating them here.
 
@@ -66,6 +73,7 @@ Hand brute-force sub-steps to the crypto-weakness skill where secret search mech
 
 Confuse algorithm selection where the verifier honours a binding label inside the blob, confirming each attempt with local re-verification.
 Downgrade the binding where legacy verifiers accept weaker checks beside the current one.
+Defeat binding evaluation by shaping the blob so a legacy parser resolves it before the integrity check runs, confirming the ordering with the response-class differential.
 Shift the blob across equivalent request loci when one locus enforces verification and another feeds the same rehydration.
 Name the defence-bypass family at steps that defeat hardened verifiers instead of restating its mechanics here.
 
@@ -81,10 +89,11 @@ Session-fixation effects from planted state hand off to session-management consu
 
 1. Map signed state blobs to their verifiers; the step is complete when each reachable state blob has a tamper-response observation recorded.
 2. Test the unsigned fallback by stripping the binding segment; the step is complete when the fallback verdict of accepted or rejected is recorded.
-3. Recover the weak secret through offline search with local re-verification; the step is complete when a candidate re-verifies locally or the search space is exhausted with its bounds recorded.
-4. Mint the state blob by re-signing chosen claims or by shaping the stripped form, breaking only the signature layer; the step is complete when exactly one minted blob exists with its construction rationale recorded.
-5. Prove acceptance with the least-privilege claim that still demonstrates effect; the step is complete when the server reflects the minted claims from the forged blob.
-6. Cover priority session stores first and revisit skipped loci; the step is complete when each named session locus is tested or ruled out with an observation.
+3. Probe the parser order with one payload per blob shape and read the response class; the step is complete when every shape carries a parse-order verdict.
+4. Recover the weak secret through offline search with local re-verification, using a known plaintext pair where one is available; the step is complete when a candidate re-verifies locally or the search space is exhausted with its bounds recorded.
+5. Mint the state blob by re-signing chosen claims or by shaping the stripped form, breaking only the signature layer; the step is complete when exactly one minted blob exists with its construction rationale recorded.
+6. Prove acceptance with the least-privilege claim that still demonstrates effect; the step is complete when the server reflects the minted claims from the forged blob.
+7. Cover priority session stores first and revisit skipped loci; the step is complete when each named session locus is tested or ruled out with an observation.
 
 ## False Positives
 
@@ -93,6 +102,7 @@ Verifiers that reject stripped blobs without any fallback close the keyless path
 Claim schemas that ignore unknown or elevated fields neutralise minting when the reflected state shows no effect.
 Sandboxed rehydration without identity or state consequences limits the finding to acceptance without impact.
 Error text naming state classes without attacker bytes reaching the verifier marks a dead code path rather than a finding.
+A verifier that evaluates the binding before any parse, with uniform rejection across every blob shape, closes the ordering path.
 
 ## Pro Tips
 
@@ -101,9 +111,11 @@ Verify every secret candidate locally before sending it, since local checks are 
 Mint the smallest claim that proves control, favouring a benign marker over a privileged role where the marker reflects.
 Record the binding facts beside each attempt so a failed run still narrows the remaining search space.
 Treat legacy verifiers as strip-first targets, since fallback paths cluster around older acceptance logic.
+Probe parser ordering early where a legacy parser sits beside the current one, since shape acceptance removes the need for secret work.
+Recover from a known plaintext pair where one is in hand, since the pair constrains the secret better than a blind search.
 
 ## Summary
 
 Signature-gated state becomes attacker state when the binding is recoverable or removable.
-Break the layer through offline recovery with local re-verification or through keyless removal, then prove acceptance with a minted blob.
-Safe patterns verify bindings with strong secrets, reject stripped forms outright, and keep claims to the minimum the feature requires.
+Break the layer through offline recovery with local re-verification or keyless removal or a parse-order gap, then prove acceptance with a minted blob.
+Safe patterns verify bindings with strong secrets before any parse, reject stripped forms outright, and keep claims to the minimum the feature requires.

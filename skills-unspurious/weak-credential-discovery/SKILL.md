@@ -14,6 +14,7 @@ Applications expose credential material in places they never intended to publish
 **Secret Holders**
 - Served client source: comments, hidden fields, inline scripts, and configuration objects
 - Deployable artifacts at guessable locations: environment files, configuration files, version-control metadata, backups, and debug or status pages
+- Build and bundle artifacts: source maps, asset manifests, interface specification documents, and build-info files, which reconstruct source, enumerate routes, and carry embedded secrets
 - API responses that embed credential shapes or token material
 
 **Authentication Acceptors**
@@ -51,6 +52,7 @@ Applications expose credential material in places they never intended to publish
 
 - After an authenticated response, decode the session cookie, token, and storage values
 - Read the identity and role claims they carry, and note which the client can alter
+- Fingerprint the algorithm each holder uses, from its structure and digest shape, and hand the entropy and re-derivation questions to the `crypto-weakness` class and its `crypto-predictable-token` leaf at that step
 
 ## Detection Channels
 
@@ -129,9 +131,16 @@ Each variant breaks one clause: the exposure clause, the default-credential clau
 - A secret found on one surface often authenticates another; reuse across surfaces is the finding
 - Chain holders: served source names a path, the path yields a configuration, the configuration yields a credential
 
+**Liveness and Scope Validation**
+- Validate a candidate against the issuing service's read-only identity endpoint before calling it usable: liveness plus the scope it grants is what turns a credential-shaped string into a finding
+- Weigh the detectability cost before each validation, and prefer the quietest validator that still answers
+- Keep the validation request read-only and shaped like ordinary traffic, because a loud validator converts a low-noise finding into a monitored one
+See `references/secret-validators.md` for the validator shape, the identity reads by issuer family, and the output record.
+
 **Post-Authentication Reading**
 - Decode every issued artifact after login and compare its claims with the identity the flow proved
 - Where claims are client-side-authoritative, hand the signature and validation step to the token class
+- Where a holder looks opaque but must carry entropy, hand the sampling and re-derivation procedure to `crypto-weakness` and `crypto-predictable-token` rather than judging strength from one sample
 
 ## Bypass Techniques
 
@@ -178,6 +187,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Example credentials in documentation, samples, or comments that name no live account, verified by a reuse attempt
 - Version banners and environment names that disclose no reusable value
 - Generic login errors that stay uniform once timing is normalized
+- A uniform rejection that persists while correct submissions stop being accepted, which reads as a silent throttle rather than an open endpoint; re-test with spaced samples before recording a negative
 - A token whose claims are readable but cryptographically bound, where reading yields nothing beyond the identity that proved possession
 - Deployable-looking paths that return the application's own error or login page
 - Owner-only detail pages with no authentication path

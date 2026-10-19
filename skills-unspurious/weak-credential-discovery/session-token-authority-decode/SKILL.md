@@ -61,6 +61,7 @@ The parent names this decode-and-interpret loop in exactly one step, and no unau
 Read decoded fields as identity plus role markers that map the authorization surface for follow-on testing.
 Treat readable claims as discovery rather than proof, because signature validation belongs to authentication-jwt and is named there instead of restated here.
 Record token signing state as a secondary check inside interpretation, because signing rides as an aspect rather than its own bypass procedure.
+Fingerprint the algorithm that protects each holder at the decode step and hand the entropy and re-derivation questions to `crypto-weakness` and its `crypto-predictable-token` leaf, because a readable holder still decides nothing about its own strength.
 
 ## Chaining Attacks
 
