@@ -77,7 +77,6 @@ journeys:
 
 GOOD_SURFACE = """target: shop
 observed_at: "2026-10-17T00:00:00Z"
-base_url: https://shop.invalid
 units:
   - label: Service
     identity: {business_function_slug: checkout}

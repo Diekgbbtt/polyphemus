@@ -3,7 +3,31 @@ from polymerhus.recon.control.scope import (
     DISCOVERY_JOBS,
     parse_scope,
     seed_probe_target,
+    target_origin,
 )
+
+
+def test_target_origin_from_a_bare_seed_defaults_to_http():
+    # #384 (arm L): the one fact every render seam resolves deployment-neutral
+    # stored paths against; the eval front serves HTTP on :80.
+    assert target_origin({"target_seed": "t-abc.target"}) == "http://t-abc.target"
+
+
+def test_target_origin_preserves_a_scheme_bearing_seed():
+    assert (
+        target_origin({"target_seed": "https://app.example.com"})
+        == "https://app.example.com"
+    )
+
+
+def test_target_origin_reads_the_legacy_alias_and_folds_www():
+    assert target_origin({"target_domain": "www.example.com"}) == "http://example.com"
+
+
+def test_target_origin_is_none_without_a_seed():
+    assert target_origin({}) is None
+    assert target_origin(None) is None
+    assert target_origin({"target_seed": "  "}) is None
 
 
 def test_bare_apex_is_exact_host():
