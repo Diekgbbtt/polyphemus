@@ -328,6 +328,88 @@ def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_p
         hunter_store=hunter, hunter_payload_capable=False) is None
 
 
+def test_a_production_builder_run_consumes_a_zero_loop_model(
+        tmp_path, monkeypatch, caplog):
+    """R1 (T4a review round 2): the INERT run (the production builder, which cannot
+    consume the loop payload) must still consume a zero-loop produced COMPLETED
+    valid model - the modeller's legitimate "nothing to hunt here" outcome - with
+    no dispatch, and the gap line must not claim a decided model was undecided.
+
+    The run is complete, the model is in consumed/, and a LATER intake excludes
+    the unit (a consumed model is decided), so the zero-loop unit is never
+    re-modelled."""
+    from tests.attack.test_hunting_modeller_wiring import (
+        RUN as WIRING_RUN,
+        _FakeControl,
+        _FakePg,
+        _noop_pod_builder,
+        _patch_pg,
+    )
+    from tests.hunting_fixtures import ScriptedModellerTurns, intake_unit
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt = HuntStore(tmp_path / "hunts")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    models = ThreatModelStore(root_dir=tmp_path / "models")
+    control = _FakeControl()
+
+    # NO hunter_builder: the run resolves the PRODUCTION one, which cannot consume
+    # the loop payload (C1) - the only production configuration there is today
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
+        hid = asyncio.run(hunting_runtime.start_hunting(
+            PROJECT, intake_units=[intake_unit(UNIT)],
+            modeller_kwargs={"turn_fn": _zero_loop_turns()},
+            graph_read_fn=lambda cypher, params: [],
+            control=control,
+            hunt_store=hunt, hunter_store=hunter, threat_store=models,
+            pod_builder=_noop_pod_builder,
+            tick_interval=0.001,
+        ))
+
+    assert hid == WIRING_RUN
+    assert fake.statuses[-1] == (WIRING_RUN, "complete")
+    # the zero-loop model IS consumed (the mover's no-dispatch consume, S2 8.4)
+    assert models.read_completed_units(PROJECT) == [UNIT]
+    assert models.read_produced_loops(PROJECT) == []
+    # and the gap line does NOT claim the model is undecided
+    lines = [record.message for record in caplog.records
+             if "NOTHING is dispatchable" in record.message]
+    assert lines
+    assert "every model is decided" in lines[-1]
+    assert "await the per-loop hunter harness" not in lines[-1]
+
+    # a later intake excludes the unit: a consumed model is decided (S2 9.3)
+    from polymerhus.attack.hunting.unit_intake import freeze_intake
+
+    plan = freeze_intake([intake_unit(UNIT)], completed_ids=[UNIT])
+    assert plan.order == ()
+    assert [(exclusion.unit_id, exclusion.reason) for exclusion in plan.excluded] \
+        == [(UNIT, "completed")]
+
+
+def _zero_loop_turns():
+    """The scripted modeller turn seam whose COMPLETED write has no loop (every
+    vulnerability dropped): the model the mover consumes without a dispatch."""
+    from tests.hunting_fixtures import ScriptedModellerTurns, modeller_gate_payloads
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    payloads = modeller_gate_payloads()
+    vulnerable = payloads[ModelState.VULNERABILITIES_WRITTEN]["vulnerabilities"][0]
+    payloads[ModelState.VULNERABILITIES_WRITTEN] = {"vulnerabilities": [{
+        **vulnerable, "dropped": True,
+        "drop_reason": "the mechanics are absent",
+        "drop_probe": "a second tenant's item id returning that item",
+    }]}
+    failed = payloads[ModelState.COMPLETED]["failure_modes"][0]
+    payloads[ModelState.COMPLETED] = {
+        "failure_modes": [{**failed, "dropped": True,
+                           "drop_reason": "the mechanics are absent"}],
+        "loops": [],
+    }
+    return ScriptedModellerTurns(payloads=payloads)
+
+
 def _produce_one_loop_model(store, *, run_id: str, unit_id: str = UNIT):
     """One COMPLETED valid model with one `high` loop, through the real store."""
     from tests.hunting_fixtures import modeller_gate_payloads

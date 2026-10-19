@@ -932,30 +932,40 @@ def read_produced_inbox(
       whose model document is unreadable is refused here, so it is neither
       dispatched nor counted as work. With `hunter_payload_capable` False (C1:
       the run's hunter builder cannot consume the loop payload yet) the loop
-      family is not read at all - its loops are not dispatch input, nothing is
-      moved and no model is consumed.
+      files are not dispatch input - nothing is moved and no looped model is
+      consumed - but a loop-FREE model is still consumed as the no-dispatch
+      model (R1: the modeller's "nothing to hunt here" outcome, S2 8.4).
     - The hunter memory's produced test specs (the pod family, S3 8.7).
     - The hunt store's produced configs (the retiring config family: the T4b
       sweep removes this read with the config dispatch path).
 
     Each item carries its Q13 session id derived on the fly from the
     memory-item keys (Q13; ADR #169)."""
-    items: list[ProducedItem] = []
+    items: list[ProducedItem] = list(_legacy_items(
+        project_id, run_id, hunt_store=hunt_store, hunter_store=hunter_store,
+    ))
     models_to_consume: dict[str, tuple[str, ...]] = {}
-    if threat_store is not None and not hunter_payload_capable:
-        # C1 (T4a review): the run's hunter cannot consume the loop payload yet, so
-        # the loop family is not dispatch input at all - the loops stay produced
-        # (nothing is moved or consumed) and are NOT work, so the run quiesces
-        # inert and the work survives for the run that can consume it.
-        return ProducedInbox(items=_legacy_items(
-            project_id, run_id, hunt_store=hunt_store, hunter_store=hunter_store,
-        ))
     if threat_store is not None:
         for entry in threat_store.read_produced_loops(project_id):
             unit_id = str(entry.get("unit_id") or "")
             unit_name = str(entry.get("unit_name") or "")
             if entry.get("run_id") != run_id:
                 continue  # another run's model: its own mover dispatches it
+            if not hunter_payload_capable:
+                # C1 (T4a review): the run's hunter cannot consume the loop payload
+                # yet, so the loop family is not dispatch input - the loop files stay
+                # produced (nothing is moved) and are NOT work, so the run quiesces
+                # inert and the work survives for the run that can consume it.
+                #
+                # R1 (T4a review round 2): a loop-FREE model is different - it is the
+                # modeller's "nothing to hunt here" outcome, and its consume is the
+                # model-document move the mover owes regardless of any hunter
+                # (S2 8.4). Nothing about it is dispatchable work, so consuming it
+                # loses no C1 protection; leaving it produced would re-model the unit
+                # on every run and make the gap line lie.
+                if not entry.get("loops") and not entry.get("malformed_loops"):
+                    models_to_consume[unit_id] = ()
+                continue
             model = _entry_model(entry, threat_store, project_id, unit_id)
             refused: list[str] = [
                 str(broken.get("loop_id") or "")
@@ -1006,28 +1016,6 @@ def read_produced_inbox(
                 # loop files are refused). The refused files stay in produced/ -
                 # they are evidence, never pending loops.
                 models_to_consume[unit_id] = tuple(sorted(set(refused)))
-    if hunt_store is not None:
-        for config_key, file_name in hunt_store.read_produced_configs(project_id):
-            config_id = Path(file_name).stem
-            items.append(HuntConfigItem(
-                message_id=config_key,
-                session_id=hunter_session_id(run_id, config_id),
-                config_key=config_key,
-            ))
-    for fault_key in hunter_store.list_fault_keys(project_id):
-        for spec_file in hunter_store.produced_spec_files(project_id, fault_key):
-            body = produced_spec_body(hunter_store, project_id, fault_key, spec_file)
-            if not body or body.get("status") != SPEC_DISPATCH_STATUS:
-                # a not-yet-committed draft is NOT work and NOT dispatchable -
-                # the ONE gate both reads share (the never-disagree contract)
-                continue
-            items.append(TestSpecItem(
-                message_id=f"{fault_key}/{spec_file}",
-                session_id=pod_session_id(run_id, fault_key, spec_file),
-                fault_key=fault_key,
-                spec_file=spec_file,
-                spec=body,
-            ))
     return ProducedInbox(
         items=tuple(items), models_to_consume=models_to_consume,
     )
@@ -1041,9 +1029,10 @@ def _legacy_items(
     hunter_store: HunterMemoryStore,
 ) -> tuple[ProducedItem, ...]:
     """The produced items of the families that are NOT the loop family: the pod
-    family's specs and (until T4b) the retiring config family. Used when the run's
-    hunter cannot consume the loop payload (C1): the loops are then not dispatch
-    input, but the pod path (whose builder is a different seam) stays live."""
+    family's specs and (until T4b) the retiring config family. The read appends
+    them ALWAYS, then adds the loop items conditionally (C1: when the run's hunter
+    cannot consume the loop payload, the loops are not dispatch input, but the pod
+    path - whose builder is a different seam - stays live). One block, one home."""
     items: list[ProducedItem] = []
     if hunt_store is not None:
         for config_key, file_name in hunt_store.read_produced_configs(project_id):

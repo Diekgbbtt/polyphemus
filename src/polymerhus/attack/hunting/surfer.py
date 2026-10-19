@@ -528,8 +528,11 @@ def build_run_dispatch(
         no model consume (the produced read does not even hand the loop over as
         an item: `hunter_payload_capable` on the read), so the work stays
         dispatchable for the run that can consume it and the run still quiesces.
-        T6 removes this branch together with the `Mapping` discrimination in the
-        production builder."""
+        The guard here is the belt-and-braces for a DIRECTLY constructed item (or
+        a stale read from another run's wiring): the read is the primary gate -
+        it is the one the work read and the quiesce share, so it must be the one
+        that decides what is dispatchable. T6 removes this branch together with
+        the `Mapping` discrimination in the production builder."""
         if not hunter_payload_capable:
             log_refusal_once(
                 project_id, run_id, loop_refusal_detail(
@@ -673,7 +676,7 @@ async def run_hunter_session(
     mover builds this coroutine and the control plane may REFUSE to schedule it
     (gate full, module paused), in which case the coroutine is closed and never
     runs - so the dispatch seam itself must not mutate run state, or the leaked
-    key would hold the quiesce and every later low loop for ever.”
+    key would hold the quiesce and every later low loop for ever."
 
     #317: the session acquires the MODULE gate (Q15 width bound) AND its OWN
     hunter role gate around the active stretch, so a stopped hunter role holds
@@ -693,6 +696,10 @@ async def run_hunter_session(
         )
     except Exception as exc:  # noqa: BLE001 - a failing builder degrades the session
         logger.warning("surfer: hunter builder failed for %s (%s)", hunt_key, exc)
+        # Undo the registration whole: a leftover inbox suppresses the run's
+        # dispatch-gap line (it reads as "a hunter was dispatched"), and a leftover
+        # mid-graph key would hold the quiesce (M-c, T4a review round 2).
+        state.hunter_inboxes.pop(hunt_key, None)
         state.hunters_in_graph.discard(hunt_key)
         state.loop_likelihoods.pop(hunt_key, None)
         return

@@ -749,21 +749,28 @@ def test_a_run_whose_builder_can_consume_the_payload_dispatches(
         threat_store, hunter_store):
     """The same seam, a capable builder: the loop dispatches and moves as before
     (the capability flag must not change the capable path)."""
+    from polymerhus.attack.hunting.mover import run_delivery_tick
     from polymerhus.attack.hunting.surfer import RunDispatchState, build_run_dispatch
 
     produce_model(threat_store)
     state = RunDispatchState()
     builder, seen, _snapshots = _payload_recorder()
+    control = RecordingControlPlane()
     coro_for = build_run_dispatch(
         project_id=PROJECT, run_id=RUN,
         threat_store=threat_store, hunt_store=HuntStore(),
         hunter_store=hunter_store, pod_store=None, state=state, gate=None,
-        hunter_builder=builder, pod_builder=_pod_builder_fake, control=None,
+        hunter_builder=builder, pod_builder=_pod_builder_fake, control=control,
     )
 
-    item = _only_item(threat_store, hunter_store)
+    report = run_delivery_tick(
+        PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store,
+        control=control, coro_for=coro_for,
+    )
 
-    assert coro_for(item) is not None
+    assert report.admitted == 1 and report.moved == 1
+    assert control.calls == [f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-1"]
+    assert threat_store.read_produced_loops(PROJECT) == []
 
 
 def test_a_refused_dispatch_leaks_no_run_state_and_quiesces(
@@ -805,6 +812,33 @@ def test_a_refused_dispatch_leaks_no_run_state_and_quiesces(
         PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store,
         control=RecordingControlPlane(), state=state,
     )) is True
+
+
+def test_a_builder_failure_undoes_the_whole_run_registration(
+        hunter_store, caplog):
+    """M-c (T4a review round 2): a failing hunter builder degrades the session, and
+    the registration is undone WHOLE - a leftover inbox reads as "a hunter was
+    dispatched" and suppresses the run's dispatch-gap line for the rest of the
+    run, and a leftover mid-graph key would hold the quiesce."""
+    from polymerhus.attack.hunting.surfer import RunDispatchState, run_hunter_session
+
+    def failing_builder(**kwargs):
+        raise RuntimeError("builder unavailable (fixture)")
+
+    state = RunDispatchState()
+    hunt_key = f"{UNIT_NAME}__loop-1"
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.surfer"):
+        asyncio.run(run_hunter_session(
+            payload={}, project_id=PROJECT, run_id=RUN, hunt_key=hunt_key,
+            likelihood="high", hunter_store=hunter_store, state=state, gate=None,
+            hunter_builder=failing_builder,
+        ))
+
+    assert state.hunter_inboxes == {}
+    assert state.hunters_in_graph == set()
+    assert state.loop_likelihoods == {}
+    assert any("builder failed" in record.message for record in caplog.records)
 
 
 def _loop_path(tmp_path, *, unit_name=UNIT_NAME, loop_id="loop-1"):
