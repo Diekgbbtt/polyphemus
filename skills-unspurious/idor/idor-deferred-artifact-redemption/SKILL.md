@@ -28,6 +28,7 @@ Capture the baseline retrieval for the creating principal before attempting fore
 
 Foreign artifact content returned to a non-creator decides the finding.
 A stale or cross-scope stored link that still redeems signals missing scope and expiry binding.
+A handle or link that still redeems after the creating principal was removed, revoked, or downgraded signals a cached authorization context rather than a live binding.
 Finalize, cancel, and approve transitions that accept another actor's handle confirm write-side redemption gaps.
 Timing and size differentials between the creator retrieval and the foreign retrieval confirm blind redemption.
 
@@ -47,6 +48,7 @@ The agreement fails when the retrieval path redeems a stored artifact without re
 
 Two-phase create-then-redeem binding is the bent step this variant owns over the parent.
 Create an export, task, or stored link as an allowed actor, then retrieve, cancel, or approve the same handle as a foreign actor.
+Replay a handle after the creating principal was removed, revoked, or downgraded, because a retrieval path that trusts a cached authorization context keeps the artifact redeemable past the entitlement.
 Mutate stored-link key prefixes and replay stale or swapped share handles to probe scope and expiry enforcement.
 Decide each handle separately, since creation-time checks never cover retrieval-time binding.
 
@@ -86,6 +88,7 @@ Discard silent-enforcement responses that withhold foreign artifacts while the c
 Create handles under every role before redeeming, since symmetric baselines decide asymmetric verdicts.
 Track scope and expiry per handle explicitly, since retrieval paths fail on exactly those two clauses.
 Test finalize, cancel, and approve transitions as well as reads, since write-side redemption gaps carry the larger impact.
+Re-test each handle after a revocation event, since a handle that survives the creator's removal is the persistent-access primitive.
 Prove impact with role-separated before-and-after diffs of artifact state, since paired evidence survives scrutiny.
 Name the proxy-techniques family at edge-reached retrieval steps rather than restating its mechanics.
 

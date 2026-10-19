@@ -32,6 +32,7 @@ Duplication listens for double commit, so only the entries below are live here.
 - Durable double side effect in the authoritative source, such as two fulfillments or two refunds for one intent.
 - Ledger imbalance where debits and credits no longer conserve value after the burst.
 - Idempotency-key reuse signal where a foreign or replayed key still commits a second effect.
+- Two distinct transaction identifiers returned for one identical idempotency key, which confirms the key is not binding the effect.
 - Retry-driven duplicate where one worker retry produces a second downstream write.
 - Balance or entitlement delta that persists across a fresh read rather than fading as display drift.
 
@@ -55,6 +56,7 @@ This variant breaks the run-once clause because parallel submissions commit befo
 ### Orchestrated Parallel Duplicate Execution
 
 Fire identical operations simultaneously rather than sequentially, because sequential repetition is parent transition testing and cannot describe a commit race.
+Before escalating to parallel transport, confirm the duplication in a single request where the interface multiplexes several operations (aliased or batched submissions of one logical operation), since a duplicate that already lands in one request needs no timing primitive.
 Vary burst size from pairs upward until the guard either serializes cleanly or yields a durable double.
 The parent variance step covers only generic concurrency as one dimension and cannot describe synchronized firing, so this variant owns the orchestration procedure.
 

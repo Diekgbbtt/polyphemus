@@ -48,6 +48,7 @@ The agreement fails when an expanded or nested sub-resource returns without inhe
 Projection-parameter escalation with per-hop resolver verdicts is the bent step this variant owns over the parent.
 Add projection knobs to an authorized fetch and compare the widened response against the unexpanded control for privileged sub-fields.
 Walk each authorized parent to its children across field and edge resolvers, deciding every hop separately instead of trusting the top-level gate.
+Test the shared type explicitly: a per-type field-level check that is missing on a type nested inside an unrelated authorized query leaves the top level authorized while the nested object's fields are not.
 Multiplex foreign nodes through aliased and batched lookups in one request, including decoded global-node forms, and decide each node independently.
 
 ## Bypass Techniques

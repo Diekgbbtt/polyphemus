@@ -84,6 +84,7 @@ Bypass forms stay aspects inside this variant because no channel difference chan
 - Method alternation that performs the same consumption through a second verb joins the sequence the same way.
 - Name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
 - Name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
+- Where the counter's principal key derives from a client-supplied forwarding header, rotate that header so each request lands on a fresh counter; the identifier-rotation clause is owned by the defence-bypass family at its throttle-evasion step, so name it there and record only the window verdict here.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 

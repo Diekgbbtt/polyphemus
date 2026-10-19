@@ -21,7 +21,7 @@ Mass assignment binds client-supplied fields directly into models or data-transf
 
 - Handlers with automatic binding, where a request body reaches a model without a per-field map
 - Schema-layer input types that mirror models; administrative tools exposed over the same API
-- Interface descriptions and client bundles: forms and mutation payloads reveal field names
+- Interface descriptions and client bundles: forms and mutation payloads reveal field names, and an interface document that enumerates every model field is the candidate dictionary, including privileged fields the client never sends
 - Bulk and import paths, where per-item checks are often skipped
 
 ### Candidate Field Families
@@ -31,6 +31,8 @@ Mass assignment binds client-supplied fields directly into models or data-transf
 - Limit and quota fields: usage limits, seat counts, project caps, credit balances
 - Feature-gate fields: feature maps, flag lists, preview access, impersonation toggles
 - Billing fields: price, amount, currency, proration, next invoice date, trial end
+- Temporal and audit fields: creation, update, and author markers whose binding rewrites provenance and audit trails
+- Verification and status fields: verification markers, workflow-state fields, and ownership-transfer fields
 
 ### Shape Variants
 
@@ -38,6 +40,7 @@ Mass assignment binds client-supplied fields directly into models or data-transf
 - Path forms: dotted and bracketed keys reaching nested fields through different binders
 - Duplicate keys, where precedence decides which value binds
 - Sparse and patch formats: additive patch documents carrying forbidden paths
+- Binder-specific shapes: nested keys, bracketed paths, and update-operator forms that reach the model through a different binder than the plain field; probe one binder per attempt and record which one accepts the field, leaving the operator forms that belong to the query-language classes at their own step
 
 ### Encodings and Channels
 
@@ -79,6 +82,8 @@ Each variant breaks one clause: the flat-field clause, the batch-scope clause, t
 ### Privilege Escalation
 
 - Set role, permission, or administrative markers during signup or profile update
+- Test both path kinds per resource: a registration or create path binds as readily as an update path, and one of the two frequently carries the weaker field map
+- Add administrative or workflow-state fields to a mutation the client never exposes, then confirm whether the transition commits
 - Toggle or add feature flags where the flag map is bound directly
 
 ### Ownership Takeover
@@ -164,6 +169,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Fields marked read-only and enforced consistently across encodings
 - Changes visible only in the interface with no persisted effect
 - A batch rejection that persists nothing, which marks a guarded batch rather than a gap
+- A destructive probe that was reverted to the original value before the diff, which proves nothing about the bind; restore the original value only after the persistence verdict is recorded
 
 ## Pro Tips
 
@@ -173,6 +179,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 4. Inspect client bundles and mobile payloads for hidden field names and nested write examples
 5. Prefer minimal proofs that show durable state change; discard interface-only effects
 6. Diff per position and per child, not per batch, so one smuggled slot is not hidden by an echoed batch
+7. On a destructive update path, record the persistence verdict first and restore the original value afterwards, so the probe leaves no lasting change and the verdict rests on a real diff
 
 ## Summary
 

@@ -48,6 +48,8 @@ The agreement fails when a set-level path validates the collection without rebin
 Adversarial pagination with per-position verdicts is the bent step this variant owns over the parent.
 Manipulate cursors and page windows to skip scoping filters, then compare each returned page against the control principal's page.
 Inject foreign identifiers at mid-array and trailing bulk positions where first-element-only validation is suspected, and decide each position separately.
+Target bulk-export actions that accept an array of identifiers, because a bulk read that applies no per-item check returns every requested object in one response.
+Inject indirect filters into a list action, such as sort and filter keys naming another principal, because an unscoped filter skips the ownership predicate rather than the identifier check.
 Submit structured imports carrying foreign owner and scope keys through the create-time path, then verify persistence per row.
 
 ## Bypass Techniques

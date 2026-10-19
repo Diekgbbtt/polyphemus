@@ -15,6 +15,8 @@ BFLA is action-level authorization failure: callers invoke functions (endpoints,
 - Feature gates: toggles enforced at edge/UI, not at core services
 - Transport drift: REST vs GraphQL vs gRPC vs WebSocket with inconsistent checks
 - Gateway trust: backends trust X-User-Id/X-Role injected by proxies/edges
+- Unlinked interfaces: administrative, debug, or internal surfaces reachable without an actor, where the surface is assumed unreachable rather than actor-checked
+- Version surface: an old or alternate version of one action that enforces less than the current version
 - Background workers/jobs performing actions without re-checking authz
 
 ## Reconnaissance
@@ -25,12 +27,15 @@ BFLA is action-level authorization failure: callers invoke functions (endpoints,
 - Hidden buttons and disabled UI paths (feature-flagged) mapped to still-live endpoints
 - GraphQL schemas: mutations and admin-only fields/types; gRPC service descriptors (reflection)
 - Mobile clients often reveal extra endpoints/roles in app bundles or network logs
+- Unlinked administrative, debug, and internal interfaces: enumerate them from listings, artifacts, and naming conventions, then reach each one without an actor, because obscurity is the whole control
+- Version inventory: enumerate every reachable version of one action, then behaviourally diff authorization, validation, and rate-limit strength between the old and the current version
 
 ### Role and Route Inventory
 
 - Collect one session per role so every action can be exercised with each actor
 - Diff middleware stacks between the primary route and its aliases, legacy paths, and alternate encodings
 - Trace the actor value from the edge inward: token claim, gateway-injected header, and body hint
+- Enumerate client-supplied privilege flags and requester markers from bundles and prior traffic as candidate identity sources, since a service that reads them self-elevates
 
 ## Detection Channels
 
@@ -43,6 +48,9 @@ BFLA is action-level authorization failure: callers invoke functions (endpoints,
 - A privileged effect from a deferred step replayed by an unentitled caller, beside denial on the direct call.
 - State changes applied by a redelivered webhook or retried finalize without a fresh actor check.
 - Session swaps that inherit a cached edge decision.
+- A method-inconsistency pair: denial on one verb beside success on another verb of the same action, which reads as per-path enforcement.
+- A more permissive answer from an old or alternate version of one action than from the current version, which reads as a behavioural regression.
+- A privileged surface answering at all without an actor, where the surface was assumed unreachable.
 - A before-and-after state snapshot showing the privileged change completes the proof.
 
 ## Adversarial Capabilities
@@ -84,6 +92,11 @@ Service-to-service trust is the shared root, because an internal caller is assum
 - Create export/import jobs where creation is allowed but finalize/approve lacks authz; finalize another actor's jobs
 - Replay webhook or background task endpoints that perform privileged actions without verifying the caller
 
+### Multi-Step Workflow Gaps
+
+- One transition of a multi-step flow carries no authorization check while its siblings do; call the confirmation or completion step directly and skip the guarded steps
+- Dropping a step whose absence leaves a privileged default, such as a skipped selection request that leaves the privileged option in place
+
 ### Content-Type Paths
 
 - JSON vs form vs multipart handlers using different middleware: send the action through the most permissive parser
@@ -122,6 +135,7 @@ Service-to-service trust is the shared root, because an internal caller is assum
 ### Route Shadowing
 
 - Legacy or alternate routes that skip the newer middleware chain
+- Path-normalisation forms that reach a route the primary spelling does not: case variation, dot segments, encoded separators, delimiter insertion, trailing dot or extension, and double encoding; replay the same action through each form and read the verdict per form
 
 ### Idempotency and Retries
 

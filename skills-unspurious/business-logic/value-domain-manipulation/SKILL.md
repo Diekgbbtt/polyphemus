@@ -55,6 +55,7 @@ This variant breaks the domain-bounds clause because boundary values pass the tr
 ### Boundary-Value Oracle Submission
 
 Submit minimum plus zero plus negative plus fractional plus shape-swapped figures through the legitimate value fields of one transition.
+Submit scientific-notation and oversized-string figures too, because a custom decimal or money scalar frequently falls back to native floating-point parsing on inputs its author never anticipated, which reintroduces rounding error at the parser rather than at the ruleset.
 Compare each committed figure against the independently recomputed expectation rather than against the response echo.
 The parent transition step covers only skipping plus repetition plus reordering plus late mutation and cannot describe value-oracle comparison, so this variant owns the oracle procedure.
 
@@ -74,6 +75,9 @@ Treat deltas visible only in transient quotes as inconclusive until they persist
 
 Advance the oracle once the basic gap lands, because rounding and selector faults often compose across steps.
 Stack otherwise incompatible benefit instruments through sequential apply, then remove the qualifying condition and verify whether the benefit persists.
+Cycle value between a purchase instrument and a redemption instrument so each step is individually valid while the cycle nets positive, then repeat the cycle and confirm the gain in the ledger rather than in the quote.
+Swap an approved price for an archived or superseded one between the approval and the capture, which tests whether the capture re-reads the current price or trusts the stored figure.
+Carry identity-domain and email-truncation boundary cases into the same oracle where a value change feeds an entitlement change, since the boundary rule decides the entitlement rather than the price.
 Split one constrained value move into sequential sub-moves only to test per-transition rounding accumulation, leaving simultaneous bursts to the duplication variant.
 Carry e-commerce plus banking plus subscription proration shapes as aspects inside the same oracle rather than as separate procedures.
 

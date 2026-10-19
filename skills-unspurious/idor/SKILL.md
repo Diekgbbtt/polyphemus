@@ -71,6 +71,8 @@ Object-level authorization failures (BOLA/IDOR) lead to cross-account data expos
 - Privileged sub-fields present in an expanded response to a non-owner.
 - A child object returned through an authorized parent without its own check, which signals a missing per-hop binding.
 - Per-node decisions inside one multiplexed response that favour foreign callers.
+- A stored or cached authorization context that still passes for a removed, downgraded, or moved principal, which signals a temporal binding gap.
+- One member of a paired argument answering with foreign data while its counterpart is refused, which signals an asymmetric binding.
 
 ## Adversarial Capabilities
 
@@ -96,6 +98,7 @@ Each variant breaks one clause: the direct-binding clause, the scope-binding cla
 - Swap object references between principals using the same token to probe horizontal access
 - Repeat with lower-privilege tokens to probe vertical access
 - Target partial updates for silent unauthorized modifications
+- Where one request names a source and a destination (a paired transfer, a copy, a move), test which member carries the check: a validated destination beside an unchecked source is the common asymmetric gap, and each member needs its own verdict
 
 ### Bulk and Batch Operations
 
@@ -107,6 +110,7 @@ Each variant breaks one clause: the direct-binding clause, the scope-binding cla
 - Use list, search, notification, message, and callback surfaces to collect valid identifiers
 - Fetch or mutate the collected objects directly
 - Pagination manipulation to skip filters and pull other principals' pages
+- Chain one harvested identifier into a second, distinct access: an identifier leaked by one surface (a message, an export, a shared record) fuels an access the first surface never exposed, so harvest before you swap
 
 ### Job and Task Objects
 
@@ -160,6 +164,8 @@ Each variant breaks one clause: the direct-binding clause, the scope-binding cla
 - Content-type switching between structured, form, and multipart bodies
 - Method tunnelling through override headers or fields, or a read verb on an endpoint that accepts state changes
 - Duplicate keys and array injection to bypass naive validators
+- Version fallback and path decoration: replay the same action through older version prefixes and through extension-appended path forms, because authorization logic is frequently version-specific and extension handlers frequently skip the middleware
+- Static keyword swap: replace a self-referential reference keyword with a numeric or opaque identifier, so the lookup stops resolving from session context
 
 **Parameter Pollution**
 - Duplicate parameters in query or body to influence server-side precedence; try both orderings
@@ -187,6 +193,11 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - IDOR + stored scripting: pivot into other principals' sessions through data you gained access to
 - IDOR + server-side fetches: exfiltrate internal identifiers, then access their corresponding resources
 - IDOR + race: bypass spot checks with simultaneous requests
+- Identifier swap to identity change: reach the identity-change path for a foreign object, then drive the reset flow to takeover; the terminal primitive is the changed contact field, and the reset steps belong to the authentication classes
+- Artifact read to session theft: an artifact whose download name or headers the caller influences feeds a delivery that hands over a session; the session class owns the theft verdict
+- Relationship write to ownership: a relation or membership write that changes an owner field turns the object into the caller's; the mass-assignment class owns the bind verdict
+- Soft-delete persistence: an identifier that still resolves after removal keeps the access alive, so record the temporal primitive rather than a second swap
+- Double-IDOR: chain two distinct identifier swaps so the terminal write lands on a foreign object, keeping each swap's verdict separate
 
 ## Testing Methodology
 

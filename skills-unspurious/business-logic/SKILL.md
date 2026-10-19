@@ -12,7 +12,7 @@ Business logic flaws exploit intended functionality to violate domain invariants
 ## Attack Surface
 
 - Financial logic: pricing, discounts, payments, refunds, credits, chargebacks
-- Account lifecycle: signup, upgrade/downgrade, trial, suspension, deletion
+- Account lifecycle: signup, upgrade/downgrade, trial, suspension, deletion, and referral or reward grants
 - Authorization-by-logic: feature gates, role transitions, approval workflows
 - Quotas/limits: rate/usage limits, inventory, entitlements, seat licensing
 - Multi-tenant isolation: cross-organization data or action bleed
@@ -81,6 +81,8 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 - Skip or reorder steps via direct API calls; verify the server enforces preconditions on each transition
 - Replay prior steps with altered parameters (swap price after approval but before capture)
 - Split a single constrained action into many sub-actions under the threshold (limit slicing)
+- Move the identity between domains after creation (register under an allowed domain, then change the identity to a privileged one) and verify each transition re-checks the domain rules
+- Drop a selection step whose absence leaves a privileged default, such as a skipped role-selection request that leaves the highest role in place
 
 ### Concurrency and Idempotency
 
@@ -109,6 +111,8 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 
 - Feature flags enforced client-side or at the edge but not in core services; toggle names guessed or falling back to default-enabled
 - Role transitions leaving stale capabilities (retain premium after downgrade; retain admin endpoints after demotion)
+- Invitation and delegation abuse: an inviter grants a role above its own ceiling; the authorization-principal step is owned by `two-principal-authz` and the function-level verdict by `broken-function-level-authorization`, so record only the logic delta here
+- A dual-use endpoint whose privileged branch does not require the current credential, only an earlier step's approval; the authorization verdict belongs to the classes above
 
 ## Advanced Techniques
 
@@ -147,6 +151,7 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 ## Bypass Techniques
 
 - Client recomputation: totals, taxes, discounts computed on the client and accepted by the server
+- Client-side gates: a gate or hidden interface enforced only in the browser is bypassed by direct calls, and `proxy-techniques-dom-clobbering` covers markup that shadows a global the client trusts, so name it at the client-gate step rather than restating its mechanics
 - Name the proxy-techniques family at the channel-wrapping step for content-type switching and method alternation, rather than restating the channel tricks here.
 - Name the defence-bypass family at the edge-versus-core step for stale gateway decisions, rather than restating the gateway differentials here.
 

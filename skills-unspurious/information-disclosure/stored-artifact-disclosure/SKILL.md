@@ -12,9 +12,9 @@ This variant fetches what should never have shipped, parses the downloads for me
 
 ## Attack Surface
 
-Deployables live in version-control metadata, backups, temporary files, build outputs, and directory listings left reachable over HTTP.
+Deployables live in version-control metadata, backups, temporary files, build outputs, asset manifests, build-info files, package manifests, server configuration, desktop and editor metadata files, cross-domain policy files, and directory listings left reachable over HTTP.
 Secrets live in configuration files, environment dumps, diagnostic pages, and deployment manifests served to unauthenticated fetchers.
-Client leakage lives in bundles shipped with source maps, embedded environment values, and static data payloads.
+Client leakage lives in bundles shipped with source maps, embedded environment values, static data payloads, lazily loaded chunks beyond the shell-referenced bundles, and browser-side storage such as local storage, session storage, and serialized page state.
 Interfaces live in published schema documents and in live introspection and reflection endpoints that answer queries natively.
 Storage lives in broadly scoped buckets, signed URLs, and export endpoints serving datasets beyond one tenant.
 Panels live in observability and administration surfaces whose gating decides what triage may read.
@@ -50,11 +50,11 @@ The failing clause is the unreachable-deployable clause: fetched content renders
 ## Key Vulnerabilities
 
 Fetching enumerates deployables, configs, bundles, maps, listings, and panel snapshots as static retrieval.
-Parsing extracts file metadata from downloads: embedded paths, versions, keys, endpoint names, and environment values.
-Querying asks live introspection and reflection interfaces natively to enumerate hidden or privileged operations, naming the graphql skill for paradigm-specific query shapes instead of restating them.
+Parsing extracts file metadata from downloads: embedded paths, versions, keys, endpoint names, and environment values, including lazily loaded chunks and browser-side storage captured alongside the shell bundle.
+Querying asks live introspection and reflection interfaces natively to enumerate hidden or privileged operations, naming the graphql skill for paradigm-specific query shapes instead of restating them; where introspection is closed, reconstruct the schema from unknown-field suggestions and error text, one probe at a time.
 Scoping reads storage and export responses for audience, lifetime, binding, and foreign-dataset signals from the single fetched object.
 Triaging reads auth-gated observability panels per held session and records the gating posture as a secondary check.
-Noting records referrer, introspection-off, and expose-header states as secondary checks inside the same procedure.
+Noting records referrer, introspection-off, expose-header, masking, and redaction states as secondary checks inside the same procedure.
 
 ## Chaining Attacks
 
@@ -76,12 +76,14 @@ Intentional public documentation with no exploit path is not a finding.
 Redacted dumps whose sensitive fields stay redacted across replays carry no leak.
 Owner-visible-only panel details that never cross identity or tenant boundaries are not disclosure.
 Generic banners and marketing versions with no reachable surface and no chain are not findings.
+A previously recorded artifact location that now answers not-found is not remediation: content-hashed build artifacts rotate on every deploy, so re-derive the live location before each verdict.
 
 ## Pro Tips
 
 Fetch artifacts before triggering anything: deployables yield the fastest wins in the class.
 Parse every download fully before moving on: metadata hides in manifests, maps, and embedded payloads alike.
-Treat live schema interfaces as configuration findings and query them natively rather than scraping docs.
+Read lazily loaded chunks and browser-side storage as well as the shell bundle, because values migrate to the parts the initial load never fetches.
+Treat live schema interfaces as configuration findings and query them natively rather than scraping docs, and reconstruct the schema from suggestion text where introspection is closed.
 Mine observability panels last: they are noisy but high-yield where gating is misconfigured.
 
 ## Summary

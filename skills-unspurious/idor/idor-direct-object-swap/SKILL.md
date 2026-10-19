@@ -27,6 +27,7 @@ Confirm the owner's baseline request succeeds with the inferred verb and fields 
 ## Detection Channels
 
 Foreign content or metadata returned for a non-owner identifier decides the finding.
+The owner's request beside the foreign request under identical shaping, with only the reference differing, is the deciding pair.
 An error shape that differs between owned and foreign identifiers signals a missing binding even when content is masked.
 Status, size, and timing differentials between the control and the swapped attempt confirm blind access.
 Conditional-request validators that match for a foreign object confirm its existence without full content.
@@ -50,9 +51,16 @@ Substitute one foreign identifier into an evidence-derived request while replayi
 Repeat the pair across every action the matrix names, including partial-update framings that mutate silently.
 Read the verdict from the differential between the two responses, never from a single status alone.
 
+### Paired-Argument Binding
+
+- Where one request names a source and a destination (a transfer, a copy, a move), substitute one member while the other stays owned, and read which member the check follows.
+- A validated destination beside an unchecked source is the common asymmetry, so record one verdict per member rather than one per request.
+- Treat a refusal on the validated member as a held guard for that member only, because the unchecked member still needs its own attempt.
+
 ## Bypass Techniques
 
 Coerce the transport framing when a first attempt is rejected, varying content type and serialization while keeping the swapped identifier constant.
+Reshape the reference itself: array-wrapped, wildcard, boolean-coerced, zero, negative, and fractional numeric forms, and extension-appended path forms, since a parser that coerces one form can match a broader set than the gate expects.
 Pollute duplicate reference fields with both orderings and read which occurrence the service honors.
 Treat parser disagreements as defeat detail shared with the defence-bypass family at its parser step, recording only the authorization verdict here.
 
