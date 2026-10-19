@@ -11,91 +11,90 @@ A limit counts one dimension, and the effect can move in another. This variant r
 
 ## Attack Surface
 
-Throttle evasion applicability centers on a limit that stands between repeated attempts and the effect they accumulate.
-The surface holds per-entity attempt counters, per-path and per-endpoint limits, windowed quotas, lockout thresholds, and challenge responses that gate further attempts.
-A limit scoped to one dimension while the effect is reachable from several, and a counter that propagates slower than the effect accumulates, both widen the surface.
-The operation's own field validation must be satisfied before a concurrent payload reaches the counting layer, because a request the operation rejects never reaches the counter.
-A limit that blocks the first attempt rides outside this variant, because there is no second attempt to spread.
+- **Applicability**: centers on a limit that stands between repeated attempts and the effect they accumulate.
+- **Surface composition**: per-entity attempt counters, per-path and per-endpoint limits, windowed quotas, lockout thresholds, and challenge responses that gate further attempts.
+- **Widening factors**: a limit scoped to one dimension while the effect is reachable from several, and a counter that propagates slower than the effect accumulates, both widen the surface.
+- **Qualifying condition**: the operation's own field validation must be satisfied before a concurrent payload reaches the counting layer, because a request the operation rejects never reaches the counter.
+- **Out-of-scope variant**: a limit that blocks the first attempt rides outside this variant, because there is no second attempt to spread.
 
 ## Reconnaissance
 
-Throttle evasion baselines the accounting before spreading, because a limit that never engaged cannot be evaded.
-- Send a short burst of identical attempts and record whether the limit engages, how it answers, and after how many attempts.
-- Classify the limit into one of four states before spreading: hard lockout, soft source throttle, challenge injection, or silent shadow-throttle, because an admit status alone does not mean no limit.
-- Record the dimension the counter observes: a principal, a session, an address, a path, a connection, or a window.
-- Record whether the counter keys the identifier's literal spelling or the canonical value the backend resolves, because the gap between the two is a counted-dimension gap.
-- Probe each path to the effect separately, because enforcement often differs across paths.
-- Note whether the limit blocks or only slows, and whether a challenge replaces the refusal after the threshold.
-See `references/rate-limit-state-classifier.md` for the four limit states and the shadow-throttle seed test.
+- **Reconnaissance scope**: throttle evasion baselines the accounting before spreading, because a limit that never engaged cannot be evaded.
+- **Burst baseline**: send a short burst of identical attempts and record whether the limit engages, how it answers, and after how many attempts.
+- **Limit classification**: classify the limit into one of four states before spreading: hard lockout, soft source throttle, challenge injection, or silent shadow-throttle, because an admit status alone does not mean no limit.
+- **Counted dimension**: record the dimension the counter observes: a principal, a session, an address, a path, a connection, or a window.
+- **Key literalness**: record whether the counter keys the identifier's literal spelling or the canonical value the backend resolves, because the gap between the two is a counted-dimension gap.
+- **Per-path probing**: probe each path to the effect separately, because enforcement often differs across paths.
+- **Block versus slow**: note whether the limit blocks or only slows, and whether a challenge replaces the refusal after the threshold.
+- **Limit-state classifier**: see `references/rate-limit-state-classifier.md` for the four limit states and the shadow-throttle seed test.
 
 ## Detection Channels
 
-Throttle evasion listens to the counter beside the effect, so only the entries below are live here.
-- The limit's refusal or challenge on a tight burst, which proves the accounting engaged.
-- A pass for the same effect spread across identities, paths, or windows, which shows the counter observed a different dimension.
-- The differential between the refused tight burst and the passed spread attempts at one effect, which localises the counted dimension.
-- An attempt counter that does not move while the effect accumulates, which proves the accounting dimension is unwatched.
-- A uniform admit answer while the known-good value stops being accepted, which is the silent-throttle signal.
-- The delta between the rotated run and the un-rotated run, which is the proof of a source-field bypass rather than a fast run.
-- The effect appearing at the sink while the limit's verdict stayed silent or slowed only.
-- The sink's own error class, which separates a throttled attempt from a refused one.
+- **Channel scope**: throttle evasion listens to the counter beside the effect, so only the entries below are live here.
+- **Refusal or challenge**: the limit's refusal or challenge on a tight burst, which proves the accounting engaged.
+- **Spread pass**: a pass for the same effect spread across identities, paths, or windows, which shows the counter observed a different dimension.
+- **Dimension differential**: the differential between the refused tight burst and the passed spread attempts at one effect, which localises the counted dimension.
+- **Unwatched accounting**: an attempt counter that does not move while the effect accumulates, which proves the accounting dimension is unwatched.
+- **Silent-throttle signal**: a uniform admit answer while the known-good value stops being accepted, which is the silent-throttle signal.
+- **Rotation delta**: the delta between the rotated run and the un-rotated run, which is the proof of a source-field bypass rather than a fast run.
+- **Silent verdict**: the effect appearing at the sink while the limit's verdict stayed silent or slowed only.
+- **Sink error class**: the sink's own error class, which separates a throttled attempt from a refused one.
 
 ## Adversarial Capabilities
 
-Throttle evasion presupposes an accounting baseline plus multiple lanes plus repeatable attempts, and it consumes all three.
-- Send a tight burst and a spread burst to the same effect, and read both answers.
-- Hold more than one identity, session, address, or path where the limit is scoped to one of them.
-- Time attempts against the window and the counter's propagation, because both decide whether an attempt is counted.
-- Read the limit's answer shape, since a challenge and a refusal call for different spreads.
+- **Prerequisites**: throttle evasion presupposes an accounting baseline plus multiple lanes plus repeatable attempts, and it consumes all three.
+- **Paired bursts**: send a tight burst and a spread burst to the same effect, and read both answers.
+- **Lane inventory**: hold more than one identity, session, address, or path where the limit is scoped to one of them.
+- **Timing control**: time attempts against the window and the counter's propagation, because both decide whether an attempt is counted.
+- **Answer-shape reading**: read the limit's answer shape, since a challenge and a refusal call for different spreads.
 
 ## Trust Assumptions
 
-The limit trusts that the dimension it counts is the dimension the effect moves in, and that every lane reaches the counter before the next attempt.
-The agreement holds the counter's scope to every route to the effect, holds the window to every lane that consumes it, and holds the answer to a refusal once the threshold is crossed.
-This variant breaks the counted-dimension clause because the effect accumulates through a dimension the counter does not observe, so the limit reports a compliant rate while the effect grows.
-The spread is claimed only against the recorded refusal of the tight burst, because an inactive limit proves nothing about its scope.
+- **The agreement**: the limit trusts that the dimension it counts is the dimension the effect moves in, and that every lane reaches the counter before the next attempt, holds the counter's scope to every route to the effect, holds the window to every lane that consumes it, and holds the answer to a refusal once the threshold is crossed.
+- **The failing clause**: this variant breaks the counted-dimension clause because the effect accumulates through a dimension the counter does not observe, so the limit reports a compliant rate while the effect grows.
+- **Claim discipline**: the spread is claimed only against the recorded refusal of the tight burst, because an inactive limit proves nothing about its scope.
 
 ## Key Vulnerabilities
 
 ### Counted-Dimension Gaps
 
-Spread the effect across the dimension the counter does not observe: several identities under a per-session limit, several paths under a per-endpoint limit, or several addresses under a per-client one.
-Fold the identifier where the counter keys its literal spelling and the backend resolves the canonical value, because case, whitespace, encoding, and suffix variants each mint a fresh key for one entity.
-Where the counter counts requests and the backend iterates one payload into several operations, the counting unit itself is the gap; name `defence-bypass-attempt-batching` at that step.
-Probe each path to the effect separately, because enforcement often differs across the paths that reach one operation.
-The parent accounting-baseline step covers one lane's answer and cannot describe one effect spread across lanes, so this variant owns the spread procedure.
+- **Dimension spread**: spread the effect across the dimension the counter does not observe: several identities under a per-session limit, several paths under a per-endpoint limit, or several addresses under a per-client one.
+- **Identifier folding**: fold the identifier where the counter keys its literal spelling and the backend resolves the canonical value, because case, whitespace, encoding, and suffix variants each mint a fresh key for one entity.
+- **Counting unit**: where the counter counts requests and the backend iterates one payload into several operations, the counting unit itself is the gap; name `defence-bypass-attempt-batching` at that step.
+- **Per-path probing**: probe each path to the effect separately, because enforcement often differs across the paths that reach one operation.
+- **Ownership**: the parent accounting-baseline step covers one lane's answer and cannot describe one effect spread across lanes, so this variant owns the spread procedure.
 
 ### Propagation and Window Gaps
 
-Fire inside the gap between an attempt and the counter that records it, because a counter that propagates late admits a burst.
-Align attempts to the window's edges where the counter resets, so one effect consumes two windows.
-Treat a spread that succeeds only at a window edge as window evidence rather than as a scope gap.
+- **Propagation gap**: fire inside the gap between an attempt and the counter that records it, because a counter that propagates late admits a burst.
+- **Window edges**: align attempts to the window's edges where the counter resets, so one effect consumes two windows.
+- **Window evidence**: treat a spread that succeeds only at a window edge as window evidence rather than as a scope gap.
 
 ### Partial-Limit Gaps
 
-Read whether the limit refuses or only slows, because a limit that throttles without blocking leaves the effect reachable at a lower rate.
-Continue at the rate the limit admits and record the accumulated effect, since a partial limit is a delay rather than a control.
-Treat a challenge that a single solved attempt clears as a partial limit, and record what the clearance costs.
+- **Refuse versus slow**: read whether the limit refuses or only slows, because a limit that throttles without blocking leaves the effect reachable at a lower rate.
+- **Admitted rate**: continue at the rate the limit admits and record the accumulated effect, since a partial limit is a delay rather than a control.
+- **Clearance cost**: treat a challenge that a single solved attempt clears as a partial limit, and record what the clearance costs.
 
 ## Bypass Techniques
 
-Bypass shapes slip past a limit that is present, so each one is tried after the tight burst is refused.
-- Identity, session, and address rotation under a per-entity counter.
-- Path and endpoint rotation under a per-route counter.
-- Bursts timed inside the counter's propagation gap.
-- Identifier canonicalisation variants that mint a fresh key for one entity while the backend resolves the same value.
-- Concurrent attempts inside a window whose rule counts outcomes within a time span rather than attempts at a rate.
-- Attempts aligned to window edges so one effect consumes two windows.
-- A batch envelope the counter counts once while the backend iterates it; name `defence-bypass-attempt-batching` at that step.
-- Continued attempts at the rate a partial limit admits.
+- **Bypass scope**: bypass shapes slip past a limit that is present, so each one is tried after the tight burst is refused.
+- **Identity rotation**: identity, session, and address rotation under a per-entity counter.
+- **Route rotation**: path and endpoint rotation under a per-route counter.
+- **Propagation-gap bursts**: bursts timed inside the counter's propagation gap.
+- **Key canonicalisation**: identifier canonicalisation variants that mint a fresh key for one entity while the backend resolves the same value.
+- **Window concurrency**: concurrent attempts inside a window whose rule counts outcomes within a time span rather than attempts at a rate.
+- **Window-edge alignment**: attempts aligned to window edges so one effect consumes two windows.
+- **Batch envelope**: a batch envelope the counter counts once while the backend iterates it; name `defence-bypass-attempt-batching` at that step.
+- **Partial-rate continuation**: continued attempts at the rate a partial limit admits.
 
 ## Chaining Attacks
 
-Throttle evasion chains forward into the class that owns the effect, because a spread attempt is only the first layer.
-- Hand the spread to the class that owns the effect, and prove the class-specific consequence there.
-- Stack with the tier gap where the counter sits at one tier and the effect is served at another.
-- Stack with the race class at the concurrency step, since a spread burst and a concurrent burst reinforce each other.
-- Name the class at its own step rather than restating its procedure here.
+- **Chain scope**: throttle evasion chains forward into the class that owns the effect, because a spread attempt is only the first layer.
+- **Effect hand-off**: hand the spread to the class that owns the effect, and prove the class-specific consequence there.
+- **Tier-gap stack**: stack with the tier gap where the counter sits at one tier and the effect is served at another.
+- **Race stack**: stack with the race class at the concurrency step, since a spread burst and a concurrent burst reinforce each other.
+- **Own-step naming**: name the class at its own step rather than restating its procedure here.
 
 ## Testing Methodology
 
@@ -111,23 +110,22 @@ Throttle evasion baselines the accounting first and spreads second, because an i
 
 ## False Positives
 
-Stop when the limit refused every lane, because a controlled rate is not an evasion.
+- **Stop condition**: stop when the limit refused every lane, because a controlled rate is not an evasion.
 
-- A limit that refuses the effect across every identity, path, and window.
-- A limit that never engaged, where no counter or threshold was observed at any rate.
-- A spread whose effect never reached the sink, where the attempts passed and each request broke later.
-- A challenge solved once, which is a clearance cost to record rather than a bypass.
-- A simulator response that answers every attempt without accounting for it.
+- **Uniform refusal**: a limit that refuses the effect across every identity, path, and window.
+- **Inactive limit**: a limit that never engaged, where no counter or threshold was observed at any rate.
+- **Broken request**: a spread whose effect never reached the sink, where the attempts passed and each request broke later.
+- **Clearance cost**: a challenge solved once, which is a clearance cost to record rather than a bypass.
+- **Simulator answer**: a simulator response that answers every attempt without accounting for it.
 
 ## Pro Tips
 
-Throttle evasion rewards accounting discipline plus lane discipline.
-
-1. Baseline the limit before spreading, because the counted dimension is the whole mechanism.
-2. Spread one dimension per attempt so the uncounted lane is nameable.
-3. Read the limit's answer shape, since a challenge and a refusal call for different spreads.
-4. Keep the burst as narrow as the question allows, and record the rate at which the effect accumulates.
-5. Hand the accumulation to the class that owns the effect, and stop at the narrowest proof.
+- **Discipline**: throttle evasion rewards accounting discipline plus lane discipline.
+- **Baseline first**: baseline the limit before spreading, because the counted dimension is the whole mechanism.
+- **One dimension per attempt**: spread one dimension per attempt so the uncounted lane is nameable.
+- **Answer-shape reading**: read the limit's answer shape, since a challenge and a refusal call for different spreads.
+- **Narrow bursts**: keep the burst as narrow as the question allows, and record the rate at which the effect accumulates.
+- **Effect hand-off**: hand the accumulation to the class that owns the effect, and stop at the narrowest proof.
 
 ## Summary
 

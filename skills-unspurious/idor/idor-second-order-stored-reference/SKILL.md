@@ -41,7 +41,7 @@ The leading word is stored: every probe writes one reference into the caller's o
 
 ## Adversarial Capabilities
 
-Stored-reference testing presupposes two principals, write access to at least one storable field, and the ability to trigger the resolving operation, and it consumes all three.
+- **Prerequisites**: stored-reference testing presupposes two principals, write access to at least one storable field, and the ability to trigger the resolving operation, and it consumes all three.
 - **Two principals**: hold the planting principal's session plus a victim principal's session whose object identifiers are known.
 - **Persisted plant**: write a chosen reference into a field the caller may legitimately set, and confirm the write persisted before relying on it.
 - **Trigger reach**: trigger the resolving operation, including scheduled, delayed, and unrelated-action triggers.
@@ -52,8 +52,8 @@ Stored-reference testing presupposes two principals, write access to at least on
 ## Trust Assumptions
 
 - **The agreement**: an object reference arriving with a request is private to the caller, any surrounding authorization already binds the referenced object to that caller, identity arriving through surrounding channels belongs to the same caller, a token accepted by one service transfers only to its intended audience, and a check performed at creation still holds at retrieval, so no caller reaches data beyond its own scope.
-- **The stored-reference clause fails** where a later operation resolves a stored reference without re-binding it to the caller, so the write-time check stands in for a check at use.
-- **The use-time clause fails** where the resolving operation trusts the stored value because an entitled caller wrote it, rather than because the current caller is entitled to the resolved object.
+- **The stored-reference clause fails**: where a later operation resolves a stored reference without re-binding it to the caller, so the write-time check stands in for a check at use.
+- **The use-time clause fails**: where the resolving operation trusts the stored value because an entitled caller wrote it, rather than because the current caller is entitled to the resolved object.
 
 ## Key Vulnerabilities
 
@@ -117,12 +117,12 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 
 ## Pro Tips
 
-1. Separate the write from the trigger in every test, because the gap between them is where the binding is missing.
-2. Inventory resolving operations before planting, since the trigger is the scarce resource rather than the reference.
-3. Re-trigger after a scope change, because stale stored bindings outlive the entitlement that justified them.
-4. Confirm the resolved object in the caller's own view, since a trigger whose output the caller never sees is not yet provable.
-5. Prefer the smallest proof: one planted reference and one trigger that returns the victim's data to the planter.
-6. Never conclude resistance from a failed trigger alone, since the schedule, the shape, or the persistence may be wrong while the binding is absent.
+- **Separated write and trigger**: separate the write from the trigger in every test, because the gap between them is where the binding is missing.
+- **Trigger-first inventory**: inventory resolving operations before planting, since the trigger is the scarce resource rather than the reference.
+- **Scope-change retrigger**: re-trigger after a scope change, because stale stored bindings outlive the entitlement that justified them.
+- **Caller-view confirmation**: confirm the resolved object in the caller's own view, since a trigger whose output the caller never sees is not yet provable.
+- **Smallest proof**: prefer the smallest proof: one planted reference and one trigger that returns the victim's data to the planter.
+- **Failed-trigger caution**: never conclude resistance from a failed trigger alone, since the schedule, the shape, or the persistence may be wrong while the binding is absent.
 
 ## Summary
 

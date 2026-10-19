@@ -11,87 +11,86 @@ A verdict belongs to the tier that gave it, and the effect belongs to the tier t
 
 ## Attack Surface
 
-Edge-origin differential applicability centers on a control enforced at one tier of the path while the effect is served at another.
-The surface holds edge and gateway tiers that decide before the service, middleware chains beside legacy and versioned routes, shared caches that store a verdict, and core entry points that remain reachable beside the guarded front.
-A tier that reuses a stored decision, and a route set where one route carries the current chain and another does not, both widen the surface.
-A path where one tier both decides and serves rides outside this variant, because there is no second tier to differ from.
+- **Applicability**: centers on a control enforced at one tier of the path while the effect is served at another.
+- **Surface composition**: edge and gateway tiers that decide before the service, middleware chains beside legacy and versioned routes, shared caches that store a verdict, and core entry points that remain reachable beside the guarded front.
+- **Widening factors**: a tier that reuses a stored decision, and a route set where one route carries the current chain and another does not, both widen the surface.
+- **Out-of-scope variant**: a path where one tier both decides and serves rides outside this variant, because there is no second tier to differ from.
 
 ## Reconnaissance
 
-Edge-origin differentials compare tiers before crafting, because the gap is between two verdicts rather than inside one request.
-- Map the tiers on the path and record which tier decides, which tier serves, and which tier stores a verdict.
-- Enumerate the routes that reach the same effect, and note which of them carry the current chain.
-- Establish the refusal baseline at the enforcing tier, so a later pass is attributable to the serving tier.
-- Record the lifetime and the key of any stored verdict, because a decision that outlives its request is the differential.
-- Compare each route's answer with and without authentication, because the two answers read each tier's scope rather than one tier's rule.
+- **Reconnaissance scope**: edge-origin differentials compare tiers before crafting, because the gap is between two verdicts rather than inside one request.
+- **Tier mapping**: map the tiers on the path and record which tier decides, which tier serves, and which tier stores a verdict.
+- **Route enumeration**: enumerate the routes that reach the same effect, and note which of them carry the current chain.
+- **Refusal baseline**: establish the refusal baseline at the enforcing tier, so a later pass is attributable to the serving tier.
+- **Stored-verdict record**: record the lifetime and the key of any stored verdict, because a decision that outlives its request is the differential.
+- **Scope comparison**: compare each route's answer with and without authentication, because the two answers read each tier's scope rather than one tier's rule.
 
 ## Detection Channels
 
-Edge-origin differentials listen to two verdicts for one request, so only the entries below are live here.
-- The enforcing tier's refusal on the canonical route, which proves the chain evaluated the request.
-- A pass on a sibling route for the same effect, which shows the serving tier never consulted the chain.
-- The differential between the refused canonical route and the passed sibling route at one effect, which localises the tier gap.
-- A stale or cached verdict applied to a changed request, such as a changed method, which proves the decision was not recomputed.
-- The effect appearing at the serving tier while the enforcing tier's verdict stayed silent.
-- The enforcing tier's own marker absent from a response the serving tier produced, which localises the tier that answered.
-- The sink's own error class, which names the tier that answered.
+- **Channel scope**: edge-origin differentials listen to two verdicts for one request, so only the entries below are live here.
+- **Enforcing refusal**: the enforcing tier's refusal on the canonical route, which proves the chain evaluated the request.
+- **Sibling pass**: a pass on a sibling route for the same effect, which shows the serving tier never consulted the chain.
+- **Route differential**: the differential between the refused canonical route and the passed sibling route at one effect, which localises the tier gap.
+- **Stale verdict**: a stale or cached verdict applied to a changed request, such as a changed method, which proves the decision was not recomputed.
+- **Silent enforcing verdict**: the effect appearing at the serving tier while the enforcing tier's verdict stayed silent.
+- **Marker absence**: the enforcing tier's own marker absent from a response the serving tier produced, which localises the tier that answered.
+- **Sink error class**: the sink's own error class, which names the tier that answered.
 
 ## Adversarial Capabilities
 
-Edge-origin differentials presuppose tier visibility plus route enumeration plus a repeatable baseline, and they consume all three.
-- Read the same request at the enforcing tier and at the serving tier, and record both verdicts.
-- Enumerate the sibling routes, versions, and entry points that reach one effect.
-- Change one property of a request under a stored verdict: the claims, the session, the identity, or the target.
-- Reach the core entry directly where the front tier hides it.
+- **Prerequisites**: edge-origin differentials presuppose tier visibility plus route enumeration plus a repeatable baseline, and they consume all three.
+- **Two-tier reading**: read the same request at the enforcing tier and at the serving tier, and record both verdicts.
+- **Route inventory**: enumerate the sibling routes, versions, and entry points that reach one effect.
+- **Property change**: change one property of a request under a stored verdict: the claims, the session, the identity, or the target.
+- **Core access**: reach the core entry directly where the front tier hides it.
 
 ## Trust Assumptions
 
-The control trusts that the tier which decides and the tier which serves evaluate the same request under the same rule.
-The agreement holds every route to the current chain, holds a stored verdict to the request that produced it, and holds the enforcing tier's scope to the serving tier's effect.
-This variant breaks the tier clause because one tier decides while another serves, so the request reaches an effect the deciding tier would have refused.
-The pass is claimed only when both verdicts are recorded for one request, because a single verdict cannot show a tier gap.
+- **The agreement**: the control trusts that the tier which decides and the tier which serves evaluate the same request under the same rule, holds every route to the current chain, holds a stored verdict to the request that produced it, and holds the enforcing tier's scope to the serving tier's effect.
+- **The failing clause**: this variant breaks the tier clause because one tier decides while another serves, so the request reaches an effect the deciding tier would have refused.
+- **Claim discipline**: the pass is claimed only when both verdicts are recorded for one request, because a single verdict cannot show a tier gap.
 
 ## Key Vulnerabilities
 
 ### Route and Chain Divergence
 
-Reach one effect through a sibling route, a legacy form, or a versioned path that does not carry the current chain, because the route table and the middleware wiring often diverge.
-Enumerate the shadow and deprecated route families explicitly: an older version of the same operation, an alternate host family or device subdomain, and a legacy path alias, because the enforcement was wired to the current route only.
-Where a rule is scoped to a path, reach the protected path through a spelling the rule does not match while the router still resolves it: case, dot segments, encoded separators, and trailing characters.
-Where the enforcing tier skips a request it believes to be internal, the asserting field itself is the route past the chain, so test the claim the field makes rather than the path.
-Vary the framing of the same route where the wiring binds a check to one framing only.
-A path-override field reaches the route the enforcing tier denied; name `proxy-techniques-relay-forwarding` at that step rather than restating its procedure here.
-The parent tier-mapping step covers one route's verdict and cannot describe two routes to one effect, so this variant owns the route-divergence procedure.
+- **Sibling routes**: reach one effect through a sibling route, a legacy form, or a versioned path that does not carry the current chain, because the route table and the middleware wiring often diverge.
+- **Route families**: enumerate the shadow and deprecated route families explicitly: an older version of the same operation, an alternate host family or device subdomain, and a legacy path alias, because the enforcement was wired to the current route only.
+- **Path spellings**: where a rule is scoped to a path, reach the protected path through a spelling the rule does not match while the router still resolves it: case, dot segments, encoded separators, and trailing characters.
+- **Internal claim**: where the enforcing tier skips a request it believes to be internal, the asserting field itself is the route past the chain, so test the claim the field makes rather than the path.
+- **Framing variation**: vary the framing of the same route where the wiring binds a check to one framing only.
+- **Path override**: a path-override field reaches the route the enforcing tier denied; name `proxy-techniques-relay-forwarding` at that step rather than restating its procedure here.
+- **Ownership**: the parent tier-mapping step covers one route's verdict and cannot describe two routes to one effect, so this variant owns the route-divergence procedure.
 
 ### Verdict Reuse Across Requests
 
-Replay a request under a stored verdict with one property changed, because a cached or stale decision is applied to requests it never evaluated.
-Change the session, the identity, the target, or the method under an unchanged decision, one property per attempt.
-Treat a second property that the stored verdict still admits as the completed probe.
+- **Verdict replay**: replay a request under a stored verdict with one property changed, because a cached or stale decision is applied to requests it never evaluated.
+- **One property per attempt**: change the session, the identity, the target, or the method under an unchanged decision, one property per attempt.
+- **Completed probe**: treat a second property that the stored verdict still admits as the completed probe.
 
 ### Scope Divergence Between Tiers
 
-Compare what each tier evaluates: the front tier often covers the address, the method, or the path while the serving tier applies the identity-bound rule.
-Where the rule covers one verb, reach the same handler through a sibling verb the rule never evaluated.
-Send the same effect through the tier that evaluates less and record which tier answered.
-Treat a scope the enforcing tier never read as the bypass, and keep the effect identical across the two attempts.
+- **Scope comparison**: compare what each tier evaluates: the front tier often covers the address, the method, or the path while the serving tier applies the identity-bound rule.
+- **Sibling verb**: where the rule covers one verb, reach the same handler through a sibling verb the rule never evaluated.
+- **Least-evaluating tier**: send the same effect through the tier that evaluates less and record which tier answered.
+- **Unread scope**: treat a scope the enforcing tier never read as the bypass, and keep the effect identical across the two attempts.
 
 ## Bypass Techniques
 
-Bypass shapes slip past a control that is present at one tier, so each one is tried after the enforcing tier refuses.
-- Sibling routes, legacy forms, and versioned paths that skip the current chain.
-- Stored verdicts replayed against a changed session, identity, or target.
-- Direct core entries where the front tier hides a live route.
-- Alternate framings of one route, where the wiring binds the check to one framing.
-- Requests shaped to the scope the enforcing tier reads while the serving tier applies the full rule.
+- **Bypass scope**: bypass shapes slip past a control that is present at one tier, so each one is tried after the enforcing tier refuses.
+- **Sibling routes**: sibling routes, legacy forms, and versioned paths that skip the current chain.
+- **Stored verdicts**: stored verdicts replayed against a changed session, identity, or target.
+- **Direct core entries**: direct core entries where the front tier hides a live route.
+- **Alternate framings**: alternate framings of one route, where the wiring binds the check to one framing.
+- **Scoped shapes**: requests shaped to the scope the enforcing tier reads while the serving tier applies the full rule.
 
 ## Chaining Attacks
 
-Edge-origin differentials chain forward into the class that owns the effect, because a tier gap is only the first layer.
-- Hand the served effect to the class that owns it, and prove the class-specific consequence there.
-- Stack with the parser confusion where a sibling route also reads a different member.
-- Stack with the cache deception where the same tier also stores a response body rather than a verdict.
-- Name the class at its own step rather than restating its procedure here.
+- **Chain scope**: edge-origin differentials chain forward into the class that owns the effect, because a tier gap is only the first layer.
+- **Effect hand-off**: hand the served effect to the class that owns it, and prove the class-specific consequence there.
+- **Parser-confusion stack**: stack with the parser confusion where a sibling route also reads a different member.
+- **Cache-deception stack**: stack with the cache deception where the same tier also stores a response body rather than a verdict.
+- **Own-step naming**: name the class at its own step rather than restating its procedure here.
 
 ## Testing Methodology
 
@@ -107,23 +106,22 @@ Edge-origin differentials read the tiers first and compare second, because the g
 
 ## False Positives
 
-Stop when both tiers gave the same verdict, because an identical verdict is not a differential.
+- **Stop condition**: stop when both tiers gave the same verdict, because an identical verdict is not a differential.
 
-- A sibling route that refuses the effect, confirmed across the route inventory.
-- A stored verdict recomputed on the changed request, confirmed by a fresh refusal.
-- A pass whose effect never reached the serving tier, where the route passed and the request broke later.
-- A second control at the serving tier, which shows a stacked control rather than a tier gap.
-- A cached response body rather than a cached verdict, which is the shared-cache step rather than this one.
+- **Refusing sibling**: a sibling route that refuses the effect, confirmed across the route inventory.
+- **Recomputed verdict**: a stored verdict recomputed on the changed request, confirmed by a fresh refusal.
+- **Broken request**: a pass whose effect never reached the serving tier, where the route passed and the request broke later.
+- **Stacked control**: a second control at the serving tier, which shows a stacked control rather than a tier gap.
+- **Cached body**: a cached response body rather than a cached verdict, which is the shared-cache step rather than this one.
 
 ## Pro Tips
 
-Edge-origin differentials reward tier mapping plus route enumeration.
-
-1. Map which tier decides and which tier serves before crafting, because the mechanism follows the gap.
-2. Enumerate sibling routes, since the chain often covers one route and not its siblings.
-3. Change one property under a stored verdict so the reuse is attributable.
-4. Re-baseline at both tiers after each pass, because a second control often sits at the serving tier.
-5. Confirm at the serving tier, because the enforcing tier's silence is not the effect.
+- **Discipline**: edge-origin differentials reward tier mapping plus route enumeration.
+- **Tier mapping**: map which tier decides and which tier serves before crafting, because the mechanism follows the gap.
+- **Sibling-route enumeration**: enumerate sibling routes, since the chain often covers one route and not its siblings.
+- **One property per attempt**: change one property under a stored verdict so the reuse is attributable.
+- **Two-tier re-baseline**: re-baseline at both tiers after each pass, because a second control often sits at the serving tier.
+- **Serving-tier confirmation**: confirm at the serving tier, because the enforcing tier's silence is not the effect.
 
 ## Summary
 
