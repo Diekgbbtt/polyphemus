@@ -146,10 +146,9 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 
 ## Bypass Techniques
 
-- Content-type switching (JSON/form/multipart) to hit different code paths
-- Method alternation (GET performing state change; override headers or fields)
 - Client recomputation: totals, taxes, discounts computed on the client and accepted by the server
-- Cache/gateway differentials: stale decisions from edge caches that are not identity-aware
+- Name the proxy-techniques family at the channel-wrapping step for content-type switching and method alternation, rather than restating the channel tricks here.
+- Name the defence-bypass family at the edge-versus-core step for stale gateway decisions, rather than restating the gateway differentials here.
 
 ## Chaining Attacks
 

@@ -129,6 +129,8 @@ The forwarding family is informational: no protocol guarantee says who set it. A
 - Rewrite and override headers honored after the authorization check, the classic guarded-path bypass
 - Address families under several names: spray all of them, since each layer may read a different one
 
+The relay mechanics these shapes work are the proxy-techniques family's relay step; name it there and keep the header-shape detail here.
+
 ### Content-Type and Encoding Confusion
 
 - Inject an HTML media type into an endpoint that returned structured data; browsers may sniff and render it

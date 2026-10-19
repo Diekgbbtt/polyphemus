@@ -79,9 +79,11 @@ Shape separator and encoding values that normalize differently between the redir
 Shape numeric address forms that match textual rules while resolving to internal targets.
 Shape nested-redirector values that hide the internal destination one forwarding layer deep.
 
+The hop chain and the destination parse comparison are the proxy-techniques family's steps; name it there and keep the class-specific pivot verdict here.
+
 ## Chaining Attacks
 
-Pivot the egress into internal exploitation only by handing off to the SSRF family at the internal-access step.
+Pivot the egress into internal exploitation only by handing off to the `ssrf` class at the internal-access step.
 Escape through multi-hop chains where the trusted redirector fronts the internal destination.
 Relay the pivot through token-bearing fetcher flows only where the fetcher attaches credentials to the followed hop.
 

@@ -136,6 +136,7 @@ The non-decomposing baseline is the endpoint itself: one surface where depth, al
 - Aliasing to duplicate a filtered operation many times inside one document
 - Nested selections that reach a guarded field through an allowed parent
 - Batching to interleave a blocked operation among allowed siblings
+- Name the defence-bypass family at its signature-evasion step for the filter shapes, rather than restating the matcher mechanics here.
 
 ## Chaining Attacks
 
@@ -143,6 +144,7 @@ The non-decomposing baseline is the endpoint itself: one surface where depth, al
 - Broken object authorization + identifier enumeration to sweep collections for foreign data
 - Denial-of-service probes + alias amplification to hold a rate-limit budget while brute-force operations run
 - Error exposure + injection probing: leaked query fragments shorten the blind-exploitation path
+- URL-like resolver arguments that reach an internal fetch name the proxy-techniques family at its relay step and `ssrf` at the fetch step, rather than restating either here
 
 ## Testing Methodology
 

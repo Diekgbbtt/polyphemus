@@ -71,7 +71,7 @@ Carry prompt-framing variations such as urgency plus authority plus help-desk pr
 
 Bypass forms are the check values this variant defeats, each confirmed through polling rather than request shape alone.
 - Short guessable codes pass an issuance side that favors usability over entropy.
-- Slow-only rate limits pass a polling side that throttles without ever blocking.
+- Slow-only rate limits pass a polling side that throttles without ever blocking, with the partial-limit step owned by the defence-bypass family.
 - Unbound approvals pass a confirmation side that never joins the approver identity to the requester session.
 - Unverified approval screens pass an inducement where any visitor can confirm any code.
 

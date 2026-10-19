@@ -127,6 +127,7 @@ Each variant breaks one clause: the flat-field clause, the batch-scope clause, t
 ### Content-Type Switching
 
 - Switch structured, form-encoded, multipart, and plain-text bodies; some code paths validate only one
+- Name the defence-bypass family at its parser step for content-type switching and key-path reshaping, rather than restating those mechanics here.
 
 ### Key Path Variants
 

@@ -88,6 +88,8 @@ Shape fragment and query values that mask the effective destination from prefix 
 Shape confusable-character and trailing-dot values that equalize differently per parser.
 Shape double-encoded and case-varied values that decode one extra time in the consumer.
 
+The destination parse comparison is the proxy-techniques family's step; name it there and keep the class-specific navigation verdict here.
+
 ## Chaining Attacks
 
 Escape through multi-hop chains where a trusted domain fronts a redirector that lands externally.

@@ -137,7 +137,7 @@ Each variant breaks one clause: the exposure clause, the default-credential clau
 
 **Uniformity and Lockout Defences**
 - Where responses are uniform, fall back to timing and connection behaviour as the residual channel
-- Where lockout exists, stay under the threshold and spread attempts across identities and sessions
+- Where lockout exists, the threshold and the spread across identities are the defence-bypass family's throttle step; name it there and keep the lockout verdict here
 
 **Secret Obfuscation**
 - Decode layered and encoded holders before judging a candidate

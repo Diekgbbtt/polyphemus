@@ -129,7 +129,7 @@ Service-to-service trust is the shared root, because an internal caller is assum
 
 ### Cache Key Confusion
 
-- Cached authorization decisions at the edge reused across users; test with cache-key variation and session swaps
+- Cached authorization decisions at the edge reused across users; test with cache-key variation and session swaps, with the edge-versus-core step owned by the defence-bypass family
 
 ## Testing Methodology
 

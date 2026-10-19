@@ -134,6 +134,7 @@ Bypass shapes slip past a check that is present, so each one is tried after the 
 - The same artifact presented over a second transport or endpoint whose check is weaker.
 - Retired keys and previous generator versions accepted during a rotation overlap.
 - Alternate identifier spellings accepted by the derivation path while the lookup stays on the canonical one.
+- Name the defence-bypass family at the normalisation, tolerant-acceptance, and spelling-folding steps, and the proxy-techniques family at the second-carrier step, rather than restating those mechanics here.
 
 ## Chaining Attacks
 
