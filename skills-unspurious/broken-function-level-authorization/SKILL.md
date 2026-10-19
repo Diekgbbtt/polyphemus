@@ -36,6 +36,7 @@ BFLA is action-level authorization failure: callers invoke functions (endpoints,
 - Diff middleware stacks between the primary route and its aliases, legacy paths, and alternate encodings
 - Trace the actor value from the edge inward: token claim, gateway-injected header, and body hint
 - Enumerate client-supplied privilege flags and requester markers from bundles and prior traffic as candidate identity sources, since a service that reads them self-elevates
+- Inventory the route surface by tier before any replay, because one action is frequently reachable through more than one route, handler, or version; the sibling-route and version-consistency inventory is owned by `proxy-techniques-channel-wrapping`, and the authorization verdict per form is recorded here
 
 ## Detection Channels
 
@@ -155,6 +156,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 4. **Vary headers and selectors** - Org/tenant/project; test behind gateway vs direct-to-service
 5. **Include background flows** - Job creation/finalization, webhooks, queues; confirm re-validation
 6. **Confirm the effect** - Snapshot the durable state before and after each replay, and the step completes when every privileged effect has a matched denial
+
+The matrix and its transport replay are driven by `scripts/bfla-role-matrix`, which records an expected-minimum-role cell per action and a verdict per cell, so an unexpected grant is named rather than eyeballed.
 
 ## Variants
 

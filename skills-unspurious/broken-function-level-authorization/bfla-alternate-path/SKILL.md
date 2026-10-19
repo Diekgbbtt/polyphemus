@@ -24,6 +24,7 @@ Parser encoding labels alone never define the attempt; only a middleware gap bet
 Map every route and framing that reaches each privileged action before replaying anything.
 Collect interface documents, client bundles, prior HTTP history, and gateway routing notes until each action owns a list of candidate aliases, legacy versions, and method framings.
 Inventory the version surface explicitly, then behaviourally diff each old version against the current one on authorization, validation, and rate-limit strength, because a regression shows only in the diff.
+The tier inventory that supplies these alternates, with its route families and version forms, is owned by `proxy-techniques-channel-wrapping`; the enforcement verdict per form is recorded here.
 Diff the middleware chain per route and per parser handler until the permissive chains are named.
 Confirm the proper-role baseline succeeds on the primary path before judging any alternate attempt.
 

@@ -25,6 +25,7 @@ Map every identity and selector input the privileged action accepts before varyi
 Collect interface documents, client bundles, prior HTTP history, and gateway topology notes until each action owns a list of candidate hints and selectors.
 Record which values the edge injects versus which the client supplies, since precedence between them is the question.
 Record every gate keyed on a hint that is not an identity claim: navigation provenance, origin or network-address values, and routing overrides; enumerate the forwarding-address header family (including misspellings and private-address forms) where a network-origin allowlist is suspected.
+The hint families, the supply-remove-contradict triple, and the per-family probe notes are in `references/hint-header-probes.md`.
 Confirm the unhinted baseline decision with the lower-role token before judging any hinted attempt.
 
 ## Detection Channels
