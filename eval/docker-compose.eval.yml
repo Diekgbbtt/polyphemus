@@ -57,3 +57,10 @@ services:
     env_file:
       - path: .env
         required: true
+
+  kali:
+    # Steel endpoint (#390, D359-4): the kali container is the only Steel CLI
+    # client, so it must carry the value. Declared as an optional passthrough
+    # rather than an `env_file`, so the instance's LLM keys never enter kali.
+    environment:
+      STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}

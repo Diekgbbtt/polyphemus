@@ -38,6 +38,16 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 _STEEL_TOKEN = re.compile(r"\bsteel\b")
 _STEEL_VERSION_PIN = "0.4.4"
+# The `steel` binary token in COMMAND POSITION (start of the line, or after a
+# shell separator, optionally behind env assignments and `sudo`), followed by
+# whitespace or end. This is the anchor for the local-mode injection: a bare
+# `\bsteel\b` also matches the word inside a path like `/opt/steel` or
+# `steel-cli`, which would corrupt a prefixed command.
+_STEEL_COMMAND = re.compile(
+    r"(^|[;&|\n]\s*)"
+    r"((?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)"
+    r"(steel)(?=\s|$)"
+)
 # The global mode flag the gateway injects when a self-hosted endpoint is
 # configured (#390, D359-4), and the flags a caller may already have used to
 # choose the mode or the URL (either one suppresses the injection).
@@ -396,14 +406,16 @@ def _local_mode(command: str) -> str:
     # The CLI selects local mode only through the global `--local` flag, and it
     # reads the endpoint URL itself (native precedence step 2). When the
     # deployment names a self-hosted runtime, inject `--local` immediately
-    # after the leading `steel` token. A command that already carries `--local`
-    # or `--api-url` is left untouched, and the URL text is never rewritten
-    # (#390, D359-4). Script text is not passed here: scripts stay verbatim.
+    # after the `steel` binary token (command position, so a path that merely
+    # contains the word "steel" is never touched). A command that already
+    # carries `--local` or `--api-url` is left untouched, and the URL text is
+    # never rewritten (#390, D359-4). Script text is not passed here: scripts
+    # stay verbatim.
     if not os.environ.get(_STEEL_ENDPOINT_ENV, "").strip():
         return command
     if _STEEL_MODE_FLAG.search(command):
         return command
-    return _STEEL_TOKEN.sub("steel --local", command, count=1)
+    return _STEEL_COMMAND.sub(r"\1\2\3 --local", command, count=1)
 
 
 def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh",

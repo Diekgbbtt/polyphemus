@@ -14,6 +14,11 @@ services:
   kali:
     cap_add:
       - NET_ADMIN
+    environment:
+      # Steel endpoint (#390, D359-4): an empty value means the remote cloud.
+      # Explicit here as belt-and-suspenders for the dev bring-up; the base
+      # file already declares it.
+      STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
 
   agent:
     volumes:

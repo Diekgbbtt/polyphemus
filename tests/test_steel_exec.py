@@ -391,14 +391,36 @@ def test_injection_lands_after_the_steel_token_not_at_the_front(
     assert _calls(steel_stub)[-1] == "--local browser cookies --json"
 
 
+def test_injection_ignores_the_word_steel_inside_a_path(
+        workroot, steel_stub, monkeypatch):
+    # Regression: a bare `\bsteel\b` anchor matched the word inside a path
+    # (`/opt/steel`, `steel-cli`) and corrupted the prefix. The anchor must be
+    # the `steel` token in command position.
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    (workroot / "steel").mkdir()
+    (workroot / "steel-cli").mkdir()
+    for command in (
+        f"cd {workroot}/steel && steel browser cookies --json",
+        f"cd {workroot}/steel-cli && steel browser cookies --json",
+        f"STEEL_DIR={workroot}/steel steel browser cookies --json",
+    ):
+        out = _steel_exec(command=command, session_id="s1")
+        assert out["returncode"] == 0, out
+        assert _calls(steel_stub)[-1] == "--local browser cookies --json", command
+
+
 def test_script_mode_never_rewritten(workroot, steel_stub, monkeypatch):
     # Script text is verbatim by contract (D13); the skill tells the caller to
-    # pass `--local` itself.
+    # pass `--local` itself. With the endpoint set, the script's own steel call
+    # must run without an injected flag.
     monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
     script = "steel browser cookies --json\necho done\n"
     out = _steel_exec(script=script, script_lang="sh", session_id="s2")
     assert out["returncode"] == 0, out
     assert "done" in out["stdout"]
+    # The version probe runs first, then the script's unmodified steel call.
+    assert _calls(steel_stub)[-1] == "browser cookies --json"
+    assert not any("--local" in c for c in _calls(steel_stub))
 
 
 def test_gateway_env_name_matches_the_shared_resolver():
