@@ -69,20 +69,20 @@ The embedded request is executed by the back-end as a first-class request from t
 ## Advanced Techniques
 
 **Attribute Set Enumeration**
-- Move the injected field between mapped and unmapped positions to learn which positions the hop forwards.
-- Record one verdict per position so the mapped set stays explicit.
+- **Mapped and unmapped positions**: move the injected field between mapped and unmapped positions to learn which positions the hop forwards.
+- **Per-position verdicts**: record one verdict per position so the mapped set stays explicit.
 
 **Terminator Variation**
-- Vary the frame's terminator and length encoding to find the shape the back-end honours over the HTTP declaration.
-- Prefer the smallest variation that still reaches the back-end unchanged.
+- **Terminator and length encoding**: vary the frame's terminator and length encoding to find the shape the back-end honours over the HTTP declaration.
+- **Smallest variation**: prefer the smallest variation that still reaches the back-end unchanged.
 
 **Shared-Pool Amplification**
-- Prefer a shared back-end pool, because a per-client connection limits the smuggled frame to its own client.
-- Confirm connection correspondence before attempting capture-shaped effects.
+- **Shared back-end pool**: prefer a shared back-end pool, because a per-client connection limits the smuggled frame to its own client.
+- **Connection confirmation**: confirm connection correspondence before attempting capture-shaped effects.
 
 **Quiet Confirmation**
-- Confirm with a marker read plus a response-pairing anomaly before attempting interior-path reach.
-- Keep the embedded request short during detection and extend it only after the mapping is proven.
+- **Marker and pairing anomaly**: confirm with a marker read plus a response-pairing anomaly before attempting interior-path reach.
+- **Short embedded request**: keep the embedded request short during detection and extend it only after the mapping is proven.
 
 ## Bypass Techniques
 
@@ -122,11 +122,11 @@ Cross-protocol desync runs hop mapping first and embedded-request proof last, be
 
 ## Pro Tips
 
-1. Prefer mapping the copied-field set first, since only mapped fields can carry the embedded request.
-2. Favor one injected field per frame so the attribute that carries it attributes exactly.
-3. Confirm with a marker plus a response-pairing anomaly before attempting interior-path reach.
-4. Run capture-shaped attempts only with explicit authorisation and during low-traffic periods, because they touch real callers.
-5. Hand any same-protocol framing result to the parent and any version-translation result to the downgrade sibling rather than stretching this oracle.
+- **Copied-field mapping first**: prefer mapping the copied-field set first, since only mapped fields can carry the embedded request.
+- **One injected field per frame**: favor one injected field per frame so the attribute that carries it attributes exactly.
+- **Marker confirmation**: confirm with a marker plus a response-pairing anomaly before attempting interior-path reach.
+- **Capture authorisation**: run capture-shaped attempts only with explicit authorisation and during low-traffic periods, because they touch real callers.
+- **Sibling handoff**: hand any same-protocol framing result to the parent and any version-translation result to the downgrade sibling rather than stretching this oracle.
 
 ## Summary
 
