@@ -27,7 +27,6 @@ HTTP request smuggling exploits disagreements between a front-end proxy and a ba
 - **Encoding beside length**: an encoding declaration present beside a length declaration.
 - **Chunk size obfuscation**: through whitespace, tab, case, or invalid extensions.
 - **Header-block and frame boundaries**: where reassembly order differs between hops.
-
 - **Smuggling carrier families**: see `references/smuggling-carrier-families.md` for the carriers a smuggled prefix can ride and each carrier's prerequisite.
 
 ## Reconnaissance
@@ -140,7 +139,6 @@ HTTP request smuggling exploits disagreements between a front-end proxy and a ba
 - **Duplicate encoding fields**: where the back-end uses the last and the front-end the first.
 - **Injected line break**: a line break injected into a preceding field value, so the declaration arrives only at the back-end.
 - **Case and folding variants**: case variation and obsolete folding forms accepted by one hop and normalized by the other.
-
 - **Declaration pair matrix**: see `references/declaration-pair-matrix.md` for the pair cells and the leftover accounting.
 - **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 

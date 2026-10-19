@@ -35,7 +35,6 @@ Cross-site scripting is attacker-controlled input that reaches a render or execu
 - **Source enumeration**: enumerate sources - URL components, referrer, message channels, storage, server data, and uploaded file names or metadata.
 - **Source-to-sink tracing**: trace each source to every sink that renders or evaluates it, including deferred, retrieval, and re-render paths.
 - **Sink instrumentation**: instrument markup-insertion and evaluation sinks to log which values reach them.
-
 - **Source and sink families**: see `references/source-sink-families.md` for the source and sink family lists with the context-to-encoding matrix.
 
 ### Context Classification

@@ -88,7 +88,6 @@ The goal is confirmed execution context that later escalates to durable control.
 - **Encoded stagers**: reach execution through transport decoding that restores the probe shape after the filter.
 - **Binary alternatives**: reach execution through absolute paths plus alternate binaries plus shell-flavour switching when one family is blocked.
 - **Layered combinations**: hand off to the defence-bypass family at the filter step rather than restating relay mechanics here.
-
 - **Bypass-shape table**: see `references/command-injection-bypass-shapes.md` for the per-family bypass table and the out-of-band confirmation procedure.
 - **Extended reading**: when this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 

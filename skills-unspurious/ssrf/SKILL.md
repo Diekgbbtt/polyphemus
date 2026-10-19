@@ -145,7 +145,6 @@ Server-side request forgery lets the server reach networks and services the call
 - **Wrapped and encoded destinations**: a blob carried in the path or a double-encoded host reaches the fetch after the filter's decode passes, and the number of decode passes before the fetch is the bug.
 - **Parser-confusion address shapes**: a userinfo split, a fragment before the host, an encoded separator, and a backslash before the host move the parse between the check and the connection.
 - **Edge-versus-origin path confusion**: the edge and the origin normalise the path differently, so the approved address and the fetched path diverge, with the comparison owned by the proxy-techniques family at its destination-parser step.
-
 - **Address notation families**: see `references/address-notation-bypass.md` for the notation families with the check each one defeats.
 
 **Relay Mechanics**

@@ -210,6 +210,11 @@ fi
 # only there. `## Variants` is exempt because checks 8's R9/R10 sweep parses its
 # line set, and the out-of-scope sections (front matter, title, intro, Testing
 # Methodology, Summary) keep their prose by the spec's section 4.
+# Two sibling shapes are offenders too: a blank line between two records, while
+# a blank line around a heading (the `## ` opener or a `###` group label) stays
+# legal; and an indented line outside a code fence, because the only indented
+# lines the contract allows are the abstract fences, which carry a two-space
+# indent. An indented prose or numbered line is therefore an offender.
 # The scan is awk-based on purpose: a `grep -n` prefix defeats an anchored `-v`
 # filter, so the line-number form is built only for the offender report.
 layout_scan() {
@@ -231,24 +236,34 @@ layout_scan() {
                h == "## Chaining Attacks" || h == "## False Positives" || \
                h == "## Pro Tips" || h == "## Tooling"
       }
-      BEGIN { inscope = 0; fence = 0 }
-      /^## / { inscope = inscope_head($0); fence = 0; next }
+      BEGIN { inscope = 0; fence = 0; prev = ""; blanks = "" }
+      /^## / { inscope = inscope_head($0); fence = 0; prev = "heading"; blanks = ""; next }
       {
         if (!inscope) next
-        if ($0 ~ /^```/) { fence = !fence; next }
+        if ($0 ~ /^[[:space:]]*```/) { fence = !fence; prev = "fence"; blanks = ""; next }
         if (fence) next
-        if ($0 ~ /^[[:space:]]*$/) next
-        if ($0 ~ /^#/) next
-        if ($0 ~ /^[[:space:]]/) next
-        if ($0 ~ /^- \*\*[^*]+\*\*: .+\.$/) next
-        if ($0 ~ /^[0-9]+\./) {
-          printf "%s:%d: numbered item: %s\n", FILENAME, FNR, $0; next
+        if ($0 ~ /^[[:space:]]*$/) { blanks = blanks " " FNR; next }
+        if ($0 ~ /^#/) { prev = "heading"; blanks = ""; next }
+        if (prev == "record" && $0 ~ /^- \*\*[^*]+\*\*: .+\.$/) {
+          n = split(blanks, b, " ")
+          for (i = 1; i <= n; i++)
+            printf "%s:%s: blank line between records\n", FILENAME, b[i]
         }
-        if ($0 ~ /^\*\*[^*]+\*\*$/ && cp == 1) next
+        blanks = ""
+        if ($0 ~ /^[[:space:]]/) {
+          printf "%s:%d: indented line outside a code fence: %s\n", FILENAME, FNR, $0
+          prev = "other"; next
+        }
+        if ($0 ~ /^- \*\*[^*]+\*\*: .+\.$/) { prev = "record"; next }
+        if ($0 ~ /^[0-9]+\./) {
+          printf "%s:%d: numbered item: %s\n", FILENAME, FNR, $0; prev = "other"; next
+        }
+        if ($0 ~ /^\*\*[^*]+\*\*$/ && cp == 1) { prev = "group"; next }
         if ($0 ~ /^\*\*[^*]+\*\*$/) {
-          printf "%s:%d: bare group header: %s\n", FILENAME, FNR, $0; next
+          printf "%s:%d: bare group header: %s\n", FILENAME, FNR, $0; prev = "other"; next
         }
         printf "%s:%d: not a record: %s\n", FILENAME, FNR, $0
+        prev = "other"
       }
     ' "$f" >> "$out"
   done

@@ -150,7 +150,6 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 - **First-sequence synchronization**: where the needed request count exceeds what one packet carries, synchronise the first sequence numbers across several connections and fragment each request so the final frames still arrive together.
 - **Wire-capture validation**: confirm the flush landed as one segment carrying every final frame, because a merely pipelined burst reads as a race attempt without the tightness.
 - **Connection warming**: pre-establish sessions, cookies, and transport state to remove jitter.
-
 - **Single-packet staging**: see `references/race-single-packet.md` for the staging-and-flush template and the window-estimation decision tree.
 
 **Isolation-Level Exploitation**
