@@ -1,6 +1,6 @@
 # Tier Route Inventory
 
-This note holds the sibling-route and version inventory behind the api-version-consistency item: the route families that reach one operation, the chain each carries, and the behavioural regression the pair is read for.
+This note holds the sibling-route and version inventory behind the version-consistency check: the route families that reach one operation, the chain each carries, and the behavioural regression the pair is read for.
 It belongs to the proxy family because an older version, an alternate host family, or a legacy alias is a second carrier that reaches the same operation.
 
 ## The Route Families
