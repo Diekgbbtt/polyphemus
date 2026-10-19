@@ -21,20 +21,23 @@
 | T2b | Planner retirement and modeller wiring | T2a | S1 4.4, 7.1-7.4, 9.1 |
 | T2c | Residual type retirement (folded into T3, T4, T6) | T2b | S1 9.1 |
 | T3 | Run lifecycle: intake, ordering, risk budget, halt, resume | T1, T2a, T2b | S1 7; S2 7.4, 9 |
-| T4 | Per-loop dispatch: surfer, mover, runtime | T1, T3 | S2 8; S1 7.6 |
+| T4a | Per-loop dispatch: loop item, mover, sequencing, quiesce | T1, T3 | S2 8; S1 7.6 |
+| T4b | Config family retirement and hunter launch re-point | T4a | S1 9.1 |
 | T5 | Hunter harness pass FSM | - | S4 14 |
 | T6 | Hunter spec set, store, tools, and removals | T5 | S3 8.6-8.8 |
 | T7 | Hunter production prompt work phase | T6 | S3 8.5 |
 | T8 | Pod reduced D4, INIT gate, probe authoring | - | S5 8.1-8.5 |
 | T9 | Triager procedure-diff variant minting | T8 | S5 8.6 |
-| T10 | Documentation, hygiene, eval translation, fault-KB | T2, T4, T7, T9 | S1 9.5-9.6; impact map |
+| T10 | Documentation, hygiene, eval translation, fault-KB | T2a, T2b, T4a, T4b, T7, T9 | S1 9.5-9.6; impact map |
 | T11 | **PROPOSED, not cut** - the run resume trigger: the operator verb and the orphaned-run disposition | T3 | S1 7.5; #331 ESCALATED item 2; impact map 3.5 |
 
 The frontier is T1, T5, and T8.
-The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4, T5, T6, T7, T8, T9, T10.
+The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4a, T4b, T5, T6, T7, T8, T9, T10.
 A different order is valid when the blockers are closed.
 The T2 split is recorded in the ticket tracker: #375 (T2a), #386 (T2b), and the folded T2c scope in #376, #377, and #379.
+The T4 split is recorded in the ticket tracker: #377 (T4a) and #387 (T4b).
 The split happened because the original T2 could not complete in one implementation context. The T2a increment is additive; the production path changes only in T2b.
+The T4a increment changes the dispatch record; the config family retires in T4b.
 
 ## 3. Data dependency map
 
@@ -79,7 +82,8 @@ T1 store
   -> T2a modeller pass: five gates, hints, tools, completion, prompt
       -> T2b planner retirement and bootstrap wiring (transitional unit order)
           -> T3 run driver: intake order, accumulator, halt, resume, trajectory
-              -> T4 surfer/mover: per-loop dispatch, sequencing, quiesce
+              -> T4a surfer/mover: per-loop dispatch, sequencing, quiesce
+                  -> T4b config family retirement and hunter launch re-point
 ```
 
 The modeller writes the model.
@@ -229,7 +233,9 @@ Replace the transitional distinct-unit order that T2b introduces.
 - The runtime no longer selects units through the fault-source/KB path.
 - Tests cover the pure algorithms and the integration path.
 
-### T4 - Per-loop dispatch: surfer, mover, runtime
+### T4a - Per-loop dispatch: loop item, mover, sequencing, quiesce
+
+Delivered at `ee2fcee3`; the review is tracked on #377.
 
 **What to build.**
 The `ThreatLoopItem` and the dispatch validity predicate.
@@ -240,7 +246,7 @@ The quiesce predicate.
 The zero-loop consume.
 The model document move.
 The role-gate interaction.
-Retire the dispatch consumers of `HuntConfig`, `DispatchResult`, and `DeliveredCandidate`; the loop item is the dispatch record.
+The payload materialisation.
 
 **Acceptance criteria.**
 - One loop file dispatches one hunter.
@@ -251,8 +257,27 @@ Retire the dispatch consumers of `HuntConfig`, `DispatchResult`, and `DeliveredC
 - The work read and the dispatch read share the validity predicate.
 - A malformed loop is refused without wedging the quiesce.
 - A stale loop from another run is not dispatched.
-- The dispatch path no longer carries `HuntConfig`, `DispatchResult`, or `DeliveredCandidate`.
 - Tests cover the mover deduction and an integration path with the real store.
+
+### T4b - Config family retirement and hunter launch re-point
+
+Tracked on #387.
+
+**What to build.**
+Drop `HuntConfigItem` and the config read from the mover.
+Delete the surfer's config clauses and the config bridge.
+Drop the `hunt_store` threading from the runtime.
+Decide the disposition of `enqueue_hunt_config` and the `POST /hunting/hunt` endpoint.
+Replace the temporary config bridge in `run_hunter_session`, or mark it designed-not-built with the T6 dependency.
+Re-point the tests onto a shared `produce_model` fixture.
+Update `CONTEXT.md` and `CONTEXT-MAP.md`.
+
+**Acceptance criteria.**
+- The mover reads only produced loop files.
+- The dispatch path no longer carries `HuntConfig`, `DispatchResult`, or `DeliveredCandidate`.
+- The API enqueue disposition is decided, implemented, and tested.
+- The hunter launch carries the loop payload or refuses loudly with the T6 marker.
+- The re-pointed tests pass.
 
 ### T5 - Hunter harness pass FSM
 
