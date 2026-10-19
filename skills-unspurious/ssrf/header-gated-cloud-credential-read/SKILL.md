@@ -39,8 +39,7 @@ The read goal is short-lived credential disclosure plus platform API access, all
 
 ## Trust Assumptions
 
-- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach.
-- **The agreement**: holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
+- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
 - **The exposure**: stored platform credentials leak only when the server exposes them through such a fetch.
 - **The failing clause**: this variant breaks the plain-header clause because the gated target demands a token header plus method pair that a plain fetch cannot supply, so a single fetch never reaches the credential.
 

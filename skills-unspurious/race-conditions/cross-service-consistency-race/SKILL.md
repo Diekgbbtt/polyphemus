@@ -60,7 +60,7 @@ The goal is duplicate side effects plus over-issuance plus inconsistent aggregat
 
 - **Timeout provocation**: provoke a timeout to force the producer to redeliver, because retry-driven duplication is the second bent behavior.
 - **Redelivery observation**: submit placeholder shape `<distributed-workflow-payload>` with a slow-dependent leg and observe whether each redelivery commits a fresh side effect.
-- **Storm adjudication**: probe queue multiplicity separately - where several workers consume one queue, one published message can be picked up more than once, so count the durable effects against the publish count.
+- **Queue multiplicity**: probe queue multiplicity separately - where several workers consume one queue, one published message can be picked up more than once, so count the durable effects against the publish count.
 - **Storm adjudication**: treat one retry yielding one extra durable write as storm evidence and treat deduped redelivery as a clean consumer.
 
 ### Compensation-Without-Prevention Triggering

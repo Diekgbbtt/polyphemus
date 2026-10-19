@@ -38,8 +38,7 @@ The translation goal is command execution against internal text-protocol service
 
 ## Trust Assumptions
 
-- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach.
-- **The agreement**: holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
+- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
 - **The exposure**: sensitive network position plus stored file content leak only when the server exposes them through such a fetch.
 - **The failing clause**: this variant breaks the plain-protocol clause because the scheme selects a non-HTTP handler that translates the destination into raw protocol grammar, so a fetch becomes a command.
 

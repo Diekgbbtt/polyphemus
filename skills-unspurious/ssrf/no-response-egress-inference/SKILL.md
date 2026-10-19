@@ -41,8 +41,7 @@ The inference goal is internal service discovery plus port mapping that later en
 
 ## Trust Assumptions
 
-- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach.
-- **The agreement**: holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
+- **The agreement**: the fetcher trusts a user-supplied destination to select only locations the server is permitted to reach, holds the destination stable from allowlist check through fetch, keeps the response observable to the caller, keeps the request in plain-fetch shape with no translated protocol grammar, and keeps the request in plain-fetch shape with no gate-passing header or method pair.
 - **The exposure**: sensitive network position leaks only when the server exposes reachability through such a fetch.
 - **The failing clause**: this variant breaks the observability clause because the response carries no readable body, so reachability is decided only through callback correlation plus timing plus size plus error-class differencing.
 
