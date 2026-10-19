@@ -435,9 +435,13 @@ where `SignalOutcome` is one of:
 - `trail_only(reason)`
 - `none`
 
-`advance_state(state, outcome) -> (new_state, hint, trail_entry)`
+`advance_state(state, outcome, signal) -> (new_state, hint, trail_entry)`
 
-The hint is the constant for the exited state.
+The observed signal rides the call as a third argument.
+The trail entry records it (see below), and the listed outcome shapes do not carry it.
+A caller may omit it: the state move and the hint still resolve, and the exited pass then reads off the current state.
+
+The hint is the constant for the exited state - the signalling state on a forward jump, never the pass the jump started from.
 The trail entry records the signal, the outcome, and the state move.
 
 ### 14.6 Vocabulary
@@ -591,6 +595,10 @@ It routes to `detect` when a signal is pending.
 Every push returns to `supervise`.
 There is no fault push node and no per-fault list move.
 
+The "no signal" stay carries no destination (`Command(goto=[])` in the implementation) rather than a self-route: a self-route is a superstep loop, and reaching END there would claim the chain is over.
+END is therefore reached only on `complete`.
+The router is the pure `route_supervise(state)`, so the contract is unit-testable.
+
 The graph holds no model.
 The graph is compiled in memory per hunt.
 The ReAct engine runs outside the graph, as before.
@@ -610,6 +618,10 @@ The refactor removes:
 
 The pod dispatch path stays.
 The tool surface stays, with `skill_list` and `skill_load` added.
+
+**T5 (#378) disposition of this scope.**
+Landed: the fault lifecycle, its detector and push functions, the four push nodes, the fault lists, `current_fault`, the old phase channel, `derive_verdict`, and the five old hint constants are removed.
+Deferred to T6 (#379): `SpecItem.experiment_ref` and the store-side status vocabulary - the store keeps its four-value write gate locally (`hunter_memory.STORE_SPEC_STATUSES`) until the spec-set store rework, because `specified` is also the mover's pod-dispatch gate and dropping it alone would silently stop every pod dispatch.
 
 ### 14.12 Implementation decisions
 

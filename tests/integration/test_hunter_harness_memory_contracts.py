@@ -1,19 +1,22 @@
-"""H1-H5 harness-seam contract predicates for the hunter memory system
+"""H1-H6 harness-seam contract predicates for the hunter memory system
 (docs/design/hunting-164-assertion-catalogue.md).
 
 These are CONTRACT predicates on the harness seam, not e2e walkthroughs: they
 drive the real turn-by-turn ReAct host (`build_sync_hunting_agent`) against the
-real per-project `HunterMemoryStore` and the real five-tool surface, with the
-LIVE EDGE - the LLM session - substituted by a scripted model emitting REAL
-tool calls. Per the to-assertions rule a path that substitutes its live edge is
-a simulation, so it lives in the INTEGRATION tier: it pins the harness's
-deterministic detection+push+hint wiring (status verbatim, phase hints verbatim,
-lifecycle-on-one-file, fault/note identifier equality) and the request-bound
-tool schemas (H5). The live qualitative walkthrough of the same path - the real
-model through the co-located gateway - is the e2e tier's
-`test_hunter_memory_live_walkthrough.py` (E1). Every terminal quantity here is
-read back from the real YAML files the store wrote or from the recorded tool
-responses.
+real per-project `HunterMemoryStore` and the real tool surface, with the LIVE
+EDGE - the LLM session - substituted by a scripted model emitting REAL tool
+calls. Per the to-assertions rule a path that substitutes its live edge is a
+simulation, so it lives in the INTEGRATION tier: it pins the harness's
+deterministic detection+push+hint wiring (the pass-exit signals, the transition
+hints and the grounding rider verbatim, the phase-summary notes, the
+fault/note identifier equality) and the request-bound tool schemas (H5). The
+live qualitative walkthrough of the same path - the real model through the
+co-located gateway - is the e2e tier's `test_hunter_memory_live_walkthrough.py`
+(E1). Every terminal quantity here is read back from the real YAML files the
+store wrote or from the recorded tool responses.
+
+T5 (#378) re-pointed H1 and H4 from the retired fault lifecycle onto the pass
+chain, and added H6 (the tracker is never gated by a tool's acceptance).
 """
 from __future__ import annotations
 
@@ -22,11 +25,9 @@ import json
 from langchain_core.language_models import BaseChatModel
 
 from polymerhus.attack.hunting.hunter_state import (
-    COMMIT_SPECIFICATION_HINT,
-    D2_HINT,
-    D3_HINT,
-    NEXT_FAULT_HINT,
-    NEXT_ITERATION_HINT,
+    GROUNDING_HINT,
+    GROUNDING_KB_HINT,
+    TRANSITION_HINTS,
 )
 from tests.hunting_fixtures import (
     FAULT_KEY,
@@ -55,40 +56,58 @@ def _write(fault_keyword, strategy_keyword, spec):
     })
 
 
-# --- E1: the full lifecycle over the real store --------------------------------
+def _phase_note(phase, *, action="append", body=None):
+    """The interposed phase-summary note the model writes as a pass exit
+    (S4 14.8): `notes`, kind `phase_summary`, name `phase:<state>`."""
+    return _tool_call("notes", {
+        "command": "write", "action": action,
+        "note_name": f"phase:{phase}", "kind": "phase_summary",
+        "body": body or f"the {phase} pass output"})
 
 
-def test_H1_full_lifecycle_over_the_real_store(tmp_path):
+def _spec_set(*statuses, keywords=("f1", "probe")):
+    """The batched `specs` list write (S4 14.4): the whole set in one write.
+    The GENERATE draft is all-`hypothesised`; the terminal VERIFY-CLAIMS write
+    promotes the survivors and declasses the unfeasible. The store's own
+    `specs`-list handling is T6 (#379) - the tracker observes the signal off
+    the model's call and is never gated by the tool's acceptance."""
+    return _tool_call("hunts_store", {
+        "command": "write",
+        "specs": [
+            {"status": status, "fault_keyword": keywords[0],
+             "strategy_keyword": keywords[1]}
+            for status in statuses
+        ],
+    })
+
+
+# --- H1: the pass chain over the real turn seam --------------------------------
+
+
+def test_H1_the_pass_chain_reaches_complete_on_the_terminal_write(tmp_path):
+    """The tracked state walks the eight-pass chain to `complete` (S4 14.2):
+    the interposed phase notes carry the prose passes, the `hunts_store` writes
+    carry GENERATE and the terminal VERIFY-CLAIMS commit, and the harness lands
+    the terminal state in the feedback."""
     store = build_memory_store(tmp_path)
     steps = [
-        _write("f1", "probe", _fault("F1", status="hypothesised", mechanism="m1")),
-        _write("f1", "probe", _fault("F1", status="verified", mechanism="m1",
-                                     supports=["evidence-1"])),
-        _write("f1", "probe", _spec("F1", "S1", status="specified")),
-        _write("f2", "probe", _fault("F2", status="hypothesised", mechanism="m2")),
-        _write("f2", "probe", _fault("F2", status="dropped", mechanism="m2")),
-        _answer("candidate set exhausted"),
+        _phase_note("grounding"),
+        _phase_note("slice"),
+        _phase_note("collect"),
+        _phase_note("discriminate"),
+        _spec_set("hypothesised"),                  # GENERATE exit
+        _phase_note("well_formedness"),             # WELL-FORMEDNESS exit
+        _spec_set("ratified", "dropped"),           # VERIFY-CLAIMS exit
     ]
     agent = build_hunter_agent(store, steps=steps)
     result = agent(_hunt_config())
 
     assert result.hypothesis_verdict is None
-    # EXACTLY TWO produced spec files, each carrying its lifecycle terminal
-    files = sorted(_produced(tmp_path).glob("*.yaml"))
-    assert [f.name for f in files] == ["f1_probe.yaml", "f2_probe.yaml"]
-    f1 = store.read_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe")
-    f2 = store.read_spec(PROJECT, FAULT_KEY, fault_keyword="f2", strategy_keyword="probe")
-    assert f1["status"] == "specified" and f1["spec_id"] == "S1"
-    assert f2["status"] == "dropped"
-    # the terminal graph state rides the feedback: ratified S1, dropped F2,
-    # and F1 is NOT left stale in hypothesised
-    assert "phase: concluded" in result.feedback
-    assert "- ratified: S1" in result.feedback
-    assert "- dropped: F2" in result.feedback
-    assert "- hypothesised: F1" not in result.feedback
+    # the chain landed terminal: the harness ends the hunt at COMPLETE
+    assert "state: complete" in result.feedback
 
 
-# --- E2: fault and note share the identifier over the real pipeline ------------
+# --- H2: fault and note share the identifier over the real pipeline ------------
 
 
 def test_H2_fault_and_note_share_the_identifier_over_the_real_pipeline(tmp_path):
@@ -181,23 +200,29 @@ def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
     assert delete_resp == {"ok": True, "key": f"{FAULT_KEY}:n1"}
 
 
-# --- E4: the phase hints ride the tool responses and the graph tracks ----------
+# --- H4: the pass hints ride the tool responses -------------------------------
 
 
-def test_H4_phase_hints_ride_tool_responses_and_graph_tracks_the_loop(tmp_path):
+def test_H4_exit_hints_and_the_grounding_rider_ride_the_tool_responses(tmp_path):
+    """The harness injects the exited pass's constant in the signal's tool
+    response (S4 14.7) and the grounding `kb_query` rider on a grounding KB
+    call (S4 14.9); a hint is consumed by its own response - never leaked onto
+    a later one. A [D2] re-iteration rewrites an earlier pass's note: that is
+    trail material, and it rides no hint."""
     store = build_memory_store(tmp_path)
     seen: list = []
     steps = [
-        # a grounding-phase kb_query rides the D3 retrieval-gap check
+        # grounding: a KB call rides the retrieval-gap rider, never a transition
         _tool_call("kb_query", {
             "scenario_id": "s1", "attack_goal": "g", "concern": "c"}),
-        _write("f1", "probe", _fault("F1", status="hypothesised", mechanism="m1")),
-        _write("f1", "probe", _fault("F1", status="verified", mechanism="m1",
-                                     supports=["evidence-1"])),
-        _write("f1", "probe", _spec("F1", "S1", status="specified")),
-        _write("f2", "probe", _fault("F2", status="hypothesised", mechanism="m2")),
-        _write("f2", "probe", _fault("F2", status="dropped", mechanism="m2")),
-        _answer("concluded"),
+        _phase_note("grounding"),
+        _phase_note("slice"),
+        _phase_note("collect"),
+        _phase_note("discriminate"),
+        _spec_set("hypothesised"),
+        _phase_note("collect", action="update",        # the [D2] re-entry
+                    body="the collect pass output (re-iterated)"),
+        _phase_note("well_formedness"),
     ]
     agent = build_hunter_agent(store, steps=steps, seen=seen)
     result = agent(_hunt_config())
@@ -206,34 +231,34 @@ def test_H4_phase_hints_ride_tool_responses_and_graph_tracks_the_loop(tmp_path):
 
     def hint_content(i):
         # the tool response the model received on turn i (step N's response
-        # arrives as step N+1's input, so seen[N+1][-1] carries step N's hint)
+        # arrives as step N+1's input, so seen[i][-1] carries step i-1's hint)
         return seen[i][-1] or ""
 
-    # each phase hint rode its status-write response verbatim, inside the
-    # phase-transition-hint wrapper
     assert "<phase-transition-hint>" in hint_content(1)
-    assert D3_HINT in hint_content(1)
-    assert D2_HINT in hint_content(2)
-    assert COMMIT_SPECIFICATION_HINT in hint_content(3)
-    assert NEXT_ITERATION_HINT in hint_content(4)
-    assert D2_HINT in hint_content(5)
-    assert NEXT_FAULT_HINT in hint_content(6)
+    # the roster: grounding's rider, then each exited pass's own constant
+    assert GROUNDING_KB_HINT in hint_content(1)
+    assert TRANSITION_HINTS["grounding"] in hint_content(2)
+    assert TRANSITION_HINTS["slice"] in hint_content(3)
+    assert TRANSITION_HINTS["collect"] in hint_content(4)
+    assert TRANSITION_HINTS["discriminate"] in hint_content(5)
+    assert TRANSITION_HINTS["generate"] in hint_content(6)
+    # the [D2] re-entry rewrite is trail material: it never moves the state
+    # back and rides no hint
+    assert TRANSITION_HINTS["collect"] not in hint_content(7)
+    assert TRANSITION_HINTS["well_formedness"] in hint_content(8)
     # hints are consumed per response - no stale hint leaks onto a later one
-    assert D2_HINT not in hint_content(3)
-    assert NEXT_ITERATION_HINT not in hint_content(5)
-    # the graph tracked the loop, never left stale: both faults reached their
-    # terminal lists - F1 ratified (not hypothesised/verified), F2 dropped
-    # (not hypothesised)
-    assert "- ratified: S1" in result.feedback
-    assert "- dropped: F2" in result.feedback
-    assert "- hypothesised: F1" not in result.feedback
-    assert "- verified: F1" not in result.feedback
-    assert "- hypothesised: F2" not in result.feedback
-    # the persisted lifecycle files agree
-    assert store.read_spec(PROJECT, FAULT_KEY, fault_keyword="f1",
-                           strategy_keyword="probe")["status"] == "specified"
-    assert store.read_spec(PROJECT, FAULT_KEY, fault_keyword="f2",
-                           strategy_keyword="probe")["status"] == "dropped"
+    assert GROUNDING_KB_HINT not in hint_content(2)
+    assert TRANSITION_HINTS["slice"] not in hint_content(4)
+    # the interposed notes persisted as the hunter-only kind, and the
+    # re-iteration REWROTE the same note (latest wins, one record)
+    notes = store.read_notes(PROJECT)
+    assert {n["note_name"] for n in notes} >= {
+        "phase:grounding", "phase:slice", "phase:collect", "phase:discriminate",
+        "phase:well_formedness"}
+    assert {n["kind"] for n in notes} == {"phase_summary"}
+    collect_notes = [n for n in notes if n["note_name"] == "phase:collect"]
+    assert [n["body"] for n in collect_notes] == [
+        "the collect pass output (re-iterated)"]
 
 # --- H5: the nine tool schemas ride the session turn (option B) ---------------
 
@@ -288,3 +313,31 @@ def test_H5_tool_schemas_ride_the_session_turn(tmp_path, monkeypatch):
         # the args JSON schema rides the request body - the model sees it
         assert "parameters" in t["function"]
         assert "properties" in t["function"]["parameters"]
+
+
+# --- H6: the tracker is never gated by the tool's acceptance -------------------
+
+
+class _ExplodingNoteStore:
+    """A store whose note WRITE raises (O3): the seam degrades, and the
+    tracker must still observe the model's own call."""
+
+    def write_note(self, *args, **kwargs):
+        raise RuntimeError("notes store exploded")
+
+    def read_notes(self, *args, **kwargs):
+        return []
+
+
+def test_H6_the_tracker_advances_even_when_the_tool_call_fails():
+    """S4 14.2: the machine NEVER gates a tool call. The signal is read off the
+    model's own call, never off the tool's response, so a tool that raises
+    still advances the tracker and still rides the exited pass's hint."""
+    seen: list = []
+    agent = build_hunter_agent(
+        _ExplodingNoteStore(), steps=[_phase_note("grounding"), _answer("done")],
+        seen=seen)
+    result = agent(_hunt_config())
+
+    assert "state: slice" in result.feedback
+    assert GROUNDING_HINT in (seen[1][-1] or "")

@@ -67,12 +67,12 @@ from .conciseness import append_conciseness_directive
 from .hunter_memory import (
     DuplicateSpecError,
     HunterMemoryStore,
+    STORE_SPEC_STATUSES,
 )
 from .http_history_contract import (
     GET_HTTP_ARTIFACT_DESCRIPTION,
     SEARCH_HTTP_HISTORY_DESCRIPTION,
 )
-from .hunter_state import FAULT_STATUSES
 from .hunting_status import TARGET_UNAVAILABLE_DIRECTIVE
 from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
@@ -307,7 +307,9 @@ class NotesArgs(BaseModel):
     kind: str = Field(
         default="freeform",
         description="The note kind: hypothesis_refusal | "
-                    "implicit_test_primitive | freeform.")
+                    "implicit_test_primitive | freeform | phase_summary "
+                    "(the interposed pass exit; name the note phase:<state>, "
+                    "e.g. phase:well_formedness).")
     body: str = Field(default="", description="The note body.")
     evidence: str | None = Field(
         default=None,
@@ -447,10 +449,10 @@ class HuntsStoreTool(StoreToolBase):
                 f"the spec payload must carry the file-name identity "
                 f"attribute(s) {', '.join(missing)}; the spec file name "
                 f"<fault_keyword>_<strategy_keyword>.yaml is DERIVED from them")
-        if spec.get("status") not in FAULT_STATUSES:
+        if spec.get("status") not in STORE_SPEC_STATUSES:
             return self._write_rejected(
                 ["status"],
-                f"status must be one of {FAULT_STATUSES}; got "
+                f"status must be one of {STORE_SPEC_STATUSES}; got "
                 f"{spec.get('status')!r}")
         # The write mode is derived from the status (the orchestrator's
         # status-driven write): hypothesised creates the draft (the novelty
@@ -486,7 +488,10 @@ _NOTES_DESCRIPTION = append_conciseness_directive((
     "command=\"read\".\n"
     "write takes an action (append | update | delete), a "
     "note_name, the note kind (hypothesis_refusal | implicit_test_primitive "
-    "| freeform), and the body. evidence is a plain string (prose); "
+    "| freeform | phase_summary), and the body. phase_summary is the "
+    "interposed pass exit: name it phase:<state> (e.g. phase:grounding), one "
+    "note per pass; a loop re-iteration rewrites the same note with update. "
+    "evidence is a plain string (prose); "
     "structured refs go in provenance, the typed object with source, run_id, "
     "verdict_stub, and probe_refs (extra=forbid - a stray provenance key is "
     "rejected). "

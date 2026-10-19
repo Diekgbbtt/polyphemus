@@ -5,12 +5,6 @@ tests/integration/test_hunting_agent_contracts.py and are never repeated in
 this tier's red/green loop (testing-strategy.md section 2, the #82 precedent).
 This tier pins the pure functions the harness relies on:
 
-  derive_verdict(terminal_reason, *, clean, init_validation=None)
-      - the D7 vierdict derivation (D67-02, Q3-amended; implementation doc
-        section 2.3/5.2): reads ONLY the terminal reason plus the single
-        `clean` flag (plus `init_validation` for the INIT-rejection case),
-        never per-variant machinery.
-
   derive_technological_axis(card)
       - the deterministic technological axis for the `(fault-class, axis)`
         KB join key (IA-8, D10): derived from the unit's index card, never
@@ -18,69 +12,17 @@ This tier pins the pure functions the harness relies on:
 
   ROLES - the `hunting` role joins the LLM role registry keyed by
       `LLM_HUNTING` (Q1).
+
+The retired D7 verdict derivation (`derive_verdict`) left with T5 (#378): the
+verdict-consumption graph is out of scope and nothing live derived a verdict.
 """
 import pytest
 
 from polymerhus.attack.hunting.hunting_agent import (
     HypothesisVerdict,
     derive_technological_axis,
-    derive_verdict,
 )
 from polymerhus.app.llm.providers import HUNTING_ROLES, ROLES
-
-
-# --- derive_verdict: the ratified Q3 map (implementation doc 2.3) ------------
-
-def test_symptom_confirmed_derives_successful():
-    assert derive_verdict("symptom-confirmed", clean=False) == "successful"
-
-
-def test_space_exhausted_derives_unsuccessful():
-    assert derive_verdict("space-exhausted", clean=True) == "unsuccessful"
-
-
-def test_technical_infeasibility_derives_unsuccessful():
-    # A structural blocker is a refutation, never insufficient-evidence (Q3).
-    assert derive_verdict("technical-infeasibility", clean=False) == "unsuccessful"
-
-
-def test_specific_defence_prevention_derives_unsuccessful():
-    assert derive_verdict("specific-defence-prevention", clean=False) == "unsuccessful"
-
-
-def test_no_symptom_evidence_blocked_derives_insufficient_evidence():
-    # Blocked/unreachable observations: the absence is not established (Q3).
-    assert derive_verdict("no-symptom-evidence", clean=False) == "insufficient-evidence"
-
-
-def test_no_symptom_evidence_clean_derives_unsuccessful():
-    # Clean completed observations: a symptom-absent is established (Q3).
-    assert derive_verdict("no-symptom-evidence", clean=True) == "unsuccessful"
-
-
-def test_budget_timeout_mid_flight_derives_insufficient_evidence():
-    # The loop was cut mid-flight: the absence is not established (Q3).
-    assert derive_verdict("budget-timeout", clean=False) == "insufficient-evidence"
-
-
-def test_budget_timeout_clean_derives_unsuccessful():
-    assert derive_verdict("budget-timeout", clean=True) == "unsuccessful"
-
-
-def test_init_rejection_derives_underspecified_spec():
-    # A pod INIT rejection (tech-infeasibility carrying init_validation)
-    # derives underspecified-spec (Q3/Q5).
-    assert derive_verdict(
-        "technical-infeasibility",
-        clean=False,
-        init_validation=["symptom references an unobservable surface"],
-    ) == "underspecified-spec"
-
-
-def test_unknown_terminal_reason_derives_insufficient_evidence():
-    # Fail-open: an out-of-enum terminal reason cannot be interpreted, so the
-    # derivation is conservative - never a success or a clean absence claim.
-    assert derive_verdict("something-else", clean=True) == "insufficient-evidence"
 
 
 # --- derive_technological_axis: the deterministic joint-key axis (IA-8) ------
@@ -360,7 +302,7 @@ def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
     assert _load_hunting_agent_skill() not in first_human
     grounding = first_human.index("You are dispatched to hunt")
     surface = first_human.index("Tool surface")
-    state = first_human.index("phase:")
+    state = first_human.index("state: grounding")
     protocol = first_human.index("Each turn you either call")
     assert grounding < surface < state < protocol
 
@@ -368,7 +310,7 @@ def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
 def test_two_step_scripted_dispatch_terminates_with_terminal_assembly(
         monkeypatch):
     """(c) a two-step scripted-model dispatch still terminates with the same
-    terminal assembly (no derived verdict, concluded phase in the feedback)."""
+    terminal assembly (no derived verdict, the tracked pass in the feedback)."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
 
     result, _ = _run_stubbed_dispatch(monkeypatch, [
@@ -380,7 +322,7 @@ def test_two_step_scripted_dispatch_terminates_with_terminal_assembly(
          "message": AIMessage(content="candidate set exhausted")},
     ])
     assert result.hypothesis_verdict is None
-    assert "phase: concluded" in result.feedback
+    assert "state: grounding" in result.feedback
     assert "candidate set exhausted" in result.feedback
 
 
@@ -447,7 +389,7 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
             seen=seen)
         result = agent(_hunt_config())
     assert result.hypothesis_verdict is None
-    assert "phase: concluded" in result.feedback
+    assert "state: grounding" in result.feedback
     assert len(seen) == 2
     for turn_messages in seen:
         assert turn_messages[0] == f"{skill}\n\n{index}"  # the leading SystemMessage

@@ -368,6 +368,68 @@ The removal of the fault lifecycle and the old hints.
 - The old fault lists, statuses, hints, and `derive_verdict` are gone.
 - Tests cover the pure functions and the graph.
 
+**Implementation-time decisions (T5).**
+
+- The pure surface is `hunter_state.py`: the eight pass literals, `SpecStatus`
+  (`{hypothesised, ratified, dropped}`), `SpecItem`, `HuntState`
+  (`state` / `specs` / `injected_constant` / `trail`), the signal shapes, the
+  detector `detect_phase_signal(tool_name, args)`, the acceptance rule
+  `detect_signal(state, signal) -> SignalOutcome` and
+  `advance_state(state, outcome, signal) -> (new_state, hint, trail_entry)`.
+  `advance_state` takes the observed signal as a third argument: S4 14.5 fixes
+  that the trail entry records the signal, and the listed outcome shapes
+  (`advance(target)` / `forward_jump(target, skipped)` / `trail_only(reason)` /
+  `none`) do not carry it by themselves.
+- The trail entry shape is `{signal, outcome, from, to}` plus `skipped` on a
+  forward jump. The hint is keyed by the EXITED pass - the signalling pass on a
+  forward jump, not the pass the jump started from.
+- The state-machine side retires the fault lifecycle completely: `FaultStatus`,
+  `FAULT_STATUSES`, `FaultItem`, `HuntPhase`, `TransitionName`,
+  `detect_transition`, `push_transition`, the four lists, `current_fault`, the
+  `phase` channel, the five old hint constants, and the stale `derive_verdict`
+  are gone. The `spec_id`-derivation helper from #313 goes with the state
+  machine: the spec identity is the store's, derived from the payload keywords
+  (S3 8.6).
+- The store-side status vocabulary is NOT T5's: `hunter_memory.STORE_SPEC_STATUSES`
+  keeps the retiring four values locally (the store owns its write gate) because
+  T6 (#379) reworks the store onto the spec set - `specified` is also the mover's
+  pod-dispatch gate (`mover.SPEC_DISPATCH_STATUS`), so dropping the literal from
+  the store in T5 would silently stop every pod dispatch. `SpecItem.experiment_ref`
+  and the harness `HuntConfig` consumption (and the `hunter_payload_capable`
+  marker) likewise stay for T6, as the ticket boundary records.
+- The graph topology is as sketched in S4 14.10 with one implementation detail
+  named here: the "no signal" stay carries NO destination (`Command(goto=[])` -
+  the drive returns with the channels untouched) instead of routing back to
+  `supervise`, because a self-route is a LangGraph superstep loop and reaching END
+  would claim the chain is over. END is therefore reached only on `complete`, and
+  the router is the pure `route_supervise(state)` so the contract is unit-testable.
+  `detect` appends the trail-only entry itself (the sketch routes that case
+  straight back to `supervise`); `advance` writes the state, the hint, and the
+  entry.
+- The `phase_summary` note kind and the `phase:<state>` name land in the pure
+  module (`PHASE_SUMMARY_KIND`, `phase_note_name`). The hunter store's note-kind
+  enum gains the kind (S4 14.8 - hunter-only: the hunt store, the pod and the
+  modeller do not), so the interposed exit is writable and an `update` rewrites
+  the same note. The detector accepts a phase note only for the FIVE declared
+  note exits (`NOTE_EXIT_PASSES`): GENERATE and VERIFY-CLAIMS exit on the
+  `hunts_store` writes and COMPLETE is terminal, so a note named for them is no
+  signal and can never substitute the authoritative store write. The tracker is
+  never gated on the store's acceptance anyway (see the H6 predicate).
+- The harness reads the signal off the model's raw tool call BEFORE the tool's
+  acceptance matters and injects the exited pass's constant in that response; the
+  grounding `kb_query` rider stays outside the graph (it is not a transition).
+  The hunt ends when the model concludes (a plain answer) or when the tracked
+  state lands `complete` - the retired `concluded` phase is gone and the terminal
+  feedback renders `state: <pass>`.
+- The `specs` channel exists and rides through `advance_state` untouched
+  (last-write); the harness does not yet fold a written set into it. That fold is
+  T6's, together with the `specs`-list store write, because the `SpecItem` fields
+  (`spec_ref`, the derived `spec_id`) come from the store's file derivation.
+- Tests: `tests/attack/test_hunter_state.py` (the pure functions, re-pointed from
+  the #313 payload-shape consumer) and the new `tests/attack/test_hunter_graph.py`
+  (the topology and the drive); the harness predicates H1/H4 are re-pointed to the
+  pass chain and a new H6 pins the no-gate invariant.
+
 ### T6 - Hunter spec set, store, tools, and removals
 
 **What to build.**

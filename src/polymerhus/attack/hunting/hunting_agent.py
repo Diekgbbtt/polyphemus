@@ -1,19 +1,16 @@
-"""The hunting agent (#83, as of #164 W5): the turn-by-turn ReAct host.
+"""The hunting agent (#83, as of T5 #378): the turn-by-turn ReAct host.
 
-The hunt store (#82; the config family retires with T4 #377) feeds this module
-one declarative `HuntConfig` per hunt (IA-2); the harness drives the model
-through the ratified tool surface
+The harness drives the model through the ratified tool surface
 (`hunts_store` / `notes` / `graph_view` / `kb_query` / `exec`, R3/R1/R2) as a
-turn-by-turn ReAct loop OVER the state-graph hunter (`hunter_graph.py`).
-Persistence rides the per-project hunter memory store (spec 6) - the harness
-writes no hunt-store records - and the harness derives no verdict: the hunt
-idles at END (spec 2.4, R4/GP2-b).
+turn-by-turn ReAct loop OVER the pass-chain tracker (`hunter_graph.py`).
+Persistence rides the per-project hunter memory store and the harness derives
+no verdict: the hunt idles at END (R4/GP2-b).
 
 The harness is the TURN-BY-TURN DRIVER (ADR R4): per LLM step it runs ONE
 `arun_session_turn` on the per-hunt `HuntSession(run_id, hunt_id)` thread, so
 every LLM call rides the session seam and the checkpointer, compaction (#95 D9),
 and capability (#99) negotiation attach. Each turn uses the STANDARD tool
-interface: the five tools are bound REQUEST-ONLY (`convert_to_openai_tool`) so
+interface: the tools are bound REQUEST-ONLY (`convert_to_openai_tool`) so
 their JSON schemas ride the generation request's `tools` body, but no ToolNode
 is created - the model emits a real tool call per turn (valid args per schema)
 and concludes with a plain answer, and the harness stays the sole executor.
@@ -21,27 +18,27 @@ The harness executes the tool itself - the tools are bound OUTSIDE the agent
 (spec 4: the built-in session seam runs the whole model<->tool loop in ONE
 `agent.invoke`, so intermediate tool calls do NOT return control; the explicit
 node-per-step topology gives the harness control between steps), feeds the tool
-result back as the next turn's input, and, when the write carried a lifecycle
-status verbatim, drives the state graph's DETECTION + PUSH (R4, GP8c): the lists
-move and the phase-transition constant (G9) is injected in the tool-call
-response - a constant, never the system prompt. The passive machine NEVER gates
-a tool call on the current state and never rejects an illegal transition.
+result back as the next turn's input, and, when the call carried a declared
+pass-exit signal, drives the tracker's DETECTION + PUSH (S4 14): the state
+moves, the trail records it, and the exited pass's constant is injected in the
+tool-call response - a constant, never the system prompt. The signal is read
+off the model's REAL call before the tool runs, so the passive machine NEVER
+gates a tool call on the tracked state and never rejects a signal: it records
+what the model signalled.
 
-The loop continues until the model concludes the hunt (the hypothesis list
-exhausted) -> the graph lands END -> IDLE. The verdict-consumption workflow
-graph is OUT OF SCOPE (R4/GP2-b): there is no `waiting-for-verdict` node;
-`derive_verdict` stays a PURE function here but is STALE - its wiring lives in
-the out-of-scope verdict graph. The dispatch result therefore reports the
-terminal state and carries NO derived verdict.
+The loop continues until the model concludes the hunt (a plain answer) or the
+tracked state lands `complete` - the terminal pass, after which there is no
+model work (S3 8.4). The verdict-consumption workflow graph is OUT OF SCOPE
+(R4/GP2-b): there is no `waiting-for-verdict` node. The dispatch result
+therefore reports the terminal state and carries NO derived verdict - T5
+retired the stale `derive_verdict` (S4 14.11).
 
 Retired here (R1, spec 8): the prompt-composed `dispatch_fn` and its `kb` /
-`pod` / `author` / `judge` seams. The symptom-technique KB typed seam
-(`symptom_kb.py`, `SymptomTechniqueQuery`) is retired - the model consumes the
-`AnswerBundleV1`-shaped dict the `kb_query` tool returns directly in its author
-lane. The back-edge is cut completely (GP5) and replaced by the `exec` tool;
-the exec tool is UNBOUNDED at the harness level (R2b) with the partition guard
-(Q8): exec never produces the hypothesis verdict - the pod remains the only
-source of experimental evidence for the committed hypothesis.
+`pod` / `author` / `judge` seams. The back-edge is cut completely (GP5) and
+replaced by the `exec` tool; the exec tool is UNBOUNDED at the harness level
+(R2b) with the partition guard (Q8): exec never produces the hypothesis
+verdict - the pod remains the only source of experimental evidence for the
+committed hypothesis.
 
 Everything external is a typed seam, injected at construction: the `graph_view` /
 `kb_query` / `exec` tool bodies, the per-project `HunterMemoryStore`, the session
@@ -73,7 +70,11 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
 from polymerhus.attack.hunting.hunt_store import semantic_key
 from polymerhus.attack.hunting.hunter_graph import build_hunter_graph
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.attack.hunting.hunter_state import D3_HINT, FAULT_STATUSES
+from polymerhus.attack.hunting.hunter_state import (
+    COMPLETE,
+    GROUNDING_KB_HINT,
+    detect_phase_signal,
+)
 from polymerhus.attack.hunting.hunter_tools import (
     ExecFn,
     GraphViewFn,
@@ -100,9 +101,10 @@ _HUNTER_ROLE = "hunting_hunter"
 # but a stalled or looping model must never pin a hunt forever (fail-open O3).
 _MAX_STEPS = 60
 
-# The D7 hypothesis verdict (Q3-amended, implementation doc 2.3): four values,
-# derived by the harness, never by the LLM. KEPT PURE and STALE (R4): the wiring
-# node lives in the OUT-OF-SCOPE verdict-consumption graph.
+# The D7 hypothesis verdict vocabulary (Q3-amended, implementation doc 2.3):
+# four values, derived by the harness, never by the LLM. Kept as the typed
+# vocabulary of the OUT-OF-SCOPE verdict-consumption graph; no live derivation
+# remains here (T5 #378 removed the stale `derive_verdict`).
 HypothesisVerdict = Literal[
     "successful", "unsuccessful", "insufficient-evidence", "underspecified-spec",
 ]
@@ -158,37 +160,6 @@ def _load_hunting_agent_skill() -> str:
 
 
 # --- pure helpers (kept from the #83 harness) ---------------------------------
-
-def derive_verdict(
-    terminal_reason: str,
-    *,
-    clean: bool,
-    init_validation: list[str] | None = None,
-) -> HypothesisVerdict:
-    """The D7 verdict derivation (D67-02, Q3-amended; implementation doc 2.3).
-
-    PURE and STALE as of R4: the wiring node lives in the OUT-OF-SCOPE
-    verdict-consumption graph, not in this harness. Reads ONLY the pod's
-    terminal reason plus the single `clean` flag (plus `init_validation` for the
-    INIT-rejection case) - never per-variant machine outcomes, never the LLM.
-
-    A terminal reason outside the ratified map is uninterpretable, so the
-    derivation is conservative - `insufficient-evidence`, never a success or a
-    clean absence claim (fail-open).
-    """
-    init_validation = init_validation or []
-    if terminal_reason == "technical-infeasibility" and init_validation:
-        return "underspecified-spec"
-    if terminal_reason == "symptom-confirmed":
-        return "successful"
-    if terminal_reason in (
-        "space-exhausted", "technical-infeasibility", "specific-defence-prevention",
-    ):
-        return "unsuccessful"
-    if terminal_reason in ("no-symptom-evidence", "budget-timeout"):
-        return "unsuccessful" if clean else "insufficient-evidence"
-    return "insufficient-evidence"
-
 
 def derive_technological_axis(card: dict | None) -> str:
     """The deterministic technological axis of a unit's index card (IA-8/D10).
@@ -347,23 +318,17 @@ def _compose_grounding(config: HuntConfig) -> str:
 
 def _state_summary(state: dict) -> str:
     """The semantic state rendered for the model / the terminal feedback: the
-    `HuntState` lists (the model's write-time rank order), never the trail
-    (replay only, never authoritative)."""
-    lines = [f"phase: {state.get('phase', 'grounding')}"]
-    for key, label in (
-        ("hypothesised_faults", "hypothesised"),
-        ("verified_faults", "verified"),
-        ("dropped_faults", "dropped"),
-        ("ratified_specs", "ratified"),
-    ):
-        for item in state.get(key) or []:
-            if not isinstance(item, dict):
-                continue
-            ident = item.get("fault_id") or item.get("spec_id")
-            mechanism = str(item.get("mechanism") or "")[:80]
-            lines.append(f"- {label}: {ident} {mechanism}")
+    tracked pass and the spec set channel (the trail stays replay-only, never
+    authoritative)."""
+    lines = [f"state: {state.get('state', 'grounding')}"]
+    for spec in state.get("specs") or []:
+        if not isinstance(spec, dict):
+            continue
+        ident = spec.get("spec_id") or ""
+        summary = str(spec.get("summary") or "")[:80]
+        lines.append(f"- {spec.get('status', '?')}: {ident} {summary}".rstrip())
     if len(lines) == 1:
-        lines.append("- (no faults tracked yet)")
+        lines.append("- (no specs tracked yet)")
     return "\n".join(lines)
 
 
@@ -382,22 +347,6 @@ def _compose_first_step(config: HuntConfig, state: dict, tool_surface: str) -> s
         _state_summary(state),
         _STEP_PROTOCOL,
     ])
-
-
-def _status_write(args: Any) -> tuple[str, dict] | None:
-    """The observation the harness extracts from a `hunts_store` write: the
-    `status` verbatim plus the fault/spec object. A non-write, a missing spec,
-    or a status outside the lifecycle -> None (no state move - the passive
-    machine records only what the model signalled on a lifecycle write)."""
-    if not isinstance(args, dict) or args.get("command") != "write":
-        return None
-    spec = args.get("spec")
-    if not isinstance(spec, dict):
-        return None
-    status = spec.get("status")
-    if status not in FAULT_STATUSES:
-        return None
-    return status, dict(spec)
 
 
 def _last_tool_calls(messages) -> list[dict]:
@@ -498,7 +447,7 @@ def build_hunting_agent(
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
             http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         )
-        state: dict = {"phase": "grounding", "trail": []}
+        state: dict = {"state": "grounding", "specs": [], "trail": []}
 
         from langchain_core.messages import HumanMessage, ToolMessage  # noqa: PLC0415
         from langchain_core.utils.function_calling import (  # noqa: PLC0415
@@ -582,14 +531,11 @@ def build_hunting_agent(
 
             tool_calls = _last_tool_calls(turn.messages)
             if not tool_calls:
-                # The model concluded the hunt with a plain answer: the
-                # hypothesis list is exhausted -> END -> idle. The terminal phase
-                # is `concluded` (spec 2.4's deterministic surface): the harness
+                # The model concluded the hunt with a plain answer: the harness
                 # lands the state, derives NO verdict (the verdict-consumption
                 # graph is OUT OF SCOPE and derives it from the pod-verdict
                 # messages the surfer feeds the idle hunt), and the dispatch
-                # result reports the terminal state.
-                state["phase"] = "concluded"
+                # result reports the tracked pass.
                 feedback.append(_terminal_feedback(state, str(turn.content or "")))
                 return _assemble(state, feedback)
 
@@ -602,25 +548,26 @@ def build_hunting_agent(
                 tool_name = str(tc.get("name") or "")
                 tool_args = tc.get("args") or {}
                 result = await _invoke_tool(tools_by_name, tool_name, tool_args)
-                observed = _status_write(tool_args) if tool_name == "hunts_store" else None
-                if observed is not None:
-                    status, fault = observed
+                # DETECTION + PUSH (S4 14): the signal is read off the model's
+                # REAL call (before/after the tool runs is immaterial - the
+                # acceptance never depends on it), so the passive machine is
+                # never gated by the tool's own acceptance. The tracker moves
+                # the state, records the trail, and the exited pass's constant
+                # is injected in THIS tool-call response.
+                signal = detect_phase_signal(tool_name, tool_args)
+                if signal is not None:
                     try:
-                        # DETECTION + PUSH (R4, GP8c): the state tracker moves
-                        # the lists and injects the phase-transition constant (G9).
-                        driven = await compiled.ainvoke({
-                            **state, "observed_status": status, "observed_fault": fault,
-                        })
-                        state = driven
+                        state = await compiled.ainvoke(
+                            {**state, "observed_signal": signal})
                     except Exception as exc:  # noqa: BLE001 - fail-open, keep serving
                         logger.warning("hunt %s state tracking degraded (%s)", hunt_id, exc)
                         feedback.append(f"state tracking degraded ({exc})")
-                elif tool_name == "kb_query" and state.get("phase") == "grounding":
-                    # The grounding-phase D3 prompt (spec 2.3): a kb_query call
-                    # while the harness is still grounded prompts the D3
-                    # retrieval-gap check. Not a transition (no status write),
-                    # so it injects here, never through the graph.
-                    state["injected_constant"] = D3_HINT
+                    if signal.get("kind") == "kb_query" and state.get("state") == "grounding":
+                        # The grounding retrieval-gap rider (S4 14.7/Q53): a KB
+                        # call while the tracker is still in GROUNDING prompts
+                        # the gap check. Not a transition (the grounding exit
+                        # remains the phase-summary note), so it injects here.
+                        state["injected_constant"] = GROUNDING_KB_HINT
                 # The constant rides THIS tool-call response and is consumed:
                 # it must never leak onto a later, unrelated tool result.
                 hint = state.get("injected_constant")
@@ -635,6 +582,13 @@ def build_hunting_agent(
                            tags=["attack", "hunting", "hunting-agent"])
                 results.append(ToolMessage(tool_call_id=tc.get("id"), content=result))
             new_messages = results
+            if state.get("state") == COMPLETE:
+                # The chain is complete: the terminal spec-set write landed and
+                # there is no model work left (S3 8.4). The hunt ends here, with
+                # the terminal state in the feedback; the surfer dispatches the
+                # pod from the persisted set.
+                feedback.append(_terminal_feedback(state, ""))
+                return _assemble(state, feedback)
         else:
             # A natural loop end (no break) is genuine budget exhaustion; the
             # break paths above already reported their own degradation, so a

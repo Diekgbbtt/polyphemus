@@ -268,7 +268,6 @@ def test_failed_spec_dump_leaves_no_partial_file(tmp_path, monkeypatch):
 
 
 # --- #341: notes.yaml growth is bounded (count + size, value-aware eviction) --
-
 def _append_named(store: HunterMemoryStore, name: str, body: str = "x",
                   provenance: dict | None = None) -> None:
     store.write_note(
@@ -356,3 +355,34 @@ def test_a_single_oversized_record_is_kept_whole(tmp_path, monkeypatch):
     assert len(notes) == 1
     assert notes[0]["note_name"] == "oversized"
 
+
+
+# --- S4 14.8: the hunter-only phase-summary note kind -------------------------
+
+
+def test_phase_summary_is_a_hunter_note_kind_and_an_update_rewrites_it(tmp_path):
+    """S4 14.8/Q51a: the hunter's notes accept the `phase_summary` kind - the
+    interposed pass exit - and a loop re-iteration rewrites the SAME
+    `phase:<state>` note with `action=update` (the latest note wins)."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    key = store.write_note(
+        PROJECT, action="append", fault_key=FAULT_KEY,
+        note_name="phase:slice", kind="phase_summary", body="first slice")
+    assert key == f"{FAULT_KEY}:phase:slice"
+    store.write_note(
+        PROJECT, action="update", fault_key=FAULT_KEY,
+        note_name="phase:slice", kind="phase_summary", body="re-iterated slice")
+    notes = store.read_notes(PROJECT)
+    assert [n["body"] for n in notes] == ["re-iterated slice"]
+    assert notes[0]["kind"] == "phase_summary"
+
+
+def test_the_phase_kind_is_hunter_only():
+    """S4 14.8: the hunt-store and pod note enums do NOT gain `phase_summary`;
+    it is the hunter's kind alone."""
+    from polymerhus.attack.hunting.hunt_store import ProjectMemoryStore
+    from polymerhus.attack.hunting.pod.pod_memory import POD_NOTE_KINDS
+
+    assert "phase_summary" in hunter_memory.NOTE_KINDS
+    assert "phase_summary" not in ProjectMemoryStore.NOTE_KINDS
+    assert "phase_summary" not in POD_NOTE_KINDS

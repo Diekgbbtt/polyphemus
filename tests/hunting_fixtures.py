@@ -149,7 +149,9 @@ def _hunt_config(**overrides) -> HuntConfig:
 
 def _fault(fault_id, *, status, mechanism="m", supports=None, conflicts=None,
            test="t"):
-    """A `FaultItem`-shaped write payload carrying the lifecycle status."""
+    """A hypothesis-draft `spec` write payload carrying the store's status
+    (the store-side lifecycle the `hunts_store` tool still validates; the
+    harness tracker no longer reads it)."""
     return {"fault_id": fault_id, "mechanism": mechanism,
             "supports": supports or [], "conflicts": conflicts or [],
             "test": test, "status": status}

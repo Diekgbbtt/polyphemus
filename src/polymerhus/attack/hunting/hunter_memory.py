@@ -33,11 +33,13 @@ the hunt store (`<project_id>/hunting/orchestration/`) and the pod memory
   poisoned as separators). Keywords are sanitised (`_`/`:`/path separators
   and control chars replaced with `-`).
 - The produced/ spec file carries the `status` attribute
-  (`hypothesised | verified | dropped | specified` from
-  `hunter_state.FaultStatus`): the `hypothesised` write creates the fault
-  draft, `verified`/`dropped` update it, `specified` completes it into the
-  full spec - "the persisted environment state IS the fault-processing
-  tracker" (G4/G10).
+  (`hypothesised | verified | dropped | specified`, the store's own write gate
+  `STORE_SPEC_STATUSES`): the `hypothesised` write creates the fault draft,
+  `verified`/`dropped` update it, `specified` completes it into the full spec -
+  "the persisted environment state IS the fault-processing tracker" (G4/G10).
+  The four-value tuple is the retiring store-side lifecycle: the harness
+  machine no longer knows it (T5 #378 retired the state vocabulary) and T6
+  (#379) reworks the store onto the `{hypothesised, ratified, dropped}` set.
 - A duplicate `create` write (a `<fault>_<strategy>.yaml` that already
   exists) FAILS with a `DuplicateSpecError` - the enforced novelty gate, a
   very rare path (G4). Re-authoring UPDATES the existing file in place
@@ -90,9 +92,24 @@ from .hunt_store import (
     semantic_key,
     split_semantic_key,
 )
-from .hunter_state import FAULT_STATUSES
+from .hunter_state import PHASE_SUMMARY_KIND
 
 logger = logging.getLogger(__name__)
+
+STORE_SPEC_STATUSES: tuple[str, ...] = (
+    "hypothesised",
+    "verified",
+    "dropped",
+    "specified",
+)
+"""The store's spec-write status gate.
+
+The store owns its write validation: the four-value lifecycle is the RETIRING
+store-side vocabulary (T6 #379 reworks the store onto the
+`{hypothesised, ratified, dropped}` spec set and retires it - `specified` is
+also the mover's pod-dispatch gate, `mover.SPEC_DISPATCH_STATUS`, so the
+literal may not be dropped here alone). The harness state machine no longer
+knows any of it (`hunter_state.SpecStatus` is the live three)."""
 
 # The per-project bucket is resolved through the ONE `data_root.project_dir`
 # layout owner (the `hunting/hunter/` bucket under `DATA_ROOT`); no env var.
@@ -104,8 +121,11 @@ _SPEC_MODES = ("create", "update")
 _NOTE_ACTIONS = ("append", "update", "delete")
 
 # The closed enum of note kinds (the pattern's #137 Q3), reused verbatim on
-# the hunter's notes so the data contract is the SAME as the pattern's store.
-NOTE_KINDS = ProjectMemoryStore.NOTE_KINDS
+# the hunter's notes so the data contract is the SAME as the pattern's store -
+# plus the hunter-only `phase_summary` kind (S4 14.8/Q51a): the interposed
+# phase-exit note whose name is `phase:<state>`. The hunt-store and pod enums
+# do NOT gain it and the modeller's `notes` tool refuses it.
+NOTE_KINDS = tuple(ProjectMemoryStore.NOTE_KINDS) + (PHASE_SUMMARY_KIND,)
 
 HUNTER_NOTES_MAX_RECORDS = 1000
 HUNTER_NOTES_MAX_BYTES = 4 * 1024 * 1024
@@ -396,14 +416,13 @@ class HunterMemoryStore(BoundedRecordStore):
         config file-name stem, ADR Q13's `config_id`) or its round-tripping
         `::`-joined semantic key - the 2-part revival key is NOT accepted.
         `spec` is the fault/spec object carrying the `status` attribute
-        (`hypothesised | verified | dropped | specified` from
-        `hunter_state.FaultStatus`); it is persisted verbatim. The
+        (`hypothesised | verified | dropped | specified`, the store's
+        `STORE_SPEC_STATUSES` write gate); it is persisted verbatim. The
         `fault_keyword` / `strategy_keyword` are the file-name components
         (the concrete fault semantic + testing strategy keywords, sanitised
-        under G3) - explicit because the hypothesised/verified/dropped drafts
-        are `FaultItem`s that carry no strategy field, so the file name must
-        be fixed at the first (creating) write and stable across the
-        lifecycle.
+        under G3) - explicit because the hypothesis-only draft carries no
+        strategy field, so the file name must be fixed at the first (creating)
+        write and stable across the lifecycle.
 
         `mode="create"` FAILS with a `DuplicateSpecError` when the file
         already exists (the novelty gate, G4); `mode="update"` overwrites the
@@ -429,9 +448,10 @@ class HunterMemoryStore(BoundedRecordStore):
         if not isinstance(spec, dict):
             raise ValueError("hunter store: spec must be a dict carrying the status attribute")
         status = spec.get("status")
-        if status not in FAULT_STATUSES:
+        if status not in STORE_SPEC_STATUSES:
             raise ValueError(
-                f"hunter store: spec must carry a status in FAULT_STATUSES; got {status!r}"
+                f"hunter store: spec must carry a status in STORE_SPEC_STATUSES; "
+                f"got {status!r}"
             )
         path = self._spec_file(
             project_id, fault_key, fault_keyword, strategy_keyword, side,
