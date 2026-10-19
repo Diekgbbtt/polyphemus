@@ -9,7 +9,9 @@ protocol executed end to end, not a live-model quality claim.
 
 The set is checked for the properties the prompt promises: a well-formed,
 disjoint spec set over the slice; every body the reduced D4 surface; the drops
-applied only at the terminal write; the mixed status set refused.
+applied only at the terminal write; the mixed status set refused; a merged
+identity absorbed without breaking the whole set; and a [D2] phase-note
+rewrite that stays trail material.
 """
 from __future__ import annotations
 
@@ -71,23 +73,24 @@ def _generated():
             "hypothesised", "id_unbound", "direct_read",
             symptom="another tenant's item body is returned to the caller",
             assumption="the lookup authorises the caller against the item's owner",
-            rationale="The lookup trusts the caller's item id; an unbound read "
-                      "manifests as another tenant's item body.",
+            rationale="The item lookup treats the client-supplied item id as an "
+                      "authorisation input, so the tenant boundary is decided by "
+                      "the request.",
         ),
         _spec(
             "hypothesised", "id_unbound", "signed_url",
             symptom="a signed URL minted from the item id returns another "
                     "tenant's object",
             assumption="the signed URL is scoped to the caller's tenant",
-            rationale="The object store trusts the URL's scope, while the item "
-                      "id crosses the boundary unbound.",
+            rationale="The object store scopes the delivery capability while the "
+                      "item id crosses the trust boundary unbound.",
         ),
         _spec(
             "hypothesised", "share_route", "mint_url",
             symptom="a viewer obtains a share URL for an item it cannot read",
             assumption="the share route checks readability before minting",
-            rationale="The share route trusts the caller's item id and may mint "
-                      "a delivery capability the lookup would refuse.",
+            rationale="The share capability is minted from the item id before "
+                      "the readability check decides the tenant.",
         ),
     ]
 
@@ -212,3 +215,128 @@ def test_a_mixed_status_set_is_refused_and_never_moves_the_tracker(tmp_path):
         "id-unbound_direct-read": "ratified",
         "id-unbound_signed-url": "dropped",
     }
+
+
+def test_a_merge_widens_the_survivor_and_declasses_the_absorbed_identity(tmp_path):
+    """S3 8.5 + S4 14.6: a [D2] merge keeps one identity, widens it, and
+    carries the absorbed identity as `dropped` at the terminal write.
+
+    S4 14.6 defines `dropped` as "the declass of a verified-unfeasible spec".
+    The merge extends that vocabulary: the absorbed identity is declassed for
+    overlap, not infeasibility. The extension is forced by the store's
+    no-delete, whole-set contract - omitting the absorbed identity from the
+    terminal set would leave its produced file `hypothesised` forever, so the
+    set would be neither whole nor terminal. The absorbed entry keeps its typed
+    body and takes the same terminal status, with the merge reason recorded on
+    the `phase:well_formedness` note.
+    """
+    direct = _spec(
+        "hypothesised", "id_unbound", "direct_read",
+        symptom="another tenant's item body is returned to the caller",
+        assumption="the lookup authorises the caller against the item's owner",
+        rationale="The item lookup treats the client-supplied item id as an "
+                  "authorisation input, so the tenant boundary is decided by "
+                  "the request.",
+    )
+    signed = _generated()[1]
+    export = _spec(
+        "hypothesised", "export_route", "export_read",
+        symptom="the export route returns another tenant's item body",
+        assumption="the export route authorises the item against the caller's tenant",
+        rationale="The export route reads the client-supplied item id before "
+                  "the tenant check decides the boundary.",
+    )
+    widened = {
+        **direct,
+        "verification_symptoms": [direct["verification_symptoms"][0],
+                                  export["verification_symptoms"][0]],
+        "assumptions": [direct["assumptions"][0], export["assumptions"][0]],
+        "rationale": "The item lookup treats the client-supplied item id as an "
+                     "authorisation input on both the direct and export routes.",
+    }
+    steps = [
+        _phase_note("grounding", body="Frame explicit; failure modes: the "
+                    "lookup ownership check, the export ownership check, the "
+                    "signed-URL scope."),
+        _phase_note("slice", body="Item-id authorisation over the direct and "
+                    "export routes; boundary on the effective request item."),
+        _phase_note("collect", body="Instances: direct read and signed-URL "
+                    "redirect, both carrying the item id."),
+        _phase_note("discriminate", body="Separate on authorisation source x "
+                    "route; narrow on the item id, broad on the routes."),
+        _set_write([direct, signed]),                       # the GENERATE exit
+        _phase_note("collect", action="update",             # the [D2] re-entry
+                    body="[D2] re-entry: the export route is a new instance; "
+                         "re-collect it under the same item-id boundary."),
+        _set_write([direct, signed, export]),               # a re-generate write
+        _phase_note("well_formedness", body="Merge: the direct-read identity "
+                    "widens to name the direct and export routes; the export "
+                    "identity is absorbed. No overlap remains; the absorbed "
+                    "identity is carried as dropped at the terminal write."),
+        _set_write([{**widened, "status": "ratified"},
+                    {**signed, "status": "ratified"},
+                    {**export, "status": "dropped"}]),      # the VERIFY exit
+    ]
+    store = build_memory_store(tmp_path)
+    result = build_hunter_agent(store, steps=steps)(_hunter_payload())
+
+    assert result["state"] == "complete"
+    produced = (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs"
+                / HUNT_KEY / "produced")
+    assert {path.stem for path in produced.glob("*.yaml")} == {
+        "id-unbound_direct-read", "id-unbound_signed-url",
+        "export-route_export-read"}
+    # the whole set is terminal: the widened survivor is ratified, the signed
+    # sibling survives, and the absorbed identity is declassed - no identity is
+    # left in the draft state
+    assert {spec["status"] for spec in store.read_specs(PROJECT, HUNT_KEY)} == {
+        "ratified", "dropped"}
+    survivor = store.read_spec(PROJECT, HUNT_KEY, "id-unbound_direct-read")
+    assert survivor["status"] == "ratified"
+    assert len(survivor["verification_symptoms"]) == 2
+    assert len(survivor["assumptions"]) == 2
+    assert store.read_spec(PROJECT, HUNT_KEY,
+                           "id-unbound_signed-url")["status"] == "ratified"
+    assert store.read_spec(PROJECT, HUNT_KEY,
+                           "export-route_export-read")["status"] == "dropped"
+    merge_note = [note for note in store.read_notes(PROJECT)
+                  if note["note_name"] == "phase:well_formedness"]
+    assert len(merge_note) == 1
+    assert "absorbed" in merge_note[0]["body"]
+
+
+def test_a_phase_note_update_on_a_reiteration_is_trail_material(tmp_path):
+    """S3 8.5/S4 14.8: a [D2] re-iteration rewrites the same phase note with
+    `action=update`; the backward signal is trail material and injects no
+    transition hint, so the tracked state never regresses to COLLECT."""
+    from polymerhus.attack.hunting.hunter_state import TRANSITION_HINTS  # noqa: PLC0415
+
+    generated = _generated()[:2]
+    seen: list = []
+    steps = [
+        _phase_note("grounding"),
+        _phase_note("slice"),
+        _phase_note("collect", body="the first instance set"),
+        _phase_note("discriminate"),
+        _set_write(generated),
+        _phase_note("collect", action="update",
+                    body="[D2] re-iteration: the export route is a new instance"),
+        _phase_note("well_formedness"),
+        _set_write([{**generated[0], "status": "ratified"},
+                    {**generated[1], "status": "dropped"}]),
+    ]
+    store = build_memory_store(tmp_path)
+    result = build_hunter_agent(store, steps=steps, seen=seen)(_hunter_payload())
+
+    assert result["state"] == "complete"
+    collect_notes = [note for note in store.read_notes(PROJECT)
+                     if note["note_name"] == "phase:collect"]
+    assert len(collect_notes) == 1                     # rewritten, not appended
+    assert collect_notes[0]["body"].startswith("[D2]")
+
+    # step N's tool response arrives as step N+1's input; the update's response
+    # carries no transition hint because an earlier pass's signal never exits
+    # the current pass (and in particular never moves back to COLLECT).
+    update_response = seen[6][-1] or ""
+    assert TRANSITION_HINTS["collect"] not in update_response
+    assert "<phase-transition-hint>" not in update_response

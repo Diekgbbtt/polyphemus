@@ -16,33 +16,34 @@ signed-URL tenant scope. phase:grounding.
 SLICE: report-id authorisation across the download and export routes; boundary
 on the effective request item (the report id) and the delivery behaviour
 (direct file versus signed-URL redirect). phase:slice.
-COLLECT: direct download, signed-URL redirect, and a share-minted URL as an
+COLLECT: direct download, signed-URL redirect, and a share-route mint as an
 advanced technique. phase:collect.
 DISCRIMINATE: authorisation source x delivery route; narrow on the report id,
 broad on the routes. phase:discriminate.
-GENERATE: two specs - direct download and signed-URL redirect; the share-minted
-URL folds into the signed-URL spec, which owns the same authorisation source.
-One hunts_store write, all hypothesised.
+GENERATE: three specs - direct download, signed-URL redirect, share-route
+mint. One hunts_store write, all hypothesised.
 WELL-FORMEDNESS: the export route is a new instance the collection missed;
 [D2] re-enters the reasoning at COLLECT.
 Update phase:collect with action=update (the export route and its own
 authorisation branch). Re-generate: a second hunts_store write, all
-hypothesised, upserting the two identities in place and adding the export
+hypothesised, upserting the three identities in place and adding the export
 spec. The tracked state stays WELL-FORMEDNESS throughout.
 Then merge: the direct-download spec and the export spec differ only by route
 while the authorisation variable is the same, so the direct-download identity
 widens to name both routes and the export identity is absorbed. Record the
 merge and its reason in phase:well_formedness; the terminal write carries the
 absorbed identity as dropped.
-Coverage basis: both routes are named in the merged spec and the signed-URL
-region keeps its own spec. No proof of exhaustiveness is claimed. Exit note.
-VERIFY-CLAIMS: probe the assumption "a viewer can mint a signed URL for a
-report it can read" - exec the share route; 403. That mechanism is absent, so
-the signed-URL spec is unfeasible. Probe the object-store configuration
-evidence: an unsigned request for the prefix returns 403, so the signed URL is
-the only delivery. The merged direct-route spec survives.
+Coverage basis: both routes are named in the merged spec, the signed-URL
+region keeps its own spec, and the share-route mint keeps its own spec. No
+proof of exhaustiveness is claimed. Exit note.
+VERIFY-CLAIMS: probe the assumption "a viewer can mint a signed URL from the
+share route" - exec the share route; 403. The share-route spec is unfeasible.
+Probe the object-store configuration evidence: an unsigned request for the
+prefix returns 403, so the download route's signed URL is the only delivery.
+The widened direct-route and signed-URL specs survive.
 Terminal write: the whole set in one hunts_store call; the widened direct-route
-spec ratified, the signed-URL spec and the absorbed export identity dropped.
+and signed-URL specs ratified, the share-route spec and the absorbed export
+identity dropped.
 COMPLETE.
 ```
 
@@ -84,9 +85,10 @@ COLLECT: instances from the target surfaces and the notes only - the KB
 contributes none. phase:collect.
 DISCRIMINATE: the collected routes separate the specs; the narrow/broad
 trade-off is stated. phase:discriminate.
-GENERATE: two specs, all hypothesised, the structural reasoning carried in the
-rationale because the class skill is absent; the skill_procedure excerpt is
-empty per field, which is a recorded gap, not a failure.
+GENERATE: two specs, all hypothesised, each rationale stays vulnerability-level;
+the absent class skill was recorded as a gap in phase:grounding, and the
+skill_procedure excerpt is empty per field - also a recorded gap, not a
+failure.
 WELL-FORMEDNESS: coverage is partial over the technology-specific region the
 KB would have named. Record the residual gap and the coverage basis; the set
 stays hypothesised. phase:well_formedness.

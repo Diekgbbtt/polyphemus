@@ -259,6 +259,7 @@ def test_the_prompt_carries_the_reduced_d4_spec_body():
     assert "4000 characters" in prompt
     assert "non-empty list" in prompt
     assert "symptom-absent" in prompt
+    assert "It carries no failure-mode detail and no narrowed vector" in prompt
 
 
 def test_the_prompt_carries_the_phase_summary_note_exits():
@@ -295,6 +296,37 @@ def test_well_formedness_records_drops_and_never_writes_dropped_statuses():
 # --- the examples -------------------------------------------------------------
 
 
+def test_the_worked_rationale_does_not_restate_the_symptom():
+    """S3 8.6: the rationale is vulnerability-level. The worked example is a
+    literal contract sample, so its rationale must not restate the symptom or
+    carry a failure-mode detail (the defect this predicate pins: a rationale
+    that duplicated the `verification_symptoms` phrase verbatim)."""
+    prompt = _prompt()
+    worked = prompt[prompt.index("## Worked example 1"):]
+    symptom = re.search(r'"verification_symptoms": \[(.*?)\]', worked, re.S)
+    rationale = re.search(r'"rationale": "(.*?)"', worked, re.S)
+    assert symptom is not None and rationale is not None
+
+    symptom_text = " ".join(symptom.group(1).split()).strip().strip('"').strip()
+    rationale_text = " ".join(rationale.group(1).split())
+
+    def words(text):
+        return re.findall(r"[a-z0-9]+", text.lower())
+
+    symptom_words = words(symptom_text)
+    rationale_words = words(rationale_text)
+    # no four-word run of the symptom may reappear in the rationale: a
+    # restated failure mode is exactly such a run ("another tenant's report
+    # body" was the regression), while a vulnerability-level rationale may
+    # still share a noun or two.
+    symptom_runs = {tuple(symptom_words[index:index + 4])
+                    for index in range(len(symptom_words) - 3)}
+    rationale_runs = {tuple(rationale_words[index:index + 4])
+                      for index in range(len(rationale_words) - 3)}
+    assert symptom_runs & rationale_runs == set()
+    assert symptom_text.lower() not in rationale_text.lower()
+
+
 def test_the_examples_are_rewritten_for_the_new_passes_and_surface():
     """S3 8.5: imitate the reasoning shape, not the old domain; the off-path
     examples cover a [D2] re-entry, a probe, and a degraded run."""
@@ -311,6 +343,16 @@ def test_the_examples_are_rewritten_for_the_new_passes_and_surface():
                     "phase:discriminate", "phase:well_formedness",
                     "hypothesised", "ratified", "dropped", "specs"):
         assert present in examples, present
+    # the structural support stays in the threat model, never the rationale;
+    # an absent class skill is a grounding gap, not rationale material
+    assert "structural reasoning carried in the rationale" not in examples
+    assert "class skill absent" in examples
+    # the [D2] example's terminal set follows its probes: the share-route mint
+    # is the spec the 403 falsifies, while the signed-URL delivery survives
+    normalized = " ".join(examples.split())
+    assert "The share-route spec is unfeasible" in normalized
+    assert "the widened direct-route and signed-URL specs ratified" in normalized
+    assert "the signed-URL spec is unfeasible" not in examples
 
 
 def test_the_prompt_stays_within_a_reasonable_size():

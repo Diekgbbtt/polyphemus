@@ -231,8 +231,8 @@ The direct-download entry:
      caller"],
    "assumptions": ["the download route authorises the report id against the
      caller's tenant"],
-   "rationale": "The lookup trusts the caller's report id; an unbound read
-     manifests as another tenant's report body.",
+   "rationale": "The item lookup treats the client-supplied report id as an
+     authorisation input, so the tenant boundary is decided by the request.",
    "provenance": {"loop_id": "loop-1", "unit_id": "Service:reports:a",
      "canonical_class": "IDOR", "web_vulnerability_class": "idor",
      "baseline_ref": "GET /reports/1/download",
