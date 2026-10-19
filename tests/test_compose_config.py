@@ -1,3 +1,4 @@
+import os
 import subprocess
 
 import yaml
@@ -47,11 +48,16 @@ def test_agent_carries_the_optional_steel_endpoint():
     Presence only: the empty default keeps the remote cloud, so no value ships
     in the repo and the assertion stays true for a plain clone.
     """
+    # Force the empty default: an operator `.env` may carry a real value, and
+    # this test asserts the shipped default, not the local deployment.
+    env = {**os.environ, "STEEL_BROWSER_API_URL": ""}
+    env.pop("COMPOSE_ENV_FILES", None)
     r = subprocess.run(
         ["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "config"],
         capture_output=True,
         text=True,
         cwd=".",
+        env=env,
     )
     assert r.returncode == 0, r.stderr
 
