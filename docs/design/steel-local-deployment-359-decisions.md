@@ -14,7 +14,7 @@ A Steel runtime on the operator's own server egresses from the operator's networ
   It is internet-exposed (SSH 22, HTTP 80, HTTPS 443 answer from the public internet).
 - The polymerhus stack runs on `eval-server-polyphemus` (46.224.225.245), which carries the `dev` checkout at `/opt/polymerhus-dev`.
   The two hosts reach each other at about 10 ms round-trip.
-- The pinned Steel CLI is `0.4.4`. Its endpoint precedence is `--api-url` -> `STEEL_BROWSER_API_URL` -> `STEEL_LOCAL_API_URL` -> `browser.apiUrl` -> `http://localhost:3000/v1`.
+- The pinned Steel CLI is `0.5.0-preview.6` (#395). Its endpoint precedence is `--api-url` -> `STEEL_BROWSER_API_URL` -> `STEEL_LOCAL_API_URL` -> `browser.apiUrl` -> `http://localhost:3000/v1`.
   `--local` and `--api-url` are global flags. An environment variable supplies the base URL only; it cannot select local mode.
 - The Steel API image is `ghcr.io/steel-dev/steel-browser-api`. Only the `latest` tag is published; the index digest `sha256:eb8567bac2221d2856923184cf693a08df9a488680431ebded73cab63aa181eb` pins it (amd64 `sha256:683ace5122e6d6a0852da2c5ac44c39045f743470be1d2c15b169680bf513880`, 729 MB compressed).
 - The API serves the browser CDP over its own WebSocket on port 3000 (`websocketUrl` = `ws://<DOMAIN>/`). Port 9223 is not needed by a remote client.
@@ -48,7 +48,7 @@ The Steel API has no built-in authentication; the allowlist is the access contro
 Add one deployment-level value, `STEEL_BROWSER_API_URL`.
 It is unset by default, so an unconfigured deployment keeps using the remote Steel cloud servers exactly as today.
 When it is set, it names the self-hosted endpoint in the CLI's canonical form: `http://<host>:<port>/v1`.
-The value carries the `/v1` path because the CLI appends the operation path to it (`{base_url}{path}`), and the API mounts every route under `/v1` (CLI 0.4.4 `src/config/mod.rs`, `src/api/client.rs`; API `steel-browser-plugin.ts`).
+The value carries the `/v1` path because the CLI appends the operation path to it (`{base_url}{path}`), and the API mounts every route under `/v1` (CLI `src/config/mod.rs`, `src/api/client.rs`; API `steel-browser-plugin.ts`).
 The CLI reads this name natively (its precedence step 2). A thin shared resolver in the `app` layer exposes the same value to any SDK consumer.
 The resolver returns the SDK-native origin form: it drops one terminal `/v1` and any trailing slash, because the Python SDK appends `/v1` to `base_url` itself (`steel/_client.py`, `sessions.py`).
 The resolver is therefore the one place the form is adapted, and it stays the single construction point for the SDK side.
@@ -103,14 +103,27 @@ The declared artifact is `eval/deploy/steel/docker-compose.steel.yml`: the API i
 - The operator adds `STEEL_BROWSER_API_URL` to the eval instance `.env` once the value form is confirmed: `http://192.33.91.87:3000/v1`.
 - The current `STEEL_API_KEY` stays for the E4 cloud-path check.
 
-## D359-10 - The CLI interactive path waits on an upstream timeout fix (#395)
+## D359-10 - The CLI interactive path is fixed by the pin bump (#395)
 
-The pinned Steel CLI (v0.4.4) cannot run its interactive session daemon against the local API image.
-The API's create response carries `timeout: 0`, because the local runtime is single-session and has no session-timeout concept.
-The CLI reads that as an already-expired session and shuts the daemon down on its first loop (`[daemon] Session timeout reached, shutting down`), so `browser start` and the actions that ride it answer `Connection reset by peer`.
-`steel scrape` does not use the daemon and works; the SDK path (`base_url` plus `session.websocket_url`) works; the address seam is unaffected.
-Tracked as #395; a CLI pin bump is a skill-review event (D10/#221).
-Until it lands, local-mode interactive browser coverage is reduced to one-shot reads and the SDK crawl path.
+*Resolved 2026-10-19. The original defect and the measured diagnosis follow; the fix is the last paragraph.*
+
+Steel CLI v0.4.4 could not run its interactive daemon against the local API image.
+The API's create response carries `timeout: 0`, because the local runtime is single-session and has no session-expiry concept.
+`get_session_timeout` returned `Some(0)`, so the daemon's deadline was `createdAt + 0 - 30 s`, already in the past.
+The daemon shut down on its first loop (`[daemon] Session timeout reached, shutting down`) and closed its Unix socket, so `browser start` answered `Connection reset by peer`.
+`steel scrape` does not use the daemon and worked; the SDK path worked; the address seam was unaffected.
+
+The cause is a released-version gap, not a network or browser failure:
+
+- The CLI sends `{"timeout": <ms>}` in `POST /v1/sessions`, and the self-hosted API strips it (no field in `CreateSession`) and returns `timeout: 0` (upstream issue steel-dev/steel-browser#350, still open).
+- The CLI defect is fixed upstream in PR steel-dev/cli#95 (merged 2026-07-06): the timeout helpers collapse `0` to `None`, so the requested `--session-timeout` applies.
+- No stable release contains that fix: v0.4.4 is the latest stable tag. The fix ships in `0.5.0-preview.6` (2026-09-12).
+- The failure reproduces over loopback on the API host itself, and the preview binary succeeds over the same wire, so the network path is not a cause.
+  Evidence and traces: `docs/design/evidence/steel-359/t395-cli-timeout-root-cause.md`.
+
+The pin is now `0.5.0-preview.6`, the first release with the fix.
+`--session-timeout` is enforced by the daemon; when the daemon exits it releases the session.
+The server still does not expire a session on its own (upstream #350); that residual is accepted for a single-session local runtime, and a stable release replaces the preview pin when upstream publishes one.
 
 ## Open queue
 

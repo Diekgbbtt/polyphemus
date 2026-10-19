@@ -37,7 +37,9 @@ async def _offload(fn, /, *args, **kwargs):
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 _STEEL_TOKEN = re.compile(r"\bsteel\b")
-_STEEL_VERSION_PIN = "0.4.4"
+# First release containing upstream PR #95 (self-hosted `timeout: 0` means no
+# expiry): #395. 0.4.4, the latest stable tag, still carries the defect.
+_STEEL_VERSION_PIN = "0.5.0-preview.6"
 # Local-mode injection helpers (#390, D359-4). The injection must land on the
 # `steel` BINARY token, not on the word inside a path (`/opt/steel`,
 # `steel-cli`), and it must not touch any other byte of the command (the

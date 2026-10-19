@@ -11,7 +11,7 @@ Given `steel_exec` at the tool-function seam, exercising the routing semantic, t
 Yields `tests/test_steel_exec.py::test_non_steel_command_refused_never_executed`, `::test_ambiguous_inputs_refused_never_executed`, `::test_steel_substring_without_token_refused`, `::test_py_script_runs_and_bad_lang_refused`.
 
 C2 - Pinned-CLI guard.
-Given a `steel --version` probe that does not name the 0.4.4 pin, exercising the delivery-honesty semantic, the tool yields `refused:steel-version-mismatch` and runs nothing.
+Given a `steel --version` probe that does not name the `0.5.0-preview.6` pin, exercising the delivery-honesty semantic, the tool yields `refused:steel-version-mismatch` and runs nothing.
 Yields `tests/test_steel_exec.py::test_stale_steel_version_refused_never_executed`.
 
 C3 - Timeout ordering.
@@ -27,7 +27,7 @@ Given any run (success, shell error, malformed output), exercising the envelope 
 Yields `tests/test_steel_exec.py::test_steel_command_passes_through_with_envelope`, `::test_sh_script_written_verbatim_then_run`, `::test_py_script_runs_and_bad_lang_refused`.
 
 C6 - Eager kali delivery.
-Given the repo at rest, exercising the delivery semantic, `kali/postrun.sh` pins v0.4.4 with both arch checksums and installs best-effort/idempotently, and the kali service is the only place `STEEL_API_KEY` is wired, with no key value in the repo.
+Given the repo at rest, exercising the delivery semantic, `kali/postrun.sh` pins v0.5.0-preview.6 with both arch checksums and installs best-effort/idempotently, and the kali service is the only place `STEEL_API_KEY` is wired, with no key value in the repo.
 Yields `tests/test_steel_cli_delivery.py` (five static pin/wiring assertions).
 
 C7 - Skill data-section conformance.

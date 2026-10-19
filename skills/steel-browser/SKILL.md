@@ -9,7 +9,7 @@ description: >-
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '1.10'
+  version: '1.11'
 ---
 
 # Steel browser operation
@@ -33,8 +33,9 @@ A command that already carries `--local` or `--api-url` is left untouched.
 Script text is never rewritten, so a script must pass `--local` itself, and so must a bare CLI (there the value is still read from the environment).
 An invocation hidden inside a quoted shell string (`sh -c "steel ..."`) is not rewritten either; pass `--local` yourself in that form.
 When the value is unset, everything addresses the cloud exactly as before.
-**Known limitation.** The pinned CLI's interactive daemon treats the local API's `timeout: 0` as an expired session (#395), so `steel browser start` and the actions that ride it fail with a connection reset against the local runtime.
-Until the upstream fix, use `steel scrape` for local one-shot reads and the SDK crawl path for local sessions.
+The pinned CLI is 0.5.0-preview.6, the first release whose daemon maps the local API's `timeout: 0` to "no expiry" (#395).
+`--session-timeout` is therefore enforced by the daemon, and the local runtime releases the session when the daemon exits.
+The local API itself still ignores a create-time timeout (upstream issue #350), so the server does not expire a session on its own.
 
 ## The path: survey, open, mount, operate, close
 

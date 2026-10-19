@@ -45,7 +45,7 @@ def steel_stub(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     calls = tmp_path / "calls.log"
-    _write_steel_stub(bindir, calls, "steel version 0.4.4")
+    _write_steel_stub(bindir, calls, "steel version 0.5.0-preview.6")
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
     return calls
 
@@ -189,7 +189,7 @@ def test_unreadable_catalogue_fails_open(workroot, tmp_path, monkeypatch):
     stub.write_text(
         "#!/bin/sh\n"
         'case "$*" in\n'
-        '  *--version*) echo "steel version 0.4.4" ;;\n'
+        '  *--version*) echo "steel version 0.5.0-preview.6" ;;\n'
         '  *"browser sessions"*) echo "not json" ;;\n'
         '  *) echo "{\\"stub\\": true}" ;;\n'
         "esac\n"
@@ -241,7 +241,7 @@ def test_stale_steel_version_refused_never_executed(workroot, steel_stub_stale):
     out = _steel_exec(command="steel browser sessions --json", session_id="s1")
     assert out["returncode"] != 0
     assert out["stderr"].startswith("refused:steel-version-mismatch")
-    assert "0.4.4" in out["stderr"]
+    assert "0.5.0-preview.6" in out["stderr"]
     assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
     assert _calls(steel_stub_stale) == ["--version"]
 

@@ -4,9 +4,11 @@ Seams under assertion (both static/structural, no live cloud needed):
 - kali/postrun.sh file content (pinned release facts, wiring shape).
 - docker-compose.yml kali service config (credential env wiring).
 
-Expected values below are independent literals from the ticket brief
-(GitHub release tag v0.4.4, verified live 2026-09-11), never recomputed
-the way the stanza computes them.
+Expected values below are independent literals from the upstream release
+(GitHub release tag v0.5.0-preview.6; its published `.sha256` files,
+verified live 2026-10-19), never recomputed the way the stanza computes them.
+The pin moved from v0.4.4 to v0.5.0-preview.6 because the older release
+treats a self-hosted `timeout: 0` as an expired session (#395).
 """
 
 from pathlib import Path
@@ -15,9 +17,9 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-STEEL_VERSION = "0.4.4"
-SHA_X86_64 = "358ccca0f5250dcb64b8870e2148e83d4d75c1e0c4eaef2c2d4a0a427aaa32ef"
-SHA_AARCH64 = "0cec104b3c0da0c232a5f4fe5feaa8098dfc9581fb76029f621d55cc023feb7a"
+STEEL_VERSION = "0.5.0-preview.6"
+SHA_X86_64 = "83df78ee0a82273ecec5403b079ee12a31d3bb2a2f976f7af919cc63e64d7c18"
+SHA_AARCH64 = "6944041f37f4cf5caa4f640c31057b144e126aa4e9ef352f566e84a4d43e8936"
 
 
 def _postrun_text() -> str:
@@ -54,7 +56,7 @@ def test_postrun_stanza_is_idempotent_and_best_effort():
     text = _postrun_text()
     # Idempotent: skip when the pinned version is already present.
     assert "steel --version" in text
-    assert "0.4.4" in text
+    assert "0.5.0-preview.6" in text
     # Best-effort: never abort boot (no active `set -e` command line -
     # the header only names it in a comment; script always exits 0).
     assert not [

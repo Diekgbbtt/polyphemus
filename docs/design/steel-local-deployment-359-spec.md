@@ -40,7 +40,7 @@ The client choice is deliberately neutral: whether the recon browser phase drive
 ### The address seam (one value)
 
 - Add `STEEL_BROWSER_API_URL` as a deployment-level value. Unset means remote Steel (byte-identical to today); set means the self-hosted base URL.
-- The value is the CLI's canonical self-hosted endpoint, and it carries the `/v1` path: `http://<host>:<port>/v1`. The CLI appends the operation path to the value (`{base_url}{path}`), and the API mounts every route under `/v1` (verified in the CLI 0.4.4 source and the API route table).
+- The value is the CLI's canonical self-hosted endpoint, and it carries the `/v1` path: `http://<host>:<port>/v1`. The CLI appends the operation path to the value (`{base_url}{path}`), and the API mounts every route under `/v1` (verified in the CLI source and the API route table).
 - A thin resolver in the shared `app` layer returns the SDK-native base URL: the value with one terminal `/v1` removed. The Python SDK appends `/v1` itself, so the origin form reaches the same routes. The resolver is the one construction point for the SDK side, and it is the one place the form is adapted. It is not owned by recon, because the Steel browser capability is shared infrastructure, not a recon-only knob (D359-1, D359-4).
 - The CLI reads the same name natively (precedence step 2). No new CLI-side name is invented.
 - `steel_exec` injects the global `--local` flag into a command-mode invocation when the value is set; script-mode callers and a bare CLI pass `--local` themselves, and the browser skill states the rule.
@@ -82,9 +82,9 @@ The internal-reachability case needs no public-egress proxy: the runtime egresse
 
 ## Further Notes
 
-- The Steel CLI pin stays `0.4.4`; a bump is a skill-review event (D10, #221).
+- The Steel CLI pin is `0.5.0-preview.6`, the first release that contains upstream PR #95 (`timeout: 0` from a self-hosted runtime means "no expiry", #395); a bump is a skill-review event (D10, #221).
 - The deployment host is fixed; the polymerhus stack is portable, and mutual reachability is the invariant (D359-1).
 - The `steel_crawl` provider change is minimal on purpose; the rewrite may keep the SDK or move to the CLI, and the resolver serves either.
-- Known limitation (D359-10, #395): the pinned Steel CLI v0.4.4 cannot run its interactive session daemon against the local API image, because the API reports `timeout: 0` and the daemon treats that as expired.
-  One-shot `steel scrape` and the SDK path work; the seam is unaffected.
-  The interactive CLI path resumes when the upstream timeout fix ships.
+- The interactive CLI path works against the local runtime (D359-10, #395).
+  The local API still ignores a create-time timeout (upstream issue #350), so the daemon enforces `--session-timeout` and releases the session when it exits.
+  One-shot `steel scrape` and the SDK path are unaffected.

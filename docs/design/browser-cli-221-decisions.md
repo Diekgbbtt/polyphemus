@@ -146,7 +146,7 @@ Non-regression boundary: NO edits under `crawl/` (`steel_client.py`, `steel_prov
 New code lives in `src/polymerhus/recon/browser/` (seam + tools + redaction + session lifecycle).
 `steel_crawl`'s suite staying green IS the non-regression proof, plus a dedicated assertion that no shared module's behaviour changed.
 Image change: a pinned steel CLI binary layer is ADDED in the `Dockerfile` next to the crawl layer (`Dockerfile:34-37`); the `steel-sdk` + `playwright` pins in `requirements-crawl.txt` are KEPT (the in-process provider still needs them); `STEEL_API_KEY` wiring is UNCHANGED (env to `recon/config.py:19`, which the seam reuses via D7).
-CLI pin is 0.4.4 (the spike-tested version; the earlier "D2 defect" framing is amended at D2 above - a flag-order artifact, not a CLI defect); any bump re-runs the spike matrix before adoption.
+CLI pin is 0.5.0-preview.6 (moved from the spike-tested 0.4.4 by #395: the older daemon treated a self-hosted `timeout: 0` as an expired session); any bump re-runs the spike matrix before adoption.
 
 **Rationale.**
 The ticket is explicit (no migration, no shared-code breakage); the boundary above makes "untouched" mechanically checkable in review (the diff must show zero hunks under `crawl/` and `parsers/`). Keeping the SDK pins is forced by the same ruling: the provider they serve still ships.

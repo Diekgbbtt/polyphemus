@@ -145,3 +145,5 @@ Root cause, read from the steel CLI v0.4.4 source:
 `steel scrape` does not use the daemon, so it works. The API create/release and the CDP connection work when driven directly (see the walkthrough above).
 
 This blocks only the CLI's interactive session path, not the deployment, the address seam, or the SDK path. It needs an upstream fix: treat `timeout == 0` as unlimited (or have the API echo a requested timeout). Tracked as #395.
+
+*Resolved 2026-10-19 by the `0.5.0-preview.6` pin (upstream PR #95). The measured root cause, the loopback and field-rewrite experiments, and the green trace are in `t395-cli-timeout-root-cause.md`.*

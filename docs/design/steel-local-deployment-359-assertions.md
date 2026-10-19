@@ -1,6 +1,6 @@
 # Assertions - work item "local Steel runtime and the one address seam (#359)"
 
-**Source:** `docs/design/steel-local-deployment-359-spec.md` and `docs/design/steel-local-deployment-359-decisions.md` (D359-1..D359-9).
+**Source:** `docs/design/steel-local-deployment-359-spec.md` and `docs/design/steel-local-deployment-359-decisions.md` (D359-1..D359-10).
 **Tickets:** #390 (T1), #391 (T2), #392 (T3), #393 (T4), #394 (T5).
 
 ## Seams under assertion
@@ -14,6 +14,7 @@
 - S7 the live Steel API container on `dj-viscon-workshop-1` - the deployed runtime.
 - S8 the live internal `comfyui` target on the eval server, reached through the eval front.
 - S9 `skills/steel-browser/SKILL.md` - the stated rule for script mode and the bare CLI.
+- S10 the pinned CLI binary in `kali` - the interactive daemon path fixed by the `0.5.0-preview.6` pin (#395).
 
 ## Contract predicates (host-side unit tier)
 
@@ -45,6 +46,7 @@ The live wiring is covered by C7 and the walkthrough tier.
 | E5 | D359-8 - the guard is red-capable | E2 with the local container stopped | the same inputs as E2 | S7 stopped | run E2; start the container; run E2 again | the stopped run fails with a connection error and no silent cloud fallback; the restarted run passes | same module, both runs recorded in #394 |
 | E6 | D359-2 - state is durable | restart the local API container | a profile or session snapshot created before the restart | S7 and its `.cache` volume | create state; restart; read the state back | the state survives the restart | same module |
 | E7 | D359-7 - the boundary is real | a live session against the local runtime | one capability the boundary excludes, for example the Credentials API | S7 | call the excluded capability | the call fails or is absent, matching the recorded boundary | manual evidence in #392, not a repeatable test |
+| E8 | D359-10, #395 - the interactive daemon starts | the pinned CLI in `kali` with `STEEL_BROWSER_API_URL` set | a unique session name, `--session-timeout 120000`, `--local`, and the endpoint | S10, S7 | `browser start --json`; then `browser navigate ... about:blank --json` over the same daemon socket; then `browser stop` | start returns `success:true` with a positive `remainingMs`; navigate returns `success:true`, so the daemon socket stayed open; the session is stopped | `tests/e2e/test_steel_interactive_local.py`; the 0.4.4 red run and the preview green run are recorded in `docs/design/evidence/steel-359/t395-cli-timeout-root-cause.md` |
 
 ## Bootstrap only the operator can supply
 

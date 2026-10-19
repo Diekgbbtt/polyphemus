@@ -67,6 +67,6 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 ## Further Notes
 
 - This spec travels with the change and links from #221 at PR time (recorded deviation from tracker publication - #221 already carries the problem/solution/acceptance).
-- CLI pin is the spike-tested 0.4.4; bumps are skill-review events.
+- CLI pin is 0.5.0-preview.6 (#395; the first release with the self-hosted timeout fix); bumps are skill-review events.
 - The #221 acceptance criteria on redaction and always-stopped sessions are restated by the D4/D5 retirement and the trap-plus-backstop lifecycle; the criteria text itself needs its amendment at implementation time.
 - ADRs live in the companion decisions file (D1/D4/D5/D6/D7/D10 superseded or retired as marked; D11-D19 binding).

@@ -21,9 +21,10 @@ from tests.conftest import wait_for
 
 MCP_URL = "http://localhost:8000/mcp"
 
-# Independent literal from the ticket brief (spike-verified 2026-09-11),
-# never recomputed from the stanza under test.
-STEEL_VERSION_PIN = "0.4.4"
+# Independent literal from the upstream release (v0.5.0-preview.6, the first
+# release with the self-hosted timeout fix, #395), never recomputed from the
+# stanza under test.
+STEEL_VERSION_PIN = "0.5.0-preview.6"
 
 ENVELOPE_KEYS = {"stdout", "stderr", "returncode", "duration_ms"}
 

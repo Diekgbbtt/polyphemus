@@ -4,7 +4,7 @@ Seam under test: `polymerhus.app.steel_endpoint.steel_browser_api_url`.
 No docker, no network, no cloud key.
 
 The value is the CLI's canonical self-hosted endpoint and carries the `/v1`
-path (CLI 0.4.4 builds `{base_url}{path}`). The Python SDK appends `/v1`
+path (the pinned CLI builds `{base_url}{path}`). The Python SDK appends `/v1`
 itself, so the resolver returns the SDK-native origin form: one terminal
 `/v1` and any trailing slash removed.
 """
