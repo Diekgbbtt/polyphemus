@@ -21,8 +21,8 @@
 | S4 | W4: nested-taxonomy loader (flat-leaf identity, uniqueness hard error, level-2 nesting, logical root mount, scaffold, conformance tests, README) | DONE 2026-10-18: merged after the single review round (CLEAR); 16 conformance tests green; the wider targeted suites green; `verify.sh` NO-FAILURES (1 pending: C1) |
 | S5 | W5: artifact `skills` field, `load_skill` descriptions command, runtime rendering, agent workflows (C5, workflow ticket #236); per the 2026-10-18 ruling: the pod runner/triager prompt refactoring plus the skills loading/listing binding for all four hunting-module agents | DONE 2026-10-18: merged `ac48b90b`; the review returned BLOCKED on two majors (the hunting CONTEXT.md drift; the triager-variant skill drop), both fixed in the one fix pass; the wider suites green; `verify.sh` NO-FAILURES (1 pending: C1 families) |
 | S6 | W6: `defence-bypass` and `proxy-techniques` families (C1) + cross-reference wiring (C2) | DONE 2026-10-19: merged `155b6ed9`; the review returned CLEAR (one major scope call ruled by the operator: fix the concrete misses); `verify.sh` ALL-CHECKS-PASS (zero pending) |
-| S7 | W7: C4-full enrichment (D1a proposal report first, operator-assessed; then D1b surgical pass, D1c references/scripts) | IN FLIGHT 2026-10-19: D1a delivered and assessed by the operator (rulings and classification map recorded, `8fc0f57d`); the second mining round is complete (`1e61eb8a`) and assessed (`round-2/rulings.md`); the mining phase is closed; then D1b/D1c, one review, merge, `verify.sh` ALL-CHECKS-PASS |
-| S8 | Final integration: trunk to `dev` as one PR (human-merged) | PR open; operator merges |
+| S7 | W7: C4-full enrichment (D1a proposal report first, operator-assessed; then D1b surgical pass, D1c references/scripts) | DONE 2026-10-19: merged `e27beada`; the review returned BLOCKED on two majors (the R5 leaf renames; the README record), both fixed once; `verify.sh` ALL-CHECKS-PASS; the suite stands at 165 skills |
+| S8 | Final integration: trunk to `dev` as one PR (human-merged) | READY 2026-10-19: the trunk carries W0-W7; awaiting the operator's go to push and open the PR |
 
 ## Ordering constraints
 
@@ -42,11 +42,12 @@ After each merge into the trunk: run `verify.sh`, update the completion ledger r
 
 ## Current pointers (2026-10-18)
 
-- Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: the W6 merge `155b6ed9`; contains W0 landing, W0/W1 completion, W2 cortex, W3, W4, W5, W6.
+- Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: the W7 merge `e27beada`; contains W0 landing, W0/W1 completion, W2 cortex, W3, W4, W5, W6, W7 (165 suite skills).
 - S2: COMPLETE - all three residual items merged after their single review rounds (W2, W0, W1).
 - S3: COMPLETE - both rounds answered and recorded (`skill-evolution-w3-decisions.md`, D-W3-1..D-W3-8); merged `b42a19d9` after review CLEAR with the one fix pass absorbed.
 - S4: COMPLETE - the W4 mount seam merged after review CLEAR (`7ac935d6`).
 - S5: COMPLETE - merged `ac48b90b` after the review BLOCKED on two majors, both fixed once (the hunting CONTEXT.md reconciliation; the triager-variant skill inheritance).
-- S6: COMPLETE - merged `155b6ed9`; review CLEAR with one operator-ruled scope call; `verify.sh` reaches ALL-CHECKS-PASS.
-- S7: IN FLIGHT - D1a delivered, operator-assessed and recorded (`_migration/enrichment/d1a/rulings.md`, `8fc0f57d`); the second mining round is complete (`1e61eb8a`) and assessed (`round-2/rulings.md`); the mining phase is closed; D1b/D1c follow.
-- Open operator gates: the round-2 evaluation (W7); the mounted-suite wiring decision (carried; see the map); the layout work item (#388, deferred).
+- S6: COMPLETE - merged `155b6ed9`; review CLEAR with one operator-ruled scope call; `verify.sh` reached ALL-CHECKS-PASS.
+- S7: COMPLETE - merged `e27beada`; review BLOCKED on two majors, both fixed once; the suite stands at 165 skills.
+- S8: READY - the trunk carries W0-W7 and `verify.sh` is ALL-CHECKS-PASS; awaiting the operator's go to push `feat/skills-system` and open the final PR to `dev` (human-merged).
+- Open operator gates: the final PR go; the mounted-suite wiring decision (see the map); the layout work item (#388, deferred).
