@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Fire identical constrained operations as a synchronized burst and read the lanes.
+
+The harness runs one operation across several concurrent lanes, records each
+lane's status, size, and digest, then optionally re-reads an authoritative state
+path after a settling delay, so a durable double is separated from a transient
+echo. It is the parallel-burst step of `concurrent-duplication` in executable
+form; the timing primitive itself stays owned by `race-conditions`, and the
+ledger read is the class's own confirmation step.
+
+Usage:
+  business-logic-race-harness --base https://target.test --plan plan.json
+  business-logic-race-harness --base https://target.test --plan plan.json --execute
+  business-logic-race-harness --base https://target.test --plan plan.json --execute \\
+      --lanes 8 --settle 5 --json-out burst.json
+
+  plan.json:
+
+  {
+    "operation": {"method": "POST", "path": "/api/coupons/redeem",
+                  "headers": {"Cookie": "session=<user>", "Content-Type": "application/json"},
+                  "body": {"code": "<coupon>"}},
+    "state": {"method": "GET", "path": "/api/wallet",
+              "headers": {"Cookie": "session=<user>"}}
+  }
+
+Discipline:
+  - Dry run by default: the lane count and the operation shape print, and nothing
+    is sent until `--execute` is given.
+  - State-changing by design, so `--execute` is required; keep the burst as small
+    as the guard needs, and stop once serialization breaks.
+  - Bounded: `--lanes` caps concurrency and `--settle` gives the ledger time to
+    settle before the confirmation read.
+  - A duplicate is a durable state change or two distinct transaction identifiers
+    from one key, never a differing response echo.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import ssl
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+
+def digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def send(
+    base: str,
+    spec: dict[str, object],
+    timeout: float,
+    context: ssl.SSLContext | None,
+) -> dict[str, object]:
+    method = str(spec.get("method", "GET")).upper()
+    body = spec.get("body")
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(base.rstrip("/") + str(spec["path"]), data=payload, method=method)
+    for key, value in dict(spec.get("headers", {})).items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            raw = response.read()
+            return {"status": response.status, "size": len(raw), "digest": digest(raw), "body": raw[:400].decode("utf-8", "replace"), "error": ""}
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        return {"status": error.code, "size": len(raw), "digest": digest(raw), "body": raw[:400].decode("utf-8", "replace"), "error": ""}
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"status": 0, "size": 0, "digest": "", "body": "", "error": str(error)}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="target base URL")
+    parser.add_argument("--plan", required=True, help="JSON plan with the operation and the state read")
+    parser.add_argument("--lanes", type=int, default=4, help="concurrent lanes in the burst")
+    parser.add_argument("--settle", type=float, default=3.0, help="seconds to wait before the confirmation read")
+    parser.add_argument("--execute", action="store_true", help="send the burst; the default is a dry run")
+    parser.add_argument("--timeout", type=float, default=15.0, help="per-request timeout in seconds")
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    parser.add_argument("--json-out", help="write the lane records to this path")
+    args = parser.parse_args(argv)
+
+    with open(args.plan, encoding="utf-8") as handle:
+        plan = json.load(handle)
+    operation = plan.get("operation", {})
+    state = plan.get("state")
+    if not operation:
+        print("the plan needs an operation spec", file=sys.stderr)
+        return 2
+    print(f"burst: {args.lanes} lanes of {operation.get('method', 'GET')} {operation.get('path')}")
+    if not args.execute:
+        print("dry run: pass --execute to send")
+        return 0
+
+    context = ssl._create_unverified_context() if args.insecure else None
+    before = send(args.base, state, args.timeout, context) if state else None
+    barrier = threading.Barrier(args.lanes)
+
+    def lane(index: int) -> dict[str, object]:
+        barrier.wait()
+        cell = send(args.base, operation, args.timeout, context)
+        cell["lane"] = index
+        return cell
+
+    with ThreadPoolExecutor(max_workers=args.lanes) as pool:
+        lanes = list(pool.map(lane, range(args.lanes)))
+    if state:
+        time.sleep(args.settle)
+        after = send(args.base, state, args.timeout, context)
+    else:
+        after = None
+
+    print(f"\n{'lane':6} {'status':6} {'size':8} {'digest':14} error")
+    for cell in lanes:
+        print(f"{cell['lane']:6} {cell['status']:6} {cell['size']:8} {cell['digest']:14} {cell['error'][:40]}")
+    distinct = {cell["digest"] for cell in lanes if cell["status"] and cell["status"] < 400}
+    successes = [cell for cell in lanes if cell["status"] and 200 <= cell["status"] < 300]
+    print(f"\nsuccessful lanes: {len(successes)} of {len(lanes)}; distinct success digests: {len(distinct)}")
+    if before is not None and after is not None:
+        print(f"state before: status={before['status']} digest={before['digest']}")
+        print(f"state after:  status={after['status']} digest={after['digest']}")
+        if before["digest"] != after["digest"]:
+            print("state moved: confirm the double in the authoritative source rather than in the response echo")
+        else:
+            print("state did not move: the burst serialized or the effect is transient")
+    if len(successes) > 1 and len(distinct) > 1:
+        print("two distinct success shapes from identical submissions: read each lane's transaction identifier")
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as handle:
+            json.dump({"base": args.base, "lanes": lanes, "before": before, "after": after}, handle, indent=2)
+        print(f"wrote {args.json_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

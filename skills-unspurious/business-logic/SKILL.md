@@ -89,12 +89,14 @@ Each variant breaks one clause: the recomputation clause, the atomicity clause, 
 - Parallelize identical operations to bypass atomic checks (create, apply, redeem, transfer)
 - Abuse idempotency: key scoped to path but not principal → reuse other users' keys; or idempotency stored only in cache
 - Message reprocessing: queue workers re-run tasks on retry without idempotent guards; cause duplicate fulfillment/refund
+- The synchronized burst is driven by `scripts/business-logic-race-harness`, which records each lane and re-reads the authoritative state after a settling delay, so a durable double is separated from a response echo
 
 ### Numeric and Currency
 
 - Floating point vs decimal rounding; rounding/truncation favoring the attacker at boundaries
 - Cross-currency arbitrage: buy in one currency, refund in another at stale rates; tax rounding per-item vs per-order
 - Negative amounts, zero-price, free-shipping thresholds, minimum/maximum guardrails
+- The probe set, the recomputation oracle, and the failure-mode index behind these cases are in `references/value-probe-set.md`
 
 ### Quotas, Limits, and Inventory
 
@@ -170,6 +172,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 3. **Test transitions** - Step skipping, repetition, reordering, late mutation
 4. **Introduce variance** - Time, concurrency, channel (mobile/web/API/schema layer), content-types
 5. **Validate persistence boundaries** - All services, queues, and jobs re-enforce invariants
+
+Alternate transition orders are replayed by `scripts/business-logic-step-skip`, which records each order's outcome and the state read beside it, so an accepted skip is attributable to the missing guard.
 
 ## Variants
 

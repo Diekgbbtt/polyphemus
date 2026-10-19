@@ -33,6 +33,7 @@ Mass assignment binds client-supplied fields directly into models or data-transf
 - Billing fields: price, amount, currency, proration, next invoice date, trial end
 - Temporal and audit fields: creation, update, and author markers whose binding rewrites provenance and audit trails
 - Verification and status fields: verification markers, workflow-state fields, and ownership-transfer fields
+- The families, the binder shapes that carry them, and the read-back verification rule are in `references/field-dictionary.md`
 
 ### Shape Variants
 
@@ -156,6 +157,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 4. **Inject candidates** - Alongside legitimate update fields, across transports and encodings
 5. **Compare state** - Before-and-after diffs across roles, per item and per child relation
 6. **Test variations** - Nested objects, arrays, alternate shapes, duplicate keys, and batch bodies; the step completes when every shape carries a persisted-or-rejected verdict
+
+The per-field injection and read-back walk is driven by `scripts/mass-assignment-field-sweep`, which sends one candidate beside the legitimate body and reads the resource back for the verdict.
 
 ## Variants
 
