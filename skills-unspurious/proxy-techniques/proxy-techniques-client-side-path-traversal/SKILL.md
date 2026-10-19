@@ -73,7 +73,6 @@ A client builds a request path by concatenating a value it was given, and the va
 ## Bypass Techniques
 
 - **Bypass scope**: bypass shapes are tried only after the request construction and the depth are mapped, because a path that does not move carries nothing.
-
 - **Upward segments**: upward segments sized to the depth between the value and the target endpoint.
 - **Encoded separators**: encoded separators resolved by the client after a checker read them as data.
 - **Padding segments**: padding segments that keep a depth-counting checker non-negative while the client's depth goes negative.
@@ -84,7 +83,6 @@ A client builds a request path by concatenating a value it was given, and the va
 ## Chaining Attacks
 
 - **Chain scope**: client-side path traversal is a request-relocation mechanism, so every chain names the class that owns the response's consequence.
-
 - **XSS hand-off**: `xss` where the page renders the arrival's response into an executable sink, because the execution belongs to that class.
 - **CSRF hand-off**: `csrf` where the relocated request reaches a state-changing endpoint under the victim's session.
 - **Disclosure hand-off**: `information-disclosure` and `idor` where the arrival returns data the page's own endpoint would not, read with the victim's authority.
@@ -107,7 +105,6 @@ Client-side path traversal maps the construction and the gadget first and crafts
 ## False Positives
 
 - **Stop condition**: stop when the value cannot relocate the path or the arrival's answer is discarded, because neither is a traversal finding.
-
 - **Query-string value**: a value that lands in the query string, where the routing ignores it.
 - **Encoding client**: a client that encodes the value before concatenation, confirmed by an encoded arrival path.
 - **Static-only arrival**: a traversed path that reaches only static resources with no caller-influenced destination or response.

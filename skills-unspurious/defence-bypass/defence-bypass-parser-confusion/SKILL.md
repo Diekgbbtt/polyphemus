@@ -107,7 +107,6 @@ Parser confusion inventories the readers first and duplicates second, because th
 ## False Positives
 
 - **Stop condition**: stop when both readers consumed the same member, because an identical reading is not a disagreement.
-
 - **Joining reader**: a reader that joins duplicated members before evaluating them, confirmed by a refusal at every ordering.
 - **Same occurrence**: a sink that reads the same occurrence the control read, where the request passed the control without changing meaning.
 - **Broken request**: a pass whose effect never reached the sink, where the request passed the control and broke later.

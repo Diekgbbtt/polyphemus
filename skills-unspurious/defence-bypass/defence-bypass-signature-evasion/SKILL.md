@@ -111,7 +111,6 @@ Signature evasion baselines the refusal first and crafts second, because a pass 
 ## False Positives
 
 - **Stop condition**: stop when the pass came from an absent or uninvolved matcher, because neither is a bypass.
-
 - **Absent matcher**: a matcher that is absent: record the absence with the test that showed it rather than a defeat.
 - **Sink-side refusal**: a refusal that came from the sink rather than the matcher, confirmed by the sink's own error class.
 - **Broken request**: a pass whose effect never reached the sink, where the shape passed the matcher and the request broke later.

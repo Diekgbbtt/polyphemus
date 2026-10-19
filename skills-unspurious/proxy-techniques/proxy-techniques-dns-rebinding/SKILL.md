@@ -72,7 +72,6 @@ A name that is resolved twice can answer differently each time. This variant mak
 ## Bypass Techniques
 
 - **Bypass scope**: relay shapes are tried only after the direct route is baselined, because a name that never rebound carried nothing.
-
 - **Changing answer**: a name whose answer changes between the approving and the connecting lookup.
 - **Short lifetime**: a lifetime short enough to expire inside the gap between the two lookups.
 - **Wildcard answer**: a wildcard or fallback answer that covers the label the operation uses.
@@ -102,7 +101,6 @@ Rebinding baselines the pair first and answers second, because a single lookup c
 ## False Positives
 
 - **Stop condition**: stop when the resolution stayed pinned, because one answer across both lookups is not a rebind.
-
 - **Validated-value connector**: a connector fed the validated value, which resolves nothing and connects to the approved address.
 - **Outliving cache**: a resolver cache that outlives the check, confirmed by one answer across the pair.
 - **Tester-side arrival**: an arrival whose source is the tester's client rather than the target's connector.

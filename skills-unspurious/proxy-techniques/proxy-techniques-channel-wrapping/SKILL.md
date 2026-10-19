@@ -87,7 +87,6 @@ A guard watches the carrier it inspects, and the operation can travel in another
 ## Bypass Techniques
 
 - **Bypass scope**: relay shapes are tried only after the direct route is baselined, because a carrier that was never guarded carried nothing.
-
 - **Sibling content types**: sibling content types and serialisations of one body, where each path validates one representation.
 - **Alternate verbs**: alternate verbs and override members for one route.
 - **Second transports**: second transports, endpoints, and upgrade-shaped paths whose checks differ.
@@ -120,7 +119,6 @@ Channel wrapping enumerates the carriers first and wraps second, because the mec
 ## False Positives
 
 - **Stop condition**: stop when every carrier refused the operation, because guard parity is not a wrap.
-
 - **Refusing sibling**: a sibling carrier that refuses the operation, confirmed across the carrier inventory.
 - **Watched carrier**: a carrier the guard does watch, where the operation passed for a class-specific reason rather than the carrier.
 - **Broken request**: a pass whose effect never reached the sink, where the carrier passed and the request broke later.

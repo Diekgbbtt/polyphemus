@@ -78,7 +78,6 @@ A shared cache stores one response under one key and serves it to every caller t
 ## Bypass Techniques
 
 - **Bypass scope**: relay shapes are tried only after the direct route is baselined, because a cache that never stored carried nothing.
-
 - **Unkeyed selector**: a selector that shapes the body while the key omits it.
 - **Normalisation collapse**: separators, casing, and fragmentation markers the key's normalisation collapses.
 - **Address tails**: address tails and suffixes that change an entry's storage eligibility or reach.
@@ -110,7 +109,6 @@ Cache deception reads the key first and stores second, because the omission is a
 ## False Positives
 
 - **Stop condition**: stop when the entry reached only the caller that produced it, because a private entry is not a deception.
-
 - **Full key coverage**: a cache whose key covers every selector that shapes the body, confirmed by distinct entries per selector.
 - **Producing caller only**: an entry reachable only by the producing caller or session.
 - **Tester's own key**: a cache that stored the tester's own session entry under a key that names the tester.

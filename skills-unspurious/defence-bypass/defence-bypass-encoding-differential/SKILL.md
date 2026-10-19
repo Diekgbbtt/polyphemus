@@ -113,7 +113,6 @@ Encoding differentials count the decodes first and layer second, because the dif
 ## False Positives
 
 - **Stop condition**: stop when both sides read the value the same way, because an identical reading is not a differential.
-
 - **Early resolution**: a decoder that resolves the layered form before the comparison, confirmed by a refusal at every layer.
 - **Data reading**: a sink that reads the layered form as data, where the value passed the comparison without changing meaning.
 - **Broken request**: a pass whose effect never reached the sink, where the shape passed the comparison and the request broke later.

@@ -72,7 +72,6 @@ A limiter counts requests, and the backend executes whatever one request carries
 ## Bypass Techniques
 
 - **Bypass scope**: bypass shapes slip past a limit that is present, so each one is tried after the single-operation baseline is refused.
-
 - **List body**: a list body whose elements are tested in one counted request.
 - **Repeated field**: a repeated field under distinct names inside one operation envelope.
 - **Batch envelope**: a batch envelope of inner operations the limiter does not parse.
@@ -102,7 +101,6 @@ Attempt batching reads the counting unit first and the carrier second, because t
 ## False Positives
 
 - **Stop condition**: stop when the envelope executed once or the limiter counted the items, because neither is a collapse.
-
 - **Rejected payload**: a backend that rejects or ignores a multi-item payload, confirmed across every carrier.
 - **Per-item counting**: an envelope whose items are counted individually by the limiter, confirmed by a refusal at the same threshold.
 - **Single-answer response**: a response that answers the envelope once with no per-item verdict, which proves nothing about iteration.

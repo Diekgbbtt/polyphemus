@@ -95,7 +95,6 @@ The bypass mechanics stay with the skills that own them: the spread across lanes
 ## Bypass Techniques
 
 - **Bypass scope**: bypass shapes are tried only after the burst baseline records a refusal, a challenge, or a throttle.
-
 - **Spread**: move the effect across a lane the counter does not observe, one lane per attempt; name `defence-bypass-throttle-evasion` at this step.
 - **Collapse**: carry many logical attempts in one counted request; name `defence-bypass-attempt-batching` at this step.
 - **Canonicalise**: fold the identifier so the counter mints a fresh key for the same entity.
@@ -108,7 +107,6 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 ## Chaining Attacks
 
 - **Forward chaining scope**: a bypassed limit is a mechanism rather than a finding, so the admitted repetition hands forward to the class that owns the outcome.
-
 - **Credential layer**: `weak-credential-discovery` for the credential and token brute, and `crypto-weakness` where the artifact's entropy is the failing clause.
 - **Auth-adjacent flows**: `mfa-bypass` where the repeated operation is the second-factor verification step, and `account-recovery` where it is the recovery step.
 - **Counter race**: `race-conditions` at the non-atomic counter step.
@@ -131,7 +129,6 @@ Rate-limit work classifies the limit first and adjudicates the reach second, bec
 ## False Positives
 
 - **Stop condition**: stop when the limit held, never engaged, or the admitted repetition reaches nothing, because none of the three is a bypass.
-
 - **Absent limit**: no counter, threshold, or answer change at any rate, recorded with the test that showed it.
 - **Genuine enforcement**: a refusal or challenge that holds across every lane, key spelling, unit, and window.
 - **Broken request**: attempts that pass the limit and never reach the effect, where the request failed later.

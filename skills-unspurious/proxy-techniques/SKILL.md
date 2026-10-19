@@ -130,7 +130,6 @@ Every request travels a path of components that resolve, forward, redirect, cach
 ## Bypass Techniques
 
 - **Bypass scope**: relay shapes are tried only after the direct route is baselined, because an intermediary that never carried the operation is not a proxy effect.
-
 - **Destination spelling**: destination spelling and encoding variants that decode differently on each side of the path.
 - **Duplicate members**: duplicate destination members, where precedence decides which component reads which value.
 - **Second carrier**: a second carrier for one operation: content type, verb, transport, endpoint, session, or device.
@@ -144,7 +143,6 @@ Every request travels a path of components that resolve, forward, redirect, cach
 ## Chaining Attacks
 
 - **Chain scope**: a carried operation is a mechanism rather than a finding, so the path hands forward to the class that owns the effect.
-
 - **Effect hand-off**: hand the carried operation to the class that owns the effect, and prove the class-specific consequence there.
 - **Family naming**: interception and re-presentation is a goal the family serves, so a chain that needs a component to accept a re-presented request names the family rather than a class.
 - **Family chaining**: chain the families, because a carried operation past a destination check lands on a control the defence-bypass family owns.
@@ -180,7 +178,6 @@ Proxy work baselines the direct route first and carries the operation second, be
 ## False Positives
 
 - **Stop condition**: stop when the evidence shows the path carried nothing or the caller's own client made the request, because neither is a proxy effect.
-
 - **Tester-side arrival**: an arrival whose source is the tester's client rather than an intermediary, which reads as a client-side request.
 - **Direct-route success**: a direct-route success mistaken for a carried operation, confirmed by the paired baseline.
 - **Tester's own entry**: a shared cache serving the tester's own session entry under a key that names the tester.

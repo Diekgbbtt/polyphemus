@@ -78,7 +78,6 @@ An approval applied to a first hop covers the hop rather than the arrival. This 
 ## Bypass Techniques
 
 - **Bypass scope**: relay shapes are tried only after the direct route is baselined, because a chain the check never inspected carried nothing.
-
 - **Approved first destination**: an approved first destination that forwards to a destination under control.
 - **Trusted redirecting endpoint**: the check's own trusted redirecting endpoint as the first hop, so the approved value performs the forward.
 - **Shaped destination value**: a destination value shaped with userinfo, a protocol-relative form, a backslash, an encoded separator, a null or fragment terminator, or a look-alike host family, so the approver reads the approved destination.
@@ -111,7 +110,6 @@ Redirect chains record the chain first and craft the last hop second, because th
 ## False Positives
 
 - **Stop condition**: stop when every hop re-validated the destination, because a chain that carries its own approval is not a carry.
-
 - **Re-checking follower**: a follower that re-checks each hop, confirmed by a refusal at the second hop.
 - **Approved last hop**: a chain whose last hop is the approved destination, where the check covered the arrival.
 - **Tester-side arrival**: an arrival whose source is the tester's client rather than a follower.

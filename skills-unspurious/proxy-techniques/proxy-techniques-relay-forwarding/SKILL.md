@@ -78,7 +78,6 @@ An intermediary adds its own fields to a request, and the origin reads those fie
 ## Bypass Techniques
 
 - **Bypass scope**: relay shapes are tried only after the direct route is baselined, because an origin that reads its own observation carried nothing.
-
 - **Authority value**: an authority value supplied through the relay's own fields.
 - **Construction value**: a supplied value that reaches a construction decision: a recovery or invitation link, a canonical or share URL, or an identity document's issuer or discovery value.
 - **Source field**: a source field a limiter or an allowlist reads as the peer's own address.
@@ -109,7 +108,6 @@ Relay forwarding inventories the fields first and supplies second, because the m
 ## False Positives
 
 - **Stop condition**: stop when the origin used its own observation, because an ignored field carried nothing.
-
 - **Own-observation origin**: an origin that reads its own connection values, confirmed by a refusal for every field family.
 - **Value-replacing relay**: a relay that replaces caller-supplied values with its own before forwarding.
 - **Undecided value**: a value that reached no decision at all, where the field arrived and the origin never used it.

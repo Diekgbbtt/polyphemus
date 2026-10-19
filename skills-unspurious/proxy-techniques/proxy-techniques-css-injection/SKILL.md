@@ -70,7 +70,6 @@ A stylesheet is treated as presentation, and presentation can still read the doc
 ## Bypass Techniques
 
 - **Bypass scope**: bypass shapes are tried only after the injection renders and the policy is read, because a closed policy carries nothing.
-
 - **One selector per character**: one selector per candidate character, so each match is attributable to one character.
 - **Import recursion**: import recursion that conditions the next position on the matched prefix.
 - **Character-set widening**: character-set coverage widened until the recursion stops early no more.
@@ -80,7 +79,6 @@ A stylesheet is treated as presentation, and presentation can still read the doc
 ## Chaining Attacks
 
 - **Chain scope**: CSS injection is a no-execution channel, so every chain names the class that owns the disclosed secret.
-
 - **Disclosure hand-off**: `information-disclosure` at its data-channel step, because the extracted value is the disclosure.
 - **CSRF hand-off**: `csrf` where the leaked proof-of-intent value is replayed against the operation it guards.
 - **XSS hand-off**: `xss` where the leaked policy value is the permit key that class reuses, so the extraction is the enabling step rather than the execution.
@@ -102,7 +100,6 @@ CSS injection reads the policy first and solves one character second, because th
 ## False Positives
 
 - **Stop condition**: stop when no out-of-band hit arrives or the value is not a secret, because neither is a disclosure.
-
 - **Closed policy**: a closed policy: external resource origins are refused, and a blocked request is indistinguishable from a match in the page's own tooling.
 - **No hit**: no out-of-band hit, because a rendered style change is not an extraction.
 - **Public value**: a value that is not secret, where the channel reads a public attribute and discloses nothing.

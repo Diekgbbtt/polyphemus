@@ -114,7 +114,6 @@ Allowance gaps read the permit first and probe second, because the omission is n
 ## False Positives
 
 - **Stop condition**: stop when the permit held or the capability was never withheld, because neither is a bypass.
-
 - **Uniform refusal**: a permit whose forbidden route is refused at every attempt, confirmed across the route inventory.
 - **Never withheld**: a capability the permit never withheld, where the effect was always allowed.
 - **Broken request**: a pass whose effect never reached the sink, where the route was permitted and the request broke later.

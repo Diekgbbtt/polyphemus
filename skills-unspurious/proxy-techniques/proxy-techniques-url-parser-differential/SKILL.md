@@ -84,7 +84,6 @@ One destination value, two readers, two targets. This variant exploits the gap b
 ## Bypass Techniques
 
 - **Bypass scope**: relay shapes are tried only after the direct route is baselined, because a value both readers parse alike carried nothing.
-
 - **Userinfo and separator shapes**: userinfo and separator shapes that move the authority boundary between readers.
 - **Duplicate members**: duplicate destination members, where each reader resolves precedence for itself.
 - **Notation forms**: trailing dots, case, width variants, and numeric address forms that equalize differently.
@@ -114,7 +113,6 @@ Destination parse differentials compare the readers first and craft second, beca
 ## False Positives
 
 - **Stop condition**: stop when both readers derived the same target, because an identical parse is not a differential.
-
 - **Identical normalisation**: readers that normalise the value identically before comparing, confirmed by a refusal for every shaped element.
 - **Approver-target consumer**: a consumer that connects to the approver's derived target, where the shaped value changed nothing.
 - **Tester-side arrival**: an arrival whose source is the tester's client rather than the consumer.

@@ -107,7 +107,6 @@ Edge-origin differentials read the tiers first and compare second, because the g
 ## False Positives
 
 - **Stop condition**: stop when both tiers gave the same verdict, because an identical verdict is not a differential.
-
 - **Refusing sibling**: a sibling route that refuses the effect, confirmed across the route inventory.
 - **Recomputed verdict**: a stored verdict recomputed on the changed request, confirmed by a fresh refusal.
 - **Broken request**: a pass whose effect never reached the serving tier, where the route passed and the request broke later.

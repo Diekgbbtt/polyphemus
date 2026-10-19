@@ -92,7 +92,6 @@ The bypass mechanics stay with the skills that own them: the duplicate-member pr
 ## Bypass Techniques
 
 - **Bypass scope**: bypass shapes are tried only after the canonical single-member request is baselined, because a duplicate that changes nothing is not a bypass.
-
 - **Precedence shaping**: order the duplicate pair so the validator reads the approved occurrence and the consumer reads the other one.
 - **Split reassembly**: divide one effect across duplicates so each occurrence is individually benign and the sink joins them; name the `defence-bypass` family at this step.
 - **Spelling variants**: fold the duplicated identifier's spelling so a per-name rule sees a fresh name while the consumer resolves the same entity.
@@ -104,7 +103,6 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 ## Chaining Attacks
 
 - **Forward chaining scope**: a duplicate member is a mechanism rather than a finding, so the decision it reaches hands forward to the class that owns the consequence.
-
 - **Value layer**: `business-logic` where the duplicate decides an amount, a quantity, a price, or a quota.
 - **Destination layer**: `open-redirect` and `oauth` where the duplicate decides a destination or a redirect target.
 - **Authorization layer**: the function-level and object-level classes where the duplicate decides a role, a scope, or an identifier.
@@ -127,7 +125,6 @@ Parameter pollution establishes the resolution rule first and exercises the deci
 ## False Positives
 
 - **Stop condition**: stop when the duplicate changed nothing the application decides on, because an unresolved ambiguity is not a finding.
-
 - **Single-resolution readers**: every reader consumes the same occurrence, confirmed across both orderings and every shape.
 - **Rejected duplicates**: the application refuses requests carrying a repeated member, confirmed by a uniform rejection.
 - **No decision reached**: the duplicate wins the resolution and the value is never used in a decision or an effect.

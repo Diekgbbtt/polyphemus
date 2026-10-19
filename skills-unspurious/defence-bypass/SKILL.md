@@ -164,7 +164,6 @@ Bypass work runs the control first and the effect second, because an unattribute
 ## False Positives
 
 - **Stop condition**: stop when the evidence shows the control held or never engaged, because neither is a bypass.
-
 - **Absent control**: a control that is absent: record the absence with the test that showed it rather than a defeat.
 - **Uninvolved control**: a control that never evaluated the input, such as a client-side check or a probe the rule set does not inspect.
 - **Sink-side denial**: a denial that came from the sink rather than from the control, confirmed by the sink's own error class.

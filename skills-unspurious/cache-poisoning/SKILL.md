@@ -90,7 +90,6 @@ The cache-key mechanics stay with `proxy-techniques-cache-deception`, the contro
 ## Bypass Techniques
 
 - **Bypass scope**: bypass shapes are tried only after the entry's key coverage is read, because a selector the key covers stores nothing.
-
 - **Unkeyed selector**: a request field, member, or cookie that shapes the body while the key omits it.
 - **Declaration gap**: a key-coverage declaration that omits a selector the response actually varies with.
 - **Storage-eligibility suffix**: a path shape that changes whether a dynamic response is stored at all.
@@ -103,7 +102,6 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 ## Chaining Attacks
 
 - **Forward chaining scope**: a stored entry is a mechanism rather than a finding, so the delivered body hands forward to the class that owns its effect.
-
 - **Executable delivery**: `xss` where the stored body carries executable markup, because the cache delivers it to every later caller.
 - **Disclosure direction**: `information-disclosure` and its `differential-oracle-disclosure` leaf where the entry carries content produced for another caller.
 - **Destination layer**: `open-redirect` where the stored body carries a destination the origin built from the shaping value.
@@ -126,7 +124,6 @@ Cache poisoning reads the key first and stores second, because the omission is a
 ## False Positives
 
 - **Stop condition**: stop when the entry reached only the caller that produced it or the body was regenerated, because neither is a poisoning delivery.
-
 - **Key covers every selector**: a distinct entry per varied field, confirmed across the selector sweep.
 - **Unreflected input**: a selector that changes storage but never appears in the body.
 - **Regenerated response**: a body that changes per request despite the status fields, confirmed by a changing body.

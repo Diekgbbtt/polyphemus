@@ -74,7 +74,6 @@ A client script reads a global by name, and markup can define that name. This va
 ## Bypass Techniques
 
 - **Bypass scope**: bypass shapes are tried only after the injection point and the global read are both mapped, because a name that cannot resolve carries nothing.
-
 - **Admitted naming attribute**: a naming attribute the allowlist admits, planted on an element the allowlist keeps.
 - **Nested shape**: a nested container-and-child shape that reaches one property deeper into a namespace.
 - **String-coercing element**: an element whose string form is an attacker-chosen destination, consumed where a URL is expected.
@@ -84,7 +83,6 @@ A client script reads a global by name, and markup can define that name. This va
 ## Chaining Attacks
 
 - **Chain scope**: DOM clobbering is a zero-impact primitive, so every chain names the class that owns the sink's consequence.
-
 - **XSS hand-off**: `xss` where the clobbered value reaches a markup insertion or an evaluation sink, because the execution belongs to that class.
 - **CSRF hand-off**: `csrf` where the clobbered name carries a proof-of-intent value, so the clobbered token is the chain's enabling step.
 - **Destination hand-off**: `open-redirect` and `proxy-techniques-client-side-path-traversal` where the clobbered value is consumed as a destination.
@@ -107,7 +105,6 @@ DOM clobbering maps the globals and the sinks first and injects the smallest mar
 ## False Positives
 
 - **Stop condition**: stop when the name cannot resolve or the value reaches no sink, because neither is a clobbering finding.
-
 - **Fixed global**: a global that is fixed by the runtime or read through a primitive the markup cannot shadow, confirmed by an unchanged value.
 - **Unconsumed name**: a clobbered name whose value is never consumed, where the read was recorded and discarded.
 - **Stripped names**: an injection point that strips naming attributes, confirmed by the element arriving without its name.

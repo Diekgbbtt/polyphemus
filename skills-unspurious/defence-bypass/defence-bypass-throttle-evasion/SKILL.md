@@ -111,7 +111,6 @@ Throttle evasion baselines the accounting first and spreads second, because an i
 ## False Positives
 
 - **Stop condition**: stop when the limit refused every lane, because a controlled rate is not an evasion.
-
 - **Uniform refusal**: a limit that refuses the effect across every identity, path, and window.
 - **Inactive limit**: a limit that never engaged, where no counter or threshold was observed at any rate.
 - **Broken request**: a spread whose effect never reached the sink, where the attempts passed and each request broke later.
