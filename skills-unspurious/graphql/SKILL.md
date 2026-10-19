@@ -37,6 +37,7 @@ GraphQL APIs expose one endpoint where every interesting action is an operation 
 - Distinguish unknown-field errors from unauthorized-field errors: the second proves the field exists
 - Note whether the schema declares a subscription operation type, and whether a push-channel handshake is available on the same path
 - Watch for console and editor surfaces on sibling paths
+- See `references/graphql-payloads.md` for the operation shapes behind introspection, the field-suggestion probe, alias batches, depth bombs, and batch arrays.
 
 ### Authenticate and Re-enumerate
 
