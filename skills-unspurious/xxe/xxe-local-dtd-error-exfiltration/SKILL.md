@@ -71,6 +71,7 @@ Local-definition exfiltration presupposes a declaration-accepting consumer plus 
 - **Trusted hook**: reference an installed definition document and redefine one of its declared entities, because the trusted document's own entity names are the hook the parser already accepts.
 - **Caller body**: the redefinition body declares further entities, so the caller supplies grammar the installed document never contained.
 - **No network needed**: the whole chain resolves on the filesystem, so a closed network does not close the technique.
+See `references/local-dtd-repurposing.md` for the ordered recipe, the definition families, and the failure modes.
 
 ### Error-Channel Construction
 
