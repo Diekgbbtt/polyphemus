@@ -151,6 +151,8 @@ Each variant reaches evaluation through a different observability: same-response
 - Markup and rich-text stages that carry a payload through a filter to the template stage
 - Format-string stage before the template stage: inert as a format string, live as a template
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Template evaluation to a shell-equivalent primitive on the rendering host, then durable control

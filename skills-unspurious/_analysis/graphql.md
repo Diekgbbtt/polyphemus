@@ -30,7 +30,7 @@ This notion varies only across aggregated weakness families, and each family is 
 Testing methodology: the eight testing-order steps S1 to S8 (lines 151-160) are the step-test substrate.
 This notion is invariant as parent text and each step already names its own fallback values.
 Proxy techniques: alternate transport forms and SSRF-reached internal targets via URL-like args are reached here (lines 58, 144-151).
-This notion invokes the future proxy family and `ssrf` at the reached step instead of restating them.
+This notion invokes the `proxy-techniques` family and `ssrf` at the reached step instead of restating them.
 Defence bypass techniques: fragment and comment WAF evasion plus alias-based rate-limit bypass are the bypasses named (lines 127-149).
 This notion is an aspect inside the batching and injection steps because the parent text already covers both values.
 Techniques anti-patterns: treating whole-endpoint 401 as absence of GraphQL and treating public hello fields as findings are the named anti-patterns (lines 28, 162-168).
@@ -116,7 +116,7 @@ No return to STATE 3 was needed because the failure is absence of any discrimina
 ## 11. Recommended set
 Discrimination function: graphql does not discriminate on its own characteristics because every candidate feature is either covered exhaustively by its own parent step or owned procedurally by another skill.
 Recommended variant graphql-single-skill: the class emits exactly one skill covering S1 through S8, with no divergence delta claimed because no split survived the two-half test.
-The single skill references `two-principal-authz` for principal-comparison logic, the BFLA split for authorization-path partitions, `sql-injection`, `ssrf`, and `rce` for sink interpretation, and the future proxy family for SSRF-reached internal targets.
+The single skill references `two-principal-authz` for principal-comparison logic, the BFLA split for authorization-path partitions, `sql-injection`, `ssrf`, and `rce` for sink interpretation, and the `proxy-techniques` family for SSRF-reached internal targets.
 Non-discriminators: all PreconditionEnvironment values including introspection state, console exposure, cost preconditions, and batching acceptance; all TechnologyStack names including engine, envelope, and sink family; all DefensiveControl values; the aggregated VulnerabilityClass itself; all AttackGoal values; the AttackerCapability ladder; the full AttackTechnique repertoire; all PayloadPattern documents; all Artifact evidence objects; all ObservableSignal shapes.
 STATE 1 completed with eight parent steps S1 to S8 and no malformed-class stop.
 STATE 2 tested every ledger value with both halves and exited through branch 2a with zero discriminators.

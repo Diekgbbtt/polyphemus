@@ -127,6 +127,7 @@ Each variant breaks one clause: the flat-field clause, the batch-scope clause, t
 ### Content-Type Switching
 
 - Switch structured, form-encoded, multipart, and plain-text bodies; some code paths validate only one
+- Name the defence-bypass family at its parser step for content-type switching and key-path reshaping, rather than restating those mechanics here.
 
 ### Key Path Variants
 
@@ -139,6 +140,8 @@ Each variant breaks one clause: the flat-field clause, the batch-scope clause, t
 ### Race and Reorder
 
 - Race two updates: the first sets the forbidden field, the second normalizes; the final state may retain the change
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Testing Methodology
 

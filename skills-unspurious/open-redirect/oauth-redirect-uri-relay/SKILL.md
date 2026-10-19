@@ -77,6 +77,8 @@ Shape traversal values that escape the registered path after canonicalization.
 Shape encoded values that decode one extra time between verifier and navigating consumer.
 Shape logout continuation values that exploit the weaker logout rule with an otherwise rejected shape.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Relay the intercepted code into token exchange only by handing off to the OAuth token-step owner at the code-redemption step.

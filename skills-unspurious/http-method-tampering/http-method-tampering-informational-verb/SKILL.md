@@ -62,6 +62,8 @@ The defeated controls are authorization parity across verbs and echo containment
 The bypass reads disclosure and metadata without triggering body checks and replays reflected material past authentication.
 Confirm each bypass by data return, metadata use, or authenticated effect rather than by transport success alone.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Disclosed method lists chain into targeted verb-switch or override attempts against the listed handlers.

@@ -96,7 +96,7 @@ Container placement across SOAP plus SAML plus SVG plus OOXML fails nothing beca
 Encoding and DOCTYPE shape families fail nothing because S2 plus S4 cover declarations plus case plus PUBLIC versus SYSTEM plus subset choice with the same probe-and-send actions.
 Outlier: SAML assertion parse-before-signature ordering belongs to the authentication and SAML family and is named here without a variant.
 Outlier: Gateway and pipeline interior forwarding belongs to proxy-technique handling and is named here without a variant.
-Outlier: WAF DOCTYPE evasion craft belongs to the future defence-bypass family and is named here without a variant.
+Outlier: WAF DOCTYPE evasion craft belongs to the `defence-bypass` family and is named here without a variant.
 Outlier: Downstream path traversal and deserialization use of disclosed content belongs to those skills and is named here without a variant.
 
 ## 8. Hypotheses

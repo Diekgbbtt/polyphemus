@@ -80,6 +80,8 @@ Encoding layering survives pre-render filters by arriving in an encoding that de
 Multi-stage pipelines carry payloads through markup or formatting layers that strip raw syntax but preserve fenced or encoded blocks.
 Timing-shape discipline keeps oracle payloads distinguishable from benign slow responses by using margins the baseline never reaches.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 File-write primitives convert blind execution into retrievable evidence by planting content for a separate read surface.

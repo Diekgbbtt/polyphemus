@@ -58,6 +58,8 @@ This variant owns serving-header adjudication with reflection and sniffing analy
 - Defeat disposition policy by steering reflected hints so the served object returns inline instead of as attachment.
 - Defeat sniffing guards by targeting serving paths that omit the guard and let the browser upgrade the content.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Chain stored script fire into session theft by reading ambient credentials in the served origin.

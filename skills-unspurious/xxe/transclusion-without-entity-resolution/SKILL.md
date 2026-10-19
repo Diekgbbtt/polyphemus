@@ -80,6 +80,8 @@ Vary element namespace prefixes and attribute capitalisation so naive element fi
 Vary stylesheet structure between minimal templates and multi-template programs to reach the evaluation path.
 Pivot between file-URI targets and internal-URL targets inside the fetch attribute so one blocked family still yields the other.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Hand transcluded configuration content to path traversal follow-ups when the fetched file names further readable paths.

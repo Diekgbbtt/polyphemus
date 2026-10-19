@@ -125,8 +125,9 @@ Check: every class with level-2 children carries `## Variants`; a class without 
 
 The map records the suite as authored at ratification: 30 level-1 groups and 101 level-2 variants.
 The 29 analysed classes are inside the 29 class groups; `subdomain-takeover` is one of them, placed as an ordinary class entry per R7.
-`two-principal-authz` is the 30th group; the two families are not yet authored (C1, #278) and are marked as such.
-In the leaf column, a trailing `*` marks a leaf that already conforms to R5; 31 of the 101 leaves do, and every unmarked leaf is normalisation debt (section 5).
+`two-principal-authz` is the 30th group; the two families were authored after ratification (C1, #278) and their leaves are recorded in rows 31 and 32.
+In the leaf column, a trailing `*` marks a leaf that already conforms to R5; 31 of the 101 class leaves do, and every unmarked class leaf is normalisation debt (section 5).
+The 12 family leaves are authored after ratification and conform to R5; they are marked in rows 31 and 32.
 `graphql` has no level-2 children (R10).
 The `_analysis/`, `_authoring/`, `_completion/`, and `_migration/` directories are stream artefacts, not groups: they hold no `SKILL.md` and are not part of the taxonomy.
 
@@ -162,8 +163,8 @@ The `_analysis/`, `_authoring/`, `_completion/`, and `_migration/` directories a
 | 28 | `xss` | class | `xss-dom`*, `xss-stored`* |
 | 29 | `xxe` | class | `blind-parameter-entity-oob-exfiltration`, `entity-expansion-denial-of-service`, `transclusion-without-entity-resolution` |
 | 30 | `two-principal-authz` | cross-cutting methodology group (R7) | none; the group holds the level-1 skill itself |
-| 31 | `defence-bypass` | family, not yet authored (C1) | to be authored under R5; parent SKILL.md plus level-2 leaves |
-| 32 | `proxy-techniques` | family, not yet authored (C1) | to be authored under R5; parent SKILL.md plus level-2 leaves |
+| 31 | `defence-bypass` | family (C1) | `defence-bypass-allowance-gap`*, `defence-bypass-edge-origin-differential`*, `defence-bypass-encoding-differential`*, `defence-bypass-parser-confusion`*, `defence-bypass-signature-evasion`*, `defence-bypass-throttle-evasion`* |
+| 32 | `proxy-techniques` | family (C1) | `proxy-techniques-cache-deception`*, `proxy-techniques-channel-wrapping`*, `proxy-techniques-dns-rebinding`*, `proxy-techniques-redirect-chain`*, `proxy-techniques-relay-forwarding`*, `proxy-techniques-url-parser-differential`* |
 
 Ten decomposing classes are already fully conforming under R5 (`csrf`, `http-method-tampering`, `http-request-smuggling`, `idor`, `mass-assignment`, `oauth`, `prototype-pollution`, `rce`, `ssti`, `xss`); they carry 31 of the 101 leaves.
 The remaining 18 decomposing classes carry the 70 grandfathered leaves.

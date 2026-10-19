@@ -25,7 +25,7 @@ Reconnaissance: admin consoles, hidden UI paths, schema and descriptor enumerati
 Adversarial capabilities: lower-role tokens and direct-call ability outside the UI (lines 110-112); this notion is invariant setup and delegates to `two-principal-authz`.
 Common trust assumptions: client gates enforce, gateway checks transfer downstream, token claims decide identity, and a prior step approval covers finalize (lines 8, 12-16, 50-53, 100-106); each assumption varies independently and each maps to one variant.
 Testing methodology: the five steps S1 to S5 (lines 108-115); this notion is the step-test substrate and is invariant as parent text.
-Proxy techniques: direct-to-core reach and SSRF-reached internal RPC (lines 40-43, 86-88); this notion is a reached step owned by the future proxy family and invoked from the alternate-path variant, not restated here.
+Proxy techniques: direct-to-core reach and SSRF-reached internal RPC (lines 40-43, 86-88); this notion is a reached step owned by the `defence-bypass` family at its edge-versus-core step and invoked from the alternate-path variant, not restated here.
 Defence bypass techniques: header trust, route shadowing, retry or replay, cache-key confusion (lines 90-106); this notion varies by bypassed control and partitions across the three variants.
 Techniques anti-patterns: none named in the class skill; no invariant is stated.
 Scripted tests (`references/`): none shipped with the class skill; no invariant is stated.
@@ -64,7 +64,7 @@ S1 and S2 procedure detail is owned by the cross-cutting `two-principal-authz` m
 ## 7. Step-coverage falsification
 D1 value legacy or alternate route: parent S3 covers transports, encodings, and method overrides, but the uncovered reality is a legacy route such as `/admin/v1` skipping the new middleware chain while performing the identical privileged action.
 D1 value parser-specific handler: parent S3 covers submitting across encodings, but the uncovered reality is JSON, form, and multipart handlers wired to different middleware where only the permissive parser path must be diffed and resubmitted.
-D1 value edge-blocked but core-open path: parent S3 covers exercising the action, but the uncovered reality is reaching the internal RPC through an exposed route or SSRF where the proxy-reach step belongs to the proxy family and S3 never names it.
+D1 value edge-blocked but core-open path: parent S3 covers exercising the action, but the uncovered reality is reaching the internal RPC through an exposed route or SSRF where the edge-versus-core reach step belongs to the `defence-bypass` family and S3 never names it.
 D2 value conflicting identity headers: parent S4 covers varying selectors and gateway routing, but the uncovered reality is supplying `X-User-Id` or `X-Role` headers that contradict token claims and observing which source wins.
 D2 value tenant selector as identity: parent S4 covers switching selectors, but the uncovered reality is a tenant-admin action authorized solely by a header or subdomain value with the same token, which is an identity-source substitution rather than tenancy routing.
 D3 value split job finalize: parent S5 covers including background flows, but the uncovered reality is creating a job as an allowed actor and finalizing or approving another actor's job where the finalize step never re-checks the caller.
@@ -84,7 +84,7 @@ H4 Transport-split hypothesis: if transport name discriminates, then REST, Graph
 | H1 | bfla-remainder | none (no single non-coverable step is named) | Header, selector, job, and replay techniques left unsplit |
 | H2 | bfla-deferred-execution-testing | S5 (replay, retry without actor check, and cached-decision reuse are not covered by S5 text) | Job split; webhook replay; idempotency retry; cache reuse |
 | H2 | bfla-remainder | none (no single non-coverable step is named) | Alternate path and header techniques left unsplit |
-| H3 | bfla-alternate-path | S3 | Verb drift and aliases; route shadowing; content-type parser paths; edge-versus-core direct reach via proxy family step |
+| H3 | bfla-alternate-path | S3 | Verb drift and aliases; route shadowing; content-type parser paths; edge-versus-core direct reach via the `defence-bypass` family step |
 | H3 | bfla-client-identity-trust | S4 | Conflicting identity headers and precedence; tenant selector as identity; gateway injection precedence |
 | H3 | bfla-deferred-execution | S5 | Split create versus finalize or approve; webhook and queue replay; idempotent retry; cached-decision reuse |
 | H4 | bfla-rest; bfla-graphql; bfla-grpc; bfla-websocket | none per variant (no transport adds its own non-coverable authorization step; transport tooling is owned by transport skills) | Resolver, interceptor, and per-message notes as aspects |
@@ -107,6 +107,6 @@ Non-discriminators: TechnologyStack names and transport tooling; parser encoding
 STATE 1 completed with five parent steps S1 to S5 and no malformed-class stop.
 STATE 2 tested every ledger value with both halves and outliers are reported here: transport-specific GraphQL, gRPC, and WebSocket tooling passed accuracy in tooling only and were folded as aspects per STATE 3 branch 3b rather than hidden.
 Grey points: the boundary between a parser-specific chain gap and a legacy shadow route can require reading gateway configuration to attribute, and such cases are assigned by which artifact diverges (parser wiring versus route table).
-Grey points: direct-to-core reach that requires SSRF invokes the proxy family mid-procedure, and the BFLA variant records the authorization delta while the reach step itself stays owned by the proxy skill.
+Grey points: direct-to-core reach that requires SSRF invokes the `defence-bypass` family mid-procedure and the `ssrf` class at the fetch step, and the BFLA variant records the authorization delta while the reach step itself stays owned by the `defence-bypass` family.
 Grey points: tenant-selector cases where the selector is purely routing (same identity, different scope) stay inside S4 as an aspect, and only selector-as-identity cases enter the identity-trust variant.
 Open questions: none at FAIL level, and no uncertainty blocks the three-variant recommendation.

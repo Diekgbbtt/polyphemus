@@ -88,6 +88,8 @@ Bypass forms stay aspects inside this variant because no framing difference chan
 - Reshape the batch across array plus object-wrapped plus aliased forms for the same reason.
 - Race interleaving names the race-conditions skill at its TOCTOU step rather than restating it.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 Combined reasoning runs after both single-axis baselines are understood, because no slot-plus-child verdict is meaningful without a paired control.

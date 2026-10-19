@@ -69,6 +69,8 @@ Bypass forms stay aspects inside this variant because no spelling changes the or
 - Duplicate the routing header so the enforcing side reads one member while the router reads the other.
 - Layer encoded-path forms inside the rewrite value past a filter that decodes fewer times than the router.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Overriding chains forward through the reached handler because a reroute without a follow-up action is only access.

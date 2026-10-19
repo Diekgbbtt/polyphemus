@@ -87,6 +87,8 @@ Bypass forms stay aspects inside this variant because no framing difference chan
 - Reshape the batch across array plus object-wrapped plus aliased forms to reach the binder through another parser.
 - Nested key reshaping never rides here, and race interleaving names the race-conditions skill at its TOCTOU step rather than restating it.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 Per-position reasoning runs after the baseline is fixed, because no slot verdict is meaningful without a paired control.

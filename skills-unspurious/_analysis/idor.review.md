@@ -111,4 +111,4 @@ No citation was found to misquote its SKILL.md source range.
 No corrections are required.
 No FAIL-level open question exists and the grey points at `idor.md:132-136` are documented tie-breaks rather than hidden gaps.
 A future SKILL.md split should preserve the tenant-selector tie-break, the storage-inside-deferred boundary, and the GraphQL-batching-inside-expansion boundary.
-A future defence-bypass and proxy family cutover should keep the delegation pointers at `idor.md:27-28` intact.
+The `defence-bypass` and `proxy-techniques` family cutover keeps the delegation pointers at `idor.md:27-28` intact.

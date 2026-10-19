@@ -85,6 +85,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Percent-encoded plus double-encoded brackets reach the parser past filters that match only literal bracket text.
 - Case-folding pattern options widen matches past case-sensitive comparisons.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Predicates chain forward into reads because one bypass without a follow-up read is only a probe.

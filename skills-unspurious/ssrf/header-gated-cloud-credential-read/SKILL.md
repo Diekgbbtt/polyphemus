@@ -67,9 +67,9 @@ Carry blind gated replay as a secondary inside the inference variant, since blin
 
 Bypass forms stay aspects inside this variant because no encoding difference changes the token-then-read step itself.
 - Address encoding families such as decimal plus hex plus octal plus mapped forms steer the gated destination past a naive textual allowlist.
-- Parser differentials between the enforcing side and the fetching side smuggle the credential path through a split parse.
-- Redirect chains convert one allowlisted first hop into the token endpoint or the gated path as the second hop.
-- Short-lived attacker-controlled resolution answers differently across the check-time and fetch-time lookups.
+- Parser differentials, redirect chains, and short-lived resolution carry the gated destination to the fetch side, and the proxy-techniques family owns those mechanics; record only the gated verdict here.
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -58,6 +58,8 @@ This variant owns extract-then-locate-outside proof with symlink and nesting plu
 - Defeat link policy by submitting link-shaped entries where the extractor honors links instead of dropping them.
 - Defeat size gates by splitting abusive content across nested layers that each pass alone and expand together.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Chain traversal writes into configuration overwrite and then into server execution through the overwritten file.

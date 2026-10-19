@@ -169,6 +169,7 @@ Each variant breaks one clause: the direct-binding clause, the scope-binding cla
 - Cache keys that omit the authorization or tenant binding, which expose cached objects to other users
 - Manipulate the key-variation and accept fields
 - Redirect chains and conditional or partial responses that leak content across tenants
+- Name the proxy-techniques family at the shared-cache and relay steps rather than restating its mechanics
 
 **Race Windows**
 - Change the referenced identifier between the check and the use with parallel requests
@@ -177,6 +178,8 @@ Each variant breaks one clause: the direct-binding clause, the scope-binding cla
 - Use differential responses (status, size, validator, timing) to detect existence
 - Error shape often differs for owned versus foreign objects
 - Header-only and conditional requests can confirm existence without full content
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -116,6 +116,9 @@ Each variant breaks one clause: the dispatch clause, the reinterpretation clause
 - Carry the override in the body or query when the header path is filtered
 - Reach the route over a protocol version or request form whose parse path skips the gate
 - Request the guarded path directly where the edge block hides a live core route
+- Name the defence-bypass family at its signature, parser, and edge-versus-core steps for the verb-token, duplicate-input, parse-path, and core-route shapes, rather than restating those mechanics here.
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

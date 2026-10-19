@@ -103,6 +103,8 @@ Request smuggling is the same primitive at the request layer: inject a header th
 - **Forwarding alias poisoning**: the backend builds canonical URLs from forwarded values, and the cache stores the response with attacker-controlled links
 - **Cache deception**: trick the cache into storing an authenticated response at a public-looking URL by appending a cacheable extension
 
+The shared-cache keying mechanics these shapes work are the proxy-techniques family's step; name it there and keep the injection detail here.
+
 ### Authority Confusion
 
 Backends often trust the authority header or its forwarding alias when constructing absolute URLs: password reset messages, authorization callbacks, canonical links. A forged authority produces a message pointing at attacker infrastructure that still carries the victim's token.
@@ -126,6 +128,8 @@ The forwarding family is informational: no protocol guarantee says who set it. A
 - An authority alias feeding the confusion variants above
 - Rewrite and override headers honored after the authorization check, the classic guarded-path bypass
 - Address families under several names: spray all of them, since each layer may read a different one
+
+The relay mechanics these shapes work are the proxy-techniques family's relay step; name it there and keep the header-shape detail here.
 
 ### Content-Type and Encoding Confusion
 
@@ -167,6 +171,8 @@ The forwarding family is informational: no protocol guarantee says who set it. A
 **Header name games**
 - Case mangling for filters that key off exact casing
 - Null-byte truncation inside the field name on parsers that stop at the null
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

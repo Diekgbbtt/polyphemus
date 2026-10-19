@@ -68,6 +68,9 @@ Bypass forms stay aspects inside this variant because no spelling changes the cl
 - Flip eligibility markers in abstract form, namely shareability plus freshness-window directives, past a filter that inspects only the first directive.
 - Vary fragmentation markers so the key computation collapses entries the filter meant to separate.
 - Suffice deception suffixes in cacheable shape past a rule that keys off the address tail alone.
+- Name the proxy-techniques family at the shared-cache keying step rather than restating its mechanics.
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -85,6 +85,8 @@ Bypass forms are the check values this variant defeats, each confirmed through d
 - Suffix-host plus query-injection shapes pass a prefix-only comparison.
 - Duplicate carriers pass a check that reads one occurrence while delivery reads the other.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Validation findings chain forward into credential capture because an acceptance without a capture is only a parser gap.

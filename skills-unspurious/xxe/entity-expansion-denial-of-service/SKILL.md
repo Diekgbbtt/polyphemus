@@ -77,6 +77,8 @@ Vary declaration encoding and newline shapes so naive declaration filters miss t
 Vary the definition block between internal placement and external-subset placement to reach the resolution path.
 Split definitions across indentation and comment shapes so pattern filters match no single recognisable block.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Hand expansion-induced outages to availability follow-ups when the exhausted processor shares capacity with other tenants.

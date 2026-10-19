@@ -134,10 +134,10 @@ Each variant breaks one clause: the external-resolution clause, the transclusion
 
 **Declaration Variants**
 - PUBLIC and SYSTEM forms, mixed case, and internal versus external subset placement
-- Multi-declaration edge handling and nested subset forms that naive filters miss
+- Multi-declaration edge handling and nested subset forms
 
 **Encoding Variants**
-- Alternate document encodings and declarations, mixed newlines, and comment or wrapper sections that evade string-based filters
+- Alternate document encodings and declarations, mixed newlines, and comment or wrapper sections
 
 **Network and File Pivots**
 - Where the network is closed but the filesystem is readable, pivot to local disclosure
@@ -145,6 +145,10 @@ Each variant breaks one clause: the external-resolution clause, the transclusion
 
 **Transclusion Fallbacks**
 - Where declaration resolution is blocked, reach the same content through include and stylesheet paths, or through an implicitly parsed container segment
+
+Declaration shapes that a text filter misses and encoding layers that survive one are the defence-bypass family's steps; name it there and keep the class-specific declaration grammar here.
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

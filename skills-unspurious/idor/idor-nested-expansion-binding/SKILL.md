@@ -56,6 +56,8 @@ Coerce content-type and serialization framings while holding the expansion const
 Pollute duplicate knob fields with both orderings to probe which occurrence the resolver honors.
 Treat transport-specific framing owned by `graphql` as a named step rather than restated mechanics, recording only the binding verdict here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Feed child identifiers harvested from expanded responses into direct swaps to prove standalone reachability.

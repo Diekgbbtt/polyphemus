@@ -168,12 +168,15 @@ Each variant breaks one clause: the proof-of-intent clause, the scoping clause, 
 
 - Switch between form, multipart, and plain text to reach different code paths
 - Use duplicate keys and array shapes to confuse parsers
+- Name the defence-bypass family at its parser step for method-override framings and content-type switching, rather than restating those mechanics here.
 
 ### Header Manipulation
 
 - Strip the referer via meta refresh or navigation from a blank document
 - Test null-origin acceptance
 - Leverage misconfigured CORS to add custom headers that servers mistakenly treat as anti-forgery tokens
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

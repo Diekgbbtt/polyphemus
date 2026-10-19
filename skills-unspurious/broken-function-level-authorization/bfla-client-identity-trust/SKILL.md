@@ -65,6 +65,8 @@ Supply identity hints the token never granted, then remove them, then contradict
 Observe which of the three the service honors, and never infer precedence from a single hinted attempt.
 Record the winning source per finding so claim-wins cases stay separate from hint-wins cases.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 1. Build the actor-by-action matrix by enumerating each role against each privileged action, with completion when every action has an expected-role cell (procedure owned by `two-principal-authz`).

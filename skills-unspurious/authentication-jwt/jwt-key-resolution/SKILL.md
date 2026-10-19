@@ -63,6 +63,8 @@ This variant breaks the key source binding while the signature routine, the clai
 - Defeat inline key rejection by presenting an embedded key structure in the header and signing with its private half.
 - Defeat rotation and fallback controls by replaying retired keys inside the window and by presenting unknown selectors to trigger the fallback routine.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Name token theft skills at the exfiltration step and start here once a capturable token is held.

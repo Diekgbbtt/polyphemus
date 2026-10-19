@@ -73,7 +73,10 @@ else
   pending "taxonomy document (B1)"
 fi
 
-# 7. The two families exist and no dangling family reference remains (C1/C2).
+# 7. The two families exist and no dangling family reference remains (C1/C2):
+# a family mention must use the family name, because only the name resolves.
+# The implicit forms ("the bypass family", "the proxy family") and the stale
+# pre-C1 phrasing ("the future ... family") are the dangling forms.
 fam_ok=1
 for fam in defence-bypass proxy-techniques; do
   if [ ! -f "skills-unspurious/$fam/SKILL.md" ]; then fam_ok=0; fi
@@ -84,13 +87,51 @@ else
   pending "defence-bypass / proxy-techniques families (C1)"
 fi
 
-# 8. The 101 children exist and name == directory.
-child_count=$(find skills-unspurious -mindepth 3 -maxdepth 3 -name SKILL.md | wc -l | tr -d ' ')
-if [ "$child_count" = "101" ]; then
-  pass "101 child SKILL.md present (found $child_count)"
+dangling=$(grep -rlE 'the bypass family|the proxy family|future (defence-bypass|proxy-techniques|bypass|proxy)' skills-unspurious --include=SKILL.md || true)
+if [ -z "$dangling" ]; then
+  pass "every family reference in a SKILL.md uses the family name"
 else
-  failed "101 child SKILL.md present (found $child_count)"
+  printf 'FAIL  every family reference in a SKILL.md uses the family name; offenders:\n'
+  printf '%s\n' "$dangling" | sed 's/^/      /'
+  fail=1
 fi
+
+# 8. The 101 CLASS children exist (the two family groups are excluded from the
+# class count), each family parent's `## Variants` line set equals its child
+# leaf set (R9), and name == directory for every level-2 skill (family leaves
+# included).
+class_children=$(find skills-unspurious -mindepth 3 -maxdepth 3 -name SKILL.md \
+  -not -path 'skills-unspurious/defence-bypass/*' \
+  -not -path 'skills-unspurious/proxy-techniques/*' | wc -l | tr -d ' ')
+if [ "$class_children" = "101" ]; then
+  pass "101 class child SKILL.md present (found $class_children)"
+else
+  failed "101 class child SKILL.md present (found $class_children)"
+fi
+
+fam_ok=1
+for fam in defence-bypass proxy-techniques; do
+  parent="skills-unspurious/$fam/SKILL.md"
+  if [ ! -f "$parent" ]; then
+    printf '      family parent missing: %s\n' "$parent"
+    fam_ok=0
+    continue
+  fi
+  listed=$(awk '/^## Variants$/{f=1;next} f && /^## /{exit} f && /^- /{sub(/^- /,""); sub(/ - .*/,""); print}' "$parent" | sort)
+  leaves=$(find "skills-unspurious/$fam" -mindepth 2 -maxdepth 2 -name SKILL.md | sed 's|/SKILL.md$||; s|.*/||' | sort)
+  if [ "$listed" != "$leaves" ]; then
+    printf '      %s: ## Variants lines != child leaves\n' "$fam"
+    printf '        listed: %s\n' "$(printf '%s' "$listed" | tr '\n' ' ')"
+    printf '        leaves: %s\n' "$(printf '%s' "$leaves" | tr '\n' ' ')"
+    fam_ok=0
+  fi
+done
+if [ "$fam_ok" = "1" ]; then
+  pass "each family parent's ## Variants lines equal its child leaves (R9)"
+else
+  failed "each family parent's ## Variants lines equal its child leaves (R9)"
+fi
+
 mismatch=0
 while IFS= read -r f; do
   dir=$(basename "$(dirname "$f")")
@@ -115,6 +156,25 @@ if grep -rl "$emdash" $targets >/dev/null 2>&1; then
   fail=1
 else
   pass "no em dashes in authored Markdown"
+fi
+
+# 10. Every non-family SKILL.md that carries a `## Bypass Techniques` section
+# closes it with the canonical extended-reading pointer to the two families,
+# exactly once. The two family bundles ARE the extended reading, so they are
+# exempt.
+pointer="When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families."
+pointer_bad=""
+for f in $(grep -rlE '^## Bypass Techniques' skills-unspurious --include=SKILL.md); do
+  case "$f" in
+    skills-unspurious/defence-bypass/*|skills-unspurious/proxy-techniques/*) continue ;;
+  esac
+  if [ "$(grep -cF "$pointer" "$f")" != "1" ]; then pointer_bad="$pointer_bad $f"; fi
+done
+if [ -z "$pointer_bad" ]; then
+  pass "every class bypass section carries the extended-reading pointer once"
+else
+  printf 'FAIL  every class bypass section carries the extended-reading pointer once; offenders:%s\n' "$pointer_bad"
+  fail=1
 fi
 
 if [ "$fail" != 0 ]; then

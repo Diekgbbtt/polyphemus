@@ -154,6 +154,8 @@ Each variant breaks one clause: the destination clause, the freshness clause, th
 - Separator and authority-confusion shapes inside the destination value
 - Encoded and double-encoded forms of separators, resolved by the consumer after validation
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Open redirect plus authorization flow: the credential arrives at an attacker listener

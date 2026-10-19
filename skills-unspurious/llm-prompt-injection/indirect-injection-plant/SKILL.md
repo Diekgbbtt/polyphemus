@@ -77,6 +77,8 @@ Bypass forms stay aspects inside this variant because no wrapper changes the pla
 - Multi-record seeding spreads fragments across several records that merge at retrieval.
 - Paraphrase variation reshapes the directive when a verbatim pattern is blocked.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Plant chains forward into proofs because retrieval alone is only delivery.

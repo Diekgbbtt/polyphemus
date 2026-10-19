@@ -73,6 +73,8 @@ Read each ownership control as binding input and proceed only where the control 
 - Treat fallback-origin exposure as the signal that unknown-domain answers still route through shared edge capacity.
 - Treat issuance restriction as a guardrail that limits certificate issuance while the binding is triaged.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Carry proven edge control into trust-policy impact owned by consumer checks.

@@ -91,6 +91,8 @@ Bypass detail rides as aspects inside this variant and cross-references the defe
 - Handler-variety shapes reach execution when one sink family blocks direct script shapes.
 - Sanitizer configuration gaps plus policy gaps plus sink-type gaps surface through negative tests at retrieval time.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Stored execution chains forward into impact once retrieval confirmation is recorded.

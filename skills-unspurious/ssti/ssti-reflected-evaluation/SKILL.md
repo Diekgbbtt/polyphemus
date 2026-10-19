@@ -78,6 +78,8 @@ Encoding layering survives pre-render filters by arriving in an encoding that de
 Whitespace, case, and precedence variants defeat naive keyword denylists while preserving evaluation semantics.
 Multi-stage pipelines carry payloads through markup or formatting layers that strip raw syntax but preserve fenced or encoded blocks.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 File-write primitives establish persistence by placing executable content where a follow-up request triggers it.

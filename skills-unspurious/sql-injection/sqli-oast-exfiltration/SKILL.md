@@ -74,6 +74,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Clause relocation through derived tables plus common table expressions hides the callback shape.
 - Fallback to blind extraction applies only when egress filtering removes every callback.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Callbacks chain forward into reads because one received label without a follow-up read is only a probe.

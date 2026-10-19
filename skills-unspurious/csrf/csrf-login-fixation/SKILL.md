@@ -86,6 +86,8 @@ Bypass forms stay aspects inside this variant because no value difference change
 - Forced logout steers the flow through a cleared state where fresh planting faces the weakest check.
 - Referrer stripping through an empty-context navigation source presents the planting without its origin context.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Fixation chains forward into capture and attribution abuse because a planted session without follow-up observation is only a probe.

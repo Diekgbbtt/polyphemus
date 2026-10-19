@@ -78,6 +78,8 @@ Bypass forms stay aspects inside this variant because no wrapper changes the ove
 - Multi-turn laundering splits one blocked request across several turns that merge in context.
 - Role-play framing wraps the same instruction in a hypothetical the guard misclassifies.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Override chains forward into proofs because chat compliance alone is only behavior.

@@ -63,6 +63,8 @@ This variant breaks the claims and context binding while the signature routine, 
 - Defeat lifetime enforcement by presenting expired and premature shapes and by bracketing the clock skew tolerance.
 - Defeat token kind enforcement by swapping token kinds across paths and by swapping nested token orderings.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Name token theft skills at the exfiltration step and start here once tokens for two contexts are held.

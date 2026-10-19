@@ -150,10 +150,11 @@ Each variant breaks one clause: the atomicity and ordering clause, the dedup-sco
 
 ## Bypass Techniques
 
-- Distribute across addresses, sessions, and accounts to evade per-entity throttles
-- Switch methods, content types, and endpoints that trigger the same state change through different code paths
 - Send bursts before counters propagate, and keep the final write in a duplicate-capable phase
-- Probe each path for guard enforcement separately; protections often differ across channels
+- Name the proxy-techniques family at the channel-wrapping step for method, content-type, and endpoint switching, rather than restating the channel tricks here.
+- Name the defence-bypass family at the throttle and edge-versus-core steps for per-entity throttles and per-path guard gaps, rather than restating those mechanics here.
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

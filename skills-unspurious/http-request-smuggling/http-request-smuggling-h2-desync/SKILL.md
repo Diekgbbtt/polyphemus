@@ -87,6 +87,8 @@ Prefer the forbidden framing field where the front-end validates only HTTP/2 fra
 Prefer the regular declared-length field where the translation hop derives back-end framing from it without reconciling it against the true body.
 Each attempt is complete when the survival read-out names the exact field and value the back-end honoured.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Chain bypass into privileged access by smuggling a request for a restricted endpoint and reading whether the back-end accepts it as proxy-originated.

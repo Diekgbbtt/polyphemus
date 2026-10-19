@@ -58,6 +58,8 @@ This variant owns trigger-job-then-read-side-effect proof with command and file-
 - Defeat sandbox assumptions by reaching external IO or script engines the policy claims are disabled.
 - Defeat size gates by distributing abusive metadata across blocks that each pass alone and combine in the parser.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Chain processor file reads into secret theft by aiming file operators at credential material.

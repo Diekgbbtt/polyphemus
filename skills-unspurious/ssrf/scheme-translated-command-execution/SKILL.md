@@ -67,9 +67,9 @@ Carry blind translated replay as a secondary inside the inference variant, since
 
 Bypass forms stay aspects inside this variant because no encoding difference changes the grammar-crafting step itself.
 - Address encoding families such as decimal plus hex plus octal plus mapped forms steer the translated destination past a naive textual allowlist.
-- Parser differentials between the enforcing side and the fetching side smuggle the translated scheme through a split parse.
-- Redirect chains convert one allowlisted first hop into a translated second hop where the client follows scheme switches.
-- Short-lived attacker-controlled resolution answers differently across the check-time and fetch-time lookups.
+- Parser differentials, redirect chains, and short-lived resolution carry the translated destination to the fetch side, and the proxy-techniques family owns those mechanics; record only the grammar verdict here.
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

@@ -79,6 +79,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Clause relocation through derived tables plus common table expressions hides the conversion shape.
 - Fallback to UNION or blind channels applies only when filtering silences every shaped error.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Shaped errors chain forward into reads because one disclosed value without a follow-up read is only a probe.

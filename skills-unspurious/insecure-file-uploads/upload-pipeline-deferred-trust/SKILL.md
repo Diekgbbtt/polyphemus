@@ -58,6 +58,8 @@ This variant owns act-after-the-gate proof with finalize swaps plus presigned co
 - Defeat permission constraints by steering identity and header fields that the delegated policy leaves open.
 - Defeat scan gating by fetching before the verdict and by caching the early response behind a shared serving path.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Chain presigned inline rendering into stored script delivery by pairing delegated control with a script-capable served type.

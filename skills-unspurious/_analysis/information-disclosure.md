@@ -58,8 +58,8 @@ Common trust assumptions: verbosity never reaches prod, debug tooling is disable
 Invariant is undisclosed means unreachable, what varies is which holder is trusted with that assumption.
 Testing methodology: the five parent steps P1 through P5 at lines 71 through 75 plus the three detection procedures D1 through D3 at lines 25 through 41.
 Invariant is the map-to-correlate spine, what varies is which elicitation step bends per candidate procedure.
-Proxy techniques: none held as a standalone proxy family by this class, since cache confirmation names its own second-session procedure and the future proxy-techniques family owns generic relay steps.
-Defence bypass techniques: none held as a standalone bypass family by this class, since redaction, gating, Vary, and introspection checks ride as aspects inside their variants and the future defence-bypass family owns generic bypass steps.
+Proxy techniques: none held as a standalone proxy family by this class, since cache confirmation names its own second-session procedure and the `proxy-techniques` family owns generic relay steps.
+Defence bypass techniques: none held as a standalone bypass family by this class, since redaction, gating, Vary, and introspection checks ride as aspects inside their variants and the `defence-bypass` family owns generic bypass steps.
 Techniques anti-patterns: none stated in the authority file, while the live skill warns against taking intentional docs and generic errors as findings.
 These are invariant warnings.
 Scripted tests (references/): none shipped with this skill, since validation is described inline at lines 87 through 93 of the analysed file.

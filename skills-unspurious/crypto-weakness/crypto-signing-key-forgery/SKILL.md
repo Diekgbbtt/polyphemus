@@ -85,6 +85,8 @@ Forgery defeats the strong-secret plus algorithm-pinning control by showing eith
 - Demonstrate keyless acceptance against a verifier that promises rejection of unpinned algorithms.
 - Treat rejection of both recovered-secret and keyless tokens as a stop signal rather than a bypass.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Forgery chains forward into privilege because a minted token without a follow-up use is only evidence.

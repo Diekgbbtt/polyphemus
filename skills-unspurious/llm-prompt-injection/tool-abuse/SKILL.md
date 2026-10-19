@@ -77,6 +77,8 @@ Bypass forms stay aspects inside this variant because no wrapper changes the inv
 - Encoding wrappers disguise argument values past input-side filters.
 - Split-request framing separates the tool choice from the argument values across messages.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Abuse chains forward into effect because a logged call without consequence is only partial proof.

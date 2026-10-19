@@ -58,6 +58,8 @@ Replay the finalize or approve step with no actor grant beyond the prior approva
 Redeliver the webhook or queue task with a different caller or none, and read whether the effect still applies.
 Swap sessions under an unchanged cached decision, and read whether the new actor inherits the old verdict.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 1. Build the actor-by-action matrix by enumerating each role against each privileged action including deferred steps, with completion when every deferred step has an expected-actor cell (procedure owned by `two-principal-authz`).

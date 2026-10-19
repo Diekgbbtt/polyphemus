@@ -124,6 +124,8 @@ Each variant breaks one clause: the canonicalization clause, the whole-destinati
 - Full-width dots and numeric address forms that the validator treats as untrusted-looking text
 - Scheme case variation and scheme-relative forms
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Open redirect plus an authorization flow: the issued credential is delivered to attacker infrastructure

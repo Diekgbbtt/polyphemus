@@ -86,6 +86,8 @@ Bypass forms stay aspects inside this variant because no value difference change
 - Upgrade-shape reliance steers the request through a path whose checks differ from plain HTTP paths.
 - Referrer stripping through an empty-context navigation source presents the handshake without its origin context.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Socket abuse chains forward into messaging and action abuse because an open channel without a follow-up action is only a probe.

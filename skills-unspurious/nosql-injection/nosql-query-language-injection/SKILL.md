@@ -92,6 +92,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Percent-encoded plus double-encoded quotes reach the parser past filters that match only literal quote bytes.
 - Filter-clause alternatives reach the parser past single-keyword stripping.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Breaks chain forward into reads because one widened match without a follow-up read is only a probe.

@@ -127,6 +127,8 @@ To force the declaration disagreement, vary the encoding declaration itself:
 - A line break injected into a preceding field value, so the declaration arrives only at the back-end
 - Case variation and obsolete folding forms accepted by one hop and normalized by the other
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Smuggling plus cache poisoning: the smuggled prefix shapes a stored entry for later users

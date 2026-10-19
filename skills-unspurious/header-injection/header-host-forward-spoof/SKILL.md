@@ -69,6 +69,8 @@ Bypass forms stay aspects inside this variant because no spelling changes the pr
 - Duplicate the Host field so the enforcing side reads one member while the builder reads the other.
 - Layer encoded-dot plus encoded-port forms past a filter that decodes fewer times than the builder.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Spoofing chains forward through the bent link or the opened endpoint because a bent value without a consumer is only confusion.

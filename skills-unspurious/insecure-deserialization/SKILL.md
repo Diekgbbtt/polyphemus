@@ -132,11 +132,12 @@ Each variant breaks one clause: the type-resolution clause, the integrity clause
 
 ## Bypass Techniques
 
-- Encoding layers stacked in sequence before the decoder sees the blob
 - Alternative parameters that store the same session value, where some paths decode without the check
 - Switching the content type or the parameter location between requests
 - Type confusion: an array versus an object body reaches different decoder branches
-- Encoding smuggling inside the length or type fields of string-based serialization forms
+- Name the defence-bypass family at the encoding and framing steps for stacked layers and length-field smuggling, rather than restating those mechanics here.
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 

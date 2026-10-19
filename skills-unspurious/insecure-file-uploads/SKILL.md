@@ -152,6 +152,8 @@ Each variant breaks one clause: the placement clause, the render clause, the ext
 - Double extensions, mixed case, hidden dotfiles, repeated dots, and long paths ending in an allowed suffix
 - Divergence between the name in the multipart part and the name carried in the parameters, plus duplicate parameters where the later wins
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Upload plus server execution: the placed object becomes an interpreter entry point

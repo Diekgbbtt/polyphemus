@@ -44,8 +44,8 @@ Common trust assumptions: served source carries no secrets, deployables carry no
 Invariant is unexposed means unusable, what varies is which holder is trusted with that assumption.
 Testing methodology: the five parent steps P1 through P5 defined in section 5 below from lines 10 through 125.
 Invariant is the obtain-then-confirm spine, what varies is which obtain-and-confirm step bends per candidate procedure.
-Proxy techniques: none held as a standalone proxy family by this class, since fetching and replaying use direct requests and the future proxy-techniques family owns generic relay steps.
-Defence bypass techniques: none held as a standalone bypass family by this class, since lockout and uniformity and signing checks ride as aspects inside their variants and the future defence-bypass family owns generic bypass steps.
+Proxy techniques: none held as a standalone proxy family by this class, since fetching and replaying use direct requests and the `proxy-techniques` family owns generic relay steps.
+Defence bypass techniques: none held as a standalone bypass family by this class, since lockout and uniformity and signing checks ride as aspects inside their variants and the `defence-bypass` family owns generic bypass steps.
 Techniques anti-patterns: none stated in the authority file, while the live skill warns implicitly to test defaults before expensive vectors and to decode every session.
 These are invariant ordering warnings.
 Scripted tests (references/): none shipped with this skill, since validation is described inline as executable patterns at lines 18 through 125.

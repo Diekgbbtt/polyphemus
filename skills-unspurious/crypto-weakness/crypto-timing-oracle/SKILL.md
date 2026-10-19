@@ -85,6 +85,8 @@ Extraction defeats the constant-time-comparison control by showing timing still 
 - Demonstrate full-token recovery against a store that promises no oracle beyond accept-or-reject.
 - Treat flat distributions across all prefixes and rounds as a stop signal rather than a bypass.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Extraction chains forward into use because a recovered token without presentation is only a string.

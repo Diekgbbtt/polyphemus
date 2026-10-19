@@ -56,6 +56,8 @@ Pollute duplicate paging fields with both orderings to probe which occurrence th
 Coerce serialization framings across the bulk endpoint while holding positions constant, since per-item checks often differ per stack.
 Treat race-window detail as owned by `race-conditions`, recording only the per-position authorization verdict here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Feed identifiers harvested from list and search seeders into bulk positions and import rows.
@@ -85,7 +87,7 @@ Test list and search endpoints before bulk writes, since they seed identifiers a
 Decide every bulk position independently, since first-element validation masks mid-array gaps.
 Vary page windows beyond the cooperative sequence, since filters often bind only the expected cursor.
 Prove batch impact with role-separated rereads of each affected row, since acknowledgements overstate and understate alike.
-Name the bypass family at parser-coercion steps rather than restating its mechanics.
+Name the defence-bypass family at parser-coercion steps rather than restating its mechanics.
 
 ## Summary
 

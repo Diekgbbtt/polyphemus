@@ -84,8 +84,8 @@ Each variant breaks one clause: the canonical-address clause, the hop clause, th
 
 - Loopback, private, and link-local address families plus IPv6 and mapped forms, sent through every notation the parser accepts
 - Scheme-less and relative forms that the fetcher completes against an interior base
-- Hostname forms whose resolution the fetcher performs after the validation side has approved a different canonical value
-- Userinfo, fragment, trailing-dot, and case shapes that change the parse between the check and the connection
+- Hostname forms whose resolution the fetcher performs after the validation side has approved a different canonical value, where the proxy-techniques family owns the rebinding step and this class records only the reach verdict
+- Userinfo, fragment, trailing-dot, and case shapes that change the parse between the check and the connection, with the parse comparison owned by the proxy-techniques family at its destination-parser step
 
 ### Scheme Translation
 
@@ -99,6 +99,8 @@ Each variant breaks one clause: the canonical-address clause, the hop clause, th
 - An approval applied before redirect following lets a controlled hop land on an interior destination
 - Validation and fetch sides disagreeing on scheme, host, port, path, or encoding
 - Front-end and client-library parsing differences that open a connection the front end never approved
+
+Redirect chains and destination parse differentials are the proxy-techniques family's steps; name it at the hop and record only the reach verdict here.
 
 ### Gated Destinations
 
@@ -126,7 +128,7 @@ Each variant breaks one clause: the canonical-address clause, the hop clause, th
 - Confirm listener infrastructure itself before any probe, so a missing callback means blocked egress rather than a broken receiver
 
 **Chain Depth Control**
-- Control both the approved destination and the next hop when redirects are followed
+- Control both the approved destination and the next hop when redirects are followed, with the chain mechanics owned by the proxy-techniques family at its redirect step
 - Protocol switches through a redirect test where the handler policy is actually applied
 
 **Timing Discipline**
@@ -137,17 +139,13 @@ Each variant breaks one clause: the canonical-address clause, the hop clause, th
 **Address Encoding**
 - Decimal, octal, and hexadecimal notations, IPv6 and mapped forms, and mixed notation the parser accepts
 
-**DNS Rebinding**
-- A first resolution the check approves, a second that reaches the interior, served from short-lived records under attacker control
-
-**Parser Differentials**
-- Inconsistencies in scheme, host, port, path, and decoding between the validation side and the fetch side
-
-**Redirect Chains**
-- A destination inside the approved set that hops outside it; protocol switches and nested redirects through the chain
+**Relay Mechanics**
+- Short-lived resolution, redirect chains, and destination parse differentials are generic relay steps, and the proxy-techniques family owns them; name it at the hop rather than restating the mechanics here
 
 **Carrier Switching**
 - Move the same destination between direct parameters, stored fields, embedded links, and derived values until one reaches the fetcher unfiltered
+
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
@@ -164,8 +162,8 @@ Each variant breaks one clause: the canonical-address clause, the hop clause, th
 2. **Establish the oracle** - Callback infrastructure first, with one token per probe and listener preflight
 3. **Interior addressing** - Loopback, private, link-local, and mapped address families plus hostname resolution
 4. **Handler variation** - Non-HTTP schemes where the sink supports them, or the recorded absence of each
-5. **Parser differentials** - Front-end approval versus fetch-side canonical form
-6. **Redirect behaviour** - Single-hop, multi-hop, and protocol switches, with both hops under control
+5. **Parser differentials** - Front-end approval versus fetch-side canonical form, with the comparison owned by the proxy-techniques family at its destination-parser step
+6. **Redirect behaviour** - Single-hop, multi-hop, and protocol switches, with both hops under control and the chain owned by the proxy-techniques family at its redirect step
 7. **Request shaping** - Method, header, and two-step sequences the sink allows
 8. **High-value targeting** - Credential paths, control planes, and interior data stores, one minimal read each
 9. **Confirm the effect** - Every claim carries a callback, differential, or disclosed-content verdict

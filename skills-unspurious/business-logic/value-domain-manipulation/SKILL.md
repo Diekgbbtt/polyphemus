@@ -85,6 +85,8 @@ Bypass forms stay aspects inside this variant because no channel difference chan
 - Name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
 - Name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Manipulation chains forward into extraction once the ledger gain is durable, because a quote-only delta alone proves nothing.

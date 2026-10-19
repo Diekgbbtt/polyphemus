@@ -79,6 +79,8 @@ Sandbox-claim probing reaches external IO or script engines that the declared po
 Fallback variation reaches execution through a second operator family when the first family is confined.
 Layered combinations hand off to the defence-bypass family at the filter step rather than restating relay mechanics here.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Delegate execution chains forward into server control because a processor side effect is only the entry proof.

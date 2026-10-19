@@ -178,6 +178,8 @@ Each variant breaks one clause on a different channel: rendering, shaping, truth
 - Substitute an equivalent operator or function when the obvious one is filtered
 - Expression contexts carry comparisons that the top-level filter rejects
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - SQL injection to authentication bypass, then a second request to a privileged surface

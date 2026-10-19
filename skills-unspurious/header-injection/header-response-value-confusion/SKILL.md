@@ -69,6 +69,8 @@ Bypass forms stay aspects inside this variant because no spelling changes the sa
 - Layer encoded-scheme forms past a filter that decodes fewer times than the navigator.
 - Mangle sink-field casing where the filter keys off exact spelling while the client folds case.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Confusion chains forward through the adopted client behavior because a replaced value without client action is only reflection.

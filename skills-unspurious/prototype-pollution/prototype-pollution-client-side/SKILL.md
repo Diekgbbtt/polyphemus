@@ -70,6 +70,8 @@ This agreement fails at the browser consumer, where a routing, auth-state, or re
 **Split pollution evades per-input limits** by spreading the path across inputs that merge sequentially.
 **Stored triggering evades immediate inspection** by resting the payload until a later background merge or export step activates it.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Testing Methodology
 
 Shared setup runs first across merge-point mapping, canary proof, shape variation, and channel variation.

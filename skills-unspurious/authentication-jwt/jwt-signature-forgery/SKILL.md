@@ -62,6 +62,8 @@ This variant breaks the signature algorithm binding while the key source, the cl
 - Defeat strict verification by presenting encoding edge shapes such as unencoded payload forms and nested token orderings that mishandle the verification path.
 - Defeat secret strength by recovering the weak secret offline and then minting under the legitimate algorithm.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Name token theft skills at the exfiltration step and start here once a capturable token is held.

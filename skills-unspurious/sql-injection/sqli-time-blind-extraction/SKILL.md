@@ -74,6 +74,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - Clause relocation through derived tables plus common table expressions hides the gated shape.
 - Fallback to callback exfiltration applies only when noise removes every stable delay.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Delays chain forward into reads because one timed bit without a follow-up read is only a probe.

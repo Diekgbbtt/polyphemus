@@ -149,6 +149,8 @@ Each variant breaks one clause: the dangling-record clause, the alternate-name c
 **Record-Type Differences**
 - One record type may remain claimable while another stays verified; probe each independently
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Takeover plus redirect-allowlist trust: an authorization flow sends codes or credentials to attacker-served content

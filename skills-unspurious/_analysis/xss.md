@@ -20,7 +20,7 @@ The recommended set keeps the parent `xss` baseline for immediate reflection plu
 | TechnologyStack | React, Vue, Angular, and Svelte sinks and renderers | SKILL 19, 30-32 | Non-discriminator |
 | TechnologyStack | DOMPurify, CSP, Trusted Types, Markdown and PDF renderers | SKILL 22, 54, 96-105 | Non-discriminator |
 | TechnologyStack | REST, GraphQL, WebSocket, SSE, and service workers | SKILL 40, 133 | Non-discriminator |
-| DefensiveControl | Output encoding, sanitizer config, CSP, Trusted Types, and safe schemes | SKILL 22, 53-58, 96-105, 137-140 | Non-discriminator and cross-reference to future defence-bypass family |
+| DefensiveControl | Output encoding, sanitizer config, CSP, Trusted Types, and safe schemes | SKILL 22, 53-58, 96-105, 137-140 | Non-discriminator and cross-reference to the `defence-bypass` family |
 | VulnerabilityClass | Cross-site scripting | SKILL 6-8 | Class definition itself |
 | AttackGoal | Impact demonstration through exfiltration plus chaining plus evidence-backed PoCs | SKILL 77, 194, 199-201 | Non-discriminator |
 | AttackerCapability | Ability to submit input that is reflected immediately | SKILL 128 | Follows delivery condition |
@@ -83,7 +83,7 @@ STATE 2 feature testing also shows that persistence and non-persistent client-on
 | Output context HTML versus attribute versus URL versus JS versus CSS versus SVG | No | Not tested | Non-discriminator | S3 already classifies context and S5 tunes payloads without changing procedure |
 | Payload pattern polyglot versus unclosed tag versus encoding versus event variety | No | Not tested | Non-discriminator | S5 explicitly iterates encodings while the source-to-sink procedure stays fixed |
 | Technology stack framework or template engine or renderer | No | Not tested | Non-discriminator | Procedure survives stack change and stack is a runtime knowledge-base fact |
-| DefensiveControl encoding versus sanitizer versus CSP versus Trusted Types | No | Not tested | Non-discriminator and cross-reference | S4 assesses defenses and bypass detail belongs to the future defence-bypass family |
+| DefensiveControl encoding versus sanitizer versus CSP versus Trusted Types | No | Not tested | Non-discriminator and cross-reference | S4 assesses defenses and bypass detail belongs to the `defence-bypass` family |
 | AttackGoal exfiltration versus chaining versus evidence-backed PoC | No | Not tested | Non-discriminator | Goal selects impact demonstration after execution is already confirmed |
 | Immediate same-response reflection | No | Not tested | Non-discriminator and parent baseline | S2 already maps same-cycle request-to-response flow accurately and exhaustively |
 | Persistence with later retrieval and rendering through any sink | Yes | No | Discriminator | S1 plus S2 cannot describe two-phase write-then-retrieve mapping through storage |
@@ -178,7 +178,7 @@ Parent `xss` baseline covers immediate same-response reflection mapping with sam
 Variant `xss-stored` diverges at S1 plus S2 through two-phase write-then-retrieve mapping with separate later-view confirmation for server or DOM sinks.
 Variant `xss-dom` diverges at S2 through non-persistent browser-instrumented client-only tracing with sink-invocation confirmation and no server reflection.
 Non-discriminators are output context plus payload pattern plus technology stack plus defensive control plus attack goal plus all L0 and L1 runtime entities.
-Defence bypass detail is a cross-reference to the future `defence-bypass` and `proxy-techniques` families rather than variant content.
+Defence bypass detail is a cross-reference to the `defence-bypass` and `proxy-techniques` families rather than variant content.
 Transport repetition across REST plus GraphQL plus WebSocket plus SSE plus service workers is a secondary matrix inside each variant.
 Sanitizer mutation plus uploaded inline files plus renderer restrictions are secondary divergences or aspects inside the nearest delivery variant.
 Template expression routing follows the server-computation rule that server-computed output routes to server-side template injection and browser-only execution stays in XSS.

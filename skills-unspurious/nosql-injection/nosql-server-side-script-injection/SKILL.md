@@ -88,6 +88,8 @@ Bypass forms stay aspects inside this variant because no encoding difference cha
 - String-splitting plus concatenation inside the body reaches the engine past naive keyword matching.
 - Percent-encoded plus double-encoded wrappings reach the parser past filters that match only literal function text.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Bodies chain forward into reads because one evaluated function without a follow-up read is only a probe.

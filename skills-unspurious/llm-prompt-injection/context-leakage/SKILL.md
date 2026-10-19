@@ -77,6 +77,8 @@ Bypass forms stay aspects inside this variant because no wrapper changes the dis
 - Multi-turn laundering builds disclosure across several individually innocent turns.
 - Translation wrappers request the hidden text rendered in another language form.
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 Leakage chains forward into use because disclosed text alone is only information.

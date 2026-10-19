@@ -160,6 +160,8 @@ Each variant breaks one clause: stored delivery breaks the persistence clause, a
 - Allowed elements or attributes that combine into a gadget
 - Namespace and parser-context switches the sanitizer does not model
 
+When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
+
 ## Chaining Attacks
 
 - Execution to session-bound actions: drive a state change the victim did not intend (compose with the CSRF class)
