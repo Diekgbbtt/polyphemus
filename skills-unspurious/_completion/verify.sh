@@ -96,40 +96,45 @@ else
   fail=1
 fi
 
-# 8. The 101 CLASS children exist (the two family groups are excluded from the
-# class count), each family parent's `## Variants` line set equals its child
-# leaf set (R9), and name == directory for every level-2 skill (family leaves
-# included).
+# 8. The CLASS children exist, and every decomposing group parent's `## Variants`
+# line set equals its own child leaf set (R9), with no `## Variants` on a group
+# that has no children (R10). The class-children count is a floor: the ratified
+# floor is 101 (B1) and later authoring grows it, so the check pairs the floor
+# with the per-parent sweep instead of freezing the number. Name == directory is
+# swept for every level-2 skill, family leaves included.
 class_children=$(find skills-unspurious -mindepth 3 -maxdepth 3 -name SKILL.md \
   -not -path 'skills-unspurious/defence-bypass/*' \
   -not -path 'skills-unspurious/proxy-techniques/*' | wc -l | tr -d ' ')
-if [ "$class_children" = "101" ]; then
-  pass "101 class child SKILL.md present (found $class_children)"
+if [ "$class_children" -ge 101 ]; then
+  pass "class child SKILL.md count is at or above the ratified floor of 101 (found $class_children)"
 else
-  failed "101 class child SKILL.md present (found $class_children)"
+  failed "class child SKILL.md count is at or above the ratified floor of 101 (found $class_children)"
 fi
 
-fam_ok=1
-for fam in defence-bypass proxy-techniques; do
-  parent="skills-unspurious/$fam/SKILL.md"
-  if [ ! -f "$parent" ]; then
-    printf '      family parent missing: %s\n' "$parent"
-    fam_ok=0
+variant_ok=1
+for group in $(find skills-unspurious -mindepth 1 -maxdepth 1 -type d -not -name '_*' | sort); do
+  parent="$group/SKILL.md"
+  [ -f "$parent" ] || continue
+  leaves=$(find "$group" -mindepth 2 -maxdepth 2 -name SKILL.md | sed 's|/SKILL.md$||; s|.*/||' | sort)
+  if [ -z "$leaves" ]; then
+    if grep -q '^## Variants$' "$parent"; then
+      printf '      %s: ## Variants present with no child leaves\n' "$group"
+      variant_ok=0
+    fi
     continue
   fi
   listed=$(awk '/^## Variants$/{f=1;next} f && /^## /{exit} f && /^- /{sub(/^- /,""); sub(/ - .*/,""); print}' "$parent" | sort)
-  leaves=$(find "skills-unspurious/$fam" -mindepth 2 -maxdepth 2 -name SKILL.md | sed 's|/SKILL.md$||; s|.*/||' | sort)
   if [ "$listed" != "$leaves" ]; then
-    printf '      %s: ## Variants lines != child leaves\n' "$fam"
+    printf '      %s: ## Variants lines != child leaves\n' "$group"
     printf '        listed: %s\n' "$(printf '%s' "$listed" | tr '\n' ' ')"
     printf '        leaves: %s\n' "$(printf '%s' "$leaves" | tr '\n' ' ')"
-    fam_ok=0
+    variant_ok=0
   fi
 done
-if [ "$fam_ok" = "1" ]; then
-  pass "each family parent's ## Variants lines equal its child leaves (R9)"
+if [ "$variant_ok" = "1" ]; then
+  pass "every decomposing parent's ## Variants lines equal its child leaves (R9/R10)"
 else
-  failed "each family parent's ## Variants lines equal its child leaves (R9)"
+  failed "every decomposing parent's ## Variants lines equal its child leaves (R9/R10)"
 fi
 
 mismatch=0
