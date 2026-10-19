@@ -40,13 +40,19 @@ _STEEL_TOKEN = re.compile(r"\bsteel\b")
 _STEEL_VERSION_PIN = "0.4.4"
 # Local-mode injection helpers (#390, D359-4). The injection must land on the
 # `steel` BINARY token, not on the word inside a path (`/opt/steel`,
-# `steel-cli`). A per-segment shell word scan finds it: split on shell
-# separators, then walk the launcher prefixes (`sudo`, `env`, `nohup`,
-# `command`, `exec`), a bare `timeout <flags|duration>`, and `VAR=value`
-# assignments (quoted values included), and check that the next word is
-# `steel` or ends in `/steel`.
-_SHELL_SEPARATORS = re.compile(r"(\|\||&&|[;&|\n])")
+# `steel-cli`), and it must not touch any other byte of the command (the
+# gateway's verbatim-value contract). A quote-aware tokenizer yields each
+# shell word with its offset; a per-segment scan skips launcher prefixes and
+# finds the binary; `--local` is then inserted at the token's end offset.
+_SHELL_SEPARATOR_CHARS = ";&|\n"
 _LAUNCHER_WORDS = frozenset({"sudo", "env", "nohup", "command", "exec"})
+# Launcher flags that consume the FOLLOWING token as their value.
+_LAUNCHER_VALUE_FLAGS = {
+    "sudo": frozenset({"-u", "-g", "-p", "-C", "-h", "-r", "-t", "-U", "-D"}),
+    "env": frozenset({"-u", "-C", "-S"}),
+    "timeout": frozenset({"-s", "-k"}),
+}
+_TIMEOUT_DURATION = re.compile(r"^\d+(?:\.\d+)?[smhd]?$")
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # The global mode flag the gateway injects when a self-hosted endpoint is
 # configured, and the flags a caller may already have used to choose the mode
@@ -402,26 +408,70 @@ def _run_script(script: str, script_lang: str, session_id: str, timeout_s: int) 
         f.write(script)
     return _run(f"{_SCRIPT_RUNNERS[script_lang]} {shlex.quote(f.name)}", session_id, timeout_s)
 
+def _shell_tokens(command: str) -> list[tuple[str, int, int]]:
+    # Quote-aware split into (text, start, end). Separators (`;`, `&`, `&&`,
+    # `|`, `||`, newline) are their own tokens; quoted strings stay one token,
+    # so a separator inside an argument never starts a segment.
+    tokens: list[tuple[str, int, int]] = []
+    position = 0
+    length = len(command)
+    while position < length:
+        char = command[position]
+        if char in " \t\r\n":
+            position += 1
+            continue
+        if char in _SHELL_SEPARATOR_CHARS:
+            end = position + 1
+            if char in "&|" and end < length and command[end] == char:
+                end += 1
+            tokens.append((command[position:end], position, end))
+            position = end
+            continue
+        start = position
+        quote: str | None = None
+        while position < length:
+            char = command[position]
+            if quote:
+                if char == quote:
+                    quote = None
+                elif char == "\\" and quote == '"' and position + 1 < length:
+                    position += 1
+            elif char in "'\"":
+                quote = char
+            elif char in " \t\r\n" or char in _SHELL_SEPARATOR_CHARS:
+                break
+            elif char == "\\" and position + 1 < length:
+                position += 1
+            position += 1
+        tokens.append((command[start:position], start, position))
+    return tokens
+
+
 def _steel_binary_index(words: list[str]) -> int | None:
     # Index of the `steel` binary token in one shell command segment, past its
     # launcher prefixes. None when this segment does not invoke the binary.
     index = 0
     while index < len(words):
         word = words[index]
-        if word in _LAUNCHER_WORDS:
-            index += 1
-            continue
-        if word == "timeout":
-            index += 1
-            while index < len(words) and (words[index].startswith("-") or words[index].isdigit()):
-                index += 1
-            continue
         if _ASSIGNMENT.match(word):
             quotes = word.count('"') + word.count("'")
             index += 1
             while quotes % 2 and index < len(words):
                 quotes += words[index].count('"') + words[index].count("'")
                 index += 1
+            continue
+        if word in _LAUNCHER_WORDS or word == "timeout":
+            value_flags = _LAUNCHER_VALUE_FLAGS.get(word, frozenset())
+            index += 1
+            while index < len(words):
+                candidate = words[index]
+                if candidate.startswith("-"):
+                    index += 2 if candidate in value_flags else 1
+                    continue
+                if word == "timeout" and _TIMEOUT_DURATION.match(candidate):
+                    index += 1
+                    continue
+                break
             continue
         break
     if index < len(words) and (words[index] == "steel" or words[index].endswith("/steel")):
@@ -430,25 +480,27 @@ def _steel_binary_index(words: list[str]) -> int | None:
 
 
 def _inject_local_command(command: str) -> str:
-    # Insert the global `--local` after every `steel` binary invocation in the
-    # command. Whitespace inside a rewritten segment is normalised to single
-    # spaces; the unset path never calls this, so the cloud command stays
-    # byte-identical.
-    parts = _SHELL_SEPARATORS.split(command)
-    for position in range(0, len(parts), 2):
-        segment = parts[position]
-        core = segment.strip()
-        if not core:
-            continue
-        words = core.split()
-        index = _steel_binary_index(words)
-        if index is None:
-            continue
-        words.insert(index + 1, "--local")
-        leading = segment[: len(segment) - len(segment.lstrip())]
-        trailing = segment[len(segment.rstrip()):]
-        parts[position] = leading + " ".join(words) + trailing
-    return "".join(parts)
+    # Insert the global `--local` after every `steel` binary invocation. Only
+    # the insertion point changes; every other byte (spacing, quotes, values)
+    # stays exactly as the caller wrote it.
+    insert_at: list[int] = []
+    segment: list[tuple[str, int]] = []
+
+    def close_segment() -> None:
+        index = _steel_binary_index([text for text, _ in segment])
+        if index is not None:
+            insert_at.append(segment[index][1])
+
+    for text, _start, end in _shell_tokens(command):
+        if text[0] in _SHELL_SEPARATOR_CHARS:
+            close_segment()
+            segment = []
+        else:
+            segment.append((text, end))
+    close_segment()
+    for offset in sorted(insert_at, reverse=True):
+        command = command[:offset] + " --local" + command[offset:]
+    return command
 
 
 def _local_mode(command: str) -> str:

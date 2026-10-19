@@ -410,55 +410,78 @@ def test_injection_ignores_the_word_steel_inside_a_path(
 
 
 def test_injection_survives_launcher_prefixes(workroot, steel_stub, monkeypatch):
-    # The binary may hide behind an env assignment or an absolute path and
-    # still must receive the flag (#390 review round 2, executed forms).
+    # The binary may hide behind a launcher, an absolute path, or a `timeout`
+    # and still must receive the flag (#390 review round 2/3). The launchers
+    # are stubs that hand the remaining words to `steel`, so a missed
+    # injection reaches the steel stub WITHOUT `--local` and fails here.
     monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
-    stub_path = steel_stub.parent / "bin" / "steel"
+    bindir = steel_stub.parent / "bin"
+    (bindir / "sudo").write_text(
+        "#!/bin/sh\n"
+        "while [ $# -gt 0 ]; do\n"
+        '  case "$1" in\n'
+        "    -u|-g|-p) shift 2 ;;\n"
+        "    -E|-H|-n) shift ;;\n"
+        "    *) break ;;\n"
+        "  esac\n"
+        "done\n"
+        'exec "$@"\n'
+    )
+    (bindir / "timeout").write_text(
+        "#!/bin/sh\n"
+        "while [ $# -gt 0 ]; do\n"
+        '  case "$1" in\n'
+        "    -s|-k) shift 2 ;;\n"
+        "    -*) shift ;;\n"
+        "    *) shift; break ;;\n"
+        "  esac\n"
+        "done\n"
+        'exec "$@"\n'
+    )
+    for name in ("sudo", "timeout"):
+        (bindir / name).chmod(0o755)
+    home = workroot / "home"
+    (home / ".steel" / "bin").mkdir(parents=True)
+    (home / ".steel" / "bin" / "steel").write_bytes((bindir / "steel").read_bytes())
+    (home / ".steel" / "bin" / "steel").chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
     for command in (
+        "sudo steel browser cookies --json",
+        "sudo -u root steel browser cookies --json",
         "env STEEL_API_KEY=k steel browser cookies --json",
-        f"{stub_path} browser cookies --json",
+        "timeout 60 steel browser cookies --json",
+        "timeout -s TERM 5 steel browser cookies --json",
+        f"{bindir}/steel browser cookies --json",
+        "~/.steel/bin/steel browser cookies --json",
     ):
         out = _steel_exec(command=command, session_id="s1")
-        assert out["returncode"] == 0, out
+        assert out["returncode"] == 0, (command, out)
         assert _calls(steel_stub)[-1] == "--local browser cookies --json", command
 
 
-def test_local_mode_injection_shapes(monkeypatch):
-    # Direct seam check for the shapes that cannot execute in the host suite
-    # (sudo needs a password, `timeout` is GNU-only): the flag still lands on
-    # the binary and nowhere else.
+def test_injection_preserves_caller_values_verbatim(
+        workroot, steel_stub, monkeypatch):
+    # The gateway's contract is that a value after `--` is taken verbatim. The
+    # injection must not re-render the rest of the command, so runs of spaces
+    # survive (#390 review round 3).
     monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
-    cases = {
-        "steel browser cookies --json": "steel --local browser cookies --json",
-        "sudo steel browser cookies --json": "sudo steel --local browser cookies --json",
-        "/usr/local/bin/steel browser cookies --json":
-            "/usr/local/bin/steel --local browser cookies --json",
-        "~/.steel/bin/steel browser cookies --json":
-            "~/.steel/bin/steel --local browser cookies --json",
-        "env STEEL_API_KEY=k steel browser cookies --json":
-            "env STEEL_API_KEY=k steel --local browser cookies --json",
-        "timeout 60 steel browser cookies --json":
-            "timeout 60 steel --local browser cookies --json",
-        "cd /opt/steel && steel browser cookies --json":
-            "cd /opt/steel && steel --local browser cookies --json",
-        "cd /opt/steel-cli && steel browser cookies --json":
-            "cd /opt/steel-cli && steel --local browser cookies --json",
-        "cd /opt/steel": "cd /opt/steel",
-        # An invocation hidden in a quoted shell string is the caller's own
-        # business, exactly like script text.
-        'sh -c "steel browser cookies --json"':
-            'sh -c "steel browser cookies --json"',
-        # A caller-chosen mode or URL suppresses the injection.
-        "steel --local browser cookies --json":
-            "steel --local browser cookies --json",
-        "steel browser cookies --json --api-url http://h/v1":
-            "steel browser cookies --json --api-url http://h/v1",
-        # Every invocation in a chain gets the flag.
-        "steel browser start && steel browser cookies":
-            "steel --local browser start && steel --local browser cookies",
-    }
-    for command, expected in cases.items():
-        assert m._local_mode(command) == expected, command
+    out = _steel_exec(
+        command="steel browser fill --session s1 '#x' -- 'John   Smith'",
+        session_id="s1")
+    assert out["returncode"] == 0, out
+    assert "John   Smith" in _calls(steel_stub)[-1], _calls(steel_stub)[-1]
+
+
+def test_injection_ignores_separators_inside_quoted_arguments(
+        workroot, steel_stub, monkeypatch):
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    out = _steel_exec(
+        command="steel browser eval --session s1 --json 'a|steel b' -- 'x|steel y'",
+        session_id="s1")
+    assert out["returncode"] == 0, out
+    logged = _calls(steel_stub)[-1]
+    assert logged.count("--local") == 1, logged
+    assert "a|steel b" in logged and "x|steel y" in logged, logged
 
 
 def test_injection_covers_every_invocation_in_a_chain(

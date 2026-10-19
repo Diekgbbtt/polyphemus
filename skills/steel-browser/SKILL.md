@@ -31,6 +31,7 @@ On a bare CLI you hold the same guards yourself.
 In command mode the gateway injects the global `--local` flag for you, and the CLI reads the endpoint value itself, so a plain `steel ...` command needs no change.
 A command that already carries `--local` or `--api-url` is left untouched.
 Script text is never rewritten, so a script must pass `--local` itself, and so must a bare CLI (there the value is still read from the environment).
+An invocation hidden inside a quoted shell string (`sh -c "steel ..."`) is not rewritten either; pass `--local` yourself in that form.
 When the value is unset, everything addresses the cloud exactly as before.
 
 ## The path: survey, open, mount, operate, close
