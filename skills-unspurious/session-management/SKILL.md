@@ -55,7 +55,7 @@ Session state is coupled to the systems around it: follow the authentication, au
 
 ## Adversarial Capabilities
 
-Session testing presupposes two concrete sessions captured by real flows plus control reads, and it consumes both.
+- **Prerequisites**: session testing presupposes two concrete sessions captured by real flows plus control reads, and it consumes both.
 - **Two real sessions**: hold an attacker session and a victim session captured by real flows, never placeholder values; the principal handling follows `two-principal-authz`.
 - **Explicit replay**: replay a captured identifier explicitly rather than reusing a live client store, because logout may have overwritten the client-side copy.
 - **Control pair**: keep a negative control (a garbage identifier) and a positive baseline (the live session) beside every claim, so a status-only echo never decides a finding.
@@ -65,10 +65,10 @@ Session testing presupposes two concrete sessions captured by real flows plus co
 
 ## Trust Assumptions
 
-The class rests on one agreement: the session identifier is server-chosen, regenerated at every privilege change, and revocable at every event that ends the authority it carries.
-The agreement holds the identifier to server-side generation rather than client acceptance, holds the authentication boundary to regeneration, holds logout, credential change, and device revocation to server-side invalidation of every sibling session, holds rotated credentials to single use with reuse detection, and holds every service that accepts the identifier to the same revocation state.
-Sensitive position leaks when the identifier outlives its authority: it survives a boundary it should have been replaced at, an event it should have been revoked by, or an expiry it should have honoured.
-Session-layer-only kill chains still rest on the coupled systems: fixation needs an acceptance or planting path that the authentication and cross-site mechanics provide, and forgery of a self-contained session needs the secret material and key-publicity properties owned by `crypto-weakness` and `authentication-jwt`.
+- **The trust premise**: the class rests on one agreement: the session identifier is server-chosen, regenerated at every privilege change, and revocable at every event that ends the authority it carries.
+- **The agreement**: it holds the identifier to server-side generation rather than client acceptance, holds the authentication boundary to regeneration, holds logout, credential change, and device revocation to server-side invalidation of every sibling session, holds rotated credentials to single use with reuse detection, and holds every service that accepts the identifier to the same revocation state.
+- **The exposure**: sensitive position leaks when the identifier outlives its authority: it survives a boundary it should have been replaced at, an event it should have been revoked by, or an expiry it should have honoured.
+- **Coupled-system dependency**: session-layer-only kill chains still rest on the coupled systems: fixation needs an acceptance or planting path that the authentication and cross-site mechanics provide, and forgery of a self-contained session needs the secret material and key-publicity properties owned by `crypto-weakness` and `authentication-jwt`.
 
 ## Key Vulnerabilities
 
