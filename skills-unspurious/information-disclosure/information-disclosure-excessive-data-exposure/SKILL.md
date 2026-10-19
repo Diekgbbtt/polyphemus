@@ -44,7 +44,7 @@ This variant reads one response against the caller's entitlement: it maps the em
 
 ## Adversarial Capabilities
 
-Field-set reading presupposes one authenticated session per role plus the rendered representation for comparison, and it consumes both.
+- **Prerequisites**: field-set reading presupposes one authenticated session per role plus the rendered representation for comparison, and it consumes both.
 - **Role sessions**: hold sessions for the roles the resource serves, including a low-privilege principal and a second principal where embedded objects are in scope.
 - **Rendered capture**: capture the rendered representation per resource, so the entitlement statement is explicit rather than assumed.
 - **Raw reading**: read raw responses outside the interface, where the excess is visible before any rendering filter applies.
@@ -55,7 +55,7 @@ Field-set reading presupposes one authenticated session per role plus the render
 ## Trust Assumptions
 
 - **The agreement**: at the moment the serializer answers a read, the feature trusts that the emitted field set equals the caller's entitlement scope, so a response carries exactly the fields that scope renders, with no credential material, no other party's fields, and no internal metadata beyond the entitlement.
-- **The field-scope clause fails** where the serializer emits the full model and the rendered view's filtering carries no security.
+- **The field-scope clause fails**: where the serializer emits the full model and the rendered view's filtering carries no security.
 - **Identity scope stays with the siblings**: cross-caller reads belong to the sibling variants and the principal step belongs to `two-principal-authz`, so this variant judges field scope only.
 
 ## Key Vulnerabilities
@@ -115,13 +115,13 @@ Field-set reading presupposes one authenticated session per role plus the render
 
 ## Pro Tips
 
-1. Read raw responses outside the interface, because the rendering filter is where the excess hides.
-2. Compare against the rendered field set explicitly rather than against intuition about what looks sensitive.
-3. Extract nested and embedded objects recursively, since embedded counterparties carry the highest-value excess.
-4. Rank by sensitivity family rather than field count, so one credential field outranks many cosmetic extras.
-5. Test the caller's own object first: own-object over-exposure needs no second principal and no reference swap.
-6. Check collection pages and update echoes, because both frequently emit field sets the default read omits.
-7. Re-check each candidate against the role that is entitled to it, so an entitled field is never filed as excess.
+- **Raw reads first**: read raw responses outside the interface, because the rendering filter is where the excess hides.
+- **Explicit comparison**: compare against the rendered field set explicitly rather than against intuition about what looks sensitive.
+- **Recursive extraction**: extract nested and embedded objects recursively, since embedded counterparties carry the highest-value excess.
+- **Family ranking**: rank by sensitivity family rather than field count, so one credential field outranks many cosmetic extras.
+- **Own object first**: test the caller's own object first: own-object over-exposure needs no second principal and no reference swap.
+- **Collection and echo checks**: check collection pages and update echoes, because both frequently emit field sets the default read omits.
+- **Entitlement re-check**: re-check each candidate against the role that is entitled to it, so an entitled field is never filed as excess.
 
 ## Summary
 
