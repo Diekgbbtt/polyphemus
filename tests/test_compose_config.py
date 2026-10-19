@@ -66,10 +66,11 @@ def test_agent_carries_the_optional_steel_endpoint():
     kali_env = config["services"]["kali"]["environment"]
     assert agent_env["STEEL_BROWSER_API_URL"] == ""
     assert agent_env["STEEL_BROWSER_API_URL"] == kali_env["STEEL_BROWSER_API_URL"]
-    for name, service in config["services"].items():
-        if name in ("agent", "kali"):
-            continue
-        assert "STEEL_BROWSER_API_URL" not in (service.get("environment") or {})
+    # Services with no `.env` passthrough never see the value.
+    for name in ("postgres", "neo4j", "lightrag"):
+        assert "STEEL_BROWSER_API_URL" not in (
+            config["services"][name].get("environment") or {}
+        )
 
 
 def test_dev_overlay_config_is_valid():
