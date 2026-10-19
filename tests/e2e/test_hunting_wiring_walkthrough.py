@@ -164,8 +164,9 @@ def test_E1_whole_pipeline_happy_path(client):
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     # T4b (#387): a produced hunt config is no longer dispatch input; the
     # seeded SPEC still drives the real POD edge. A hunter is dispatched from a
-    # produced loop file, which needs the run's own modeller (and the T6 #379
-    # payload harness) - never a pre-seeded config.
+    # produced loop file (live after T6 #379), which needs the run's own
+    # modeller and the production hunter prompt work phase (T7 #380) - never a
+    # pre-seeded config.
     stack.seed_experiment_log(p, spec_id=spec_file)
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
     assert launch.status_code == 201, launch.text
@@ -290,11 +291,12 @@ def test_E3_mid_flight_stop(client):
 # =============================================================================
 
 def test_E4_per_session_pause_resume_mid_graph(client):
-    """id: E4 - per-session pause/resume mid-graph. Carried, blocked on T6
-    (#379): the per-loop hunter session id is derived from the produced loop
-    file (`<unit_name>__<loop_id>`), and no hunter dispatches until the harness
-    consumes the loop payload. The per-session verbs themselves keep their own
-    coverage in C19-C22 (pod sessions and the modeller pass) and E9 (pod)."""
+    """id: E4 - per-session pause/resume mid-graph. Carried, blocked on T7
+    (#380): the per-loop hunter session id is derived from a produced loop file
+    (`<unit_name>__<loop_id>`), and driving a live hunt from one needs the
+    production hunter prompt work phase. The per-session verbs themselves keep
+    their own coverage in C19-C22 (pod sessions and the modeller pass) and E9
+    (pod)."""
     _need_pg()
     p = _new_project(client, "hw-e4")
     launch = client.post(f"/projects/{p}/hunting", json={"candidates": []})
@@ -303,9 +305,9 @@ def test_E4_per_session_pause_resume_mid_graph(client):
     hunter_sid = hunter_session_id(rid, DISPATCH_ID)
 
     pytest.skip(
-        f"carried, blocked on T6 #379: no hunter session {hunter_sid!r} can "
-        f"dispatch from a pre-seeded config (the loop payload harness is "
-        f"designed-not-built)")
+        f"carried, blocked on T7 #380: the hunter session {hunter_sid!r} needs "
+        f"a modeller-produced loop and the production hunter prompt work phase "
+        f"to drive a live hunt")
     pause = client.post(
         f"/projects/{p}/hunting/{rid}/sessions/{hunter_sid}/pause")
     assert pause.status_code == 200, pause.text
@@ -325,9 +327,9 @@ def test_E4_per_session_pause_resume_mid_graph(client):
 
 def test_E5_single_session_stop_does_not_end_the_run(client):
     """id: E5 - single-session stop does not end the run. Carried, blocked on
-    T6 (#379): the contract needs a hunter AND a pod session live at once (one
-    stopped, the sibling keeping the run alive), and no hunter dispatches until
-    the harness consumes the loop payload. The single-session stop verb keeps
+    T7 (#380): the contract needs a hunter AND a pod session live at once (one
+    stopped, the sibling keeping the run alive), and driving a live hunter needs
+    the production hunter prompt work phase. The single-session stop verb keeps
     its own coverage in C22 and E9 (the pod session, the surviving family)."""
     _need_pg()
     p = _new_project(client, "hw-e5")
@@ -338,9 +340,9 @@ def test_E5_single_session_stop_does_not_end_the_run(client):
     rid = launch.json()["hunting_run_id"]
     pod_sid = pod_session_id(rid, DISPATCH_ID, spec_file)
     pytest.skip(
-        f"carried, blocked on T6 #379: the single-session-stop contract needs "
-        f"a live hunter sibling, and no hunter {hunter_session_id(rid, DISPATCH_ID)!r} "
-        f"can dispatch from a pre-seeded config")
+        f"carried, blocked on T7 #380: the single-session-stop contract needs "
+        f"a live hunter sibling, and driving {hunter_session_id(rid, DISPATCH_ID)!r} "
+        f"needs the production hunter prompt work phase")
 
     # The run reaches a terminal only once the remaining sessions settle.
     branch = _poll_branch(p, rid, timeout=240)
@@ -425,7 +427,8 @@ def test_E7_one_live_run_guard(client):
     p = _new_project(client, "hw-e7")
     # Seed dispatching work (the live POD family) so the first run stays alive
     # across the second POST. T4b (#387): the config family is not dispatch
-    # input, and a hunter is inert until T6 (#379).
+    # input; a hunter dispatches only from a produced loop file (T6 #379), and
+    # the production hunter prompt work phase (T7 #380) drives a live hunt.
     stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
     first = client.post(f"/projects/{p}/hunting", json={"candidates": []})

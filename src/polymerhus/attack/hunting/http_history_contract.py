@@ -24,6 +24,13 @@ pod's runner turn.
 
 This module is pure text plus constants - it imports nothing and performs no
 I/O (CODING_STANDARD section 6).
+
+T8 (#380): the `payload_vector_space.request_ref` mentions below are the
+retired D4 field. The pod contract re-points them to
+`provenance.baseline_ref` when T8 reduces the D4 (S5 8.5); the hunter's exec
+tool already speaks the new field. Left here until the pod's replay path is
+re-pointed, so the pod's runner prompt and this shared description change
+together.
 """
 from __future__ import annotations
 

@@ -18,7 +18,7 @@ Covers, per AC:
   launch and lets a run's own pinned row through.
 - AC2: a produced loop file dispatches ONE hunter session (gate-bounded:
   N loops fan out, the shared dispatch gate caps concurrent hunters); a
-  produced specified spec dispatches ONE pod session through the SAME mover.
+  produced ratified spec dispatches ONE pod session through the SAME mover.
   T4b (#387): the loop file is the ONLY hunter dispatch input - the retired
   config family is not read, not dispatched and not work.
 - AC3: the hunt session enters an idle loop after its graph ends; a delivered
@@ -617,11 +617,11 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
 
 # --- identity-based refactor: the cross-run pod-dispatch wedge regression ------
 
-def test_cross_run_specified_spec_dispatches_a_pod_without_a_parent(stores,
+def test_cross_run_ratified_spec_dispatches_a_pod_without_a_parent(stores,
                                                                     monkeypatch):
     """The pod-dispatch WEDGE regression (identity-based refactor, 2026-08-25):
 
-    A produced `specified` spec whose parent config was consumed by an EARLIER
+    A produced `ratified` spec whose parent config was consumed by an EARLIER
     run (so NO live parent hunter inbox exists in THIS run) must still dispatch
     a pod - the dispatch is gated on the spec's OWN persisted status, never on
     a chain-adjacent parent's liveness. AND the move lands (produced->consumed)
@@ -682,7 +682,7 @@ def test_cross_run_specified_spec_dispatches_a_pod_without_a_parent(stores,
     assert notes[0]["note_name"] == f"pod-export:{SPEC_FILE}"
     assert notes[0]["key"] == f"{DISPATCH_ID}:pod-export:{SPEC_FILE}"
     assert "hunting:" not in notes[0]["key"]
-    # the run reached quiesce - a produced `specified` spec can never wedge it
+    # the run reached quiesce - a produced `ratified` spec can never wedge it
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
     assert control.live(RUN) == set()
 

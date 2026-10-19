@@ -99,7 +99,7 @@ def test_C4_status_lifecycle_rides_one_produced_file(tmp_path):
 def test_C5_duplicate_identity_inside_the_set_fails(tmp_path):
     store = build_memory_store(tmp_path)
     with pytest.raises(DuplicateSpecError):
-        store.write_specs(PROJECT, HUNT_KEY, [_spec(), _spec(status="ratified")])
+        store.write_specs(PROJECT, HUNT_KEY, [_spec(), _spec()])
     # the rejected batch left nothing on disk
     assert not _produced(tmp_path).exists()
     # a different strategy is a fresh file, never a collision
@@ -240,7 +240,7 @@ def test_C16_hunts_store_batched_write(tmp_path):
 def test_C17_duplicate_identity_denoted_signal(tmp_path):
     store = build_memory_store(tmp_path)
     out = json.loads(_hunts(store, command="write", specs=[
-        _spec(), _spec(status="ratified")]))
+        _spec(), _spec()]))
     assert out["ok"] is False and out["error"] == "duplicate_spec"
     assert store.read_specs(PROJECT, HUNT_KEY) == []
 

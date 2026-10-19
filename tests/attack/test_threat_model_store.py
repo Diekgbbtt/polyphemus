@@ -95,6 +95,7 @@ def _trust_model() -> dict:
                 "kind": "trust-transition",
                 "statement": "A caller can force the state before the owner check.",
                 "maps_to_fault": "fault-1",
+                "transition_ref": "tr-1",
                 "confidence": "ASSUMED",
                 "evidences": [_evidence()],
             }],
@@ -610,6 +611,34 @@ def test_completion_reports_referential_errors(tmp_path):
     validation = store.read_model(PROJECT, UNIT)["validation"]
     assert validation["valid"] is False
     assert "vulnerability:v-1.fault_ref='fault-missing'" in validation["referential_errors"]
+
+
+def test_completion_reports_an_unresolved_violation_transition_ref(tmp_path):
+    """S2 5.1/S3 8.2: a non-null `Violation.transition_ref` must resolve to a
+    dynamic-state transition; the checker reports the broken link. The same
+    fixture with the valid `tr-1` ref validates (asserted by the ladder test)."""
+    store = ThreatModelStore(tmp_path)
+    store.write_sections(
+        PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
+        {"technical_sharpening": _sharpening()}, run_id=RUN,
+    )
+    trust = _trust_model()
+    trust["dynamic_state_trust"]["violations"][0]["transition_ref"] = "tr-missing"
+    store.write_sections(
+        PROJECT, UNIT, "TRUST_MODELLED", {"trust_model": trust}, run_id=RUN)
+    store.write_sections(
+        PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
+        {"assumptions": _assumptions()}, run_id=RUN)
+    store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": _vulnerabilities()}, run_id=RUN)
+    store.write_sections(
+        PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
+
+    validation = store.read_model(PROJECT, UNIT)["validation"]
+    assert validation["valid"] is False
+    assert "violation:vi-1.transition_ref='tr-missing'" in \
+        validation["referential_errors"]
 
 
 def test_completion_reports_an_unclosed_assumption(tmp_path):

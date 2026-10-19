@@ -4,8 +4,9 @@ catalogue (`docs/design/hunting-wiring-assertions.md`).
 The catalogue drives the hunting-wiring runtime plane under REAL production
 conditions against a live agent container (the "target"), with the live
 `hunting_runs` Postgres row (the target postgres is already up) and fixtures
-seeded through the REAL store APIs (`HuntStore`, `HunterMemoryStore`,
-`PodMemoryStore`).
+seeded through the REAL store APIs (`HunterMemoryStore`, `PodMemoryStore`;
+the retired hunt-config family is only read back physically to prove nothing
+writes it).
 
 Two targets selectable via `WIRING_TARGET`:
 - `sibling` (default): a distinct agent container (`agent-hw`, built FROM THIS
@@ -211,44 +212,6 @@ def create_project(client, name: str) -> str:
 # the caller's side of the mount.
 
 
-def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
-                     vulnerability_class: str, status: str = "ratified",
-                     **overrides) -> str:
-    """Write ONE hunt config through `HuntStore.write_config` (the real store
-    API) into the produced family; returns its semantic `config_key`.
-
-    The seeded body MUST satisfy the real `HuntConfig.model_validate` surface
-    (the surfer refuses an unratifiable ratified config and the run wedges on
-    the retained produced item - the at-least-once contract), so the required
-    `hunt_id` and the top-level `rationale` / `research_direction` slots ship by
-    default, the shape the (retired) planner minted. It also carries a real
-    adapted
-    surface card + caveats
-    + a tool-registry entry so a dispatched HUNTER runs genuine multi-turn
-    research (a bare 4-key config makes the graph short-circuit in ~1-2s and
-    no live hunter session is ever observable - the same INIT defect the pod
-    seeds were fixed for)."""
-    from polymerhus.attack.hunting.hunt_store import HuntStore
-    data = {
-        "hunt_id": f"{unit_id}::{fault_class}",
-        "unit_id": unit_id, "fault_class": fault_class,
-        "vulnerability_class": vulnerability_class, "status": status,
-        "rationale": "seeded", "research_direction": "",
-        "surface_context": {
-            "cards": [
-                f"{unit_id}: spine service for {vulnerability_class} probing; "
-                "exposes the parameterised endpoint under test",
-            ],
-        },
-        "observed_defences": ["the kali sandbox is the target; the probe surface is the "
-                           "seeded service"],
-        "preconditions": ["network egress from the pod to the target is allowed"],
-    }
-    data.update(overrides)
-    store = HuntStore()
-    return store.write_config(project_id, data, directory="produced")
-
-
 def seed_test_spec(project_id: str, *, hunt_key: str, fault_keyword: str,
                    strategy_keyword: str, status: str = "ratified",
                    **overrides) -> str:
@@ -333,16 +296,19 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
 
 
 def produced_config_keys(project_id: str) -> list[str]:
-    from polymerhus.attack.hunting.hunt_store import HuntStore
-    return [k for k, _ in HuntStore().read_produced_configs(project_id)]
+    """The retired config family's produced file stems, read straight from the
+    physical layout (T6 removed the config I/O). The live assertions use this
+    only to prove NOTHING writes the retired family; a new writer would show
+    up here."""
+    from polymerhus.app.data_root import DATA_ROOT, project_dir
 
-
-def produced_config_body(project_id: str, semantic_key: str) -> dict:
-    """The persisted config BODY for a semantic key (produced/ then consumed/),
-    a real store read - never the code's return."""
-    from polymerhus.attack.hunting.hunt_store import HuntStore
-    configs = HuntStore().read_configs_by_key(project_id, semantic_key)
-    return configs[0] if configs else {}
+    base = (
+        project_dir(project_id, "hunting/orchestration", root=DATA_ROOT)
+        / "hunt_configs" / "produced"
+    )
+    if not base.exists():
+        return []
+    return sorted(child.stem for child in base.glob("*.yaml"))
 
 
 def produced_spec_files(project_id: str, fault_key: str) -> list[str]:

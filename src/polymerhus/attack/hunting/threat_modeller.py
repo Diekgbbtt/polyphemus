@@ -543,11 +543,10 @@ async def arun_modeller_pass(
     missing section for the completion checker to report.
 
     The pass returns after one turn per state at most. It never waits for
-    dispatch (S1 7.3). designed-not-built - T4 (#377): the store's produced loop
-    files are INTENDED to be the dispatch handoff to the run-scoped surfer, but
-    no production path translates a loop file into a dispatchable item yet
-    (the surfer still reads the hunt-config family), so a modelled unit
-    currently dispatches nothing.
+    dispatch (S1 7.3). The store's produced loop files ARE the dispatch handoff:
+    T6 (#379) made the per-loop dispatch live end to end (the run-scoped surfer
+    materialises the payload and dispatches one hunter per loop file); the pass
+    itself never dispatches.
 
     ONE pass at a time per run: the pass mutates the shared `ModellerTools`
     (the run-scoped tracker, the store wrapper, the unit cell, the suite seam),

@@ -337,6 +337,7 @@ def modeller_gate_payloads() -> dict:
                         "kind": "trust-transition",
                         "statement": "A caller can force the state before the owner check.",
                         "maps_to_fault": "fault-1",
+                        "transition_ref": "tr-1",
                         "confidence": "ASSUMED",
                         "evidences": [_evidence()],
                     }],

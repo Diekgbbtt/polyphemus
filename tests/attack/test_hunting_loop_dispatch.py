@@ -125,6 +125,100 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
     assert "vector" not in payload
 
 
+# --- the payload's violation -> transition link (S2 5.1, S3 8.2) -------------
+
+def _dynamic_model(threat_store):
+    """The produced completed model and its loop file, deep-copyable."""
+    _produce_model(threat_store, project_id=PROJECT, unit_id=UNIT, run_id=RUN)
+    model = threat_store.read_model(PROJECT, UNIT)
+    loop_file = threat_store.read_loop_files(PROJECT, UNIT)[0]
+    return model, loop_file
+
+
+def _second_transition() -> dict:
+    return {
+        "id": "tr-2",
+        "source": "ds-1",
+        "target": "ds-1",
+        "guard": "a forged item id",
+        "confidence": "INFERRED",
+        "evidences": [{"kind": "request", "ref": "GET /catalogue"}],
+    }
+
+
+def test_a_violation_transition_ref_selects_exactly_that_transition(threat_store):
+    """S2 5.1/S3 8.2: a valid `Violation.transition_ref` selects exactly the
+    named transition, never the first one in the model."""
+    import copy
+
+    model, loop_file = _dynamic_model(threat_store)
+    model = copy.deepcopy(model)
+    dynamic = model["trust_model"]["dynamic_state_trust"]
+    dynamic["transitions"].append(_second_transition())
+    dynamic["violations"][0]["transition_ref"] = "tr-2"
+
+    payload = materialise_hunter_payload(
+        model, loop_file, dispatch_id=f"{UNIT_NAME}__loop-1")
+
+    assert payload["dynamic_state"]["transition"]["id"] == "tr-2"
+    assert payload["dynamic_state"]["violation"]["id"] == "vi-1"
+
+
+def test_an_absent_transition_ref_with_multiple_transitions_yields_no_transition(
+        threat_store):
+    """S2 5.1/S3 8.2: without a ref, several transitions are ambiguous - the
+    payload records the gap (transition None) instead of guessing the first."""
+    import copy
+
+    model, loop_file = _dynamic_model(threat_store)
+    model = copy.deepcopy(model)
+    dynamic = model["trust_model"]["dynamic_state_trust"]
+    dynamic["transitions"].append(_second_transition())
+    dynamic["violations"][0].pop("transition_ref")
+
+    payload = materialise_hunter_payload(
+        model, loop_file, dispatch_id=f"{UNIT_NAME}__loop-1")
+
+    assert payload["dynamic_state"]["transition"] is None
+    assert payload["dynamic_state"]["violation"]["id"] == "vi-1"
+
+
+def test_an_absent_transition_ref_with_one_transition_is_unambiguous(threat_store):
+    """S2 5.1/S3 8.2: a single-transition model needs no ref - that transition
+    is the only reading; zero transitions also degrade to None."""
+    import copy
+
+    model, loop_file = _dynamic_model(threat_store)
+    model = copy.deepcopy(model)
+    model["trust_model"]["dynamic_state_trust"]["violations"][0].pop(
+        "transition_ref")
+    payload = materialise_hunter_payload(
+        model, loop_file, dispatch_id=f"{UNIT_NAME}__loop-1")
+    assert payload["dynamic_state"]["transition"]["id"] == "tr-1"
+
+    model["trust_model"]["dynamic_state_trust"]["transitions"] = []
+    payload = materialise_hunter_payload(
+        model, loop_file, dispatch_id=f"{UNIT_NAME}__loop-1")
+    assert payload["dynamic_state"]["transition"] is None
+
+
+def test_an_invalid_transition_ref_yields_no_transition(threat_store):
+    """S2 5.1/S3 8.2: an invalid ref is the completion checker's referential
+    error; the payload degrades to the gap, never a raise (the payload is
+    advisory context, never a gate)."""
+    import copy
+
+    model, loop_file = _dynamic_model(threat_store)
+    model = copy.deepcopy(model)
+    model["trust_model"]["dynamic_state_trust"]["violations"][0][
+        "transition_ref"] = "tr-missing"
+
+    payload = materialise_hunter_payload(
+        model, loop_file, dispatch_id=f"{UNIT_NAME}__loop-1")
+
+    assert payload["dynamic_state"]["transition"] is None
+
+
 # --- one loop file dispatches one hunter (S2 2.2, 8.4) -------------------------
 
 class RecordingControlPlane:

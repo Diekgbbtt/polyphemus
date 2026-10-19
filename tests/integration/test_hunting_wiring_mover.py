@@ -344,7 +344,7 @@ def test_C32_live_registry_item_is_never_dispatched_twice_and_moves_once(
 
 # --- C33 -----------------------------------------------------------------------
 
-def test_C33_specified_spec_with_empty_hunter_inboxes_dispatches_one_pod(
+def test_C33_ratified_spec_with_empty_hunter_inboxes_dispatches_one_pod(
     tmp_path,
 ):
     """id: C33 - the identity-based-refactor regression: a produced `ratified`
@@ -370,7 +370,7 @@ def test_C33_specified_spec_with_empty_hunter_inboxes_dispatches_one_pod(
 
 # --- C34 -----------------------------------------------------------------------
 
-def test_C34_run_work_remaining_and_dispatch_agree_for_a_specified_spec(
+def test_C34_run_work_remaining_and_dispatch_agree_for_a_ratified_spec(
     tmp_path,
 ):
     """id: C34 - never-disagree contract: a produced `ratified` spec makes

@@ -1,34 +1,21 @@
-"""The per-project hunt-config + notes memory store (memory-system spec, #166).
+"""The residual hunt-store vocabulary and the orchestrator notes surface.
 
-Topology (spec section 3), one folder per project, lazily created at the
-first write:
+The hunt-config dispatch family retired in T4b (#387) and its config I/O retired
+in T6 (#379) with no live consumer left: the mover no longer reads produced
+configs, the surfer no longer dispatches them, and the API path is a loud 410.
+The module stays for the TWO things still imported elsewhere:
 
-    data/<project_id>/orchestration/
-      hunt_configs/
-        produced/<unit_id>_<CWE_ID>_<vulnerability_class>.yaml
-        consumed/<unit_id>_<CWE_ID>_<vulnerability_class>.yaml
-      memory.yaml                                  (notes; append/update/delete)
+- the config-key helpers (`semantic_key`, `split_semantic_key`,
+  `config_file_name`, `parse_config_file_name`) that the legacy identity tests
+  and the eval translation still use;
+- `ProjectMemoryStore.NOTE_KINDS`, the closed hunter note-kind vocabulary the
+  hunter memory reuses verbatim.
 
-One YAML file per hunt config; the file name IS the config's identity (G4):
-`_` is the separator (unit ids contain `:` and `-`, so those are poisoned as
-separators), and the last-two-underscores convention - `<unit>_<CWE-ID>_<class>`
-with the CWE id (`CWE-\\d+`) disambiguating the middle segment - is the robust
-parse. The store's ONE canonical internal representation is the semantic key
-`<unit_id>::<CWE_ID>::<vulnerability_class>` (`semantic_key`), which
-round-trips with the file name via `config_file_name` / `parse_config_file_name`.
-
-A duplicate-id write - a file name that already exists in produced/ OR
-consumed/ - FAILS with `DuplicateConfigError`: the enforced novelty gate at
-the storage layer (G4), a deduplication signal the model interprets (it
-reflects on overlap and merges or refreshes instead of duplicating). `dropped`
-configs stay on disk statused `dropped`, never deleted (G6). `memory.yaml`
-keeps its natural append order (no `_seq`, G11); the notes surface exposes
-read / append / update / delete primitives (spec 6.2; the notes TOOL contract
-is another workstream's - #167 - this is the store it binds to). **Sibling
-hunter-memory reads (#202):** `read_hunter_specs` / `read_hunter_notes` cross
-to the `hunter/` sibling bucket under the same `data/<project_id>/` tree - the
-downstream TestImplementationSpecs + the Q16 durable PodExport records that
-feed a config's `prior_hunt_insights`, shallow-projected (I3).
+`HuntStore`'s per-project `memory.yaml` notes surface remains as the
+orchestrator's (now unused) notes store; the retired config topology
+(`hunt_configs/produced`, `hunt_configs/consumed`) is not written by this
+module any more. The produced config data still on disk is T10's disposition
+(the eval translation owns the retired family).
 
 Writes are atomic (a temp file in the same directory, then `os.replace` - a
 crash mid-dump leaves the previous file content intact) and serialised per
@@ -40,9 +27,7 @@ Fail-open canon unchanged: a read failure degrades to an empty set (O4) - a
 missing file, an unreadable YAML, or a malformed record degrades per-record
 with a warning, never a raise into the turn; a write failure raises to the
 caller, which warns and counts `store_write_failures` (O3). Never a silent
-corruption. Configs serialise via `model_dump` -> YAML; reads return plain
-dicts (round-trip fidelity over strict model parsing, so legacy or foreign
-yaml stays readable).
+corruption.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6).
@@ -50,7 +35,6 @@ section 6).
 from __future__ import annotations
 
 import logging
-import os
 import re
 import uuid
 from pathlib import Path
@@ -80,12 +64,6 @@ KEY_SEPARATOR = "::"
 # empty-class (carried-bare) degrade keeps the trailing `_` and is tolerated by
 # the empty class suffix.
 _CONFIG_FILE_RE = re.compile(r"_(CWE-\d+)_")
-
-# The writeable config directories. `consumed` is the inbox-surfer mover's
-# target (G13, ADR #169 Q3); the store exposes the produced-side read
-# (`read_produced_configs`) and the single-owner move primitive
-# (`consume_config`) the mover operates on (tracker #172).
-_CONFIG_DIRECTORIES = ("produced", "consumed")
 
 MEMORY_NOTES_MAX_RECORDS = 2000
 MEMORY_NOTES_MAX_BYTES = 4 * 1024 * 1024
@@ -164,49 +142,11 @@ def _keys_match(record_key: str, query_key: str) -> bool:
             or query_key.startswith(record_key + KEY_SEPARATOR))
 
 
-class DuplicateConfigError(ValueError):
-    """A config write whose file name already exists in produced/ or consumed/
-    (G4): the enforced novelty gate at the storage layer. The callers degrade
-    fail-open (warn + count), never a silent duplicate."""
-
-
-class ConfigIdentityError(ValueError):
-    """A config write whose payload does not carry the identity the file name
-    is DERIVED from (#298): `unit_id` and `fault_class` must be present and
-    non-empty; `vulnerability_class` may be empty (the carried-bare degrade is
-    legal). The write seam raises this rather than composing a degenerate file
-    name no reader can ratify (the `_CWE-1220_.yaml` regression). `fields` names
-    the missing attribute(s) so the tool emits a CODED rejection the agent can
-    correct."""
-
-    def __init__(self, fields: "list[str]", message: str):
-        super().__init__(message)
-        self.fields = list(fields)
-
-
-def require_config_identity(data: dict) -> tuple[str, str, str]:
-    """The `(unit_id, fault_class, vulnerability_class)` the file name and the
-    semantic key are DERIVED from (#298). `unit_id` and `fault_class` are
-    REQUIRED - a missing or empty one is a `ConfigIdentityError`, never a
-    silently-composed degenerate name; the vulnerability class may be empty
-    (the carried-bare degrade)."""
-    unit_id = str(data.get("unit_id") or "")
-    fault_class = str(data.get("fault_class") or "")
-    vulnerability_class = str(data.get("vulnerability_class") or "")
-    missing = [name for name, value in (("unit_id", unit_id),
-                                        ("fault_class", fault_class)) if not value]
-    if missing:
-        raise ConfigIdentityError(
-            missing,
-            f"hunt config write needs the identity attribute(s) "
-            f"{', '.join(missing)} to derive the file name; the payload did "
-            f"not carry them",
-        )
-    return unit_id, fault_class, vulnerability_class
-
-
 class HuntStore(BoundedRecordStore):
-    """The per-project hunt-config + notes memory store (memory-system spec)."""
+    """The per-project `memory.yaml` notes store (memory-system spec).
+
+    The config I/O surface retired in T6 (#379); only the notes primitives
+    remain, and no live dispatch path reads them."""
 
     def __init__(self, root_dir: str | Path | None = None):
         """Rooted under `root_dir` (default: the app-owned `DATA_ROOT`); the
@@ -220,249 +160,8 @@ class HuntStore(BoundedRecordStore):
     def _project_dir(self, project_id: str) -> Path:
         return project_dir(project_id, "hunting/orchestration", root=self._root)
 
-    def _produced_dir(self, project_id: str) -> Path:
-        return self._project_dir(project_id) / "hunt_configs" / "produced"
-
-    def _consumed_dir(self, project_id: str) -> Path:
-        return self._project_dir(project_id) / "hunt_configs" / "consumed"
-
     def _memory_file(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "memory.yaml"
-
-    # --- config surface ----------------------------------------------------------
-
-    def write_config(self, project_id: str, config, *, directory: str = "produced") -> str:
-        """Persist one hunt config's YAML serialisation (the hypothesise /
-        ratify write; `status` rides the config object). `config` is a
-        `HuntConfig` or a dict. The file name IS the identity: a file that
-        already exists in produced/ OR consumed/ fails with
-        `DuplicateConfigError` - the deduplication signal (G4). A `dropped`
-        config stays on disk statused `dropped`, never deleted (G6). Returns
-        the config's semantic key. Raises on write failure - the caller warns
-        and counts (O3). The whole check-then-write runs under the project's
-        lock, so the duplicate gate is not TOCTOU (I2)."""
-        if directory not in _CONFIG_DIRECTORIES:
-            raise ValueError(
-                f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
-        with self._lock_for(project_id):
-            data = config.model_dump() if not isinstance(config, dict) else dict(config)
-            unit_id, fault_class, vulnerability_class = require_config_identity(data)
-            # #298 Rule 1: the hunt_id is a DERIVED symbol, never a request
-            # field - set it from the validated identity so a payload that omits
-            # it (as the agent contract requires) can never persist a config the
-            # surfer's `HuntConfig` validation would then refuse.
-            data["hunt_id"] = semantic_key(unit_id, fault_class, vulnerability_class)
-            name = config_file_name(unit_id, fault_class, vulnerability_class)
-            produced = self._produced_dir(project_id) / name
-            consumed = self._consumed_dir(project_id) / name
-            if produced.exists() or consumed.exists():
-                raise DuplicateConfigError(
-                    f"a config for {semantic_key(unit_id, fault_class, vulnerability_class)} "
-                    "already exists in produced/ or consumed/; the write is the "
-                    "deduplication signal, not a second file"
-                )
-            target = produced if directory == "produced" else consumed
-            # The topology is owned by the app-layer scaffold (#234): the
-            # orchestration/ bucket and both hunt_configs/ sides are created
-            # eagerly at project creation, so the store writes its files only.
-            self._dump_yaml_atomic(target, data)
-            return semantic_key(unit_id, fault_class, vulnerability_class)
-
-    def update_config(self, project_id: str, config, *, directory: str = "produced") -> str:
-        """Persist one hunt config's YAML serialisation, UPSERTING at its
-        identity (the ratify-phase write; `status` rides the config object): an
-        existing file at the identity is OVERWRITTEN in place - the ratification
-        amends the hypothesised draft, and a `dropped` config is marked by
-        rewriting its file statused `dropped` (G6: it stays on disk, never
-        deleted) - and an absent identity CREATES the file (the ratify phase may
-        create additional configs). The G4 novelty gate does NOT apply here: the
-        write is an explicit in-place amendment of a known identity, not a
-        re-elicitation. Returns the config's semantic key. Raises on write
-        failure - the caller warns and counts (O3). The whole write runs under
-        the project's lock (I2).
-
-        MOVE-AWARE (G4, #192): when the identity ALREADY lives in consumed/ (the
-        mover's produced->consumed move landed for it - its at-least-once
-        marker), a produced-target write is a NO-OP success returning the
-        semantic key. The config is already ratified and durable in consumed/,
-        and re-creating a produced/ copy would break the produced/consumed
-        mutual exclusivity - the surfer's inbox would never drain, the mover
-        would re-dispatch the identity every tick, and the run would hang in
-        `running` (the #192 race: the orchestrator's ratify harness write can
-        land after the move). A warning logs the race for observability."""
-        if directory not in _CONFIG_DIRECTORIES:
-            raise ValueError(
-                f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
-        with self._lock_for(project_id):
-            data = config.model_dump() if not isinstance(config, dict) else dict(config)
-            unit_id, fault_class, vulnerability_class = require_config_identity(data)
-            # #298 Rule 1: `hunt_id` is DERIVED from the validated identity
-            # (the file name / semantic key family), never a request field.
-            data["hunt_id"] = semantic_key(unit_id, fault_class, vulnerability_class)
-            name = config_file_name(unit_id, fault_class, vulnerability_class)
-            produced = self._produced_dir(project_id)
-            consumed = self._consumed_dir(project_id)
-            if directory == "produced" and (consumed / name).exists():
-                logger.warning(
-                    "hunt store: ratify write for %s skipped - the identity "
-                    "already lives in consumed/ (post-move write, #192); no "
-                    "produced/ copy re-created", name,
-                )
-                return semantic_key(unit_id, fault_class, vulnerability_class)
-            target = produced if directory == "produced" else consumed
-            self._dump_yaml_atomic(target / name, data)
-            return semantic_key(unit_id, fault_class, vulnerability_class)
-
-    @staticmethod
-    def _read_yaml(path: Path) -> dict | None:
-        """One config file's dict, fail-open per record: a read/YAML error or
-        a non-dict body warns and degrades to None (the record is skipped, the
-        caller keeps serving - O4)."""
-        try:
-            body = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            logger.warning("hunt store: unreadable config %s (%s)", path, exc)
-            return None
-        return body if isinstance(body, dict) else None
-
-    def _config_with_key(self, path: Path) -> tuple[str, dict] | None:
-        """One config file's `(semantic key, body)`: the file-name identity
-        first (the convention, G4), the content rebuild as the fallback (a
-        non-CWE fault_class or foreign yaml with the identity fields). The body
-        is loaded ONCE and shared, so a keyed read never double-reads the file
-        (M7)."""
-        body = self._read_yaml(path)
-        if body is None:
-            return None
-        parsed = parse_config_file_name(path.name)
-        if parsed is not None:
-            return semantic_key(*parsed), body
-        unit_id = body.get("unit_id")
-        if unit_id is None:
-            return None
-        return (semantic_key(
-            str(unit_id),
-            str(body.get("fault_class") or ""),
-            str(body.get("vulnerability_class") or ""),
-        ), body)
-
-    def _config_paths(self, project_id: str) -> list[Path]:
-        """Every config file path, produced/ then consumed/, in file-name
-        order (deterministic; a missing directory contributes nothing)."""
-        paths: list[Path] = []
-        for directory in (self._produced_dir(project_id), self._consumed_dir(project_id)):
-            if directory.exists():
-                paths.extend(sorted(directory.glob("*.yaml")))
-        return paths
-
-    def read_configs_by_key(self, project_id: str, key: str) -> list[dict]:
-        """The prior configs for a semantic key (`unit::cwe::class`) or a
-        2-part revival-key prefix (`unit::cwe`): produced/ then consumed/, in
-        file-name order. A missing store or a failing read degrades to an
-        empty set - the caller keeps serving (O4)."""
-        with self._lock_for(project_id):
-            out: list[dict] = []
-            for path in self._config_paths(project_id):
-                item = self._config_with_key(path)
-                if item is None:
-                    continue
-                record_key, body = item
-                if not _keys_match(record_key, key):
-                    continue
-                out.append(body)
-            return out
-
-    def read_configs(self, project_id: str) -> list[dict]:
-        """Every persisted config (produced + consumed), in deterministic
-        order. Fail-open per record (O4)."""
-        with self._lock_for(project_id):
-            out: list[dict] = []
-            for path in self._config_paths(project_id):
-                body = self._read_yaml(path)
-                if body is not None:
-                    out.append(body)
-            return out
-
-    def read_produced_configs(self, project_id: str) -> list[tuple[str, str]]:
-        """The PRODUCED-side inbox surface (ADR #169 Q3/G13, tracker #172):
-        `(semantic_key, config_file_name)` for every produced config, in
-        file-name order - what the inbox surfer operates on. `consumed/`
-        contributes nothing (its records are already dispatched and moved).
-
-        The identity round-trips from the FILE NAME (G4, first-class) so even
-        an unreadable/foreign body is surfaceable by its name; a name outside
-        the convention falls back to the body's identity (a file-name-less
-        degrade). Fail-open: a missing directory or an unskippable record
-        contributes nothing (O4)."""
-        with self._lock_for(project_id):
-            directory = self._produced_dir(project_id)
-            if not directory.exists():
-                return []
-            out: list[tuple[str, str]] = []
-            for path in sorted(directory.glob("*.yaml")):
-                parsed = parse_config_file_name(path.name)
-                if parsed is not None:
-                    out.append((semantic_key(*parsed), path.name))
-                    continue
-                item = self._config_with_key(path)
-                if item is not None:
-                    out.append((item[0], path.name))
-            return out
-
-    def consume_config(self, project_id: str, key: str) -> bool:
-        """Move one produced config to consumed/ - the single-owner
-        produced->consumed transition of the inbox-surfer protocol
-        (ADR #169 Q3/G13, tracker #172): ONLY the mover calls this (the
-        single-owner rename, #172 AC). `key` is the config's SEMANTIC key
-        (the store's canonical identity, G4); the file name round-trips from
-        it, so a produced config at that identity is renamed to consumed/.
-
-        True when the config now lives in consumed/ - renamed NOW, or already
-        moved by an earlier tick (at-least-once: the repeated invocation of a
-        confirmed move is a no-op success, never an error). False when NO such
-        record exists in either side (nothing to move). Raises on a genuine
-        storage failure (O3 - the caller warns and counts, never aborting the
-        tick) and on a non-3-part key (a revival-key prefix names several
-        configs - ambiguous, refused). Runs under the project's lock (I2,
-        mirroring `write_config`), so the rename is not TOCTOU.
-
-        The G4 novelty gate makes produced/ and consumed/ MUTUALLY EXCLUSIVE
-        per name; a store where BOTH hold the same name is corrupted, and the
-        move refuses to clobber the consumed record (at-least-once: a moved
-        message is never lost to a re-write)."""
-        parts = split_semantic_key(key)
-        if parts is None:
-            raise ValueError(
-                f"consume_config needs the full 3-part semantic key; "
-                f"{key!r} is not one (a revival-key prefix names several "
-                f"configs - ambiguous, refused)"
-            )
-        name = config_file_name(*parts)
-        with self._lock_for(project_id):
-            produced = self._produced_dir(project_id) / name
-            consumed = self._consumed_dir(project_id) / name
-            if produced.exists() and consumed.exists():
-                logger.warning(
-                    "hunt store: both produced/ and consumed/ hold %s for "
-                    "%s; refusing to clobber the consumed record (fail-open)",
-                    name, project_id,
-                )
-                return False
-            if not produced.exists():
-                return consumed.exists()
-            if consumed.exists():
-                logger.warning(
-                    "hunt store: consume of %s has produced/ and consumed/ "
-                    "both on disk; refusing to overwrite (fail-open)",
-                    name,
-                )
-                return False
-            # Destination safety net only: the app scaffold owns the topology
-            # (ensure_project); the move needs its destination directory to
-            # exist even when a caller roots a store outside the scaffold.
-            consumed.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(produced, consumed)
-            return True
 
     # --- notes surface (memory.yaml) ----------------------------------------------
 

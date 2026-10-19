@@ -476,6 +476,19 @@ class HuntsStoreTool(StoreToolBase):
                 "the spec payload must carry the file-name identity "
                 "attribute(s) and the status; the spec identity "
                 "<fault_keyword>_<strategy_keyword> is DERIVED from them")
+        # S3 8.7: exactly two set shapes exist - the GENERATE set (all
+        # `hypothesised`) and the terminal set (survivors `ratified`, unfeasible
+        # `dropped`). A mixed set persists a set the tracker never accepts as
+        # an exit, so it is a coded rejection, never a silent stall.
+        statuses = [spec["status"] for spec in specs]
+        if "hypothesised" in statuses and any(
+                status in ("ratified", "dropped") for status in statuses):
+            return self._write_rejected(
+                ["specs"],
+                "a spec set is either the GENERATE write (all `hypothesised`) "
+                "or the terminal write (survivors `ratified`, unfeasible "
+                "`dropped`); do not mix `hypothesised` with a terminal status "
+                "in one write")
         try:
             # The store derives the spec ids and applies the set lifecycle;
             # statuses are persisted verbatim (hypothesised creates, a later
@@ -794,10 +807,11 @@ class ExecTool(BaseTool):
         "produces the hypothesis verdict - the pod remains the only source of "
         "experimental evidence for the committed hypothesis; exec results only "
         "inform your reasoning, never the committed hypothesis's evidence. If "
-        "the spec's payload_vector_space carries a request_ref, do NOT re-create "
-        "that request by hand here: a hand-written curl loses the replay lineage "
+        "the spec's provenance carries a `baseline_ref`, do NOT re-create that "
+        "request by hand here: a hand-written curl loses the replay lineage "
         "(derived_from / replay_kind stay null and the artifact looks like "
-        "original traffic) - the pod's replay path is what preserves it.\n\n"
+        "original traffic) - the pod's baseline replay path is what preserves "
+        "it.\n\n"
         f"{TARGET_UNAVAILABLE_DIRECTIVE}"
     )
     args_schema: type[BaseModel] = ExecArgs

@@ -204,6 +204,11 @@ class Violation(_Record):
     kind: ViolationKind
     statement: str
     maps_to_fault: str
+    # The transition the violation bounds (S2 5.1/S3 8.2): the payload's
+    # dynamic-state selection reads this link. Optional because a
+    # state-consistency violation need not bound a transition; when the model
+    # carries transitions and this ref is absent the link is ambiguous.
+    transition_ref: str | None = None
     confidence: Confidence
     evidences: list[Evidence]
 
@@ -488,6 +493,7 @@ def _check_references(model: UnitThreatModel) -> list[str]:
         for ref in agreement.interface_agreement_refs:
             if ref not in agreement_ids:
                 unresolved(f"trust_agreement:{agreement.id}", "interface_agreement_refs", ref)
+    transition_ids = {transition.id for transition in dynamic.transitions}
     for transition in dynamic.transitions:
         for endpoint in (transition.source, transition.target):
             if endpoint not in state_ids:
@@ -495,6 +501,9 @@ def _check_references(model: UnitThreatModel) -> list[str]:
     for violation in dynamic.violations:
         if violation.maps_to_fault not in fault_ids:
             unresolved(f"violation:{violation.id}", "maps_to_fault", violation.maps_to_fault)
+        if violation.transition_ref and violation.transition_ref not in transition_ids:
+            unresolved(f"violation:{violation.id}", "transition_ref",
+                       violation.transition_ref)
     for failure_mode in model.failure_modes:
         if failure_mode.vulnerability_ref not in vulnerability_ids:
             unresolved(

@@ -231,6 +231,7 @@ Violation:
   kind: trust-transition | state-consistency | forced-transition | other
   statement: str
   maps_to_fault: str
+  transition_ref: str | None = None
   confidence: Confidence
   evidences: list[Evidence]
 
@@ -452,7 +453,8 @@ It checks referential integrity:
 - Every `vulnerability_ref` resolves to a vulnerability.
 - Every `failure_mode_ref` resolves to a failure mode.
 - Every `boundary_ref` resolves to a trust agreement.
-Every `Violation.maps_to_fault` resolves to a fault id.
+- Every `Violation.maps_to_fault` resolves to a fault id.
+- Every non-null `Violation.transition_ref` resolves to a dynamic-state transition.
 - Every `interface_agreement_refs` entry resolves to an interface agreement.
 - Every transition `source` and `target` resolves to a dynamic state.
 

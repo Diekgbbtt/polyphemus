@@ -121,9 +121,11 @@ _UNSAFE_KEYWORD_CHARS = frozenset("_:/\\")
 
 def _is_durable_prior_insight(record: dict) -> bool:
     """The durable prior-insight marker (G3/#202): a Q16 pod-export stub
-    (`provenance.verdict_stub`) is the record `HuntStore.read_hunter_notes`
-    consumes into a config's `prior_hunt_insights`, so it is protected from the
-    ordinary-notes eviction of the `notes.yaml` bound (#341)."""
+    (`provenance.verdict_stub`) is the durable pod-completion record the surfer
+    writes for a parent hunt key, so it is protected from the ordinary-notes
+    eviction of the `notes.yaml` bound (#341). The old
+    `HuntStore.read_hunter_notes` consumer retired with the config family; the
+    record stays the durable trail a later verdict/insight reader can use."""
     provenance = record.get("provenance")
     return bool(isinstance(provenance, dict) and provenance.get("verdict_stub"))
 
@@ -437,6 +439,21 @@ class HunterMemoryStore(BoundedRecordStore):
             )
         self._validate_side(side)
         self._validate_hunt_key(hunt_key)
+        # S3 8.7 defines exactly two set shapes: the GENERATE write (all
+        # `hypothesised`) and the terminal write (survivors `ratified`,
+        # unfeasible `dropped`). A mixed set is neither exit the harness
+        # tracks - it would persist while the hunt stalls - so it is refused.
+        statuses = {
+            spec.get("status") for spec in specs
+            if isinstance(spec, dict)
+        }
+        if "hypothesised" in statuses and statuses & {"ratified", "dropped"}:
+            raise ValueError(
+                "hunter store: a spec set is either the GENERATE write (all "
+                "`hypothesised`) or the terminal write (survivors `ratified`, "
+                "unfeasible `dropped`); a set mixing `hypothesised` with a "
+                "terminal status is not a lifecycle shape"
+            )
         # Validate the WHOLE batch first: a rejected write never leaves a
         # partial set on disk.
         prepared: list[tuple[str, dict]] = []

@@ -163,7 +163,7 @@ def test_hunts_store_write_derives_the_file_names_from_the_set(tmp_path):
 
     duplicate = json.loads(_hunts(store, command="write", specs=[
         {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "dropped", "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"},
     ]))
     assert duplicate["ok"] is False
     assert duplicate["error"] == "duplicate_spec"
@@ -210,6 +210,24 @@ def test_hunts_store_read_is_bound_to_the_loop_key(tmp_path):
         "hypothesised"
     assert json.loads(_hunts(store, command="read",
                              statuses=["ratified"]))["specs"] == []
+
+
+def test_hunts_store_refuses_a_mixed_status_set(tmp_path):
+    """S3 8.7: only the GENERATE (all hypothesised) and terminal
+    (ratified/dropped) shapes exist. A mixed set is a coded rejection naming
+    `specs`, never a persisted set the tracker cannot close on."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    out = json.loads(_hunts(store, command="write", specs=[
+        {"status": "hypothesised", "fault_keyword": "f1",
+         "strategy_keyword": "probe"},
+        {"status": "ratified", "fault_keyword": "f2",
+         "strategy_keyword": "probe"},
+    ]))
+    assert out["ok"] is False
+    assert out["error"] == "hunts_store_write_rejected"
+    assert out["fields"] == ["specs"]
+    assert "GENERATE write" in out["detail"]
+    assert store.read_specs(PROJECT, HUNT_KEY) == []
 
 
 # --- #209: the D84-22 rejected-call canon survives ----------------------------

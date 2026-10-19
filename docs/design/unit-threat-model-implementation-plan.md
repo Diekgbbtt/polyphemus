@@ -461,14 +461,14 @@ The hunter-side `HuntConfig` and `DispatchResult` retirement and the fault-KB ai
   `_default_hunter_builder` is removed together with its `Mapping` discrimination
   and the T4a inertness marker, so the per-loop dispatch path is live end to end.
 
-**Spec note carried from T4a (the payload's transition link).**
-The stored `Violation` carries no ref to the `Transition` it bounds (S2 5.1), so
-the payload's `dynamic_state` selection is a deterministic GUESS: the mover takes
-the violation whose `maps_to_fault` is the loop's fault and the FIRST transition of
-the dynamic-state model as its transition. T6 fixes the schema link (a
-`Violation.transition_ref`, or the transition naming its violation) and the
-selection reads it; until then the payload's transition is advisory context, never
-a gate.
+**Spec note carried from T4a (the payload's transition link) - LANDED in T6.**
+The stored `Violation` now carries `transition_ref` (S2 5.1, `threat_model.py`),
+and the completion checker reports a non-null ref that resolves to no transition
+as a referential error. `materialise_hunter_payload` reads the link: a valid ref
+selects exactly that transition; an absent ref is unambiguous only with zero or
+one transition; with several transitions it yields NO transition and records the
+gap (`dynamic_state.transition` is None) instead of guessing the first. Until
+this landed the payload's transition was advisory context, never a gate.
 
 ### T7 - Hunter production prompt work phase
 

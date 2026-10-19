@@ -772,12 +772,12 @@ async def launch_modeller(
     run-scoped surfer, no dispatch, no `hunting_runs` row. It is the same pass
     body the whole-pipeline bootstrap schedules: the frozen intake's units are
     modelled in order to COMPLETED and their produced loop files land in the
-    per-project threat model store. designed-not-built - T4 (#377): no
-    production path translates a loop file into a dispatchable item yet, so the
-    launch (like the whole-pipeline run) produces models and dispatches nothing.
-    The control plane schedules THIS coroutine under the ADR Q13 modeller
-    session id (`hunting:<run_id>:threat-modeller`), so the per-session verbs
-    (hold/resume/cancel, ADR Q13/Q17) address it like any modeller session.
+    per-project threat model store. The launch deliberately runs no surfer, so
+    it dispatches nothing; the per-loop dispatch itself is live (T6 #379) and
+    belongs to the run-scoped surfer. The control plane schedules THIS coroutine
+    under the ADR Q13 modeller session id (`hunting:<run_id>:threat-modeller`),
+    so the per-session verbs (hold/resume/cancel, ADR Q13/Q17) address it like
+    any modeller session.
 
     designed-for-removal - the launch surface's modeller-only vocabulary (the
     `hunting/orchestrator` endpoint path and the `orchestrator` component label

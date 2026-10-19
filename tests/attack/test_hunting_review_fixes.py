@@ -314,7 +314,7 @@ def test_the_gap_reason_names_the_stuck_loop_and_is_absent_with_work(
 
     # a still-dispatchable produced SPEC suppresses the line too (the pod
     # family stays live; the retired config family would no longer count)
-    _write_specified_spec(hunter)
+    _write_ratified_spec(hunter)
     assert hunting_runtime.report_dispatch_gap(
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
         state=empty, threat_store=models, hunter_store=hunter) is None
@@ -400,7 +400,7 @@ def _zero_loop_turns():
     return ScriptedModellerTurns(payloads=payloads)
 
 
-def _write_specified_spec(hunter) -> None:
+def _write_ratified_spec(hunter) -> None:
     """One produced `ratified` test spec (the pod family's dispatch gate) -
     the surviving dispatchable produced family (S3 8.7)."""
     hunter.write_specs(

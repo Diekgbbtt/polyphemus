@@ -75,21 +75,31 @@ def _assumption_for_fault(model: Mapping, fault_ref: str) -> dict | None:
 
 
 def _transition_for_violation(model: Mapping, violation: Mapping | None) -> dict | None:
-    """The transition the violation bounds.
+    """The transition the violation bounds (S2 5.1, S3 8.2).
 
-    A `Violation` carries no transition ref (S2 5.1), so the link is the
-    violation's own kind: a `trust-transition` violation is the transition's
-    violation, and the carried transition is the first one in the dynamic-state
-    model - the deterministic, documented reading. No transition (or no
-    violation) degrades to None."""
+    The schema link is `Violation.transition_ref`: a valid ref selects exactly
+    that transition. An absent ref is unambiguous only when the dynamic-state
+    model carries at most one transition (zero -> no transition, one -> that
+    transition); with several transitions an absent ref yields NO transition -
+    the payload records the gap (`dynamic_state.transition` is None) instead of
+    guessing the first one. An invalid ref is a completion-checker referential
+    error; here it degrades to None (the payload is never a gate)."""
     if not violation or violation.get("kind") != "trust-transition":
         return None
-    transitions = _as_list(
-        (model.get("trust_model") or {}).get("dynamic_state_trust", {}).get("transitions")
-    )
-    for transition in transitions:
-        if isinstance(transition, Mapping):
-            return dict(transition)
+    transitions = [
+        transition for transition in _as_list(
+            (model.get("trust_model") or {}).get("dynamic_state_trust", {}).get("transitions")
+        )
+        if isinstance(transition, Mapping)
+    ]
+    ref = violation.get("transition_ref")
+    if isinstance(ref, str) and ref:
+        for transition in transitions:
+            if transition.get("id") == ref:
+                return dict(transition)
+        return None
+    if len(transitions) == 1:
+        return dict(transitions[0])
     return None
 
 

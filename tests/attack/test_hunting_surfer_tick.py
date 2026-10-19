@@ -31,16 +31,15 @@ pod (own-status dispatch gate), the quiesce pending-work predicate
 
 Also pins the store move primitives themselves (moves + at-least-once
 idempotency + the absent-record False + the locked rename), and the real
-`RuntimeControlPlane` adapter (ModuleAdmissionRefused -> refused). The
-`HuntStore` config-primitive tests stay: the store module is not the dispatch
-path, and its retirement is the T6/T10 data sweep.
+`RuntimeControlPlane` adapter (ModuleAdmissionRefused -> refused). The retired
+hunt-store config I/O is not exercised here (T6 removed it; the key helpers and
+the notes surface live in `test_hunt_store.py`).
 """
 import asyncio
 import time
 
 import pytest
 
-from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
     ProducedItem,
@@ -70,20 +69,6 @@ UNIT_NAME = "Service-catalogue-and-discovery"
 LOOP_ID = "loop-1"
 DISPATCH_ID = f"{UNIT_NAME}__{LOOP_ID}"
 HUNTER_SESSION = hunter_session_id(RUN, DISPATCH_ID)
-
-
-def _config(**overrides) -> dict:
-    data = {
-        "hunt_id": "hunt-1",
-        "unit_id": UNIT,
-        "fault_class": CWE,
-        "status": "ratified",
-        "vulnerability_class": CLASS,
-        "rationale": "r",
-        "research_direction": "rd",
-    }
-    data.update(overrides)
-    return data
 
 
 def _spec(**overrides) -> dict:
@@ -149,10 +134,6 @@ def _produce(stores, *, loops=None, run_id=RUN):
         threat, project_id=PROJECT, unit_id=UNIT, run_id=run_id, loops=loops)
 
 
-def _write_config(store, **overrides) -> str:
-    return store.write_config(PROJECT, _config(**overrides))
-
-
 def _write_spec(hunter, *, hunt_key=DISPATCH_ID, keyword="sqli", strategy="blind",
                 status="ratified"):
     return hunter.write_specs(
@@ -197,8 +178,7 @@ def _real_coro_for(threat, hunter, state=None):
     )
 
 
-def test_the_surfer_work_read_and_dispatch_carry_no_config_clause(
-        stores, tmp_path):
+def test_the_surfer_work_read_and_dispatch_carry_no_config_clause(stores):
     """T4b (#387): the surfer's work read and dispatch decision are loop-only.
 
     No config predicate, no config dispatch branch, no config refuse-once log,
@@ -218,9 +198,7 @@ def test_the_surfer_work_read_and_dispatch_carry_no_config_clause(
         assert "hunt_store" not in inspect.signature(fn).parameters, (
             f"{fn.__name__} must not carry the retired hunt store")
 
-    hunt = HuntStore(tmp_path / "hunts")
     _threat, hunter = stores
-    _write_config(hunt)                        # a produced ratified config
     assert run_work_remaining(PROJECT, RUN, hunter_store=hunter) is False
     coro_for = build_run_dispatch(
         project_id=PROJECT, run_id=RUN, hunter_store=hunter, pod_store=None,
@@ -475,44 +453,6 @@ def test_move_failure_is_counted_and_never_aborts_the_tick(stores, monkeypatch):
 
 
 # --- the store move primitives (single-owner, at-least-once idempotency) --------
-
-def test_consume_config_moves_and_is_at_least_once_idempotent(tmp_path):
-    store = HuntStore(tmp_path)
-    key = store.write_config(PROJECT, _config())
-    assert store.consume_config(PROJECT, key) is True
-    assert store.read_produced_configs(PROJECT) == []
-    assert len(store.read_configs(PROJECT)) == 1
-    # a second consume of an already-consumed record is a True no-op
-    assert store.consume_config(PROJECT, key) is True
-    # an absent record is False (nothing to move)
-    assert store.consume_config(PROJECT, "x::CWE-1::y") is False
-
-
-def test_consume_config_requires_the_full_semantic_key(tmp_path):
-    store = HuntStore(tmp_path)
-    _write_config(store)
-    with pytest.raises(ValueError, match="3-part"):
-        store.consume_config(PROJECT, f"{UNIT}::{CWE}")   # 2-part is a prefix
-
-
-def test_consume_config_round_trips_the_carried_bare_class(tmp_path):
-    store = HuntStore(tmp_path)
-    key = store.write_config(PROJECT, _config(vulnerability_class=""))
-    assert key == f"{UNIT}::{CWE}::"
-    assert store.consume_config(PROJECT, key) is True
-    assert store.read_produced_configs(PROJECT) == []
-    assert len(store.read_configs(PROJECT)) == 1
-
-
-def test_read_produced_configs_returns_only_the_produced_side(tmp_path):
-    store = HuntStore(tmp_path)
-    key_a = _write_config(store, vulnerability_class=CLASS)
-    _write_config(store, vulnerability_class="CSRF")
-    store.consume_config(PROJECT, key_a)
-    produced = store.read_produced_configs(PROJECT)
-    assert [k for k, _ in produced] == [f"{UNIT}::{CWE}::CSRF"]
-    assert [name for _, name in produced] == ["Service:catalogue-and-discovery_CWE-639_CSRF.yaml"]
-
 
 def test_consume_spec_moves_and_is_at_least_once_idempotent(tmp_path):
     hunter = HunterMemoryStore(tmp_path)

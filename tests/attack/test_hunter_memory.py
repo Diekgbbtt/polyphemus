@@ -104,8 +104,7 @@ def test_a_duplicate_identity_in_one_set_is_the_dedup_signal(tmp_path):
     with pytest.raises(DuplicateSpecError):
         store.write_specs(PROJECT, HUNT_KEY, [
             _spec(fault_keyword="registration", strategy_keyword="probe"),
-            _spec(fault_keyword="registration", strategy_keyword="probe",
-                  status="dropped"),
+            _spec(fault_keyword="registration", strategy_keyword="probe"),
         ])
     assert store.read_specs(PROJECT, HUNT_KEY) == []
 
@@ -125,6 +124,29 @@ def test_the_status_vocabulary_is_the_three_live_values(tmp_path):
     for retired in ("verified", "specified"):
         with pytest.raises(ValueError, match="status"):
             store.write_specs(PROJECT, HUNT_KEY, [_spec(status=retired)])
+
+
+def test_a_mixed_hypothesised_and_terminal_set_is_refused(tmp_path):
+    """S3 8.7 defines exactly two set shapes: the GENERATE write (all
+    `hypothesised`) and the terminal write (`ratified`/`dropped`). A mixed set
+    would persist while the tracker sees no exit, so the store refuses it and
+    leaves no partial file behind."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    with pytest.raises(ValueError, match="GENERATE write"):
+        store.write_specs(PROJECT, HUNT_KEY, [
+            _spec(fault_keyword="f1", status="hypothesised"),
+            _spec(fault_keyword="f2", status="ratified"),
+        ])
+    assert store.read_specs(PROJECT, HUNT_KEY) == []
+    # the two legal shapes still land
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="f1", status="hypothesised")])
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="f1", status="ratified"),
+        _spec(fault_keyword="f2", status="dropped"),
+    ])
+    assert [s["status"] for s in store.read_specs(PROJECT, HUNT_KEY)] == [
+        "ratified", "dropped"]
 
 
 def test_the_file_name_is_derived_from_the_sanitised_keywords(tmp_path):
@@ -219,8 +241,10 @@ def test_read_specs_sides_and_status_filters(tmp_path):
     store = HunterMemoryStore(root_dir=tmp_path)
     store.write_specs(PROJECT, HUNT_KEY, [
         _spec(fault_keyword="f1", strategy_keyword="probe"),
-        _spec(fault_keyword="f2", strategy_keyword="probe", status="dropped"),
+        _spec(fault_keyword="f2", strategy_keyword="probe"),
     ])
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="f2", strategy_keyword="probe", status="dropped")])
     assert len(store.read_specs(PROJECT, HUNT_KEY)) == 2
     ratified = store.read_specs(PROJECT, HUNT_KEY, statuses=["ratified"])
     assert ratified == []
