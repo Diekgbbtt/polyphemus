@@ -76,6 +76,7 @@ Bypass forms stay aspects inside this variant because no wrapper changes the dis
 - Paraphrase reframing asks for the same hidden text through a differently worded request.
 - Multi-turn laundering builds disclosure across several individually innocent turns.
 - Translation wrappers request the hidden text rendered in another language form.
+- Request the hidden text in an encoded or transposed rendering so an output filter that scans for the literal never sees it.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
@@ -85,6 +86,7 @@ Leakage chains forward into use because disclosed text alone is only information
 - Hand disclosed schemas to tool-abuse for argument-shaped privileged calls.
 - Hand disclosed instructions to direct-injection-override for sharper follow-up steering.
 - Hand disclosed cross-tenant data to output-handling where a sink forwards it onward.
+- Hand disclosed schemas to the server-side request and command families where a tool argument reaches a fetch or a shell, rather than restating those procedures here.
 - Treat boilerplate shifts mapped here as the guardrail intelligence each follow-up reuses.
 
 ## Testing Methodology
@@ -113,6 +115,7 @@ Leakage rewards ground truth plus reframing patience plus boilerplate attention.
 3. Read refusal boilerplate as signal because shifts reveal the hidden shape.
 4. Separate schema disclosure from tool invocation since schemas alone already guide follow-ups.
 5. Record every hallucination as a negative so later runs stop relitigating invented text.
+6. Anchor each probe to a non-guessable string the run seeded, so a plausible answer separates from a real disclosure.
 
 ## Summary
 
