@@ -35,28 +35,28 @@ The goal is the post-factor state, proved by reaching a resource the pre-factor 
 
 ## Detection Channels
 
-- Post-factor access from a pre-factor state, shown by a resource the pre-factor session reaches that it should not.
-- A consumed factor proof accepted a second time, which shows the single-use clause is unenforced.
-- A partial or prefix-shaped proof accepted, which shows the comparison leaks correctness in pieces.
-- More than one success from concurrent submissions of one proof, which shows a validation race.
-- An alternate path accepting a proof the primary path refuses, which sets the effective strength below the declared factor.
-- A remembered-device token accepted from a different device or address context, which shows the trust is not bound to the context that earned it.
-- A verification endpoint whose verdict does not change between a wrong and a right value, which shows the decision is made elsewhere.
+- **Post-factor access**: post-factor access from a pre-factor state, shown by a resource the pre-factor session reaches that it should not.
+- **Consumed-proof replay**: a consumed factor proof accepted a second time, which shows the single-use clause is unenforced.
+- **Partial-proof acceptance**: a partial or prefix-shaped proof accepted, which shows the comparison leaks correctness in pieces.
+- **Concurrent acceptance**: more than one success from concurrent submissions of one proof, which shows a validation race.
+- **Alternate-path acceptance**: an alternate path accepting a proof the primary path refuses, which sets the effective strength below the declared factor.
+- **Portable device token**: a remembered-device token accepted from a different device or address context, which shows the trust is not bound to the context that earned it.
+- **Flat verdict**: a verification endpoint whose verdict does not change between a wrong and a right value, which shows the decision is made elsewhere.
 
 ## Adversarial Capabilities
 
-- Hold primary credentials for a test account whose factor is enrolled, plus a second account to observe the post-factor state.
-- Drive the flow by hand so each state transition stays separable and replayable.
-- Submit one proof more than once, and concurrently, while keeping the same pre-factor session.
-- Read the channel the factor is delivered through, or hold the device that receives it.
-- Reach the alternate paths, including the enrolment and reset paths, from a pre-factor session.
+- **Primary credentials**: hold primary credentials for a test account whose factor is enrolled, plus a second account to observe the post-factor state.
+- **Manual flow driving**: drive the flow by hand so each state transition stays separable and replayable.
+- **Replay submission**: submit one proof more than once, and concurrently, while keeping the same pre-factor session.
+- **Channel or device access**: read the channel the factor is delivered through, or hold the device that receives it.
+- **Alternate-path reach**: reach the alternate paths, including the enrolment and reset paths, from a pre-factor session.
 
 ## Trust Assumptions
 
 - **The agreement**: after primary authentication, every sensitive transition requires a factor proof the server issued to that account, the proof is single-use and bound to the challenge and the session that requested it, every accepted path into the account carries the same factor strength, and the post-factor state is granted only after the proof verifies.
-- **The enforcement clause fails** where the factor is a user-interface step rather than a server-side requirement, so a transition completes from the pre-factor state.
-- **The lifecycle clause fails** where a consumed, expired, or superseded proof still verifies, or where concurrent submissions are all accepted.
-- **The strength clause fails** where an alternate path accepts a shorter, unthrottled, or client-decided proof, so the account is only as strong as its weakest accepted factor.
+- **The enforcement clause fails**: the factor is a user-interface step rather than a server-side requirement, so a transition completes from the pre-factor state.
+- **The lifecycle clause fails**: a consumed, expired, or superseded proof still verifies, or concurrent submissions are all accepted.
+- **The strength clause fails**: an alternate path accepts a shorter, unthrottled, or client-decided proof, so the account is only as strong as its weakest accepted factor.
 
 ## Key Vulnerabilities
 
@@ -129,22 +129,22 @@ MFA bypass maps the state machine first and attacks the factor second, because n
 
 ## False Positives
 
-- A success-shaped response with no post-factor access, where the client acted on its own verdict and the server never granted the state.
-- A transition that is genuinely non-sensitive by the application's own model, so the factor is not required by design.
-- A factor not required because the session is already post-factor, confirmed by the state rather than by the request.
-- A test account whose factor was never enrolled, which is an enrolment state rather than a bypass.
-- A limit that slows rather than blocks, which is a weak control rather than a missing one; report it as the strength finding it is.
-- An alternate factor that is genuinely as strong as the primary one, which is a design choice rather than a weakness.
-- A verdict difference caused by network noise rather than by proof correctness, confirmed by repeating the measurement.
+- **Success-shaped response**: a success-shaped response with no post-factor access, where the client acted on its own verdict and the server never granted the state.
+- **Non-sensitive transition**: a transition that is genuinely non-sensitive by the application's own model, so the factor is not required by design.
+- **Already-stepped-up session**: a factor not required because the session is already post-factor, confirmed by the state rather than by the request.
+- **Unenrolled factor**: a test account whose factor was never enrolled, which is an enrolment state rather than a bypass.
+- **Slow-only limit**: a limit that slows rather than blocks, which is a weak control rather than a missing one; report it as the strength finding it is.
+- **Equally strong alternate factor**: an alternate factor that is genuinely as strong as the primary one, which is a design choice rather than a weakness.
+- **Network-noise verdict**: a verdict difference caused by network noise rather than by proof correctness, confirmed by repeating the measurement.
 
 ## Pro Tips
 
-1. Prove the post-factor state with a request the pre-factor session could not reach, never with the response shape alone.
-2. Never re-authenticate during a proof-space walk, because a fresh login regenerates the proof.
-3. Test the sibling routes of every gated route; the gate usually sits on one registration.
-4. Sweep the transitions that follow the factor, since step-up enforcement often stops at the login boundary.
-5. Treat the alternate paths as the same factor for impact purposes, because the account is only as strong as its weakest accepted path.
-6. Record the exact shape and the state it reached so the finding reproduces from a clean session.
+- **State proof**: prove the post-factor state with a request the pre-factor session could not reach, never with the response shape alone.
+- **No re-authentication**: never re-authenticate during a proof-space walk, because a fresh login regenerates the proof.
+- **Sibling-route testing**: test the sibling routes of every gated route; the gate usually sits on one registration.
+- **Post-factor transition sweep**: sweep the transitions that follow the factor, since step-up enforcement often stops at the login boundary.
+- **Alternate-path equivalence**: treat the alternate paths as the same factor for impact purposes, because the account is only as strong as its weakest accepted path.
+- **Reproducible record**: record the exact shape and the state it reached so the finding reproduces from a clean session.
 
 ## Summary
 
