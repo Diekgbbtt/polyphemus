@@ -52,6 +52,10 @@ services:
       LLM_POD_RUNNER: ${LLM_POD_RUNNER:?LLM_POD_RUNNER is required - '<provider>:<model>' in the instance .env}
       LLM_POD_TRIAGER: ${LLM_POD_TRIAGER:?LLM_POD_TRIAGER is required - '<provider>:<model>' in the instance .env}
       LLM_CAPABILITY_OVERRIDES: ${LLM_CAPABILITY_OVERRIDES:?LLM_CAPABILITY_OVERRIDES is required - the A6 capability override for the eval relay; run eval/env_preflight.py}
+      # Steel runtime address (#391, D359-4): the SDK crawl provider reads the
+      # same value as the CLI. Empty means the remote cloud; the instance .env
+      # carries the operator's value, and no default ships in the repo.
+      STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
 
   tests:
     env_file:

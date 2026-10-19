@@ -195,6 +195,12 @@ services:
       LIGHTRAG_BASE_API_URL: http://lightrag:9621
       INGESTION_ROOT: /data/ingestion
       INGESTION_NORMALIZED_DIR: /data/ingestion/normalized
+      # Steel runtime address (#391, D359-4): optional passthrough for the SDK
+      # crawl provider. Empty means "unset", so the provider keeps the remote
+      # Steel cloud and passes no base_url. Set it to the CLI's canonical form
+      # (`http://<host>:<port>/v1`); the shared resolver strips that `/v1` for
+      # the SDK. No default ships in the repo.
+      STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
       # --- LLM API gateway (#100) - the co-located litellm proxy (#104 T1) ----
       # The proxy is the SECOND ASGI process in this container; it starts BEFORE
       # the agent uvicorn and is polled on /health/liveliness before the agent

@@ -5,13 +5,22 @@ It is an IN-PROCESS provider driven from the crawl ReAct loop's asyncio event
 loop (ASYNC Playwright API - the sync API cannot run inside a running event
 loop).
 
-Architecture (operator correction, SP4): steel.dev is the authenticated CLOUD
-BROWSER. The provider opens a steel.dev session with the Steel SDK and drives it
-with Playwright connected over CDP at
+Architecture (operator correction, SP4): the browser runtime is the
+authenticated CLOUD BROWSER by default, or the self-hosted runtime when the
+deployment names one. The provider opens a session with the Steel SDK and drives
+it with Playwright connected over CDP at the session's own `websocket_url`:
+
+    ws://<runtime host>:<port>/
+
+When the SDK session carries no `websocket_url`, it falls back to the steel.dev
+cloud pattern:
 
     wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<session id>
 
 The only credential is `config.STEEL_API_KEY`; there is no MCP host URL.
+The address comes from the shared `STEEL_BROWSER_API_URL` resolver (#390,
+D359-4): unset keeps the SDK default (the cloud), set passes the resolver's
+SDK-native origin as `base_url` on session create and release (D359-5).
 
 Contract: `SteelCrawlProvider.get_tools()` returns a list of LangChain
 `StructuredTool`s, one per name in `steel_client.CRAWL_TOOL_NAMES`. Each tool is
@@ -40,6 +49,7 @@ import time
 import uuid
 from urllib.parse import parse_qsl, urlparse
 
+from polymerhus.app.steel_endpoint import steel_browser_api_url
 from polymerhus.recon import config
 
 # ---------------------------------------------------------------------------
@@ -274,15 +284,46 @@ def _build_manifest(crawl: _Crawl) -> dict:
     return {"endpoints": endpoints, "js_urls": sorted(js_urls)}
 
 
-def _create_steel_session(api_key: str, use_proxy: bool, profile_id: str | None = None):
+def _steel_client_kwargs(api_key: str, base_url: str | None) -> dict:
+    """Return the `Steel(...)` kwargs, omitting `base_url` when it is unset.
+
+    An omitted `base_url` leaves the SDK's own default (the steel.dev cloud)
+    untouched, so an unconfigured deployment is byte-identical to before.
+    """
+    kwargs = {"steel_api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    return kwargs
+
+
+def _cdp_connect_url(session, api_key: str) -> str:
+    """Return the CDP connect URL for one SDK session.
+
+    The session's own `websocket_url` names the runtime the SDK just created,
+    so it is correct for both the cloud and a self-hosted runtime. The cloud
+    pattern is the fallback for an SDK response that omits the field.
+    """
+    return getattr(session, "websocket_url", None) or (
+        f"wss://connect.steel.dev?apiKey={api_key}&sessionId={session.id}"
+    )
+
+
+def _create_steel_session(
+    api_key: str,
+    use_proxy: bool,
+    profile_id: str | None = None,
+    base_url: str | None = None,
+):
     """Create a Steel session (SYNC SDK), with the reference's opts fallback ladder.
 
-    Runs off the event loop via `asyncio.to_thread`. Returns the session object.
-    A profile mount that the platform rejects falls back to the unprofiled
-    ladder below - an auth-establishment concern, never a crawl crash."""
+    Runs off the event loop via `asyncio.to_thread`. Returns the client and the
+    session object. A profile mount that the platform rejects falls back to the
+    unprofiled ladder below - an auth-establishment concern, never a crawl
+    crash. `base_url` addresses a self-hosted runtime; None keeps the SDK
+    default (the cloud)."""
     from steel import Steel  # noqa: PLC0415
 
-    client = Steel(steel_api_key=api_key)
+    client = Steel(**_steel_client_kwargs(api_key, base_url))
     opts = _random_session_opts(use_proxy, profile_id)
     try:
         return client, client.sessions.create(**opts)
@@ -302,10 +343,26 @@ class SteelCrawlProvider:
 
     One instance drives one crawl job. `get_tools()` returns LangChain
     `StructuredTool`s bound to this instance's crawl registry.
+
+    The Steel runtime address is the shared `STEEL_BROWSER_API_URL` value,
+    resolved once at construction. Unset leaves the SDK default (the steel.dev
+    cloud). Set addresses a self-hosted runtime through the SDK `base_url`.
     """
 
-    def __init__(self, api_key: str | None = None, *, session_lifetime_s: int | None = None, auth_cookies=None, steel_profile: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        session_lifetime_s: int | None = None,
+        auth_cookies=None,
+        steel_profile: str | None = None,
+        base_url: str | None = None,
+    ):
         self._api_key = api_key if api_key is not None else config.STEEL_API_KEY
+        # Shared deployment address (#390, D359-5). None means "unset", which
+        # leaves the SDK default (the cloud) in place; an explicit argument
+        # exists for tests and for a future caller that resolves it elsewhere.
+        self._base_url = base_url if base_url is not None else steel_browser_api_url()
         self._session_lifetime_s = (
             session_lifetime_s
             if session_lifetime_s is not None
@@ -344,7 +401,8 @@ class SteelCrawlProvider:
             from steel import Steel  # noqa: PLC0415
 
             await asyncio.to_thread(
-                Steel(steel_api_key=crawl.api_key).sessions.release, crawl.session.id
+                Steel(**_steel_client_kwargs(crawl.api_key, self._base_url)).sessions.release,
+                crawl.session.id,
             )
         except Exception:
             pass
@@ -386,10 +444,14 @@ class SteelCrawlProvider:
 
         await self._reap_expired()
         client, session = await asyncio.to_thread(
-            _create_steel_session, self._api_key, use_proxy, self._steel_profile
+            _create_steel_session,
+            self._api_key,
+            use_proxy,
+            self._steel_profile,
+            self._base_url,
         )
         p = await async_playwright().start()
-        cdp_url = f"wss://connect.steel.dev?apiKey={self._api_key}&sessionId={session.id}"
+        cdp_url = _cdp_connect_url(session, self._api_key)
         try:
             browser = await p.chromium.connect_over_cdp(cdp_url)
             ctx = browser.contexts[0]

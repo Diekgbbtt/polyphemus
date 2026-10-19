@@ -41,6 +41,27 @@ def test_ingestion_overlay_config_is_valid():
     assert "lightrag-writeups" not in config["services"]
 
 
+def test_agent_carries_the_optional_steel_endpoint():
+    """#391: the SDK crawl provider reads the same value as the Steel CLI.
+
+    Presence only: the empty default keeps the remote cloud, so no value ships
+    in the repo and the assertion stays true for a plain clone.
+    """
+    r = subprocess.run(
+        ["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "config"],
+        capture_output=True,
+        text=True,
+        cwd=".",
+    )
+    assert r.returncode == 0, r.stderr
+
+    config = yaml.safe_load(r.stdout)
+    agent_env = config["services"]["agent"]["environment"]
+    kali_env = config["services"]["kali"]["environment"]
+    assert "STEEL_BROWSER_API_URL" in agent_env
+    assert agent_env["STEEL_BROWSER_API_URL"] == kali_env["STEEL_BROWSER_API_URL"]
+
+
 def test_dev_overlay_config_is_valid():
     r = subprocess.run(
         ["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "config"],

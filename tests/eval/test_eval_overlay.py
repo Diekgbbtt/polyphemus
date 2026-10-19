@@ -118,6 +118,24 @@ def test_eval_overlay_renders_with_complete_env(tmp_path: Path) -> None:
 
 
 @docker
+def test_eval_overlay_passes_the_steel_endpoint_to_the_agent(tmp_path: Path) -> None:
+    """#391: the agent's SDK provider reads the same deployment value as kali."""
+    env = {**COMPLETE_ENV, "STEEL_BROWSER_API_URL": "http://192.0.2.10:3000/v1"}
+    project = stage(tmp_path, env)
+
+    rendered = render(
+        project, ["docker-compose.yml", "docker-compose.dev.yml", "eval/docker-compose.eval.yml"]
+    )
+
+    assert rendered.returncode == 0, rendered.stderr
+    config = yaml.safe_load(rendered.stdout)
+    agent_env = environment_map(config["services"]["agent"])
+    kali_env = environment_map(config["services"]["kali"])
+    assert agent_env["STEEL_BROWSER_API_URL"] == "http://192.0.2.10:3000/v1"
+    assert agent_env["STEEL_BROWSER_API_URL"] == kali_env["STEEL_BROWSER_API_URL"]
+
+
+@docker
 def test_eval_overlay_fails_loud_on_missing_required_var(tmp_path: Path) -> None:
     env = {k: v for k, v in COMPLETE_ENV.items() if k != "LLM_TRIAGER"}
     project = stage(tmp_path, env)
