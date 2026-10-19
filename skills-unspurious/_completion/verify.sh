@@ -73,7 +73,10 @@ else
   pending "taxonomy document (B1)"
 fi
 
-# 7. The two families exist and no dangling family reference remains (C1/C2).
+# 7. The two families exist and no dangling family reference remains (C1/C2):
+# a family mention must use the family name, because only the name resolves.
+# The implicit forms ("the bypass family", "the proxy family") and the stale
+# pre-C1 phrasing ("the future ... family") are the dangling forms.
 fam_ok=1
 for fam in defence-bypass proxy-techniques; do
   if [ ! -f "skills-unspurious/$fam/SKILL.md" ]; then fam_ok=0; fi
@@ -82,6 +85,15 @@ if [ "$fam_ok" = "1" ]; then
   pass "defence-bypass and proxy-techniques families exist"
 else
   pending "defence-bypass / proxy-techniques families (C1)"
+fi
+
+dangling=$(grep -rlE 'the bypass family|the proxy family|future (defence-bypass|proxy-techniques|bypass|proxy)' skills-unspurious --include=SKILL.md || true)
+if [ -z "$dangling" ]; then
+  pass "every family reference in a SKILL.md uses the family name"
+else
+  printf 'FAIL  every family reference in a SKILL.md uses the family name; offenders:\n'
+  printf '%s\n' "$dangling" | sed 's/^/      /'
+  fail=1
 fi
 
 # 8. The 101 CLASS children exist (the two family groups are excluded from the

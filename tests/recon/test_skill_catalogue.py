@@ -90,6 +90,32 @@ def test_a_group_parent_and_its_variants_are_both_loadable(suite) -> None:
     assert suite.read("graphql").startswith("# GraphQL")
 
 
+def test_each_family_parent_links_exactly_its_child_leaves(suite) -> None:
+    # R9: the decomposing parent contract binds the two technique families the
+    # way it binds a class - `## Variants` follows `## Testing Methodology`,
+    # lists one line per child leaf in the form `<leaf> - <trigger>`, and its
+    # line set equals the child leaf set. `_completion/verify.sh` check 8 also
+    # sweeps this; the pin here makes a family regression fail in pytest.
+    for family in ("defence-bypass", "proxy-techniques"):
+        body = suite.read(family)
+        assert body.startswith("# "), family
+        assert body.index("## Variants") > body.index("## Testing Methodology")
+        section = body.split("## Variants", 1)[1].split("\n## ", 1)[0]
+        listed = [
+            line[2:].split(" - ")[0]
+            for line in section.splitlines()
+            if line.startswith("- ")
+        ]
+        leaves = sorted(
+            path.parent.name for path in (SUITE_ROOT / family).glob("*/SKILL.md")
+        )
+        assert leaves, family  # a family with no leaves proves nothing
+        assert sorted(listed) == leaves, family
+        assert len(listed) == len(set(listed))  # every child has exactly one line
+        # A family leaf resolves by its flat leaf name, like any other skill (R3).
+        assert suite.read(leaves[0])
+
+
 # --- R3: the flat leaf is the loader-facing identity ---------------------------
 
 
