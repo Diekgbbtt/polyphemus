@@ -2,7 +2,7 @@
 name: rate-limit-bypass
 description: Rate-limit bypass testing for the accounting between repeated attempts and the effect they accumulate, covering limit classification when an admit answer is not the absence of a limit, counted-dimension gaps when the effect moves in a lane the counter does not observe, and reachability adjudication when a brute claim needs the keyspace, throughput, and lifetime math.
 metadata:
-  version: '1.0.0'
+  version: 1.0.0
 ---
 
 # Rate Limit Bypass

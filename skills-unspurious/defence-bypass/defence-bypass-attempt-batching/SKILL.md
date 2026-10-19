@@ -2,7 +2,7 @@
 name: defence-bypass-attempt-batching
 description: Attempt batching where a limit counts requests while the backend iterates a payload, covering array bodies when a list of values is tested in one counted request, alias sets when one operation envelope repeats a field under distinct names, multipart batches when inner operations ride an envelope the limiter does not parse, and fat requests when a body is consumed on a verb the counter treats as one read.
 metadata:
-  version: '1.0.0'
+  version: 1.0.0
 ---
 
 # Attempt Batching

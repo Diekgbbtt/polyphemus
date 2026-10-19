@@ -2,7 +2,7 @@
 name: http-parameter-pollution
 description: HTTP parameter pollution testing for duplicate members whose resolution differs across readers, covering server-side precedence when a duplicate decides a security-relevant value, split-payload reassembly when individually benign duplicates join into the withheld effect, and client-side injection when a reflected value re-splits into a second parameter downstream.
 metadata:
-  version: '1.0.0'
+  version: 1.0.0
 ---
 
 # HTTP Parameter Pollution

@@ -2,7 +2,7 @@
 name: proxy-techniques-dom-clobbering
 description: DOM clobbering where markup-only injection defines or shadows a named global the application trusts, covering single and nested clobbering when named elements resolve in place of an expected value, base-resolution hijack when the document's base is redirected, and sink reach when the clobbered value is consumed by a URL, markup, evaluation, or resource-load sink.
 metadata:
-  version: '1.0.0'
+  version: 1.0.0
 ---
 
 # DOM Clobbering

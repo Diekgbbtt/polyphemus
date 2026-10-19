@@ -2,7 +2,7 @@
 name: proxy-techniques-client-side-path-traversal
 description: Client-side path traversal where a caller value concatenated into the path component of a client-built request traverses to a different endpoint, covering relative-base completion when the client resolves the value against its own base, gadget-endpoint chaining when the traversed request reaches a redirecting or reflecting endpoint, and response control when the client follows the redirect and renders the attacker's answer.
 metadata:
-  version: '1.0.0'
+  version: 1.0.0
 ---
 
 # Client-Side Path Traversal

@@ -2,7 +2,7 @@
 name: proxy-techniques-css-injection
 description: CSS injection as a no-execution data channel, covering attribute-value oracles when a selector matches a secret attribute character by character, prefix recursion when an imported stylesheet conditions the next position on the matched prefix, and policy gating when external resource origins decide whether the leak can leave the page.
 metadata:
-  version: '1.0.0'
+  version: 1.0.0
 ---
 
 # CSS Injection

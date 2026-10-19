@@ -2,7 +2,7 @@
 name: cache-poisoning
 description: Web cache poisoning testing for a shared cache that stores a response shaped by an input its key omits, covering unkeyed input discovery when a selector changes the body but not the key, stored header and error classes when the entry serves a verdict or a failure to later callers, and mass delivery when one stored response reaches every caller without victim interaction.
 metadata:
-  version: '1.0.0'
+  version: 1.0.0
 ---
 
 # Cache Poisoning
