@@ -28,6 +28,7 @@
 | T8 | Pod reduced D4, INIT gate, probe authoring | - | S5 8.1-8.5 |
 | T9 | Triager procedure-diff variant minting | T8 | S5 8.6 |
 | T10 | Documentation, hygiene, eval translation, fault-KB | T2, T4, T7, T9 | S1 9.5-9.6; impact map |
+| T11 | **PROPOSED, not cut** - the run resume trigger: the operator verb and the orphaned-run disposition | T3 | S1 7.5; #331 ESCALATED item 2; impact map 3.5 |
 
 The frontier is T1, T5, and T8.
 The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4, T5, T6, T7, T8, T9, T10.

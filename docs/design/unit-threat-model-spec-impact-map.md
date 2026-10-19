@@ -117,6 +117,40 @@ Each decision below must appear in the named spec section. The adversarial revie
 | Q52: consistent `{hypothesised, ratified, dropped}` vocabulary | S2 6.2; S3 8.6; S4 14.6 |
 | Q53: D3_HINT reframe | S4 14.7 |
 
+### 3.5 Implementation-time additions (T3, #376)
+
+These are implementation-time additions to the specs above, recorded here as
+required by S1 4.3 (the change spec owns implementation-level choices only where
+a decision delegated the choice to it).
+
+| Addition | Spec location | Why |
+|---|---|---|
+| The `stale` intake-exclusion reason | S1 7.1; S2 9.2 | A terminal, non-resumable run's produced model whose archive to `abandoned/` did not land must not be modelled into (a stale COMPLETED model seeds the retry's tracker), and it must not vanish from the run record either: it is recorded as an exclusion with its reason. |
+| The `skipped` key on a trajectory entry | S2 9.2 | S1 6.1 requires a forward jump to record the gates it skipped in the run record's trajectory; the six-key shape cannot carry them without it. |
+| The run RECORD's fixed keys are merged, never replaced | S2 9.2 | A resume re-persists the recomputed record, so the record write is additive by top-level key (`pg.set_hunting_run_stats`) and never touches the run's status. |
+
+**Disposition - the run-resume TRIGGER is not built (T3, #376).**
+S1 7.5 fixes the resume RULES (re-enter at `intake_position`, recompute
+`risk_total`, a halted run resumes dispatch only) and T3 implements them, but no
+production path re-enters `start_hunting` with an existing run id: the launch
+API always mints a new row, and `reconcile_orphaned_hunting_runs` terminalises an
+orphaned `running` row without rescheduling it.
+The design places the trigger outside this ticket: `docs/design/hunting-331-provider-resume-adr.md`
+(partially ratified) leaves the resume re-scheduling and "its trigger (operator
+call, eval surfer, or a health probe)" ESCALATED - "guessing it would invent an
+interface the operator has not ratified" - and `docs/design/unit-threat-model-workflow.md`
+section 6 defers the stop/resume mechanics to the change spec, which named the
+rules and no verb.
+CONSEQUENCE (STATE): while the trigger is unbuilt, a unit whose produced model is
+in flight under a `running` / `interrupted` / `stopped` producing run is
+excluded from every later run and stays UN-MODELLED. The freeze logs the
+producing run and its status for every such unit, and the exclusion is recorded
+in `intake_excluded`.
+PROPOSED TICKET: **T11 (proposed, not cut) - the run resume trigger**: the
+operator verb that re-enters the run with its recorded run id, and the
+orphaned-run disposition in `reconcile_orphaned_hunting_runs` (reschedule, or
+stamp the do-not-resume cause). Blocked on the operator's trigger choice.
+
 ### 3.4 The risk-scoring research
 
 | Decision | Spec location |

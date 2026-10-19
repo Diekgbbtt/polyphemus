@@ -355,52 +355,71 @@ def resume_run(
             if entry.get("unit_id")
         ),
         intake_position=min(int(record.get("intake_position") or 0), len(order)),
-        degraded_units=[dict(entry) for entry in record.get("degraded_units") or []],
+        degraded_units=_dedupe_degraded(record.get("degraded_units") or ()),
         trajectory=[dict(entry) for entry in record.get("trajectory") or []],
     )
-    recorded = {
-        str(entry.get("unit_id")): ModelSum(
-            unit_id=str(entry.get("unit_id")),
+    # The recorded model sums, re-accumulated through the ONE accumulator entry
+    # point (the same weights the live run uses): the running total is the sum of
+    # the entries, never the recorded `risk_total`.
+    recorded: dict[str, ModelSum] = {}
+    for entry in record.get("model_sums") or []:
+        unit_id = entry.get("unit_id")
+        if not unit_id:
+            continue
+        recorded[str(unit_id)] = ModelSum(
+            unit_id=str(unit_id),
             total=int(entry.get("total") or 0),
             breakdown={level: int((entry.get("breakdown") or {}).get(level, 0))
                        for level in RISK_LEVELS},
         )
-        for entry in record.get("model_sums") or []
-        if entry.get("unit_id")
-    }
-    run.accumulator.model_sums = list(recorded.values())
-    halt = bool(record.get("halt"))
+    for entry in recorded.values():
+        run.accumulator.add(entry)
     run.accumulator.crossing_unit = record.get("crossing_unit")
     run.accumulator.blocked_unit = record.get("blocked_unit")
-    run.accumulator.halt = halt
+    run.accumulator.halt = bool(record.get("halt"))
 
     # Adopt every complete model from the recorded position forward: the units
-    # already modelled before the crash were neither re-modelled nor lost.
-    for unit_id in order[run.intake_position:]:
-        model = (models or {}).get(unit_id)
-        if not is_complete_model(model):
-            break
-        entry = recorded.get(unit_id)
-        if entry is None:
-            entry = model_sum(unit_id, model)
-            recorded[unit_id] = entry
-            run.accumulator.add(entry)
-        run.intake_position += 1
-        if not halt and run.accumulator.crossed:
-            run.accumulator.crossing_unit = unit_id
-            run.accumulator.blocked_unit = (
-                order[run.intake_position] if run.intake_position < len(order) else None
-            )
-            run.accumulator.halt = True
-    run.accumulator.model_sums = list(recorded.values())
-    # The recompute: the running sum is the sum of the adopted model sums, never
-    # the recorded total.
-    run.accumulator.total = sum(entry.total for entry in run.accumulator.model_sums)
-    run.accumulator.breakdown = _empty_breakdown()
-    for entry in run.accumulator.model_sums:
-        for level, count in entry.breakdown.items():
-            run.accumulator.breakdown[level] += count
+    # already modelled before the crash were neither re-modelled nor lost. A
+    # HALTED record adopts nothing (a halted run resumes dispatch only, S1 7.5),
+    # and the adoption itself replays the halt check: the FIRST crossing is final
+    # - the crossing unit is the last one adopted and the position stops there.
+    if not run.accumulator.halt:
+        for unit_id in order[run.intake_position:]:
+            model = (models or {}).get(unit_id)
+            if not is_complete_model(model):
+                break
+            if unit_id not in recorded:
+                entry = model_sum(unit_id, model)
+                recorded[unit_id] = entry
+                run.accumulator.add(entry)
+            run.intake_position += 1
+            if run.accumulator.crossed:
+                run.accumulator.crossing_unit = unit_id
+                run.accumulator.blocked_unit = (
+                    order[run.intake_position]
+                    if run.intake_position < len(order) else None
+                )
+                run.accumulator.halt = True
+                break
     return run
+
+
+def _dedupe_degraded(entries: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
+    """The degraded-unit entries, one per unit id (S2 9.2).
+
+    A crash between a unit's degradation and the run-record write leaves the
+    record behind the position, so a resume can degrade the same unit again. The
+    record keeps ONE entry per unit - the latest reason wins - so a restart never
+    multiplies a unit's finding."""
+    deduped: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        unit_id = str(entry.get("unit_id") or "")
+        if not unit_id:
+            continue
+        deduped[unit_id] = {
+            "unit_id": unit_id, "reason": str(entry.get("reason") or ""),
+        }
+    return list(deduped.values())
 
 
 __all__ = [

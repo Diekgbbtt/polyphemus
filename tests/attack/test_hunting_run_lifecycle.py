@@ -719,3 +719,45 @@ def test_a_failed_model_commit_is_never_counted_in_the_run_record(
     assert record["risk_total"] == 0
     assert [entry["unit_id"] for entry in record["degraded_units"]] == [UNIT_A]
     assert record["intake_position"] == 1
+
+
+def test_a_resumed_run_clears_the_stale_provider_interrupt_keys(
+        tmp_path, monkeypatch):
+    """M7: the provider-failure handler stamps `interrupted` / `interrupt_reason`
+    / `provider_status` onto the run row, and the additive stats merge never
+    clears them - the eval reads `interrupt_reason`. A resume that completes the
+    run must clear them: a completed run is not interrupted."""
+    fake = _resume_fake(_seed_record(
+        intake_order=[UNIT_A],
+        intake_position=1,                # the intake was already exhausted
+        risk_total=3,
+        model_sums=[_completed_sum(UNIT_A)],
+        interrupted=True,
+        interrupt_reason="provider unavailable (status=429)",
+        provider_status=429,
+        quota_exhausted=False,
+        retry_after_s=45.0,
+    ))
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+
+    async def exploding_pass(project_id, run_id, unit_id, tools, **kwargs):
+        raise AssertionError(f"the intake is exhausted at {unit_id}")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        modeller_pass_fn=exploding_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert fake.statuses[-1] == (RUN, "complete")
+    record = fake.run_record(RUN)
+    assert record["interrupted"] is None
+    assert record["interrupt_reason"] is None
+    assert record["provider_status"] is None
+    assert record["quota_exhausted"] is None
+    assert record["retry_after_s"] is None
+    assert record["risk_total"] == 3      # the run record itself is untouched

@@ -724,8 +724,9 @@ The run record carries:
 
 - `intake_order`: the ordered unit ids.
 - `intake_position`: the index of the next unit to model.
-- `intake_excluded`: the excluded unit ids with reasons `completed` or `in-flight`.
+- `intake_excluded`: the excluded unit ids with reasons `completed`, `in-flight`, or `stale`.
   An `abandoned/` model is ignored and retried, not excluded.
+  `stale` records a produced model of a terminal, non-resumable run whose archive to `abandoned/` did not land: the unit is excluded, never modelled into the stale model, and a later run retries it (implementation-time addition, T3 #376).
 - `risk_threshold`.
 - `threshold_basis`: `default` or `override`.
 - `risk_weights`.
@@ -741,8 +742,10 @@ The run record carries:
 A `trajectory` entry is:
 
 ```
-{unit_id, signal, from_state, to_state, outcome, at}
+{unit_id, signal, from_state, to_state, outcome, at, skipped}
 ```
+
+`skipped` carries the gates a forward jump passed over (S1 6.1: the harness records the skipped states in the run record's trajectory).
 
 The trajectory is bounded by the number of units and gates.
 It lives in the run record, not in the model document.

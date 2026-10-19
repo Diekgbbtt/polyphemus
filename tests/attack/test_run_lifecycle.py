@@ -175,6 +175,56 @@ def test_resume_adopts_a_model_committed_before_the_run_record_update():
     assert run.record()["risk_total"] == 3
 
 
+def test_a_resume_keeps_one_degraded_entry_per_unit():
+    """S2 9.2: the crash window lets a resume degrade the same unit twice (the
+    record can lag the position), so the restored `degraded_units` carries ONE
+    entry per unit id - the latest reason wins."""
+    record = _record(
+        intake_order=["Service:a", "Service:b"],
+        intake_position=1,
+        degraded_units=[
+            {"unit_id": "Service:a", "reason": "the target was unreachable"},
+            {"unit_id": "Service:a", "reason": "the projection was unparseable"},
+            {"unit_id": "Service:b", "reason": "the pass aborted"},
+        ],
+    )
+
+    run = resume_run(record)
+
+    assert run.record()["degraded_units"] == [
+        {"unit_id": "Service:a", "reason": "the projection was unparseable"},
+        {"unit_id": "Service:b", "reason": "the pass aborted"},
+    ]
+
+
+def test_the_resume_adoption_stops_at_the_crossing_unit():
+    """S1 7.4/7.5: the adoption replays the halt check per adopted model, and the
+    FIRST crossing is final - the crossing unit is the last one adopted, the next
+    one is the blocked unit, and the position stops there (the order is never
+    re-ranked, and a later complete model never overwrites the audit trail)."""
+    record = _record(
+        intake_order=["Service:a", "Service:b", "Service:c"],
+        intake_position=0,
+        risk_threshold=3,
+        threshold_basis="override",
+    )
+
+    run = resume_run(record, models={
+        "Service:a": _model("high"),              # 3, the inclusive crossing
+        "Service:b": _model("high"),
+        "Service:c": None,
+    })
+
+    assert run.crossing_unit == "Service:a"
+    assert run.blocked_unit == "Service:b"
+    assert run.intake_position == 1
+    assert run.accumulator.total == 3
+    assert run.next_unit is None
+    assert run.halt is True
+    assert [entry["unit_id"] for entry in run.record()["model_sums"]] == [
+        "Service:a"]
+
+
 def test_a_halted_run_resumes_dispatch_only():
     """S1 7.5: a halted run resumes dispatch only - it never models another unit
     (the dequeue stays closed) and the halt's audit trail survives the restart."""

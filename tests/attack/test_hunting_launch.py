@@ -163,3 +163,49 @@ def test_launch_modeller_never_raises_through_the_control_plane(tmp_path):
         intake_units=[intake_unit(UNIT)],
         modeller_pass_fn=_exploding_pass,
     ))
+
+
+def test_a_modeller_only_launch_is_refused_while_a_run_is_live(monkeypatch):
+    """M4 / spec #169 US10: the ONE-live-run-per-project guard covers the
+    modeller-only launch too - the per-project produced/consumed directories are
+    single-owner, so a second pass must never race a live run on one unit."""
+    from polymerhus.app.clients import pg
+
+    monkeypatch.setattr(pg, "list_hunting_runs", lambda project_id: [
+        {"hunting_run_id": "live-run", "status": "running"}])
+    reports: list[str] = []
+
+    async def _pass(project_id, run_id, unit_id, tools, **kw):
+        reports.append(unit_id)
+        return _unit_outcome(unit_id)
+
+    result = asyncio.run(hunting_runtime.launch_modeller(
+        "p1", run_id=RUN,
+        intake_units=[intake_unit(UNIT)],
+        modeller_pass_fn=_pass,
+    ))
+
+    assert reports == []                 # the pass never ran
+    assert result is None                # the refusal shape `start_hunting` uses
+
+
+def test_a_modeller_only_launch_proceeds_when_no_run_is_live(monkeypatch):
+    """The guard is a refusal only while a run is LIVE: with no live run (or no
+    readable row, fail-open) the modeller-only launch models its intake."""
+    from polymerhus.app.clients import pg
+
+    monkeypatch.setattr(pg, "list_hunting_runs", lambda project_id: [])
+    reports: list[str] = []
+
+    async def _pass(project_id, run_id, unit_id, tools, **kw):
+        reports.append(unit_id)
+        return _unit_outcome(unit_id)
+
+    outcomes = asyncio.run(hunting_runtime.launch_modeller(
+        "p1", run_id=RUN,
+        intake_units=[intake_unit(UNIT)],
+        modeller_pass_fn=_pass,
+    ))
+
+    assert reports == [UNIT]
+    assert [outcome.unit_id for outcome in outcomes] == [UNIT]

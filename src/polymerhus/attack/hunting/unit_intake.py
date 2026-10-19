@@ -24,7 +24,13 @@ in flight in `produced/` while its producing run is live or resumable is skipped
 (`in-flight`, the sole-writer guard); a model in `abandoned/` is ignored and the
 unit is retried; a produced model whose producing run is terminal and not
 resumable is STALE - its unit directory moves to `abandoned/` and the unit is
-retried.
+retried, and when that archive does not land the unit is excluded `stale` (never
+modelled into the stale model). Every removal is recorded with its reason.
+
+STATE: the run-resume TRIGGER is not built (the #331 ADR's ESCALATED item 2;
+proposed as ticket T11 in the impact map). An `in-flight` unit therefore stays
+un-modelled until an operator resumes or drains its producing run, and the freeze
+logs that run and its status for every such unit.
 
 This module owns the pure ordering; the driver (`run_lifecycle`) owns the run
 record and the accumulator. The read seam is injectable (CODING_STANDARD s6):
@@ -35,12 +41,20 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from pathlib import Path
+from typing import Callable, Mapping, Sequence
 
 from polymerhus.analysis.l1_curator import SYSTEM_EDGE_RELS
 from polymerhus.analysis.l1_types import elide_singleton
 
 logger = logging.getLogger(__name__)
+
+# The injectable seams (CODING_STANDARD s6), typed so the agreement is explicit:
+# `L1ReadFn` is the raw read seam (the `neo4j_client.read` contract) and
+# `ArchiveFn` the stale-archive seam (the store's `archive_unit`; it returns the
+# path it MOVED, or None when it moved nothing).
+L1ReadFn = Callable[[str, dict], list]
+ArchiveFn = Callable[[str, str], "Path | None"]
 
 # The live L1 edge families (S1 7.2), single-sourced from the L1 curator's
 # §6 System-edge taxonomy: the ten families the ordering counts. A retired
@@ -59,13 +73,13 @@ class IntakeUnit:
     """One frozen unit of the run's intake snapshot.
 
     `live_edge_count` is the unit's live L1 edge count in both directions and
-    `endpoint_count` the aggregated endpoint count the tie-break reads; `kind`
-    is the unit kind (`service` / `system`) as the run record and the model
-    schema spell it.
+    `endpoint_count` the aggregated endpoint count the tie-break reads. The unit
+    KIND is deliberately not carried: it is derived from the unit id wherever it
+    is needed (`threat_model.unit_kind_from_unit_id`, and the loop file's
+    `unit_kind`), so the snapshot holds no data nothing reads.
     """
 
     unit_id: str
-    kind: str
     live_edge_count: int = 0
     endpoint_count: int = 0
 
@@ -136,33 +150,29 @@ def intake_units_from_rows(
         labels = [str(label) for label in (row.get("labels") or [])]
         props = dict(row.get("props") or {})
         if "L1Service" in labels:
+            # a Service aggregates its OWN Endpoints; a System sums the ones its
+            # connected Services aggregate (S1 7.2)
             slug = props.get("business_function_slug")
             unit_id = (
                 unit_id_of("Service", slug)
                 if isinstance(slug, str) and slug else ""
             )
-            kind = "service"
+            endpoints = int(row.get("endpoints") or 0)
         else:
             system_kind = props.get("kind")
             unit_id = (
                 unit_id_of(str(system_kind), props.get("discriminator"))
                 if system_kind else ""
             )
-            kind = "system"
+            endpoints = sum(linked.get(unit_id, {}).values())
         if not unit_id or unit_id.endswith(":"):
             logger.warning(
                 "unit intake: skipping an L1 node with no derivable identity (%s)",
                 props,
             )
             continue
-        endpoints = (
-            int(row.get("endpoints") or 0)
-            if kind == "service"
-            else sum(linked.get(unit_id, {}).values())
-        )
         units.append(IntakeUnit(
             unit_id=unit_id,
-            kind=kind,
             live_edge_count=count_live_edges(row.get("edge_families") or []),
             endpoint_count=endpoints,
         ))
@@ -187,6 +197,15 @@ class IntakePlan:
     archived: tuple[str, ...] = ()
 
 
+# The exclusion reasons the run record carries (S2 9.2): `completed` (a decided
+# model in `consumed/`), `in-flight` (a produced model a live/resumable run still
+# owns) and `stale` (a produced model of a terminal run whose archive did not
+# land, so the unit must not be modelled into it - an implementation-time
+# addition recorded in the artifact spec and the impact map).
+COMPLETED_REASON = "completed"
+IN_FLIGHT_REASON = "in-flight"
+STALE_REASON = "stale"
+
 # The producing-run statuses that still hold a produced model (S2 9.3): a
 # `running` run is live, and `interrupted` (the resumable provider pause) and
 # `stopped` (the operator's deliberate end, which resumes from the persisted run
@@ -198,7 +217,11 @@ class IntakePlan:
 # OWNED ELSEWHERE: the finer #331 derivation (`interrupted` with
 # `quota_exhausted=true` is terminal, `quota_exhausted=false` is resumable after
 # `retry_after_s`) belongs to the deferred #331 resume ticket; until it lands,
-# every `interrupted` run is treated as resumable.
+# every `interrupted` run is treated as resumable. The same ticket owns the run
+# RESUME TRIGGER: no production path re-enters `start_hunting` with an existing
+# run id today, so an in-flight unit stays un-modelled until the operator
+# resumes or drains its producing run (see the STATE note in `CONTEXT.md` and
+# the disposition in the impact map).
 RESUMABLE_RUN_STATUSES: frozenset[str] = frozenset(
     {"running", "interrupted", "stopped"}
 )
@@ -210,7 +233,7 @@ def freeze_intake(
     completed_ids: Sequence[str] = (),
     produced: Sequence[Mapping[str, str]] = (),
     run_statuses: Mapping[str, str] | None = None,
-    archive_fn=None,
+    archive_fn: ArchiveFn | None = None,
 ) -> IntakePlan:
     """Freeze the unit set: order it, then apply the exclusions (S2 9.3).
 
@@ -223,15 +246,18 @@ def freeze_intake(
       attribute.
     - A produced model whose producing run is terminal and not resumable is
       STALE: its unit directory moves to `abandoned/` (`archive_fn`) and the
-      unit is retried. `archived` records ONLY the units that actually MOVED; a
-      failed archive leaves the stale model in place, so the unit is NOT retried
-      into it (a stale COMPLETED model would seed the retry's tracker and be
-      re-counted as if the run had modelled it).
+      unit is retried. `archived` records ONLY the units that actually MOVED;
+      an archive that did NOT land (a raise, or a store reporting nothing to
+      move) leaves the stale model in place, so the unit is recorded `stale` in
+      `excluded` and is NOT retried into it (a stale COMPLETED model would seed
+      the retry's tracker and be re-counted as if the run had modelled it).
     - An `abandoned/` model is ignored and the unit retried: the freeze does not
       read that family at all.
 
-    The exclusions are recorded in the frozen (sorted) order, so the run record's
-    `intake_excluded` reads in the intake's own order.
+    Every unit the freeze removes is recorded: the exclusions are written in the
+    frozen (sorted) order, so the run record's `intake_excluded` reads in the
+    intake's own order, and each carries its reason from `COMPLETED_REASON` /
+    `IN_FLIGHT_REASON` / `STALE_REASON` (S1 7.1, S2 9.2).
     """
     statuses = dict(run_statuses or {})
     completed = set(completed_ids)
@@ -247,7 +273,7 @@ def freeze_intake(
     kept: list[IntakeUnit] = []
     for unit in order_intake(units):
         if unit.unit_id in completed:
-            excluded.append(IntakeExclusion(unit.unit_id, "completed"))
+            excluded.append(IntakeExclusion(unit.unit_id, COMPLETED_REASON))
             continue
         run_id = produced_run.get(unit.unit_id)
         if run_id is None:
@@ -255,7 +281,17 @@ def freeze_intake(
             continue
         status = statuses.get(run_id)
         if status is None or status in RESUMABLE_RUN_STATUSES:
-            excluded.append(IntakeExclusion(unit.unit_id, "in-flight"))
+            excluded.append(IntakeExclusion(unit.unit_id, IN_FLIGHT_REASON))
+            detail = (
+                f"its producing run {run_id!r} is {status!r}" if run_id
+                else "its producing run is unknown"
+            )
+            logger.warning(
+                "unit intake: %s is in flight (%s); that run must be RESUMED to "
+                "drain its produced model, or the unit stays un-modelled until "
+                "the run-resume trigger lands (proposed ticket, see the impact "
+                "map's T3 disposition)", unit.unit_id, detail,
+            )
             continue
         reason = (
             f"stale produced model: its producing run {run_id} is {status!r}, "
@@ -273,18 +309,25 @@ def freeze_intake(
             except Exception as exc:  # noqa: BLE001 - the archive is best-effort
                 logger.warning(
                     "unit intake: archiving the stale produced model of %s "
-                    "failed (%s); the unit is NOT retried this run (a stale "
-                    "model must never be modelled into)", unit.unit_id, exc,
+                    "failed (%s); the unit is recorded `stale` and NOT retried "
+                    "this run (a stale model must never be modelled into)",
+                    unit.unit_id, exc,
                 )
+                excluded.append(IntakeExclusion(unit.unit_id, STALE_REASON))
                 continue
             if destination is None:
+                # the archive reported nothing to move: the stale produced
+                # directory is still there, so the unit takes the SAME handling
+                # as a failed archive (M2) - recorded `stale`, never modelled
                 logger.warning(
                     "unit intake: the archive of %s reported nothing to move; "
-                    "the unit is retried", unit.unit_id,
+                    "the unit is recorded `stale` and NOT retried this run",
+                    unit.unit_id,
                 )
-            else:
-                archived.append(unit.unit_id)
-                logger.warning("unit intake: %s", reason)
+                excluded.append(IntakeExclusion(unit.unit_id, STALE_REASON))
+                continue
+            archived.append(unit.unit_id)
+            logger.warning("unit intake: %s", reason)
         kept.append(unit)
     return IntakePlan(
         order=tuple(unit.unit_id for unit in kept),
@@ -293,7 +336,7 @@ def freeze_intake(
     )
 
 
-def read_intake(project_id: str, *, read_fn=None) -> tuple[IntakeUnit, ...]:
+def read_intake(project_id: str, *, read_fn: L1ReadFn | None = None) -> tuple[IntakeUnit, ...]:
     """The intake read over the live L1 view (S1 7.1-7.2).
 
     Two reads: the project's L1 units with their edge families in both
@@ -343,8 +386,13 @@ def read_intake(project_id: str, *, read_fn=None) -> tuple[IntakeUnit, ...]:
 
 __all__ = [
     "AGGREGATES_FAMILY",
+    "COMPLETED_REASON",
+    "IN_FLIGHT_REASON",
+    "STALE_REASON",
+    "ArchiveFn",
     "IntakeExclusion",
     "IntakeUnit",
+    "L1ReadFn",
     "IntakePlan",
     "LIVE_L1_FAMILIES",
     "RESUMABLE_RUN_STATUSES",

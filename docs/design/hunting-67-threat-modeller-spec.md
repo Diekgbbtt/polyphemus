@@ -501,7 +501,8 @@ The saturation stop and the risk halt are different boundaries.
 At run start, the runtime reads the L1 inventory and freezes the unit set.
 A unit is excluded when its threat model is already complete in `consumed/`.
 A unit is also skipped when its model is in flight in `produced/`, because the model never evolves and a second writer would violate the sole-writer invariant.
-Each exclusion is recorded with its reason.
+A unit is excluded as `stale` when a terminal, non-resumable run's produced model could not be archived to `abandoned/`: it is never modelled into a stale model (implementation-time addition, T3 #376).
+Each exclusion is recorded with its reason (`completed`, `in-flight`, or `stale`).
 
 The freeze is a run-level snapshot.
 The L1 graph may change during the run; the modeller does not re-read the inventory.

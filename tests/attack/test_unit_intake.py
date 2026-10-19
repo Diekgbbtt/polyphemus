@@ -18,11 +18,9 @@ from polymerhus.attack.hunting.unit_intake import (
 )
 
 
-def _unit(unit_id: str, *, live_edges: int = 0, endpoints: int = 0,
-          kind: str | None = None) -> IntakeUnit:
+def _unit(unit_id: str, *, live_edges: int = 0, endpoints: int = 0) -> IntakeUnit:
     return IntakeUnit(
         unit_id=unit_id,
-        kind=kind or ("service" if unit_id.startswith("Service:") else "system"),
         live_edge_count=live_edges,
         endpoint_count=endpoints,
     )
@@ -55,8 +53,7 @@ def test_intake_rows_count_only_the_live_edge_families():
     }]
 
     assert intake_units_from_rows(rows, []) == (
-        IntakeUnit(unit_id="Service:a", kind="service",
-                   live_edge_count=2, endpoint_count=4),
+        IntakeUnit(unit_id="Service:a", live_edge_count=2, endpoint_count=4),
     )
 
 
@@ -93,7 +90,7 @@ def test_a_system_endpoint_count_sums_its_distinct_connected_services():
     ]
 
     assert intake_units_from_rows(unit_rows, service_rows) == (
-        IntakeUnit(unit_id="GraphQLApi", kind="system",
+        IntakeUnit(unit_id="GraphQLApi",
                    live_edge_count=2, endpoint_count=8),
     )
 
@@ -120,8 +117,8 @@ def test_read_intake_counts_every_l1_edge_in_both_directions():
 
     units = read_intake(PROJECT, read_fn=read)
 
-    assert units == (IntakeUnit(unit_id="Service:a", kind="service",
-                                live_edge_count=2, endpoint_count=2),)
+    assert units == (IntakeUnit(unit_id="Service:a", live_edge_count=2,
+                                endpoint_count=2),)
     cypher, params = seen[0]
     assert "-[r]-(:L1TestableUnit)" in cypher, "the L1 hop must be undirected"
     assert params["families"] == sorted(LIVE_L1_FAMILIES)
@@ -230,6 +227,27 @@ def test_freeze_intake_excludes_completed_and_in_flight_units():
     assert plan.archived == ()
 
 
+def test_a_failed_stale_archive_records_the_unit_as_stale_excluded():
+    """S2 9.2 / S1 7.1: a unit whose stale produced model could NOT be archived
+    (the store refuses, or `os.replace` fails) is neither modelled nor silently
+    dropped: it is recorded in `intake_excluded` with the reason `stale`, so the
+    run record names every unit the freeze removed and why."""
+    def _explode(unit_id, reason):
+        raise OSError("disk full (fixture)")
+
+    plan = freeze_intake(
+        [_unit("Service:a", live_edges=2)],
+        produced=[{"unit_id": "Service:a", "run_id": "dead-run"}],
+        run_statuses={"dead-run": "complete"},
+        archive_fn=_explode,
+    )
+
+    assert plan.order == ()            # never modelled into a stale model
+    assert plan.archived == ()
+    assert [(entry.unit_id, entry.reason) for entry in plan.excluded] == [
+        ("Service:a", "stale")]
+
+
 def test_a_stopped_producing_run_is_resumable_so_its_model_is_in_flight():
     """S1 7.5 / S2 9.3: a `stopped` run resumes from the persisted run record, so
     its produced model is IN FLIGHT - the new run skips the unit and never
@@ -251,11 +269,34 @@ def test_a_stopped_producing_run_is_resumable_so_its_model_is_in_flight():
     assert archived == []
 
 
+def test_an_in_flight_skip_names_the_producing_run_and_its_status(caplog):
+    """I2 disposition: no production path re-enters a run yet (the resume
+    trigger is the deferred #331 ticket), so the freeze must make a blocked unit
+    diagnosable - the in-flight skip names the producing run and its status, and
+    the exclusion keeps the fixed `in-flight` reason (S2 9.2)."""
+    with caplog.at_level("WARNING",
+                         logger="polymerhus.attack.hunting.unit_intake"):
+        plan = freeze_intake(
+            [_unit("Service:a", live_edges=1)],
+            produced=[{"unit_id": "Service:a", "run_id": "stopped-run"}],
+            run_statuses={"stopped-run": "stopped"},
+        )
+
+    assert [(entry.unit_id, entry.reason) for entry in plan.excluded] == [
+        ("Service:a", "in-flight")]
+    assert plan.order == ()
+    line = next(record.message for record in caplog.records
+                if "in flight" in record.message)
+    assert "Service:a" in line
+    assert "stopped-run" in line and "stopped" in line
+
+
 def test_the_freeze_records_only_archives_that_actually_moved():
     """S2 9.3: `IntakePlan.archived` names the units whose stale produced model
-    MOVED to `abandoned/`. A store that reports nothing to move, and a freeze
-    with no archive seam, are not archives - and a FAILED archive leaves the
-    stale model in place, so the unit is not retried into it."""
+    MOVED to `abandoned/`. A freeze with no archive seam keeps the unit (the
+    caller owns the produced family), and an archive that reports NOTHING TO MOVE
+    takes the same handling as a failed one: the stale directory is still there,
+    so the unit must not be modelled into it."""
     units = [_unit("Service:a", live_edges=1)]
     produced = [{"unit_id": "Service:a", "run_id": "dead-run"}]
     statuses = {"dead-run": "complete"}
@@ -263,26 +304,23 @@ def test_the_freeze_records_only_archives_that_actually_moved():
     no_seam = freeze_intake(units, produced=produced, run_statuses=statuses)
     assert no_seam.order == ("Service:a",)
     assert no_seam.archived == ()
+    assert no_seam.excluded == ()
 
     nothing_moved = freeze_intake(
         units, produced=produced, run_statuses=statuses,
         archive_fn=lambda unit_id, reason: None)
-    assert nothing_moved.order == ("Service:a",)
+    assert nothing_moved.order == ()
     assert nothing_moved.archived == ()
+    assert [(entry.unit_id, entry.reason) for entry in nothing_moved.excluded] == [
+        ("Service:a", "stale")]
 
     moved = freeze_intake(
         units, produced=produced, run_statuses=statuses,
         archive_fn=lambda unit_id, reason: f"abandoned/{unit_id}")
     assert moved.order == ("Service:a",)
     assert moved.archived == ("Service:a",)
+    assert moved.excluded == ()
 
-    def _explode(unit_id, reason):
-        raise OSError("disk full (fixture)")
-
-    failed = freeze_intake(
-        units, produced=produced, run_statuses=statuses, archive_fn=_explode)
-    assert failed.order == ()          # never retried into a stale model
-    assert failed.archived == ()
 
 
 def test_a_stale_produced_model_of_a_terminal_run_is_archived_and_retried():

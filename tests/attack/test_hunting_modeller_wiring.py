@@ -77,6 +77,9 @@ class _FakePg:
                                stats: dict | None = None) -> None:
         self.statuses.append((hunting_run_id, status))
         self.stats_writes.append((hunting_run_id, status, stats))
+        if stats is not None:
+            # the production seam MERGES stats onto the row (additive JSONB)
+            self.set_hunting_run_stats(hunting_run_id, stats)
 
     def set_hunting_run_stats(self, hunting_run_id: str, stats: dict) -> None:
         self.records.setdefault(hunting_run_id, {}).update(stats or {})

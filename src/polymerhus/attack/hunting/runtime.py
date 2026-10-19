@@ -65,9 +65,16 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
     from typing import Any, Coroutine
 
     from polymerhus.app.llm.checkpoints import FlushResult
+    from polymerhus.attack.hunting.run_lifecycle import ThreatModelRun
+    from polymerhus.attack.hunting.unit_intake import (
+        IntakePlan,
+        IntakeUnit,
+        L1ReadFn,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +174,19 @@ def enqueue_hunt_config(project_id: str, config, *, hunt_store=None) -> str:
     payload = {**payload, "status": "ratified"}
     store = hunt_store if hunt_store is not None else HuntStore()
     return store.write_config(project_id, payload, directory="produced")
+
+
+# The provider-pause keys the run row's stats carry (#331). The stats merge is
+# ADDITIVE, so nothing ever clears them: a resumed run that completes must NULL
+# them explicitly, or the eval keeps reading a stale `interrupt_reason` for a run
+# that finished (M7).
+CLEARED_INTERRUPT_STATS: dict[str, None] = {
+    "interrupted": None,
+    "interrupt_reason": None,
+    "provider_status": None,
+    "quota_exhausted": None,
+    "retry_after_s": None,
+}
 
 
 def _provider_interrupt_stats(err) -> dict:
@@ -357,7 +377,7 @@ def resume_pod_session(runtime, session_id: str) -> None:
     runtime.resume_session("hunting", session_id)
 
 
-def _read_only_l1_read(project_id: str):
+def _read_only_l1_read(project_id: str) -> "L1ReadFn | None":
     """The read-only L1 graph read seam (never a write-capable client).
 
     Shared by the modeller's grounding provider and the run's INTAKE read (S1
@@ -377,7 +397,7 @@ def _read_only_l1_read(project_id: str):
         return None
 
 
-def _read_model_document(store, project_id: str, unit_id: str) -> dict | None:
+def _read_model_document(store: Any, project_id: str, unit_id: str) -> dict | None:
     """The persisted model for `unit_id`, fail-open to None (a degraded read is
     an unknown model, never a raise into the run)."""
     read = getattr(store, "read_model", None) if store is not None else None
@@ -391,7 +411,9 @@ def _read_model_document(store, project_id: str, unit_id: str) -> dict | None:
         return None
 
 
-def _produced_run_statuses(project_id: str, produced: list[dict]) -> dict[str, str]:
+def _produced_run_statuses(
+    project_id: str, produced: Sequence[Mapping[str, str]],
+) -> dict[str, str]:
     """The producing runs' statuses for the intake freeze (S2 9.3).
 
     Blocking pg read (the caller offloads). Fail-open: with no readable row the
@@ -421,7 +443,9 @@ def _produced_run_statuses(project_id: str, produced: list[dict]) -> dict[str, s
     }
 
 
-def _freeze_intake(store, project_id: str, units) -> object:
+def _freeze_intake(
+    store: Any, project_id: str, units: Sequence[IntakeUnit],
+) -> IntakePlan:
     """The intake freeze (S1 7.1, S2 9.3): the exclusions from the store's
     consumed/produced families and the producing runs' statuses.
 
@@ -462,7 +486,9 @@ def _freeze_intake(store, project_id: str, units) -> object:
     )
 
 
-def _resume_intake(store, project_id: str, record: dict) -> object:
+def _resume_intake(
+    store: Any, project_id: str, record: Mapping[str, Any],
+) -> ThreatModelRun:
     """The resumed run from its persisted record (S1 7.5).
 
     Blocking store reads: the caller offloads. `risk_total` is recomputed from
@@ -487,11 +513,11 @@ async def _run_intake(
     tools,
     pass_fn,
     pass_kwargs: dict,
-    intake_units=None,
-    intake_read_fn=None,
-    record: dict | None = None,
-    record_fn=None,
-) -> tuple[list, object]:
+    intake_units: Sequence[IntakeUnit] | None = None,
+    intake_read_fn: L1ReadFn | None = None,
+    record: Mapping[str, Any] | None = None,
+    record_fn: Callable[[dict], Awaitable[None]] | None = None,
+) -> tuple[list, ThreatModelRun]:
     """Freeze the intake, order it, and model it ONE UNIT AT A TIME (S1 7.1-7.5).
 
     The run reads the L1 inventory and freezes the unit set (or resumes a
@@ -610,8 +636,8 @@ def _default_modeller_tools(
     project_id: str,
     run_id: str,
     *,
-    threat_store=None,
-    graph_read_fn=None,
+    threat_store: Any = None,
+    graph_read_fn: L1ReadFn | None = None,
 ):
     """The production modeller tool seams (S1 5).
 
@@ -733,13 +759,13 @@ async def launch_modeller(
     project_id: str,
     *,
     run_id: str,
-    intake_units=None,
-    intake_read_fn=None,
-    tools=None,
-    threat_store=None,
-    graph_read_fn=None,
-    modeller_pass_fn=None,
-    modeller_kwargs=None,
+    intake_units: Sequence[IntakeUnit] | None = None,
+    intake_read_fn: L1ReadFn | None = None,
+    tools: Any = None,
+    threat_store: Any = None,
+    graph_read_fn: L1ReadFn | None = None,
+    modeller_pass_fn: Callable[..., Awaitable[Any]] | None = None,
+    modeller_kwargs: Mapping[str, Any] | None = None,
 ) -> Any:
     """The modeller-ONLY launch coroutine (spec #169 "Singular component
     launches"): ONE modelling pass over the run's INTAKE and NOTHING else - no
@@ -769,7 +795,11 @@ async def launch_modeller(
     `hunting_runs` row's `stats`, and a modeller-only launch has none.
 
     Fail-open: a modeller failure never raises through the control plane
-    (logged). Injectable seams (s6): `modeller_pass_fn` and `modeller_kwargs`
+    (logged). The ONE-live-run-per-project guard (spec #169 US10) covers this
+    launch like the whole-pipeline one: with a live run in the project the pass
+    is REFUSED with a `None` return, because the per-project produced/consumed
+    directories are single-owner and a second pass would race the live run on one
+    unit's model. Injectable seams (s6): `modeller_pass_fn` and `modeller_kwargs`
     substitute the pass body / its kwargs for tests."""
 
     async with hunting_module_context():
@@ -777,6 +807,15 @@ async def launch_modeller(
             arun_modeller_pass,
         )
 
+        # the guard reads pg itself (`_project_has_live_hunting_run`), so this
+        # module needs no pg import here
+        if await _project_has_live_hunting_run(project_id, run_id=run_id):
+            logger.warning(
+                "launch_modeller: a live hunting run already exists for project "
+                "%s; the modeller-only launch is refused (one live run per "
+                "project)", project_id,
+            )
+            return None
         if tools is None:
             tools = _default_modeller_tools(
                 project_id, run_id, threat_store=threat_store,
@@ -978,21 +1017,21 @@ async def start_hunting(
     project_id: str,
     *,
     run_id: str | None = None,
-    intake_units=None,
-    intake_read_fn=None,
-    tools=None,
-    control=None,
-    gate=None,
+    intake_units: Sequence[IntakeUnit] | None = None,
+    intake_read_fn: L1ReadFn | None = None,
+    tools: Any = None,
+    control: Any = None,
+    gate: Any = None,
     tick_interval: float | None = None,
-    hunt_store=None,
-    hunter_store=None,
-    pod_store=None,
-    hunter_builder=None,
-    pod_builder=None,
-    modeller_pass_fn=None,
-    modeller_kwargs=None,
-    threat_store=None,
-    graph_read_fn=None,
+    hunt_store: Any = None,
+    hunter_store: Any = None,
+    pod_store: Any = None,
+    hunter_builder: Callable[..., Any] | None = None,
+    pod_builder: Callable[..., Awaitable[Any]] | None = None,
+    modeller_pass_fn: Callable[..., Awaitable[Any]] | None = None,
+    modeller_kwargs: Mapping[str, Any] | None = None,
+    threat_store: Any = None,
+    graph_read_fn: L1ReadFn | None = None,
 ) -> str | None:
     """The hunting bootstrap entry point (seam 3.1) - rewired by T4 (#173),
     then by T2b (#386), then by T3 (#376): the run's pass is the MODELLER's, over
@@ -1424,9 +1463,17 @@ async def start_hunting(
             )
             await flush_run_scoped("hunting", hunting_run_id)
             if status is not None:
+                terminal_stats = None
+                if status == "complete" and resume_record is not None \
+                        and resume_record.get("interrupted"):
+                    # the run RESUMED a provider pause and finished: the pause's
+                    # cause keys are nulled (M7), so a completed run is never
+                    # read as interrupted
+                    terminal_stats = dict(CLEARED_INTERRUPT_STATS)
                 try:
                     await asyncio.to_thread(
                         pg.set_hunting_run_status, hunting_run_id, status,
+                        stats=terminal_stats,
                     )
                 except Exception:  # noqa: BLE001 - fail-open
                     logger.warning(

@@ -389,8 +389,7 @@ def modeller_gate_payloads() -> dict:
 
 # --- the run intake fixtures (T3, #376) ---------------------------------------
 
-def intake_unit(unit_id: str, *, live_edges: int = 0, endpoints: int = 0,
-                kind: str | None = None):
+def intake_unit(unit_id: str, *, live_edges: int = 0, endpoints: int = 0):
     """One frozen intake unit (S1 7.1): the run bootstrap's `intake_units` seam.
 
     The counts are the run's own snapshot of the live L1 edge count and the
@@ -399,7 +398,6 @@ def intake_unit(unit_id: str, *, live_edges: int = 0, endpoints: int = 0,
 
     return IntakeUnit(
         unit_id=unit_id,
-        kind=kind or ("service" if unit_id.startswith("Service:") else "system"),
         live_edge_count=live_edges,
         endpoint_count=endpoints,
     )
