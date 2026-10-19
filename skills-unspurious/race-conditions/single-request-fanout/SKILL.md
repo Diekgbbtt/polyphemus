@@ -10,6 +10,7 @@ metadata:
 Per-request guards promise one state change per call yet a batched or aliased request can smuggle many changes past them at once.
 This variant packs many state changes into one request, hides duplicates behind aliases and persisted queries, and races emits over a persistent channel.
 The goal is duplicate fulfillment plus over-issuance plus quota bypass that counts as one request at the gate but many in the ledger.
+A second direction rides the same packing: one envelope carrying many costly operations amplifies load at the cost of a single counted request.
 
 ## Attack Surface
 
@@ -53,6 +54,7 @@ This variant breaks the one-request-one-effect clause because a single request f
 ### Batched Mutation Packing
 
 Pack many identical mutations into one envelope with placeholder shape `<batch-envelope>` holding `<state-change-payload>` repeated, because intra-request packing is the first bent behavior the parent never describes.
+Two envelope shapes carry the packing: an array of distinct operations inside one body, and several alias-named copies of one field inside one operation.
 Treat many durable writes from one envelope as fanout evidence and treat per-mutation rejection as clean batch accounting.
 The parent concurrent-requests step demands parallel requests and cannot describe one request replacing them, so this variant owns the packing procedure.
 

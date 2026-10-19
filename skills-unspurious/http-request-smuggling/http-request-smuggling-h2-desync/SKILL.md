@@ -72,6 +72,11 @@ A confirmed prefix becomes a bypass when it names a restricted endpoint the fron
 A confirmed prefix becomes a capture when it names a reflective endpoint and declares a length modestly beyond its own partial body, so the back-end sources the remainder from the next user's bytes.
 Both outcomes ride the same desync channel and differ only in the prefix payload choice.
 
+### Upgrade and Tunnel Aspect Values
+
+The two framing injections stay the enumerated values inside one variant, because one inject-then-observe step covers both.
+Cleartext-upgrade and tunnel-establishment shapes ride as aspect values: an upgrade request the front-end passes through while the back-end re-reads its framing, and a tunnel-establishment request that opens a channel the front-end attributes to its own upgrade handling.
+
 ## Advanced Techniques
 
 Deepen the mapping observation by injecting each framing field alone and then both together, recording which value wins each conflict.

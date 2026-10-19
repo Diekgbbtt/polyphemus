@@ -52,6 +52,8 @@ Cross-site scripting is attacker-controlled input that reaches a render or execu
 ### Trigger and Evidence Setup
 
 - Keep a trigger URL or navigation for each stored payload so later-view execution is attributable
+- Use a unique alphanumeric marker and search the no-marker baseline for it first, because a common word echoed by a help link reads as a reflection until the baseline clears it
+- Record the beacon-field family that reaches a logged or stored surface and is later rendered: error messages, return and source parameters, identity fields, agent and referrer strings, addresses, and file names
 - Operate a listener to receive exfiltration callbacks, with one marker per payload
 - Snapshot the victim-context state that execution changes, so the proof shows effect rather than echo
 
@@ -65,6 +67,7 @@ Cross-site scripting is attacker-controlled input that reaches a render or execu
 - A served file that executes inline under its response type, which proves active-content delivery.
 - A policy-violation report from the runtime guard, which maps which sinks the policy covers and which it misses.
 - A callback receipt carrying the per-payload marker, which proves execution and exfiltration reach.
+- A callback whose user agent belongs to a real browser, which separates victim execution from a backend fetch that merely followed the stored value.
 - A state change in the victim context attributable to the executed payload, which proves effect beyond a script alert.
 - Encoded output that stays inert under the exact sink context, which reads as correct encoding rather than a finding.
 
@@ -97,6 +100,8 @@ Each variant breaks one clause: stored delivery breaks the persistence clause, a
 ### Sanitizer Round Trip
 
 - Sanitised output re-parsed by the client can repair into executable markup; feed the output back through the parser
+- Parsing-ambiguity combinations where one namespace plus one foreign-content element re-parse into executable markup although each part alone is inert; enumerate the namespace-plus-element pairs the sanitizer's grammar does not model
+- Markdown and diagram renderers post-process sanitized text and can reintroduce markup after the sanitizer has run, so test the renderer's own grammar as a second sanitizer
 - Configuration gaps: allowed elements or attributes that form a gadget with an allowed handler
 - Sanitizers that cover markup while other sinks stay live
 
@@ -108,13 +113,14 @@ Each variant breaks one clause: stored delivery breaks the persistence clause, a
 
 ### Client-Only Flow
 
-- Sources: URL components, referrer, message channels, storage, and server data consumed in the client
+- Sources: URL components, referrer, message channels, storage, server data consumed in the client, and the window-name property that survives cross-origin navigation
 - Sinks: markup insertion, URL-bearing attributes, string-evaluating timers, dynamic code construction, and worker or document creation
 - Re-render and hydration paths where the client renders server-encoded content under different rules
 
 ### Computed Expressions
 
 - A sink that evaluates expressions rather than rendering text; where the computation happens on the server, the template class owns the step
+- Legacy expression frameworks escape their sandbox through constructor access and evaluation helpers, and some accept an order-by form that needs no quoting; treat a client-only expression sink as escaping whenever a constructor or helper reference reaches evaluation
 - Client-only expression evaluation stays here
 
 ### Restricted Renderers
@@ -141,6 +147,10 @@ Each variant breaks one clause: stored delivery breaks the persistence clause, a
 
 **Payload Discipline**
 - Keep a small curated set per context and iterate on encoding rather than spraying catalogues
+
+**Proxy Primitives**
+- A markup-only injection can define or shadow a named element so a global the application trusts resolves to attacker-controlled structure; the `proxy-techniques-dom-clobbering` leaf owns that primitive plus its downstream gadget step, so name it there rather than restating it here
+- Where the clobbered value later reaches a script, style, navigation, or state-changing sink, the chain continues in the class that owns that sink
 
 ## Bypass Techniques
 
@@ -169,6 +179,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Stored execution to a persistent foothold in the victim's client state
 - Execution to authorization effects where the application trusts client-readable state; the token class owns validation steps
 - Execution to overlays and interface impersonation served from the trusted origin
+- A self-only sink becomes a real finding when a cross-site request can drive the mutation that carries the payload; name the CSRF class at that step and re-read the false-positive verdict rather than filing self-XSS
 
 ## Testing Methodology
 

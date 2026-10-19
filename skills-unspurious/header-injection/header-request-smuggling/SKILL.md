@@ -31,6 +31,7 @@ Smuggling listens for cross-request leakage, so only the entries below are live 
 - Response-queue anomaly, namely a response that answers a request never sent, proves the smuggled bytes executed as a request.
 - Timing plus length diff between the paired replay and a clean sequential baseline isolates framing disagreement from ordinary latency.
 - Cross-version behavior diff records which protocol path honors the smuggled framing and which path rejects it.
+- Anomalous response to a normal request, namely a forbidden or wrong-path result for a request that carried no ambiguity of its own, because it was appended to the smuggled prefix.
 
 ## Adversarial Capabilities
 
@@ -63,7 +64,7 @@ Name stored-response splitting at this step rather than restating it, since head
 ## Bypass Techniques
 
 Bypass forms stay aspects inside this variant because no obfuscation changes the leftover-bytes oracle itself.
-- Obfuscate the encoding declaration with whitespace plus casing plus folded-continuation edges past a strict-match filter.
+- Obfuscate the encoding declaration with whitespace before the colon plus casing plus folded-continuation edges plus an invalid value spelling, past a strict-match filter that recognizes only the canonical form.
 - Split the framing payload across continuation frames so reassembly order decides which side filters first.
 - Smuggle duplicate length declarations where the enforcing side reads one member while the backend reads the other.
 - Layer encoded-length forms past a filter that decodes fewer times than the framing parser.

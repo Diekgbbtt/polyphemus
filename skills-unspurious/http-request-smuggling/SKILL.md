@@ -35,6 +35,7 @@ HTTP request smuggling exploits disagreements between a front-end proxy and a ba
 - Identify each hop between the client and the application, and note which protocol version each hop speaks
 - Note whether the front-end terminates the connection or reuses a back-end socket across client connections
 - Record whether the front-end rejects ambiguous requests or normalizes them before forwarding
+- Fingerprint the front-end strictness posture before any pair sweep: a front-end that rejects or normalizes ambiguous framing closes the plain forms, so record that posture as the gate for the probe set rather than spending pairs on it
 
 ### Probe Framing Acceptance
 
@@ -97,6 +98,7 @@ The parent baseline is the framing declaration pair itself: every hop is probed 
 ### Cross-User Capture
 
 - A poisoned socket prepends a partial request whose declared length exceeds the sent body, so the back-end consumes bytes from the next user's request
+- Aim the smuggled prefix at a handler that echoes the whole request, so the next caller's headers and body return in a readable response attributed to the smuggled request, which harvests at scale instead of one request at a time
 - The captured bytes land in the response of a controlled reflective endpoint, which discloses headers and body of the next request
 - Proof lives in the arrival of the marker token in a response to a request that never carried it
 
@@ -117,6 +119,16 @@ The parent baseline is the framing declaration pair itself: every hop is probed 
 
 - Header-block splitting across frames, where hops differ on whether reassembly precedes filtering
 - Fields that trigger a reparse of a block the front-end already validated
+
+### Upgrade-Based Shapes
+
+- An upgrade request carries a framing declaration that the front-end validates and the back-end re-reads, so smuggled bytes ride a connection the front-end believes it upgraded
+- A smuggled tunnel-establishment request makes the back-end open a channel that the front-end attributes to its own upgrade handling
+- Connection-reuse poisoning: a smuggled prefix that survives on a pooled socket re-shapes the framing of every later request that lands on it
+
+### Translation-Hop Shapes
+
+- Where the hop re-encodes HTTP into a binary protocol of the back-end's own design, the framing declaration never reaches the back-end at all; that craft belongs to http-request-smuggling-cross-protocol-desync rather than to the declaration pairs here
 
 ## Bypass Techniques
 
@@ -150,6 +162,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 ## Variants
 
 - http-request-smuggling-h2-desync - Downgrade desync probing through injected framing fields in the newer protocol's header block, where the front-end translates before the back-end.
+- http-request-smuggling-cross-protocol-desync - Desync the hop that translates HTTP into a binary back-end protocol by embedding a request inside the frame's attribute encoding.
 
 ## False Positives
 

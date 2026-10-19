@@ -69,6 +69,7 @@ Header injection turns user input into protocol-level control: response splittin
 - A timing plus length diff between the paired replay and a clean sequential baseline.
 - A cookie-jar state change: widened scope, a persisted attacker cookie, or a shadowed session name.
 - A render behaviour change, namely a body rendered as script-capable content after a media-value replacement.
+- A status or size delta across forged authority values, which names the default virtual host and the interior hosts behind the edge.
 - Navigation to a replaced destination inside the same response.
 
 ## Adversarial Capabilities
@@ -110,6 +111,10 @@ The shared-cache keying mechanics these shapes work are the proxy-techniques fam
 Backends often trust the authority header or its forwarding alias when constructing absolute URLs: password reset messages, authorization callbacks, canonical links. A forged authority produces a message pointing at attacker infrastructure that still carries the victim's token.
 
 Also test precedence between the authority header and its aliases, bracketed and trailing-dot forms, and port confusion shapes.
+
+- **Double authority and absolute-target shapes**: send a second authority field, and send an absolute request target whose authority differs from the field, so the precedence order decides which layer reads which value
+- **Discovery-document oracle**: a discovery document that publishes issuer and endpoint addresses is a second link-generating oracle beside a reset or callback flow, because the authority family is rebuilt into every published address
+- **Routing versus rewriting**: an authority that selects the upstream the front end forwards to and a rewrite header that changes the routed path act at different layers and never compose; the interior-body read that follows a routed fetch escalates to the `ssrf` class
 
 ### Cookie Manipulation
 

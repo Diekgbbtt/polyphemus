@@ -52,6 +52,7 @@ This variant breaks the client-semantics clause because a delimiter-free replace
 ### Cookie-Attribute Replacement
 
 Append attribute suffixes in abstract form, namely scope-widening plus persistence plus cross-site-relaxation plus session-erasure plus name-shadowing shapes, and confirm the jar adopts the attacker meaning.
+Carry the cross-site attribute semantics explicitly, namely which values make the entry travel on cross-site requests, plus the leading-dot domain rule that widens the entry to sibling hosts.
 Treat name shadowing as the precedence play, because jar rules can let an attacker-set name override the genuine session entry.
 The parent cookie step enumerates suffix shapes, so this variant owns the jar-behavior proof that turns a suffix into fixation or erasure.
 
@@ -94,6 +95,7 @@ Stop when the evidence shows the replaced value never drives client behavior, be
 - Sniffing guards set consistently across the sink endpoints, confirmed by guard presence beside every ignored media replacement.
 - Replaced values reflected but never consumed by any jar plus render plus navigation path, confirmed by baseline-identical behavior.
 - Session-erasure shapes that the jar ignores per its own validity rules, confirmed by surviving session state across replays.
+- Prefix-binding hardening present, namely a reserved cookie-name prefix that binds the entry to one host plus a secure transport, which defeats the name-shadowing and scope-widening shapes.
 
 ## Pro Tips
 

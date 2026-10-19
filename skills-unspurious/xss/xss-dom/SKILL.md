@@ -14,7 +14,7 @@ The impact goal is victim-context execution with sink-log evidence rather than r
 ## Attack Surface
 
 Applicability centers on a non-persistent client-only flow from source to sink with no server reflection and no storage boundary.
-The source is a client-observable value such as a fragment identifier or a query string read in the browser or a cross-document message or a client store read within one page lifetime.
+The source is a client-observable value such as a fragment identifier or a query string read in the browser or a cross-document message or a client store read within one page lifetime or the window-name property that survives cross-origin navigation.
 The sink is a client rendering or execution primitive such as markup insertion or attribute binding or navigation handling or string evaluation or worker creation.
 The flow completes within one page lifetime without a write-then-retrieve pair.
 Any technique with a persistence boundary belongs to stored even when its sink is a client sink, so this variant owns only the non-persistent remainder.
@@ -22,8 +22,8 @@ Any technique with a persistence boundary belongs to stored even when its sink i
 ## Reconnaissance
 
 Reconnaissance inventories client sources and their reachable sinks without touching the server body.
-Enumerate client sources by exercising fragment values plus query values read in the browser plus cross-document messages plus client store values and recording which ones reach script.
-Enumerate sinks by instrumenting markup insertion plus attribute binding plus navigation handling plus evaluation primitives and recording which sink fires per source.
+Enumerate client sources by exercising fragment values plus query values read in the browser plus cross-document messages plus window-name values plus client store values and recording which ones reach script.
+Enumerate sinks by instrumenting markup insertion plus library pre-filters that mutate markup before insertion plus framework bindings that mark a value as safe markup plus attribute binding plus navigation handling plus evaluation primitives, and recording which sink fires per source.
 Record one source-to-sink path per flow with its observation hook, and the inventory completes when every reachable client source maps to its sinks with no unmapped source left.
 
 ## Detection Channels
@@ -68,8 +68,10 @@ The step completes when every claimed flow shows a sink invocation with the sour
 
 ### Client-Source Families
 
-Cover fragment-driven plus browser-read query plus cross-document message plus client-store flows under one tracing procedure.
+Cover fragment-driven plus browser-read query plus cross-document message plus window-name plus client-store flows under one tracing procedure.
 Vary only the driver that sets the source value while keeping the instrumentation fixed.
+Message flows need their sender and listener shapes enumerated: a partial origin check by substring, suffix, or unanchored pattern is bypassable with a look-alike host, so a weak check is still a finding.
+Where several listeners exist, record which one fires per message and whether a race between two handlers lets a message reach the wrong sink.
 Record the source family per trace so the matrix shows which families reach which sinks.
 
 ## Advanced Techniques
@@ -95,7 +97,7 @@ DOM execution chains forward into impact once sink invocation is recorded.
 - Exfiltrate session state plus token material to an attacker-controlled destination after sink execution.
 - Chain sink execution into a state-changing request that rides the victim session.
 - Overlay a credential-collection interface on the affected view after confirming sink invocation.
-- Register a background worker from the sink execution so later visits re-execute within the same origin.
+- Register a background worker from the sink execution so later visits re-execute within the same origin, and let that worker intercept later fetches for the same origin.
 
 ## Testing Methodology
 

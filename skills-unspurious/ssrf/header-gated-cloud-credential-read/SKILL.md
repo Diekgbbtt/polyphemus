@@ -17,6 +17,7 @@ Applicability centers on a server-side fetch sink that can influence request hea
 The sink accepts attacker-influenced destination input reaching a platform credential store that is gated behind a token plus header plus method check.
 The fetcher permits at least a two-step sequence, namely one fetch that mints the gate token plus one fetch that presents it.
 The response oracle stays direct, meaning each gated outcome returns visibly as credential content or as a gate denial.
+A second metadata target beside the credential path is the instance user-data path, because startup scripts plus provisioning material often carry secrets of their own.
 Blind gated replay adds no step beyond sequencing plus the inference oracle, so it rides as a secondary inside the inference variant.
 
 ## Detection Channels
@@ -48,6 +49,7 @@ This variant breaks the plain-header clause because the gated target demands a t
 ### Token-Then-Read Sequencing
 
 Fetch the gate token first with the method the gate demands, then present that token in the header of the authenticated metadata read.
+The token request carries the lifetime header the gate demands, and the credential read follows a role-name listing, so the sequence reads token, then role name, then credentials.
 Carry the token value between the two fetches without alteration, because any mutation re-arms the gate.
 The parent header step covers only a single-fetch influence question and cannot describe ordered token-then-read sequencing, so this variant owns the sequencing procedure.
 
@@ -97,6 +99,7 @@ Stop when the gate never opens or no fetch leaves the server, because a denial w
 - Canned simulator responses that return fixed bodies without real gate evaluation.
 - Strict allowlist with resolution pinning plus no redirect following, confirmed by uniform negatives across all gated paths.
 - Callback hits whose source matches the tester machine rather than the server, which indicate a client-side fetch made the request.
+- A sink that can issue nothing but a plain read cannot open the gate, confirmed by uniform denials across every method and header attempt.
 
 ## Pro Tips
 
