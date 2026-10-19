@@ -41,16 +41,16 @@ The exfiltration goal is file content returned to the caller through the error c
 
 ## Detection Channels
 
-- Error text carrying a fragment of the read file rather than of the submitted document.
-- An error-class change that proves the redefined entity resolved where the original definition was inert.
-- An error naming a destination built from file content, where the destination itself is the disclosure.
-- A difference between the pre-flight document and the redefinition document, which isolates the redefinition as the cause.
-- A derived artifact or log entry carrying the interpolated fragment when the response channel stays closed.
-- Absent egress across the attempt, which confirms the disclosure came from the error path rather than from a callback.
+- **Read-file fragment**: error text carrying a fragment of the read file rather than of the submitted document.
+- **Error-class change**: an error-class change that proves the redefined entity resolved where the original definition was inert.
+- **Content-built destination**: an error naming a destination built from file content, where the destination itself is the disclosure.
+- **Pre-flight difference**: a difference between the pre-flight document and the redefinition document, which isolates the redefinition as the cause.
+- **Artifact or log entry**: a derived artifact or log entry carrying the interpolated fragment when the response channel stays closed.
+- **Absent egress**: absent egress across the attempt, which confirms the disclosure came from the error path rather than from a callback.
 
 ## Adversarial Capabilities
 
-Local-definition exfiltration presupposes a declaration-accepting consumer plus a reachable installed definition document, and it consumes both.
+- **Local-definition exfiltration**: presupposes a declaration-accepting consumer plus a reachable installed definition document, and it consumes both.
 - **Submit a declaration block**: send a document whose external subset names an installed definition document.
 - **Know a definition path**: discover at least one definition document on the host through the path families above.
 - **Compose a redefinition**: override an entity the installed document itself declares, so the trusted document carries the caller body.
@@ -71,7 +71,7 @@ Local-definition exfiltration presupposes a declaration-accepting consumer plus 
 - **Trusted hook**: reference an installed definition document and redefine one of its declared entities, because the trusted document's own entity names are the hook the parser already accepts.
 - **Caller body**: the redefinition body declares further entities, so the caller supplies grammar the installed document never contained.
 - **No network needed**: the whole chain resolves on the filesystem, so a closed network does not close the technique.
-See `references/local-dtd-repurposing.md` for the ordered recipe, the definition families, and the failure modes.
+- **Local-definition recipe**: see `references/local-dtd-repurposing.md` for the ordered recipe, the definition families, and the failure modes.
 
 ### Error-Channel Construction
 
@@ -130,13 +130,13 @@ Calibration runs first, because a redefinition without a reachable error channel
 
 ## Pro Tips
 
-1. Pre-flight with a harmless internal entity; it is the cheapest gate on the whole technique.
-2. Keep the redefinition minimal so each error is attributable to exactly one read.
-3. Read one offset window per attempt; long values rarely survive the error path intact.
-4. Enumerate installed definition documents before composing anything, because the hook decides the whole chain.
-5. Confirm zero egress explicitly, because the channel is the finding here.
-6. Prefer an error class that quotes the destination over one that reports only a line number.
-7. Re-enumerate the definition documents after an image or application upgrade; the installed set changes with the build.
+- **Inline pre-flight**: pre-flight with a harmless internal entity; it is the cheapest gate on the whole technique.
+- **Minimal redefinition**: keep the redefinition minimal so each error is attributable to exactly one read.
+- **One window per attempt**: read one offset window per attempt; long values rarely survive the error path intact.
+- **Definition enumeration first**: enumerate installed definition documents before composing anything, because the hook decides the whole chain.
+- **Zero-egress confirmation**: confirm zero egress explicitly, because the channel is the finding here.
+- **Quoting error class**: prefer an error class that quotes the destination over one that reports only a line number.
+- **Definition re-enumeration**: re-enumerate the definition documents after an image or application upgrade; the installed set changes with the build.
 
 ## Summary
 
