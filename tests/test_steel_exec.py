@@ -420,7 +420,7 @@ def test_injection_survives_launcher_prefixes(workroot, steel_stub, monkeypatch)
         "#!/bin/sh\n"
         "while [ $# -gt 0 ]; do\n"
         '  case "$1" in\n'
-        "    -u|-g|-p) shift 2 ;;\n"
+        "    -u|-g|-p|--user|--group|--prompt) shift 2 ;;\n"
         "    -E|-H|-n) shift ;;\n"
         "    *) break ;;\n"
         "  esac\n"
@@ -431,7 +431,7 @@ def test_injection_survives_launcher_prefixes(workroot, steel_stub, monkeypatch)
         "#!/bin/sh\n"
         "while [ $# -gt 0 ]; do\n"
         '  case "$1" in\n'
-        "    -s|-k) shift 2 ;;\n"
+        "    -s|-k|--signal|--kill-after) shift 2 ;;\n"
         "    -*) shift ;;\n"
         "    *) shift; break ;;\n"
         "  esac\n"
@@ -448,7 +448,9 @@ def test_injection_survives_launcher_prefixes(workroot, steel_stub, monkeypatch)
     for command in (
         "sudo steel browser cookies --json",
         "sudo -u root steel browser cookies --json",
+        "sudo --user root steel browser cookies --json",
         "env STEEL_API_KEY=k steel browser cookies --json",
+        "env -u FOO steel browser cookies --json",
         "timeout 60 steel browser cookies --json",
         "timeout -s TERM 5 steel browser cookies --json",
         f"{bindir}/steel browser cookies --json",

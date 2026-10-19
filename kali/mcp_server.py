@@ -48,9 +48,13 @@ _SHELL_SEPARATOR_CHARS = ";&|\n"
 _LAUNCHER_WORDS = frozenset({"sudo", "env", "nohup", "command", "exec"})
 # Launcher flags that consume the FOLLOWING token as their value.
 _LAUNCHER_VALUE_FLAGS = {
-    "sudo": frozenset({"-u", "-g", "-p", "-C", "-h", "-r", "-t", "-U", "-D"}),
-    "env": frozenset({"-u", "-C", "-S"}),
-    "timeout": frozenset({"-s", "-k"}),
+    "sudo": frozenset({
+        "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from",
+        "-h", "--host", "-r", "--role", "-t", "--type", "-U", "--other-user",
+        "-D", "--chdir", "-R", "--chroot",
+    }),
+    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "timeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
 }
 _TIMEOUT_DURATION = re.compile(r"^\d+(?:\.\d+)?[smhd]?$")
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
