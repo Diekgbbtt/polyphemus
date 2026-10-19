@@ -37,31 +37,31 @@ The class covers the request step, the artifact lifecycle, the binding between a
 
 ## Detection Channels
 
-- A measurably different response for a known and an unknown identity at the request step, which is the enumeration oracle.
-- The artifact returned in the response body instead of the channel, which is an immediate completion path.
-- A consumed artifact accepted a second time, which shows the single-use clause is unenforced.
-- An artifact accepted after its intended lifetime, which shows the expiry clause is unenforced.
-- An artifact accepted from a different session, device, or address, which shows the binding clause is unenforced.
-- The delivery link's host or scheme decided by a request value, which shows the destination is built from request state.
-- The flow completing for an identity whose channel the tester does not control, which is the class's own success signal.
-- An alternate factor accepting a low-entropy answer, which shows the recovery strength sits below the primary credential.
-- A session issued with no artifact consumed, which shows the flow can be short-circuited.
+- **Enumeration oracle**: a measurably different response for a known and an unknown identity at the request step, which is the enumeration oracle.
+- **Body-returned artifact**: the artifact returned in the response body instead of the channel, which is an immediate completion path.
+- **Reused artifact**: a consumed artifact accepted a second time, which shows the single-use clause is unenforced.
+- **Expired artifact**: an artifact accepted after its intended lifetime, which shows the expiry clause is unenforced.
+- **Unbound artifact**: an artifact accepted from a different session, device, or address, which shows the binding clause is unenforced.
+- **Request-built destination**: the delivery link's host or scheme decided by a request value, which shows the destination is built from request state.
+- **Foreign-channel completion**: the flow completing for an identity whose channel the tester does not control, which is the class's own success signal.
+- **Low-entropy alternate factor**: an alternate factor accepting a low-entropy answer, which shows the recovery strength sits below the primary credential.
+- **Artifact-free session issue**: a session issued with no artifact consumed, which shows the flow can be short-circuited.
 
 ## Adversarial Capabilities
 
-- Hold a readable channel for a test identity, and read the raw delivery including every value in the link.
-- Hold a second identity to observe cross-account effects and to confirm a swap changes the account the flow targets.
-- Sample several artifacts to compare shape and entropy before claiming predictability.
-- Submit one artifact more than once, from a second session, and across its intended lifetime.
-- Supply the identity value through every field the request and completion steps accept.
+- **Readable channel**: hold a readable channel for a test identity, and read the raw delivery including every value in the link.
+- **Second identity**: hold a second identity to observe cross-account effects and to confirm a swap changes the account the flow targets.
+- **Artifact sampling**: sample several artifacts to compare shape and entropy before claiming predictability.
+- **Replay and reuse submission**: submit one artifact more than once, from a second session, and across its intended lifetime.
+- **Identity-field control**: supply the identity value through every field the request and completion steps accept.
 
 ## Trust Assumptions
 
 - **The agreement**: the recovery flow grants a credential or an identity change only to the party that proves control of the channel the account names, the artifact is unguessable, single-use, short-lived, and bound to the account, the session, and the requested transition, the delivery destination is built from server-side state, and the identity the artifact names is the identity it changes.
-- **The channel-proof clause fails** where the flow completes for an identity the requester does not control, including through an alternate factor that proves less than the channel.
-- **The lifecycle clause fails** where an artifact is predictable, exposed before delivery, reusable, long-lived, or not superseded by a re-issue.
-- **The binding clause fails** where an artifact is accepted from any session, device, or address, or where the identity field is honored without a join to the account the artifact was issued for.
-- **The destination clause fails** where the delivery link's host or scheme is built from a request value, so the artifact is delivered to a destination the requester chose.
+- **The channel-proof clause fails**: the flow completes for an identity the requester does not control, including through an alternate factor that proves less than the channel.
+- **The lifecycle clause fails**: an artifact is predictable, exposed before delivery, reusable, long-lived, or not superseded by a re-issue.
+- **The binding clause fails**: an artifact is accepted from any session, device, or address, or the identity field is honored without a join to the account the artifact was issued for.
+- **The destination clause fails**: the delivery link's host or scheme is built from a request value, so the artifact is delivered to a destination the requester chose.
 
 ## Key Vulnerabilities
 
@@ -135,22 +135,22 @@ Recovery testing baselines the delivery first and mutates one control second, be
 
 ## False Positives
 
-- A response difference that is timing noise rather than an oracle, confirmed by repeating the measurement across identities.
-- An artifact that looks predictable but carries a server-validated component that is not visible in its delivered form.
-- A displayed temporary credential that is freshly generated rather than the stored original.
-- A session issued because the tester was already authenticated, confirmed by the pre-request state.
-- An identity change confirmed to the current address, where the tester also controls that channel.
-- A rate limit that slows rather than blocks, which is a weak control rather than a missing one; report it as the strength finding it is.
-- A completion that only works while the tester holds the artifact from its own delivery, which is the flow working as intended.
+- **Timing noise**: a response difference that is timing noise rather than an oracle, confirmed by repeating the measurement across identities.
+- **Hidden validation component**: an artifact that looks predictable but carries a server-validated component that is not visible in its delivered form.
+- **Freshly generated credential**: a displayed temporary credential that is freshly generated rather than the stored original.
+- **Pre-authenticated session**: a session issued because the tester was already authenticated, confirmed by the pre-request state.
+- **Own-channel confirmation**: an identity change confirmed to the current address, where the tester also controls that channel.
+- **Slow-only rate limit**: a rate limit that slows rather than blocks, which is a weak control rather than a missing one; report it as the strength finding it is.
+- **Own-delivery completion**: a completion that only works while the tester holds the artifact from its own delivery, which is the flow working as intended.
 
 ## Pro Tips
 
-1. Read the raw delivery, because the artifact's full form commonly exists only in the link that is sent.
-2. Sample several artifacts before claiming predictability, and name the derivation only when it reproduces.
-3. Test from a second session and a second device; a binding gap is invisible from the requesting session.
-4. Keep the identity-field swap as its own attempt so the cross-account effect stays attributable.
-5. Sweep the transitions after recovery, because the flow commonly reaches more than the credential it names.
-6. Confirm completion on a second account, then stop at the narrowest proof that shows it.
+- **Raw-delivery reading**: read the raw delivery, because the artifact's full form commonly exists only in the link that is sent.
+- **Sampling before claims**: sample several artifacts before claiming predictability, and name the derivation only when it reproduces.
+- **Second-session testing**: test from a second session and a second device; a binding gap is invisible from the requesting session.
+- **Isolated identity swap**: keep the identity-field swap as its own attempt so the cross-account effect stays attributable.
+- **Transition sweep**: sweep the transitions after recovery, because the flow commonly reaches more than the credential it names.
+- **Second-account completion**: confirm completion on a second account, then stop at the narrowest proof that shows it.
 
 ## Summary
 
