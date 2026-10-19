@@ -16,12 +16,12 @@ Concrete field spellings are runtime knowledge-base facts and stay out of this n
 | Rewrite and override family | The routed path or method the request claims | Routers and dispatchers consulted after the authorization check | A guarded path or method served while the direct request stays refused |
 | Capability and hint family | Identity, role, or preference hints | Personalization and authorization hints | A content change or a decision change |
 
-## Layer disambiguation
+## Layer handoffs
 
 The authority field, its aliases, and the rewrite family act at different layers, and two of them never compose.
-An authority value that selects the upstream the edge forwards to is a routing-shaped value, and the interior-body read that follows a routed fetch escalates to the `ssrf` class.
-A rewrite value changes the routed path while the real authority stays put, so a rewrite-shaped result belongs to `header-method-override` even when both arrive in one request.
-A forwarding alias is informational by protocol: no guarantee says which layer set it, so any trust past the boundary the application controls is a finding.
+A routing-shaped authority result escalates to the `ssrf` class at the interior-body read, and a rewrite-shaped result belongs to `header-method-override` even when both arrive in one request.
+The forwarding family stays informational here: no protocol guarantee says which layer set the value, so any trust past the boundary the application controls is a finding.
+The layer rule and the per-layer confirmation are detailed by the `proxy-techniques` family at its relay and forwarding step, so this note keeps the per-family consumer map and the probe discipline.
 
 ## Probe discipline
 
