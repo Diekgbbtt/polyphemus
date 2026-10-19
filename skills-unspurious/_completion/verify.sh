@@ -9,11 +9,11 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT" || exit 2
 
-# The suite now lives at the live catalogue root: these are its 39 class and 2
-# family group directories. The other live-root skills (the flat corpus, the
-# anatomy skills, the meta family) keep their old layouts and are NOT scanned
-# by the suite-scoped checks below; the stream records stay in
-# `skills-unspurious/`.
+# The suite now lives at the live catalogue root: these are its 41 group
+# directories (38 classes, the R7 cross-cutting group `two-principal-authz`,
+# and the 2 families). The other live-root skills (the flat corpus, the anatomy
+# skills, the meta family) keep their old layouts and are NOT scanned by the
+# suite-scoped checks below; the stream records stay in `skills-unspurious/`.
 SUITE_ROOT="skills"
 SUITE_GROUPS=(
   account-recovery
@@ -147,21 +147,95 @@ else
   fail=1
 fi
 
-# The replacement boundary: the non-suite live-root skills stay untouched (the
-# anatomy skills, the meta family, and a sample of the corpus's tool and
-# technology skills).
+# The replacement boundary: the FULL non-suite live-root set stays untouched
+# (the corpus's 33 tool/technology/Windows skills, the six anatomy skills, and
+# the three meta skills), and the level-1 SKILL.md-bearing directories under
+# `skills/` are EXACTLY the suite groups plus the non-suite level-1 skills - so
+# a new unlisted group directory is flagged instead of silently joining the
+# catalogue.
+NON_SUITE=(
+  agent-browser
+  authorization-pyramid
+  aws
+  cve-exploitation
+  django
+  fastapi
+  ffuf
+  firebase-firestore
+  httpx
+  katana
+  kubernetes
+  lightrag-query
+  low-hanging-fruit
+  meta/authn-skill-writing
+  meta/meta-usage-skill
+  meta/meta-write-skill
+  naabu
+  nestjs
+  nextjs
+  nmap
+  nuclei
+  python
+  semgrep
+  sqlmap
+  steel-browser
+  subfinder
+  supabase
+  webapp-clientside-semantic-model
+  webpage-analysis
+  webpage-profile
+  windows-ad
+  windows-ad-auth
+  windows-ad-unauth
+  windows-adcs
+  windows-coerce-relay
+  windows-kerberos
+  windows-lateral
+  windows-ldap-acl
+  windows-mssql
+  windows-privesc
+  windows-smb
+  windows-trusts
+)
 keep_ok=1
-for keep in \
-  webpage-analysis webpage-profile lightrag-query steel-browser \
-  webapp-clientside-semantic-model authorization-pyramid \
-  meta/meta-usage-skill meta/meta-write-skill meta/authn-skill-writing \
-  ffuf nmap semgrep windows-ad; do
+for keep in "${NON_SUITE[@]}"; do
   [ -f "$SUITE_ROOT/$keep/SKILL.md" ] || { printf '      missing non-suite skill: %s\n' "$keep"; keep_ok=0; }
 done
 if [ "$keep_ok" = "1" ]; then
-  pass "the non-suite live-root skills stay in place"
+  pass "the full non-suite live-root set (${#NON_SUITE[@]} skills) stays in place"
 else
-  failed "the non-suite live-root skills stay in place"
+  failed "the full non-suite live-root set stays in place"
+fi
+
+# The namespace rule: `meta/` itself carries no SKILL.md, so its children keep
+# their path-shaped loader names instead of becoming flat-leaf suite variants.
+if [ -e "$SUITE_ROOT/meta/SKILL.md" ]; then
+  failed "the meta namespace carries no SKILL.md of its own"
+else
+  pass "the meta namespace carries no SKILL.md of its own"
+fi
+
+# The level-1 boundary is exact: every level-1 SKILL.md-bearing directory is a
+# suite group or a listed non-suite skill. An unlisted new group fails here.
+level1=()
+while IFS= read -r dir; do
+  [ -f "$dir/SKILL.md" ] && level1+=("$(basename "$dir")")
+done < <(find "$SUITE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort)
+expected_level1=("${SUITE_GROUPS[@]}")
+for keep in "${NON_SUITE[@]}"; do
+  case "$keep" in
+    */*) ;;
+    *) expected_level1+=("$keep") ;;
+  esac
+done
+level1_sorted=$(printf '%s\n' "${level1[@]}" | sort)
+expected_level1_sorted=$(printf '%s\n' "${expected_level1[@]}" | sort)
+if [ "$level1_sorted" = "$expected_level1_sorted" ]; then
+  pass "the level-1 SKILL.md-bearing directories equal SUITE_GROUPS union NON_SUITE"
+else
+  printf 'FAIL  the level-1 SKILL.md-bearing directories are not the listed set; diff:\n'
+  diff <(printf '%s\n' "$expected_level1_sorted") <(printf '%s\n' "$level1_sorted") | sed 's/^/      /'
+  fail=1
 fi
 
 fam_ok=1

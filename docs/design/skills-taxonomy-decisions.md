@@ -75,7 +75,7 @@ Separate roots: rejected, one catalogue identity serves both.
 
 ## D-T7 - Parent conformance (B2): parents keep a conformed full body plus a `## Variants` section (round 3, option a)
 
-**Ruling.** All 30 class parents are adapted to the ontology now, and stay indexable and loadable (there is not yet enough eval evidence to bake the class coverage solely into variants).
+**Ruling.** All class parents are adapted to the ontology now, and stay indexable and loadable (there is not yet enough eval evidence to bake the class coverage solely into variants).
 A conformed parent carries:
 
 - `## Attack Surface`, `## Reconnaissance`, `## Detection Channels`, `## Adversarial Capabilities` (new), `## Trust Assumptions` (new), `## Key Vulnerabilities`, `## Advanced Techniques`, `## Bypass Techniques`, `## Chaining Attacks`, `## Testing Methodology`, `## Variants` (new), `## False Positives`, `## Pro Tips`, `## Summary`, in the ontology's section order;

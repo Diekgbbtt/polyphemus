@@ -254,7 +254,9 @@ class SkillCatalogue:
     and keeps the flat leaf identity (R3). A level-2 bundle under a plain
     namespace directory is a namespaced skill (`meta/` on the live root): its
     loader name is the root-relative path, so `is_meta_skill` and the declared
-    `meta/...` names keep resolving."""
+    `meta/...` names keep resolving. A namespace directory therefore carries no
+    `SKILL.md` of its own (`skills/meta/SKILL.md` stays absent): with a parent
+    bundle its children would become flat-leaf suite variants instead."""
 
     def __init__(
         self, root: str | Path, *, logical_root: str = LOGICAL_SUITE_ROOT
@@ -372,9 +374,20 @@ class SkillCatalogue:
 # from racing the scan. A malformed live tree degrades to an empty catalogue
 # with one loud log rather than raising into an agent turn - the fail-open
 # contract every read states (the repo checks and tests still fail the defect).
+# The sentinel child path a failed live mount degrades to: it is never created
+# and carries no bundles, so the fallback catalogue is empty by construction
+# rather than a half-built index.
+_LIVE_CATALOGUE_EMPTY = ".unmounted"
+
 _LIVE_CATALOGUE_LOCK = threading.Lock()
 _LIVE_CATALOGUE: "SkillCatalogue | None" = None
 _LIVE_CATALOGUE_ROOT: Path | None = None
+
+
+def _empty_live_catalogue(root: Path) -> "SkillCatalogue":
+    """The empty catalogue a malformed live tree degrades to: mounted under the
+    sentinel child no skill scan creates, so every read resolves nothing."""
+    return SkillCatalogue(root / _LIVE_CATALOGUE_EMPTY)
 
 
 def _live_catalogue() -> "SkillCatalogue":
@@ -395,7 +408,7 @@ def _live_catalogue() -> "SkillCatalogue":
                     "every skill read degrades to its fallback",
                     root,
                 )
-                catalogue = SkillCatalogue(root / ".unmounted")
+                catalogue = _empty_live_catalogue(root)
             _LIVE_CATALOGUE = catalogue
             _LIVE_CATALOGUE_ROOT = root
         return _LIVE_CATALOGUE
@@ -479,6 +492,9 @@ def list_skill_descriptions(
     author's), the listing is capped at `MAX_SKILL_LISTING` with the omitted
     count stated, and `pattern` is a regex searched against each skill's NAME
     and its DESCRIPTION (so both a name filter and a text filter work).
+    The cap is a read bound as well as an output bound: once it is reached no
+    further frontmatter is resolved, and the remaining candidates are counted
+    from the names alone.
     Fail-open, always loud: an invalid pattern, an empty result, and a
     truncation each render an explicit line - never a blank or silently absent
     listing."""
@@ -491,12 +507,20 @@ def list_skill_descriptions(
             matcher = re.compile(pattern)
         except re.error as exc:
             return f"load_skill: invalid pattern {pattern!r} ({exc}); nothing listed."
+    # The meta exclusion is a name rule, so the candidate list is built without
+    # a read; the cap then bounds the frontmatter reads below, not just the
+    # rendered lines.
+    candidates = [name for name in sorted(names) if not is_meta_skill(name)]
     lines = [SKILL_LIST_HEADER]
     listed = 0
     omitted = 0
-    for name in sorted(names):
-        if is_meta_skill(name):
-            continue
+    for index, name in enumerate(candidates):
+        if listed >= MAX_SKILL_LISTING:
+            # The cap is a READ bound: once MAX accepted entries are listed, no
+            # further frontmatter is read; the remaining candidates are counted
+            # from the names alone and stated as omitted.
+            omitted = len(candidates) - index
+            break
         meta = seam.meta(name, project_id=project_id)
         description = meta.get("description") if isinstance(meta, dict) else None
         if not isinstance(description, str) or not description:
@@ -505,9 +529,6 @@ def list_skill_descriptions(
         if matcher is not None and not (
             matcher.search(name) or matcher.search(description)
         ):
-            continue
-        if listed >= MAX_SKILL_LISTING:
-            omitted += 1
             continue
         lines.append(line)
         listed += 1

@@ -23,6 +23,7 @@ under a plain namespace directory keeps its path-shaped loader name.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,104 @@ from polymerhus.app.llm import skills
 # `meta/` family. The stream records live in `skills-unspurious/` and carry no
 # SKILL.md, so they are not part of the taxonomy.
 SKILLS_ROOT = Path(__file__).resolve().parents[2] / "skills"
+
+# The live root's exact loader-name set (207 names): 41 suite groups plus their
+# 124 variant leaves, 39 flat non-suite skills, and the 3 path-shaped meta
+# skills. It is hardcoded, not recomputed from the index rule, so the mount
+# cannot drop or invent a name without failing this pin.
+_EXPECTED_LIVE_NAMES = frozenset(
+    {
+        "account-recovery", "agent-browser", "archive-zipslip-write",
+        "async-boundary-abuse", "authentication-jwt", "authorization-pyramid",
+        "aws", "bfla-alternate-path", "bfla-client-identity-trust",
+        "bfla-deferred-execution", "blind-parameter-entity-oob-exfiltration",
+        "broken-function-level-authorization", "business-logic",
+        "cache-poisoning", "cdn-alternate-domain-binding",
+        "concurrent-duplication", "context-leakage",
+        "cross-service-consistency-race", "crypto-predictable-token",
+        "crypto-signing-key-forgery", "crypto-timing-oracle", "crypto-weakness",
+        "csrf", "csrf-form-post", "csrf-login-fixation", "csrf-navigation-get",
+        "csrf-parser-differential", "csrf-websocket-handshake",
+        "cve-exploitation", "dangling-record-resource-claim",
+        "default-credential-replay", "defence-bypass",
+        "defence-bypass-allowance-gap", "defence-bypass-attempt-batching",
+        "defence-bypass-edge-origin-differential",
+        "defence-bypass-encoding-differential", "defence-bypass-parser-confusion",
+        "defence-bypass-signature-evasion", "defence-bypass-throttle-evasion",
+        "deserialization-deferred-trigger", "deserialization-gadget-chain",
+        "deserialization-signed-forgery", "differential-oracle-disclosure",
+        "direct-injection-override", "django", "email-header-injection",
+        "entity-expansion-denial-of-service", "error-verbosity-disclosure",
+        "exposed-secret-extraction", "fastapi", "ffuf", "firebase-firestore",
+        "generic-redirect-parser-bypass", "graphql", "header-cache-poisoning",
+        "header-crlf-splitting", "header-gated-cloud-credential-read",
+        "header-host-forward-spoof", "header-injection", "header-method-override",
+        "header-request-smuggling", "header-response-value-confusion",
+        "http-method-tampering", "http-method-tampering-informational-verb",
+        "http-method-tampering-override-smuggling",
+        "http-method-tampering-preflight-coercion",
+        "http-method-tampering-verb-switch", "http-parameter-pollution",
+        "http-request-smuggling", "http-request-smuggling-cross-protocol-desync",
+        "http-request-smuggling-h2-desync", "httpx", "idempotency-dedup-bypass",
+        "idor", "idor-collection-batch-scope", "idor-context-carrier-substitution",
+        "idor-deferred-artifact-redemption", "idor-direct-object-swap",
+        "idor-nested-expansion-binding", "idor-second-order-stored-reference",
+        "indirect-injection-plant", "information-disclosure",
+        "information-disclosure-excessive-data-exposure",
+        "insecure-deserialization", "insecure-file-uploads",
+        "jwt-claims-confusion", "jwt-flow-lifecycle", "jwt-key-resolution",
+        "jwt-signature-forgery", "katana", "kubernetes", "ldap-injection",
+        "lfi-include-execution", "lightrag-query", "llm-prompt-injection",
+        "low-hanging-fruit", "mass-assignment",
+        "mass-assignment-bulk-collection-injection",
+        "mass-assignment-bulk-nested-relation-write",
+        "mass-assignment-nested-relation-write", "meta/authn-skill-writing",
+        "meta/meta-usage-skill", "meta/meta-write-skill", "mfa-bypass", "naabu",
+        "nestjs", "nextjs", "nmap", "no-response-egress-inference",
+        "nosql-aggregation-pipeline-injection",
+        "nosql-command-protocol-smuggling", "nosql-injection",
+        "nosql-operator-injection", "nosql-query-language-injection",
+        "nosql-server-side-script-injection", "ns-delegation-takeover", "nuclei",
+        "oauth", "oauth-code-client-binding", "oauth-device-approval",
+        "oauth-pkce-enforcement", "oauth-redirect-uri-relay",
+        "oauth-redirect-uri-validation", "oauth-state-nonce-csrf",
+        "open-redirect", "optimistic-guard-evasion", "output-handling",
+        "path-traversal-lfi-rfi", "prototype-pollution",
+        "prototype-pollution-client-side", "prototype-pollution-server-side",
+        "proxy-techniques", "proxy-techniques-cache-deception",
+        "proxy-techniques-channel-wrapping",
+        "proxy-techniques-client-side-path-traversal",
+        "proxy-techniques-css-injection", "proxy-techniques-dns-rebinding",
+        "proxy-techniques-dom-clobbering", "proxy-techniques-redirect-chain",
+        "proxy-techniques-relay-forwarding",
+        "proxy-techniques-url-parser-differential", "python",
+        "quota-window-slicing", "race-conditions",
+        "race-conditions-partial-construction", "rate-limit-bypass", "rce",
+        "rce-command-injection", "rce-pipeline-execution",
+        "redirector-to-fetcher-pivot", "rfi-remote-include",
+        "scheme-translated-command-execution", "semgrep", "session-management",
+        "session-token-authority-decode", "single-request-fanout",
+        "sql-injection", "sql-injection-second-order",
+        "sqli-boolean-blind-extraction", "sqli-error-based-extraction",
+        "sqli-oast-exfiltration", "sqli-time-blind-extraction",
+        "sqli-union-extraction", "sqlmap", "ssrf", "ssti",
+        "ssti-blind-evaluation", "ssti-reflected-evaluation", "steel-browser",
+        "stored-artifact-disclosure", "subdomain-takeover",
+        "subdomain-takeover-mail-record-claim", "subfinder", "supabase",
+        "tool-abuse", "transclusion-without-entity-resolution", "traversal-read",
+        "two-principal-authz", "upload-archive-extraction",
+        "upload-client-execution", "upload-pipeline-deferred-trust",
+        "upload-server-execution", "upload-toolchain-execution",
+        "username-enumeration-oracle", "value-domain-manipulation",
+        "weak-credential-discovery", "webapp-clientside-semantic-model",
+        "webpage-analysis", "webpage-profile", "windows-ad", "windows-ad-auth",
+        "windows-ad-unauth", "windows-adcs", "windows-coerce-relay",
+        "windows-kerberos", "windows-lateral", "windows-ldap-acl",
+        "windows-mssql", "windows-privesc", "windows-smb", "windows-trusts",
+        "xpath-injection", "xss", "xss-dom", "xss-stored", "xxe",
+        "xxe-local-dtd-error-exfiltration",
+    }
+)
 
 
 @pytest.fixture(autouse=True)
@@ -164,6 +263,19 @@ def test_a_namespaced_family_keeps_its_path_shaped_name(suite) -> None:
     assert "meta-usage-skill" not in suite.list_skills()
 
 
+def test_the_meta_namespace_carries_no_skill_md_of_its_own(suite) -> None:
+    # The path-shaped rule depends on `meta/` being a plain namespace directory:
+    # a `meta/SKILL.md` would make every meta child a level-2 suite variant and
+    # collapse its loader name to the flat leaf. The absence is asserted here
+    # and repeated by `verify.sh`, so the rule cannot be broken silently.
+    assert not (SKILLS_ROOT / "meta" / "SKILL.md").exists()
+    assert all(
+        suite.bundle_path(name).parent == SKILLS_ROOT / "meta"
+        for name in suite.list_skills()
+        if name.startswith("meta/")
+    )
+
+
 def test_reported_names_are_loader_names_and_complete(suite) -> None:
     names = suite.list_skills()
     assert names == sorted(names)
@@ -171,19 +283,12 @@ def test_reported_names_are_loader_names_and_complete(suite) -> None:
     # keeps its path shape.
     assert all(suite.logical_root not in name for name in names)
     assert all(name.startswith("meta/") for name in names if "/" in name)
-    # Every SKILL.md-bearing directory at level 1 or 2 is reported by its
-    # loader name: the mount drops nothing and invents nothing (R2).
-    walked = set()
-    for path in SKILLS_ROOT.rglob("SKILL.md"):
-        bundle = path.parent
-        depth = len(bundle.relative_to(SKILLS_ROOT).parts)
-        assert depth in (1, 2), path  # the live tree stays inside the mount levels
-        if depth == 2 and not (bundle.parent / "SKILL.md").is_file():
-            walked.add("/".join(bundle.relative_to(SKILLS_ROOT).parts))
-        else:
-            walked.add(bundle.name)
-    assert set(names) == walked
-    assert len(names) == len(walked)  # a duplicate name is never collapsed
+    # The live root's exact loader-name set: every SKILL.md-bearing directory at
+    # level 1 or 2 is reported by its loader name, so the mount drops nothing
+    # and invents nothing (R2). The set is hardcoded, never recomputed from the
+    # index rule, so a new, renamed, or missing bundle fails this pin.
+    assert set(names) == _EXPECTED_LIVE_NAMES
+    assert len(names) == len(_EXPECTED_LIVE_NAMES)  # a duplicate name is never collapsed
 
 
 def test_the_loader_functions_resolve_through_the_mount(suite) -> None:
@@ -319,6 +424,52 @@ def test_a_missing_root_mounts_empty_and_degrades(tmp_path) -> None:
     assert catalogue.read("anything", fallback="FALLBACK") == "FALLBACK"
     assert catalogue.meta("anything") == {}
     assert catalogue.bundle_path("anything") is None
+
+
+def test_a_malformed_live_tree_degrades_to_an_empty_catalogue(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    # The default live mount is fail-open: a tree that fails to index (here a
+    # duplicate leaf name) degrades to an empty catalogue with ONE loud log, so
+    # a broken deployment never raises into an agent turn.
+    _write_bundle(tmp_path, "alpha")
+    _write_bundle(tmp_path, "beta")
+    _write_bundle(tmp_path, "alpha", "shared-leaf")
+    _write_bundle(tmp_path, "beta", "shared-leaf")
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
+
+    with caplog.at_level(logging.ERROR, logger="polymerhus.app.llm.skills"):
+        assert skills.list_skills() == []
+        assert skills.skill_for("shared-leaf") == ""
+        assert skills.skill_meta("shared-leaf") == {}
+
+    mount_logs = [
+        record
+        for record in caplog.records
+        if "failed to mount" in record.getMessage()
+    ]
+    assert len(mount_logs) == 1  # one log per failed snapshot, never per read
+    assert mount_logs[0].levelno == logging.ERROR
+
+    # The fallback is the LIVE mount's contract only: an explicit mount of the
+    # same malformed tree raises at construction.
+    with pytest.raises(skills.DuplicateSkillNameError):
+        skills.SkillCatalogue(tmp_path)
+
+
+def test_clear_cache_picks_up_a_newly_added_skill(tmp_path, monkeypatch) -> None:
+    # `clear_cache` drops the live-root index snapshot (the hot-reload seam):
+    # a skill added after the first scan stays invisible until the cache clears,
+    # then indexes without a new process.
+    _write_bundle(tmp_path, "first")
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
+    assert skills.list_skills() == ["first"]
+
+    _write_bundle(tmp_path, "second")
+    assert skills.list_skills() == ["first"]  # the snapshot is still the old tree
+
+    skills.clear_cache()
+    assert skills.list_skills() == ["first", "second"]
 
 
 def test_the_default_resolution_mounts_the_live_root(suite) -> None:

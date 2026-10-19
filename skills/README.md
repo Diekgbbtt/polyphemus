@@ -16,7 +16,7 @@ skills/meta/<meta-skill-name>/SKILL.md
 
 The live root carries three layers:
 
-- The well-formed web-vulnerability-testing suite, in nested groups: a class or technique-family parent at level 1 and its variants at level 2 (41 groups: 39 classes and the `defence-bypass` and `proxy-techniques` families; 165 skills).
+- The well-formed web-vulnerability-testing suite, in nested groups: a class or technique-family parent at level 1 and its variants at level 2 (165 skills across 41 groups: 38 classes - 28 decomposing class parents, 9 new standalone classes, and the standalone `graphql` - the R7 cross-cutting group `two-principal-authz`, never counted among the classes, and the `defence-bypass` and `proxy-techniques` families).
   The stream that produced it is W0-W7; its records live in `skills-unspurious/`.
 - The remaining flat product and corpus skills: the six anatomy skills (`authorization-pyramid`, `lightrag-query`, `steel-browser`, `webapp-clientside-semantic-model`, `webpage-analysis`, `webpage-profile`) and the corpus's non-suite tool, technology, and Windows skills.
   The corpus's 30 flat vulnerability classes were superseded by the suite's enriched groups (the mount replacement), so those class directories are now group parents.
@@ -37,6 +37,10 @@ It refuses a duplicate name loudly with both colliding paths named (R4), refuses
 
 An explicit catalogue remains an index over an explicit root: `SkillCatalogue(root)` mounts any tree, and a call passing `catalogue=` resolves through that mount instead of the live root (`skill_for(name, catalogue=...)`, `list_skills(catalogue=...)`, and so on).
 Mounting one never changes the live root's index.
+
+The default live mount is fail-open: a malformed live tree (a duplicate name, a `SKILL.md` outside the two levels, or an unreadable scan) is logged once at ERROR and degrades to an empty catalogue, so no read raises into an agent turn.
+An explicit `SkillCatalogue(root)` mount is fail-loud: the same defect raises at construction, so a test or an operator mounting a tree sees it immediately.
+The repo checks and the catalogue tests fail the malformed tree either way.
 
 ## Runtime loading (`build_load_skill_tool()::load_skill`)
 
@@ -110,8 +114,8 @@ A family leaf is named `<family>-<discriminator>` (rule R5), where the discrimin
 The loader name of a skill is its flat leaf sub-directory (R3); its frontmatter `name` equals that directory, and the global name space is unique (R4).
 `references/` and `scripts/` resolve inside the owning leaf, at level 1 or level 2 (R8).
 
-**What is there.** 165 skills across 41 groups: 39 classes (30 decomposed class parents plus 9 that stand as one skill) and the `defence-bypass` and `proxy-techniques` families.
-The 30 class parents each carry a `## Variants` line set equal to their own leaves (R9); `graphql` stands as one skill with no `## Variants` (R10).
+**What is there.** 165 skills across 41 groups: 38 classes (28 decomposing class parents, 9 new standalone classes, and the standalone `graphql`), the R7 cross-cutting group `two-principal-authz` (never counted among the classes), and the `defence-bypass` and `proxy-techniques` families.
+Each of the 30 groups carrying a `## Variants` set - the 28 decomposing class parents and the two family parents - lists a line set equal to its own leaves (R9); `graphql` stands as one skill with no `## Variants` (R10).
 The families carry 16 variant leaves between them (`defence-bypass` 7, `proxy-techniques` 9).
 The suite map in `docs/design/skills-taxonomy.md` is the authoritative placement; the counts and the enrichment record are in `skills-unspurious/INVENTORY.md`, `skills-unspurious/DECOMPOSITION-REPORT.md`, and `skills-unspurious/SCREAMING-REPORT.md`.
 
@@ -147,6 +151,6 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 | `meta/meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
 | `meta/authn-skill-writing` | **authored** | authoring a project's per-project `authn` skill: posture probe, sign-in/sign-up execution, and the store/skill two-plane split |
 
-The catalogue additionally carries the suite's 165 nested skills (above) and the external corpus's remaining 33 non-suite skills moved in-repo flat (#232 D232-12), all governed by the same data-section conformance sweep.
+The catalogue's other 42 skills - the external corpus's remaining 33 moved in-repo flat (#232 D232-12), the six anatomy skills, and the three `meta/` skills - are governed by the same data-section conformance sweep.
 
 Roadmap detail + priorities: `docs/design/jobs-tools-skills-taxonomy.md` section 6.
