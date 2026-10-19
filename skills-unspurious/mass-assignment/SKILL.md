@@ -11,141 +11,141 @@ Mass assignment binds client-supplied fields directly into models or data-transf
 
 ## Attack Surface
 
-- Structured bodies, schema-layer inputs, form-encoded and multipart bodies
-- Automatic model binding in controllers and resolvers; create and update helpers
-- Writable nested relations, sparse and patch updates, bulk endpoints
+- **Input carriers**: structured bodies, schema-layer inputs, form-encoded and multipart bodies
+- **Binding surfaces**: automatic model binding in controllers and resolvers; create and update helpers
+- **Widening shapes**: writable nested relations, sparse and patch updates, bulk endpoints
 
 ## Reconnaissance
 
 ### Surface Map
 
-- Handlers with automatic binding, where a request body reaches a model without a per-field map
-- Schema-layer input types that mirror models; administrative tools exposed over the same API
-- Interface descriptions and client bundles: forms and mutation payloads reveal field names, and an interface document that enumerates every model field is the candidate dictionary, including privileged fields the client never sends
-- Bulk and import paths, where per-item checks are often skipped
+- **Binding handlers**: handlers with automatic binding, where a request body reaches a model without a per-field map
+- **Schema inputs**: schema-layer input types that mirror models; administrative tools exposed over the same API
+- **Interface descriptions and client bundles**: forms and mutation payloads reveal field names, and an interface document that enumerates every model field is the candidate dictionary, including privileged fields the client never sends
+- **Bulk and import paths**: where per-item checks are often skipped
 
 ### Candidate Field Families
 
-- Privilege and role fields: role, permission, and administrative marker fields
-- Ownership and tenancy fields: user, owner, account, organization, tenant, and workspace references
-- Limit and quota fields: usage limits, seat counts, project caps, credit balances
-- Feature-gate fields: feature maps, flag lists, preview access, impersonation toggles
-- Billing fields: price, amount, currency, proration, next invoice date, trial end
-- Temporal and audit fields: creation, update, and author markers whose binding rewrites provenance and audit trails
-- Verification and status fields: verification markers, workflow-state fields, and ownership-transfer fields
-- The families, the binder shapes that carry them, and the read-back verification rule are in `references/field-dictionary.md`
+- **Privilege and role fields**: role, permission, and administrative marker fields
+- **Ownership and tenancy fields**: user, owner, account, organization, tenant, and workspace references
+- **Limit and quota fields**: usage limits, seat counts, project caps, credit balances
+- **Feature-gate fields**: feature maps, flag lists, preview access, impersonation toggles
+- **Billing fields**: price, amount, currency, proration, next invoice date, trial end
+- **Temporal and audit fields**: creation, update, and author markers whose binding rewrites provenance and audit trails
+- **Verification and status fields**: verification markers, workflow-state fields, and ownership-transfer fields
+- **Field dictionary reference**: the families, the binder shapes that carry them, and the read-back verification rule are in `references/field-dictionary.md`
 
 ### Shape Variants
 
-- Alternate shapes: arrays versus scalars, nested objects, objects under unexpected keys
-- Path forms: dotted and bracketed keys reaching nested fields through different binders
-- Duplicate keys, where precedence decides which value binds
-- Sparse and patch formats: additive patch documents carrying forbidden paths
-- Binder-specific shapes: nested keys, bracketed paths, and update-operator forms that reach the model through a different binder than the plain field; probe one binder per attempt and record which one accepts the field, leaving the operator forms that belong to the query-language classes at their own step
+- **Alternate shapes**: arrays versus scalars, nested objects, objects under unexpected keys
+- **Path forms**: dotted and bracketed keys reaching nested fields through different binders
+- **Duplicate keys**: where precedence decides which value binds
+- **Sparse and patch formats**: additive patch documents carrying forbidden paths
+- **Binder-specific shapes**: nested keys, bracketed paths, and update-operator forms that reach the model through a different binder than the plain field; probe one binder per attempt and record which one accepts the field, leaving the operator forms that belong to the query-language classes at their own step
 
 ### Encodings and Channels
 
-- Content types: structured, form-encoded, multipart, and plain text
-- Schema-layer inputs: add candidate fields to input objects, then overfetch the response to detect change
-- Bulk bodies: arrays of objects, verifying that per-item allowlists still apply
+- **Content types**: structured, form-encoded, multipart, and plain text
+- **Schema-layer inputs**: add candidate fields to input objects, then overfetch the response to detect change
+- **Bulk bodies**: arrays of objects, verifying that per-item allowlists still apply
 
 ## Detection Channels
 
-- A persisted value visible in a later read for the field under test, which binds the attempt to a verdict.
-- Silent persistence without a corresponding echo in the response, which confirms a write the response never reflected.
-- Per-position state inside a bulk request, where one slot persists a value the batch echo does not show.
-- A per-position diff across roles, which separates a validated slot or field from a smuggled one.
-- A child value persisted through a nested write and visible in a later child read or a parent overfetch.
-- A silent nested persistence without parent echo, which confirms a write the response never reflected.
-- A child-scope diff across roles, which separates a caller-permitted link from an out-of-scope write.
-- A recomputed field that ignores the input, which marks a guarded field or slot rather than a success.
-- A parent-only change with no child persistence, which marks a non-finding for the nested paths.
-- Uniform rejection with nothing persisted, which marks a guarded batch rather than a finding.
+- **Persisted value**: a persisted value visible in a later read for the field under test, which binds the attempt to a verdict.
+- **Silent persistence**: silent persistence without a corresponding echo in the response, which confirms a write the response never reflected.
+- **Per-position state**: per-position state inside a bulk request, where one slot persists a value the batch echo does not show.
+- **Per-position diff**: a per-position diff across roles, which separates a validated slot or field from a smuggled one.
+- **Persisted child value**: a child value persisted through a nested write and visible in a later child read or a parent overfetch.
+- **Silent nested persistence**: a silent nested persistence without parent echo, which confirms a write the response never reflected.
+- **Child-scope diff**: a child-scope diff across roles, which separates a caller-permitted link from an out-of-scope write.
+- **Recomputed field**: a recomputed field that ignores the input, which marks a guarded field or slot rather than a success.
+- **Parent-only change**: a parent-only change with no child persistence, which marks a non-finding for the nested paths.
+- **Uniform rejection**: uniform rejection with nothing persisted, which marks a guarded batch rather than a finding.
 
 ## Adversarial Capabilities
 
-Binding testing presupposes a writable resource per role, a candidate field list, and a read path that shows persisted state, and it consumes all three.
-- Hold one session per role, including a low-privilege account and a second principal where ownership change is in question.
-- Send arbitrary field sets alongside the legitimate update fields the client normally sends.
-- Re-shape one field through every binder the application exposes.
-- Read the resource back per item, per child relation, and per role after each attempt.
-- Snapshot state before and after each attempt so a silent persistence is still visible.
+- **Prerequisites**: binding testing presupposes a writable resource per role, a candidate field list, and a read path that shows persisted state, and it consumes all three.
+- **Role sessions**: hold one session per role, including a low-privilege account and a second principal where ownership change is in question.
+- **Field-set injection**: send arbitrary field sets alongside the legitimate update fields the client normally sends.
+- **Binder reshaping**: re-shape one field through every binder the application exposes.
+- **Read-back**: read the resource back per item, per child relation, and per role after each attempt.
+- **State snapshot**: snapshot state before and after each attempt so a silent persistence is still visible.
 
 ## Trust Assumptions
 
-The class rests on one agreement: the bind step maps exactly the fields the caller is entitled to set, whatever shape the request takes.
-The agreement holds the field map to an allowlist at the boundary, holds every transport and shape to the same map, holds nested and child writes to the same per-field scope as the top level, and holds bulk requests to a per-item check rather than a boundary check once.
-Sensitive position leaks when the bind step maps more than the caller may set: an extra flat field, a nested child, a mid-batch slot, or a shape another binder treats differently.
-Each variant breaks one clause: the flat-field clause, the batch-scope clause, the nested-binding clause, or the shape-consistency clause.
+- **The trust premise**: the class rests on one agreement: the bind step maps exactly the fields the caller is entitled to set, whatever shape the request takes.
+- **The agreement**: it holds the field map to an allowlist at the boundary, holds every transport and shape to the same map, holds nested and child writes to the same per-field scope as the top level, and holds bulk requests to a per-item check rather than a boundary check once.
+- **The exposure**: sensitive position leaks when the bind step maps more than the caller may set: an extra flat field, a nested child, a mid-batch slot, or a shape another binder treats differently.
+- **The failing clause**: each variant breaks one clause: the flat-field clause, the batch-scope clause, the nested-binding clause, or the shape-consistency clause.
 
 ## Key Vulnerabilities
 
 ### Privilege Escalation
 
-- Set role, permission, or administrative markers during signup or profile update
-- Test both path kinds per resource: a registration or create path binds as readily as an update path, and one of the two frequently carries the weaker field map
-- Add administrative or workflow-state fields to a mutation the client never exposes, then confirm whether the transition commits
-- Toggle or add feature flags where the flag map is bound directly
+- **Marker binding**: set role, permission, or administrative markers during signup or profile update
+- **Path-kind comparison**: test both path kinds per resource: a registration or create path binds as readily as an update path, and one of the two frequently carries the weaker field map
+- **Hidden-field addition**: add administrative or workflow-state fields to a mutation the client never exposes, then confirm whether the transition commits
+- **Flag toggling**: toggle or add feature flags where the flag map is bound directly
 
 ### Ownership Takeover
 
-- Change owner, account, or tenancy references to seize or relocate resources
-- Move objects across principals or tenants through the same bind path
+- **Reference change**: change owner, account, or tenancy references to seize or relocate resources
+- **Cross-principal moves**: move objects across principals or tenants through the same bind path
 
 ### Feature Gate and Limit Bypass
 
-- Enable premium or preview flags through the flag fields
-- Raise limits, seat counts, and quotas through their bound fields
+- **Flag enabling**: enable premium or preview flags through the flag fields
+- **Limit raising**: raise limits, seat counts, and quotas through their bound fields
 
 ### Billing and Entitlements
 
-- Modify plan, price, proration, trial end, or credit balance fields
-- Bypass server-side recomputation of derived financial values
+- **Financial field writes**: modify plan, price, proration, trial end, or credit balance fields
+- **Recomputation bypass**: bypass server-side recomputation of derived financial values
 
 ### Nested and Relation Writes
 
-- Writable nested serializers and relation helpers let a caller create or link related objects beyond its scope
-- A nested write inside a batch position passes a boundary-only check
+- **Nested relation writes**: writable nested serializers and relation helpers let a caller create or link related objects beyond its scope
+- **Batch-position nesting**: a nested write inside a batch position passes a boundary-only check
 
 ## Advanced Techniques
 
 ### Schema-Layer Inputs
 
-- Field-level authorization missing on input types: attempt forbidden fields inside mutation inputs
-- Combine with aliasing and batching to compare effects within one request
-- Overfetch immediately after the mutation to see fields the response filtered
+- **Input-type gaps**: field-level authorization missing on input types: attempt forbidden fields inside mutation inputs
+- **Alias and batch comparison**: combine with aliasing and batching to compare effects within one request
+- **Post-mutation overfetch**: overfetch immediately after the mutation to see fields the response filtered
 
 ### Binding-Layer Edges
 
-- Deep nesting features that reach child records through an authorized parent
-- Blanket-permit configuration that opens every field, and type casts that mutate hidden fields
-- Writable nested serializers with missing read-only marks and partial updates that skip validation
-- Schema paths excluded from reads that nevertheless accept writes, and upsert defaults that fill unset fields
+- **Deep nesting**: deep nesting features that reach child records through an authorized parent
+- **Blanket permits and casts**: blanket-permit configuration that opens every field, and type casts that mutate hidden fields
+- **Serializer marks**: writable nested serializers with missing read-only marks and partial updates that skip validation
+- **Write-only paths**: schema paths excluded from reads that nevertheless accept writes, and upsert defaults that fill unset fields
 
 ### Parser and Validator Gaps
 
-- Validators that run after binding and cover only the expected fields
-- Unknown fields dropped from the response but persisted underneath
-- Inconsistent allowlists between clients or layers, where an alternate encoding bypasses the validation pipeline
+- **Post-bind validators**: validators that run after binding and cover only the expected fields
+- **Dropped fields**: unknown fields dropped from the response but persisted underneath
+- **Allowlist inconsistency**: inconsistent allowlists between clients or layers, where an alternate encoding bypasses the validation pipeline
 
 ## Bypass Techniques
 
 ### Content-Type Switching
 
-- Switch structured, form-encoded, multipart, and plain-text bodies; some code paths validate only one
-- Name the defence-bypass family at its parser step for content-type switching and key-path reshaping, rather than restating those mechanics here.
+- **Content-type switching**: switch structured, form-encoded, multipart, and plain-text bodies; some code paths validate only one
+- **Family naming**: name the defence-bypass family at its parser step for content-type switching and key-path reshaping, rather than restating those mechanics here.
 
 ### Key Path Variants
 
-- Dotted, bracketed, and object-reshaped keys reaching nested fields through different binders
+- **Key path variants**: dotted, bracketed, and object-reshaped keys reaching nested fields through different binders
 
 ### Batch Paths
 
-- Per-item checks skipped in bulk operations; insert one hostile object inside a large batch
+- **Batch paths**: per-item checks skipped in bulk operations; insert one hostile object inside a large batch
 
 ### Race and Reorder
 
-- Race two updates: the first sets the forbidden field, the second normalizes; the final state may retain the change
+- **Race and reorder**: race two updates: the first sets the forbidden field, the second normalizes; the final state may retain the change
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
@@ -168,21 +168,21 @@ The per-field injection and read-back walk is driven by `scripts/mass-assignment
 
 ## False Positives
 
-- The server recomputing derived fields (plan, price, role) and ignoring the client input
-- Fields marked read-only and enforced consistently across encodings
-- Changes visible only in the interface with no persisted effect
-- A batch rejection that persists nothing, which marks a guarded batch rather than a gap
-- A destructive probe that was reverted to the original value before the diff, which proves nothing about the bind; restore the original value only after the persistence verdict is recorded
+- **Server recomputation**: the server recomputing derived fields (plan, price, role) and ignoring the client input
+- **Read-only enforcement**: fields marked read-only and enforced consistently across encodings
+- **Interface-only changes**: changes visible only in the interface with no persisted effect
+- **Batch rejection**: a batch rejection that persists nothing, which marks a guarded batch rather than a gap
+- **Reverted probe**: a destructive probe that was reverted to the original value before the diff, which proves nothing about the bind; restore the original value only after the persistence verdict is recorded
 
 ## Pro Tips
 
-1. Build a sensitive-field dictionary per resource and fuzz it systematically
-2. Always try alternate shapes and encodings; many validators are shape-specific
-3. In the schema layer, read the resource immediately after the mutation; the effect is often visible even when the response filters fields
-4. Inspect client bundles and mobile payloads for hidden field names and nested write examples
-5. Prefer minimal proofs that show durable state change; discard interface-only effects
-6. Diff per position and per child, not per batch, so one smuggled slot is not hidden by an echoed batch
-7. On a destructive update path, record the persistence verdict first and restore the original value afterwards, so the probe leaves no lasting change and the verdict rests on a real diff
+- **Dictionary first**: build a sensitive-field dictionary per resource and fuzz it systematically
+- **Shape variation**: always try alternate shapes and encodings; many validators are shape-specific
+- **Immediate read-back**: in the schema layer, read the resource immediately after the mutation; the effect is often visible even when the response filters fields
+- **Client mining**: inspect client bundles and mobile payloads for hidden field names and nested write examples
+- **Minimal proofs**: prefer minimal proofs that show durable state change; discard interface-only effects
+- **Per-position diffing**: diff per position and per child, not per batch, so one smuggled slot is not hidden by an echoed batch
+- **Destructive-probe discipline**: on a destructive update path, record the persistence verdict first and restore the original value afterwards, so the probe leaves no lasting change and the verdict rests on a real diff
 
 ## Summary
 
