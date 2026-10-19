@@ -42,16 +42,16 @@ Treat every stored value that a read path reuses as statement text until the tri
 
 ## Detection Channels
 
-- A statement error at the trigger that quotes the stored value or names a clause the write never contained.
-- A differential at the trigger between two stored values that differ in one fragment only.
-- An effect that appears only after the plant and correlates with the trigger operation rather than with the write.
-- A callback receipt at a later operation carrying data only the stored value could have produced.
-- A state change on the record the trigger acts on, where the stored value redirected the statement's target.
-- An identity delta where one principal's stored value changes another principal's outcome.
+- **Statement error at the trigger**: quotes the stored value or names a clause the write never contained.
+- **Trigger differential**: between two stored values that differ in one fragment only.
+- **Post-plant effect**: appears only after the plant and correlates with the trigger operation rather than with the write.
+- **Callback receipt**: at a later operation carrying data only the stored value could have produced.
+- **Record state change**: on the record the trigger acts on, where the stored value redirected the statement's target.
+- **Identity delta**: where one principal's stored value changes another principal's outcome.
 
 ## Adversarial Capabilities
 
-Second-order work presupposes a persistent write plus a reachable trigger, and it consumes both.
+- **Second-order work**: presupposes a persistent write plus a reachable trigger, and it consumes both.
 - **Persistent write**: hold the ability to store caller text in at least one field the application later reuses.
 - **Trigger reach**: invoke the operation that interpolates the stored text, from the same or from another identity.
 - **Tracking across operations**: keep the plant and the trigger attributable through one marker per pair.
@@ -144,13 +144,13 @@ Pairing runs before shaping, because a payload without a trigger proves nothing.
 
 ## Pro Tips
 
-1. Map the pair before shaping anything, because the write and the trigger are two halves of one finding.
-2. Plant one unique marker per storage point so a deferred effect attributes to exactly one pair.
-3. Test the trigger under a second principal; cross-context execution is the strongest form of this variant.
-4. Expect less filtering at the trigger, because the read path trusts the store.
-5. Keep the plant minimal so the write's own validation accepts it.
-6. Record both halves in the finding, because the remediation has a write side and a read side.
-7. Re-run the trigger inventory after each deployment; a new report or export adds a new trigger.
+- **Pair mapping**: map the pair before shaping anything, because the write and the trigger are two halves of one finding.
+- **One marker per point**: plant one unique marker per storage point so a deferred effect attributes to exactly one pair.
+- **Second principal**: test the trigger under a second principal; cross-context execution is the strongest form of this variant.
+- **Trigger filtering**: expect less filtering at the trigger, because the read path trusts the store.
+- **Minimal plant**: keep the plant minimal so the write's own validation accepts it.
+- **Both halves recorded**: record both halves in the finding, because the remediation has a write side and a read side.
+- **Trigger re-inventory**: re-run the trigger inventory after each deployment; a new report or export adds a new trigger.
 
 ## Summary
 

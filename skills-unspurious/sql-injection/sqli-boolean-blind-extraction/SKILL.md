@@ -13,80 +13,78 @@ The extraction goal is metadata plus table rows rebuilt from response differenti
 
 ## Attack Surface
 
-Applicability centers on a query path whose responses vary stably with injected predicate truth.
-User input reaches SQL construction with string concatenation present and at least one observable response difference per paired probe.
-The differential surface preserves status plus body plus length plus presence-header distinctions rather than normalizing every answer.
-Identifier versus value influence plus query shape ride inside this variant only as aspects because neither changes the diffing step itself.
-DBMS dialect rides inside this variant only as predicate naming because renaming a string function never changes the binary-search procedure.
+- **Applicability**: centers on a query path whose responses vary stably with injected predicate truth.
+- **Input reach**: user input reaches SQL construction with string concatenation present and at least one observable response difference per paired probe.
+- **Differential surface**: preserves status plus body plus length plus presence-header distinctions rather than normalizing every answer.
+- **Identifier versus value influence plus query shape**: ride inside this variant only as aspects because neither changes the diffing step itself.
+- **DBMS dialect**: rides inside this variant only as predicate naming because renaming a string function never changes the binary-search procedure.
 
 ## Detection Channels
 
-Paired differentials confirm this variant, so only the entries below are live here.
-- Status plus body plus length plus presence-header difference between a true predicate and its false pair.
-- Stable per-pair verdict separating a reachable truth signal from random variance.
-- Normalized response digest confirming the differential survives templating noise.
-- Ordered-output shaping signal where sort plus paging contexts carry the predicate into visible row order.
+- **Paired differentials**: confirm this variant.
+- **Response difference**: status plus body plus length plus presence-header difference between a true predicate and its false pair.
+- **Stable per-pair verdict**: separating a reachable truth signal from random variance.
+- **Normalized response digest**: confirming the differential survives templating noise.
+- **Ordered-output shaping signal**: where sort plus paging contexts carry the predicate into visible row order.
 
 ## Adversarial Capabilities
 
-Extraction presupposes anonymous request ability plus paired-response observation, and it consumes both.
-- Send paired requests differing only in one predicate truth value.
-- Normalize each response by length plus digest plus presence headers before comparing.
-- Repeat each pair until the verdict stabilises across samples.
-- Hold an authenticated session only where the sink requires privilege before answering differentially.
+- **Extraction**: presupposes anonymous request ability plus paired-response observation, and it consumes both.
+- **Paired requests**: send paired requests differing only in one predicate truth value.
+- **Response normalization**: normalize each response by length plus digest plus presence headers before comparing.
+- **Verdict stabilisation**: repeat each pair until the verdict stabilises across samples.
+- **Privileged session**: hold an authenticated session only where the sink requires privilege before answering differentially.
 
 ## Trust Assumptions
 
-The feature trusts user input to remain a bound literal from request through query construction to execution.
-The agreement holds concatenation shape stable, keeps ORM fragments bound, keeps identifiers quoted, keeps error output silent, keeps execution timing stable, and keeps database egress closed.
-Query results expose only application data, and no statement shape or store internals leak to the caller.
-This variant breaks the response-stability clause because paired predicates force distinguishable responses for true versus false, so one bit of store content leaks per pair.
+- **The agreement**: the feature trusts user input to remain a bound literal from request through query construction to execution, holds concatenation shape stable, keeps ORM fragments bound, keeps identifiers quoted, keeps error output silent, keeps execution timing stable, keeps database egress closed, and query results expose only application data with no statement shape or store internals leaking to the caller.
+- **The failing clause**: this variant breaks the response-stability clause because paired predicates force distinguishable responses for true versus false, so one bit of store content leaks per pair.
 
 ## Key Vulnerabilities
 
 ### Predicate-Pair Diffing
 
-Submit each predicate beside its exact negation and compare the normalized responses, because a single request without its pair proves nothing.
-Treat a consistent class change as one bit and treat uniform randomness as inconclusive rather than negative.
-The parent extraction step names boolean bit extraction without stating true-versus-false pairing or normalization, so this variant owns the diffing procedure.
-```text
-AND <TRUE-PREDICATE>
-AND <FALSE-PREDICATE>
-```
+- **Predicate-pair submission**: submit each predicate beside its exact negation and compare the normalized responses, because a single request without its pair proves nothing.
+- **Class-change handling**: treat a consistent class change as one bit and treat uniform randomness as inconclusive rather than negative.
+- **Diffing procedure**: the parent extraction step names boolean bit extraction without stating true-versus-false pairing or normalization, so this variant owns the diffing procedure.
+  ```text
+  AND <TRUE-PREDICATE>
+  AND <FALSE-PREDICATE>
+  ```
 
 ### Binary-Search Bit Extraction
 
-Walk each character by halving its value range with substring plus comparison predicates, because linear guessing wastes requests.
-Encode outputs in a compact alphabet to normalize before comparing.
-The parent extraction step never states substring iteration or range halving, so this variant owns the search procedure.
-```text
-SUBSTRING(<TARGET>, <POSITION>, <LENGTH>) <GUESS>
-```
+- **Range-halving walk**: walk each character by halving its value range with substring plus comparison predicates, because linear guessing wastes requests.
+- **Alphabet encoding**: encode outputs in a compact alphabet to normalize before comparing.
+- **Search procedure**: the parent extraction step never states substring iteration or range halving, so this variant owns the search procedure.
+  ```text
+  SUBSTRING(<TARGET>, <POSITION>, <LENGTH>) <GUESS>
+  ```
 
 ### Ordered-Output Shaping
 
-Carry predicates into sort plus paging contexts where row content stays hidden, because row order still answers truth.
-Shape one ordering expression per pair and record which permutation the response preserves.
-The parent boolean step never states sort-context shaping, so this variant owns the ordered-output procedure.
+- **Predicate carry-over**: carry predicates into sort plus paging contexts where row content stays hidden, because row order still answers truth.
+- **Ordering-expression shaping**: shape one ordering expression per pair and record which permutation the response preserves.
+- **Ordered-output procedure**: the parent boolean step never states sort-context shaping, so this variant owns the ordered-output procedure.
 
 ## Bypass Techniques
 
-Bypass forms stay aspects inside this variant because no encoding difference changes the diffing step itself.
-- Comment sequences plus spacing swaps reach the parser past naive whitespace filtering.
-- Keyword splitting plus case folding reach the parser past naive keyword blocklists.
-- Numeric plus character-builder encodings reach the parser past literal-pattern filters.
-- Clause relocation through derived tables plus common table expressions hides the predicate shape.
-- Promotion to gated timing applies only when jitter removes every stable differential.
+- **Bypass forms**: stay aspects inside this variant because no encoding difference changes the diffing step itself.
+- **Comment and spacing swaps**: comment sequences plus spacing swaps reach the parser past naive whitespace filtering.
+- **Keyword splitting**: keyword splitting plus case folding reach the parser past naive keyword blocklists.
+- **Numeric and character-builder encodings**: numeric plus character-builder encodings reach the parser past literal-pattern filters.
+- **Clause relocation**: clause relocation through derived tables plus common table expressions hides the predicate shape.
+- **Timing promotion**: promotion to gated timing applies only when jitter removes every stable differential.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Differentials chain forward into reads because one extracted bit without a follow-up read is only a probe.
-- Pivot from metadata to authentication records for a reversible login proof through paired diffing.
-- Pivot from metadata to role or privilege fields for a reversible modification proof where an UPDATE path is injectable.
-- Pivot from the boolean channel to file or command primitives only where granted privilege enables them.
-- Stop each chain at the smallest read or reversible proof that confirms the architectural risk.
+- **Differentials**: chain forward into reads because one extracted bit without a follow-up read is only a probe.
+- **Authentication pivot**: pivot from metadata to authentication records for a reversible login proof through paired diffing.
+- **Privilege pivot**: pivot from metadata to role or privilege fields for a reversible modification proof where an UPDATE path is injectable.
+- **Execution pivot**: pivot from the boolean channel to file or command primitives only where granted privilege enables them.
+- **Stop condition**: stop each chain at the smallest read or reversible proof that confirms the architectural risk.
 
 ## Testing Methodology
 
@@ -103,20 +101,20 @@ The delta over the parent is the paired-truth procedure plus the substring range
 
 ## False Positives
 
-Stop when paired predicates answer uniformly, because differentials without truth signal are only noise.
-- Static response sizes from templating rather than from predicate truth.
-- Generic errors unrelated to SQL parsing or constraints, which carry no differential information.
-- Timing gaps alone without a content differential, which belong to the timing sibling once gated sleep becomes the sole oracle.
-- Parameterized queries with no string concatenation, verified by code review.
+- **Stop condition**: stop when paired predicates answer uniformly, because differentials without truth signal are only noise.
+- **Static response sizes**: static response sizes from templating rather than from predicate truth.
+- **Generic errors**: generic errors unrelated to SQL parsing or constraints, which carry no differential information.
+- **Timing gaps alone**: timing gaps alone without a content differential, which belong to the timing sibling once gated sleep becomes the sole oracle.
+- **Parameterized queries**: parameterized queries with no string concatenation, verified by code review.
 
 ## Pro Tips
 
-Diffing rewards calibration plus normalization plus narrow alphabets.
-1. Prefer the smallest predicate pair that shows a stable difference before extracting anything.
-2. Normalize every response before comparing so boilerplate never poses as signal.
-3. Repeat each pair until the class stabilises, and log every sample behind its pair.
-4. Read metadata first, then jump directly to business-critical tables with minimal lateral noise.
-5. Record inconclusive pairs as inconclusive rather than negative so later runs revisit them.
+- **Diffing discipline**: diffing rewards calibration plus normalization plus narrow alphabets.
+- **Smallest pair first**: prefer the smallest predicate pair that shows a stable difference before extracting anything.
+- **Response normalization**: normalize every response before comparing so boilerplate never poses as signal.
+- **Pair repetition**: repeat each pair until the class stabilises, and log every sample behind its pair.
+- **Metadata first**: read metadata first, then jump directly to business-critical tables with minimal lateral noise.
+- **Inconclusive logging**: record inconclusive pairs as inconclusive rather than negative so later runs revisit them.
 
 ## Summary
 

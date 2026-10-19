@@ -13,76 +13,74 @@ The exfiltration goal is metadata plus table rows delivered to the listener with
 
 ## Attack Surface
 
-Applicability centers on a query path whose database reaches an attacker-observed listener through a callback primitive.
-User input reaches SQL construction with string concatenation present and at least one name-resolution or web-request primitive reachable.
-The egress surface preserves outbound callbacks rather than blocking every database-initiated connection.
-Identifier versus value influence plus query shape ride inside this variant only as aspects because neither changes the embedding step itself.
-DBMS dialect rides inside this variant only as primitive naming because renaming the callback never changes the correlation procedure.
+- **Applicability**: centers on a query path whose database reaches an attacker-observed listener through a callback primitive.
+- **Input reach**: user input reaches SQL construction with string concatenation present and at least one name-resolution or web-request primitive reachable.
+- **Egress surface**: preserves outbound callbacks rather than blocking every database-initiated connection.
+- **Identifier versus value influence plus query shape**: ride inside this variant only as aspects because neither changes the embedding step itself.
+- **DBMS dialect**: rides inside this variant only as primitive naming because renaming the callback never changes the correlation procedure.
 
 ## Detection Channels
 
-Listener hits confirm this variant, so only the entries below are live here.
-- Callback receipt at the attacker listener carrying an embedded label from the database.
-- Per-probe token correlation binding one inbound hit to exactly one outbound request.
-- Stable metadata echo confirming version plus user plus database name through repeated callbacks.
-- Blind-extraction fallback signal where egress filtering removes callbacks but a differential still answers.
+- **Listener hits**: confirm this variant.
+- **Callback receipt**: callback receipt at the attacker listener carrying an embedded label from the database.
+- **Per-probe correlation**: per-probe token correlation binding one inbound hit to exactly one outbound request.
+- **Metadata echo**: stable metadata echo confirming version plus user plus database name through repeated callbacks.
+- **Differential fallback**: blind-extraction fallback signal where egress filtering removes callbacks but a differential still answers.
 
 ## Adversarial Capabilities
 
-Exfiltration presupposes anonymous request ability plus listener operation, and it consumes both.
-- Send requests carrying structure-altering input into the candidate sink.
-- Operate a listener that mints one fresh token per probe and records each inbound hit with its label.
-- Embed one label per probe and correlate each arrival with its request.
-- Hold an authenticated session only where the sink requires privilege before executing the callback primitive.
+- **Exfiltration**: presupposes anonymous request ability plus listener operation, and it consumes both.
+- **Structure-altering requests**: send requests carrying structure-altering input into the candidate sink.
+- **Listener operation**: operate a listener that mints one fresh token per probe and records each inbound hit with its label.
+- **Per-probe labelling**: embed one label per probe and correlate each arrival with its request.
+- **Privileged session**: hold an authenticated session only where the sink requires privilege before executing the callback primitive.
 
 ## Trust Assumptions
 
-The feature trusts user input to remain a bound literal from request through query construction to execution.
-The agreement holds concatenation shape stable, keeps ORM fragments bound, keeps identifiers quoted, keeps error output silent, keeps execution timing stable, and keeps database egress closed.
-Query results expose only application data, and no statement shape or store internals leak to the caller.
-This variant breaks the egress-closure clause because injected labels force the database to open outbound callbacks carrying chosen data, so store content arrives at the listener.
+- **The agreement**: the feature trusts user input to remain a bound literal from request through query construction to execution, holds concatenation shape stable, keeps ORM fragments bound, keeps identifiers quoted, keeps error output silent, keeps execution timing stable, keeps database egress closed, and query results expose only application data with no statement shape or store internals leaking to the caller.
+- **The failing clause**: this variant breaks the egress-closure clause because injected labels force the database to open outbound callbacks carrying chosen data, so store content arrives at the listener.
 
 ## Key Vulnerabilities
 
 ### Label Embedding
 
-Embed the requested value inside the callback address so the listener label itself carries the data.
-Prefer one value per probe and keep labels short enough to survive resolution encoding.
-The parent extraction step names out-of-band retrieval without stating label embedding, so this variant owns the embedding procedure.
-```text
-<CALLBACK-PRIMITIVE>(<LABEL>.<LISTENER>)
-```
+- **Label embedding**: embed the requested value inside the callback address so the listener label itself carries the data.
+- **Label economy**: prefer one value per probe and keep labels short enough to survive resolution encoding.
+- **Embedding procedure**: the parent extraction step names out-of-band retrieval without stating label embedding, so this variant owns the embedding procedure.
+  ```text
+  <CALLBACK-PRIMITIVE>(<LABEL>.<LISTENER>)
+  ```
 
 ### Primitive Selection
 
-Select the callback primitive the target database actually exposes, because each store family enables a different egress shape.
-Confirm primitive availability with a benign marker callback before embedding any data.
-The parent extraction step never states primitive choice, so this variant owns the selection procedure.
+- **Primitive selection**: select the callback primitive the target database actually exposes, because each store family enables a different egress shape.
+- **Availability confirmation**: confirm primitive availability with a benign marker callback before embedding any data.
+- **Selection procedure**: the parent extraction step never states primitive choice, so this variant owns the selection procedure.
 
 ### Listener Correlation
 
-Mint one fresh token per probe and attribute each inbound hit to its probe, because batch totals cannot identify which request succeeded.
-Record the listener outcome per token and treat unmatched hits as unattributed rather than positive.
-The parent callback step covers only quiet watching without per-token attribution, so this variant owns the correlation procedure.
+- **Token minting**: mint one fresh token per probe and attribute each inbound hit to its probe, because batch totals cannot identify which request succeeded.
+- **Outcome recording**: record the listener outcome per token and treat unmatched hits as unattributed rather than positive.
+- **Correlation procedure**: the parent callback step covers only quiet watching without per-token attribution, so this variant owns the correlation procedure.
 
 ## Bypass Techniques
 
-Bypass forms stay aspects inside this variant because no encoding difference changes the embedding step itself.
-- Comment sequences plus spacing swaps reach the parser past naive whitespace filtering.
-- Keyword splitting plus case folding reach the parser past naive keyword blocklists.
-- Numeric plus character-builder encodings reach the parser past literal-pattern filters.
-- Clause relocation through derived tables plus common table expressions hides the callback shape.
-- Fallback to blind extraction applies only when egress filtering removes every callback.
+- **Bypass forms**: stay aspects inside this variant because no encoding difference changes the embedding step itself.
+- **Comment and spacing swaps**: comment sequences plus spacing swaps reach the parser past naive whitespace filtering.
+- **Keyword splitting**: keyword splitting plus case folding reach the parser past naive keyword blocklists.
+- **Numeric and character-builder encodings**: numeric plus character-builder encodings reach the parser past literal-pattern filters.
+- **Clause relocation**: clause relocation through derived tables plus common table expressions hides the callback shape.
+- **Blind fallback**: fallback to blind extraction applies only when egress filtering removes every callback.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Callbacks chain forward into reads because one received label without a follow-up read is only a probe.
-- Pivot from metadata to authentication records for a reversible login proof through callback labels.
-- Pivot from metadata to role or privilege fields for a reversible modification proof where an UPDATE path is injectable.
-- Pivot from the callback channel to file or command primitives only where granted privilege enables them.
-- Stop each chain at the smallest read or reversible proof that confirms the architectural risk.
+- **Callbacks**: chain forward into reads because one received label without a follow-up read is only a probe.
+- **Authentication pivot**: pivot from metadata to authentication records for a reversible login proof through callback labels.
+- **Privilege pivot**: pivot from metadata to role or privilege fields for a reversible modification proof where an UPDATE path is injectable.
+- **Execution pivot**: pivot from the callback channel to file or command primitives only where granted privilege enables them.
+- **Stop condition**: stop each chain at the smallest read or reversible proof that confirms the architectural risk.
 
 ## Testing Methodology
 
@@ -99,20 +97,20 @@ The delta over the parent is the label-encoding construction plus the per-databa
 
 ## False Positives
 
-Stop when the listener receives nothing attributable, because unattributed traffic is not exfiltration.
-- Callback hits whose source matches the tester machine rather than the database, which indicate a client-side request made the connection.
-- Egress-blocked targets where every labeled probe shows no arrival, which call for the blind fallback rather than a finding.
-- Cached or replayed arrivals that duplicate an earlier token rather than confirming a new probe.
-- Parameterized queries with no string concatenation, verified by code review.
+- **Stop condition**: stop when the listener receives nothing attributable, because unattributed traffic is not exfiltration.
+- **Self-origin callbacks**: callback hits whose source matches the tester machine rather than the database, which indicate a client-side request made the connection.
+- **Egress-blocked targets**: egress-blocked targets where every labeled probe shows no arrival, which call for the blind fallback rather than a finding.
+- **Duplicate arrivals**: cached or replayed arrivals that duplicate an earlier token rather than confirming a new probe.
+- **Parameterized queries**: parameterized queries with no string concatenation, verified by code review.
 
 ## Pro Tips
 
-Callbacks reward fresh tokens plus short labels plus quiet operation.
-1. Prefer the callback oracle first on silent targets, then promote only stable positives to labeled extraction.
-2. Mint one token per probe and never reuse a label across two requests.
-3. Embed one short value per probe so encoding never truncates the data.
-4. Read metadata first, then jump directly to business-critical tables with minimal lateral noise.
-5. Record egress-blocked verdicts explicitly so later runs fall back to blind extraction without re-probing.
+- **Callback discipline**: callbacks reward fresh tokens plus short labels plus quiet operation.
+- **Oracle-first promotion**: prefer the callback oracle first on silent targets, then promote only stable positives to labeled extraction.
+- **Token freshness**: mint one token per probe and never reuse a label across two requests.
+- **Short value per probe**: embed one short value per probe so encoding never truncates the data.
+- **Metadata first**: read metadata first, then jump directly to business-critical tables with minimal lateral noise.
+- **Egress verdict recording**: record egress-blocked verdicts explicitly so later runs fall back to blind extraction without re-probing.
 
 ## Summary
 

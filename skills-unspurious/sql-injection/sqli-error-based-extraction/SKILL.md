@@ -13,81 +13,79 @@ The extraction goal is metadata plus table rows read from error text without nee
 
 ## Attack Surface
 
-Applicability centers on a query path whose failure responses carry database-generated error text.
-User input reaches SQL construction with string concatenation present and error output reflected to the caller.
-The error surface preserves type plus constraint plus parser detail rather than replacing it with a generic page.
-Identifier versus value influence plus query shape ride inside this variant only as aspects because neither changes the shaping step itself.
-DBMS dialect rides inside this variant only as shaper naming because renaming a conversion never changes the shaping procedure.
+- **Applicability**: centers on a query path whose failure responses carry database-generated error text.
+- **Input reach**: user input reaches SQL construction with string concatenation present and error output reflected to the caller.
+- **Error surface**: preserves type plus constraint plus parser detail rather than replacing it with a generic page.
+- **Identifier versus value influence plus query shape**: ride inside this variant only as aspects because neither changes the shaping step itself.
+- **DBMS dialect**: rides inside this variant only as shaper naming because renaming a conversion never changes the shaping procedure.
 
 ## Detection Channels
 
-Shaped errors confirm this variant, so only the entries below are live here.
-- Type plus constraint plus parser error text carrying database internals such as version or path detail.
-- Error-text change between a benign probe and a shaped probe separating shaping success from failure.
-- Stable metadata echo confirming version plus user plus database name through repeated shaped errors.
-- UNION fallback signal where filtering removes shaping but a rendered row still answers.
+- **Shaped errors**: confirm this variant.
+- **Error text detail**: type plus constraint plus parser error text carrying database internals such as version or path detail.
+- **Probe divergence**: error-text change between a benign probe and a shaped probe separating shaping success from failure.
+- **Metadata echo**: stable metadata echo confirming version plus user plus database name through repeated shaped errors.
+- **Rendered-row fallback**: UNION fallback signal where filtering removes shaping but a rendered row still answers.
 
 ## Adversarial Capabilities
 
-Extraction presupposes anonymous request ability plus failure-text observation, and it consumes both.
-- Send requests carrying structure-altering input into the candidate sink.
-- Trigger controlled failures with one malformed class at a time and record the error text per probe.
-- Compare each shaped error against its benign baseline to confirm the injected value rendered.
-- Hold an authenticated session only where the sink requires privilege before reflecting errors.
+- **Extraction**: presupposes anonymous request ability plus failure-text observation, and it consumes both.
+- **Structure-altering requests**: send requests carrying structure-altering input into the candidate sink.
+- **Controlled failures**: trigger controlled failures with one malformed class at a time and record the error text per probe.
+- **Baseline comparison**: compare each shaped error against its benign baseline to confirm the injected value rendered.
+- **Privileged session**: hold an authenticated session only where the sink requires privilege before reflecting errors.
 
 ## Trust Assumptions
 
-The feature trusts user input to remain a bound literal from request through query construction to execution.
-The agreement holds concatenation shape stable, keeps ORM fragments bound, keeps identifiers quoted, keeps error output silent, keeps execution timing stable, and keeps database egress closed.
-Query results expose only application data, and no statement shape or store internals leak to the caller.
-This variant breaks the error-silence clause because crafted conversions force the database to embed chosen values inside failure text, so store internals arrive as errors.
+- **The agreement**: the feature trusts user input to remain a bound literal from request through query construction to execution, holds concatenation shape stable, keeps ORM fragments bound, keeps identifiers quoted, keeps error output silent, keeps execution timing stable, keeps database egress closed, and query results expose only application data with no statement shape or store internals leaking to the caller.
+- **The failing clause**: this variant breaks the error-silence clause because crafted conversions force the database to embed chosen values inside failure text, so store internals arrive as errors.
 
 ## Key Vulnerabilities
 
 ### Error Shaping With Conversions
 
-Force a conversion failure whose message embeds the requested value, because the message template quotes its offending input.
-Vary the conversion target until the message carries the full value rather than a truncation.
-The parent extraction step names error-based retrieval without stating conversion shaping, so this variant owns the shaping procedure.
-```text
-<CAST-SHAPER>(<TARGET-VALUE>)
-<CONVERT-SHAPER>(<TARGET-VALUE>)
-```
+- **Conversion-failure forcing**: force a conversion failure whose message embeds the requested value, because the message template quotes its offending input.
+- **Conversion-target variation**: vary the conversion target until the message carries the full value rather than a truncation.
+- **Shaping procedure**: the parent extraction step names error-based retrieval without stating conversion shaping, so this variant owns the shaping procedure.
+  ```text
+  <CAST-SHAPER>(<TARGET-VALUE>)
+  <CONVERT-SHAPER>(<TARGET-VALUE>)
+  ```
 
 ### Disclosure Scoping Through Errors
 
-Pivot from single values to metadata by shaping version plus current user plus database name into consecutive errors.
-Continue from metadata to target tables once the metadata echo proves the shaping is stable.
-Crafted conversion errors stay in this variant while the error text carries the value, and row-rendering probes belong to the UNION sibling.
-```text
-<CAST-SHAPER>(<METADATA-VALUE>)
-<CAST-SHAPER>(<TARGET-VALUE>)
-```
+- **Metadata pivot**: pivot from single values to metadata by shaping version plus current user plus database name into consecutive errors.
+- **Table continuation**: continue from metadata to target tables once the metadata echo proves the shaping is stable.
+- **Variant boundary**: crafted conversion errors stay in this variant while the error text carries the value, and row-rendering probes belong to the UNION sibling.
+  ```text
+  <CAST-SHAPER>(<METADATA-VALUE>)
+  <CAST-SHAPER>(<TARGET-VALUE>)
+  ```
 
 ### Structured-Document Error Generation
 
-Shape errors through structured-document functions where plain conversions are filtered, because malformed documents fail with quoted paths.
-Submit one malformed document class at a time and record which shape returns quoted detail.
-The parent error step never states document-path shaping, so this variant owns the document-shaping procedure.
+- **Document-function shaping**: shape errors through structured-document functions where plain conversions are filtered, because malformed documents fail with quoted paths.
+- **Document-class probing**: submit one malformed document class at a time and record which shape returns quoted detail.
+- **Document-shaping procedure**: the parent error step never states document-path shaping, so this variant owns the document-shaping procedure.
 
 ## Bypass Techniques
 
-Bypass forms stay aspects inside this variant because no encoding difference changes the shaping step itself.
-- Comment sequences plus spacing swaps reach the parser past naive whitespace filtering.
-- Keyword splitting plus case folding reach the parser past naive keyword blocklists.
-- Numeric plus character-builder encodings reach the parser past literal-pattern filters.
-- Clause relocation through derived tables plus common table expressions hides the conversion shape.
-- Fallback to UNION or blind channels applies only when filtering silences every shaped error.
+- **Bypass forms**: stay aspects inside this variant because no encoding difference changes the shaping step itself.
+- **Comment and spacing swaps**: comment sequences plus spacing swaps reach the parser past naive whitespace filtering.
+- **Keyword splitting**: keyword splitting plus case folding reach the parser past naive keyword blocklists.
+- **Numeric and character-builder encodings**: numeric plus character-builder encodings reach the parser past literal-pattern filters.
+- **Clause relocation**: clause relocation through derived tables plus common table expressions hides the conversion shape.
+- **Channel fallback**: fallback to UNION or blind channels applies only when filtering silences every shaped error.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Shaped errors chain forward into reads because one disclosed value without a follow-up read is only a probe.
-- Pivot from metadata to authentication records for a reversible login proof through shaped errors.
-- Pivot from metadata to role or privilege fields for a reversible modification proof where an UPDATE path is injectable.
-- Pivot from the error channel to file or command primitives only where granted privilege enables them.
-- Stop each chain at the smallest read or reversible proof that confirms the architectural risk.
+- **Shaped errors**: chain forward into reads because one disclosed value without a follow-up read is only a probe.
+- **Authentication pivot**: pivot from metadata to authentication records for a reversible login proof through shaped errors.
+- **Privilege pivot**: pivot from metadata to role or privilege fields for a reversible modification proof where an UPDATE path is injectable.
+- **Execution pivot**: pivot from the error channel to file or command primitives only where granted privilege enables them.
+- **Stop condition**: stop each chain at the smallest read or reversible proof that confirms the architectural risk.
 
 ## Testing Methodology
 
@@ -104,20 +102,20 @@ The delta over the parent is the conversion-shaper selection plus the baseline-d
 
 ## False Positives
 
-Stop when the error text carries no injected value, because generic failure without shaping is not extraction.
-- Generic errors unrelated to SQL parsing or constraints, which carry no database detail.
-- Static error templates that never quote the offending input regardless of the shaped value.
-- Application-layer validation messages that reject input before any query executes.
-- Parameterized queries with no string concatenation, verified by code review.
+- **Stop condition**: stop when the error text carries no injected value, because generic failure without shaping is not extraction.
+- **Generic errors**: generic errors unrelated to SQL parsing or constraints, which carry no database detail.
+- **Static error templates**: static error templates that never quote the offending input regardless of the shaped value.
+- **Application-layer validation**: application-layer validation messages that reject input before any query executes.
+- **Parameterized queries**: parameterized queries with no string concatenation, verified by code review.
 
 ## Pro Tips
 
-Shaping rewards baselines plus one conversion at a time plus early metadata.
-1. Prefer the quietest working shaper first and keep it for the whole run.
-2. Record one benign baseline per sink before shaping anything.
-3. Shape one value per probe so each error names exactly one disclosed field.
-4. Read metadata first, then jump directly to business-critical tables with minimal lateral noise.
-5. Treat a truncation as a shaper problem and switch conversion targets before assuming enforcement.
+- **Shaping discipline**: shaping rewards baselines plus one conversion at a time plus early metadata.
+- **Quietest shaper first**: prefer the quietest working shaper first and keep it for the whole run.
+- **Baseline recording**: record one benign baseline per sink before shaping anything.
+- **One value per probe**: shape one value per probe so each error names exactly one disclosed field.
+- **Metadata first**: read metadata first, then jump directly to business-critical tables with minimal lateral noise.
+- **Truncation handling**: treat a truncation as a shaper problem and switch conversion targets before assuming enforcement.
 
 ## Summary
 
