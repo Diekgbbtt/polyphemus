@@ -85,6 +85,10 @@ def test_prefer_primary_orders_links_without_restricting_them() -> None:
     prompt = _load_skill()
 
     assert (
-        "`prefer PRIMARY` orders the links by evidence, it never restricts them - "
+        "prefer the PRIMARY services (those that already aggregate this chunk's assets), "
+        "but never drop an evidenced link"
+    ) in prompt
+    assert (
+        "`prefer PRIMARY` orders the links, it never restricts them - "
         "emit a link for every Service the evidence supports"
     ) in prompt
