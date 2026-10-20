@@ -46,7 +46,7 @@ def test_call_builders_encode_the_ph_py_semantics() -> None:
         "POST", "/projects/p/analysis", {"run_id": "r1"}
     )
     assert api.launch_hunting("p") == api.ApiCall(
-        "POST", "/projects/p/hunting", {"candidates": []}
+        "POST", "/projects/p/hunting", {}
     )
     assert api.stop_hunting("p", "h1") == api.ApiCall(
         "POST", "/projects/p/hunting/h1/stop"

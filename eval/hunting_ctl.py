@@ -7,24 +7,25 @@ the orchestrator's pass vacuous (O1) or reasons over hollow evidence.
 
 This client does NOT select or fabricate anything. It controls and monitors
 through the API REST surface alone, and its only active feature is stopping the
-run at a ratified-config threshold by watching the orchestrator tail.
+run at a dispatched-loop threshold by watching the threat-model store tail.
 
 Control (API):
-  - POST /projects/{id}/hunting                      launch (empty batch - the
-                                                     selection is the platform's
-                                                     concern, once wired)
+  - POST /projects/{id}/hunting                      launch (the run's input is
+                                                     its L1 INTAKE; the retired
+                                                     candidate batch is gone)
   - GET  /projects/{id}/hunting/{rid}                status row
   - POST /projects/{id}/hunting/{rid}/stop           stop
-  - POST /projects/{id}/hunting/orchestrator         one orchestrator pass
-  - POST /projects/{id}/hunting/hunt                 enqueue one ratified config
+  - POST /projects/{id}/hunting/modeller             one threat-modeller pass
+  - POST /projects/{id}/hunting/hunt                 RETIRED (T4b #387): 410 Gone
   - per-session + module lifecycle verbs             (not used by this client)
 
-Monitoring (the orchestrator tail):
-  - The ratified-config count is read from the project's HuntStore on the HOST
-    path (the #234 app-owned data root), never docker exec:
-    data/<project>/hunting/orchestration/hunt_configs/ produced + consumed.
-    Stop is issued via the API when the count reaches the threshold, or when
-    the run reaches terminal on its own.
+Monitoring (the threat-model tail):
+  - The dispatched-loop count is read from the project's threat-model store on
+    the HOST path (the #234 app-owned data root), never docker exec:
+    data/<project>/hunting/threat_modeller/ produced + consumed. A loop file is
+    the dispatch record (S2 8.4); the model document is NOT counted. Stop is
+    issued via the API when the count reaches the threshold, or when the run
+    reaches terminal on its own.
 
 Env: PH_API (default http://localhost:8080), HUNT_DATA_ROOT (default
 <repo>/data).
@@ -61,15 +62,17 @@ def _api(method: str, path: str, body=None, timeout: int = 30):
         return 0, {"detail": f"request failed: {exc}"}
 
 
-def _ratified_count(project_id: str) -> int:
-    """The orchestrator tail: distinct ratified configs in the HuntStore
-    produced+consumed families (the consumed move is the at-least-once marker,
-    so a config may appear once per side - dedupe by file stem)."""
-    base = resolve() / project_id / "hunting" / "orchestration" / "hunt_configs"
+def _dispatched_loop_count(project_id: str) -> int:
+    """The threat-model tail: loop files in the store's produced+consumed
+    families (the consumed move is the at-least-once marker, so a loop may
+    appear once per side - dedupe by unit dir + file stem)."""
+    base = resolve() / project_id / "hunting" / "threat_modeller"
     seen: set[str] = set()
     for side in ("produced", "consumed"):
-        for f in (base / side).glob("*.yaml") if (base / side).exists() else ():
-            seen.add(f.stem)
+        side_dir = base / side
+        if side_dir.exists():
+            for f in side_dir.glob("*/loop-*.yaml"):
+                seen.add(f"{f.parent.name}/{f.stem}")
     return len(seen)
 
 
@@ -91,7 +94,7 @@ def cmd_status(args):
     d = body or {}
     print(json.dumps({k: d.get(k) for k in (
         "hunting_run_id", "status", "started_at", "finished_at")}, default=str))
-    print(f"orchestrator tail (ratified configs): {_ratified_count(args.project_id)}")
+    print(f"threat-model tail (dispatched loops): {_dispatched_loop_count(args.project_id)}")
 
 
 def cmd_stop(args):
@@ -102,20 +105,20 @@ def cmd_stop(args):
 
 def cmd_monitor(args):
     """Poll the API status + the orchestrator tail until terminal, the
-    ratified-config threshold, or a stall (no new configs for `--stall-min`).
+    dispatched-loop threshold, or a stall (no new loop files for `--stall-min`).
     Stop is issued through the API when the threshold is reached."""
     last_count = -1
     stalled_since = None
     while True:
         code, body = _api("GET", f"/projects/{args.project_id}/hunting/{args.run_id}")
         status = (body or {}).get("status") if code == 200 else "unreachable"
-        count = _ratified_count(args.project_id)
-        log.info("status=%s ratified=%d", status, count)
+        count = _dispatched_loop_count(args.project_id)
+        log.info("status=%s dispatched_loops=%d", status, count)
         if status not in ("running",):
             log.info("run terminal (%s); nothing to stop", status)
             return
         if args.stop_after and count >= args.stop_after:
-            log.info("ratified %d >= stop-after %d; stopping via the API",
+            log.info("dispatched loops %d >= stop-after %d; stopping via the API",
                      count, args.stop_after)
             cmd_stop(args)
             return
@@ -123,7 +126,7 @@ def cmd_monitor(args):
             if stalled_since is None:
                 stalled_since = time.time()
             elif time.time() - stalled_since > (args.stall_min * 60):
-                log.warning("stall watchdog: no new configs for %d min; stopping",
+                log.warning("stall watchdog: no new loop files for %d min; stopping",
                             args.stall_min)
                 cmd_stop(args)
                 return

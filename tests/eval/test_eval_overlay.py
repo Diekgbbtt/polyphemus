@@ -39,10 +39,11 @@ COMPLETE_ENV = {
     "LLM_JOB_ORCHESTRATOR": "opencode:manual/test",
     "LLM_CRAWLER": "opencode:manual/test",
     "LLM_ANALYSER": "opencode:manual/test",
-    "LLM_HUNTING_ORCHESTRATOR": "opencode:manual/test",
+    "LLM_HUNTING_THREAT_MODELLER": "opencode:manual/test",
     "LLM_HUNTING_HUNTER": "opencode:manual/test",
     "LLM_POD_RUNNER": "opencode:manual/test",
     "LLM_POD_TRIAGER": "opencode:manual/test",
+    "LLM_SKILL_EVOLVER": "opencode:manual/test",
     "LLM_CAPABILITY_OVERRIDES": CAPABILITY_OVERRIDE_ENV,
 }
 

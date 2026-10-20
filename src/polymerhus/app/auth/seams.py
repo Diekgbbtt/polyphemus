@@ -44,6 +44,7 @@ def auth_capable_binding(
     role_id: str, *, store=None, skill_store=None, lesson_store=None,
     project_id: str | None = None, with_write_skill: bool = False,
     with_readonly_auth_store: bool = False, task_skills=None,
+    arm_exempt_surface: bool = False,
 ):
     """Wrap `skill_agent_binding(role_id)` with the auth capability.
 
@@ -75,6 +76,12 @@ def auth_capable_binding(
     `task_skills` is the artifact-declared skill configuration (#236): it
     reaches `skill_agent_binding` verbatim, which resolves, unions, caps, and
     warns - the auth wrapper never re-implements that policy.
+
+    `arm_exempt_surface` (the threat modeller, S1 5.5) arms the same shared
+    read-only surface WITHOUT `write_skill` for an exempt role whose turn still
+    needs the project skill and the auth store: the roster stays honest (no
+    catalogue skill bears) and the capability is declared by the site that
+    needs it. `with_write_skill` wins if both are passed.
     """
     from polymerhus.app.auth.tool import build_auth_store_tool  # noqa: PLC0415
     from polymerhus.app.llm.skills import (  # noqa: PLC0415
@@ -125,6 +132,23 @@ def auth_capable_binding(
                     lesson_store=lesson_store, role_id=role_id),
                     build_auth_store_tool(
                         project_id=project_id, store=store, read_only=True)],
+                context={"skills": [AUTHN_SKILL], "project_id": project_id},
+            )
+        if arm_exempt_surface:
+            # The threat modeller's site-declared arming (S1 5.5): the
+            # project's `authn` procedure and the shared `auth_store`, with no
+            # write capability. The roster stays honest (no catalogue skill
+            # bears on the role); the site declares the capability it needs.
+            if project_id is None:
+                from polymerhus.app.config import config  # noqa: PLC0415 - lazy, no env at import
+                project_id = config.PROJECT_ID
+            return SkillAgentBinding(
+                role_id=role_id,
+                middleware=[skill_index_middleware(store=skill_store)],
+                tools=[*build_skill_tools(
+                    project_id, store=skill_store,
+                    lesson_store=lesson_store, role_id=role_id),
+                    build_auth_store_tool(project_id=project_id, store=store)],
                 context={"skills": [AUTHN_SKILL], "project_id": project_id},
             )
         # An exempt role binds no skill surface: no auth capability either.

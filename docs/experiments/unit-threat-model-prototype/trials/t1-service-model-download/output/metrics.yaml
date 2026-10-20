@@ -1,0 +1,57 @@
+trial: t1-service-model-download
+unit_id: Service:model-download
+t0_epoch: 1792099940
+t0_utc: 2026-10-15T21:32:20Z
+probe_attribution: "S1 = P01-P21; S2 = P22-P26 plus P43-P51; S3 = P27-P42 plus P52-P58; S4 and S5 = no probes."
+probe_attribution_note: "Attribution follows the reasoning phase each probe served, not wall-clock order; the campaign ran as one serial sequence with interleaved batches."
+wallclock_convention: "per-state wallclock_s is the date-delta from the previous gate write (S1 from t0) to this state's gate write; probe_span_s is the measured first-to-last span of the state's attributed probes."
+wallclock_note: "The whole probe campaign ran before gate 1 was written; therefore the S1 window contains the campaign and gates 2-5 measure the sequential model-authoring time. S2 and S3 attributed-probe spans overlap in wall-clock time because their batches interleaved."
+states:
+  UNIT_TECHNICAL_SHARP:
+    probes_run: 21
+    notes_written: 4
+    wallclock_s: 1070
+    probe_span_s: 322
+  TRUST_MODELLED:
+    probes_run: 14
+    notes_written: 2
+    wallclock_s: 52
+    probe_span_s: 296
+  TRUST_ASSUMPTIONS_WRITTEN:
+    probes_run: 23
+    notes_written: 1
+    wallclock_s: 24
+    probe_span_s: 272
+  VULNERABILITIES_WRITTEN:
+    probes_run: 0
+    notes_written: 1
+    wallclock_s: 42
+    probe_span_s: 0
+  COMPLETED:
+    probes_run: 0
+    notes_written: 1
+    wallclock_s: 40
+    probe_span_s: 0
+totals:
+  probe_commands_used: 58
+  probe_budget: 60
+  probe_campaign_span_s: 693
+  total_wallclock_s: 1228
+  notes_total: 9
+  gates_written: 5
+model_counts:
+  interface_agreements: 12
+  control_flows: 7
+  data_flows: 6
+  trust_agreements: 10
+  efsm_states: 7
+  efsm_transitions: 8
+  efsm_violations: 6
+  assumptions: 15
+  faults: 15
+  vulnerabilities_kept: 12
+  vulnerabilities_dropped: 4
+  failure_modes_feasible: 13
+  failure_modes_dropped: 4
+  loops: 13
+  evidence_gaps: 12

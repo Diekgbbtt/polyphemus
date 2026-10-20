@@ -45,7 +45,7 @@ Its runtime assumptions (one shared stack, one global KB, one shared kali, one g
 - **N18 - Stack alignment at version advance**: every advance computes a stack manifest (one SHA per alignment-relevant artifact plus the digests of running images) and a single compressed stack fingerprint. The orchestrator workflow step checks the recent `eval` SHAs, diffs the manifest, and performs or dispatches the alignment action per the impact map (none for source/skills/lightrag; restart kali; restart litellm; recreate affected services; config-layer alignment for env schema), failing closed on database-schema, data-layout, platform-dependency, and image-definition changes. The daemon performs the mechanical advance and enforces the fail-closed gate; the orchestrator decides and executes everything else.
 - **N19 - Eval compose overlay and env-schema preflight**: a `docker-compose.eval.yml` overlay requires the per-instance `.env` (`required: true`) and fails loud on missing required interpolation; a preflight always fills missing keys from `.env.example` into the instance `.env` without clobbering operator values, and the keyset drift is reported in the manifest. Rollback records the last-known-good `eval` SHA, and only an operator may rewind.
 - **N16 - Eval-close verification phase**: the orchestrator workflow verifies the presence of every trial's `verdicts.yaml`; missing artifacts are re-dispatched to the assessment subagent, and after two failures the orchestrator micro-diagnoses the cause and repairs **configuration only** (`.env`, eval artifacts). Codebase self-repair is out of scope; when no local misconfiguration interpretation exists and a new configuration decision is required, it fails closed.
-- **N17 - State assertion and recovery loop**: a background surfer loop monitors the instances and prompts the orchestrator when the hunt-configs cap is reached or an instance is in a failed state (e.g. LLM credits exhausted). The orchestrator asserts the state and decides: fully terminate, destroy, or fix (configuration/data layer only) and restart.
+- **N17 - State assertion and recovery loop**: a background surfer loop monitors the instances and prompts the orchestrator when the token budget is reached or an instance is in a failed state (e.g. LLM credits exhausted). The orchestrator asserts the state and decides: fully terminate, destroy, or fix (configuration/data layer only) and restart.
 
 ## 4. Superseded (must not be perpetuated)
 
@@ -74,11 +74,11 @@ TargetRun
   target_id
   target_config: TargetConfig
   start_phase: recon|analysis|hunting
-  hunt_config_budget: int | null
+  token_budget: int | null
   target_run_id: <id> | null              # artifact store middle level; default instance id
   preloaded_hunting_artifacts:
-    configs: <host path> | null            # hunt configs -> hunt_configs/produced/
-    test_specs: [{path: <host path>, fault_key: <fault key>}]  # -> test-specs/<fault_key>/produced/
+    models: <host path> | null            # threat-model units -> threat_modeller/produced/<unit_name>/
+    test_specs: [{path: <host path>, dispatch_id: <loop dispatch id>}]  # -> test-specs/<dispatch_id>/produced/
 
 TargetConfig
   lifecycle: TargetLifecycle     # strategy: targetctl | image | compose
@@ -124,7 +124,8 @@ Verified against the code; each item is a place the current architecture breaks 
 
 **6.4 Hunting control.**
 - No cap on config production or consumption exists anywhere; the only bounds are concurrency gates and per-agent step budgets.
-- There is no import/seed API for hunting artifacts; the only seam is the implicit file-drop into `data/<pid>/hunting/orchestration/hunt_configs/produced/*.yaml` (ratified) and `<pid>/hunting/hunter/test-specs/<fault_key>/produced/*.yaml`, read lazily.
+- There is no import/seed API for hunting artifacts; the only seam is the implicit file-drop into `data/<pid>/hunting/threat_modeller/produced/<unit_name>/` (the model and its loop files) and `<pid>/hunting/hunter/test-specs/<dispatch_id>/produced/*.yaml`, read lazily.
+- T10b (#397): the retired hunt-config preload form is refused loudly; a pre-mined config cannot satisfy the hunting prerequisite.
 
 **6.5 Auth bootstrap.**
 - The parameterised external-agent prompt exists (`skills/meta/authn-skill-writing/references/bootstrap-workflow.md`), and the store seed face is `PUT /projects/{id}/auth`; there is no catalogue `skills/authn/` - it is authored per project at `skills/target-specific-procedure/<project_id>/authn/SKILL.md`.
@@ -144,7 +145,7 @@ Verified against the code; each item is a place the current architecture breaks 
 - G11 Target agnosticity: the generic pull-and-play contract beyond `targetctl`.
 - G12 Per-target pre-eval work-item gate: where recorded and enforced.
 - G13 Which services, if any, may be shared across instances (postgres/neo4j/lightrag/agent/kali).
-- **G14 Verdict evidence chain (N13)** - RESOLVED 2026-09-28: `evidence_chain: {hunt_config, spec_dir, experiment_logs[], pod_export}`, data-root-relative, required for `identified`/`partial`; extended with phase-mapped observability reasoning references (D17). Residual: the exact mapping from reasoning spans to phases. Status 2026-09-28 (adversarial review, I4): reasoning refs are optional and currently unproduced (designed-not-built); the file chain is the operative requirement.
+- **G14 Verdict evidence chain (N13)** - RESOLVED 2026-09-28; translated by T10b #397: `evidence_chain: {loop, spec_dir, experiment_logs[], pod_export}`, data-root-relative, required for `identified`/`partial`; extended with phase-mapped observability reasoning references (D17). Residual: the exact mapping from reasoning spans to phases. Status 2026-09-28 (adversarial review, I4): reasoning refs are optional and currently unproduced (designed-not-built); the file chain is the operative requirement.
 - **G15 Diagnosis contract (N14)** - RESOLVED 2026-09-28: dedicated adapted procedure (D18); typed `diagnoses.yaml` (D19); failure-mode taxonomy (D21, pending confirmation of the arrow mapping); issue-bank reference-or-propose, never file (D22); root-cause space extended to the persisted data layer (D24).
 - **G16 Version pinning (N15)** - RESOLVED 2026-09-28 into D25-D29/D32: stash-and-pop, the app-state proxy, the deploy unit with the agent diff turn, the `eval` branch shape (a) and the worktree layout (a). Remaining open items live in `docs/design/eval-environment-version-pinning-adr.md`: rollback, daemon health/heartbeat, proxy sufficiency for assessment/teardown windows, daemon supervision, per-SHA image tags.
 - **G17 Self-repair versus version freeze (R11)** - RESOLVED 2026-09-28: D28, configuration-layer repairs only, fail closed otherwise.

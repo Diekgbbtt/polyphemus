@@ -5,7 +5,7 @@
 <target>` drives one `TargetRun` from its phase entry to terminal through the
 trial engine (`orchestrator.trial`, #270): phase-entry predicates over
 persisted state, setup-outcome chaining, launch/poll within a budget, and the
-hunting cap. `assess`/`close-verify` (#271) dispatch the background assessment
+token budget. `assess`/`close-verify` (#271) dispatch the background assessment
 subagent and run the eval-close presence/schema verification with
 re-dispatch and a bounded micro-diagnosis; `diagnose` (#272) dispatches the
 diagnoser subagent and `issue-search` exposes the read-only issue bank;
@@ -24,7 +24,7 @@ by the external operator and is no longer in this codebase; only the durable
 recovery state (`orchestrator.alignment`) stays, so a hold blocks `up`/`trial`
 until `alignment resolve` records the operator's decision. `surfer` (#275) is
 the background supervisor (`orchestrator.surfer`):
-it asserts the environment state (app-state plus the persisted cap/failed-run
+it asserts the environment state (app-state plus the persisted budget/failed-run
 evidence plus a failure-signal classifier), prompts the orchestrator, and
 resolves exactly one bounded lifecycle decision - terminate, destroy, or a
 configuration/data-layer fix that restarts and resumes - escalating anything

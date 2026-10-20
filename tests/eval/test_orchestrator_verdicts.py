@@ -1,9 +1,12 @@
 """The `verdicts.yaml` schema, validation, and atomic write (#271).
 
 The schema is exactly the spec block: vuln_id, identified|partial|missed,
-confidence, matched{unit,fault_class,symptom}, evidence_chain (required for
-identified/partial), eval_sha, stack_fingerprint. A malformed verdict is
-rejected loudly and never written. The write is temp + rename.
+confidence, matched{unit, web_vulnerability_class, fault, symptom},
+evidence_chain (required for identified/partial), eval_sha,
+stack_fingerprint. A malformed verdict is rejected loudly and never written.
+The write is temp + rename. T10b (#397) translated the retired `fault_class`
+match into the model's web-vulnerability class plus fault, and the parent
+document chain element from a hunt config to a threat-model loop file.
 """
 from __future__ import annotations
 
@@ -13,24 +16,28 @@ import yaml
 from orchestrator import evidence, verdicts
 from orchestrator.files import (
     FileStore,
-    hunt_configs_dir,
     hunter_test_specs_dir,
     pod_experiment_logs_dir,
     pod_spec_dir,
+    threat_model_dir,
 )
 
 SHA = "eval-sha-1"
 FINGERPRINT = "fp-1"
 
 
+UNIT = "service:web:viewer"
+UNIT_NAME = "service-web-viewer"
+DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+
+
 def seed_chain(tmp_path, *, project: str = "pid"):
     files = FileStore()
     root = tmp_path / "data"
-    files.write_text(
-        hunt_configs_dir(root, project, "produced") / "unit_CWE-89_sqli.yaml",
-        "id: unit_CWE-89_sqli\n",
-    )
-    spec_dir = hunter_test_specs_dir(root, project) / "unit_CWE-89_sqli"
+    unit_dir = threat_model_dir(root, project, "produced") / UNIT_NAME
+    files.write_text(unit_dir / f"{UNIT_NAME}.yaml", "state: COMPLETED\n")
+    files.write_text(unit_dir / "loop-1.yaml", "loop:\n  id: loop-1\n")
+    spec_dir = hunter_test_specs_dir(root, project) / DISPATCH_ID
     files.write_text(spec_dir / "produced" / "sqli_error.yaml", "id: sqli_error\n")
     files.write_text(pod_experiment_logs_dir(root, project, "sqli_error") / "0.yaml", "o: 0\n")
     files.write_text(pod_spec_dir(root, project, "sqli_error") / "run1.yaml", "v: s\n")
@@ -38,8 +45,9 @@ def seed_chain(tmp_path, *, project: str = "pid"):
         root,
         evidence.EvidenceTarget(
             project_id=project,
-            hunt_config="unit_CWE-89_sqli",
-            fault_key="unit_CWE-89_sqli",
+            unit=UNIT,
+            loop_id="loop-1",
+            dispatch_id=DISPATCH_ID,
             spec_id="sqli_error",
             pod_export="run1",
         ),
@@ -54,7 +62,12 @@ def row(*, identified: str = "identified", chain: evidence.EvidenceChain | None 
         "vuln_id": "comfyui-004",
         "identified": identified,
         "confidence": 0.9,
-        "matched": {"unit": "viewer", "fault_class": "CWE-22", "symptom": "file read"},
+        "matched": {
+            "unit": UNIT,
+            "web_vulnerability_class": "path-traversal",
+            "fault": "fault-1",
+            "symptom": "file read",
+        },
         "eval_sha": sha,
         "stack_fingerprint": fingerprint,
     }
@@ -79,9 +92,12 @@ def test_accepts_identified_with_a_resolvable_chain(tmp_path) -> None:
 
     assert parsed[0].identified == "identified"
     assert parsed[0].eval_sha == SHA
-    assert parsed[0].matched.fault_class == "CWE-22"
+    assert parsed[0].matched.web_vulnerability_class == "path-traversal"
+    assert parsed[0].matched.fault == "fault-1"
     assert parsed[0].evidence_chain is not None
-    assert parsed[0].evidence_chain.spec_dir.endswith("test-specs/unit_CWE-89_sqli")
+    assert parsed[0].evidence_chain.spec_dir.endswith(
+        f"test-specs/{DISPATCH_ID}"
+    )
 
 
 def test_accepts_partial_with_a_resolvable_chain(tmp_path) -> None:
@@ -119,7 +135,12 @@ def test_accepts_a_missed_row_with_null_matched(tmp_path) -> None:
     # verdicts). Live e2e regression: the first assessment wrote nulls and the
     # strict validator rejected the whole file.
     payload = row(identified="missed")
-    payload["matched"] = {"unit": None, "fault_class": None, "symptom": ""}
+    payload["matched"] = {
+        "unit": None,
+        "web_vulnerability_class": None,
+        "fault": None,
+        "symptom": "",
+    }
 
     parsed = verdicts.validate_verdicts(
         [payload],
@@ -131,14 +152,20 @@ def test_accepts_a_missed_row_with_null_matched(tmp_path) -> None:
 
     assert parsed[0].identified == "missed"
     assert parsed[0].matched.unit is None
-    assert parsed[0].matched.fault_class is None
+    assert parsed[0].matched.web_vulnerability_class is None
+    assert parsed[0].matched.fault is None
     assert parsed[0].matched.symptom is None
 
 
 def test_rejects_a_null_matched_on_an_identified_row(tmp_path) -> None:
     files, root, chain = seed_chain(tmp_path)
     payload = row(chain=chain)
-    payload["matched"] = {"unit": None, "fault_class": "CWE-22", "symptom": "file read"}
+    payload["matched"] = {
+        "unit": None,
+        "web_vulnerability_class": "path-traversal",
+        "fault": "fault-1",
+        "symptom": "file read",
+    }
 
     with pytest.raises(verdicts.VerdictError):
         verdicts.validate_verdicts(
@@ -328,4 +355,4 @@ def test_load_round_trips_the_written_rows(tmp_path) -> None:
     )
 
     assert loaded[0].vuln_id == "comfyui-004"
-    assert loaded[0].evidence_chain.hunt_config == chain.hunt_config
+    assert loaded[0].evidence_chain.loop == chain.loop

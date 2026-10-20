@@ -1,0 +1,78 @@
+loop_id: loop-7
+unit_id: Service:model-download
+class: Cross-entry artifact substitution (validated entry not bound to the used URL)
+class_skill: business-logic
+slice:
+  source: trust_agreement
+  statement: "TA2 + F12: the gate trusts the validated catalog tuple and the queued tuple to be the same data, but the catalogue lookup binds (name, save_path, filename) while url is only checked for set membership across catalog URLs (P24 cross-entry 200; P22 403 contrast; P48 exact-equality). The loop opens the binding space between validated attributes and used attributes."
+discrimination:
+  axes_used: [payload-vector, chaining-advanced]
+  boundary: "the shape of the check-to-use gap: validated-but-not-bound inside the checked branch (s1, cross-entry URL substitution) versus never-checked because the branch has no gate (s2, suffix branch degeneracy); fault fixed at F12."
+  narrow_broad_tradeoff: "narrow on the two gap shapes the payload evidences and broad on catalogue inventory for the substitution vector; the binding question composes from the catalog itself, so s1's breadth comes from enumerating its entries, not from payload fuzz."
+specs:
+- spec_id: loop-7-s1
+  label: "cross-entry URL substitution"
+  sub_slice: "A catalog-valid (name, save_path, filename) triple bound to a different catalog entry's URL: set membership passes, the queued url differs from the validated artifact's url, and the worker fetches the substituted target (anchor P24); region = substitution between catalogue entries within the checked branch."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {transition: "gate validation then queue use (ET1 -> ET3)", invariant: "the used artifact equals the validated artifact (V2)", oracle: "independent recomputation against the catalog inventory - the class's recompute-don't-echo pattern", catalog_source: "GET /externalmodel/getlist?mode=default"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 gate and worker on aiohttp 3.14.3; fixed default-channel catalog"
+    endpoint: "GET /externalmodel/getlist?mode=default (catalog read), POST /manager/queue/install_model, GET /manager/queue/start"
+    parameter: "name/save_path/filename from entry E1; url from entry E2"
+    method: "GET then POST then GET"
+    body: '{"name": "<E1.name>", "url": "<E2.url>", "filename": "<E1.filename>", "save_path": "<E1.save_path>"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns the gap inside the checked branch: both attributes are legitimate catalog values, only the binding is broken. s2 owns the branch where no validation tuple exists at all. Nearest outside sibling loop-2/5's file reads are reached by other means; here both sides of the mismatch are catalog-native."
+  chaining_advanced_note: null
+  proxy_technique: "Read the catalog once and construct the mismatch from its own inventory: pick E1's triple and E2's URL (member of the set, so no 403), submit, drain, and observe which URL the worker actually fetched (listener attribution for an attacker-controlled entry or content match against E2's known content). The contrast control (non-set URL -> 403, P22) isolates set membership as the only check."
+  verification_symptoms: ["200 for the mixed tuple and a drained fetch whose target is E2's URL, not E1's (listener hit or content equality), proving used != validated", "the check-to-use mismatch is stable across entry pairs drawn from the same catalog inventory"]
+  payload_vector_space:
+    method: "GET catalog -> POST install_model -> GET start"
+    path: "/externalmodel/getlist, /manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start"
+    parameter: "mixed attribute tuple: triple from one entry, url from another; also triple from one entry with url of any member"
+    body: "JSON install item assembled from catalog entries"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the catalog exposes at least two entries with distinct URLs (IA10 entry structure)", "the worker uses the queued url attribute for the fetch (IA6)", "non-set URLs are refused (P22) so substitution is bounded to set members"]
+  rationale: "If F12 is implemented (validated tuple not rebound at use), the url attribute is only constrained to the set; any member passes, so the fetched artifact need not equal the validated artifact. The fault is the missing binding, and the catalog itself supplies the substitution inventory."
+  interpretation_guidance: "Symptom-present = accepted mixed tuple whose execution fetches the substituted URL while the validated triple names another artifact; the gate decision and the execution target diverge observably. Symptom-absent = 403 for cross-entry tuples (per-entry binding added) or a fetch of E1's URL (use rebound to validation): record which. A 200 alone is not a symptom; the fetch target must be attributed."
+- spec_id: loop-7-s2
+  label: "unvalidated-branch check absence"
+  sub_slice: "Items in the lowercase .safetensors branch enter the queue with no catalog validation of any attribute (P13 anchor), so no validated tuple exists for the use stage to diverge from; region = check-to-use gaps where the check stage itself is skipped, making every used attribute unvalidated."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {transition: "gate bypass then queue use", invariant: "every used artifact was validated before use", anchor: "P13: unknown save_path plus random .safetensors name -> 200, fetched; P09 same family", technique: "branch enumeration of the workflow map - the class's state-machine mapping applied to the gate's two branches"}
+  concretisation:
+    protocol: http
+    technology: "same gate and worker; contrast branch keeps the catalog check"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start"
+    parameter: "all attributes free in the suffix branch: name, url, save_path, filename"
+    method: "POST then GET"
+    body: '{"name": "t1-ungated", "url": "http://<listener>/marker", "filename": "t1-ungated.safetensors", "save_path": "t1-dir"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the degenerate gap: no validation precedes use, so binding is vacuous. s1 owns a live-but-unbound validation stage; s2 owns an absent stage. Different failing precondition (skipped gate versus unbound result) with different observables: s2 needs no catalog inventory at all."
+  chaining_advanced_note: "Structural: F12's name is the check-to-use gap, and its own evidence chain cites both shapes - P24 (checked but unbound) and P13 (no gate for safetensors items). The trust agreement TA2 presupposes a validation stage whose outputs flow to use; in the suffix branch the antecedent is missing entirely, so the failure mode is check absence rather than check mismatch. The business-logic skill lacks a gate-binding entity; the mapping is carried from the class's precondition-per-transition discipline."
+  proxy_technique: "Submit a triple that cannot be in any catalog (random name, unknown save_path, listener URL) under a .safetensors filename beside a non-safetensors control with identical attributes; acceptance plus execution for the suffix item while the control is 400 demonstrates the skipped stage; the listener attributes the unchecked url's use."
+  verification_symptoms: ["200 for the suffix item with a triple provably absent from the catalog, while the matched non-safetensors control is refused (P11/P12 contrast)", "the unchecked attributes are used verbatim in execution (listener fetch of the supplied url, write under the supplied save_path)"]
+  payload_vector_space:
+    method: "POST install_model -> GET start"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start"
+    parameter: "all four attributes free; control keeps attributes identical with a non-safetensors filename"
+    body: "JSON install item with non-catalog triple and listener URL"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the suffix branch exists and has no catalog validation (IA3/P13)", "the control triple is actually absent from the catalog (checked via getlist)"]
+  rationale: "If F12 is implemented as evidenced, the queue's use stage consumes attributes the validation stage never saw whenever the branch skips it; this is the limit case of the binding gap and a distinct failure mode from substitution. It also fixes the region where the catalog control is simply inert."
+  interpretation_guidance: "Symptom-present = the unvalidated item executes with all attributes unbound, contrasted against the identical refused control. Symptom-absent = the suffix branch is refused or downstream re-validates before use (fetch bounded to catalog artifacts): the gap is closed at either stage; record which. The control's refusal is required context, not a symptom of this spec."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the checked-but-unbound shape with catalog-native payloads and an attribution oracle; s2 owns the unchecked shape with non-catalog payloads and a contrast oracle. Different failing preconditions, disjoint payload construction, and no shared observation beyond the queue."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Both shapes the fault's evidence chain names (P24 mismatch, P13 absence) carry owning specs. Queue-time mutation between check and use is not evidenced (no queue-edit route exists), so the binding space is closed as stated."
+  well_formedness_statement: "Two specs cover F12's binding space: a live validation stage whose result is not rebound at use (s1) and a skipped validation stage (s2). Each owns a distinct shape with its own payload construction and oracle; together they exhaust the check-to-use gap as the payload evidences it, with no spec reducible to a payload-string variant of the other."
+degradations: ["The class skill lacks a gate-binding entity; both specs carry the mapping structurally from the payload's TA2/V2 and the class's per-transition precondition discipline.", "Cross-entry substitution is bounded to URLs the fixed catalog exposes; the substitution inventory is read from getlist rather than assumed."]

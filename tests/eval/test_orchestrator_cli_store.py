@@ -39,14 +39,12 @@ def _write_setup(tmp_path, store_dir) -> str:
 
 
 def _make_data_root(root):
-    (root / "pid/hunting/orchestration/hunt_configs/consumed").mkdir(parents=True)
-    (root / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml").write_text(
-        "config: cfg\n", encoding="utf-8"
-    )
-    (root / "pid/hunting/hunter/test-specs/fault-a").mkdir(parents=True)
-    (root / "pid/hunting/hunter/test-specs/fault-a/spec.yaml").write_text(
-        "spec: a\n", encoding="utf-8"
-    )
+    unit_dir = root / "pid/hunting/threat_modeller/consumed/service-web-viewer"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "loop-1.yaml").write_text("loop: 1\n", encoding="utf-8")
+    spec_dir = root / "pid/hunting/hunter/test-specs/service-web-viewer__loop-1"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.yaml").write_text("spec: a\n", encoding="utf-8")
     (root / "pid/hunting/test-executor-pod/spec-1/experiment-log").mkdir(parents=True)
     (root / "pid/hunting/test-executor-pod/spec-1/experiment-log/order-0.yaml").write_text(
         "order: 0\n", encoding="utf-8"
@@ -66,10 +64,15 @@ def _make_trial(tmp_path, data_root) -> str:
                     "vuln_id": "v1",
                     "identified": "identified",
                     "confidence": 0.9,
-                    "matched": {"unit": "u", "fault_class": "fc", "symptom": "s"},
+                    "matched": {
+                        "unit": "service:web:viewer",
+                        "web_vulnerability_class": "path-traversal",
+                        "fault": "fault-1",
+                        "symptom": "s",
+                    },
                     "evidence_chain": {
-                        "hunt_config": "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml",
-                        "spec_dir": "pid/hunting/hunter/test-specs/fault-a",
+                        "loop": "pid/hunting/threat_modeller/consumed/service-web-viewer/loop-1.yaml",
+                        "spec_dir": "pid/hunting/hunter/test-specs/service-web-viewer__loop-1",
                         "experiment_logs": [
                             "pid/hunting/test-executor-pod/spec-1/experiment-log/order-0.yaml"
                         ],

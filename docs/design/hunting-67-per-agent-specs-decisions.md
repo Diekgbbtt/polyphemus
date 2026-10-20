@@ -1,5 +1,8 @@
 # Hunting #67 - per-agent specs decision record
 
+**SUPERSEDED IN PART (unit threat model, 2026-10-15/18; carried by T10 #383).** D67-03, D67-07, and D67-10 are superseded by the unit threat model specification set: the modeller contract is S1 (`hunting-67-threat-modeller-spec.md`), the hunter workflow/typed surface is S3 (`hunting-67-hunting-agent-spec.md`), and the pod contract is S5 (`hunting-67-test-executor-pod-spec.md`). The remaining decisions stand as written.
+
+
 Status: RATIFIED through two direct grilling passes (2026-08-03); every decision below was answered by the operator individually, and several corrected the drafting agent's own claims (Q2 verdict-level mis-specification, Q7 pattern-vocabulary scope).
 Ticket: #67 (`Hunting Phase-2 spec: per-agent specs`), part of the wayfinder map #54.
 Base: `feat/hunting-67-per-agent-specs`, branched off `dev` at 8737f72 (which carries the merged #63 implementation).

@@ -28,13 +28,13 @@ Neither fits the eval verbatim - this is an out-of-band diagnosis, not a live fi
 
 1. **Observe.** Reproduce the miss from persisted evidence only, per vuln.
    Read the ground truth with `python3 eval/gt.py <ground-truth-dir> --json`.
-   Read the produced hunting artifacts under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the hunt configs under `<data_root>/<project_id>/hunting/orchestration/hunt_configs/{produced,consumed}/`, the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<fault_key>/`, and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
+   Read the produced hunting artifacts under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the unit threat models and their loop files under `<data_root>/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/`, the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/` (the loop dispatch id `<unit_name>__<loop_id>`), and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
    Every one of those paths is parametrised on `<project_id>`, which you read from the `project_id` field of the trial record named in your launch command; `<data_root>` is the data root you were given.
    Reason mostly over observability: read the Langfuse traces for the trial's runs and search the observability platform for the exact decision nodes where the pipeline turned away.
    Establish what actually happened, not what should have happened.
 2. **Hypothesise.** For each vuln write down the candidate failure modes from the taxonomy below, each with the evidence that would confirm or falsify it.
    Never skip this step: "I think I know" is a hypothesis, and it is tested like any other.
-3. **Experiment.** Choose the single cheapest observable that discriminates your hypotheses: one pod export, one experiment-log slice, one trace span, one hunt config, one line of the relevant code.
+3. **Experiment.** Choose the single cheapest observable that discriminates your hypotheses: one pod export, one experiment-log slice, one trace span, one threat-model loop, one line of the relevant code.
    Counter-check against the code: open the relevant module under `src/polymerhus/` (hunting orchestration, hunter, pod) and the relevant skill bundle, and confirm the behaviour the artifacts imply.
    Ground on the design docs, primarily the agent-stack docs, before concluding a defect is "by design".
 4. **Conclude.** Name the failure mode and the typed root cause that the evidence supports, cite each fact as an evidence reference, then move to the next vuln.
@@ -58,7 +58,7 @@ Write a YAML list with exactly one entry per named vuln:
               | hunter_notsufficient_tests_exploration
               | pod_diverged_trajectory
               | surface_gap | spec_underspecified | cap_hit
-              | orchestrator_failed_unit-fault_binding
+              | modeller_failed_unit-fault_binding
   root_cause:
     type: implementation_defect | design_defect | missing_component
         | kb_coverage_gap | skill_defect
@@ -78,7 +78,7 @@ Never invent them, and never change them: a row whose identity does not match th
 More failure modes are expected, particularly in the analysis layer, but they are a recorded future extension and may not be invented here.
 `root_cause.combination_of` carries only the additional types; never repeat the primary `type`.
 `diagnosis_overview` and `root_cause.extended_description` must be non-empty.
-Each `evidences` item names a `source` (for example `pod_export`, `experiment_log`, `hunt_config`, `trace`, `code`, `design_doc`), a `ref` (the artifact path or trace/node identifier), and a `note` (what it shows).
+Each `evidences` item names a `source` (for example `pod_export`, `experiment_log`, `loop`, `trace`, `code`, `design_doc`), a `ref` (the artifact path or trace/node identifier), and a `note` (what it shows).
 When a `ref` names a persisted artifact path, it is relative to the data root and begins with the `<project_id>/` segment, exactly like the assessment evidence chain.
 
 ## The root-cause space

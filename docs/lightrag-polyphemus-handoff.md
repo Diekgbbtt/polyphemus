@@ -121,7 +121,7 @@ and are **not** part of this work:
 | `LIGHTRAG_API_KEY` | optional | sent as `X-API-Key` when set |
 | `LIGHTRAG_TIMEOUT_SECONDS` | `30` | LightRAG client request timeout |
 | `LLM_HUNTING_HUNTER` | `swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731` | **required** to run a real hunt (hunting module bootstrap validates it) |
-| `LLM_HUNTING_ORCHESTRATOR` | `swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731` | **required** to run a real hunt |
+| `LLM_HUNTING_THREAT_MODELLER` | `swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731` | **required** to run a real hunt |
 | `API_KEY_SWISSAI` | secret | required by `build_chat_model` for the `swissai` provider (`API_KEY_<PROVIDER>` convention) |
 | standard platform vars | `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `POSTGRES_DSN`, `KALI_MCP_URL` | required by `config.py` at import |
 

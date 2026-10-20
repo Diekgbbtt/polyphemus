@@ -1,0 +1,110 @@
+loop_id: loop-9
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: null
+class_skill: null
+slice:
+  source: trust_agreement
+  statement: "TA-2/IA-8: catalogue anchors are rendered with a named target ('blank') and no rel protection, and the notice HTML (third-party, DF-4) carries its own anchors; the shell treats an anchor click as a navigation into an isolated context, while the opened context can retain a reference to the shell window. Opener retention turns any clickable link in manager-rendered markup into a route back into the shell origin (F-1 sink + named target -> V-9)."
+discrimination:
+  axes_used: [payload-vector, tech-misconfiguration, chaining-advanced]
+  boundary: "anchor family (catalogue converter-generated vs notice third-party) crossed with the target form (named 'blank' vs keyword '_blank') and its context semantics. No payload-string variants."
+  narrow_broad_tradeoff: "Narrow to the two evidenced anchor families and the target semantics that decide the mechanism; a wider sweep over every link in the shell would collect links with no evidenced markup path."
+specs:
+  - spec_id: loop-9-s1
+    label: "clicked description anchor retains a handle to the shell window"
+    sub_slice: "The catalogue converter's generated anchors (target='blank', no rel) rendered inside descriptions; owns the click-mediated opener-retention claim for the catalogue markup family: the landing page keeps a usable reference to the manager shell window and can navigate it."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        markup_source: "convert_markdown_to_html emits <a href='url' target='blank'> from the [a/(text)](url) pattern (IA-8)"
+        render_locus: "description cell and flyover preview (IA-7)"
+        mechanism: "window.opener retention of a same-window-group context; navigation authority over the opener window"
+        structural_basis: "anchor rendered in shell markup with a non-protected target; click supplied by the operator"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoint: "GET /customnode/getlist (record description -> rendered anchor)"
+      technology: "V3.37 converter markup; browser window/opener semantics"
+      interaction: "operator clicks a description link whose URL the attacker influenced (record control, any content-control route)"
+      observation: "window.opener state in the opened context and its ability to navigate the opener to a foreign page"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-9-s3: same click mechanism but a different anchor family and target form (converter named 'blank' versus notice keyword '_blank'); implicit noopener rules differ between the forms, so the two specs test different expectations."
+    chaining_advanced_note: null
+    proxy_technique: "Control a description link target (or rely on any third-party link the description carries), have the operator click it, and evaluate opener retention from the opened context: a non-null opener with navigation authority completes the reverse-tabnabbing chain into the shell origin."
+    verification_symptoms:
+      - "the opened context observes a non-null opener referencing the manager shell window"
+      - "the opened context can navigate that window (shell replaced by a foreign page) without user action in the shell"
+      - "implicit protection is absent for the named target (no rel=noopener/noreferrer on the generated anchor)"
+    payload_vector_space: {method: GET, path: "/customnode/getlist (rendered anchor)", parameter: "record description carrying the markdown anchor pattern", body: null, headers: "none"}
+    assumptions: ["the operator clicks a description link (likelihood note: an injected or contributed link must be clicked)", "the browser in scope does not force noopener for the named target (browser/spec dependence is named in the payload)"]
+    rationale: "The converter emits a named-target anchor with no rel, and the description is attacker-influenced by design; if the opened context keeps its opener, the landing page holds navigation authority over the shell window, converting a display-time click into cross-window control."
+    interpretation_guidance: "symptom-present = the opened page reads a usable opener and can navigate the shell window (phishing substitution observable). symptom-absent = opener is null or navigation via opener is refused - a browser-enforced protection or a rel addendum would yield this true negative. For a named target the check is decisive; do not infer opener state from the target spelling alone."
+  - spec_id: loop-9-s2
+    label: "named target is a shared, pre-hijackable browsing context"
+    sub_slice: "The target semantics: 'blank' is a named browsing context rather than the '_blank' keyword, so every such link reuses one window and any page can occupy that name first; owns the concrete markup misconfiguration (named form, no rel) and the context-reuse/pre-seeding failure it enables."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        markup_defect: "target='blank' (named context) instead of '_blank' (keyword), with no rel protection (converter evidence)"
+        consequences: "one shared window for all such links; a foreign page can window.open the same name first and keep a handle"
+        structural_basis: "paste semantics: named targets resolve by name in the window group, not by 'new unnamed window' semantics"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoint: "rendered catalogue anchors (getlist descriptions, flyover)"
+      technology: "browser named-window resolution; V3.37 generated markup"
+      interaction: "operator click on any named-target link, with or without a prior foreign page having opened the same name"
+      observation: "whether two distinct catalogue links reuse one window, and whether a pre-seeded window receives the navigation under an attacker-held handle"
+    discrimination_axis: tech-misconfiguration
+    discrimination_note: "Nearest sibling loop-9-s1: s1 owns opener retention on the clicked page; this spec owns the named-context defect that creates window sharing and pre-hijack even when opener rules differ; the technology artefact under test is the target spelling and its resolution, not the opener."
+    chaining_advanced_note: null
+    proxy_technique: "Pre-open a window named 'blank' from a foreign page (or simply click two different catalogue links); the catalogue navigation lands in that named context, so the attacker-held handle persists: the landing page can be replaced at any time, unbeknown to the operator."
+    verification_symptoms:
+      - "two distinct catalogue links open in one shared window (second click replaces the first)"
+      - "a window pre-named 'blank' by a foreign page receives the catalogue link's navigation"
+      - "the pre-seeding page retains a usable handle on the window after the catalogue content loads"
+    payload_vector_space: {method: GET, path: "rendered anchors in getlist output", parameter: "record description link markup", body: null, headers: "none"}
+    assumptions: ["the converter's target spelling is the named form as evidenced (target='blank')", "the operator clicks a catalogue link after (or during) a foreign page's pre-opening of the name"]
+    rationale: "A named target is resolved by name, not as 'a new context'; the markup therefore both shares one window across unrelated links and exposes that window to whoever claims the name first - the operator's subsequent clicks land in a context an attacker can keep replacing."
+    interpretation_guidance: "symptom-present = shared-window reuse or pre-seeded reception is observed, with the attacker page retaining a handle. symptom-absent = each click yields an isolated fresh context (keyword semantics with protection) or the pre-seeded name is not reused - true negatives for this mechanism. Distinguish the two symptoms: reuse alone is context confusion, pre-seeded reception is the hijack."
+  - spec_id: loop-9-s3
+    label: "notice third-party anchors extend the same click mechanism"
+    sub_slice: "The notice anchor family: third-party wiki HTML (DF-4) rendered via innerHTML contains its own anchors (observed target='_blank'); owns the opener/context claim for links the unit did not author, where any notice-injection control point (transport, extraction, authorship) supplies the carrier."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        markup_source: "notice HTML from the external wiki, injected unmodified (IA-6, DF-4); anchors observed with the '_blank' keyword, in contrast to the converter's named form"
+        carrier_variants: "any control point of the notice fetch can place the anchor (transport substitution, extraction framing, authored content)"
+        structural_basis: "anchor family inventory: links rendered by the shell fall into catalogue-generated and notice-supplied families"
+    concretisation:
+      protocol: "server fetch -> client GET /manager/notice"
+      target: "http://46.224.225.245:44177"
+      endpoint: "GET /manager/notice (rendered anchors)"
+      technology: "V3.37 notice handler; browser context semantics for the keyword form"
+      interaction: "operator clicks a notice link (e.g. a news item) at shell initialisation"
+      observation: "the opened context's opener state and navigation authority over the shell window"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-9-s1/s2: those own the catalogue converter's named-target defects; this spec owns the un-authored notice family whose anchor markup comes from outside the unit, and its target form differs (keyword), so the implicit-protection expectation differs. The carrier chain (any notice control point) is this spec's distinct region."
+    chaining_advanced_note: "Structural: no class skill covers opener-mediated navigation, so the family is carried structurally by inventorying the anchor sources the shell renders and chaining the notice carrier (any loop-5 control point) into the click. The chain's second step is the browser's context resolution, not an application fault, so it is reasoned rather than parametrised."
+    proxy_technique: "Place an anchor in the notice content through any notice control point, have the operator click it at shell initialisation, and evaluate the opened context: keyword-form links may receive implicit protection in modern browsers, so the test must read the actual opener rather than assume."
+    verification_symptoms:
+      - "a notice-supplied link opens a context whose opener state is observable and, where retained, usable"
+      - "the notice anchor exists without rel protection and its context behaviour differs from the catalogue named-target family"
+      - "the click chain is reachable without touching catalogue markup at all (independent carrier)"
+    payload_vector_space: {method: GET, path: "/manager/notice (rendered anchor)", parameter: null, body: "notice HTML carrying the link", headers: "none"}
+    assumptions: ["the notice surface renders third-party anchors as observed (news links present)", "implicit noopener rules for the keyword form may hold in modern browsers - a negative here is the expected baseline, and the spec tests for exceptions (legacy engines, augmented navigations)"]
+    rationale: "The shell renders link markup it did not author through the notice path; whichever context those links create, the operator's click is the activation, and a retained opener extends the same navigation-authority failure through a second, independently controllable carrier."
+    interpretation_guidance: "symptom-present = a notice link yields a context with a usable opener or a shared/hijackable window. symptom-absent = the keyword form receives implicit protection and each click is isolated - the baseline true negative for modern browsers. Because the carrier requires a notice content control point, record which control point supplied the link; a link-free notice is not evidence of protection."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the catalogue converter's opener-retention claim (named form), s2 the named-context semantics (sharing/pre-seeding), s3 the notice family's keyword-form claim and its independent carrier. Anchor families and target semantics are disjoint; no spec differs from a sibling by a payload string."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Union covers both evidenced anchor families and the two target forms (named 'blank' on catalogue markup, keyword '_blank' on notice markup), under the one click mechanism. Other shell links carry no evidenced attacker-influenced markup path and are outside the slice."
+  well_formedness_statement: "Three specs over disjoint sub-slices: catalogue-family opener retention, named-context semantics, and the notice-family carrier. Overlap is absent - each spec owns a distinct family or target-semantics claim, and the click mechanism is shared rather than duplicated. Coverage is exhaustive over the evidenced clickable markup families rendered by the shell."
+degradations:
+  - "No class skill matches: the suite has no reverse-tabnabbing class (open-redirect is the nearest name but its harm is redirect resolution, not opener-mediated navigation), so the mechanism is carried structurally."
+  - "Named-target opener retention is browser/spec dependent per the payload; the specs read the actual context state and treat mechanism-level negatives as expected baselines rather than faults."
+  - "The loop's likelihood requires an operator click and attacker influence over the link markup; both are named as assumptions per spec rather than assumed away."

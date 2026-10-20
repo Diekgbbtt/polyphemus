@@ -355,7 +355,7 @@ def _parser() -> argparse.ArgumentParser:
     # --- the surfer loop (#275) -----------------------------------------------
     surfer_parser = sub.add_parser(
         "surfer",
-        help="assert instance state and recover a cap-reached or failed run",
+        help="assert instance state and recover a budget-stopped or failed run",
     )
     _common_args(surfer_parser)
     surfer_parser.add_argument(

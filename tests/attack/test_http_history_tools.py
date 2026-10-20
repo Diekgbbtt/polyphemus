@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import json
 
-import httpx
 
 from polymerhus.attack.hunting.hunter_tools import (
     HttpHistoryGetTool,
     HttpHistorySearchTool,
     build_hunter_tools,
 )
-from polymerhus.attack.hunting.hunting_pod import HuntingHttpPod
 from polymerhus.attack.hunting.pod.agents import runner_react_tools
 
 
@@ -103,7 +101,9 @@ def test_every_http_history_description_states_the_contract_and_the_model():
     assert "conjunctive" in search.lower()
     assert "next_cursor" in search
     assert "absent" in search
-    assert "request_ref" in search
+    assert "provenance.baseline_ref" in search
+    # T8 (#381): the retired D4 field never names the baseline again.
+    assert "payload_vector_space" not in search and "request_ref" not in search
     # FM-B: the filter-vocabulary anti-patterns are taught, not just listed
     assert "TWO DIFFERENT AXES" in search
     assert "no `present` op" in search
@@ -112,24 +112,11 @@ def test_every_http_history_description_states_the_contract_and_the_model():
     # get: what makes a baseline replayable, and what is visible
     get = GET_HTTP_ARTIFACT_DESCRIPTION
     assert "captured" in get
-    assert "request_ref" in get
+    assert "provenance.baseline_ref" in get
+    assert "payload_vector_space" not in get and "request_ref" not in get
 
     # replay: the CLOSED override vocabulary and the lineage of the new artifact
     replay = REPLAY_HTTP_REQUEST_DESCRIPTION
     for key in ("remove_header", "form", "json", "mutated"):
         assert key in replay
 
-
-def test_request_ref_precedence_is_reported():
-    spec = {"d4_typed_base": {
-        "target_identity": {"url": "http://target.example/"},
-        "payload_vector_space": {
-            "request_ref": "http_01J0000000000000000000000A",
-            "method": "GET", "path": "/inline",
-            "mutations": [{"location": "query", "name": "q", "values": ["x"]}],
-        }}}
-    pod = HuntingHttpPod(project_id="proj-1",
-                         replay_fn=lambda p, a, o: {"status": 200 if o else 403},
-                         transport=httpx.MockTransport(lambda r: httpx.Response(200)))
-    out = pod(spec)
-    assert any("ignored" in str(item) for item in out["evidence"]["interpretations"])

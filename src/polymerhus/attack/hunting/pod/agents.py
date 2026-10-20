@@ -46,7 +46,15 @@ from polymerhus.attack.hunting.pod.types import RawObservation, RunnerStep
 class TriagerDecision(BaseModel):
     """The critic's per-lap decision: classify the stretch, then either terminate
     (a binary verdict + a Q3-amended terminal_reason + `clean`) or mine a
-    falsifiable variant (its declined attribute and derived spec)."""
+    falsifiable variant (its basis and derived spec).
+
+    The variant fields carry the S5 8.6 material the graph resolves the basis
+    from: `covered_gap_classes` is the triager's coverage assessment of the
+    executed D6 trail against the seven typed `SkillProcedure` fields (None =
+    no assessment stated), `failure_mode_plausible` is the fallback condition,
+    and the two trigger flags name a failed or diverged runner execution.
+    `declined_attribute` is the triager's claimed basis; the graph reconciles it
+    with the first-uncovered diff and records the RESOLVED basis."""
 
     classification: str = ""
     action: Literal["terminate", "variant"] = "terminate"
@@ -57,6 +65,10 @@ class TriagerDecision(BaseModel):
     declined_attribute: str = ""
     variant_spec: dict = Field(default_factory=dict)
     feedback: str = ""
+    covered_gap_classes: list[str] | None = None
+    failure_mode_plausible: bool = False
+    runner_failed: bool = False
+    runner_diverged: bool = False
 
 
 # Injected seam signatures (the graph owns the curated message lists).
@@ -65,23 +77,31 @@ TriagerFn = Callable[[dict, RawObservation, list, object], dict]
 
 
 def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
-    """The LLM-free runner: on the first turn of a stretch it issues the default
-    probe from the payload vector space (O12/C11), then concludes and hands the
-    observation to the critic. Drives the LLM-free CONTRACT TIER (an injected
-    seam - the production default is the ReAct turn, D84-16)."""
-    from polymerhus.attack.hunting.pod.symbolic import default_probe_from_spec
+    """The LLM-free runner: on the first turn of a stretch it AUTHORS one probe
+    from the reduced spec (S5 8.5) - a replay of `provenance.baseline_ref` when
+    the hunter named one, otherwise a GET of `target_identity.url` - then
+    concludes and hands the observation to the critic. A spec with neither is
+    the real "no probe derivable" outcome. Drives the LLM-free CONTRACT TIER
+    (an injected seam - the production default is the ReAct turn, D84-16)."""
+    from polymerhus.attack.hunting.pod.symbolic import author_probe_from_spec
     from polymerhus.attack.hunting.pod.tools import curl_command
 
     if tool_calls == 0:
-        chain = default_probe_from_spec(spec, "v")
+        chain = author_probe_from_spec(spec, "v")
         if chain is None:
             return RunnerStep(action="conclude", exhausted=True,
-                              observation_note="no probe derivable from the payload vector space")
+                              observation_note="no probe derivable from the reduced spec")
+        core = chain.steps[0]
+        if core.request_ref:
+            return RunnerStep(action="tool_call", tool="replay",
+                              request_ref=core.request_ref,
+                              overrides=dict(core.overrides),
+                              thought="replay the spec's recorded baseline")
         return RunnerStep(action="tool_call", tool="exec",
-                          command=curl_command(chain.steps[0]),
-                          thought="issue the default probe for the target root")
+                          command=curl_command(core),
+                          thought="issue the first probe authored from the target identity")
     return RunnerStep(action="conclude",
-                      observation_note="default probe issued; handing the observation to the critic")
+                      observation_note="first probe issued; handing the observation to the critic")
 
 
 async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
@@ -245,7 +265,11 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     seam (surface B) is retired. Constructed PER STRETCH because `exec` carries
     the current variant's dedup scope."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
-    from polymerhus.attack.hunting.pod.tools import ExecTool, KbQueryTool  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.tools import (  # noqa: PLC0415
+        ExecTool,
+        KbQueryTool,
+        replay_signature,
+    )
 
     tools = [
         ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref,
@@ -254,13 +278,40 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     ]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
+
+    def _record_replay(artifact_id, overrides, result) -> None:
+        """Record a replay result as a `RawObservation` (fail-open, S5 8.5): a
+        replay is a probe execution like any other, so its observed status
+        lands RAW in the D6 trail (G4). A missing baseline (null status) is an
+        UNOBSERVABLE response (`returncode=1`), never a clean absence; a
+        logless tool records nothing (the contract tier)."""
+        if log is None:
+            return
+        try:
+            sig = replay_signature(variant_ref, artifact_id, overrides)
+            status = result.get("status") if isinstance(result, dict) else None
+            artifact = result.get("artifact_id") if isinstance(result, dict) else None
+            log.mark_executed(sig)
+            log.record_observation(RawObservation(
+                probe_ref=sig, variant_ref=variant_ref,
+                request={"artifact_id": artifact_id, "overrides": dict(overrides)},
+                status=status if isinstance(status, int) else None,
+                returncode=0 if status is not None else 1,
+                http_artifact_refs=(
+                    [artifact] if isinstance(artifact, str) and artifact else [])))
+        except Exception:  # noqa: BLE001 - evidence recording never gates the tool
+            pass
+
     if replay_fn is not None:
         # The description is the canonical contract (#196) imported from
         # `http_history_contract` - the pod and the hunter's read pair teach the
         # SAME artifact model; a local docstring here would be a second source.
         @tool(description=REPLAY_HTTP_REQUEST_DESCRIPTION)
         def replay(artifact_id: str, overrides: dict | None = None) -> str:
-            return json.dumps(replay_fn(project_id, artifact_id, overrides or {}))
+            declared = overrides or {}
+            result = replay_fn(project_id, artifact_id, declared)
+            _record_replay(artifact_id, declared, result)
+            return json.dumps(result)
 
         tools.append(replay)
     return tools

@@ -173,7 +173,7 @@ def test_a_declaration_against_an_exempt_role_is_refused_loudly(caplog) -> None:
     """The roster's exemption is a considered capability-minimalism decision,
     not artifact-overridable: the declaration is warned and ignored."""
     with caplog.at_level(logging.WARNING, logger="polymerhus.app.llm.skills"):
-        binding = skill_agent_binding("hunting_orchestrator", task_skills=["ssrf"])
+        binding = skill_agent_binding("hunting_threat_modeller", task_skills=["ssrf"])
 
     assert binding.tools == []
     assert binding.middleware == []
@@ -297,7 +297,7 @@ def test_importing_the_touched_modules_performs_no_io():
     modules = [
         "polymerhus.app.llm.skills",
         "polymerhus.app.auth.seams",
-        "polymerhus.attack.hunting.hunt_orchestrator",
+        "polymerhus.attack.hunting.read_only_graph",
         "polymerhus.attack.hunting.hunting_agent",
         "polymerhus.attack.hunting.surfer",
         "polymerhus.attack.hunting.pod.types",
@@ -327,28 +327,20 @@ def test_importing_the_touched_modules_performs_no_io():
 
 
 def test_a_malformed_artifact_field_is_refused_by_the_schema() -> None:
-    """The two artifact schemas round-trip a declared skill list; a malformed
+    """The D4 artifact schemas round-trip a declared skill list; a malformed
     value is a schema violation (the dispatch refuses it, never a crash)."""
     import pydantic
 
-    from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig
+    from polymerhus.attack.hunting.hunter_tools import SpecWrite
     from polymerhus.attack.hunting.pod.types import TestImplementationSpec
 
-    config = HuntConfig.model_validate({
-        "hunt_id": "h1", "unit_id": "Service:a", "fault_class": "CWE-1",
-        "prompt_template": {"rationale": "r"},
-        "skills": ["ssrf", "csrf"],
-    })
-    assert config.skills == ["ssrf", "csrf"]
+    spec = TestImplementationSpec(**{"skills": ["ssrf", "csrf"]})
+    assert spec.skills == ["ssrf", "csrf"]
 
-    spec = TestImplementationSpec(**{"skills": ["ssrf"]})
-    assert spec.skills == ["ssrf"]
+    write = SpecWrite(skills=["ssrf"])
+    assert write.skills == ["ssrf"]
 
     with pytest.raises(pydantic.ValidationError):
-        HuntConfig.model_validate({
-            "hunt_id": "h1", "unit_id": "Service:a", "fault_class": "CWE-1",
-            "prompt_template": {"rationale": "r"},
-            "skills": "ssrf",  # a bare string is not a list of names
-        })
+        SpecWrite(skills="ssrf")  # a bare string is not a list of names
     with pytest.raises(pydantic.ValidationError):
         TestImplementationSpec(**{"skills": 7})

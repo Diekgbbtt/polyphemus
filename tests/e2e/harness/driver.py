@@ -38,11 +38,12 @@ def _load_spec() -> dict[str, Any]:
         raise SystemExit("POD_SPEC_PATH unset")
     with open(SPEC_PATH, encoding="utf-8") as fh:
         spec = yaml.safe_load(fh)
-    # The typed base the pod's verification ranges over: keep only the D4 keys
-    # (the fixture carries extra name/comments).
-    keep = {"target_identity", "verification_symptoms", "testing_pattern",
-            "assumptions", "payload_vector_space", "rationale",
-            "interpretation_guidance"}
+    # The reduced D4 the pod's verification ranges over (S5 8.4, S3 8.6): the
+    # three retired fields (`testing_pattern`, `payload_vector_space`,
+    # `interpretation_guidance`) are never forwarded (T10b #397). The fixture's
+    # `name` and comments stay out of the typed payload.
+    keep = {"target_identity", "verification_symptoms", "assumptions",
+            "rationale", "parent_spec_ref", "provenance"}
     return {k: spec[k] for k in keep if k in spec}
 
 
@@ -52,7 +53,7 @@ def _mocked_kb(query: str, *, fault_id: str = "", technological_axis=()) -> dict
     kb_file = os.environ.get("POD_E2E_MOCK_KB_FILE",
                              "/srv/tests/e2e/fixtures/mock-kb.yaml")
     with open(kb_file, encoding="utf-8") as fh:
-        kb = yaml.safe_load(fh).get("symptom_kb", {})
+        kb = yaml.safe_load(fh).get("technique_kb", {})
     q = (query or "").lower()
     for key, entry in kb.items():
         if key.lower() in q:
@@ -76,9 +77,10 @@ async def _run_pod(spec: dict) -> dict[str, Any]:
 
     run_id = f"pod-e2e-{RUN_ID}"
     try:
-        from polymerhus.attack.hunting.pod.pod_memory import spec_identifier
-        spec_id = spec_identifier(
-            str(spec.get("fault") or "fault"), str(spec.get("strategy") or "strategy"))
+        # The spec identity is the fixture's file-name stem, the same derived
+        # `<fault>_<strategy>` identity the production lane crosses (D84-34);
+        # the reduced D4 carries no fault/strategy fields.
+        spec_id = Path(SPEC_PATH).stem or "spec"
         with hunt_session(run_id, f"hunt-{RUN_ID}"):
             return await arun_pod(spec, run_id=run_id, kb_fn=_mocked_kb,
                                   trace_fn=None, project_id=PROJECT_ID,
@@ -91,22 +93,18 @@ async def _run_pod(spec: dict) -> dict[str, Any]:
 def _read_notes(spec: dict) -> list[dict]:
     """Read the pod's run notes back from the per-project memory-store root the
     production lane wrote (D84-33 `data/<project_id>/test-executor-pod/` under
-    the hunting module), keyed by the #164 spec id (`<fault>_<strategy>`) - the
-    N3 note-detail evidence source.
+    the hunting module), keyed by the derived spec id (the fixture's
+    `<fault>_<strategy>` file stem) - the N3 note-detail evidence source.
 
     The `experiment_summary` is the TERMINAL RECORD of each variant's
     experiment-log slice (D84-35, T2) - NOT a notes.yaml record - so it is
     surfaced here from the variant files, shaped like the note records the NFR
     scorer expects; `kb_insight`/`freeform` come from notes.yaml."""
     try:
-        from polymerhus.attack.hunting.pod.pod_memory import (
-            PodMemoryStore,
-            spec_identifier,
-        )
+        from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
 
         store = PodMemoryStore(project_id=PROJECT_ID)
-        spec_id = spec_identifier(
-            str(spec.get("fault") or "fault"), str(spec.get("strategy") or "strategy"))
+        spec_id = Path(SPEC_PATH).stem or "spec"
         notes = [n for n in store.read_notes(spec_id)
                  if n.get("kind") != "experiment_summary"]
         for order in store.list_variant_orders(spec_id):

@@ -34,7 +34,8 @@ from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, note_key
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
+    "assumptions": ["network egress allowed"],
+    "rationale": "reachability",
 }
 
 SPEC_ID = "sqli_blind"  # the #164 `<fault>_<strategy>` memory key

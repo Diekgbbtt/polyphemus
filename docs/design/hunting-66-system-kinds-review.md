@@ -1,5 +1,9 @@
 # Hunting #66 - Critical review of the spine-systems enum (SYSTEM_KINDS)
 
+*Historical review record (superseded).*
+The fault-KB it reviews was DELETED in T10 (#383); the review is kept as the record of that decision.
+
+
 Status: reported artifact (operator-requested follow-up, part of the
 curation-decisions review). Not a runtime gate.
 Date: 2026-08-05.

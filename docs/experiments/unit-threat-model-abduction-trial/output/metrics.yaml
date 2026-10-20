@@ -1,0 +1,49 @@
+trial: t1-tbsg-service-model-download
+unit_id: Service:model-download
+target: http://46.224.225.245:47745
+states:
+  UNIT_TECHNICAL_SHARP:
+    probes_run: 59          # all target probing (57 curl probes + 2 ssh oracle reads); no probing in later states
+    notes_written: 5
+    wallclock_s: 620
+  TRUST_MODELLED:
+    probes_run: 0
+    notes_written: 2
+    wallclock_s: 89
+  TRUST_ASSUMPTIONS_WRITTEN:
+    probes_run: 0
+    notes_written: 3
+    wallclock_s: 27
+  VULNERABILITIES_WRITTEN:
+    probes_run: 0
+    notes_written: 2
+    wallclock_s: 27
+  COMPLETED:
+    probes_run: 0
+    notes_written: 3
+    wallclock_s: 151
+totals:
+  shell_probe_commands: 59      # limit 60
+  curl_probes: 57
+  oracle_reads: 2
+  notes: 15
+  wallclock_s: 914
+model_counts:
+  interface_agreements: 7
+  control_flows: 4
+  data_flows: 4
+  trust_agreements: 6
+  efsm_states: 6
+  efsm_transitions: 8
+  efsm_violations: 3
+  assumptions: 9
+  assumptions_local: 8
+  assumptions_propagated: 1
+  dimensions_used: [identity, spatial, temporal, interpretation]
+  faults: 9
+  vulnerabilities_kept: 9
+  vulnerabilities_dropped: 4
+  failure_modes_feasible: 10
+  failure_modes_dropped: 4
+  loops: 9
+  evidence_gaps: 9

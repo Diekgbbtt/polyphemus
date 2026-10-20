@@ -47,7 +47,7 @@ environment):
 ```bash
 export API_KEY_SWISSAI="$LLM_BINDING_API_KEY"
 export LLM_HUNTING_HUNTER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
-export LLM_HUNTING_ORCHESTRATOR=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
+export LLM_HUNTING_THREAT_MODELLER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
 export LIGHTRAG_BASE_API_URL=http://127.0.0.1:9621
 export QUERY_LLM_API_KEY="$LLM_BINDING_API_KEY"
 export QUERY_LLM_BASE_URL=https://api.swissai.svc.cscs.ch/v1
@@ -125,13 +125,17 @@ This exercises the production registry path: the model gets the real
 set -a; source .env; set +a
 export API_KEY_SWISSAI="$LLM_BINDING_API_KEY"
 export LLM_HUNTING_HUNTER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
-export LLM_HUNTING_ORCHESTRATOR=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
+export LLM_HUNTING_THREAT_MODELLER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
 export LIGHTRAG_BASE_API_URL=http://127.0.0.1:9621
 export QUERY_LLM_API_KEY="$LLM_BINDING_API_KEY"
 export QUERY_LLM_BASE_URL=https://api.swissai.svc.cscs.ch/v1
 export QUERY_LLM_MODEL=RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
 export QUERY_LLM_MAX_TOKENS=16384
 export PYTHONPATH=src
+
+> **Historical harness (superseded).** The snippet below drives the retired planner pass and its `HuntConfig`.
+> The live harness drives the unit threat model and dispatches a hunter per produced loop file.
+> Keep it as a record of the pre-T10 comparison, not as a runnable live recipe.
 
 .venv/bin/python - <<'PY'
 import asyncio, json, time

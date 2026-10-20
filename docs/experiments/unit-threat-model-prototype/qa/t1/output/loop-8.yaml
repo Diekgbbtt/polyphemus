@@ -1,0 +1,78 @@
+loop_id: loop-8
+unit_id: Service:model-download
+class: Unauthenticated state-changing GET (CSRF-able queue control)
+class_skill: csrf
+slice:
+  source: trust_agreement
+  statement: "TA10 + F9: the queue trusts state-changing operations (start, reset) to be deliberate, but both are unauthenticated GET endpoints with no CSRF token, so any HTTP participant can cross the idle-to-drained and drained-to-stale transitions (P14/P24). The loop opens the delivery space that reaches those GETs without an intent signal."
+discrimination:
+  axes_used: [tech-misconfiguration, payload-vector]
+  boundary: "the delivery context that reaches the same GETs: no-context participant crossing bound to the GET route design (s1) versus browser-mediated cross-site delivery (s2); endpoints and effect stay fixed."
+  narrow_broad_tradeoff: "narrow on the two delivery contexts the payload supports (direct crossing and browser cross-site), broad on endpoints inside each (start and reset both carried as vector space); there is no token or confirmation chain to map, so breadth is spent on delivery geometry."
+specs:
+- spec_id: loop-8-s1
+  label: "no-context participant crossing"
+  sub_slice: "Any unauthenticated HTTP client - no browser, no ambient authority - forces the transitions: start drains the queue, reset empties it with counters retained; region = the crossing that requires no victim context at all, resting on the aiohttp route binding of state changes to GET."
+  class_skill_parametrisation:
+    skill: csrf
+    inputs: {endpoints: "GET /manager/queue/start, GET /manager/queue/reset", defense_map: "no token, no Origin/Referer check, no auth (P01/P02, methods enforced elsewhere: P42/P43)", technique: "GET state-change inventory plus method-binding contrast from the class skill's reconnaissance"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 on aiohttp 3.14.3; no TLS, no login, single seeded profile"
+    endpoint: "GET /manager/queue/start and GET /manager/queue/reset (mirror /api/...)"
+    parameter: "none (path-carried operation)"
+    method: GET
+    body: "none"
+    headers: "none required; the crossing carries no credential of any kind"
+  discrimination_axis: tech-misconfiguration
+  discrimination_note: "Owns the crossing that needs no browser: the failing expectation is 'state-changing operations are deliberate and authenticated' and the mechanism is the GET route binding (contrast: POST /manager/queue/status -> 405, P42, shows the app enforces methods elsewhere). s2 owns browser-delivered crossings; s1 holds the payload constant and varies only the participant."
+  chaining_advanced_note: null
+  proxy_technique: "A bare HTTP client issues the GET after establishing queue state: enqueue items (install_model), then GET start to force the drain (listener confirms fetches); separately, reach drained state and GET reset to observe retention. Contrast against POST to the same path (405) to fix the method binding as the mechanism."
+  verification_symptoms: ["start drains a queued batch for a participant holding no credential (listener hits and done_count advance)", "reset executes from the same participant and leaves counters retained with an empty queue (ES5 anchor, P24/P25)"]
+  payload_vector_space:
+    method: "GET (contrast: POST -> 405)"
+    path: "/manager/queue/start, /manager/queue/reset, /api/manager/queue/start, /api/manager/queue/reset"
+    parameter: null
+    body: null
+    headers: "none; absence of any auth or token is the tested property"
+  assumptions: ["the transitions are server-global on the single seeded profile, so no victim resource is needed", "no hidden middleware enforces method or origin on these paths (P14/P24 executed them directly)"]
+  rationale: "If F9 is implemented (state changes bound to GET), the trust agreement's deliberateness clause has no enforcement surface: no method constraint, no auth, no token. The crossing materialises for any participant, browser or not, and P14/P24 anchor the executed transitions."
+  interpretation_guidance: "Symptom-present = the transition executes for an unauthenticated bare client (queue drains on start; queue empties with stale counters on reset), with before/after server state as the evidence. Symptom-absent = the same request returns 405/401/403 or leaves state unchanged: the route binding or an auth layer was added; record which. A 200 response alone is not a symptom - the state change is."
+- spec_id: loop-8-s2
+  label: "browser-mediated cross-site delivery"
+  sub_slice: "Delivery of the same GETs from a foreign-origin context - top-level navigation, link, meta refresh, redirect chain, or preflightless embedded request - so a visitor's browser issues the crossing without any same-origin intent; region = cross-site delivery vectors against the queue-control routes."
+  class_skill_parametrisation:
+    skill: csrf
+    inputs: {endpoints: "same GET routes", technique: "navigation-triggering plus embedded preflightless delivery from csrf-navigation-get; sending-scope recording (vacuous here: no cookies exist) and null-origin contexts", anchors: "P01/P02 no login surface, no principal anywhere"}
+  concretisation:
+    protocol: http (page served over http or https from the attacker origin)
+    technology: "attacker page on a foreign origin; victim browser performs the navigation/embed; unit enforces no Origin/Referer check on the routes"
+    endpoint: "GET /manager/queue/start and GET /manager/queue/reset"
+    parameter: "none"
+    method: GET
+    body: "none (navigation) / no body (embedded GET)"
+    headers: "foreign-origin Referer/Origin delivered by the browser; none is checked"
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns browser delivery geometry: top-level navigation versus preflightless embedded requests, including null-origin and referrer-stripped variants. s1 owns the no-browser crossing; the endpoints coincide by requirement, but the tested variable (route binding versus delivery vector) and the failing clause ('deliberate' without auth versus 'cross-site intent' without origin proof) differ."
+  chaining_advanced_note: null
+  proxy_technique: "Construct an attacker page carrying each delivery vector against the queue routes: top-level navigation (link click, meta refresh, location assignment) and embedded preflightless requests (img/iframe). The state change is server-global, so no victim credential is forged; the observation is before/after queue state at the unit around the victim-context visit."
+  verification_symptoms: ["after a victim-context navigation or embed to start, a previously queued batch drains (fetches observed, counters advance) with no same-origin interaction at the unit", "after a victim-context visit to reset, the queue empties and counters persist as ES5, with the foreign origin never rejected (no Origin/Referer enforcement)"]
+  payload_vector_space:
+    method: "GET delivered by browser navigation or embedded preflightless request"
+    path: "/manager/queue/start, /manager/queue/reset"
+    parameter: null
+    body: null
+    headers: "browser-set Origin/Referer from the foreign page; null-origin and stripped-referrer variants as vector options"
+  assumptions: ["a victim browser visits the attacker page and has IP reachability to the unit (no TLS, no auth, so reachability alone suffices)", "SameSite semantics are vacuous (no cookies exist); the delivery vector decides only whether the GET is issued, not whether authority rides it", "shared-instance deployments make the forced transition a durable effect on the operator's queue"]
+  rationale: "If F9 is implemented, the GET plus absent origin/intent checks lets any cross-site context trigger the transition; the delivery geometry is the only remaining variable once the method binding exists. The loop's own framing ('CSRF-able queue control') makes browser-mediated delivery a first-class sub-slice even though no credential is forged."
+  interpretation_guidance: "Symptom-present = the transition executes when the request arrives from a foreign-origin navigation or embed (server-side state diff attributed to that request), with no origin rejection. Symptom-absent = the vector does not issue or cannot reach the unit, or the route refuses cross-site delivery (405/403, origin enforcement): record the vector and the refusal class. A browser that never loads the page is a harness failure, not an absence answer."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the no-context crossing (route binding, no browser) and s2 owns browser-mediated delivery (vector geometry). The endpoints and observation surface coincide by requirement of the loop, but the tested variable and failing expectation are disjoint; no accepted payload or mechanism is shared, so neither reduces to the other."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Both halves named by the loop's class ('unauthenticated' and 'CSRF-able') carry owning specs. Chained confirmation steps do not exist on these routes (no token or confirmation in the flow), so the csrf-navigation-get chain-two-GETs region is empty here rather than uncovered."
+  well_formedness_statement: "Two specs cover F9's delivery space: the unauthenticated direct crossing (route binding) and the browser-mediated cross-site crossing (delivery vectors). Endpoints are shared by necessity, but sub-slices, tested variables, and failing clauses are disjoint; their union covers what a GET-bound, tokenless, credential-less state change makes reachable."
+degradations: ["No login surface exists (P01/P02), so the CSRF half is tested as forced state change on a shared instance rather than credential-riding; the class skill's session-scope entities (SameSite, tokens) apply vacuously and are carried structurally.", "Browser delivery depends on attacker-page and victim-browser harness outside this mock; the spec defines the observation at the server state, which the mock can represent."]

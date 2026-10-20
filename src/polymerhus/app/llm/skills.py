@@ -69,9 +69,9 @@ baseline is never displaced. The L1 index middleware renders the resolved
 descriptions, so the artifact set rides the #221 mechanism with no new
 rendering path. The same ONE `load_skill` tool gains the listing mode: no name
 lists the catalogue's descriptions (all, or the `pattern` regex), meta excluded,
-capped at `MAX_SKILL_LISTING`; the hunt-orchestrator's #236 grant composes that
-same tool in `attack/hunting/actors.build_orchestrator_read_grants`, so it lists
-freely and loads any named body.
+capped at `MAX_SKILL_LISTING`; the threat modeller's suite pair is a separate
+surface, and the shared binding still composes the same listing tool for any
+role that lists freely and loads a named body.
 """
 from __future__ import annotations
 
@@ -210,6 +210,33 @@ def list_skills(catalogue: "SkillCatalogue | None" = None) -> list[str]:
     if catalogue is not None:
         return catalogue.list_skills()
     return _live_catalogue().list_skills()
+
+
+def list_suite_classes(catalogue: "SkillCatalogue | None" = None) -> list[str]:
+    """The web-vulnerability suite's CLASS parents (the level-1 bundles under
+    `web-vulnerability-testing/`). This is the class vocabulary the unit threat
+    model's `web_vulnerability_class` stores; the nested variants are procedures,
+    not classes."""
+    if catalogue is not None:
+        return catalogue.suite_classes()
+    return _live_catalogue().suite_classes()
+
+
+def list_suite_leaves(catalogue: "SkillCatalogue | None" = None) -> list[str]:
+    """Every web-vulnerability suite skill: the class parents AND their nested
+    variant leaves. The threat modeller's and the hunter's `skill_list` render
+    this discovery surface, so an assumption probe can load any leaf procedure."""
+    if catalogue is not None:
+        return catalogue.suite_leaves()
+    return _live_catalogue().suite_leaves()
+
+
+def read_suite_raw(name: str, catalogue: "SkillCatalogue | None" = None) -> str:
+    """One suite class's raw `SKILL.md` text (frontmatter intact), for the
+    suite seam's listing parser and load. An unknown name degrades to ""."""
+    if catalogue is not None:
+        return catalogue.read_raw(name)
+    return _live_catalogue().read_raw(name)
 
 
 # --- The nested catalogue (W4, taxonomy spec section 6; the mount replacement) -
@@ -386,6 +413,40 @@ class SkillCatalogue:
         if bundle is None:
             return None
         return bundle / target
+
+    def suite_classes(self) -> list[str]:
+        """The suite's CLASS parents: the level-1 bundles under the logical
+        root. A class parent is the directory name the unit threat model stores
+        in `web_vulnerability_class`; the nested variant leaves are procedures
+        of that class, never separate classes."""
+        suite_root = (self._root / self._logical_root).resolve()
+        return sorted(
+            name for name, bundle in self._bundles.items()
+            if bundle.parent.resolve() == suite_root
+        )
+
+    def suite_leaves(self) -> list[str]:
+        """Every suite skill: the class parents AND their nested variant leaves.
+        This is the discovery surface the threat modeller and the hunter list;
+        the class parent remains the value stored in `web_vulnerability_class`."""
+        suite_root = (self._root / self._logical_root).resolve()
+        return sorted(
+            name for name, bundle in self._bundles.items()
+            if suite_root in bundle.resolve().parents
+        )
+
+    def read_raw(self, name: str) -> str:
+        """The named skill's `SKILL.md` text with the frontmatter INTACT (the
+        suite seam's listing parses it; the seam strips the body on load). An
+        unknown name returns "" and never raises - the same fail-open contract
+        as `read`."""
+        bundle = self._bundles.get(name)
+        if bundle is None:
+            return ""
+        try:
+            return (bundle / "SKILL.md").read_text(encoding="utf-8")
+        except OSError:
+            return ""
 
 
 # The live-root catalogue is built LAZILY on the first read: the import stays
@@ -653,9 +714,12 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # The critic never touches the target: its KB reads are context reads
     # (D84-27), so only the retrieval discipline bears.
     "pod_triager": ("lightrag-query",),
-    # The gate/ratify/match decisions run over candidate material; no knowledge
-    # skill bears.
-    "hunting_orchestrator": (),
+    # The threat modeller (S1 5.5): no catalogue skill bears on the job - its
+    # class material is the web-vulnerability SUITE, bound through the
+    # modeller's own `skill_list` / `skill_load` pair - so the roster declares it
+    # exempt and the actor arms the read-only skill surface + `auth_store`
+    # explicitly (the recon-orchestrator coupling, `app/auth/seams.py`).
+    "hunting_threat_modeller": (),
     # -- app (the skill-evolution loop) -----------------------------------------
     # The SkillEvolver authors revisions of project bundles; its discipline is
     # the authoring meta-skill (#232 D232-7). It is a BOUND role whose pass arms
@@ -837,12 +901,10 @@ def skill_agent_binding(
     set is exempt and returns an inert binding (no middleware, no tools, no
     skills in the context): the site stays uniform, and nothing dead is bound.
 
-    The hunt-orchestrator's #236 read grant composes the SAME
-    `build_load_skill_tool` directly in
-    `attack/hunting/actors.build_orchestrator_read_grants`, beside the
-    HTTP-history read pair: it lists freely and loads any named body, and it
-    writes nothing (no lesson, no skill revision). The roster and this seam
-    stay untouched by it. Import performs no I/O."""
+    The retired hunt-orchestrator's #236 read grant composed the SAME
+    `build_load_skill_tool`; the unit threat model replaces it with the
+    modeller's suite pair and the `arm_exempt_surface` binding. The roster and
+    this seam stay unchanged. Import performs no I/O."""
     if role_id not in ROLE_SKILLS:
         raise ValueError(
             f"skill seam: {role_id!r} is not declared in ROLE_SKILLS - every "
@@ -2427,6 +2489,9 @@ __all__ = [
     "is_meta_skill",
     "list_skill_descriptions",
     "list_skills",
+    "list_suite_classes",
+    "list_suite_leaves",
+    "read_suite_raw",
     "render_skill_index",
     "skill_agent_binding",
     "skill_for",

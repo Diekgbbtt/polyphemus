@@ -40,29 +40,34 @@ class WorkItem:
 
 @dataclass(frozen=True)
 class PreloadedTestSpec:
-    """One pre-mined hunter `TestImplementationSpec` and its fault-key family.
+    """One pre-mined hunter `TestImplementationSpec` and its dispatch identity.
 
-    `path` is a host path (a spec file, or a directory of them); `fault_key` is
-    the `<fault_key>/` directory under `hunting/hunter/test-specs/` whose
-    produced/ inbox the pipeline's lazy read drains.
+    `path` is a host path (a spec file, or a directory of them); `dispatch_id`
+    is the loop dispatch id `<unit_name>__<loop_id>` whose `test-specs/`
+    family produced/ inbox the pipeline's lazy read drains (S3 8.9).
     """
 
     path: str
-    fault_key: str
+    dispatch_id: str
 
 
 @dataclass(frozen=True)
 class PreloadedArtifacts:
-    """Operator-supplied pre-mined hunting artifacts (#270 AC4).
+    """Operator-supplied pre-mined hunting artifacts (#270 AC4; T10b #397).
 
-    `configs` is the former single-path form: a host path to a hunt config or a
-    directory of them, placed into the hunt-config `produced/` inbox. Each
-    `test_specs` entry names one spec and its fault key, placed into that
-    family's `produced/` inbox. Both are the pipeline's own lazy-read locations,
-    so the normal mover consumes them and the cap counts them.
+    `models` is a host path to a threat-model unit directory (a model document
+    plus its loop files) or to a directory of unit directories, placed into the
+    threat-model store's `produced/` inbox. Each `test_specs` entry names one
+    spec and its dispatch id, placed into that hunter family's `produced/`
+    inbox. Both are the pipeline's own lazy-read locations, so the normal mover
+    consumes them.
+
+    The retired hunt-config form (`configs`, or a bare string) is REFUSED
+    loudly: T4b (#387) removed the config family from the dispatch path, and a
+    pre-mined config must never read as a satisfied prerequisite.
     """
 
-    configs: str | None = None
+    models: str | None = None
     test_specs: tuple[PreloadedTestSpec, ...] = ()
 
 
@@ -388,23 +393,36 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
 
 
 def _parse_preloaded_artifacts(payload: object, where: str) -> PreloadedArtifacts | None:
-    """Validate the pre-mined artifact configuration (#270 AC4).
+    """Validate the pre-mined artifact configuration (#270 AC4; T10b #397).
 
-    A bare string is the legacy configs-only form. The mapping form carries
-    `configs` and/or `test_specs`; every test-spec entry names its `fault_key`
-    so the spec lands in the right `<fault_key>/produced/` inbox. A missing or
-    unknown field, a missing fault key, or an unsafe fault key fails loud.
+    The mapping form carries `models` and/or `test_specs`; every test-spec
+    entry names its dispatch id so the spec lands in the right
+    `<dispatch_id>/produced/` inbox. A missing or unknown field, a missing
+    dispatch id, or an unsafe dispatch id fails loud.
+
+    The retired hunt-config form (the `configs` key or a bare string) is a
+    LOUD rejection, never a silently empty preload: a pre-mined config cannot
+    satisfy the hunting prerequisite because nothing reads the config family
+    (T4b #387).
     """
     if payload is None:
         return None
     if isinstance(payload, str):
-        if not payload:
-            raise SetupError(f"{where}: expected a non-empty string")
-        return PreloadedArtifacts(configs=payload)
+        raise SetupError(
+            f"{where}: a bare pre-mined path is RETIRED with the hunt-config "
+            "family (T4b #387, T10b #397); use the mapping form with 'models' "
+            "(a threat-model unit directory) or 'test_specs'"
+        )
 
     mapping = _mapping(payload, where)
-    _check_keys(mapping, ("configs", "test_specs"), where)
-    configs = _optional_str(mapping, "configs", where)
+    if "configs" in mapping:
+        raise SetupError(
+            f"{where}.configs is RETIRED (T4b #387, T10b #397): a pre-mined "
+            "hunt config cannot satisfy the hunting prerequisite; name a "
+            "threat-model unit directory under 'models'"
+        )
+    _check_keys(mapping, ("models", "test_specs"), where)
+    models = _optional_str(mapping, "models", where)
     raw_specs = mapping.get("test_specs") or []
     if not isinstance(raw_specs, list):
         raise SetupError(f"{where}.test_specs: expected a list")
@@ -412,21 +430,21 @@ def _parse_preloaded_artifacts(payload: object, where: str) -> PreloadedArtifact
         _parse_preloaded_test_spec(item, f"{where}.test_specs[{i}]")
         for i, item in enumerate(raw_specs)
     )
-    if configs is None and not test_specs:
-        raise SetupError(f"{where}: expected at least one of 'configs' or 'test_specs'")
-    return PreloadedArtifacts(configs=configs, test_specs=test_specs)
+    if models is None and not test_specs:
+        raise SetupError(f"{where}: expected at least one of 'models' or 'test_specs'")
+    return PreloadedArtifacts(models=models, test_specs=test_specs)
 
 
 def _parse_preloaded_test_spec(payload: object, where: str) -> PreloadedTestSpec:
     mapping = _mapping(payload, where)
-    _check_keys(mapping, ("path", "fault_key"), where)
+    _check_keys(mapping, ("path", "dispatch_id"), where)
     path = _str_field(mapping, "path", where, required=True)
-    fault_key = _str_field(mapping, "fault_key", where, required=True)
-    if not is_path_safe_id(fault_key):
+    dispatch_id = _str_field(mapping, "dispatch_id", where, required=True)
+    if not is_path_safe_id(dispatch_id):
         raise SetupError(
-            f"{where}.fault_key: expected a path-safe identifier, got {fault_key!r}"
+            f"{where}.dispatch_id: expected a path-safe identifier, got {dispatch_id!r}"
         )
-    return PreloadedTestSpec(path=path, fault_key=fault_key)
+    return PreloadedTestSpec(path=path, dispatch_id=dispatch_id)
 
 
 def _parse_target_config(payload: object, where: str) -> TargetConfig:

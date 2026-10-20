@@ -1,7 +1,7 @@
 ---
 name: lightrag-query
 description: >-
-  Compact operational guide to the `query_lightrag` / `kb_query` tool for the hunting agent: when to use it, how to build a `QuerySpecV1` by deriving the fields from the HuntConfig, and how to treat the validated `AnswerBundle` (methodology and provenance, never a vulnerability confirmation). The KB is a testing-methodology knowledge base - retrieve concepts from it,   never use it to verify or adjudicate a bug.
+  Compact operational guide to the `query_lightrag` / `kb_query` tool for the hunting agent: when to use it, how to build a `QuerySpecV1` by deriving the fields from the loop payload, and how to treat the validated `AnswerBundle` (methodology and provenance, never a vulnerability confirmation). The KB is a testing-methodology knowledge base - retrieve concepts from it,   never use it to verify or adjudicate a bug.
 metadata:
   version: '1.0'
 ---
@@ -24,20 +24,20 @@ confirms one.
 
 ## How to build `QuerySpecV1`
 
-Derive every field from the HuntConfig. Pass ONLY the fields below - the tool
-binds the real QuerySpecV1, and a field outside it is not part of the query
-contract. In particular, the config's vulnerability class and fault class are
-not top-level query fields: fold them into the concern and the attack goal. No
-retrieved text, no invented fields.
+Derive every field from the loop payload and the unit context. Pass ONLY the
+fields below - the tool binds the real QuerySpecV1, and a field outside it is
+not part of the query contract. In particular, the loop's web vulnerability
+class and its fault are not top-level query fields: fold them into the concern
+and the attack goal. No retrieved text, no invented fields.
 
-- `scenario_id`: identifies the current hunt or hypothesis.
-- `attack_goal`: the attack objective, from the config's research direction.
-- `concern`: the security concern under investigation - the config's
-  vulnerability class plus its rationale.
+- `scenario_id`: identifies the current loop.
+- `attack_goal`: the attack objective, from the loop's rationale.
+- `concern`: the security concern under investigation - the loop's web
+  vulnerability class plus the vulnerability rationale.
 - `technology_stack`: the technology stack of the testable unit.
 - `target_refs`: references to the target (components/surfaces).
 - `input_vectors`: presumed input vectors, read from the target surface.
-- `known_facts`: known and verified facts (e.g. L0 evidence).
+- `known_facts`: known and established facts (e.g. L0 evidence).
 - `acceptable_technique_families`: technique families acceptable for the methodology.
 - `unsupported_claims`: claims the tool must not treat as confirmed.
 - `evidence`: L0/L1 references with summaries, the provenance constraint.

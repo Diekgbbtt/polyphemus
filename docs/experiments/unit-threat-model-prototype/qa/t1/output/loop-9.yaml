@@ -1,0 +1,78 @@
+loop_id: loop-9
+unit_id: Service:model-download
+class: Denial of service via worker crash (serial worker starvation)
+class_skill: null
+slice:
+  source: dynamic_state_trust
+  statement: "TA7 + the ES2->ES6 transition: the queue trusts ui_id to be a hashable string and consumes it in worker bookkeeping with no type validation; one non-string ui_id halts the serial worker at pickup, the tail starves with frozen counters and no surfaced error, and recovery requires a later start (ET7). The loop opens the worker-halt space over the dynamic-state trust."
+discrimination:
+  axes_used: [payload-vector, chaining-advanced]
+  boundary: "the value-type dimension that triggers the halt (s1) versus the stall's blast radius and recovery closure over the state machine (s2); fault fixed at F7."
+  narrow_broad_tradeoff: "narrow on trigger types (one observed family plus its siblings) and broad on the orchestration around the stall (tail battery, recovery paths); the fault is OBSERVED in a single sample, so the set pins the trigger space and the state closure rather than inventing new mechanisms."
+specs:
+- spec_id: loop-9-s1
+  label: "ui_id type-space poison"
+  sub_slice: "Accepted installs whose ui_id carries a non-string JSON value (dict anchored P50; siblings: list, number, boolean, null, nested structures): enqueue returns 200 and the worker halts before the fetch when it consumes the id; region = which value types poison the pickup path."
+  class_skill_parametrisation:
+    skill: null
+    inputs: {absence_note: "no suite skill covers worker-crash denial of service; per the hunter contract the reasoning is structural from the payload", sink: "worker pickup bookkeeping consuming ui_id (CF5)", anchor: "P50 ui_id {} -> 200; P52/P53/P54 halt without fetch"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 queue on aiohttp 3.14.3, serial worker"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start then GET /manager/queue/status"
+    parameter: ui_id (value type is the variable)
+    method: "POST then GET"
+    body: '{"name": "x", "url": "http://<listener>/marker", "filename": "t1-head.safetensors", "save_path": "checkpoints", "ui_id": {}}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns the trigger dimension: which accepted ui_id values stop the pickup path. s2 owns the consequence dimension (starvation, silence, recovery) around one confirmed trigger; s1 uses the anchored dict plus one candidate value per submission so attribution stays exact."
+  chaining_advanced_note: null
+  proxy_technique: "Queue one poison item alone (or as head of a battery for the s2 orchestration) with a listener URL as the would-be fetch; issue start and read status; a halted worker shows the ES6 signature: no listener hit, done_count unchanged, is_processing false, and no error in any response. Each candidate ui_id value is submitted as its own item so the halting type attributes cleanly."
+  verification_symptoms: ["after start with a poison head: zero listener hits, done_count unchanged, is_processing false - the ES6 signature (P52/P53/P54 anchor)", "during install: 200 acceptance of the non-string ui_id with the item counted like any other (the accept stage never inspects the type)"]
+  payload_vector_space:
+    method: "POST install_model -> GET start -> GET status"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start, /manager/queue/status"
+    parameter: "ui_id value types: dict (anchor), list, int, float, bool, null, nested dict/list combinations"
+    body: "JSON install item with listener URL and poison ui_id"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["ui_id is optional and normally a string produced by the manager shell (IA1/A7)", "the worker consumes ui_id before the fetch (CF5), so the halt precedes any outbound request", "one candidate value per submission keeps type attribution exact"]
+  rationale: "If F7 is implemented (no type validation on ui_id), every accepted non-string value is a poison candidate; the worker's serial pickup then stops at the first non-hashable/unexpected value. The dict anchor proves the mechanism; the type space decides which values share it."
+  interpretation_guidance: "Symptom-present = start yields no fetch for the head item while the item was accepted, with counters frozen and silence in all responses; the ES6 signature. Symptom-absent = the item is processed/refused (400) or the fetch proceeds: the type guard exists or the value was coerced; record which types are handled. A 200 at enqueue is expected either way and is not a symptom."
+- spec_id: loop-9-s2
+  label: "tail starvation and recovery closure"
+  sub_slice: "One poisoned head plus a battery of legitimate tail items: the halt starves every later item (no fetches, frozen counters) with no error surfaced to any client, and only a later start (after head disposal) or a reset clears the stall (ES6->ES7); region = the stall's blast radius and the recovery closure over the dynamic-state trust."
+  class_skill_parametrisation:
+    skill: null
+    inputs: {absence_note: "carried structurally from the payload's state machine", states: "ES2 queued-idle -> ES6 stalled-after-poison -> ES7 recovered; ET6/ET7 with guard_verified none", invariant: "V4: one accepted item cannot stop the serial worker globally"}
+  concretisation:
+    protocol: http
+    technology: "same queue and serial worker; tail items carry distinct listener tokens for attribution"
+    endpoint: "POST install_model (head + N tail items), GET start, GET status, GET reset"
+    parameter: "orchestration order: poison first, legitimate tail behind it"
+    method: "POST then GETs"
+    body: 'head: ui_id {}; tail: distinct .safetensors installs with per-item tokens'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the transition closure: starvation of the tail, the silence of the failure surface, and the recovery semantics (ES6->ES7 by another start, or reset). s1 owns which values trigger; s2 fixes the trigger at the anchor and varies the orchestration and observation window - a different state-space region, not a payload variant."
+  chaining_advanced_note: "No class skill exists in the suite for worker-crash denial of service (suite_class null), so the reasoning is structural from the payload's dynamic-state trust: the ES2->ES6 transition has no verified guard (ui_id type never checked, ET6), ES6/ES7 supply the failure and recovery signatures (tail queued, counters frozen, recovery by a later start), and V4 fixes the invariant under test (one item cannot stop the worker globally)."
+  proxy_technique: "Queue the poison head plus N legitimate tail items with unique tokens; start once and record that tail tokens never reach the listener while counters freeze; start again and read whether the surviving tail processes (ET7) and whether the poison head is consumed; optionally reset then start to map the operator-visible recovery paths. The absence of any error field across status and start responses is recorded as the silence property."
+  verification_symptoms: ["zero listener hits for every tail token while the head holds the poison - one request starves an arbitrary tail (blast radius independent of N)", "counters frozen and is_processing false across repeated status reads, with no error text in any response", "recovery signature: a later start processes the surviving tail once the head is disposed (ES7 anchor P55/P56), proving the stall is durable but operator-clearable"]
+  payload_vector_space:
+    method: "POST installs -> GET start (repeated) -> GET status -> GET reset -> GET start"
+    path: "/manager/queue/install_model, /manager/queue/start, /manager/queue/status, /manager/queue/reset"
+    parameter: "orchestration: head position, tail size N, recovery path (later start versus reset+start)"
+    body: "JSON install items: poison head, tokenised tail"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the queue is FIFO and serial (IA12), so the head halts everything behind it", "head disposal semantics (whether the poison is consumed on halt) are unobserved; the recovery probe reads them rather than assuming", "no error propagation exists on the pickup path (TA7/P53 silence)"]
+  rationale: "If F7 is implemented, a single accepted request converts into a durable stall of the shared serial worker: tail work starves while the operator sees no error, and only explicit operator action recovers it. That blast-radius/closure region is separate from the trigger values and carries the denial-of-service effect."
+  interpretation_guidance: "Symptom-present = tail tokens stay silent under a poisoned head while counters freeze and responses stay error-free; recovery occurs only through a later start or reset. Symptom-absent = the tail processes despite the poison (per-item isolation: the worker catches the type failure) or an error is surfaced at halt (the stall is visible): record which. Do not extend an s1 negative (value coerced) into s2: the orchestration needs its own run."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns trigger values (one candidate per submission, halt attribution); s2 owns orchestration, blast radius, silence, and recovery with the trigger fixed at the anchor. Disjoint variables and observation windows; s2 does not re-test the type space and s1 does not claim persistence or recovery."
+  coverage:
+    status: partial
+    uncovered: ["permanent worker death (an exception escaping the worker loop so later starts cannot recover) is not evidenced; the observed closure is recovery-by-later-start (ES7), so irreversible-stall variants stay outside this set"]
+    notes: "The trigger space and the observed stall/recovery closure carry owning specs. The irreversible-stall region is listed as uncovered because the payload shows no such evidence and inventing it would be ungrounded."
+  well_formedness_statement: "Two specs cover F7's space as evidenced: the accepted-value trigger dimension (s1) and the stall's consequence-and-recovery dimension over the dynamic-state trust (s2). They are disjoint in variable and oracle, and their union covers the observed ES2->ES6->ES7 closure; the unobserved irreversible-stall region is declared uncovered rather than folded in."
+degradations: ["Class-less loop: the suite has no DoS/robustness skill, so all grounding is structural from the payload (TA7, ET6/ET7, V4, ES6/ES7).", "The halt's internal mechanism is unobserved; specs bind only to observable signatures (no fetch, frozen counters, silence).", "The halt was observed in a single sample family ({}-shaped ui_id); sibling types are hypotheses whose acceptance stays falsifiable per candidate."]

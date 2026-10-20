@@ -335,10 +335,10 @@ def test_preprocess_fail_open_on_derivation_error(monkeypatch, caplog):
     assets = [_ep("/a"), _ep("/b"), _ep("/c")]
     with caplog.at_level(logging.WARNING, logger="polymerhus.recon.control.job_agent"):
         pod_inputs = ja.default_preprocess_fn(assets, JOBS["arjun"], {}, "")
-    # P6: degrade to a dispatch-compatible batch (all URLs in one pod), never raise
+    # P6: degrade to a dispatch-compatible batch within the cap, never raise
     assert len(pod_inputs) == 1
     assert pod_inputs[0]["input_asset"]["batch"] == [
-        "https://h/a", "https://h/b", "https://h/c"]
+        "https://h/a", "https://h/b"]
     assert "derive_consumption_set failed" in caplog.text
 
 

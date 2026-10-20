@@ -52,6 +52,12 @@ The write payload (`OrchestratorHuntsStoreArgs.hunt_config`) carries the values 
 
 ### 4.2 hunting agent `hunts_store` and `notes`
 
+**SUPERSEDED 2026-10-18 for the hunter key and status lifecycle.** The hunter is dispatched per loop, not per config.
+Its store key is the loop dispatch id `<unit_name>__<loop_id>`; the folder is `test-specs/<hunt_key>/`.
+The spec status values are `{hypothesised, ratified, dropped}`.
+The derived-symbol rules below still apply to the file name `<fault_keyword>_<strategy_keyword>.yaml`.
+See `docs/design/hunting-67-threat-model-artifact-spec.md` section 8 and `docs/design/hunting-67-hunting-agent-spec.md` section 8.7.
+
 - `fault_key` (the hunter's OWN parent config key) is BOUND at tool construction (Rule 3, operator-ratified 2026-10-01). The harness already holds it - the hunter is dispatched with its `HuntConfig` - so it is derived as `semantic_key(unit_id, fault_class, vulnerability_class)` and removed from the request contract; the #199 request-field gate is superseded because there is no longer a request key to validate. The tools degrade with a coded `invalid_args` if no key is bound (a harness wiring defect).
 - `fault_keyword` / `strategy_keyword` are AGENT-OWNED identity attributes (operator-ratified 2026-10-01), exactly like `vulnerability_class`: the reasoning model authors them, and it is the store that derives and sanitises the produced spec file name `<fault_keyword>_<strategy_keyword>.yaml` from them. As of the single-payload convergence (2026-10-04, section 8) they ride INSIDE the ONE `spec` write payload, never as separate top-level request fields; the store rejects an empty keyword with a coded, field-naming `hunts_store_write_rejected`, never forming a degenerate name.
 - `notes` derives both its destination and the hunt's config key from the caller-bound handle (never a request field); it is conformant.
@@ -124,12 +130,17 @@ Status: **confirmed intended, documented** (2026-10-08, ticket #313 / eval-bug E
 The two hunting memory stores carry a **status-varying schema by design**, because the status lifecycle IS the fault-processing tracker (`hunting-164-state-graph-spec.md` section 6; `hunting-memory-system-spec.md` section 5). The variation is progressive enrichment, never an untyped ambiguity.
 
 - **Hunt config** (`HuntStore`): the body is always ONE typed `HuntConfig` field set; only its content varies with `status`. `hypothesised` carries the seeds (`rationale` / `research_direction`) with the ratification fields empty; `ratified` fills `preconditions` / `observed_defences`; `dropped` is the orphaned draft (still the same field set, marked `dropped`, never deleted, G6). A partial on-disk body is valid: every consumer that trusts fields MUST `HuntConfig.model_validate` it first (defaults fill the absent slots).
-- **Hunter spec** (`HunterMemoryStore`): while the status is `hypothesised | verified | dropped` the body is a hypothesis-only `FaultItem` draft (`fault_id` / `mechanism` / `supports` / `conflicts` / `test`); once `specified` the body is the typed `TestImplementationSpec` base (`target_identity` / `verification_symptoms` / `testing_pattern` / `assumptions` / `payload_vector_space`, plus the two NL fields) - the same D4 shape the pod's `validate_spec` consumes (`hunting-agent.md`'s SPEC-WRITE example).
+- **Hunter spec** (`HunterMemoryStore`): the body is the reduced typed `TestImplementationSpec` at every status (`target_identity` / `verification_symptoms` / `assumptions` / `rationale` / `parent_spec_ref` / `provenance`).
+  The status values are `hypothesised | ratified | dropped`, and the body shape does not vary by status.
+  `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are retired.
+  The store key is the loop dispatch id `<unit_name>__<loop_id>`; the folder is `test-specs/<hunt_key>/`.
+  **Superseded 2026-10-18** by `docs/design/hunting-67-hunting-agent-spec.md` section 8.6.
 - **The spec identity is the file-name stem** `<fault_keyword>_<strategy_keyword>` (the ADR #169 Q13 semantic `spec_id`, the pod session discriminator, the `pod-export:<spec_id>` note key). It is a DERIVED symbol (Rule 1 / #298): a typed `specified` payload carries no `spec_id` field, so any consumer needing the identity derives it from the file name (or the payload's `fault_keyword` / `strategy_keyword`), never reads a payload `spec_id`.
 
 The consumer rule this pins:
 
-- **Dispatch and work gate on the persisted `status`.** Only a `ratified` config and a `specified` spec are dispatchable work (`surfer._ratified_config` / `run_work_remaining` / `build_run_dispatch`); a hypothesised/dropped leftover is NOT work and never holds the quiesce.
-- **A consumer must read the shape the status pins, never the other one.** The pod only ever receives a `specified` spec (the typed base); the prior-hunt-insight read surfaces only the completed `specified` specs (`HuntStore.read_hunter_specs`, I3) and never a hypothesis-only draft - a dropped/hypothesised/verified draft is not a `TestImplementationSpec` and must not be laundered into a completed downstream insight. The in-memory graph `SpecItem` derives its semantic identity from the typed payload's `fault_keyword` / `strategy_keyword` (`hunter_state._with_specified`), so distinct ratified specs keep distinct identities and never collide under an empty `spec_id`.
+- **Dispatch and work gate on the persisted `status`.** Only a `ratified` config and a `ratified` spec are dispatchable work; a hypothesised or dropped leftover is NOT work and never holds the quiesce.
+- **A consumer must read the shape the status pins, never the other one.** The pod only ever receives a `ratified` spec (the reduced typed base); the prior-hunt-insight read surfaces only the completed `ratified` specs and never a draft. A dropped or hypothesised spec is not dispatchable work, but its body is the same typed surface. The in-memory graph `SpecItem` derives its semantic identity from the typed payload's `fault_keyword` / `strategy_keyword`, so distinct ratified specs keep distinct identities and never collide under an empty `spec_id`.
+  **Superseded 2026-10-18** by `docs/design/hunting-67-hunting-agent-spec.md` section 8.6 and `docs/design/hunting-164-state-graph-spec.md` section 14.
 
 Regression pins: `tests/attack/test_hunt_store.py::test_read_hunter_specs_surfaces_the_typed_specified_spec_only` (the persisted-schema consumer) and `tests/attack/test_hunter_state.py` (the payload-shape consumer).

@@ -223,6 +223,8 @@ def test_real_overlay_required_set_matches_the_no_default_contract(
     hard_reads = set(re.findall(r'os\.environ\["([A-Za-z_][A-Za-z0-9_]*)"\]', config_src))
     from polymerhus.app.llm.providers import HUNTING_ROLES, ROLES
 
+    # T10 closed the one-window alias: every role's declared model key is a hard
+    # requirement, with no legacy fallback.
     role_keys = {role.model_key for role in ROLES + HUNTING_ROLES}
     assert hard_reads == {
         "NEO4J_URI",
@@ -444,7 +446,7 @@ def test_real_example_as_key_source(tmp_path: Path, preflight) -> None:
         "LLM_JOB_ORCHESTRATOR=opencode:manual/test\n"
         "LLM_CRAWLER=opencode:manual/test\n"
         "LLM_ANALYSER=opencode:manual/test\n"
-        "LLM_HUNTING_ORCHESTRATOR=opencode:manual/test\n"
+        "LLM_HUNTING_THREAT_MODELLER=opencode:manual/test\n"
         "LLM_HUNTING_HUNTER=opencode:manual/test\n"
         "LLM_POD_RUNNER=opencode:manual/test\n"
         "LLM_POD_TRIAGER=opencode:manual/test\n",

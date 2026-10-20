@@ -38,11 +38,10 @@ def _terminate_space(spec, obs, messages, log):
 VALID_SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability",
-    "interpretation_guidance": "a 200 with a body confirms reachability",
+    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 
@@ -105,14 +104,15 @@ def test_async_seams_are_awaited_natively_by_the_graph():
 
 def test_init_rejection_makes_no_tool_call():
     calls = []
-    env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": [],
-                         "testing_pattern": "", "payload_vector_space": {}},
+    env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": []},
                         exec_fn=_exec(_OK, calls=calls),
                         runner_step_fn=symbolic_runner_step_fn, triager_fn=None,
                         trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
-    assert env["evidence"]["init_validation"]
+    # The gate collects BOTH mandatory violations in one rejection.
+    assert any("target_identity" in v for v in env["evidence"]["init_validation"])
+    assert any("verification_symptoms" in v for v in env["evidence"]["init_validation"])
     assert calls == []                               # C1: no tool call
 
 
@@ -139,6 +139,90 @@ def test_symbolic_symptom_confirmed_needs_no_triager():
     assert env["evidence"]["iterations"] == 1
     assert env["evidence"]["clean"] is True
     assert len(env["evidence"]["raw_observations"]) == 1
+
+
+def test_the_runner_authors_the_first_probe_from_the_reduced_spec():
+    """S5 8.5: with no payload vector space, the runner still authors at least
+    one probe from the spec - the base URL of `target_identity`."""
+    calls = []
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK, calls=calls),
+                        runner_step_fn=symbolic_runner_step_fn, triager_fn=None,
+                        trace_fn=_no_trace))
+    assert env["verdict"] == "successful"
+    assert len(calls) == 1
+    assert VALID_SPEC["target_identity"]["url"] in calls[0]
+
+
+def test_the_baseline_ref_is_replayed_by_the_runner():
+    """S5 8.5: `provenance.baseline_ref` enables replay when present - the
+    runner replays the named artifact instead of authoring the request."""
+    baseline = "http_01J0000000000000000000000A"
+    spec = {**VALID_SPEC,
+            "verification_symptoms": ["HTTP 403 on GET /admin"],
+            "provenance": {**VALID_SPEC["provenance"], "baseline_ref": baseline}}
+    seen = []
+
+    def replay(project_id, artifact_id, overrides):
+        seen.append((project_id, artifact_id, overrides))
+        return {"status": 403, "artifact_id": "http_NEW"}
+
+    env = _run(arun_pod(spec, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=None, replay_fn=replay, project_id="proj-1",
+                        spec_id=SPEC_ID, trace_fn=_no_trace))
+    assert seen == [("proj-1", baseline, {})]
+    assert env["verdict"] == "successful"
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+    obs = env["evidence"]["raw_observations"][0]
+    assert obs["status"] == 403
+    assert obs["http_artifact_refs"] == ["http_NEW"]
+
+
+def test_no_derivable_probe_lands_no_symptom_evidence_clean_false():
+    """S5 8.5: an authoring gap is impaired coverage, not target absence - it
+    lands `no-symptom-evidence` with `clean=false`, never `space-exhausted`.
+    The base d78d2593 would already pass THIS zero-observation case (its
+    `_clean_from_trail` is false with no observations); the discriminating
+    case is the later no-probe variant below."""
+    steps = [RunnerStep(action="conclude", exhausted=True,
+                        observation_note="no probe derivable from the spec")]
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK),
+                        runner_step_fn=_scripted(steps), triager_fn=None,
+                        trace_fn=_no_trace))
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["clean"] is False
+
+
+def test_a_later_variant_with_no_derivable_probe_is_not_a_clean_exhaustion():
+    """S5 8.5: a spec with no derivable probe lands `no-symptom-evidence` with
+    `clean=false`, never `space-exhausted`. The FIRST stretch records a clean
+    observation, then the critic mints a variant with no target identity; the
+    next stretch authors nothing. The base d78d2593's whole-run
+    `_clean_from_trail` would have called this a clean `space-exhausted`; the
+    current-stretch scope refuses it."""
+    variant_spec = {**VALID_SPEC, "target_identity": {}}
+    decisions = iter([
+        {"classification": "symptom-absent", "action": "variant",
+         "declined_attribute": "recon-action",
+         "variant_spec": variant_spec,
+         "feedback": "try without a target identity"},
+        {"classification": "symptom-absent", "action": "terminate",
+         "verdict": "unsuccessful", "terminal_reason": "space-exhausted",
+         "clean": True},
+    ])
+
+    def triager(spec, obs, messages, log):
+        return next(decisions)
+
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=triager, trace_fn=_no_trace))
+    assert env["evidence"]["iterations"] == 2
+    assert env["evidence"]["raw_observations"]       # the first stretch did probe
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["terminal_reason"] != "space-exhausted"
+    assert env["evidence"]["clean"] is False
 
 
 def test_runner_drives_a_multi_step_chain_with_intra_chain_flow():
@@ -206,8 +290,8 @@ def test_runner_sees_tool_results_in_its_curated_session():
 def test_variant_loop_records_provenance():
     decisions = iter([
         {"classification": "symptom-absent", "action": "variant",
-         "declined_attribute": "payload_vector_space",
-         "variant_spec": {**VALID_SPEC, "payload_vector_space": {"method": "GET", "path": "/api"}},
+         "declined_attribute": "recon-action",
+         "variant_spec": {**VALID_SPEC, "rationale": "reachability of /api"},
          "feedback": "try /api"},
         {"classification": "symptom-absent", "action": "terminate",
          "verdict": "unsuccessful", "terminal_reason": "space-exhausted", "clean": True},
@@ -223,15 +307,21 @@ def test_variant_loop_records_provenance():
     variants = env["evidence"]["variant_specs"]
     assert [v["ref"] for v in variants] == ["v0", "v1"]
     assert variants[1]["parent_ref"] == "v0"
-    assert variants[1]["declined_attribute"] == "payload_vector_space"
+    assert variants[1]["declined_attribute"] == "recon-action"
 
 
 def test_pod_budget_cap_terminates_only_the_pod(monkeypatch):
     monkeypatch.setattr("polymerhus.attack.hunting.pod.graph.HUNT_POD_MAX_ITERS", 3)
+    lap = {"n": 0}
 
     def triager(spec, obs, messages, log):
+        # A DISTINCT derived detail each lap: the S5 8.6 duplicate guard refuses
+        # a repeated (basis, detail), so a degenerate re-mint would terminate
+        # before the budget instead of exercising the cap.
+        lap["n"] += 1
         return {"classification": "symptom-absent", "action": "variant",
-                "declined_attribute": "testing_pattern", "variant_spec": dict(spec),
+                "declined_attribute": "bypass-technique",
+                "variant_spec": {**spec, "rationale": f"bypass attempt {lap['n']}"},
                 "feedback": "keep trying"}
 
     env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
@@ -268,6 +358,20 @@ def test_runner_infeasible_is_an_init_gate_with_evidence():
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
     assert any("WAF" in v for v in env["evidence"]["init_validation"])
+
+
+def test_a_productive_runner_exhaustion_lands_a_clean_space_exhausted():
+    """S5 8.5: a stretch that DID author and execute a probe, then concludes
+    exhausted with a clean trail, keeps the still-reachable clean
+    `space-exhausted` terminal (the no-probe variant is the impaired branch)."""
+    steps = [RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),
+             RunnerStep(action="conclude", exhausted=True,
+                        observation_note="no new probe derivable")]
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT), runner_step_fn=_scripted(steps),
+                        triager_fn=None, trace_fn=_no_trace))
+    assert env["evidence"]["terminal_reason"] == "space-exhausted"
+    assert env["evidence"]["clean"] is True
 
 
 def test_clean_false_when_triager_reports_defence():

@@ -78,10 +78,10 @@ Generalised, the rule is capability minimalism: **a role with no bearing skill b
 This supersedes the earlier reading of an empty declaration ("the middleware passes the prompt through byte-identical"): a dead tool schema plus an index that can never render is context cost with zero capability, and the fleet should not pay it.
 The roster therefore has three states, and `skill_agent_binding` distinguishes all three:
 - a role with a bounded set - the surface is bound;
-- a DECLARED role with an empty tuple (configurator, job_orchestrator, assigner, mechanism_typist, data_modeller, hunting_orchestrator) - exempt, and the binding composes to nothing;
+- a DECLARED role with an empty tuple (configurator, job_orchestrator, assigner, mechanism_typist, data_modeller, hunting_threat_modeller) - exempt, and the binding composes to nothing;
 - an UNDECLARED role id - refused with a `ValueError` at construction, because the roster is the considered decision for every tool-calling role, so an unlisted one is a wiring defect (usually a typo), not a silent no-op.
 Two implementation consequences follow.
-The binding's middleware field is a LIST, so an exempt binding composes harmlessly at a shared site with no branch - which is what lets the shared hunting actor base serve both a bound role (`hunting_hunter`) and an exempt one (`hunting_orchestrator`).
+The binding's middleware field is a LIST, so an exempt binding composes harmlessly at a shared site with no branch - which is what lets the shared hunting actor base serve both a bound role (`hunting_hunter`) and an exempt one (`hunting_threat_modeller`, formerly `hunting_orchestrator`).
 And a dedicated site for an exempt role carries no reference to the skills domain at all, so the exemption is visible where a reader looks.
 The exempt set is pinned by test (`test_the_roster_is_exactly_the_bound_plus_the_exempt_roles`), so an exemption is a deliberate edit in two places, never a drift.
 The analysis module's own ANATOMY readers keep reading their job skills directly through `skill_for` (webpage-profile, authorization-pyramid) as their system prompts: that is the bake-time role/job-skill pattern (A1), not the runtime primitives, and it is untouched by this ruling.
@@ -99,7 +99,7 @@ Repo hygiene carries the strict half of the D4 split - a declared name that does
 - `triager` (recon pod): the two anatomy skills, because it reads delivered web artefacts into anchored observations.
 - `hunting_hunter` and `pod_runner`: the KB retrieval guide (they hold the KB tool) plus the browser skill (they touch the live target through `exec`).
 - `pod_triager`: the KB guide alone - it never touches the target, and its KB reads are context reads (D84-27).
-- `configurator`, `job_orchestrator`, `hunting_orchestrator`: exempt - their turns are decisions over steering signals and candidate material, with no target contact and no KB tool.
+- `configurator`, `job_orchestrator`, `hunting_threat_modeller` (formerly `hunting_orchestrator`): exempt - their turns are decisions over steering signals and candidate material, with no target contact and no KB tool.
 - `assigner`, `mechanism_typist`, `data_modeller`: exempt - the analysis proposers' local-context interaction.
 Correcting a binding, or moving a role between bound and exempt, is a one-line edit to `ROLE_SKILLS` plus the pinned exempt set in the seam test.
 

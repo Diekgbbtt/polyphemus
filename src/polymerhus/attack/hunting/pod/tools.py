@@ -55,6 +55,15 @@ def command_signature(variant_ref: str, command: str) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+def replay_signature(variant_ref: str, artifact_id: str, overrides: dict) -> str:
+    """The O7/C10 dedup key for a baseline replay (S5 8.5): a replay is a probe
+    execution like any other, keyed by the artifact pointer + the closed
+    override set + the variant scope."""
+    blob = (f"{variant_ref}\x00replay\x00{artifact_id}\x00"
+            f"{json.dumps(overrides, sort_keys=True)}").encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 def default_exec_fn(
     command: str, timeout_s: int = EXEC_TIMEOUT_S, capture_context=None
 ) -> ExecResult:
@@ -68,7 +77,7 @@ def default_exec_fn(
 
 async def _await_seam(fn, *args):
     """Await an async exec seam, else offload a sync one to a worker thread -
-    the `_await_seam` pattern mirrored from `hunt_orchestrator.py`."""
+    the `_await_seam` pattern mirrored from `read_only_graph.py`."""
     if inspect.iscoroutinefunction(fn):
         return await fn(*args)
     return await asyncio.to_thread(fn, *args)
@@ -236,7 +245,7 @@ class KbQueryTool(BaseTool):
             degraded = {
                 "schema_version": "lightrag-answer/v2",
                 "scenario_id": kwargs.get("scenario_id", ""),
-                "summary": "query_lightrag degraded - grounded on the HuntConfig alone",
+                "summary": "query_lightrag degraded - grounded on the loop payload alone",
                 "ontology_explanations": [],
                 "provenance_references": [],
                 "knowledge_gaps": [f"knowledge base unavailable ({type(exc).__name__})"],
@@ -255,7 +264,7 @@ class KbQueryTool(BaseTool):
             degraded = {
                 "schema_version": "lightrag-answer/v2",
                 "scenario_id": kwargs.get("scenario_id", ""),
-                "summary": "query_lightrag degraded - grounded on the HuntConfig alone",
+                "summary": "query_lightrag degraded - grounded on the loop payload alone",
                 "ontology_explanations": [],
                 "provenance_references": [],
                 "knowledge_gaps": [f"knowledge base unavailable ({type(exc).__name__})"],

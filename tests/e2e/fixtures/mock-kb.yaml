@@ -11,7 +11,7 @@
 # the `SymptomTechniqueResult` shape the pod's KbRetrieveTool returns:
 #   {symptoms: [...], techniques: [...], source: "mock-kb"}
 # A query matching no key returns the empty result (fail-open, O13).
-symptom_kb:
+technique_kb:
   reflect:
     symptoms:
       - "a search term is reflected into the response without encoding"

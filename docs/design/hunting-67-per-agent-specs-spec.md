@@ -1,9 +1,18 @@
 # Hunting spec: per-agent specs (hunt-orchestrator, hunting agent, stub test-executor pod)
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 Part of [#54](https://github.com/Diekgbbtt/polyphemus/issues/54) (hunting wayfinder map, Phase-2+ concretisation).
 Resolves [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (enhancement, the graduated per-agent spec ticket).
 
 *Status: spec (decision record + contract), NOT implementation. This is the phase-2 map convention: one spec per graduated ticket. The cooperative-team execution logic of the pod beyond the scaffold is deferred (D67-01; decision record section 4); the closed-enum testing-pattern engine is deferred (D67-07; decision record section 4); the hunt-store persistence is owned by [#68](https://github.com/Diekgbbtt/polyphemus/issues/68); the control-plane dispatch graph by [#69](https://github.com/Diekgbbtt/polyphemus/issues/69); the orchestrator memory by [#70](https://github.com/Diekgbbtt/polyphemus/issues/70); the deterministic components by [#71](https://github.com/Diekgbbtt/polyphemus/issues/71). This spec owns the per-agent contracts only. Mined on 2026-08-03 per the operator's request: sections 10-14 add the end-to-end walkthrough, the domain-data contracts, the interface agreements with delivery semantics and failure handling, and the agent-attribute compliance against the #9 agent-spec precedent. A third grilling round (D67-11..D67-14, 2026-08-03) sharpened the KB-failure degradation, the worst-case vs failure-state distinction, the D-record ratification, and the inline back-edge semantics.*
+
+**PARTIALLY SUPERSEDED 2026-10-18.** Section 4 (hunt-orchestrator), section 5 (hunting-agent workflow), and section 7 (D4 structure) are superseded by `docs/design/hunting-67-threat-modeller-spec.md`, `docs/design/hunting-67-hunting-agent-spec.md` section 8, and `docs/design/hunting-67-test-executor-pod-spec.md` section 8.
+The inter-agent logic, the walkthroughs, and the failure-handling canon remain the reference where they do not contradict the new contracts.
 
 ## 0. Provenance and decision record
 
@@ -230,7 +239,7 @@ The shared recipe (section 8): one Langfuse trace per pod run, spans per loop it
 ### 6.12 Verifiability
 
 - Unit tier: the looped state machine exercised with the tool calls mocked; each of the four termination conditions unit-tested to its binary end.
-- Integration tier: `tests/integration/test_test_executor_pod_contracts.py` - the binary terminal invariant (never a third terminal state), the variant derivation rule (a declined attribute yields a derived variant spec with provenance), the infeasibility evidence in the trail.
+- Integration tier: `tests/integration/test_test_executor_pod_contracts.py` - the binary terminal invariant (never a third terminal state), the variant derivation rule (a variant basis yields a derived variant spec with provenance), the infeasibility evidence in the trail.
 - E2E tier: `tests/e2e/test_test_executor_pod_walkthrough.py` - one trivial real run against the eval target executing a spec and returning the binary verdict.
 
 ## 7. The TestImplementationSpec structure (D67-03, D67-10)

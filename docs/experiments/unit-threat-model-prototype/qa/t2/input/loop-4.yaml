@@ -1,0 +1,411 @@
+loop_id: loop-4
+unit:
+  id: WebPresentation:custom-node-catalog::manager-shell
+  kind: WebPresentation
+  base_url: http://46.224.225.245:44177
+  deployment: ComfyUI core + ComfyUI-Manager V3.37 (GET /manager/version -> V3.37), aiohttp/3.14.3, Python/3.11
+technical_sharpening:
+  interface_agreements:
+  - id: IA-1
+    statement: The SPA shell served at / injects the manager UI as same-origin ES-module scripts (paths listed by GET /api/extensions, e.g. /extensions/comfyui-manager/custom-nodes-manager.js);
+      all manager code executes in the editor page origin with full access to the page API (api.fetchApi, app, DOM).
+    rung: OBSERVED
+    evidences:
+    - GET / -> 200, 2 script tags, module import ./assets/index--PH2IHOc.js (probes.log 2026-10-15T21:31:59Z)
+    - GET /api/extensions -> 200 list of 35 script paths incl. 15 comfyui-manager scripts (probes.log 2026-10-15T21:32:0xZ)
+    - GET /extensions/comfyui-manager/custom-nodes-manager.js -> 200 53555B application/javascript (probes.log 2026-10-15T21:32:28Z)
+  - id: IA-2
+    statement: 'The manager shell requests the node-pack catalog with GET /customnode/getlist?mode=<cache|local|remote> [&skip_update=true] and
+      expects JSON {channel, node_packs: {pack_id -> pack}}; the mode parameter is mandatory - its absence raises a server exception (HTTP 500
+      text/plain "Server got itself in trouble").'
+    rung: OBSERVED
+    evidences:
+    - GET /customnode/getlist -> 500 text/plain 55B (probes.log 2026-10-15T21:33:24Z)
+    - 'GET /customnode/getlist?mode=cache&skip_update=true -> 200 {channel: default, node_packs: 8487} (probes.log 2026-10-15T21:33:xxZ)'
+    - JS fetch path fetchData(`/customnode/getlist?mode=${mode}${skip_update}`) in custom-nodes-manager.js (fetched asset)
+  - id: IA-3
+    statement: 'mode selects the catalog data source: local = local DB, channel ignored (3421 packs); cache = channel data served from a server-side
+      cache (~1-day TTL); remote = fetch the channel URL on every request.'
+    rung: OBSERVED
+    evidences:
+    - mode=local -> 200 2.2MB 3421 packs 4.3s; mode=cache -> 8487 packs (probes.log 21:33-21:34Z)
+    - 'UI select labels: ''DB: Channel (1day cache)'', ''DB: Local'', ''DB: Channel (remote)'' (comfyui-manager.js, fetched asset)'
+    - 'mode=remote&channel=default -> client timeout after 8.011s with 0 bytes: the handler blocks on an outbound fetch (probes.log 2026-10-15T21:35:10Z)'
+  - id: IA-4
+    statement: The shell requests node-to-pack mappings with GET /customnode/getmappings?mode=...; response is a JSON object keyed by pack id/reference
+      URL -> pack node data used for the node flyover and missing-node resolution.
+    rung: OBSERVED
+    evidences:
+    - GET /customnode/getmappings?mode=cache&skip_update=true -> 200 1.55MB object (probes.log 2026-10-15T21:35:50Z)
+    - loadNodes() / getMissingNodesLegacy() call fetchData(`/customnode/getmappings?mode=${mode}`) (custom-nodes-manager.js, fetched asset)
+  - id: IA-5
+    statement: 'The manager shell reads and writes manager preferences over GET-only routes: GET /manager/version (text), GET /manager/db_mode
+      (text), GET /manager/channel_url_list ({selected, list: [name::URL]}), and mutations via ?value= on /manager/db_mode, /manager/channel_url_list,
+      /manager/preview_method, /manager/policy/* with no auth token, no CSRF token, no cookie requirement.'
+    rung: OBSERVED
+    evidences:
+    - GET /manager/version -> 200 'V3.37' (probes.log 21:32Z); GET /manager/db_mode -> 200 'cache' (probes.log 21:34Z)
+    - 'GET /manager/channel_url_list -> 200 {selected: default, list: [6 name::URL entries]} (probes.log 21:33Z)'
+    - 'JS: api.fetchApi(`/manager/channel_url_list?value=${event.target.value}`) and `/manager/db_mode?value=${...}` on combo change (comfyui-manager.js,
+      fetched asset)'
+    - 'upstream v3.37 server source: handlers write config on ?value= and return 200 (INFERRED confirmation of persistence)'
+  - id: IA-6
+    statement: On shell initialisation the client fetches GET /manager/notice (HTML text) and assigns it to a DOM node via innerHTML; the notice
+      body is assembled server-side from a fixed external GitHub wiki page (fetched with TLS verification disabled) plus local version strings.
+    rung: OBSERVED
+    evidences:
+    - 'GET /manager/notice -> 200 HTML incl. news links and ''<HR>ComfyUI: Unknown[-](1900-01-01)<BR>Manager: V3.37'' (probes.log 21:34Z)'
+    - 'init_notice(): api.fetchApi(''/manager/notice'') then notice.innerHTML = data (comfyui-manager.js, fetched asset)'
+    - 'upstream v3.37 source /manager/notice: aiohttp fetch of https://github.com/ltdrdata/ltdrdata.github.io/wiki/News with verify_ssl=False
+      (INFERRED, cross-checked by the observed ''isn''t git repo'' banner text)'
+  - id: IA-7
+    statement: 'Catalogue rendering is client-side: TurboGrid renders a cell by assigning the formatter result to node.innerHTML; its default
+      string formatter is the identity function, and the description column declares no formatter, so the catalogue''s description string is parsed
+      as HTML in the manager shell.'
+    rung: OBSERVED
+    evidences:
+    - 'turbogrid.esm.js renderNodeContent: t.innerHTML = e; default formatter string: return t (fetched asset)'
+    - 'custom-nodes-manager.js columns: {id: ''description'', classMap: ''cn-pack-desc''} with no formatter (fetched asset)'
+    - 'custom-nodes-manager.js flyover: $flyoverBody.innerHTML = bodyHtml; node preview builds <div class="cn-preview-description">${nodeItem.description}</div>
+      (fetched asset)'
+  - id: IA-8
+    statement: Server-side, per-pack description/title/name pass sanitize_tag (</> to entities) and then a markdown-to-HTML converter that re-introduces
+      anchors from the pattern [a/(text)](url) -> <a href='url' target='blank'>; reference, repository, version and the rest of the pack record
+      are returned untransformed. The client then renders these strings as HTML (IA-7).
+    rung: OBSERVED
+    evidences:
+    - 'getlist JSON contains 584 of 8487 descriptions with markup: <BR>, <a href=''...'' target=''blank''>, <B>, <font> (probes.log getlist file)'
+    - upstream v3.37 populate_markdown() + convert_markdown_to_html() apply sanitize_tag then regex substitutions, URL inserted into href unvalidated
+      (INFERRED, matches observed markup shape)
+  control_flows:
+  - id: CF-1
+    statement: 'Page load: GET / -> SPA module boot -> GET /api/extensions -> same-origin module imports of manager scripts -> manager menu object
+      created -> GET /manager/version, GET /manager/db_mode, GET /manager/channel_url_list, GET /manager/notice -> notice HTML assigned to innerHTML.'
+    rung: OBSERVED
+    evidences:
+    - IA-1
+    - IA-5
+    - IA-6
+  - id: CF-2
+    statement: 'Catalog open: shell calls GET /customnode/getlist?mode=<selected db mode>[&skip_update=true] -> server resolves the channel (mode
+      local -> local DB; cache/remote -> manager config channel_url) -> cache hit or outbound fetch of {channel}/custom-node-list.json -> merge
+      github-stats/extras -> populate_markdown() -> JSON response -> client grid rows -> innerHTML render of description/title/author/version.'
+    rung: OBSERVED
+    evidences:
+    - IA-2
+    - IA-3
+    - IA-7
+    - IA-8
+  - id: CF-3
+    statement: 'Channel switch: operator selects a channel -> GET /manager/channel_url_list?value=<name> -> server writes the channel URL into
+      manager config -> subsequent getlist resolves the new channel. The switch is a GET with a persistent side effect and needs no token or confirmation.'
+    rung: OBSERVED
+    evidences:
+    - IA-5
+  - id: CF-4
+    statement: 'DB-mode switch: GET /manager/db_mode?value=<cache|local|remote> writes manager config; the next getlist uses the new mode (GET
+      with persistent side effect).'
+    rung: OBSERVED
+    evidences:
+    - IA-5
+  - id: CF-5
+    statement: 'Catalog fetch failure path: on network failure during cache/remote resolution the request either falls back to stale cache (cache
+      mode) or surfaces an error to the client while the shell shows "Failed to get custom node list."; the observed remote-mode attempt hung
+      in the handler for >8s with no bytes written (no server-side response timeout observed within 8s).'
+    rung: ASSUMED
+    evidences:
+    - mode=remote request timed out client-side at 8s, 0 bytes (probes.log 21:35:10Z)
+  - id: CF-6
+    statement: The shell's action column and flyover link to out-of-unit manager queues (install/update/disable are POSTs to /customnode/* and
+      /manager/queue/*, executed after this unit's render step).
+    rung: OBSERVED
+    evidences:
+    - action buttons in custom-nodes-manager.js POST /customnode/import_fail_info, /customnode/versions/{id}, api.fetchApi('/manager/queue/reset')
+      etc (fetched asset)
+  data_flows:
+  - id: DF-1
+    statement: 'Remote channel JSON custom-node-list.json (channel-operator controlled: description, title, author, version, reference, repository,
+      files) -> manager server outbound fetch -> server cache file -> populate_markdown transform -> HTTP JSON to shell -> TurboGrid innerHTML
+      DOM => remote strings become live HTML in the manager shell origin.'
+    rung: OBSERVED
+    evidences:
+    - IA-2
+    - IA-3
+    - IA-7
+    - IA-8
+  - id: DF-2
+    statement: 'Local DB/installed pack metadata -> same getlist JSON merge path (state: installed/not-installed) -> same render path as DF-1.'
+    rung: OBSERVED
+    evidences:
+    - IA-3
+    - DF-1
+  - id: DF-3
+    statement: extension-node-map.json -> GET /customnode/getmappings -> node list per pack (title, description, hash, conflicts) -> flyover bodyHtml
+      -> $flyoverBody.innerHTML in the shell.
+    rung: OBSERVED
+    evidences:
+    - GET /customnode/getmappings -> 200 (probes.log 21:35:50Z)
+    - flyover body includes ${nodeItem.description} inside HTML string (custom-nodes-manager.js, fetched asset)
+  - id: DF-4
+    statement: External GitHub wiki page (fetched server-side, TLS verification disabled) -> notice HTML with local version footer -> GET /manager/notice
+      -> client innerHTML in the manager shell.
+    rung: OBSERVED
+    evidences:
+    - IA-6
+  - id: DF-5
+    statement: Preference values (db_mode, channel selection, preview method, policies, share option) flow shell -> GET ?value= -> server config
+      file -> later reads change catalog source/rendering behaviour.
+    rung: OBSERVED
+    evidences:
+    - IA-5
+    - CF-3
+    - CF-4
+  - id: DF-6
+    statement: github-stats.json and extras.json (remote, per channel) merge stars/last_update/favorite flags into node_packs before render; numeric
+      fields used by the grid formatters.
+    rung: OBSERVED
+    evidences:
+    - pack record fields stars/last_update observed in getlist JSON; 'stars' column in grid (fetched assets)
+trust_model:
+  trust_agreements:
+  - id: TA-1
+    statement: 'The shell trusts every script path returned by /api/extensions as trusted code: manager extension modules run same-origin with
+      full page privileges (api.fetchApi, DOM, app). No isolation or integrity boundary exists between the shell and the injected manager code.'
+    rung: OBSERVED
+    evidences:
+    - IA-1
+  - id: TA-2
+    statement: 'The renderer trusts catalogue string attributes (description, title, author, version, id) as safe to place into the HTML of the
+      shell: TurboGrid assigns the description string to innerHTML, and shell formatters interpolate title/author/version into markup strings.
+      The data definition (display text of a remote catalogue) does not match the privilege of its use (executable markup context).'
+    rung: OBSERVED
+    evidences:
+    - IA-7
+    - IA-8
+    - DF-1
+  - id: TA-3
+    statement: 'The client trusts the server-side transform as a complete sanitizer of presentation fields: angle brackets are escaped, then markup
+      is re-introduced from markdown patterns with an unvalidated href, and the fields consumed as navigation targets (reference, repository)
+      are not transformed at all.'
+    rung: OBSERVED
+    evidences:
+    - IA-8
+  - id: TA-4
+    statement: 'Preference routes trust every HTTP caller as the operator: GET /manager/db_mode?value=, /manager/channel_url_list?value=, /manager/preview_method?value=,
+      /manager/policy/*?value= persist state with no token, no origin check and no confirmation step. Principal privilege required is none; any
+      browser user-agent and any network peer attain the mutation privilege.'
+    rung: OBSERVED
+    evidences:
+    - GET /manager/channel_url_list?value=recent -> 200, then GET -> selected=recent (probes.log 21:39:12Z and 21:39:17Z); restored to default
+      -> 200, selected=default (probes.log 21:39:40Z)
+    - JS writes preferences over GET ?value= (comfyui-manager.js, fetched asset); upstream v3.37 handlers write config on ?value= (INFERRED cross-check)
+  - id: TA-5
+    statement: 'The notice path trusts external, third-party-composed HTML as safe to inject into the shell DOM: the server fetches a GitHub wiki
+      page with TLS verification disabled and returns the extracted markdown-body HTML; the client assigns it via innerHTML on every shell initialisation.'
+    rung: OBSERVED
+    evidences:
+    - IA-6
+    - DF-4
+  - id: TA-6
+    statement: 'Catalogue identity is trusted without binding: the client''s getlist call carries only a db-mode, never the channel identity;
+      the server resolves the channel from persisted config. The displayed channel (captured at shell init) and the source of the rendered rows
+      are two independently evolving state variables with no consistency check.'
+    rung: OBSERVED
+    evidences:
+    - getlist request has no channel parameter in JS call sites; response channel derived from server config (custom-nodes-manager.js + upstream
+      source)
+    - channel config writable by any HTTP principal while a shell session may already be open (TA-4 probes)
+  - id: TA-7
+    statement: The mode parameter is trusted to exist and to be a valid enum; the handler indexes it directly and raises on absence, and non-'local'
+      values flow into channel resolution. Malformed requests reach unhandled exception paths that surface as generic 500s.
+    rung: OBSERVED
+    evidences:
+    - GET /customnode/getlist -> 500 ('Server got itself in trouble') without mode (probes.log 21:33:24Z)
+  - id: TA-8
+    statement: 'Catalogue rows are trusted as the unit of decision: repository/reference URL fields are handed to anchors, pack state (installed/not-installed,
+      version) is displayed from server-merged data, and the follow-up install/update actions trust the row payload. Decision-relevant attributes
+      are display attributes from the same remote source (no signature, no source binding).'
+    rung: OBSERVED
+    evidences:
+    - IA-4
+    - IA-8
+    - CF-6
+  dynamic_state_trust:
+    states:
+    - id: S0
+      name: SHELL_LOADED
+      description: SPA boot complete, manager module scripts loaded in origin; no manager data yet
+    - id: S1
+      name: PREFS_READ
+      description: db_mode, channel_url_list, version read; channel/db-mode combos populated; notice DOM assigned via innerHTML (external fetch)
+    - id: S2
+      name: CATALOG_REQUESTED
+      description: operator (or any request) opens the node list; getlist(mode) in flight
+    - id: S3
+      name: CATALOG_FETCHING
+      description: server resolves channel from config; cache read or outbound fetch of {channel}/custom-node-list.json; populate_markdown applied;
+        cache written on fresh fetch
+    - id: S4
+      name: CATALOG_RENDERED
+      description: rows built in the shell; description/title/author/version strings rendered through innerHTML; row links bound to repository/reference
+    - id: S5
+      name: PREFS_MUTATED
+      description: server config changed via GET ?value= (channel selection, db mode, preview method, policies)
+    - id: S6
+      name: CACHE_HELD
+      description: per-channel-URL cache file exists (~1 day TTL); served on mode=cache without freshness marker
+    - id: S7
+      name: NOTICE_RENDERED
+      description: external wiki-derived HTML present in the shell DOM
+    transitions:
+    - id: T1
+      from: S0
+      to: S1
+      action: read GET /manager/version + db_mode + channel_url_list; fetch /manager/notice; notice.innerHTML = data
+      preconditions: none
+      side_effects: external HTTPS fetch (github.com wiki, TLS verification disabled); DOM mutation with remote HTML
+      verified_conditions: none
+      trusted_conditions: notice content is benign; channel list is the operator's list
+    - id: T2
+      from: S1
+      to: S2
+      action: open manager; getlist(mode=UI combo value, skip_update unless UPDATE mode)
+      preconditions: none
+      side_effects: server may perform outbound fetch and git state checks when skip_update absent
+      verified_conditions: none
+      trusted_conditions: UI combo value corresponds to the operator's intent for this list
+    - id: T3
+      from: S2
+      to: S3
+      action: 'server resolves channel: local -> local DB; cache/remote -> config channel_url; get_data_by_mode(mode)'
+      preconditions: mode parameter present (else unhandled KeyError -> 500)
+      side_effects: outbound fetch, cache write
+      verified_conditions: mode has one of the handled values implicitly
+      trusted_conditions: config channel_url unchanged since S1; cache content equivalent to channel content
+    - id: T4
+      from: S3
+      to: S4
+      action: JSON response -> grid rows -> renderNodeContent innerHTML for description/author/version; anchors bound to repository/reference
+      preconditions: HTTP 200 with parseable JSON
+      side_effects: HTML parsed in shell origin
+      verified_conditions: response status only
+      trusted_conditions: all catalogue strings are markup-inert; URLs in link targets are safe schemes
+    - id: T5
+      from: S3
+      to: S6
+      action: fresh fetch result written to per-URL cache file (~1 day TTL)
+      preconditions: cache stale/absent and fetch succeeded
+      side_effects: content persists beyond the current render and beyond channel re-selection
+      verified_conditions: none beyond fetch success
+      trusted_conditions: fetched content remains the content later rendered
+    - id: T6
+      from: S1
+      to: S5
+      action: GET /manager/{db_mode|channel_url_list|preview_method|policy/*}?value=X -> config write
+      preconditions: channel name must exist in channel dict; db_mode/policy values unvalidated
+      side_effects: persistent server state change; no user-visible confirmation in the shell
+      verified_conditions: channel name membership only
+      trusted_conditions: the caller is the operator acting intentionally
+    - id: T7
+      from: S5
+      to: S2
+      action: next catalog open resolves the mutated preference (new channel or db mode)
+      preconditions: none
+      side_effects: catalogue source/datasource silently changed
+      verified_conditions: none
+      trusted_conditions: the UI still displays the state the operator believes is active
+    - id: T8
+      from: S1
+      to: S7
+      action: notice HTML rendered (see T1); repeat on every shell initialisation
+      preconditions: server can fetch the wiki page (returns 'Unable to retrieve Notice' otherwise)
+      side_effects: third-party page content in shell DOM
+      verified_conditions: HTTP 200 of the wiki page and presence of the markdown-body div
+      trusted_conditions: TLS transport authenticates the wiki (verification disabled); wiki content benign
+    violations:
+    - id: DTV-1
+      transition_ref: T6
+      invariant: Persistent preference changes require the authorised principal's intent (and at least a same-origin request).
+      violation: Any principal - any web page the operator's browser visits, any peer on the network - can toggle the active channel and db mode
+        with a single GET; no token, origin check, or confirmation exists.
+      user_control_evidence: unauthenticated GET mutated channel selection and it persisted (probes 21:39:12Z/21:39:17Z); restored identically
+        (21:39:35Z/21:39:40Z)
+      rung: OBSERVED
+    - id: DTV-2
+      transition_ref: T4
+      invariant: Untrusted remote data must not be treated as executable/markup content when rendered in a privileged origin.
+      violation: Remote catalogue strings are parsed as HTML by design (description column, flyover, title/author formatters); the server-side
+        transform escapes angle brackets but re-introduces anchors from markdown with an unvalidated href, and reference/repository are never
+        transformed. Untrusted data crosses into the markup context of the shell origin without escaping at the sink.
+      user_control_evidence: renderer code and column definitions (innerHTML sink); 388 packs with anchors / 253 with <BR> in the default-channel
+        response prove markup live in data
+      rung: OBSERVED
+    - id: DTV-3
+      transition_ref: T7
+      invariant: A rendered catalogue's rows must correspond to the channel identity presented to the operator.
+      violation: Channel identity is resolved server-side at request time; the UI channel value is captured once at init. A preference mutation
+        (DTV-1) between init and catalog open changes the source of a list the UI still labels with the previous channel (state/source desync,
+        TOCTOU).
+      user_control_evidence: JS reads channel list and selected value once at init; getlist carries no channel identity (fetched assets); mutation
+        probes prove concurrent writability
+      rung: INFERRED
+    - id: DTV-4
+      transition_ref: T5
+      invariant: Content rendered from cache must correspond to content the operator has approved/expects from the selected channel.
+      violation: Cache files are keyed by URL hash only; served content carries no freshness/channel marker to the shell, and re-selecting a channel
+        re-serves its cache (up to 1 day) even if the remote content changed or the last fetch was operator-unauthorised in effect (e.g. triggered
+        as a side effect).
+      user_control_evidence: 'after switching to ''recent'', mode=cache served 1021 recent-channel packs; after restore, mode=cache served 8489
+        default packs (probes 21:39:29Z / 21:39:54Z): per-channel caches persist and are re-exposed on selection'
+      rung: OBSERVED
+    - id: DTV-5
+      transition_ref: T1
+      invariant: External content must be validated for authenticity and inertness before it enters a privileged DOM.
+      violation: The notice HTML is fetched from a third-party wiki with TLS verification disabled and injected via innerHTML without sanitisation;
+        the shell treats the external page as trusted presentation state on every initialisation.
+      user_control_evidence: notice route returns wiki-derived HTML incl. anchors; init_notice assigns it via innerHTML; upstream handler uses
+        verify_ssl=False
+      rung: OBSERVED
+    - id: DTV-6
+      transition_ref: T3
+      invariant: Request parameters must be validated before use; invalid input yields a controlled error.
+      violation: Absent mode raises an unhandled KeyError surfaced as a generic 500; the parameter is indexed, not validated. Any principal can
+        produce it.
+      user_control_evidence: GET /customnode/getlist -> 500 (probes.log 21:33:24Z)
+      rung: OBSERVED
+abduction_chain:
+  assumptions:
+  - id: A-3
+    statement: The developers assumed the pack record's reference/repository fields always hold benign https links because they come from the
+      catalogue and are used only as navigation targets; no validation is applied anywhere on the path from JSON to anchor href.
+    induced_fault: F-3
+    rung: INFERRED
+    evidences:
+    - title formatter assigns link.href = rowItem.originalData.repository (custom-nodes-manager.js, fetched asset)
+    - populate_markdown sanitises only description/name/title; reference/repository returned raw (upstream v3.37 source)
+  fault:
+    id: F-3
+    name: Navigation-target fields (reference, repository) are not sanitised and are bound directly to anchor href
+    rung: OBSERVED
+    evidences:
+    - custom-nodes-manager.js title formatter link.href = repository; populate_markdown touches only description/name/title (upstream source)
+  vulnerability:
+    id: V-3
+    fault_ref: F-3
+    class: 'URL-scheme injection into navigation links: repository/reference bound to anchor href without validation (javascript: URLs, quote/attribute
+      abuse)'
+    suite_class: xss
+    rung: OBSERVED
+    evidences:
+    - link.href = rowItem.originalData.repository in the title formatter; populate_markdown sanitises description/name/title only (assets + upstream
+      source)
+likelihood: medium
+likelihood_rationale: No sanitisation at all on repository/reference, but exploitation needs record control plus an operator click on the pack
+  title.
+confidence_degree: INFERRED
+evidences:
+- title formatter assigns link.href = rowItem.originalData.repository (custom-nodes-manager.js, fetched asset)
+- populate_markdown sanitises only description/name/title; reference/repository returned raw (upstream v3.37 source)
+- custom-nodes-manager.js title formatter link.href = repository; populate_markdown touches only description/name/title (upstream source)
+- link.href = rowItem.originalData.repository in the title formatter; populate_markdown sanitises description/name/title only (assets + upstream
+  source)

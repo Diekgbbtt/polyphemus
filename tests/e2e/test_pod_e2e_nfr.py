@@ -40,10 +40,11 @@ def score_n1_prompt_materialization(spec: dict, trace: dict | None) -> int:
     driver's persisted spec; the plan materialization is the live-run concern)."""
     if not spec:
         return 0
-    required = ("target_identity", "verification_symptoms", "testing_pattern",
-                "assumptions", "payload_vector_space")
+    # The reduced D4 (S5 8.4): the three retired fields are not prompt material
+    # and their absence must not lower the score (T10b #397).
+    required = ("target_identity", "verification_symptoms", "assumptions")
     missing = [k for k in required if not spec.get(k)]
-    nl_missing = not spec.get("rationale") or not spec.get("interpretation_guidance")
+    nl_missing = not spec.get("rationale")
     if missing:
         return 1 if len(missing) < len(required) else 0
     if nl_missing:
@@ -133,19 +134,23 @@ def score_n6_termination_persistence(env: dict) -> int:
 
 
 def score_n7_triager_reflection(variants: list[dict]) -> int:
-    """Did the triager mint a variant that CHANGED the testing procedure
-    paradigm - a different technique/vector family, not a cosmetic tweak?"""
+    """Did the triager mint a variant from a FUNDAMENTAL procedure gap - a
+    procedure-gap basis (a different recon action, bypass technique, technology
+    grounding, pro tip, advanced technique, chaining step, or interpretation
+    check) rather than a cosmetic tweak or an execution-recovery retry?"""
     if not variants:
         return 0
     if len(variants) < 2:
         return 1
-    # A paradigm-sharp change: the declined attribute is the testing_pattern or
-    # the payload_vector_space changed its family (not just a path tweak).
+    procedure_gaps = {
+        "recon-action", "bypass-technique", "technology-grounding", "pro-tips",
+        "advanced-technique", "preliminary-chaining", "interpretation-pitfall",
+    }
     for v in variants[1:]:
         declined = v.get("declined_attribute")
-        if declined == "testing_pattern":
+        if declined in procedure_gaps:
             return 3
-        if declined == "payload_vector_space":
+        if declined == "failure-mode":
             return 2
     return 1
 
@@ -193,13 +198,19 @@ def score_run(artifacts: dict) -> dict:
 # --- unit-proofs: the rubric on the HERMETIC E1 artifacts ----------------------
 
 def _hermetic_e1_spec():
-    return {"target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
+    return {"target_identity": {
+                "url": "https://soupmarket.shop/",
+                "unit_id": "service:web:soupmarket",
+            },
             "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-            "testing_pattern": "blind-boolean",
             "assumptions": ["network egress allowed"],
-            "payload_vector_space": {"method": "GET", "path": "/"},
             "rationale": "reachability probe from H1",
-            "interpretation_guidance": "a 200 with a non-empty body confirms the symptom"}
+            "provenance": {
+                "loop_id": "loop-1",
+                "unit_id": "service:web:soupmarket",
+                "canonical_class": "discovery",
+                "web_vulnerability_class": "",
+            }}
 
 
 def _hermetic_h2_env():
@@ -235,7 +246,7 @@ def test_n1_drops_when_spec_missing_attribute():
 
 
 def test_n1_zero_when_base_absent():
-    spec = {"rationale": "x", "interpretation_guidance": "y"}
+    spec = {"rationale": "x"}
     assert score_n1_prompt_materialization(spec, None) == 0
 
 
@@ -289,9 +300,15 @@ def test_n5_zero_with_no_trail():
 
 
 def test_n7_triager_paradigm_shift_scores_three():
+    # T10: the basis vocabulary is the procedure diff; a procedure-gap basis is
+    # the paradigm-sharp change, `failure-mode` is the milder fallback.
     variants = [{"ref": "v0"},
-                {"ref": "v1", "declined_attribute": "testing_pattern"}]
+                {"ref": "v1", "declined_attribute": "technology-grounding"}]
     assert score_n7_triager_reflection(variants) == 3
+    assert score_n7_triager_reflection(
+        [{"ref": "v0"}, {"ref": "v1", "declined_attribute": "failure-mode"}]) == 2
+    assert score_n7_triager_reflection(
+        [{"ref": "v0"}, {"ref": "v1", "declined_attribute": "runner-failure"}]) == 1
 
 
 def test_n7_no_variant_is_zero():

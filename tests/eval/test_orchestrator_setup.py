@@ -258,60 +258,59 @@ def test_token_budget_bool_is_named(sample_setup) -> None:
 # --- pre-mined hunting artifacts (#270 AC4) -----------------------------------
 
 
-def test_preloaded_artifacts_legacy_string_parses_as_configs(sample_setup) -> None:
-    # Backward compatibility: the former single-path form pre-mines configs only.
+def test_preloaded_artifacts_retired_string_form_is_refused(sample_setup) -> None:
+    # T10b (#397): a bare path meant hunt configs. The family is retired, so the
+    # legacy form must fail loudly rather than pre-mine into a family nothing
+    # reads.
     _target(sample_setup)["preloaded_hunting_artifacts"] = "/mnt/premined-configs"
 
-    parsed = setup_mod.parse_eval_setup(sample_setup)
-
-    pre = parsed.instances[0].targets[0].preloaded_hunting_artifacts
-    assert pre.configs == "/mnt/premined-configs"
-    assert pre.test_specs == ()
+    with pytest.raises(setup_mod.SetupError, match="RETIRED"):
+        setup_mod.parse_eval_setup(sample_setup)
 
 
-def test_preloaded_artifacts_parses_configs_and_test_specs(sample_setup) -> None:
+def test_preloaded_artifacts_parses_models_and_test_specs(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
-        "configs": "/mnt/configs",
+        "models": "/mnt/models",
         "test_specs": [
-            {"path": "/mnt/specs/a.yaml", "fault_key": "unit_CWE-89_sqli"},
-            {"path": "/mnt/specs/b.yaml", "fault_key": "svc_CWE-79_xss"},
+            {"path": "/mnt/specs/a.yaml", "dispatch_id": "unit_CWE-89_sqli__loop-1"},
+            {"path": "/mnt/specs/b.yaml", "dispatch_id": "svc_CWE-79_xss__loop-2"},
         ],
     }
 
     parsed = setup_mod.parse_eval_setup(sample_setup)
 
     pre = parsed.instances[0].targets[0].preloaded_hunting_artifacts
-    assert pre.configs == "/mnt/configs"
-    assert [(s.path, s.fault_key) for s in pre.test_specs] == [
-        ("/mnt/specs/a.yaml", "unit_CWE-89_sqli"),
-        ("/mnt/specs/b.yaml", "svc_CWE-79_xss"),
+    assert pre.models == "/mnt/models"
+    assert [(s.path, s.dispatch_id) for s in pre.test_specs] == [
+        ("/mnt/specs/a.yaml", "unit_CWE-89_sqli__loop-1"),
+        ("/mnt/specs/b.yaml", "svc_CWE-79_xss__loop-2"),
     ]
 
 
-def test_preloaded_artifacts_accepts_specs_without_configs(sample_setup) -> None:
+def test_preloaded_artifacts_accepts_specs_without_models(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
-        "test_specs": [{"path": "/mnt/specs/a.yaml", "fault_key": "fault-a"}]
+        "test_specs": [{"path": "/mnt/specs/a.yaml", "dispatch_id": "unit__loop-1"}]
     }
 
     parsed = setup_mod.parse_eval_setup(sample_setup)
 
     pre = parsed.instances[0].targets[0].preloaded_hunting_artifacts
-    assert pre.configs is None
-    assert [s.fault_key for s in pre.test_specs] == ["fault-a"]
+    assert pre.models is None
+    assert [s.dispatch_id for s in pre.test_specs] == ["unit__loop-1"]
 
 
-def test_preloaded_test_spec_without_fault_key_is_named(sample_setup) -> None:
+def test_preloaded_test_spec_without_dispatch_id_is_named(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
         "test_specs": [{"path": "/mnt/specs/a.yaml"}]
     }
 
-    with pytest.raises(setup_mod.SetupError, match="fault_key"):
+    with pytest.raises(setup_mod.SetupError, match="dispatch_id"):
         setup_mod.parse_eval_setup(sample_setup)
 
 
 def test_preloaded_test_spec_without_path_is_named(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
-        "test_specs": [{"fault_key": "fault-a"}]
+        "test_specs": [{"dispatch_id": "unit__loop-1"}]
     }
 
     with pytest.raises(setup_mod.SetupError, match="path"):
@@ -320,7 +319,7 @@ def test_preloaded_test_spec_without_path_is_named(sample_setup) -> None:
 
 def test_preloaded_test_spec_unknown_key_is_named(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
-        "test_specs": [{"path": "/mnt/specs/a.yaml", "fault_key": "f", "extra": 1}]
+        "test_specs": [{"path": "/mnt/specs/a.yaml", "dispatch_id": "f", "extra": 1}]
     }
 
     with pytest.raises(setup_mod.SetupError, match="extra"):
@@ -334,19 +333,28 @@ def test_preloaded_artifacts_unknown_shape_is_named(sample_setup) -> None:
         setup_mod.parse_eval_setup(sample_setup)
 
 
+def test_preloaded_artifacts_retired_configs_key_is_refused(sample_setup) -> None:
+    # The interim loud guard (T10b #397): the retired key names the replacement
+    # instead of reading as an unknown field or an empty preload.
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {"configs": "/mnt"}
+
+    with pytest.raises(setup_mod.SetupError, match="configs is RETIRED"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
 def test_preloaded_artifacts_unknown_field_is_named(sample_setup) -> None:
-    _target(sample_setup)["preloaded_hunting_artifacts"] = {"configs": "/mnt", "oops": 1}
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {"models": "/mnt", "oops": 1}
 
     with pytest.raises(setup_mod.SetupError, match="oops"):
         setup_mod.parse_eval_setup(sample_setup)
 
 
-def test_preloaded_test_spec_path_unsafe_fault_key_is_named(sample_setup) -> None:
+def test_preloaded_test_spec_path_unsafe_dispatch_id_is_named(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
-        "test_specs": [{"path": "/mnt/specs/a.yaml", "fault_key": "../escape"}]
+        "test_specs": [{"path": "/mnt/specs/a.yaml", "dispatch_id": "../escape"}]
     }
 
-    with pytest.raises(setup_mod.SetupError, match="fault_key"):
+    with pytest.raises(setup_mod.SetupError, match="dispatch_id"):
         setup_mod.parse_eval_setup(sample_setup)
 
 

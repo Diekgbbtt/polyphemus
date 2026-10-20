@@ -1,8 +1,16 @@
 """The helper symbolic layer (spec 1.1, 2 helper symbolic layer).
 
 Minimal deterministic testing-verification helpers the scaffold's later builds
-extend: probe/payload construction from the typed `payload_vector_space`,
-and a minimal SYMBOLIC symptom recogniser.
+extend: the LLM-free approximation of the runner's probe authoring over the
+REDUCED D4 (`author_probe_from_spec`, T8/S5 8.5), and a minimal SYMBOLIC symptom
+recogniser.
+
+The reduced D4 carries no structured payload vector: the runner authors the
+probe from the spec's target identity and evidence. The optional
+`provenance.baseline_ref` names one recorded artifact to replay; otherwise the
+first probe is a GET of the base URL. The legacy `payload_vector_space`
+mutation parser is deleted (T8/T10): a replay's overrides are authored at the
+pod's own exec tool, never read from a retired D4 field.
 
 Symbolic symptom verification is the good development direction but complex
 (operator, 2026-08-06): this recogniser covers the mechanically-checkable
@@ -26,6 +34,7 @@ from polymerhus.attack.hunting.pod.types import (
     RawObservation,
     SYMPTOM_ABSENT_CLASS,
     SYMPTOM_CONFIRMED_CLASS,
+    baseline_ref_from_spec,
 )
 
 
@@ -40,86 +49,27 @@ def probe_signature(chain: ProbeChain) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
-def default_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
-    """Build the pattern's default probe from the typed `payload_vector_space`
-    (O12/C11): an EMPTY vector still yields one default probe (a GET of the
-    target's path), so an empty payload vector never zeroes the loop. For a
-    NON-EMPTY vector there is NO defaulting for any attribute (contract #191):
-    the authored `method` and `path` are read verbatim, and a vector missing
-    either yields None (no probe derivable - the loop lands space-exhausted).
-    Returns None only when no probe is derivable at all (no path anywhere)."""
-    pvs = spec.get("payload_vector_space") or {}
-    if isinstance(pvs, dict) and pvs.get("request_ref"):
-        overrides = mutations_from_pvs(pvs)
-        step = ProbeStep(
-            role="core",
-            request_ref=str(pvs.get("request_ref") or ""),
-            overrides=overrides[0] if overrides else {},
-        )
-        chain = ProbeChain(variant_ref=variant_ref, steps=[step])
-        chain.signature = probe_signature(chain)
-        return chain
-    if isinstance(pvs, dict) and pvs:
-        method = str(pvs.get("method") or "").upper()
-        path = str(pvs.get("path") or "")
-        if not method or not path:
-            return None
+def author_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
+    """Author the runner's first probe from the REDUCED D4 (S5 8.5).
+
+    The optional `provenance.baseline_ref` wins: it names one recorded artifact
+    to replay, so the core step carries `request_ref` and no URL. Otherwise the
+    core step is a GET of `target_identity.url`. A chain with neither is the
+    real "no probe derivable" outcome (None) - the graph then lands
+    `no-symptom-evidence` with `clean=false`, never a fabricated request."""
+    baseline = baseline_ref_from_spec(spec)
+    if baseline:
+        step = ProbeStep(role="core", request_ref=baseline)
     else:
-        method = "GET"
-        path = _path_from_identity(spec.get("target_identity") or {})
-    if not path:
-        return None
-    step = ProbeStep(role="core", method=method, url=str(path), body=str(pvs.get("body", "")))
+        identity = spec.get("target_identity") or {}
+        url = identity.get("url") if isinstance(identity, dict) else ""
+        url = url.strip() if isinstance(url, str) else ""
+        if not url:
+            return None
+        step = ProbeStep(role="core", method="GET", url=url)
     chain = ProbeChain(variant_ref=variant_ref, steps=[step])
     chain.signature = probe_signature(chain)
     return chain
-
-
-_MUTATION_LOCATIONS = frozenset({"query", "form", "header", "headers", "cookie", "cookies", "body", "json"})
-
-
-def mutations_from_pvs(pvs: dict) -> list[dict]:
-    """Expand ``payload_vector_space.mutations`` into the closed override set.
-
-    Authored form::
-
-        mutations:
-          - location: query
-            name: search
-            values: ["'", "' OR 1=1--"]
-
-    Returns one override dict per declared value, e.g.
-    ``{"query": {"search": "'"}}``. Unknown locations are ignored (the spec is
-    an open dict; the RESOLVER only acts on the vocabulary it understands).
-    """
-    if not isinstance(pvs, dict):
-        return []
-    overrides: list[dict] = []
-    for mutation in pvs.get("mutations") or []:
-        if not isinstance(mutation, dict):
-            continue
-        location = str(mutation.get("location") or "")
-        if location not in _MUTATION_LOCATIONS:
-            continue
-        name = str(mutation.get("name") or "")
-        for value in mutation.get("values") or []:
-            overrides.append({location: {name: value}})
-    return overrides
-
-
-def _path_from_identity(identity) -> str:
-    """Best-effort path/url from a `target_identity` dict (`{"url": ..., "unit_id": ...}`, #197)
-    or a legacy bare identity string like `service:web:soupmarket`. Falls back to `/` so a
-    bare service identity still probes root."""
-    if isinstance(identity, dict):
-        url = (identity.get("url") or "").strip()
-        return url or "/"
-    if not identity:
-        return ""
-    if identity.startswith("http://") or identity.startswith("https://"):
-        return identity
-    # A kind-qualified identity (service:web:...) carries no path -> probe root.
-    return "/"
 
 
 # --- Minimal symbolic symptom recogniser ---------------------------------------

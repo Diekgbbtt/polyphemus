@@ -1,18 +1,15 @@
-"""The hunting actors: hunt-orchestrator and hunting-hunter as MAILBOX actors
-(feat/async-actor-agents).
+"""The hunting actors: the threat modeller and the hunting-hunter as MAILBOX
+actors (feat/async-actor-agents).
 
-The hunting effort is now driven by the same actor-with-inbox architecture the
+The hunting effort is driven by the same actor-with-inbox architecture the
 recon-orchestrator uses (`recon/control/orchestrator_agent.ReconOrchestratorActor`):
 
-- `HuntOrchestratorActor` - ONE persistent `run_session_agent` per hunting run on
-  the `hunting_orchestrator` session role (`HuntingOrchestratorSession(run_id)`
-  thread). Its client (`hunt_orchestrator.arun_orchestration`) posts one message
-  per LLM turn of the pass - the hypothesise (Q8 elicitation), ratify, and note
-  phase turns (the node-per-phase REASON body, #167) - and awaits the
-  structured reply, all on the SAME thread, so the checkpointer carries the
-  pass's reasoning. This makes the hunting_orchestrator PURELY stateful,
-  exactly like the recon-orchestrator. The bound tool surface is EXACTLY the
-  three tools `hunts_store`, `notes`, `graph_view` (G3).
+- `ThreatModellerActor` - ONE persistent `run_session_agent` per hunting run on
+  the `hunting_threat_modeller` session role (`ThreatModellerSession(run_id)`
+  thread). Its client (`threat_modeller.arun_modeller_pass`) posts one turn per
+  gate state and awaits the turn, all on the SAME thread, so the checkpointer
+  carries the run's reasoning across units. The bound tool surface is the
+  modeller's (`threat_modeller_tools.build_modeller_tool_surface`, S1 5).
 - `HuntingHunterActor` - one per hunt on the `hunting_hunter` session role
   (`HuntSession(run_id, hunt_id)` thread), fed the spec-authoring (D4) and
   continuation-judgment (D5) prompts via its inbox. `HuntingActorRegistry`
@@ -36,23 +33,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict, Field
-
-from polymerhus.attack.hunting.conciseness import append_conciseness_directive
-from polymerhus.app.memory.tool_contract import (
-    NotesFieldMap,
-    StoreToolBase,
-    build_notes_tool,
-)
 
 logger = logging.getLogger(__name__)
 
-# Message kinds the orchestrator/inbox handler routes on.
-_GATE_KIND = "gate"
-_RATIFY_KIND = "ratify"
-_NOTE_KIND = "note"
+# The modeller's per-state reasoning turn kind.
+_MODELLER_TURN_KIND = "modeller_turn"
+# The hunter actor's author / judge turn kinds.
 _AUTHOR_KIND = "author"
 _JUDGE_KIND = "judge"
 
@@ -69,6 +55,9 @@ class _TurnActor:
 
     _base_kind = ""
     _role_id = ""
+    # The site-declared arming of an EXEMPT role's skill+auth surface (S1 5.5;
+    # a bound role gets its surface from the roster and ignores this).
+    _arm_exempt_surface = False
 
     def __init__(self, checkpointer=None, model_factory=None, observe: bool = True,
                  tools: Sequence = ()):
@@ -152,7 +141,8 @@ class _TurnActor:
             middleware = middleware + list(middleware_extra)
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = auth_capable_binding(self._address.role_id)
+        binding = auth_capable_binding(
+            self._address.role_id, arm_exempt_surface=self._arm_exempt_surface)
         middleware = middleware + binding.middleware
         kwargs = {
             "checkpointer": self._checkpointer,
@@ -243,494 +233,34 @@ class _TurnActor:
                 pass
 
 
-# The service keys of a config: the ONLY always-readable projection (G3).
-# The whole projected surface context is never readable through the store
-# tools - surface inspection defers to `graph_view`.
-_SERVICE_KEYS = ("unit_id", "fault_class", "vulnerability_class",
-                 "status", "hunt_id")
+class ThreatModellerActor(_TurnActor):
+    """The threat modeller as a persistent MAILBOX actor (S1 4.4).
 
-_HUNTS_STORE_DESCRIPTION = (
-    "Read or write hunt configs through the per-project store (G3).\n"
-    "A written config may carry `skills` (#236): the flat skill names the "
-    "downstream hunter should carry for the hunt direction; the dispatch "
-    "resolves and renders them.\n"
-    "cmd='read': pass the config identifier `key` (a revival key "
-    "'<unit>::<fault>' or a full semantic key '<unit>::<CWE>::<class>') and "
-    "optionally the specific `attributes` you want; the service keys are "
-    "always returned - the projected surface context is NEVER readable "
-    "through this tool (inspect it with graph_view). The read surface "
-    "extends to the DOWNSTREAM sibling hunter-memory bucket (#202): the same "
-    "`key` also surfaces the hunter's TestImplementationSpecs + the Q16 "
-    "durable PodExport verdicts (the prior-hunt insights of a config).\n"
-    "cmd='write': pass the `hunt_config` object; its `status` attribute "
-    "('hypothesised' | 'ratified' | 'dropped') drives the write - hypothesised "
-    "creates the draft (a duplicate identity FAILS as the deduplication "
-    "signal, G4), ratified / dropped upsert the config in place (dropped "
-    "stays on disk, G6). The payload MUST carry the identity attributes "
-    "`unit_id` and `fault_class`, plus `vulnerability_class` (which MAY be "
-    "empty for a carried-bare draft): the config file name and hunt id are "
-    "DERIVED from them, never authored as a file name. The hypothesise seeds "
-    "are TOP-LEVEL `rationale` + `research_direction` config attributes (the "
-    "former `prompt_template` wrapper is flattened); a ratify payload that "
-    "omits or empties them keeps the pair's canonical seeds (the symbolic "
-    "layer fills them), so you never re-author them. A payload missing "
-    "`unit_id` or `fault_class` is rejected with a coded "
-    "`hunts_store_write_rejected` error naming the missing attribute - correct "
-    "it and retry."
-)
+    ONE actor per hunting run: the modeller pass constructs it (or an injected
+    `actor_factory` does) and it spawns a `run_session_agent` on the
+    `hunting_threat_modeller` session role under the run's
+    `ThreatModellerSession` thread the first time a turn is needed, so its
+    checkpointed memory carries the run's reasoning across units. `turn` posts
+    one reasoning turn per gate state and awaits the tool-driven turn; the gate
+    writes land through the bound `hunts_store` tool (the model is the sole
+    writer of the model document).
 
-_ORCH_NOTES_DESCRIPTION = (
-    "Read or write the project's notes (`memory.yaml`) through the "
-    "per-project store, the SAME data contract as hunts_store (G3).\n"
-    "cmd='read': pass `key` (a config identifier) and optionally the specific "
-    "`attributes`. cmd='write': pass ONE of the options - 'append' (a new "
-    "note for `key`; the response carries the NEXT pair's data plus the "
-    "restart verbatim - the pair end, G1), 'update' (amend the note with "
-    "`note_id`), or 'delete' (remove the note with `note_id`)."
-)
+    The surface is EXACTLY the modeller's (S1 5): `hunts_store`, `notes`, the
+    HTTP-history read pair, `exec`, and the web-vulnerability suite pair, plus
+    the role's read-only skill + auth binding (`load_skill`, `auth_store`). The
+    unit identity follows the pass's retargetable `ModellerUnit` cell, so one
+    run-scoped actor serves every unit without stranding its captured tools.
 
+    Fail-open: a dead/crashed actor maps to `None` for every call - the pass's
+    breaker counts it and the run pauses rather than fabricating a model.
+    `stop` posts the terminal message and reaps the task; safe when never
+    spawned."""
 
-class HuntConfigWrite(BaseModel):
-    """The hunt-config WRITE payload (#236): the top-level fields the
-    orchestrator authors, typed so the tool schema itself teaches the contract.
-    `extra="allow"` keeps the write surface open for the config's long tail
-    (adversarial capabilities, preconditions, prior insights, and the wider
-    projection), while the named fields - `skills` above all - carry their
-    descriptions into the model-facing schema. The fields stay loose (`str`
-    defaults, not required) because the store owns the CODED identity and status
-    rejections; pydantic must never pre-empt them with a bare validation error.
-    """
-
-    status: str = Field(
-        default="",
-        description="The lifecycle verbatim: 'hypothesised' | 'ratified' | "
-                    "'dropped'. It drives the write (create vs re-author).")
-    unit_id: str = Field(default="", description="The L1 unit identity.")
-    fault_class: str = Field(default="", description="The fault/CWE identity.")
-    vulnerability_class: str = Field(
-        default="", description="The human class name (may be empty).")
-    rationale: str = Field(default="", description="Why this direction.")
-    research_direction: str = Field(
-        default="", description="The hypothesised direction to pursue.")
-    skills: list[str] = Field(
-        default_factory=list,
-        description="The artifact-declared skill configuration (#236): flat "
-                    "skill names (e.g. 'ssrf') the downstream HUNTER should "
-                    "carry for this hunt direction. The dispatch resolves each "
-                    "name project-first through the shared catalogue, unions it "
-                    "with the hunter's role baseline, refuses the meta family, "
-                    "caps the added set after resolution, and warns and skips "
-                    "an unresolvable name. Omit it or leave it empty for no "
-                    "added skills; never write a path or a meta skill.")
-
-    model_config = ConfigDict(extra="allow")
-
-
-class OrchestratorHuntsStoreArgs(BaseModel):
-    """The orchestrator `hunts_store` ARGS contract (G3): typed `read`/`write`
-    cmds over the produced/consumed config files. `extra="forbid"` plus a
-    coded teaching rejection on a missing `cmd` (#293)."""
-
-    cmd: Literal["read", "write"] = Field(
-        description="The operation: 'read' or 'write' (required).")
-    key: str = Field(
-        default="",
-        description="Read identifier: a revival key '<unit>::<fault>' or a "
-                    "full semantic key '<unit>::<CWE>::<class>'.")
-    attributes: list[str] = Field(
-        default_factory=list,
-        description="Read projection: return only these config attributes "
-                    "(surface_context is never readable here).")
-    hunt_config: HuntConfigWrite = Field(
-        default_factory=HuntConfigWrite,
-        description="Write payload: the hunt config object; its `status` "
-                    "attribute ('hypothesised' | 'ratified' | 'dropped') "
-                    "drives the write. The hypothesise seeds are TOP-LEVEL "
-                    "`rationale` + `research_direction` (never nested in a "
-                    "`prompt_template` object). `skills` declares the flat "
-                    "skill names the downstream hunter should carry (#236).")
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class OrchestratorNotesArgs(BaseModel):
-    """The orchestrator `notes` ARGS contract (G3): typed `read`/`write` cmds
-    over `memory.yaml`, the SAME data contract as `hunts_store`. Write options
-    `append` / `update` / `delete`; `extra="forbid"` plus a coded teaching
-    rejection on a missing `cmd` (#293)."""
-
-    cmd: Literal["read", "write"] = Field(
-        description="The operation: 'read' or 'write' (required).")
-    option: Literal["append", "update", "delete"] | None = Field(
-        default=None,
-        description="The write option: 'append' a new note, 'update' or "
-                    "'delete' an existing one.")
-    key: str = Field(
-        default="",
-        description="The config identifier the note(s) are keyed by.")
-    note: str | None = Field(
-        default=None, description="The note body (append / update).")
-    note_id: str | None = Field(
-        default=None, description="The note identifier for update / delete.")
-    attributes: list[str] = Field(
-        default_factory=list,
-        description="Read projection: return only these attributes per note.")
-
-    model_config = ConfigDict(extra="forbid")
-
-
-# The explicit notes field map (#293): the orchestrator's schema names, checked
-# against `OrchestratorNotesArgs` at construction - no alias guessing.
-_ORCH_NOTES_FIELD_MAP = NotesFieldMap(
-    key="key",
-    read_key="key",
-    action="option",
-    note="note",
-    note_id="note_id",
-    attributes="attributes",
-)
-
-
-class HuntStoreNotesHandle:
-    """The orchestrator seam's store handle for the shared `notes` tool.
-
-    It owns the `memory.yaml` destination (via `HuntStore`) and injects the
-    phase-transition verbatim. The shared algorithm never sees a path: the
-    destination is derived from THIS handle, never a request field."""
-
-    def __init__(self, store, project_id, phase_context=None,
-                 next_pair_hint=None):
-        self._store = store
-        self._project_id = project_id
-        self._phase_context = phase_context
-        self._next_pair_hint = next_pair_hint
-
-    def read(self, query) -> dict:
-        key = query.key
-        if not key:
-            return {"error": "notes read needs the config identifier (key)"}
-        if self._store is None:
-            return {"error": "no notes seam configured; notes unavailable",
-                    "key": key}
-        try:
-            notes_list = list(self._store.read_notes(self._project_id, key))
-        except Exception as exc:  # noqa: BLE001 - fail-open
-            return {"error": f"notes read degraded: {exc}", "key": key}
-        requested = list(query.attributes)
-        out = []
-        for record in notes_list:
-            projected = {"note_id": record.get("note_id"),
-                         "revival_key": record.get("revival_key"),
-                         "note": record.get("note")}
-            for attr in requested:
-                if attr in record:
-                    projected[attr] = record[attr]
-            out.append({k: v for k, v in projected.items() if v is not None})
-        return {"key": key, "notes": out}
-
-    def write(self, request) -> dict:
-        option = request.action
-        if self._store is None:
-            return {"error": "no notes seam configured; note not written",
-                    "option": option}
-        try:
-            if option == "append":
-                if not request.key or not request.body:
-                    return {"error": "notes append needs key and note"}
-                record = self._store.append_note(
-                    self._project_id, request.key, request.body)
-                next_pair = None
-                if self._phase_context is not None:
-                    next_pair = getattr(self._phase_context, "next_pair", None)
-                return {"recorded": True, "key": request.key,
-                        "note_id": record.get("note_id"),
-                        "next_pair": next_pair,
-                        "hint": self._next_pair_hint}
-            if option == "update":
-                if not request.note_id or request.body is None:
-                    return {"error": "notes update needs note_id and note"}
-                ok = self._store.update_note(
-                    self._project_id, request.note_id, request.body)
-                return {"updated": ok, "note_id": request.note_id}
-            if not request.note_id:
-                return {"error": "notes delete needs note_id"}
-            ok = self._store.delete_note(self._project_id, request.note_id)
-            return {"deleted": ok, "note_id": request.note_id}
-        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
-            return {"error": f"notes {option} degraded: {exc}"}
-
-
-class _OrchestratorHuntsStoreTool(StoreToolBase):
-    """The orchestrator's `hunts_store` binding: the shared store-tool base
-    (typed schema + coded teaching rejection + read/write dispatch) over the
-    per-project `HuntStore` seam."""
-
-    name: str = "hunts_store"
-    description: str = _HUNTS_STORE_DESCRIPTION
-    args_schema: type[BaseModel] = OrchestratorHuntsStoreArgs
-    _discriminator: str = "cmd"
-    _rejection_name: str = "hunts_store"
-    _require_write_intent: bool = False
-    _as_json: bool = False
-
-    def __init__(self, *, store_seam=None, project_id: str | None = None,
-                 **data):
-        super().__init__(**data)
-        self._store_seam = store_seam
-        self._project_id = project_id
-
-    def _read(self, args: OrchestratorHuntsStoreArgs) -> dict:
-        key = args.key
-        if not key:
-            return {"error": "hunts_store read needs the config identifier (key)"}
-        store = self._store_seam
-        if store is None:
-            return {"error": "no hunt store configured; configs unavailable",
-                    "key": key}
-        try:
-            read_fn = getattr(store, "read_configs_by_key", None)
-            if not callable(read_fn):
-                return {"error": "no hunt store configured; configs unavailable",
-                        "key": key}
-            configs = list(read_fn(self._project_id, key))
-        except Exception as exc:  # noqa: BLE001 - fail-open (O4)
-            logger.warning("hunts_store read degraded for %s (%s)", key, exc)
-            return {"error": f"hunts_store read degraded: {exc}", "key": key}
-        requested = list(args.attributes or [])
-        out: list[dict] = []
-        for cfg in configs:
-            projected = {k: cfg.get(k) for k in _SERVICE_KEYS
-                         if cfg.get(k) is not None}
-            for attr in requested:
-                if attr == "surface_context":
-                    # the whole projected surface context is NEVER readable
-                    # through the store tools (G3)
-                    continue
-                if attr in cfg:
-                    projected[attr] = cfg[attr]
-            out.append(projected)
-        return {"key": key, "configs": out}
-
-    def _write(self, args: OrchestratorHuntsStoreArgs) -> dict:
-        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-            NEXT_NOTE_HINT,
-            NEXT_RATIFY_HINT,
-            DuplicateConfigError,
-        )
-
-        hunt_config = (
-            args.hunt_config.model_dump(exclude_unset=True)
-            if hasattr(args.hunt_config, "model_dump")
-            else args.hunt_config
-        )
-        if not isinstance(hunt_config, dict) or not hunt_config:
-            return {"error": "hunts_store write needs the hunt_config object"}
-        status = str(hunt_config.get("status") or "hypothesised")
-        if status not in ("hypothesised", "ratified", "dropped"):
-            return {"error": f"unknown config status {status!r}; known: "
-                             "hypothesised, ratified, dropped"}
-        # #298: the file name is DERIVED from the identity attributes, so the
-        # payload MUST carry `unit_id` and `fault_class` (the class may be empty
-        # - the carried-bare degrade). A missing one is a coded contract
-        # rejection the agent corrects, never a silent degenerate-name write.
-        from polymerhus.attack.hunting.hunt_store import (  # noqa: PLC0415
-            ConfigIdentityError,
-            require_config_identity,
-        )
-        try:
-            require_config_identity(hunt_config)
-        except ConfigIdentityError as exc:
-            logger.warning("hunts_store write rejected: %s", exc)
-            # the CODED contract rejection (the `coded_teaching_rejection`
-            # convention): a machine error code + the missing field names the
-            # agent must supply, never a prose-only error.
-            return {"error": "hunts_store_write_rejected",
-                    "fields": list(exc.fields),
-                    "detail": str(exc),
-                    "rejected": True, "status": status}
-        store = self._store_seam
-        if store is None:
-            return {"error": "no hunt store configured; config not written",
-                    "status": status}
-        try:
-            if status == "hypothesised":
-                write_fn = getattr(store, "write_config", None)
-                if not callable(write_fn):
-                    return {"error": "no hunt store configured; config not "
-                                     "written", "status": status}
-                key = write_fn(self._project_id, hunt_config)
-                return {"acknowledged": True, "status": status, "key": key,
-                        "hint": NEXT_RATIFY_HINT}
-            update_fn = getattr(store, "update_config", None)
-            if not callable(update_fn):
-                return {"error": "no hunt store configured; config not written",
-                        "status": status}
-            key = update_fn(self._project_id, hunt_config)
-            if status == "ratified":
-                # G1 correction: the ratification response carries ONLY the
-                # strongly-take-notes verbatim - the next pair is NOT fed here.
-                return {"acknowledged": True, "status": status, "key": key,
-                        "hint": NEXT_NOTE_HINT}
-            # a dropped write is ratification-internal (G6): the model keeps
-            # ratifying the surviving configs.
-            return {"acknowledged": True, "status": status, "key": key,
-                    "hint": NEXT_RATIFY_HINT}
-        except DuplicateConfigError as exc:
-            # G4: the storage-layer deduplication signal - the model interprets
-            # it (merges or refreshes instead of duplicating).
-            logger.warning("hunts_store write blocked by the novelty gate (%s)",
-                           exc)
-            return {"error": str(exc), "duplicate": True, "status": status}
-        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
-            logger.warning("hunts_store write degraded (%s)", exc)
-            return {"error": f"hunts_store write degraded: {exc}",
-                    "status": status}
-
-
-def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | None):
-    """The model-facing tool surface bound onto the orchestrator's session
-    agent (spec 3.4, amended by #167/G3): EXACTLY the three tools `hunts_store`,
-    `notes`, `graph_view` - no back-edge-to-recon tool (the back_edge request to
-    recon is out of the agent's surface, operator ruling 2026-08-22; the
-    target-knowledge loop rides `graph_view`), no budget tool (G7). The old
-    five-tool surface (`read_memory_hunts` / `read_memory_notes` /
-    `mint_hunt_config` / `record_note`) is REPLACED.
-
-    `hunts_store` - read/write cmds over the produced/consumed config files.
-      `read` needs the config identifier (a revival key `<unit>::<fault>` or a
-      full semantic key `<unit>::<CWE>::<class>`) and accepts optionally
-      specific `attributes`; the WHOLE projected surface context is NEVER
-      readable through it - only the service keys (which may later be inspected
-      with `graph_view`, G3). `write` takes the hunt config object carrying the
-      identity attributes `unit_id` + `fault_class` (`vulnerability_class` may
-      be empty); the file name, the semantic key, and `hunt_id` are DERIVED
-      from them (#298), so a missing/empty `unit_id`/`fault_class` is a coded
-      contract rejection and every other attribute is optional. The `status`
-      attribute rides the config object
-      itself and drives the write: `hypothesised` creates the draft (a
-      duplicate identity FAILS with the G4 deduplication signal), `ratified`
-      upserts the config in place, `dropped` marks the orphan on disk (G6,
-      never deleted). The response injects the phase-transition verbatim from
-      the constants (hypothesised -> NEXT_RATIFY_HINT; ratified -> ONLY
-      NEXT_NOTE_HINT - G1).
-    `notes` - read/write cmds over `memory.yaml`, the SAME data contract as
-      `hunts_store`; write options `append` / `update` / `delete`. The append
-      response carries the next pair's data + the NEXT_PAIR_HINT constant (the
-      pair end, G1).
-    `graph_view` - unchanged (read-only L0/L1 view; write-shaped cypher
-      surfaces `ReadOnlyGraphViewError` and never executes the write).
-
-    Each tool is bound to its seam body when present; a missing seam body
-    degrades to a fail-open stub returning a denoted error object (C18) -
-    never raising into the turn. The seam bodies are constructed lazily (this
-    module imports no driver at import); the tools are JSON-serialisable
-    callables a structured-output session turn can bind."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        NEXT_PAIR_HINT,
-    )
-
-    graph_view_seam = getattr(tools, "graph_view", None)
-    store_seam = getattr(tools, "store_reads", None)
-    phase_context = getattr(tools, "phase_context", None)
-
-    # The ONE shared graph_view tool (#197): bound at all three seams, the
-    # usage contract (schema + query-language primitives + read-only guard +
-    # return shape + example) rides its description verbatim.
-    from polymerhus.attack.hunting.graph_view_tool import (  # noqa: PLC0415
-        build_graph_view_tool,
-    )
-
-    read_fn = getattr(graph_view_seam, "read", None) if graph_view_seam is not None else None
-    graph_view = build_graph_view_tool(read_fn if callable(read_fn) else None)
-
-    # The store tools ride the shared contract (#293): a typed schema with a
-    # coded teaching rejection, and ONE shared `notes` implementation bound to
-    # this seam's store handle (the `memory.yaml` destination is derived from
-    # the handle, never a request field).
-    hunts_store = _OrchestratorHuntsStoreTool(
-        store_seam=store_seam, project_id=project_id)
-    notes = build_notes_tool(
-        HuntStoreNotesHandle(store_seam, project_id, phase_context,
-                             next_pair_hint=NEXT_PAIR_HINT),
-        args_schema=OrchestratorNotesArgs,
-        field_map=_ORCH_NOTES_FIELD_MAP,
-        name="notes",
-        description=_ORCH_NOTES_DESCRIPTION,
-        discriminator="cmd",
-        as_json=False,
-        rejection_name="notes",
-        require_write_intent=False,
-    )
-
-    # The single-sourced conciseness directive (#292) rides the two store
-    # descriptions verbatim; the env-free appender is imported at module top.
-    hunts_store.description = append_conciseness_directive(hunts_store.description)
-    notes.description = append_conciseness_directive(notes.description)
-    return [hunts_store, notes, graph_view]
-
-
-def build_orchestrator_read_grants(project_id: str | None) -> list:
-    """The hunt-orchestrator's two operator-ruled READ grants (#236; the cortex
-    decision of 2026-09-28, which reopens the frozen three-tool surface):
-
-    - `search_http_history` / `get_http_artifact` - the HTTP-history read pair,
-      the SAME single implementations the hunter and the SkillEvolver bind, over
-      the production Kali client seams. The `replay` verb stays the pod's: the
-      orchestrator inspects request history, it never executes.
-    - `load_skill` - the full loader: the all-or-regex description listing, and
-      any named skill body on demand. The orchestrator designs attacks, so it
-      loads freely; it writes nothing - no lesson, no skill revision.
-
-    Both grants are read-only by construction (no mutation or execution verb;
-    the load tool writes nothing), and they ride the orchestrator's session
-    surface through the SAME `tools=` seam the three store/graph tools use -
-    never a per-site reimplementation. The
-    `build_orchestrator_tool_surface` builder stays the SEAM-BACKED half
-    (`TOOL_SURFACE`); this builder is the grant half
-    (`ORCHESTRATOR_READ_GRANTS`), and the actor composes both. The Kali-client
-    import resolves lazily inside the call (CODING_STANDARD section 6)."""
-    from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
-        default_http_get_fn,
-        default_http_search_fn,
-    )
-    from polymerhus.app.llm.skills import build_load_skill_tool  # noqa: PLC0415
-    from polymerhus.attack.hunting.hunter_tools import (  # noqa: PLC0415
-        HttpHistoryGetTool,
-        HttpHistorySearchTool,
-    )
-
-    return [
-        HttpHistorySearchTool(
-            http_search_fn=default_http_search_fn, project_id=project_id or ""
-        ),
-        HttpHistoryGetTool(
-            http_get_fn=default_http_get_fn, project_id=project_id or ""
-        ),
-        build_load_skill_tool(project_id),
-    ]
-
-
-class HuntOrchestratorActor(_TurnActor):
-    """The hunt-orchestrator as a persistent MAILBOX actor (feat/async-actor-agents).
-
-    ONE actor per hunting run: `arun_orchestration` (or an injected
-    `orchestrator_factory`) constructs it, and it spawns a `run_session_agent`
-    on the `hunting_orchestrator` session role under the run's
-    `HuntingOrchestratorSession` thread the first time a turn is needed. `reason`
-    posts a Q8 gate-reasoning request and awaits the structured `GateDecision` on
-    that thread, so the checkpointed memory carries the pass's reasoning (purely
-    stateful, exactly like the recon-orchestrator).
-
-    The agent's structured-output surface is the UNION
-    `GateDecision | RatifyDecision | NoteDecision` (a `ToolStrategy` accepts a
-    union schema): the model emits whichever schema the turn's prompt asks for,
-    and the client classifies the reply by the requested kind.
-
-    Fail-open: a dead/crashed actor maps to `None` for every call - the caller's
-    fail-open canon degrades (carry every candidate).
-    `stop` posts the terminal message and reaps the task; safe when never spawned."""
-
-    _role_id = "hunting_orchestrator"
+    _role_id = "hunting_threat_modeller"
+    # The site-declared arming (S1 5.5): the roster declares the role exempt (no
+    # catalogue skill bears - the class material is the web-vulnerability suite),
+    # so the actor arms the read-only skill surface + `auth_store` here.
+    _arm_exempt_surface = True
 
     def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
                  observe: bool = True, compaction=None, tools=None,
@@ -741,10 +271,6 @@ class HuntOrchestratorActor(_TurnActor):
         self._compaction = compaction  # #95 D9/H: None auto-wires, False disables
         self.tools = tools
         self.project_id = project_id
-        # Q4: the dedicated Overview message heads the run thread exactly ONCE
-        # (the run thread is monotonic across all faults/pairs, so a per-turn
-        # emit would re-stack the framing - the #187 precedent).
-        self._overview_emitted = False
 
     @property
     def compaction_manager(self):
@@ -753,215 +279,75 @@ class HuntOrchestratorActor(_TurnActor):
         return getattr(self._compaction, "manager", None)
 
     def _make_address(self):
-        from polymerhus.app.llm.session_address import HuntingOrchestratorSession  # noqa: PLC0415
-        return HuntingOrchestratorSession(run_id=self._run_id)
+        from polymerhus.app.llm.session_address import ThreatModellerSession  # noqa: PLC0415
+        return ThreatModellerSession(run_id=self._run_id)
 
     @property
     def _extra_tags(self) -> list | None:
-        # Convergence join: the orchestrator's turns carry the run tag now
-        # that the hand-written gate span is gone.
+        # Convergence join: the modeller's turns carry the run tag.
         return [self._run_id]
 
     @property
     def _usage_scope(self) -> str | None:
-        # The orchestrator's tokens are scoped to the run's project.
         return self.project_id
 
     async def _ensure_started(self) -> None:
-        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-            GateDecision,
-            NoteDecision,
-            RatifyDecision,
+        from polymerhus.attack.hunting.llm import _modeller_skill  # noqa: PLC0415
+        from polymerhus.attack.hunting.threat_modeller_tools import (  # noqa: PLC0415
+            build_modeller_tool_surface,
         )
-        from polymerhus.attack.hunting.llm import _gate_skill  # noqa: PLC0415
-        from polymerhus.app.llm.session import structured_response_format  # noqa: PLC0415
         if self._compaction is None:
             from polymerhus.app.llm import compaction as C  # noqa: PLC0415
             self._compaction = C.build_role_compaction_middleware(
-                "hunting_orchestrator")
+                "hunting_threat_modeller")
         middleware_extra = None
         if self._compaction is not False:
             middleware_extra = [self._compaction]
-        surface = []
-        if (getattr(self.tools, "back_edge", None) is not None
-                or getattr(self.tools, "graph_view", None) is not None
-                or getattr(self.tools, "store_reads", None) is not None):
-            surface = list(build_orchestrator_tool_surface(
+        surface: list = []
+        if self.tools is not None:
+            cell = getattr(self.tools, "unit_cell", None)
+            surface = list(build_modeller_tool_surface(
+                self.project_id or getattr(self.tools, "project_id", "") or "",
+                getattr(cell, "unit_id", "") if cell is not None else "",
                 self.tools,
-                run_id=self._run_id,
-                project_id=self.project_id,
-            ))
-        # The #236 READ grants (the cortex decision) are UNCONDITIONAL: the
-        # HTTP-history read pair and the full `load_skill` tool (listing and
-        # body) are the role's considered surface, not a function of which store
-        # seam this pass injected. They carry no mutation, no execution, and no
-        # lesson or skill writing.
-        surface += build_orchestrator_read_grants(self.project_id)
-        # The static gate skill is the run's ONE system message on this thread
-        # (#187): passed ONCE via `system_prompt`, never re-added per phase turn
-        # (the per-turn re-add used to stack a byte-identical copy on every
-        # gate/ratify/note turn - the ~145K of ~14 stale copies behind the
-        # timeout). The phase-transition verbatims stay in the tool-call
-        # responses (G1/G3), never here.
-        # A6: the structured verdict is negotiated, not pinned - computed from
-        # the REAL binding fact (with the #236 read grants bound the surface is
-        # never empty); a forced-choice-constrained profile lands on ToolStrategy
-        # over the relaxed model (voluntary).
-        tools = surface or None
-        response_format = structured_response_format(
-            "hunting_orchestrator",
-            GateDecision | RatifyDecision | NoteDecision,
-            tools_bound=bool(tools),
-        )
+            ).values())
+        # No structured response format: the modeller's output IS its gate
+        # writes through the bound tools, never a parsed structured decision.
         await super()._ensure_started(
-            response_format=response_format,
-            tools=tools,
+            tools=surface or None,
             middleware_extra=middleware_extra,
-            system_prompt=_gate_skill(),
+            system_prompt=_modeller_skill(),
         )
 
     def _on_message(self, message, last_turn):
-        # The static gate skill rides the thread's ONE system message (set once
-        # at `_ensure_started` as `system_prompt`), so the phase branches return
-        # ONLY the phase's HumanMessage - never a per-turn SystemMessage copy
-        # (#187: the old per-turn `SystemMessage(content=_gate_skill())` stacked
-        # a byte-identical copy on every gate/ratify/note turn).
-        if message.kind == _GATE_KIND:
+        # The static modeller prompt rides the thread's ONE system message (set
+        # at `_ensure_started`), so this returns ONLY the turn's HumanMessage.
+        if message.kind == _MODELLER_TURN_KIND:
             payload = message.payload if isinstance(message.payload, dict) else {}
-            from polymerhus.attack.hunting.llm import _compose_gate_prompt  # noqa: PLC0415
+            from polymerhus.attack.hunting.llm import (  # noqa: PLC0415
+                _compose_modeller_prompt,
+            )
             from langchain_core.messages import HumanMessage  # noqa: PLC0415
-            # Q4: the dedicated Overview message (a HumanMessage carrying ONLY
-            # the rendered Overview) heads the run thread ONCE, on the first
-            # gate turn that carries one; the gate prompt then chains to it
-            # with its opener verbatim. Later gate turns and later faults
-            # continue the same thread, so the Overview is never re-stacked
-            # (#187: a byte-identical per-turn re-add is a defect).
-            gate_input = payload.get("input")
-            overview = getattr(gate_input, "overview", "") or ""
-            messages = []
-            if overview and not self._overview_emitted:
-                messages.append(HumanMessage(content=overview))
-                self._overview_emitted = True
-            text = _compose_gate_prompt(gate_input, chained=bool(messages))
-            if payload.get("correction"):
-                # The voluntary-function-calling rung lets the model pick any
-                # union member; a wrong member (NoteDecision / RatifyDecision) on
-                # the hypothesise turn is a no-decision. This is the bounded
-                # retry's corrective turn.
-                text += (
-                    "\n\nCORRECTION: your previous answer was NOT a GateDecision. "
-                    "This is the HYPOTHESISE turn - answer with the GateDecision "
-                    "structured-output tool ONLY (its `directions` list)."
-                )
-            messages.append(HumanMessage(content=text))
-            return messages
-        if message.kind == _RATIFY_KIND:
-            payload = message.payload if isinstance(message.payload, dict) else {}
-            from polymerhus.attack.hunting.llm import _compose_ratify_prompt  # noqa: PLC0415
-            from langchain_core.messages import HumanMessage  # noqa: PLC0415
-            return [
-                HumanMessage(content=_compose_ratify_prompt(payload.get("input"))),
-            ]
-        if message.kind == _NOTE_KIND:
-            payload = message.payload if isinstance(message.payload, dict) else {}
-            from polymerhus.attack.hunting.llm import _compose_note_prompt  # noqa: PLC0415
-            from langchain_core.messages import HumanMessage  # noqa: PLC0415
-            return [
-                HumanMessage(content=_compose_note_prompt(payload.get("input"))),
-            ]
+            return [HumanMessage(content=_compose_modeller_prompt(payload.get("turn")))]
         if message.kind == "stop":
             from polymerhus.app.llm.actor import STOP  # noqa: PLC0415
             return STOP
         return None
 
-    async def hypothesise(self, gate_input) -> "GateDecision | None":
-        """Feed the HYPOTHESISE-phase input to the actor and await its
-        `GateDecision` (the elicitation the mint fans out at this phase).
-        Fail-open to None (the pass then carries the pair bare)."""
-        if gate_input is None or not getattr(gate_input, "candidates", None):
+    async def turn(self, turn_input) -> "object | None":
+        """Feed one gate-state turn to the actor and await it. The reply carries
+        no decision (the gate writes are the output); a None reply is the
+        no-decision signal the pass's breaker counts. Fail-open to None."""
+        if turn_input is None:
             return None
         try:
             from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
-            content = await self._post_and_await(
-                AgentMessage(kind=_GATE_KIND, payload={"input": gate_input})
+            return await self._post_and_await(
+                AgentMessage(kind=_MODELLER_TURN_KIND, payload={"turn": turn_input})
             )
-            from polymerhus.attack.hunting.hunt_orchestrator import GateDecision  # noqa: PLC0415
-            if not isinstance(content, GateDecision):
-                # The relaxed (voluntary) rung sometimes returns the wrong union
-                # member (NoteDecision / RatifyDecision) on the hypothesise turn.
-                # Retry ONCE with an explicit correction so the pair is not
-                # silently lost (the degraded-turn breaker would otherwise back
-                # off and eventually abort the pass).
-                logger.warning(
-                    "hunt-orchestrator hypothesise turn returned a non-GateDecision "
-                    "member (%s); retrying once with a correction",
-                    type(content).__name__ if content is not None else "None")
-                content = await self._post_and_await(
-                    AgentMessage(
-                        kind=_GATE_KIND,
-                        payload={"input": gate_input, "correction": True},
-                    )
-                )
-                if not isinstance(content, GateDecision):
-                    logger.warning(
-                        "hunt-orchestrator hypothesise retry still non-GateDecision "
-                        "(%s); treating it as no-decision",
-                        type(content).__name__ if content is not None else "None")
-                    return None
-            return content
-        except Exception:  # noqa: BLE001
-            logger.warning("hunt-orchestrator actor hypothesise turn failed; carrying the pair bare",
-                           exc_info=True)
+        except Exception:  # noqa: BLE001 - the pass counts a no-decision
+            logger.warning("threat modeller actor turn failed", exc_info=True)
             return None
-
-    async def ratify(self, phase_input) -> "RatifyDecision | None":
-        """Feed the RATIFY-phase input to the actor and await its
-        `RatifyDecision` (the configs at their final status).
-        Fail-open to None (the drafts stay hypothesised)."""
-        try:
-            from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
-            content = await self._post_and_await(
-                AgentMessage(kind=_RATIFY_KIND, payload={"input": phase_input})
-            )
-            from polymerhus.attack.hunting.hunt_orchestrator import RatifyDecision  # noqa: PLC0415
-            if not isinstance(content, RatifyDecision):
-                logger.warning(
-                    "hunt-orchestrator ratify turn returned a non-RatifyDecision "
-                    "member (%s); treating it as no-decision",
-                    type(content).__name__ if content is not None else "None")
-                return None
-            return content
-        except Exception:  # noqa: BLE001
-            logger.warning("hunt-orchestrator actor ratify turn failed",
-                           exc_info=True)
-            return None
-
-    async def note(self, phase_input) -> "NoteDecision | None":
-        """Feed the NOTE-phase input to the actor and await its `NoteDecision`
-        (the notes the pair writes). Fail-open to None (no note is written)."""
-        try:
-            from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
-            content = await self._post_and_await(
-                AgentMessage(kind=_NOTE_KIND, payload={"input": phase_input})
-            )
-            from polymerhus.attack.hunting.hunt_orchestrator import NoteDecision  # noqa: PLC0415
-            if not isinstance(content, NoteDecision):
-                logger.warning(
-                    "hunt-orchestrator note turn returned a non-NoteDecision "
-                    "member (%s); treating it as no-decision",
-                    type(content).__name__ if content is not None else "None")
-                return None
-            return content
-        except Exception:  # noqa: BLE001
-            logger.warning("hunt-orchestrator actor note turn failed",
-                           exc_info=True)
-            return None
-
-    async def reason(self, gate_input) -> "GateDecision | None":
-        """Feed the Q8 gate input to the actor and await its `GateDecision`.
-        Fail-open to None (the pass then carries every candidate). Retained as
-        the legacy alias of the hypothesise turn (the sync rollback lane)."""
-        return await self.hypothesise(gate_input)
 
     async def stop(self) -> None:
         await self._stop()
@@ -1077,7 +463,7 @@ def _lightrag_author_tools() -> list:
     """Build the LightRAG query tool list for the author lane (lazy). Always
     attempted as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED.
     Fail-open to `[]` when the lightrag tool is unavailable (the author lane
-    then grounds on the HuntConfig alone)."""
+    then grounds on the loop payload alone)."""
     try:
         from lightrag.tool import build_lightrag_tool  # noqa: PLC0415
         return [build_lightrag_tool()]
@@ -1088,12 +474,11 @@ def _lightrag_author_tools() -> list:
 class HuntingActorRegistry:
     """Per-run registry of `HuntingHunterActor`s, keyed by hunt_id.
 
-    The production composition point hands the harness per-hunt author/judge
-    closures bound to these actors: `asyncio.run(arun_orchestration(...))`
-    (or a future live entry point) owns ONE registry for the run; the harness's
-    `dispatch_fn` looks its actor up (or lazily spawns it) by `config.hunt_id`,
-    so concurrent hunts never collide and back-edge re-entries resume the same
-    per-hunt thread. `stop_all` reaps every spawned actor (idempotent)."""
+    The run bootstrap hands the harness per-hunt author/judge closures bound to
+    these actors: ONE registry serves the run; the harness's `dispatch_fn`
+    looks its actor up (or lazily spawns it) by `config.hunt_id`, so concurrent
+    hunts never collide and back-edge re-entries resume the same per-hunt
+    thread. `stop_all` reaps every spawned actor (idempotent)."""
 
     def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
                  observe: bool = True, author_tools: Sequence = (),

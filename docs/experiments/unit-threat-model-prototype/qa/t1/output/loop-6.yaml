@@ -1,0 +1,78 @@
+loop_id: loop-6
+unit_id: Service:model-download
+class: Path traversal via save_path (write outside the intended model subdirectory)
+class_skill: path-traversal-lfi-rfi
+slice:
+  source: trust_agreement
+  statement: "TA5 + F5: save_path is accepted as an unvalidated relative path and the worker joins it under the models root without canonicalization; the observed artefact landed under models/etc (P29), and escape beyond the models root was explicitly not probed. The loop opens the escape-geometry space: how far the join reaches and into what kinds of locations."
+discrimination:
+  axes_used: [payload-vector, chaining-advanced]
+  boundary: "the escape's geometry (how far the joined path resolves outside the intended subdirectory - s1) versus the destination's semantics (whether the landing location is consumed by the stack as code or configuration - s2); fault fixed at F5."
+  narrow_broad_tradeoff: "narrow on the two questions the loop leaves open (reach and destination meaning) and broad on traversal shapes inside the reach ladder; the write mechanism is already proven, so the set spends depth on where the path can end."
+specs:
+- spec_id: loop-6-s1
+  label: "relative escape reach ladder"
+  sub_slice: "Depth-ladder and folded-separator forms of the relative escape in save_path (.. repeated to increasing depth, ....//, separator mixes, encoded dots, absolute-leading forms): region = the path space the string join resolves to, from the sibling directory (anchor models/etc, P29) toward and beyond the models root."
+  class_skill_parametrisation:
+    skill: path-traversal-lfi-rfi
+    inputs: {sink: "worker path join then write", technique: "traversal shape families: relative segments, dot-folding, encodings, absolute-rooted names; masked-content adjudication via listings", anchor: "P29 dotdot save_path -> artefact under models/etc"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 write path; POSIX join semantics; model tree listed by IA11 routes"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start; readback via /models and /experiment/models/<dir>"
+    parameter: save_path (carrier); filename fixed as a marker leaf
+    method: "POST then GET"
+    body: '{"name": "x", "url": "http://<listener>/marker", "filename": "t1-leaf.safetensors", "save_path": "../.."}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns how far the join reaches with each traversal shape; s2 holds the shape minimal and asks what the landing location means. The two share the marker body and sink but answer different questions (reachability frontier versus destination semantics); no accepted payload is shared."
+  chaining_advanced_note: null
+  proxy_technique: "Marker body plus increasing traversal depth per candidate; the listing routes reveal exactly where each marker landed, so the reach ladder is read from filesystem-visible side effects rather than inferred. Folded and encoded shapes test whether any normalization runs before the join."
+  verification_symptoms: ["the marker entry appears at the escaped location predicted by the traversal shape, anchored at models/etc for one level (P29)", "the depth ladder shows which shapes reach outside the models root (an entry listed above the model-tree root or unreachable through the listing) versus which stop inside it"]
+  payload_vector_space:
+    method: "POST install_model -> GET start; readback GETs"
+    path: "/manager/queue/install_model, /manager/queue/start, /models, /experiment/models/<dir>"
+    parameter: "save_path traversal shapes: .., ../.., ../../(repeated), ....//, mixed separators, ..%2f, dot-folding, leading-slash forms"
+    body: "JSON install item with listener marker URL"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the join is string-based or os.path.join over components (IA7 says concatenated without canonicalization); leading-slash behaviour depends on which of the two, declared per candidate", "existing-artifact collisions follow truncating-open semantics (declared, unprobed)"]
+  rationale: "If F5 is implemented, the join has no canonicalization contract, so each traversal shape resolves by raw path semantics; the observed one-level artefact anchors the mechanism and the ladder extends it deterministically. The frontier of the reach is exactly the region the loop's likelihood note leaves open."
+  interpretation_guidance: "Symptom-present = the marker appears at the predicted escaped path for a shape, with listings confirming the location; the frontier is then the deepest escaping shape. Symptom-absent = the marker lands under the intended subdirectory (normalization) or no entry exists for a shape (refusal): that shape is bounded; per-shape negatives never generalise to other shapes. Readback through listings is the evidence; an enqueue 200 alone proves nothing."
+- spec_id: loop-6-s2
+  label: "escape into consumed locations"
+  sub_slice: "Traversal directed at locations whose contents the deployment stack consumes beyond storage: the extension-code directory (custom_nodes appears among the listed model dirs, P17) and configuration-style locations; region = writes whose landing spot changes what the stack will later import or read, i.e. placement as supply for a consumer."
+  class_skill_parametrisation:
+    skill: path-traversal-lfi-rfi
+    inputs: {sink: "same join and write", technique: "escalation from influence (write/extract) toward execution (the class's escalation chain: from disclosure to influence to execution)", consumption_anchor: "custom_nodes among the listed model dirs (P17); ComfyUI extension semantics as deployment-stack knowledge"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI core v0.3.76 loads extension code from custom_nodes; the Manager write path can land there via traversal if the relative geometry permits"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start; enumeration via /models"
+    parameter: save_path (directed), filename (consumer-relevant name)
+    method: "POST then GET"
+    body: '{"name": "x", "url": "http://<listener>/marker", "filename": "t1-consumed.py", "save_path": "<traversal geometry to the extension directory>"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns destination semantics rather than reach: an equally deep escape into an inert directory (s1) is harmless; landing in a consumed directory opens the deferred-execution chain. Variable: whether the landing location is load-bearing for the stack; oracle: entry present at a consumed path plus consumer-relevant naming."
+  chaining_advanced_note: "Structural: the class skill owns traversal shapes (s1) and names the escalation toward placement into interpreters/extractors, but this unit has no include endpoint; the consumer here is the deployment stack's own directory semantics (custom_nodes listed among model dirs, P17). The chain placement -> consumer -> effect is carried structurally: the spec proves placement and naming, and records the import/load effect as inferred rather than executed."
+  proxy_technique: "Compute the traversal geometry from the models root to the extension directory (or the configuration location) using the directory names the listing exposes; write a marker-content file with a name the consumer recognizes (.py for the extension directory, config-shaped names for configuration paths); confirm placement through the listings, never executing or importing it in this mock."
+  verification_symptoms: ["the marker entry is listed at the consumed location (custom_nodes-style path or equivalently load-bearing location) as a new file with the client-chosen name", "the consumer-relevant naming is preserved (extension/config-shaped filename), so any import or config-read that scans the location resolves it (effect itself recorded as chain-inferred)"]
+  payload_vector_space:
+    method: "POST install_model -> GET start; enumeration GET /models"
+    path: "/models for directory inventory; write via save_path geometry"
+    parameter: "save_path traversal directed at consumed directories; filename with consumer-recognized form"
+    body: "JSON install item with marker URL and consumer-shaped name"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["custom_nodes appears in the model-dir inventory (P17) and is consumed by the stack as its extension directory (deployment-stack semantics)", "the traversal reach computed in s1 applies; if the geometry cannot reach the consumed location, the spec closes as negative with the reason recorded", "no import/execution is attempted in this mock; the consumer effect stays inferred"]
+  rationale: "If F5 is implemented, selecting the destination is the attacker's choice; among all destinations, locations the stack consumes as code or configuration convert a bounded write into deferred execution or configuration change. P17 anchors custom_nodes inside the listed model space, so the geometry is plausibly reachable, making this the load-bearing escape region."
+  interpretation_guidance: "Symptom-present = the entry lands in a consumed location with consumer-recognized naming, verified through the listing without executing it; the deferred effect is then a recorded chain assumption. Symptom-absent = the geometry cannot reach any consumed location (reach stops inside inert storage) or the write is refused/renamed: the escape exists (s1) but not into loaded space; record the boundary. Never promote placement to execution without the consumer actually resolving the file."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the reach frontier with inert destinations; s2 owns consumed-destination placement with minimal geometry. They differ on the tested variable (how far versus into what) and on the conclusion drawn; no accepted payload or oracle is shared beyond the fixed fault and marker technique."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "The loop's open questions - escape beyond the models root (s1) and the meaning of destinations (s2) - each carry an owning spec. Absolute-path join semantics ride inside s1 as declared per-candidate assumptions rather than as an uncovered region."
+  well_formedness_statement: "Two specs partition F5's escape region by question: reach frontier (s1) and destination semantics (s2). They share the fault, sink, and marker technique - the fixed substrate - but not a sub-slice, a payload family, or an oracle; their union covers the geometry the loop leaves open and stops where the mock stops executing."
+degradations: ["Join semantics (string concatenation versus os.path.join) are unobserved; leading-slash candidates carry a declared assumption in s1.", "The custom_nodes consumption chain rests on P17 plus deployment-stack semantics and is inferred, never executed; s2 is explicit about the placement-only oracle.", "Escape beyond the models root may be limited by the OS/paths; the reach ladder produces negatives with reasons rather than assumed coverage."]

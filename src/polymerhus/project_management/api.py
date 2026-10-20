@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -53,6 +55,23 @@ def _runtime():
     from polymerhus.app.runtime import get_active_runtime
 
     return get_active_runtime()
+
+
+def _ensure_project_evolver(project_id: str) -> None:
+    """Start the app-owned SkillEvolver project controller, fail-open.
+
+    Called on every project launch: the controller is shared across all modules,
+    runs on the `skills` module, and is idempotent while its project session is
+    live. A missing runtime or admission refusal never blocks the launch."""
+    try:
+        from polymerhus.app.llm.evolver import ensure_project_evolver
+
+        ensure_project_evolver(project_id)
+    except Exception:  # noqa: BLE001 - fail-open: never block a launch
+        logger.warning(
+            "project evolver start failed for %s (fail-open)",
+            project_id, exc_info=True,
+        )
 
 
 class ProjectCreate(BaseModel):
@@ -107,7 +126,9 @@ class BootstrapLaunch(BaseModel):
 
 @router.post("/projects")
 def create_project(body: ProjectCreate) -> dict:
-    return {"project_id": repository.create_project(body.name)}
+    project_id = repository.create_project(body.name)
+    _ensure_project_evolver(project_id)
+    return {"project_id": project_id}
 
 
 @router.get("/projects")
@@ -424,6 +445,7 @@ async def launch_recon(project_id: str, body: ReconLaunch) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    _ensure_project_evolver(project_id)
     run_id = repository.open_run(project_id)
     _schedule_pipeline(project_id, run_id, body.jobs, with_analysis=body.with_analysis)
     return {"run_id": run_id}
@@ -539,6 +561,7 @@ async def launch_analysis(project_id: str, body: AnalysisLaunch) -> dict:
     if run is None:
         raise HTTPException(status_code=404, detail="unknown run_id")
 
+    _ensure_project_evolver(project_id)
     try:
         analysis_run_id = start_analysis(project_id, body.run_id)
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
@@ -587,7 +610,7 @@ async def bootstrap_project(project_id: str, body: BootstrapLaunch) -> dict:
     signal is that the caller must not proceed to the analysis, and a success status
     would invite exactly that."""
     try:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             repository.bootstrap_project, project_id, body.operator_kb
         )
     except ProjectNotFound:
@@ -600,6 +623,8 @@ async def bootstrap_project(project_id: str, body: BootstrapLaunch) -> dict:
             status_code=503,
             detail=f"bootstrap blocked, analysis must not proceed: {exc.reason}",
         ) from exc
+    _ensure_project_evolver(project_id)
+    return result
 
 
 @router.get("/projects/{project_id}/recon/{run_id}")
@@ -612,47 +637,16 @@ def get_recon_status(project_id: str, run_id: str) -> dict:
 
 # --- #110: the three hunting seam endpoints (seam contract 3.3) -----------------
 
-class _HuntingCandidateIn(BaseModel):
-    """The wire shape of one candidate: a `(unit_id, fault_class)` pair with the
-    match verdict + applicability witnesses. The orchestrator's normalize stage
-    still drops malformed / de-duplicates downstream (O7/O10)."""
-    unit_id: str
-    fault_class: str
-    verdict: str = "applies"
-    deterministic_witness: str | None = None
-    llm_witness: str | None = None
-
-
-def _hunting_candidates(body_candidates) -> list:
-    """Build the typed `DeliveredCandidate` batch from the wire shape, used by
-    the whole-pipeline and orchestrator-only launches. The verdict is coerced
-    onto the three-valued match-verdict Literal (a foreign value survives the
-    orchestrator's normalize-stage degrade, O7/O10)."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        DeliveredCandidate,
-        Witness,
-    )
-
-    verdicts = {"applies", "does-not-apply", "insufficient-evidence"}
-    return [
-        DeliveredCandidate(
-            unit_id=c.unit_id,
-            fault_class=c.fault_class,
-            applies_witnesses=Witness(
-                deterministic=c.deterministic_witness, llm=c.llm_witness,
-            ),
-            match_verdict=c.verdict if c.verdict in verdicts else "applies",
-        )
-        for c in body_candidates
-    ]
-
-
 class HuntingLaunch(BaseModel):
-    """The hunting launch body (#110): the optional initial candidate batch. An
-    omitted/empty batch triggers the platform's OWN FaultSource selection over the
-    live L1 (#200, spec 4.1) - a meaningful pass, never the vacuous O1 empty pass;
-    a supplied batch stays the caller override."""
-    candidates: list[_HuntingCandidateIn] = []
+    """The hunting launch body (#110).
+
+    The caller-supplied candidate batch is RETIRED (T3 #376): a run's unit set is
+    its INTAKE - the L1 inventory read at run start, ordered by live L1 edge
+    count / aggregated endpoints / unit id and frozen for the run (S1 7.1-7.2) -
+    so the pass has no wire input. The body stays as the endpoint's typed request
+    shape (today it carries nothing) instead of being dropped: the launch
+    contract is T5's, and what retired is the candidate path, not the launch.
+    """
 
 
 @router.post("/projects/{project_id}/hunting", status_code=201)
@@ -681,6 +675,7 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
+    _ensure_project_evolver(project_id)
     if not hunting_runtime.hunting_control_plane_available():
         raise HTTPException(
             status_code=503,
@@ -688,13 +683,11 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
         )
     await _hunting_live_run_guard(project_id)
 
-    candidates = _hunting_candidates(body.candidates)
-
     hunting_run_id = await asyncio.to_thread(pg.create_hunting_run, project_id)
     try:
         hunting_runtime.schedule_hunting(
             hunting_runtime.start_hunting(
-                project_id, run_id=hunting_run_id, candidates=candidates,
+                project_id, run_id=hunting_run_id,
             ),
             name=f"hunting:{hunting_run_id}",
         )
@@ -715,7 +708,9 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
     return {"hunting_run_id": hunting_run_id}
 
 
-async def _hunting_live_run_guard(project_id: str) -> None:
+async def _hunting_live_run_guard(
+    project_id: str, *, exclude_run_id: str | None = None
+) -> None:
     """The API-tier ONE-live-run-per-project guard (T5, spec #169 US10 / ticket
     ruling point 2): refuse a launch while the project already holds a
     `running` hunting run - the per-project produced/consumed memory
@@ -725,6 +720,8 @@ async def _hunting_live_run_guard(project_id: str) -> None:
     tier owns, checked BEFORE the new row opens so a refusal never leaves an
     orphan. The bootstrap's own guard is belt-and-braces (it excludes the
     run's own pinned row); this check prevents the orphan in the first place.
+    `exclude_run_id` is the resume verb's own row: a claimed resume is `running`
+    by construction, and only ANOTHER live run must refuse it.
     Fail-open: with pg unavailable the guard cannot fire and the launch
     proceeds (the row open would have failed too)."""
     from polymerhus.app.clients import pg
@@ -738,7 +735,8 @@ async def _hunting_live_run_guard(project_id: str) -> None:
         )
         return
     for row in rows:
-        if row.get("status") == "running":
+        if (row.get("status") == "running"
+                and row.get("hunting_run_id") != exclude_run_id):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -769,6 +767,143 @@ async def stop_hunting_run(project_id: str, hunting_run_id: str) -> dict:
     return {"hunting_run_id": hunting_run_id, "stopping": True}
 
 
+@router.post("/projects/{project_id}/hunting/{hunting_run_id}/resume",
+             status_code=202)
+async def resume_hunting_run(project_id: str, hunting_run_id: str) -> dict:
+    """Resume ONE stopped or `interrupted` hunting run in place (T11 #398).
+
+    The OPERATOR VERB is the ratified floor (#331 ESCALATED item 2; D-3 leaves
+    the auto-resume health checker to a follow-up). It reads the run row and
+    applies the decision table (`attack/hunting/resume.py`):
+
+    - `stopped` -> resumable immediately;
+    - `interrupted` and `stats.quota_exhausted == false` -> resumable after
+      `retry_after_s`, or the default 60s backoff when the hint is null (a 409
+      with a `Retry-After` hint inside the window);
+    - `interrupted` and `quota_exhausted == true` -> terminal (409);
+    - `interrupted` with missing/unknown stats -> do-not-resume (409). This is
+      the process-restart orphan disposition: the startup reconcile stamps a
+      restart reason and no provider class, so the verb never guesses;
+    - `running` -> already live (409);
+    - `complete` / `failed` -> terminal (409).
+
+    Admission is a CONDITIONAL claim: only the exact row the decision read
+    transitions back to `running`, so two concurrent resumes yield one 202 and
+    one 409. The claim CLEARS the provider-pause keys from the run's stats (so a
+    resumed-then-crashed row cannot inherit a stale `quota_exhausted` and look
+    resumable to the reconcile), and keeps the run record. The live-run guard
+    runs AFTER the claim, so this run's own `running` row is excluded and only
+    ANOTHER live run is a conflict; both a conflict and an admission refusal
+    restore the prior status AND the pause keys, so the operator can retry - no
+    `running` row is left behind. The resumed run re-enters `start_hunting` with
+    the EXISTING run id: it re-enters at the recorded `intake_position`, adopts
+    the committed models, recomputes `risk_total`, and resumes dispatch; a halted
+    run resumes dispatch only."""
+    from polymerhus.app.clients import pg
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.resume import (
+        PAUSE_STATS_KEYS,
+        resume_decision,
+    )
+
+    if not await asyncio.to_thread(pg.project_exists, project_id):
+        raise HTTPException(status_code=404, detail="unknown project")
+    _ensure_project_evolver(project_id)
+    if not hunting_runtime.hunting_control_plane_available():
+        raise HTTPException(
+            status_code=503,
+            detail="hunting control-plane runtime has not landed",
+        )
+    row = await asyncio.to_thread(pg.get_hunting_run, hunting_run_id)
+    if row is None or row.get("project_id") != project_id:
+        # the run namespace is project-scoped: a run of another project is an
+        # unknown run through THIS path, never resumable by id alone
+        raise HTTPException(
+            status_code=404,
+            detail="no hunting run for that hunting_run_id",
+        )
+    decision = resume_decision(
+        str(row.get("status") or ""),
+        row.get("stats"),
+        row.get("finished_at"),
+        now=datetime.now(timezone.utc),
+    )
+    if not decision.resumable:
+        headers = None
+        if decision.wait_s is not None:
+            headers = {
+                "Retry-After": str(max(1, math.ceil(decision.wait_s))),
+            }
+        raise HTTPException(
+            status_code=409, detail=decision.reason, headers=headers)
+
+    prior_status = str(row.get("status"))
+    prior_stats = dict(row.get("stats") or {})
+    prior_pause_stats = {
+        key: prior_stats[key] for key in PAUSE_STATS_KEYS if key in prior_stats
+    }
+    claimed = await asyncio.to_thread(
+        pg.claim_hunting_run_for_resume,
+        hunting_run_id,
+        project_id=project_id,
+        expected_status=prior_status,
+    )
+    if claimed is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "the resume claim was lost: another resume of this run "
+                "already claimed it"
+            ),
+        )
+
+    async def _restore_prior_status() -> None:
+        """Undo the claim: the exact prior status and the pause keys, so the
+        operator can retry (the stats merge is additive; the run record was
+        never touched)."""
+        try:
+            await asyncio.to_thread(
+                pg.set_hunting_run_status, hunting_run_id, prior_status,
+                stats=prior_pause_stats or None)
+        except Exception:  # noqa: BLE001 - best-effort restore
+            logger.warning(
+                "resume_hunting_run: could not restore %r for %s "
+                "(fail-open)", prior_status, hunting_run_id,
+            )
+
+    # The one-live-run guard runs AFTER the claim, so this resume's own row is
+    # `running` by construction and `exclude_run_id` is load-bearing: only
+    # ANOTHER live run conflicts. The conflict is undone exactly like an
+    # admission refusal - the claim must not leave this run `running`.
+    try:
+        await _hunting_live_run_guard(
+            project_id, exclude_run_id=hunting_run_id)
+    except HTTPException:
+        await _restore_prior_status()
+        raise
+
+    coro = None
+    try:
+        coro = hunting_runtime.start_hunting(project_id, run_id=hunting_run_id)
+        hunting_runtime.schedule_hunting(
+            coro,
+            name=f"hunting:{hunting_run_id}",
+        )
+    except Exception as exc:  # noqa: BLE001 - map admission refusal, restore
+        # A post-claim admission refusal must not leave the claimed `running`
+        # row behind: restore the exact prior status and its pause keys. The
+        # terminal write stamps a NEW finished_at, which restarts the wait
+        # window for a throttle - a conservative extension, never an early
+        # resume. The un-admitted coroutine is closed: a refusal happens before
+        # the runtime schedules it, so it must not sit until GC warns.
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        await _restore_prior_status()
+        _admission_refused_503(exc)
+    return {"hunting_run_id": hunting_run_id, "resumed": True}
+
+
 @router.get("/projects/{project_id}/hunting/{hunting_run_id}")
 async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
     """The hunting run's status row (seam 3.3): `running` -> terminal."""
@@ -787,9 +922,9 @@ async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
 # pass and returns its identifier (202), and the status endpoint, given that
 # identifier, serves the DURABLE pass record (200), 404 for an unknown
 # identifier. The record is written by the launch and finished by the launcher
-# (`attack/hunting/runtime.launch_evolution_pass`), so it survives the request
-# and the process: a re-read by an operator, an e2e run, or another service
-# works without holding a future.
+# (`app.llm.evolver.launch_evolution_pass`), so it survives the request and the
+# process: a re-read by an operator, an e2e run, or another service works
+# without holding a future.
 
 
 class SkillEvolveLaunch(BaseModel):
@@ -807,26 +942,26 @@ async def launch_skill_evolution(
 ) -> dict:
     """Start ONE skill-evolution pass (#232 D232-10, D-W3-4) and return its
     identifier: any posted lessons are appended first (store-stamped, agent =
-    operator), then the pass is scheduled through the hunting launcher seam and
+    operator), then the pass is scheduled through the app `skills` launcher and
     its durable record is started. The pass itself runs on the worker loop, so
     the response does not await it; poll the status endpoint with `pass_id`.
 
-    Fail-closed on the control plane: with no active runtime this is a 503,
-    never an in-process pass on the request loop (a refused launch leaves no
-    record behind). A malformed posted lesson is the store's coded refusal
+    Fail-closed on the control plane: with no active `skills` module this is a
+    503, never an in-process pass on the request loop (a refused launch leaves
+    no record behind). A malformed posted lesson is the store's coded refusal
     mapped to 400; an unwritable pass record is a 503 (the launch cannot
     honour its side of the status contract)."""
     from polymerhus.app.clients import pg
     from polymerhus.app.llm import evolver
     from polymerhus.app.llm.skills import StoreUnavailableError
-    from polymerhus.attack.hunting import runtime as hunting_runtime
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
-    if not hunting_runtime.hunting_control_plane_available():
+    _ensure_project_evolver(project_id)
+    if not evolver.skills_control_plane_available():
         raise HTTPException(
             status_code=503,
-            detail="hunting control-plane runtime has not landed",
+            detail="skills control-plane runtime has not landed",
         )
     lessons = (body.lessons if body is not None else None) or []
     records = evolver.EvolutionPassStore()
@@ -843,7 +978,7 @@ async def launch_skill_evolution(
         launched = await asyncio.to_thread(
             records.start, project_id, skill, pass_id
         )
-        hunting_runtime.launch_evolution_pass(project_id, skill, records=records)
+        evolver.launch_evolution_pass(project_id, skill, records=records)
     except StoreUnavailableError as exc:  # a write refusal, before ValueError
         raise HTTPException(
             status_code=503, detail=f"pass record unavailable: {exc}"
@@ -891,44 +1026,23 @@ async def get_skill_evolution_status(project_id: str, pass_id: str) -> dict:
 # One endpoint per component that ENQUEUES into the component's handoff family
 # so the run-scoped inbox surfer's mover dispatches it on the next tick - a
 # singular launch never BOOTS a component directly and never fabricates a
-# chained-dependency error: the enqueue succeeds with or without a live run /
-# orchestrator and the component consumes its inbox asynchronously (a queued
-# item stays in produced until admitted - the at-least-once protocol). The
-# storage-layer novelty gates (`DuplicateConfigError` / `DuplicateSpecError`,
-# ADR G4) are the server-side at-most-once marker for a replayed enqueue (409).
+# chained-dependency error. T4b (#387) retired the HUNT config enqueue with the
+# config family: the loop file is the dispatch record, so `/hunting/hunt` is a
+# loud 410 tombstone. The pod resume keeps its fail-closed 404 (no fabricated
+# `ratified` spec), and the modeller pass schedules its own input.
 
-class HuntingOrchestratorLaunch(BaseModel):
-    """Orchestrator-only launch body: the candidate batch the pass consumes.
-    The pass itself writes the ratified configs into the project's HuntStore -
-    this endpoint schedules the pass, it never fakes the orchestrator's output
-    (the produced/consumed topology has no orchestrator INPUT family; the
-    candidate batch is in-memory at schedule, so the minimal faithful reading
-    of the orchestrator's "enqueue" is scheduling its pass)."""
-
-    candidates: list[_HuntingCandidateIn] = []
-
-
-class HuntingHuntLaunch(BaseModel):
-    """Hunter-only launch body: ONE produced RATIFIED hunt config to enqueue
-    into the project's HuntStore produced family (the mover's hunter-dispatch
-    input). Only the identity triple plus the orientation prose surface; the
-    `hunt_id` is DERIVED from the identity (#298/#300), never a caller field,
-    and the #202-removed slots (`adversarial_capabilities` / `assumptions` /
-    `technique_primitives`) are gone. The rest of the `HuntConfig` parameter
-    set (surface context, preconditions, prior-hunt insights) keeps its
-    defaults."""
-
-    unit_id: str
-    fault_class: str
-    vulnerability_class: str = ""
-    research_direction: str = ""
-    rationale: str = ""
+class HuntingModellerLaunch(BaseModel):
+    """Modeller-only launch body. The pass reads the L1 inventory itself (T3
+    #376 retired the caller-supplied candidate batch), freezes and orders it,
+    and writes its models and loop files into the project's threat model store -
+    this endpoint schedules the pass, it never fakes the pass's output.
+    """
 
 
 class HuntingPodLaunch(BaseModel):
     """Pod-only launch body (identity-based refactor, 2026-08-25 operator
-    ruling): the pod's ADR Q13 session id (`hunting:<run_id>:pod:<config_id>:
-    <spec_id>`) to RESUME. The endpoint NEVER fabricates a produced `specified`
+    ruling): the pod's ADR Q13 session id (`hunting:<run_id>:pod:<dispatch_id>:
+    <spec_id>`) to RESUME. The endpoint NEVER fabricates a produced `ratified`
     test spec into the HunterMemoryStore produced family - it resumes ONE
     held/paused pod session by posting its coroutine id; the whole-pod-component
     path remains the whole-pipeline run. No stored/paused pod session to resume
@@ -937,97 +1051,78 @@ class HuntingPodLaunch(BaseModel):
     session_id: str = Field(min_length=1)
 
 
-@router.post("/projects/{project_id}/hunting/orchestrator", status_code=202)
-async def launch_orchestrator_only(project_id: str, body: HuntingOrchestratorLaunch) -> dict:
-    """'Orchestrator only': schedule ONE orchestration pass through the
-    launcher seam - no surfer, no dispatch, no run (T5). The pass consumes
-    the candidate batch and writes its ratified configs into the project's
-    HuntStore for a later run to dispatch. The outcome is asynchronous; the
+@router.post("/projects/{project_id}/hunting/modeller", status_code=202)
+async def launch_modeller_only(project_id: str, body: HuntingModellerLaunch) -> dict:
+    """The modeller-only launch: schedule ONE modelling pass through the
+    launcher seam - no surfer, no dispatch, no run (T5). The pass models the
+    selected units into the project's threat model store, where a later run's
+    surfer dispatches the produced loops. The outcome is asynchronous; the
     response carries the pass's run id for observability. 404 unknown project;
     503 fail-closed on the control plane (a real LLM pass must never ride the
-    uvicorn request loop); admission refusal maps to 503."""
+    uvicorn request loop); admission refusal maps to 503.
+
+    T10 renamed the planner-era path (`/hunting/orchestrator`) and the
+    `component: "orchestrator"` label to the modeller vocabulary; the old names
+    are removed, with no alias."""
     from polymerhus.app.clients import pg
     from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.mover import threat_modeller_session_id
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
+    _ensure_project_evolver(project_id)
     if not hunting_runtime.hunting_control_plane_available():
         raise HTTPException(
             status_code=503,
             detail="hunting control-plane runtime has not landed",
         )
 
-    candidates = _hunting_candidates(body.candidates)
     run_id = str(uuid.uuid4())
     try:
         hunting_runtime.schedule_hunting(
-            hunting_runtime.launch_orchestrator(
-                project_id, run_id=run_id, candidates=candidates,
-            ),
-            name=f"hunting:{run_id}:orchestrator",
+            hunting_runtime.launch_modeller(project_id, run_id=run_id),
+            name=threat_modeller_session_id(run_id),
         )
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
         _admission_refused_503(exc)
     return {
-        "component": "orchestrator",
+        "component": "threat_modeller",
         "run_id": run_id,
         "dispatched_asynchronously": True,
     }
 
 
-@router.post("/projects/{project_id}/hunting/hunt", status_code=202)
-async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
-    """'Hunter only': enqueue ONE produced RATIFIED hunt config into the
-    project's HuntStore produced family so the run's inbox surfer dispatches
-    one hunter on the next tick (T5). The enqueue is a store write - it
-    succeeds with or without a live run or orchestrator (the config waits in
-    produced, at-least-once), so a chained-dependency error is never
-    fabricated. A REPLAYED enqueue whose config identity already exists (a
-    duplicate file in produced/ or consumed/) is refused 409 - the storage
-    novelty gate is the server-side at-most-once marker. 404 unknown project."""
-    from polymerhus.app.clients import pg
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        HuntConfig,
-        hunt_id_for,
-    )
-    from polymerhus.attack.hunting.hunt_store import DuplicateConfigError
+@router.post("/projects/{project_id}/hunting/hunt", status_code=410)
+async def launch_hunt_only(project_id: str) -> dict:
+    """RETIRED (T4b #387): the hunter-only hunt-config enqueue.
 
-    if not await asyncio.to_thread(pg.project_exists, project_id):
-        raise HTTPException(status_code=404, detail="unknown project")
+    A hunter is no longer dispatched from an enqueued `HuntConfig`: the dispatch
+    grain is the produced LOOP FILE (S2 8.4), which the modeller writes from the
+    unit's threat model, and a live run's surfer dispatches it. There is nothing
+    an API caller can enqueue into that topology, so accepting the old body
+    would be a silent write into a family nothing reads - the handler therefore
+    refuses LOUDLY (410 Gone) and names the replacement.
 
-    config = HuntConfig(
-        hunt_id=hunt_id_for(
-            body.unit_id, body.fault_class, body.vulnerability_class,
+    The eval translation is T10b (#397): `eval/orchestrator/api.py` and
+    `eval/ph.py` never call this path; the eval's pre-mined hunt-config
+    artifacts move to the loop vocabulary there."""
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "the hunt-config enqueue is retired (T4b #387): the loop file is "
+            "the dispatch record (S2 8.4) and a live run's surfer dispatches "
+            "it; launch the whole run (POST /projects/{project_id}/hunting) "
+            "and the modeller produces the loop files. The eval translation "
+            "is T10b (#397)"
         ),
-        unit_id=body.unit_id,
-        fault_class=body.fault_class,
-        vulnerability_class=body.vulnerability_class,
-        rationale=body.rationale,
-        research_direction=body.research_direction,
     )
-    try:
-        key = await asyncio.to_thread(
-            hunting_runtime.enqueue_hunt_config, project_id, config
-        )
-    except DuplicateConfigError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail=f"this hunt config is already enqueued (at-most-once): {exc}",
-        ) from exc
-    return {
-        "component": "hunt",
-        "enqueued": True,
-        "enqueued_key": key,
-        "dispatched_asynchronously": True,
-    }
 
 
 @router.post("/projects/{project_id}/hunting/pod", status_code=202)
 async def launch_pod_only(project_id: str, body: HuntingPodLaunch) -> dict:
     """'Pod only' (identity-based refactor, 2026-08-25 operator ruling): resume
     ONE held/paused pod session by posting its coroutine id - NEVER fabricating
-    a produced `specified` spec (the reviewer's ambiguity; the whole-pod-component
+    a produced `ratified` spec (the reviewer's ambiguity; the whole-pod-component
     path remains the whole-pipeline run). The endpoint routes through the
     `resume_pod_session` launcher seam to the SHARED control plane's per-session
     `resume_session` (module "hunting", keyed by the ADR Q13 session id).
@@ -1043,6 +1138,7 @@ async def launch_pod_only(project_id: str, body: HuntingPodLaunch) -> dict:
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
+    _ensure_project_evolver(project_id)
     if not hunting_runtime.hunting_control_plane_available():
         raise HTTPException(
             status_code=503,
@@ -1216,8 +1312,8 @@ async def _agent_submodule_verb(project_id: str, hunting_run_id: str, role: str,
 @router.get("/projects/{project_id}/hunting/{hunting_run_id}/agent-submodules")
 async def list_agent_submodules(project_id: str, hunting_run_id: str) -> list[dict]:
     """The run's agent sub-module roles with their states (#317): exactly the
-    three roles `orchestrator`, `hunter`, `pod`. 404 unknown run; 503 no active
-    runtime."""
+    three roles `threat_modeller`, `hunter`, `pod`. 404 unknown run; 503 no
+    active runtime."""
     await _hunting_run_or_404(hunting_run_id)
     runtime = _runtime_or_503()
     states = runtime.agent_submodule_states("hunting", hunting_run_id)
@@ -1311,14 +1407,106 @@ async def resume_hunting_thread(project_id: str, hunting_run_id: str,
     return await _thread_verb(project_id, hunting_run_id, thread_id, stop=False)
 
 
+# --- app-level project thread index (the shared skills module) ----------------
+#
+# The SkillEvolver controller is a per-project app session, not a hunting run
+# session. It lives on the shared `skills` module and is addressable by its
+# project-scoped thread id (`skills:<project_id>:evolver`) and by the forced
+# pass ids (`skills:evolve:<project_id>:<skill>`). The project thread index is
+# the app-level control surface for those threads; the hunting run thread index
+# above remains run-scoped.
+
+
+def _project_skills_thread_ids(runtime, project_id: str) -> list[str]:
+    prefixes = (
+        f"skills:{project_id}:",
+        f"skills:evolve:{project_id}:",
+    )
+    return sorted(
+        thread_id for thread_id in runtime.run_ids("skills")
+        if thread_id.startswith(prefixes)
+    )
+
+
+@router.get("/projects/{project_id}/threads")
+def list_project_threads(project_id: str) -> list[dict]:
+    """Every live app-owned `skills` thread of the project: the project
+    SkillEvolver controller and any forced evolution pass. 503 when the
+    `skills` module is not registered on an active runtime."""
+    runtime = _runtime_or_503()
+    try:
+        runtime.handle("skills")
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=503, detail="skills module is not registered"
+        ) from exc
+    threads: list[dict] = []
+    for thread_id in _project_skills_thread_ids(runtime, project_id):
+        role = (
+            "skill_evolver_pass"
+            if thread_id.startswith(f"skills:evolve:{project_id}:")
+            else "skill_evolver"
+        )
+        threads.append({
+            "thread_id": thread_id,
+            "role": role,
+            "held": runtime.is_session_held("skills", thread_id),
+        })
+    return threads
+
+
+def _project_thread_verb(project_id: str, thread_id: str, *, stop: bool) -> dict:
+    from polymerhus.app.runtime import RunNotRegistered  # noqa: PLC0415
+
+    runtime = _runtime_or_503()
+    try:
+        runtime.handle("skills")
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=503, detail="skills module is not registered"
+        ) from exc
+    if thread_id not in _project_skills_thread_ids(runtime, project_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"no live skills thread {thread_id!r} of project {project_id}",
+        )
+    try:
+        if stop:
+            runtime.hold_session("skills", thread_id)
+        else:
+            runtime.resume_session("skills", thread_id)
+    except RunNotRegistered as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no live skills thread {thread_id!r} of project {project_id}",
+        ) from exc
+    return {
+        "project_id": project_id,
+        "thread_id": thread_id,
+        "state": "held" if stop else "resumed",
+    }
+
+
+@router.post("/projects/{project_id}/threads/{thread_id}/stop")
+def stop_project_thread(project_id: str, thread_id: str) -> dict:
+    """Hold ONE live project skills thread at its next unit boundary."""
+    return _project_thread_verb(project_id, thread_id, stop=True)
+
+
+@router.post("/projects/{project_id}/threads/{thread_id}/resume")
+def resume_project_thread(project_id: str, thread_id: str) -> dict:
+    """Release ONE held project skills thread."""
+    return _project_thread_verb(project_id, thread_id, stop=False)
+
+
 # --- module-lifecycle surface (#118/#121): drive the runtime plane ------------
 
-_MODULES = ("recon", "analysis", "hunting")
+_MODULES = ("recon", "analysis", "skills", "hunting")
 
 
 def _module_handle(runtime, module: str):
-    """The runtime's `ModuleHandle` for `module`, or None (the module registry
-    only ever holds the three ratified modules)."""
+    """The runtime's `ModuleHandle` for `module`, or None (the registry holds
+    the ratified modules plus the app-owned `skills` module)."""
     if module not in _MODULES:
         return None
     try:

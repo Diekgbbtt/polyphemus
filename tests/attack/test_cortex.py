@@ -2,7 +2,7 @@
 
 One shared verbatim, single-sourced from
 `attack/hunting/prompts/COGNITIVE_ARCHITECTURE_MAP.md`, must be present in all
-four hunting agents' served system prompts: the hunt-orchestrator, the hunter,
+four hunting agents' served system prompts: the threat modeller, the hunter,
 the pod runner, and the pod triager.
 
 The injected verbatim is the concise conceptual core - the data domains and
@@ -27,7 +27,7 @@ from polymerhus.attack.hunting.cortex import (
 # The four served system prompts, one accessor each - the composition path every
 # hunting agent's stable system prompt goes through.
 ROLE_PROMPTS = (
-    ("hunt-orchestrator", "polymerhus.attack.hunting.llm", "_gate_skill"),
+    ("threat-modeller", "polymerhus.attack.hunting.llm", "_modeller_skill"),
     ("hunter", "polymerhus.attack.hunting.hunting_agent",
      "_load_hunting_agent_skill"),
     ("pod-runner", "polymerhus.attack.hunting.pod.prompts",
@@ -179,7 +179,12 @@ def test_role_prompt_files_do_not_duplicate_the_map():
     """Single source: the map lives only in its own file, never copied into a
     role prompt file."""
     base = Path(__file__).resolve().parents[2] / "src" / "polymerhus" / "attack" / "hunting"
-    for name in ("prompts/hunt-orchestrator.md", "prompts/hunting-agent.md"):
+    for name in (
+        "prompts/threat-modeller.md",
+        "prompts/hunting-agent.md",
+        "prompts/pod-runner.md",
+        "prompts/pod-triager.md",
+    ):
         assert cognitive_architecture_map() not in (base / name).read_text(
             encoding="utf-8")
 

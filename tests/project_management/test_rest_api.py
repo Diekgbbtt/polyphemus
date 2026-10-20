@@ -39,7 +39,7 @@ def test_create_project_scaffolds_into_the_given_root(tmp_path, monkeypatch):
         "the project skill area lives in the live skills root's "
         "target-specific-procedure/ branch, not in the data root"
     )
-    assert (tmp_path / "data" / project_id / "hunting" / "orchestration").is_dir()
+    assert (tmp_path / "data" / project_id / "hunting" / "threat_modeller").is_dir()
 
 
 def test_get_settings_drops_a_legacy_auth_context(monkeypatch):

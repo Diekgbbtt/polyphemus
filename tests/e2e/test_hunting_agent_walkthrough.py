@@ -4,14 +4,19 @@ Both predicates are CARRIED, blocked: their live edge is `none` - the
 walkthrough substitutes nothing inside its edge, so the dispatch is the REAL
 hunting agent, the KB is the REAL symptom-technique KB (operator-built
 external), and the pod is the REAL one. That chain is #84 (pod); until it
-lands there is no faithful way to drive the agent's EVALUATE step (importing
-a stub pod would substitute the very component the walkthrough exists to
-exercise, which the skill and the spec forbid). Each test therefore stands as
-a skip-marked skeleton whose docstring carries the exact input fixture, path,
-and terminal quantities from the spec; when #84 lands, the body wires the real
-pod and reads the terminal quantities back off the DispatchResult (the durable
-`spec`/`evidence` store records are removed, #166 - the agent's durable trail
-is #164's own memory, G5).
+lands there is no faithful way to drive the agent's pass (importing a stub pod
+would substitute the very component the walkthrough exists to exercise, which
+the skill and the spec forbid). Each test therefore stands as a skip-marked
+skeleton whose docstring carries the exact input fixture, path, and terminal
+quantities from the spec; when #84 lands, the body wires the real pod and
+reads the terminal quantities back off the spec set and the pod-export
+envelope (the durable `spec`/`evidence` store records are removed, #166 - the
+agent's durable trail is #164's own memory, G5).
+
+T10b (#397) translated the carried skeleton's vocabulary to the loop and
+spec-set contract: a produced loop file is the dispatch record, the hunter's
+terminal spec status is `ratified`, and the retired hypothesis-verdict
+derivation is not a live contract.
 
 The ISOLATED e2e tier (spec section 6.3, `test_hunting_agent_isolated_e2e.py`)
 walks the REAL agent through its REAL infrastructure seams - store files,
@@ -25,9 +30,9 @@ loudly on a bad input before the path runs):
   - a live target the pod can probe (S5), reachable for the run;
   - the real symptom-technique KB (IA-8) answering the join key.
 
-Source: docs/design/hunting-67-hunting-agent-spec.md section 6.2 (Q3-amended
-for E2: the insufficient-evidence path now requires `no-symptom-evidence`
-with blocked observations, never `technical-infeasibility`).
+Source: docs/design/hunting-67-hunting-agent-spec.md section 6.2 (Q3-amended;
+the E2 inline back-edge is RETIRED with the verdict-processing workflow, so
+the E2 skeleton records the retired behaviour).
 """
 import uuid
 
@@ -41,7 +46,7 @@ from tests.conftest import neo4j_target, wait_for
 URI, AUTH = neo4j_target()
 
 _BLOCKED = "carried, blocked on the pod (#84): the walkthrough's live edge " \
-           "is none, so EVALUATE must be the real pod - a stub would " \
+           "is none, so the execution must be the real pod - a stub would " \
            "substitute the component under test."
 
 
@@ -75,28 +80,25 @@ def project(session):
 def test_confirmed_hypothesis(session, project, tmp_path):
     """E1 - Confirmed hypothesis (grounds H1 and D67-02, Q3-amended).
 
-    Entry seam: the `HuntConfig` dispatch (IA-2).
-    Input: a fixture `HuntConfig` with the five parts set to stated values -
-      prompt template (rationale "fault-x applies to slug-a because ...",
-      research direction [...], L0 evidence [...]), vulnerability class
-      CSRF, adversarial capabilities / assumptions / technique primitives
-      [...], adapted index-card (spine + one-hop DFS of unit "kind:slug:a"),
-      target caveats [...], prior-hunt insights [], tool registry [].
+    Entry seam: a produced threat-model loop file (S2 8.4) dispatched as the
+    hunter's loop payload.
+    Input: a fixture unit threat model whose loop carries the unit/fault locus,
+    the loop rationale, and the skill-procedure excerpt; the hunter authors the
+    spec set from it.
     Live edge: none (self-contained; the pod is the real one).
-    Path: agent queries the fixture KB on `(fault-x, slug-a-technological-
-      axis)` -> authors the spec -> pod executes -> {successful,
-      symptom-confirmed} -> hypothesis-`successful`.
-    Terminal: the hypothesis verdict `successful` with feedback; exactly one
-      pod execution recorded (the durable spec/evidence store records are
-      removed, #166 - the agent's durable trail is #164's own memory, G5).
-    Observed: the DispatchResult carries the verdict and the feedback.
+    Path: the hunter's pass sequence grounds the spec, writes the `hypothesised`
+    set, promotes the surviving spec to `ratified`, then the pod executes it
+    and returns a `successful` / `symptom-confirmed` PodExport.
+    Terminal: exactly one `ratified` spec and one pod-export envelope; the
+    hunter's durable trail is its own spec set and notes (the pre-#164
+    spec/evidence store records were removed, #166).
+    Observed: the pod envelope's verdict and terminal reason on the spec's
+    dispatch record.
 
-    When unblocked: build the agent with the real KB and the real pod over a
-    HuntStore(tmp_path), dispatch the fixture config, then assert
-      result.hypothesis_verdict == "successful"
-      result.feedback
-    (the durable spec/evidence records are removed, #166 - the agent's refs
-    degrade fail-open to None and its durable trail is #164's own memory, G5).
+    When unblocked: build the hunter with the real KB and the real pod over a
+    `HunterMemoryStore(tmp_path)`, dispatch the fixture loop, then assert the
+    pod envelope carries `verdict == "successful"` and
+    `terminal_reason == "symptom-confirmed"`.
     """
 
 
@@ -105,24 +107,16 @@ def test_inline_back_edge_revision(session, project, tmp_path):
     """E2 - Inline back-edge re-evaluation (grounds H3 and D67-14,
     Q3-amended).
 
-    Entry seam: the `HuntConfig` dispatch (IA-2).
-    Input: a fixture `HuntConfig` for a pair whose pod runs land
-      `{unsuccessful, no-symptom-evidence}` with blocked observations in the
-      trail (Q3-amended: `technical-infeasibility` derives `unsuccessful`,
-      never `insufficient-evidence`).
-    Live edge: none (the pod and the targeted recon that resolves the gap are
-      the real ones).
-    Path: hypothesis-`insufficient-evidence` -> inline need surfaced via
-      feedback -> orchestrator executes the recon -> meaningful insight
-      routes back -> revised verdict.
-    Terminal: the hypothesis verdict is revised (not `insufficient-evidence`);
-      the evidence trail contains the recon result.
-    Observed: the revised hypothesis verdict on the DispatchResult (the per-run
-      hunt/back-edge store records are removed, #166).
-
-    When unblocked: drive the real dispatch with the real back-edge tool,
-    then assert
-      the final hypothesis verdict is not "insufficient-evidence"
-    (the back-edge / evidence store records are removed, #166 - the agent's
-    durable trail is #164's own memory, G5).
+    Historical skeleton (superseded by the unit threat model rewrite, T5/T10):
+    the inline back-edge and the hypothesis-verdict derivation are RETIRED, so
+    this predicate no longer describes a live contract. It is kept as a
+    collecting skeleton so the carried walkthrough is visible, not as a live
+    assertion.
+    Input: a fixture unit threat model whose pod run lands
+    `{unsuccessful, no-symptom-evidence}` with blocked observations in the
+    trail.
+    Path (retired): hypothesis-`insufficient-evidence` -> inline recon -> a
+    revised verdict.
+    Terminal (current): the failed spec stays `dropped` and the run's trail
+    records the pod evidence; there is no revised hypothesis verdict.
     """

@@ -56,10 +56,12 @@ The `#329` slice's `retry_after_s`-driven backoff and the eval monitor's executi
 
 ## Amendment (#331 stop-only re-scope, 2026-10-09)
 
-The ticket was re-scoped to STOP-ONLY; the resume remains deferred.
+The ticket was re-scoped to STOP-ONLY; the resume remained deferred at that time.
 The STOP half of ESCALATED item 2 has now LANDED: `attack/hunting/runtime.py::stop_hunting_for_provider_failure` is the ONE app-layer handler that, on a provider failure, cancels every live component session of the run (the surfer included), drains it, flushes the threads, and stamps `interrupted` with the recorded cause - so the terminal no longer races a live session (the #331 verifier finding).
 The eval monitor's deferral of an `interrupted` execution is now explicit.
-The RESUME half stays ESCALATED, and the derivability of the resume decision from the stamped attributes alone is proven in `docs/design/331-stop-only-resume-assessment-adr.md` (decision table: `quota_exhausted=false` -> resumable after `retry_after_s`; `quota_exhausted=true` -> terminal; missing/unknown -> do-not-resume).
+The RESUME half's OPERATOR FLOOR has LANDED (T11 #398): `POST /projects/{project_id}/hunting/{hunting_run_id}/resume` applies the decision table (proven derivable from the stamped attributes alone in `docs/design/331-stop-only-resume-assessment-adr.md`: `quota_exhausted=false` -> resumable after `retry_after_s`; `quota_exhausted=true` -> terminal; missing/unknown -> do-not-resume), claims the run atomically, and re-enters `start_hunting` with the existing run id.
+The claim clears the provider-pause keys, so a resumed-then-crashed row is a do-not-resume orphan like any other reconcile stamp.
+The AUTO-RESUME background health checker the operator chose (D-3) remains a FOLLOW-UP; it is not built.
 
 ## Amendment (#312, 2026-10-08)
 

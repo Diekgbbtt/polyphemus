@@ -4,7 +4,7 @@ The state-graph hunter's seams (spec 5, ADR R4): the per-project
 `HunterMemoryStore`, the `hunts_store` / `notes` tool seam over it, and the
 turn-by-turn ReAct host's `model_factory` (a scripted model emitting REAL tool
 calls - the standard tool interface the harness binds request-only). Owned here
-so the memory contract catalogue (C1-C22) and the harness-seam catalogue (H1-H4)
+so the memory contract catalogue (C1-C28) and the harness-seam catalogue (H1-H6)
 speak the SAME canned objects and the duplication stays in one place.
 """
 from __future__ import annotations
@@ -15,18 +15,13 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import PrivateAttr
 
-from polymerhus.attack.hunting.hunt_orchestrator import (
-    HuntConfig,
-)
-from polymerhus.attack.hunting.hunt_store import semantic_key
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunting_agent import build_sync_hunting_agent
 
 PROJECT = "proj-a"
 UNIT_ID = "Service:slug:a"
-FAULT_CLASS = "fault-x"
-VULNERABILITY_CLASS = "csrf"
-FAULT_KEY = semantic_key(UNIT_ID, FAULT_CLASS, VULNERABILITY_CLASS)
+UNIT_NAME = "Service-slug-a"
+HUNT_KEY = f"{UNIT_NAME}__loop-1"
 
 
 class _ScriptedFake(BaseChatModel):
@@ -130,43 +125,60 @@ def _answer(text):
     return {"answer": text}
 
 
-def _hunt_config(**overrides) -> HuntConfig:
-    """A canonical `HuntConfig` for the (Service:slug:a, fault-x) pair."""
-    base = HuntConfig(
-        hunt_id="hunt-1",
-        unit_id=UNIT_ID,
-        fault_class=FAULT_CLASS,
-        vulnerability_class=VULNERABILITY_CLASS,
-        rationale=f"{FAULT_CLASS} applies to {UNIT_ID} because ...",
-        research_direction="CSRF feasibility reasoning at the state-changing form locus",
-        surface_context={"cards": [], "fault_evidence": ["GET /api/a answers 200"]},
-        observed_defences=["perimeter WAF on /api/*"],
-        preconditions=["an authenticated session is obtainable"],
-        prior_hunt_insights=[],
-    )
-    return base.model_copy(update=overrides)
-
-
-def _fault(fault_id, *, status, mechanism="m", supports=None, conflicts=None,
-           test="t"):
-    """A `FaultItem`-shaped write payload carrying the lifecycle status."""
-    return {"fault_id": fault_id, "mechanism": mechanism,
-            "supports": supports or [], "conflicts": conflicts or [],
-            "test": test, "status": status}
-
-
-def _spec(fault_id, spec_id, *, status, strategy="probe", **extra):
-    """A `specified`-write payload carrying the commit-specification fields."""
-    body = {
-        "fault_id": fault_id, "spec_id": spec_id, "status": status,
-        "strategy": strategy, "fault_key": FAULT_KEY,
-        "spec_ref": (f"data/{PROJECT}/hunter/test-specs/{FAULT_KEY}/"
-                     f"produced/{fault_id}_{strategy}.yaml"),
-        "experiment_ref": "", "mechanism": "m", "supports": ["e1"],
-        "conflicts": [], "test": "t",
+def _hunter_payload(**overrides) -> dict:
+    """The canonical loop payload the surfer materialises at dispatch (S2 8.2)
+    for the `(Service:slug:a, loop-1)` pair - the SAME key set
+    `materialise_hunter_payload` emits."""
+    payload = {
+        "dispatch_id": HUNT_KEY,
+        "run_id": "run-1",
+        "loop_id": "loop-1",
+        "unit_id": UNIT_ID,
+        "unit_kind": "service",
+        "loop": {
+            "id": "loop-1",
+            "fault_ref": "fault-1",
+            "vulnerability_ref": "v-1",
+            "canonical_class": "IDOR",
+            "web_vulnerability_class": "idor",
+            "likelihood": "high",
+            "likelihood_rationale": "An anonymous caller controls the id.",
+            "confidence": "INFERRED",
+            "evidences": [{"kind": "request", "ref": "GET /api/a"}],
+        },
+        "technical_sharpening": {
+            "interface_agreements": [{
+                "id": "ia-1",
+                "statement": "The endpoint reads the item id from the query.",
+            }],
+            "control_flows": [{"id": "cf-1"}],
+            "data_flows": [{"id": "df-1"}],
+        },
+        "trust_agreement": {
+            "id": "ta-1",
+            "statement": "The lookup trusts the caller's item id.",
+        },
+        "dynamic_state": None,
+        "programming_fault": {
+            "id": "fault-1",
+            "label": "improper authorisation on the item lookup",
+            "description": "The handler does not check item ownership.",
+        },
+        "canonical_class": "IDOR",
+        "web_vulnerability_class": "idor",
+        "evidence": [{"kind": "request", "ref": "GET /api/a"}],
+        "likelihood": "high",
+        "likelihood_rationale": "An anonymous caller controls the id.",
+        "vulnerability_rationale": "An anonymous caller reads another user's item.",
+        "confidence": "INFERRED",
+        "target_context": {
+            "unit_id": UNIT_ID,
+            "unit_kind": "service",
+            "baseline_refs": ["GET /api/a"],
+        },
     }
-    body.update(extra)
-    return body
+    payload.update(overrides)
+    return payload
 
 
 def build_memory_store(tmp_path) -> HunterMemoryStore:
@@ -197,10 +209,10 @@ def build_hunter_agent(memory_store, *, run_id="run-1", project_id=PROJECT,
 
 
 class _HuntingL1:
-    """The #200 fixture L1 read seam: serves the L1 INVENTORY cyphers
-    (`read_l1_inventory`'s services/systems reads) AND the per-unit projection
-    reads, so `materialize_candidates` -> `select` -> `build_projection` run
-    against one deterministic in-memory model."""
+    """The fixture L1 read seam: serves the L1 INVENTORY cyphers
+    (`read_l1_inventory`'s services/systems reads) and the per-unit projection
+    reads, so the modeller's grounding provider runs against one deterministic
+    in-memory model."""
 
     def __init__(self, *, services=(), systems=(), units=()):
         self.services = list(services)
@@ -228,7 +240,7 @@ class _HuntingL1:
 
 
 def build_hunting_l1():
-    """The #200 fixture L1: s1 fronted by a GraphQLApi System, s3 fronted by a
+    """The fixture L1: s1 fronted by a GraphQLApi System, s3 fronted by a
     RESTApi System, plus the two Systems themselves (kind-qualified singleton
     identities, the projection reader's convention)."""
     return _HuntingL1(
@@ -261,18 +273,253 @@ def build_hunting_l1():
     )
 
 
-def build_graphql_fault():
-    """The #200 fixture matching fault: a hardened predicate that passes any
-    unit reachable via a GraphQLApi System (the deterministic stage)."""
-    from polymerhus.attack.hunting.fault_source import FaultEntry
-    from polymerhus.attack.hunting.predicate import (  # noqa: PLC0415
-        Clause,
-        ClauseForm,
-        TypedPredicate,
+# --- the threat modeller fixtures (T2, #375; the shared worked example) -------
+
+def _evidence(ref: str = "GET /catalogue") -> dict:
+    return {"kind": "request", "ref": ref}
+
+
+def modeller_gate_payloads() -> dict:
+    """The five gate payloads, the minimum the completion checker needs.
+
+    The literal content is the T1 fixture shape (a known-good worked example),
+    never derived from the code under test. Single home: the modeller's pass
+    tests and the runtime wiring tests drive the SAME example."""
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    return {
+        ModelState.UNIT_TECHNICAL_SHARP: {
+            "technical_sharpening": {
+                "interface_agreements": [{
+                    "id": "ia-1",
+                    "statement": "The catalogue endpoint reads the item id from the query.",
+                    "confidence": "OBSERVED",
+                    "evidences": [_evidence()],
+                }],
+                "control_flows": [{
+                    "id": "cf-1",
+                    "statement": "The handler authorises before the lookup.",
+                    "confidence": "INFERRED",
+                    "evidences": [_evidence("framework default")],
+                }],
+                "data_flows": [{
+                    "id": "df-1",
+                    "statement": "The item body is rendered into the product page.",
+                    "confidence": "OBSERVED",
+                    "evidences": [_evidence()],
+                }],
+            },
+        },
+        ModelState.TRUST_MODELLED: {
+            "trust_model": {
+                "trust_agreements": [{
+                    "id": "ta-1",
+                    "boundary": "anonymous caller -> catalogue lookup",
+                    "interface_agreement_refs": ["ia-1"],
+                    "statement": "The lookup trusts the caller's item id.",
+                    "confidence": "INFERRED",
+                    "evidences": [_evidence()],
+                }],
+                "dynamic_state_trust": {
+                    "states": [{
+                        "id": "ds-1",
+                        "variables": ["item_id"],
+                        "confidence": "OBSERVED",
+                        "evidences": [_evidence()],
+                    }],
+                    "transitions": [{
+                        "id": "tr-1",
+                        "source": "ds-1",
+                        "target": "ds-1",
+                        "guard": "any item id",
+                        "confidence": "INFERRED",
+                        "evidences": [_evidence()],
+                    }],
+                    "violations": [{
+                        "id": "vi-1",
+                        "kind": "trust-transition",
+                        "statement": "A caller can force the state before the owner check.",
+                        "maps_to_fault": "fault-1",
+                        "transition_ref": "tr-1",
+                        "confidence": "ASSUMED",
+                        "evidences": [_evidence()],
+                    }],
+                },
+            },
+        },
+        ModelState.TRUST_ASSUMPTIONS_WRITTEN: {
+            "assumptions": [{
+                "id": "as-1",
+                "statement": "The handler omits the ownership check.",
+                "fault": {
+                    "id": "fault-1",
+                    "label": "improper authorisation on the item lookup",
+                    "description": "The handler does not check item ownership.",
+                },
+                "boundary_ref": "ta-1",
+                "confidence": "ASSUMED",
+                "evidences": [_evidence("note:catalogue")],
+            }],
+        },
+        ModelState.VULNERABILITIES_WRITTEN: {
+            "vulnerabilities": [{
+                "id": "v-1",
+                "fault_ref": "fault-1",
+                "canonical_class": "IDOR",
+                "web_vulnerability_class": "idor",
+                "characterisation": "An anonymous caller reads another user's item.",
+                "confidence": "INFERRED",
+                "evidences": [_evidence()],
+            }],
+        },
+        ModelState.COMPLETED: {
+            "failure_modes": [{
+                "id": "fm-1",
+                "vulnerability_ref": "v-1",
+                "mode": "read of another tenant's item",
+                "feasibility": "feasible",
+                "feasibility_rationale": "The id is caller-supplied.",
+                "confidence": "INFERRED",
+                "evidences": [_evidence()],
+            }],
+            "loops": [{
+                "fault_ref": "fault-1",
+                "vulnerability_ref": "v-1",
+                "failure_mode_refs": ["fm-1"],
+                "canonical_class": "IDOR",
+                "web_vulnerability_class": "idor",
+                "likelihood": "high",
+                "likelihood_rationale": "An anonymous caller controls the id.",
+                "risk_factors": {
+                    "attack_vector": "network",
+                    "attack_requirements": "none",
+                    "privileges_required": "none",
+                    "complexity": "low",
+                },
+                "confidence": "INFERRED",
+                "evidences": [_evidence()],
+            }],
+        },
+    }
+
+
+# --- the produced-model fixtures (T4b, #387) ------------------------------------
+#
+# The ONE home of the produced-model ladder: a test that needs a dispatchable
+# loop file drives the REAL store, never a copied per-file helper.
+
+def produce_model(
+    store,
+    *,
+    project_id: str,
+    unit_id: str,
+    run_id: str,
+    loops=None,
+) -> str:
+    """Drive a REAL `ThreatModelStore`'s five gates to COMPLETED for `unit_id` -
+    the produced COMPLETED valid model the mover dispatches from.
+
+    The one home of the worked example's ladder (T4b #387 lifted it out of the
+    per-file test helpers, so the retired-config tests could be re-pointed at the
+    same produced model): `loops` overrides the COMPLETED write's loop rows
+    (the sequencing fixtures). The gate payloads are a KNOWN-GOOD literal
+    (`modeller_gate_payloads`), never derived from the code under test."""
+    payloads = modeller_gate_payloads()
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    for state in ModelState:
+        sections = dict(payloads[state])
+        if state is ModelState.COMPLETED and loops is not None:
+            sections["loops"] = loops
+        store.write_sections(project_id, unit_id, state, sections, run_id=run_id)
+    return unit_id
+
+
+def loop_row(**overrides) -> dict:
+    """One COMPLETED-write loop row (the shared worked example): one `high`
+    loop over fault-1 / v-1 / fm-1. `overrides` carry the sequencing fixtures'
+    likelihood (or a distinct loop's rows)."""
+    row = {
+        "fault_ref": "fault-1",
+        "vulnerability_ref": "v-1",
+        "failure_mode_refs": ["fm-1"],
+        "canonical_class": "IDOR",
+        "web_vulnerability_class": "idor",
+        "likelihood": "high",
+        "likelihood_rationale": "The item id is attacker-controlled and unauthenticated.",
+        "risk_factors": {
+            "attack_vector": "network",
+            "attack_requirements": "none",
+            "privileges_required": "none",
+            "complexity": "low",
+        },
+        "confidence": "INFERRED",
+        "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
+    }
+    row.update(overrides)
+    return row
+
+
+def intake_unit(unit_id: str, *, live_edges: int = 0, endpoints: int = 0):
+    """One frozen intake unit (S1 7.1): the run bootstrap's `intake_units` seam.
+
+    The counts are the run's own snapshot of the live L1 edge count and the
+    aggregated endpoint count; the ordering under them is the runtime's."""
+    from polymerhus.attack.hunting.unit_intake import IntakeUnit
+
+    return IntakeUnit(
+        unit_id=unit_id,
+        live_edge_count=live_edges,
+        endpoint_count=endpoints,
     )
-    return FaultEntry(
-        fault_id="graphql-introspection",
-        predicate=TypedPredicate(target="Both", clauses=(
-            Clause(ClauseForm.REACHABLE_VIA, key="EXPOSED_VIA",
-                   values=("GraphQLApi",)),)),
-    )
+
+
+def build_intake_l1(*, units=(), systems=()):
+    """The T3 intake read seam fixture: serves the intake Cyphers.
+
+    `units` are the raw unit rows (`labels`, `props`, `edge_families`,
+    `endpoints`); `systems` are the System rows with the Services each is
+    connected to over a live L1 edge and those Services' `AGGREGATES`
+    out-degrees."""
+    def read(cypher, params):
+        if "AS edge_families" in cypher:
+            return [dict(unit) for unit in units]
+        if "AS slug" in cypher:
+            return [
+                {"kind": system["kind"],
+                 "disc": system.get("disc", "__singleton__"),
+                 "slug": service["slug"],
+                 "endpoints": service.get("endpoints", 0)}
+                for system in systems
+                for service in system.get("services", ())
+            ]
+        return []
+
+    return read
+
+
+class ScriptedModellerTurns:
+    """The fake modeller turn seam: each state's turn writes its gate through the
+    BOUND `hunts_store` tool (never the store directly), so a test drives exactly
+    what the model drives. Returns the tool responses and the turn inputs."""
+
+    def __init__(self, states=None, payloads=None):
+        from polymerhus.attack.hunting.threat_model import ModelState
+
+        self.states = list(states if states is not None else ModelState)
+        self.payloads = payloads if payloads is not None else modeller_gate_payloads()
+        self.turn_inputs: list = []
+        self.responses: list = []
+
+    def store_tool(self, turn):
+        return next(tool for tool in turn.tools if tool.name == "hunts_store")
+
+    def __call__(self, turn):
+        self.turn_inputs.append(turn)
+        if turn.state not in self.states:
+            return None
+        payload = self.payloads[turn.state]
+        self.responses.append(self.store_tool(turn).invoke({
+            "cmd": "write", "state": turn.state.value, "sections": payload,
+        }))
+        return None

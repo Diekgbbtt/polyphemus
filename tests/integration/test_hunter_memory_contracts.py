@@ -1,540 +1,379 @@
-"""Integration tier: the hunter memory assertion catalogue C1-C22
-(docs/design/hunting-164-assertion-catalogue.md).
+"""Integration tier: the hunter memory spec-set contract (S3 8.6-8.9, T6 #379).
 
-The contract predicates exercise the memory system at its two seams - the
-per-project `HunterMemoryStore` (the store seam, spec 6 / G1-G9) and the
-`hunts_store` / `notes` tool seams over it (`hunter_tools.py`, spec 5) - never
-the ReAct host's internals. The real store on a tmp root and the real tools
-bound to it; no model is involved in this tier. Every observable is the exact
-file, count, or JSON shape the contract promises.
+The contract predicates exercise the loop-driven memory system at its two
+seams - the per-project `HunterMemoryStore` (the spec-set store) and the
+`hunts_store` / `notes` tool seams over it (`hunter_tools.py`) - never the
+ReAct host's internals. The real store on a tmp root and the real tools bound
+to it; no model is involved in this tier. Every observable is the exact file,
+count, or JSON shape the contract promises.
+
+T6 re-pointed the old C1-C26 catalogue from the retired fault/config key and
+the four-value lifecycle onto the loop dispatch key, the batched `specs` set
+write and the `{hypothesised, ratified, dropped}` vocabulary.
 """
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
-from polymerhus.attack.hunting.hunt_store import semantic_key
 from polymerhus.attack.hunting.hunter_memory import (
     DuplicateSpecError,
     HunterMemoryStore,
 )
 from polymerhus.attack.hunting.hunter_tools import HuntsStoreTool, NotesTool
-from tests.hunting_fixtures import (
-    FAULT_KEY,
-    PROJECT,
-    _fault,
-    _spec,
-    build_memory_store,
-)
+from tests.hunting_fixtures import HUNT_KEY, PROJECT, build_memory_store
 
 
-# --- the store seam (C1-C15) ---------------------------------------------------
+def _spec(**extra) -> dict:
+    """A reduced-D4 spec entry: the status + the file-name identity keywords
+    plus the typed body the store persists unchanged."""
+    body = {
+        "status": "hypothesised",
+        "fault_keyword": "csrf",
+        "strategy_keyword": "probe",
+        "target_identity": {"url": "http://t/", "unit_id": "Service:a"},
+        "verification_symptoms": ["a foreign state change is accepted"],
+        "assumptions": ["the token is not bound to the session"],
+        "rationale": "r",
+        "provenance": {"loop_id": "loop-1"},
+    }
+    body.update(extra)
+    return body
+
+
+def _produced(tmp_path, spec_id="csrf_probe"):
+    return (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / HUNT_KEY
+            / "produced" / f"{spec_id}.yaml")
+
+
+# --- the store seam -----------------------------------------------------------
 
 
 def test_C1_produced_topology_and_lazy_project_dir(tmp_path):
     store = build_memory_store(tmp_path)
-    path = store.write_spec(
-        PROJECT, FAULT_KEY, fault_keyword="csrf", strategy_keyword="probe",
-        spec=_fault("F1", status="hypothesised"),
-    )
-    expected = (
-        tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced" / "csrf_probe.yaml"
-    )
-    assert path == expected
-    assert expected.is_file()
+    written = store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    assert written[0] == ("csrf_probe", _produced(tmp_path))
+    assert _produced(tmp_path).is_file()
     # the project dir is created only at the first write - no eager tree
     empty = build_memory_store(tmp_path / "empty")
-    assert empty.read_specs(PROJECT, FAULT_KEY) == []
+    assert empty.read_specs(PROJECT, HUNT_KEY) == []
     assert not (tmp_path / "empty" / PROJECT).exists()
 
 
-def test_C2_read_round_trips_by_identity(tmp_path):
+def test_C2_read_round_trips_by_derived_identity(tmp_path):
     store = build_memory_store(tmp_path)
-    spec = _fault("F1", status="hypothesised")
-    store.write_spec(PROJECT, FAULT_KEY, fault_keyword="csrf",
-                     strategy_keyword="probe", spec=spec)
-    back = store.read_spec(PROJECT, FAULT_KEY, fault_keyword="csrf",
-                           strategy_keyword="probe")
-    assert back == spec
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe") == _spec()
     # the read is a function of the identity - the consumed side is a miss
-    assert store.read_spec(PROJECT, FAULT_KEY, fault_keyword="csrf",
-                           strategy_keyword="probe", side="consumed") is None
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe",
+                           side="consumed") is None
 
 
 def test_C3_keyword_sanitisation_poisons_separator_chars(tmp_path):
     store = build_memory_store(tmp_path)
-    store.write_spec(
-        PROJECT, FAULT_KEY, fault_keyword="fault/x:csrf", strategy_keyword="probe_1",
-        spec=_fault("F1", status="hypothesised"),
-    )
-    f = (
-        tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
-        / "fault-x-csrf_probe-1.yaml"
-    )
-    assert f.is_file()
-    back = store.read_spec(PROJECT, FAULT_KEY, fault_keyword="fault/x:csrf",
-                           strategy_keyword="probe_1")
-    assert back["fault_id"] == "F1"
+    (spec_id, path) = store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="fault/x:csrf", strategy_keyword="probe_1")])[0]
+    assert spec_id == "fault-x-csrf_probe-1"
+    assert path.is_file()
     # a keyword that sanitises to a dot component is pathological -> rejected
     with pytest.raises(ValueError):
-        store.write_spec(PROJECT, FAULT_KEY, fault_keyword="..",
-                         strategy_keyword="probe",
-                         spec=_fault("F2", status="hypothesised"))
+        store.write_specs(PROJECT, HUNT_KEY, [
+            _spec(fault_keyword="..", strategy_keyword="probe")])
 
 
 def test_C4_status_lifecycle_rides_one_produced_file(tmp_path):
     store = build_memory_store(tmp_path)
-    k = dict(fault_keyword="csrf", strategy_keyword="probe")
-    store.write_spec(PROJECT, FAULT_KEY, mode="create",
-                     spec=_fault("F1", status="hypothesised"), **k)
-    store.write_spec(PROJECT, FAULT_KEY, mode="update",
-                     spec=_fault("F1", status="verified", supports=["e1"]), **k)
-    store.write_spec(PROJECT, FAULT_KEY, mode="update",
-                     spec=_spec("F1", "S1", status="specified"), **k)
-    produced = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
-    files = sorted(produced.glob("*.yaml"))
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    store.write_specs(PROJECT, HUNT_KEY, [_spec(status="ratified")])
+    files = sorted(_produced(tmp_path).parent.glob("*.yaml"))
     assert len(files) == 1
     assert files[0].name == "csrf_probe.yaml"
-    body = store.read_spec(PROJECT, FAULT_KEY, **k)
-    assert body["status"] == "specified"
-    assert body["spec_id"] == "S1"
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")["status"] == "ratified"
+    # the terminal declass rewrites the same file statused `dropped`
+    store.write_specs(PROJECT, HUNT_KEY, [_spec(status="dropped")])
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")["status"] == "dropped"
+    assert len(sorted(_produced(tmp_path).parent.glob("*.yaml"))) == 1
 
 
-def test_C5_duplicate_create_fails_and_preserves_original(tmp_path):
+def test_C5_duplicate_identity_inside_the_set_fails(tmp_path):
     store = build_memory_store(tmp_path)
-    k = dict(fault_keyword="csrf", strategy_keyword="probe")
-    store.write_spec(PROJECT, FAULT_KEY, mode="create",
-                     spec=_fault("F1", status="hypothesised"), **k)
     with pytest.raises(DuplicateSpecError):
-        store.write_spec(PROJECT, FAULT_KEY, mode="create",
-                         spec=_fault("F1", status="hypothesised"), **k)
-    # the original is not clobbered
-    assert store.read_spec(PROJECT, FAULT_KEY, **k)["fault_id"] == "F1"
-    # a different strategy or side is a fresh file, never a collision
-    store.write_spec(PROJECT, FAULT_KEY, mode="create",
-                     fault_keyword="csrf", strategy_keyword="other",
-                     spec=_fault("F1", status="hypothesised"))
-    store.write_spec(PROJECT, FAULT_KEY, mode="create", side="consumed",
-                     fault_keyword="csrf", strategy_keyword="probe",
-                     spec=_fault("F1", status="hypothesised"))
-    produced = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
-    assert len(list(produced.glob("*.yaml"))) == 2
+        store.write_specs(PROJECT, HUNT_KEY, [_spec(), _spec()])
+    # the rejected batch left nothing on disk
+    assert not _produced(tmp_path).exists()
+    # a different strategy is a fresh file, never a collision
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(strategy_keyword="other")])
+    assert sorted(p.name for p in _produced(tmp_path).parent.glob("*.yaml")) == [
+        "csrf_other.yaml"]
 
 
-def test_C6_reauthor_update_overwrites_in_place(tmp_path):
+def test_C6_reauthor_upserts_in_place(tmp_path):
     store = build_memory_store(tmp_path)
-    k = dict(fault_keyword="csrf", strategy_keyword="probe")
-    store.write_spec(PROJECT, FAULT_KEY, mode="create",
-                     spec=_fault("F1", status="hypothesised"), **k)
-    store.write_spec(PROJECT, FAULT_KEY, mode="update",
-                     spec=_fault("F1", status="verified", supports=["e1"]), **k)
-    produced = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
-    files = sorted(produced.glob("*.yaml"))
-    assert len(files) == 1
-    body = store.read_spec(PROJECT, FAULT_KEY, **k)
-    assert body["status"] == "verified"
-    assert body["supports"] == ["e1"]
-    # no _seq/_ref bookkeeping on the spec records (G11)
-    assert "_seq" not in body and "_ref" not in body
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(rationale="amended", verification_symptoms=["changed"])])
+    body = store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")
+    assert body["rationale"] == "amended"
+    assert body["verification_symptoms"] == ["changed"]
 
 
 def test_C7_read_spec_missing_returns_none_and_projection(tmp_path):
     store = build_memory_store(tmp_path)
-    assert store.read_spec(PROJECT, FAULT_KEY, fault_keyword="csrf",
-                           strategy_keyword="probe") is None
-    store.write_spec(PROJECT, FAULT_KEY, fault_keyword="csrf",
-                     strategy_keyword="probe",
-                     spec=_spec("F1", "S1", status="specified"))
-    proj = store.read_spec(PROJECT, FAULT_KEY, fault_keyword="csrf",
-                           strategy_keyword="probe",
-                           attributes=["status", "spec_id"])
-    assert set(proj) == {"status", "spec_id"}
-    assert proj == {"status": "specified", "spec_id": "S1"}
+    assert store.read_spec(PROJECT, HUNT_KEY, "nope") is None
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    projected = store.read_spec(PROJECT, HUNT_KEY, "csrf_probe",
+                                attributes=["status", "strategy_keyword"])
+    assert projected == {"status": "hypothesised", "strategy_keyword": "probe"}
 
 
 def test_C8_read_specs_listing_sides_and_statuses(tmp_path):
     store = build_memory_store(tmp_path)
-    store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe",
-                     spec=_spec("F1", "S1", status="specified"))
-    store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f2", strategy_keyword="probe",
-                     spec=_fault("F2", status="dropped"))
-    store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f3", strategy_keyword="probe",
-                     side="consumed", spec=_fault("F3", status="specified"))
-    all_specs = store.read_specs(PROJECT, FAULT_KEY)
-    assert [s["fault_id"] for s in all_specs] == ["F1", "F2", "F3"]
-    consumed = store.read_specs(PROJECT, FAULT_KEY, sides=("consumed",))
-    assert [s["fault_id"] for s in consumed] == ["F3"]
-    specified = store.read_specs(PROJECT, FAULT_KEY, statuses=["specified"])
-    assert sorted(s["fault_id"] for s in specified) == ["F1", "F3"]
-    # a missing fault_key (a valid 3-part key with no files) is a valid empty
-    # result, never a failure
-    assert store.read_specs(PROJECT, semantic_key("Service:slug:b", "fault-y",
-                                                  "csrf")) == []
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="f1"), _spec(fault_keyword="f2")])
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(status="dropped", fault_keyword="f2")])
+    assert len(store.read_specs(PROJECT, HUNT_KEY)) == 2
+    assert store.read_specs(PROJECT, HUNT_KEY, statuses=["dropped"]) == [
+        store.read_spec(PROJECT, HUNT_KEY, "f2_probe")]
+    assert store.read_specs(PROJECT, HUNT_KEY, sides=("consumed",)) == []
 
 
 def test_C9_sides_addressable_and_no_movement(tmp_path):
     store = build_memory_store(tmp_path)
-    store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe",
-                     side="consumed", spec=_fault("F1", status="specified"))
-    consumed = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "consumed"
-    assert (consumed / "f1_probe.yaml").is_file()
-    # nothing eagerly creates or moves the produced side
-    assert not (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced").exists()
-    with pytest.raises(ValueError):
-        store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f2", strategy_keyword="probe",
-                         side="sideways", spec=_fault("F2", status="hypothesised"))
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()], side="consumed")
+    assert not _produced(tmp_path).exists()
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe",
+                           side="consumed")["status"] == "hypothesised"
+    assert store.produced_spec_files(PROJECT, HUNT_KEY) == []
 
 
-def test_C10_validation_rejects_unsafe_components(tmp_path):
+def test_C10_validation_rejects_unsafe_hunt_keys(tmp_path):
     store = build_memory_store(tmp_path)
-    for bad in ("../escape", "a/b", "a\\b", "a\x00b", ".", ".."):
+    for bad in ("../escape", "a/b", "", ".", ".."):
         with pytest.raises(ValueError):
-            store.write_spec(PROJECT, bad, fault_keyword="f", strategy_keyword="p",
-                             spec=_fault("F1", status="hypothesised"))
-    with pytest.raises(ValueError):
-        store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f", strategy_keyword="p",
-                         spec=_fault("F1", status="open"))
-    with pytest.raises(ValueError):
-        store.write_spec(PROJECT, FAULT_KEY, mode="upsert", fault_keyword="f",
-                         strategy_keyword="p", spec=_fault("F1", status="hypothesised"))
-    with pytest.raises(ValueError):
-        store.write_note(PROJECT, action="append", fault_key=FAULT_KEY,
-                         note_name="n", kind="bogus", body="x")
+            store.write_specs(PROJECT, bad, [_spec()])
 
 
 def test_C11_corrupt_file_fails_loud(tmp_path):
     store = build_memory_store(tmp_path)
-    store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe",
-                     spec=_fault("F1", status="hypothesised"))
-    f = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced" / "f1_probe.yaml"
-    f.write_text("{{{{{{{{")
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    _produced(tmp_path).write_text(": : broken [", encoding="utf-8")
     with pytest.raises(OSError):
-        store.read_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe")
-    with pytest.raises(OSError):
-        store.read_specs(PROJECT, FAULT_KEY)
-    # a corrupt notes file fails loud the same way
-    notes = tmp_path / PROJECT / "hunting" / "hunter" / "notes.yaml"
-    notes.write_text("{{{{{{{{")
-    with pytest.raises(OSError):
-        store.read_notes(PROJECT)
+        store.read_specs(PROJECT, HUNT_KEY)
 
 
 def test_C12_notes_append_and_append_order(tmp_path):
     store = build_memory_store(tmp_path)
-    k1 = store.write_note(PROJECT, action="append", fault_key=FAULT_KEY,
-                          note_name="n1", kind="freeform", body="first")
-    k2 = store.write_note(PROJECT, action="append", fault_key=FAULT_KEY,
-                          note_name="n2", kind="freeform", body="second")
-    assert k1 == f"{FAULT_KEY}:n1"
-    assert k2 == f"{FAULT_KEY}:n2"
-    notes = store.read_notes(PROJECT)
-    assert [n["key"] for n in notes] == [k2, k1]  # read-latest
-    assert notes[1]["fault_key"] == FAULT_KEY
-    assert notes[1]["note_name"] == "n1"
-    assert notes[1]["body"] == "first"
+    assert store.write_note(PROJECT, action="append", hunt_key=HUNT_KEY,
+                            note_name="n1", kind="freeform", body="a") \
+        == f"{HUNT_KEY}:n1"
+    store.write_note(PROJECT, action="append", hunt_key=HUNT_KEY,
+                     note_name="n2", kind="freeform", body="b")
+    assert [n["body"] for n in store.read_notes(PROJECT)] == ["b", "a"]
 
 
 def test_C13_notes_update_delete_and_denoted_miss(tmp_path):
     store = build_memory_store(tmp_path)
-    store.write_note(PROJECT, action="append", fault_key=FAULT_KEY,
-                     note_name="n1", kind="freeform", body="first")
-    store.write_note(PROJECT, action="update", fault_key=FAULT_KEY,
-                     note_name="n1", kind="hypothesis_refusal",
-                     body="amended", evidence="e")
-    notes = store.read_notes(PROJECT)
-    assert len(notes) == 1
-    assert notes[0]["body"] == "amended"
-    assert notes[0]["kind"] == "hypothesis_refusal"
-    assert notes[0]["evidence"] == "e"
-    store.write_note(PROJECT, action="delete", fault_key=FAULT_KEY, note_name="n1",
-                     kind="freeform", body="")
+    store.write_note(PROJECT, action="append", hunt_key=HUNT_KEY,
+                     note_name="n1", kind="freeform", body="a")
+    assert store.write_note(PROJECT, action="update", hunt_key=HUNT_KEY,
+                            note_name="n1", kind="freeform", body="amended") \
+        == f"{HUNT_KEY}:n1"
+    assert [n["body"] for n in store.read_notes(PROJECT)] == ["amended"]
+    assert store.write_note(PROJECT, action="delete", hunt_key=HUNT_KEY,
+                            note_name="n1", kind="freeform", body="") \
+        == f"{HUNT_KEY}:n1"
     assert store.read_notes(PROJECT) == []
-    # update/delete on a missing key is a denoted miss, never a failure
-    assert store.write_note(PROJECT, action="update", fault_key=FAULT_KEY,
-                            note_name="missing", kind="freeform", body="x") is None
-    assert store.write_note(PROJECT, action="delete", fault_key=FAULT_KEY,
-                            note_name="missing", kind="freeform", body="") is None
+    assert store.write_note(PROJECT, action="update", hunt_key=HUNT_KEY,
+                            note_name="ghost", kind="freeform", body="") is None
 
 
 def test_C14_notes_read_grep_match_and_read_latest(tmp_path):
     store = build_memory_store(tmp_path)
-    store.write_note(PROJECT, action="append", fault_key=FAULT_KEY,
-                     note_name="lead", kind="freeform", body="WAF soft-blocked the probe")
-    store.write_note(PROJECT, action="append", fault_key=FAULT_KEY,
-                     note_name="refusal", kind="hypothesis_refusal",
-                     body="no observable symptom")
-    store.write_note(PROJECT, action="append",
-                     fault_key=semantic_key("Service:slug:b", "fault-y", "csrf"),
-                     note_name="lead", kind="freeform", body="other project note")
-    parent = store.read_notes(PROJECT, parent_key=FAULT_KEY)
-    assert sorted(n["note_name"] for n in parent) == ["lead", "refusal"]
-    by_body = store.read_notes(PROJECT, body_keyword="WAF")
-    assert len(by_body) == 1 and by_body[0]["note_name"] == "lead"
-    by_key = store.read_notes(PROJECT, key_keyword="refus")
-    assert len(by_key) == 1 and by_key[0]["note_name"] == "refusal"
-    combined = store.read_notes(PROJECT, parent_key=FAULT_KEY, key_keyword="lead")
-    assert len(combined) == 1
-    # zero matches is a valid empty result
-    assert store.read_notes(PROJECT, body_keyword="zzz-nothing") == []
+    store.write_note(PROJECT, action="append", hunt_key=HUNT_KEY,
+                     note_name="alpha", kind="freeform", body="the token check")
+    store.write_note(PROJECT, action="append", hunt_key=HUNT_KEY,
+                     note_name="beta", kind="freeform", body="unrelated")
+    assert [n["note_name"] for n in
+            store.read_notes(PROJECT, key_keyword="alph")] == ["alpha"]
+    assert [n["note_name"] for n in
+            store.read_notes(PROJECT, body_keyword="token")] == ["alpha"]
+    assert store.read_notes(PROJECT, parent_key="Service-other__loop-9") == []
 
 
-def test_C15_fault_and_note_share_the_config_identifier(tmp_path):
+def test_C15_hunt_and_note_share_the_identifier(tmp_path):
     store = build_memory_store(tmp_path)
-    store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe",
-                     spec=_fault("F1", status="hypothesised"))
-    store.write_note(PROJECT, action="append", fault_key=FAULT_KEY,
-                     note_name="decision", kind="freeform", body="hint")
-    specs = store.read_specs(PROJECT, FAULT_KEY)
-    notes = store.read_notes(PROJECT, parent_key=FAULT_KEY)
-    assert len(specs) == 1 and len(notes) == 1
-    assert specs[0]["fault_id"] == "F1"
-    assert notes[0]["fault_key"] == FAULT_KEY
-    assert notes[0]["key"] == f"{FAULT_KEY}:decision"
-    # the produced spec file lives under test-specs/<fault_key>/ - the SAME key
-    # the note keys embed: the pipeline is walked by one identifier
-    produced = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
-    assert (produced / "f1_probe.yaml").is_file()
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    store.write_note(PROJECT, action="append", hunt_key=HUNT_KEY,
+                     note_name="decision", kind="freeform", body="b")
+    (note,) = store.read_notes(PROJECT)
+    assert note["key"] == f"{HUNT_KEY}:decision"
+    assert note["hunt_key"] == HUNT_KEY
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")["status"] == "hypothesised"
 
 
-# --- the tool seams (C16-C22) ---------------------------------------------------
+# --- the tool seam ------------------------------------------------------------
 
 
-def _tool_store(tmp_path):
-    store = HunterMemoryStore(root_dir=tmp_path)
-    return (
-        store,
-        HuntsStoreTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY),
-        NotesTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY),
-    )
+def _hunts(store, **kwargs):
+    return HuntsStoreTool(store=store, project_id=PROJECT,
+                          hunt_key=HUNT_KEY).invoke(kwargs)
 
 
-def test_C16_hunts_store_write_create(tmp_path):
-    _, tool, _ = _tool_store(tmp_path)
-    out = json.loads(tool.invoke({
-        "command": "write",
-        "spec": {**_fault("F1", status="hypothesised"),
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    }))
+def _notes(store, **kwargs):
+    return NotesTool(store=store, project_id=PROJECT,
+                     hunt_key=HUNT_KEY).invoke(kwargs)
+
+
+def test_C16_hunts_store_batched_write(tmp_path):
+    store = build_memory_store(tmp_path)
+    out = json.loads(_hunts(store, command="write", specs=[
+        _spec(), _spec(fault_keyword="f2")]))
     assert out["ok"] is True
-    assert out["status"] == "hypothesised"
-    assert out["path"].endswith(f"{PROJECT}/hunting/hunter/test-specs/{FAULT_KEY}/produced/f1_probe.yaml")
-    assert Path(out["path"]).is_file()
+    assert [entry["spec_id"] for entry in out["specs"]] == [
+        "csrf_probe", "f2_probe"]
+    assert len(store.read_specs(PROJECT, HUNT_KEY)) == 2
 
 
-def test_C17_duplicate_create_denoted_signal(tmp_path):
-    _, tool, _ = _tool_store(tmp_path)
-    write = {
-        "command": "write",
-        "spec": {**_fault("F1", status="hypothesised"),
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    }
-    assert json.loads(tool.invoke(write))["ok"] is True
-    out = json.loads(tool.invoke(write))
-    assert out["ok"] is False
-    assert out["error"] == "duplicate_spec"
-    assert out["fault_key"] == FAULT_KEY
+def test_C17_duplicate_identity_denoted_signal(tmp_path):
+    store = build_memory_store(tmp_path)
+    out = json.loads(_hunts(store, command="write", specs=[
+        _spec(), _spec()]))
+    assert out["ok"] is False and out["error"] == "duplicate_spec"
+    assert store.read_specs(PROJECT, HUNT_KEY) == []
 
 
 def test_C18_hunts_store_invalid_args(tmp_path):
-    _, tool, _ = _tool_store(tmp_path)
-    out = json.loads(tool.invoke({
-        "command": "write",
-        "spec": {**_fault("F1", status="hypothesised"),
-                 "fault_keyword": "", "strategy_keyword": ""},
-    }))
-    assert out["ok"] is False and out["error"] == "hunts_store_write_rejected"
-    out = json.loads(tool.invoke({
-        "command": "write",
-        "spec": {"fault_id": "F1", "status": "open",
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    }))
-    assert out["ok"] is False and out["error"] == "hunts_store_write_rejected"
-    # a read needs no key: it is bound to the hunt's own config (#298)
-    out = json.loads(tool.invoke({"command": "read"}))
-    assert out["specs"] == [] and "error" not in out
+    store = build_memory_store(tmp_path)
+    empty = json.loads(_hunts(store, command="write", specs=[]))
+    assert empty["error"] == "hunts_store_write_rejected"
+    missing = json.loads(_hunts(store, command="write", specs=[
+        {"status": "hypothesised", "fault_keyword": "f1"}]))
+    assert missing["error"] == "hunts_store_write_rejected"
+    assert "strategy_keyword" in " ".join(missing["fields"])
+    bad_status = json.loads(_hunts(store, command="write", specs=[
+        _spec(status="specified")]))
+    assert bad_status["error"] == "hunts_store_write_rejected"
+    authored_id = json.loads(_hunts(store, command="write", specs=[
+        _spec(spec_id="S1")]))
+    assert authored_id["error"] == "hunts_store_write_rejected"
+    assert store.read_specs(PROJECT, HUNT_KEY) == []
 
 
 def test_C19_tool_read_filters_produce_projection(tmp_path):
-    _, tool, _ = _tool_store(tmp_path)
-    tool.invoke({
-        "command": "write",
-        "spec": {**_spec("F1", "S1", status="specified"),
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    })
-    out = json.loads(tool.invoke({
-        "command": "read",
-        "statuses": ["specified"], "attributes": ["status", "spec_id"],
-    }))
-    assert len(out["specs"]) == 1
-    assert set(out["specs"][0]) == {"status", "spec_id"}
-    assert out["specs"][0]["spec_id"] == "S1"
+    store = build_memory_store(tmp_path)
+    _hunts(store, command="write", specs=[
+        {"status": "ratified", "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "dropped", "fault_keyword": "f2", "strategy_keyword": "probe"},
+    ])
+    out = json.loads(_hunts(store, command="read", statuses=["ratified"],
+                            attributes=["status"]))
+    assert out["specs"] == [{"status": "ratified"}]
 
 
 def test_C20_notes_tool_denoted_missing(tmp_path):
-    _, _, tool = _tool_store(tmp_path)
-    out = json.loads(tool.invoke({
-        "command": "write", "action": "update",
-        "note_name": "nope", "kind": "freeform", "body": "x",
-    }))
-    assert out["ok"] is False
-    assert out["error"] == "note_missing"
-    assert out["fault_key"] == FAULT_KEY
-    assert out["note_name"] == "nope"
+    store = build_memory_store(tmp_path)
+    out = json.loads(_notes(store, command="write", action="update",
+                            note_name="ghost", kind="freeform", body="b"))
+    assert out["ok"] is False and out["error"] == "note_missing"
 
 
 def test_C21_absent_store_degrades_fail_open(tmp_path):
-    store_tool = HuntsStoreTool(store=None, project_id=PROJECT, fault_key=FAULT_KEY)
-    notes_tool = NotesTool(store=None, project_id=PROJECT, fault_key=FAULT_KEY)
-    out = json.loads(store_tool.invoke({
-        "command": "write",
-        "spec": {**_fault("F1", status="hypothesised"),
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    }))
-    assert out["error"] == "store_unavailable" and out["degraded"] is True
-    out = json.loads(notes_tool.invoke({
-        "command": "write", "action": "append",
-        "note_name": "n", "kind": "freeform", "body": "x",
-    }))
-    assert out["error"] == "store_unavailable" and out["degraded"] is True
+    assert json.loads(HuntsStoreTool(store=None, project_id=PROJECT,
+                                     hunt_key=HUNT_KEY).invoke(
+        {"command": "read"}))["degraded"] is True
+    out = json.loads(HuntsStoreTool(store=None, project_id=PROJECT,
+                                    hunt_key=HUNT_KEY).invoke(
+        {"command": "write", "specs": [_spec()]}))
+    assert out["degraded"] is True and out["error"] == "store_unavailable"
 
 
-def test_C22_read_failure_degrades_to_empty_set(tmp_path):
-    _, tool, _ = _tool_store(tmp_path)
-    tool.invoke({
-        "command": "write",
-        "spec": {**_fault("F1", status="hypothesised"),
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    })
-    f = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced" / "f1_probe.yaml"
-    f.write_text("{{{{{{{{")
-    out = json.loads(tool.invoke({"command": "read"}))
-    assert out["specs"] == []
-    assert out["error"] == "read_failed"
+def test_C22_read_failure_degrades_to_empty_set(tmp_path, monkeypatch):
+    store = build_memory_store(tmp_path)
+    _hunts(store, command="write", specs=[_spec()])
+
+    def boom(*args, **kwargs):
+        raise OSError("read exploded (fixture)")
+
+    monkeypatch.setattr(store, "read_specs", boom)
+    out = json.loads(_hunts(store, command="read"))
+    assert out == {"specs": [], "error": "read_failed",
+                   "detail": "read exploded (fixture)"}
 
 
-# --- the harness-BOUND config identity (C23-C24, #298) -------------------------
-
-# The hunt's own config identity is BOUND at construction (#298), superseding
-# the #199 request-field gate: the model cannot choose a config, so there is no
-# request key to validate. These tests assert the binding - reads and writes
-# land only under the bound key, the key is never a request field, and an
-# UNBOUND tool degrades instead of fabricating a degenerate folder.
-_CANON_UNIT = "Service:account-registration"
-_CANON_FAULT = "CWE-1220"
-_CANON_CLASS = "Privilege Escalation"
-_CANON_KEY = f"{_CANON_UNIT}_{_CANON_FAULT}_{_CANON_CLASS}"
-_CANON_TWIN = semantic_key(_CANON_UNIT, _CANON_FAULT, _CANON_CLASS)
-
-
-def test_C23_config_key_is_bound_not_a_request_field(tmp_path):
-    """#298: `fault_key` is NOT in the `hunts_store` args schema; the bound key
-    decides the destination folder, and an UNBOUND tool writes nothing (never a
-    degenerate `_CWE-...` file)."""
-    assert "fault_key" not in HuntsStoreTool(store=None).args_schema.model_fields
-    store = HunterMemoryStore(root_dir=tmp_path)
-    bound = HuntsStoreTool(store=store, project_id=PROJECT, fault_key=_CANON_KEY)
-    out = json.loads(bound.invoke({
-        "command": "write",
-        "spec": {**_fault("F1", status="hypothesised"),
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    }))
-    assert out["ok"] is True, out
-    assert out["path"].endswith(
-        f"{PROJECT}/hunting/hunter/test-specs/{_CANON_KEY}/produced/f1_probe.yaml")
-    assert Path(out["path"]).is_file()
-    # an unbound tool (a harness wiring defect) degrades; no folder is created
-    unbound = HuntsStoreTool(store=HunterMemoryStore(root_dir=tmp_path / "u"),
-                             project_id=PROJECT)
-    out = json.loads(unbound.invoke({
-        "command": "write",
-        "spec": {**_fault("F1", status="hypothesised"),
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    }))
-    assert out["ok"] is False and out["error"] == "invalid_args"
-    assert not (tmp_path / "u" / PROJECT / "hunting" / "hunter" / "test-specs").exists()
+def test_C23_the_hunt_key_is_bound_not_a_request_field(tmp_path):
+    store = build_memory_store(tmp_path)
+    fields = HuntsStoreTool(store=None, project_id=PROJECT,
+                            hunt_key=HUNT_KEY).args_schema.model_fields
+    assert "hunt_key" not in fields and "fault_key" not in fields
+    assert "specs" in fields
+    # a tool with NO bound key degrades to a denoted invalid_args
+    out = json.loads(HuntsStoreTool(store=store, project_id=PROJECT).invoke(
+        {"command": "write", "specs": [_spec()]}))
+    assert out["error"] == "invalid_args"
+    assert store.read_specs(PROJECT, HUNT_KEY) == []
 
 
-def test_C24_binding_accepts_the_semantic_twin(tmp_path):
-    """The bound key may be the `_`-joined canonical or its `::`-semantic twin
-    (#298, the store's own two forms); the spec lands under the bound form and a
-    bound read returns it (no request key)."""
-    store = HunterMemoryStore(root_dir=tmp_path)
-    tool = HuntsStoreTool(store=store, project_id=PROJECT, fault_key=_CANON_TWIN)
-    out = json.loads(tool.invoke({
-        "command": "write",
-        "spec": {**_fault("F1", status="hypothesised"),
-                 "fault_keyword": "f1", "strategy_keyword": "probe"},
-    }))
-    assert out["ok"] is True, out
-    assert out["path"].endswith(
-        f"{PROJECT}/hunting/hunter/test-specs/{_CANON_TWIN}/produced/f1_probe.yaml")
-    out = json.loads(tool.invoke({"command": "read"}))
-    assert len(out["specs"]) == 1
-    assert out["specs"][0]["fault_id"] == "F1"
+def test_C24_notes_tool_is_bound_to_its_own_loop(tmp_path):
+    store = build_memory_store(tmp_path)
+    other = "Service-b__loop-9"
+    tool_a = NotesTool(store=store, project_id=PROJECT, hunt_key=HUNT_KEY)
+    tool_b = NotesTool(store=store, project_id=PROJECT, hunt_key=other)
+    tool_a.invoke({"command": "write", "action": "append", "note_name": "a",
+                   "kind": "freeform", "body": "note-a"})
+    tool_b.invoke({"command": "write", "action": "append", "note_name": "b",
+                   "kind": "freeform", "body": "note-b"})
+    assert [n["body"] for n in json.loads(
+        tool_a.invoke({"command": "read"}))["notes"]] == ["note-a"]
+    assert [n["body"] for n in json.loads(
+        tool_b.invoke({"command": "read"}))["notes"]] == ["note-b"]
 
-
-def test_C24b_notes_tool_is_bound_to_its_own_config(tmp_path):
-    """The same binding rides the `notes` write/read (#298): the note lands only
-    under the bound config, and the key is not a request field."""
-    assert "fault_key" not in NotesTool(store=None).args_schema.model_fields
-    store = HunterMemoryStore(root_dir=tmp_path)
-    tool = NotesTool(store=store, project_id=PROJECT, fault_key=_CANON_KEY)
-    out = json.loads(tool.invoke({
-        "command": "write", "action": "append",
-        "note_name": "decision", "kind": "freeform", "body": "x",
-    }))
-    assert out["ok"] is True
-    read = json.loads(tool.invoke({"command": "read"}))
-    assert [n["body"] for n in read["notes"]] == ["x"]
-    # a second tool bound elsewhere shares nothing
-    other = NotesTool(store=store, project_id=PROJECT, fault_key=_CANON_TWIN)
-    assert json.loads(other.invoke({"command": "read"}))["notes"] == []
-
-
-# --- #209: the coded teaching rejection + typed provenance (C25-C26) -----------
 
 def test_C25_notes_missing_command_is_a_coded_teaching_rejection(tmp_path):
-    """#209: a `notes` call with write-intent fields but NO `command` returns
-    the coded `notes_args_rejected` teaching rejection (never a bare raise into
-    the turn), nothing is persisted, and the corrected shape lands."""
-    store = HunterMemoryStore(root_dir=tmp_path)
-    tool = NotesTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY)
-    out = json.loads(tool.invoke({
-        "action": "append",
-        "note_name": "decision", "kind": "freeform", "body": "x",
-    }))
-    assert out["ok"] is False
-    assert out["error"] == "notes_args_rejected"
+    store = build_memory_store(tmp_path)
+    out = json.loads(_notes(store, action="append", note_name="n",
+                            kind="freeform", body="b"))
+    assert out["ok"] is False and out["error"] == "notes_args_rejected"
     assert "command" in out["detail"]
-    assert store.read_notes(PROJECT) == []
-    # the corrected shape lands: command + prose evidence + typed provenance
-    out = json.loads(tool.invoke({
-        "command": "write", "action": "append",
-        "note_name": "decision", "kind": "freeform", "body": "x",
-        "evidence": "prose", "provenance": {"source": "pod-export",
-                                            "probe_refs": ["exec:probe"]},
-    }))
-    assert out["ok"] is True, out
-    notes = store.read_notes(PROJECT)
-    assert len(notes) == 1
-    assert notes[0]["evidence"] == "prose"
-    assert notes[0]["provenance"]["probe_refs"] == ["exec:probe"]
 
 
 def test_C26_dict_evidence_is_a_coded_teaching_rejection(tmp_path):
-    """#209: a dict-valued `evidence` (the model's structured-ref attempt) is a
-    coded teaching rejection naming `provenance` - the structured slot - and
-    never persists."""
-    store = HunterMemoryStore(root_dir=tmp_path)
-    tool = NotesTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY)
-    out = json.loads(tool.invoke({
-        "command": "write", "action": "append",
-        "note_name": "decision", "kind": "freeform", "body": "x",
-        "evidence": {"probe_refs": ["exec:SPA shell"]},
-    }))
-    assert out["ok"] is False
-    assert out["error"] == "notes_args_rejected"
+    store = build_memory_store(tmp_path)
+    out = json.loads(_notes(store, command="write", action="append",
+                            note_name="n", kind="freeform", body="b",
+                            evidence={"probe_refs": ["exec:x"]}))
+    assert out["ok"] is False and out["error"] == "notes_args_rejected"
     assert "provenance" in out["detail"]
-    assert store.read_notes(PROJECT) == []
+
+
+# --- the move-aware write and the single-owner move (the #205 rule) -----------
+
+
+def test_C27_move_aware_write_and_single_owner_move(tmp_path, caplog):
+    store = build_memory_store(tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    assert store.consume_spec(PROJECT, HUNT_KEY, "csrf_probe") is True
+    assert store.produced_spec_files(PROJECT, HUNT_KEY) == []
+    assert store.consume_spec(PROJECT, HUNT_KEY, "csrf_probe") is True   # at-least-once
+    assert store.consume_spec(PROJECT, HUNT_KEY, "missing") is False
+    # the late terminal write after the move is a no-op success, never a
+    # produced/ re-creation (the #205 rule; the inbox keeps draining)
+    written = store.write_specs(PROJECT, HUNT_KEY, [_spec(status="ratified")])
+    assert written[0][1].parent.name == "consumed"
+    assert store.produced_spec_files(PROJECT, HUNT_KEY) == []
+
+
+def test_C28_the_typed_skill_procedure_round_trips_through_the_tool(tmp_path):
+    from polymerhus.attack.hunting.spec_contract import SkillProcedure
+
+    store = build_memory_store(tmp_path)
+    procedure = SkillProcedure(recon_action="mine the item id",
+                               bypass_technique="swap the id")
+    out = json.loads(_hunts(store, command="write", specs=[
+        _spec(provenance={**_spec()["provenance"],
+                          "skill_procedure": procedure.model_dump()})]))
+    assert out["ok"] is True
+    body = store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")
+    assert body["provenance"]["skill_procedure"]["bypass_technique"] == "swap the id"

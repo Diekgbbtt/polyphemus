@@ -136,6 +136,8 @@ The fault-hypothesis lives inside a technique's reasoning for the duration of th
 
 It is deliberately named ahead of the code: phase 3 and its technique/probe machinery are the deferred Stage-3 signature-evaluation engine (`NM-8`, `L1D-29`), so everything in this section is **designed-not-built** except the one built instance named below.
 
+**Boundary: this is not the hunting fault entity.** The threat-model `Fault`, `Loop`, and `Vulnerability` are model artifacts of the web-vulnerability pipeline (S1/S2). They are not this phase-3 fault-hypothesis, and no hunting path reads this primitive. The unit-threat-model redesign retired the fault-hypothesis vocabulary from the hunting prompt, the hunter store, and the eval (T7/T10). This section remains the analysis-side Stage-3 ontology, designed-not-built under `NM-8`/`L1D-29`; the owning workstream is the analysis engine, not the hunting pipeline.
+
 **What it is.** A fault-hypothesis is a *defeasible, falsifiable* claim of the form "unit U, at locus L, could exhibit fault-class F, because property P is assumed there and P may not hold" - a structured belief with an explicit refutation criterion, exactly the `define-hypothesis` discipline the analyser is meant to acquire (`AMV-1`).
 
 It is not an observation (nothing has been witnessed) and not a bare inference (it asserts a *fault*, not merely a structure); it is the escalation of an inference into a testable adversarial claim, exercised in phase 3 rather than stored in either layer.
@@ -426,6 +428,26 @@ Its authority is epistemic: nothing is "done" until a separate agent has reprodu
 (The confidence gate once listed here was REMOVED 2026-10-15 with the score; see `docs/design/drop-aggregate-confidence.md`.)
 
 It is recorded here because it is the natural home for the currently-orphaned confidence and absence policies (Sections 3.2, 3.5), and because the model's own history argues both for it and for caution: prevention at creation is what actually kept the batch graph clean, but an auditor that is a no-op on good input rots undetected exactly as the broken curation stage did.
+
+### 5.1 The threat modeller and the unit threat model
+
+**The threat modeller** is the phase-1 hunting pass that turns one L1 unit into a formal, per-unit threat model before any test executes (`docs/design/hunting-67-threat-modeller-spec.md`).
+It is a stateful agent (one run-scoped session) with two authorities: it reads the L1 graph and the HTTP history, and it writes only through the threat-model store.
+It never writes L0/L1, never selects a unit (the run's INTAKE is frozen symbolically), and never evolves a finished model.
+
+The **unit threat model** is one self-standing artifact per unit, not the phase-2 attack-chain DAG (`docs/design/hunting-67-threat-model-artifact-spec.md`).
+Its primitives are:
+
+- the **technical sharpening**: the unit's interface agreements, control flows, and data flows, each a claim with an evidence reference;
+- the **trust agreements** and their **dynamic-state trust**: who trusts whom, under which mode, and which state transition persists that trust;
+- an **assumption**: a claim that must hold for the unit's safety, each named by an induced programming fault;
+- a **web-vulnerability class**: the freely named taxonomy class plus its skills-suite mapping (a `suite_gap` when the suite does not cover it);
+- a **failure mode** mapped back from the cited classes, with the evidence that would falsify it;
+- a **loop**: a flat, likelihood-ranked testable prediction (`loop-<rank>`) carrying observable symptoms, its dispatchable payload, and the loop's provenance and typed skill procedure.
+
+The model's state is structural, not a separate status row: the five gates (`UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `COMPLETED`) are the written sections, and a model is consumable once it reaches `COMPLETED` with its loops.
+The store moves the model `produced -> consumed` and archives a degraded unit's partial model to `abandoned/`; the model never evolves (a re-model is a new run).
+The **hunter** is dispatched per loop, not per config: the loop payload (the loop plus its unit context) is materialised at dispatch and the loop's dispatch id is the hunter store key (`docs/design/hunting-67-hunting-agent-spec.md`, `docs/design/hunting-164-state-graph-spec.md` section 14).
 
 ---
 

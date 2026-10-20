@@ -1,7 +1,8 @@
 """The hunting module's own LLM bootstrap and role wiring (#94/#93).
 
 Two things live here, both keyed off the hunting role records in
-`app/llm/providers.py::HUNTING_ROLES` (`hunting_orchestrator`, `hunting_hunter`):
+`app/llm/providers.py::HUNTING_ROLES` (`hunting_threat_modeller`,
+`hunting_hunter`):
 
 1. `validate_hunting_llm_config()` - the hunting module's OWN fail-fast, run at
    the HUNTING bootstrap, NEVER at app boot (operator ruling 2026-08-06). A bare
@@ -9,40 +10,30 @@ Two things live here, both keyed off the hunting role records in
    hunting model vars, so app boot validates only `ROLES` and this validates
    `HUNTING_ROLES` on the first hunt.
 
-2. The production seam factories that bind the orchestrator's injected LLM seams
-   (`hunt_orchestrator.run_orchestration`'s `reason_fn`) to a
-   real model through `roles.invoke_role`; the hunting-agent harness
+2. The production seam factories for the hunter's SYNC rollback lane
+   (`build_author_fn` / `build_judge_fn`). The hunting-agent harness
    (`hunting_agent.build_hunting_agent`) drives `arun_session_turn` DIRECTLY on
-   the per-hunt `HuntSession` thread as of #164 W5, so its author/judge seams
-   are retired (R1) and the factories below are the thin SYNC lane for the
-   orchestrator's turns and the hunter's legacy sync rollback.
+   the per-hunt `HuntSession` thread as of #164 W5, so these factories are the
+   thin SYNC lane only - no production wiring uses them.
 
-Statefulness now lives in the MAILBOX ACTORS (`attack/hunting/actors.py`,
-feat/async-actor-agents): `arun_orchestration` drives the hypothesise / ratify /
-note phase turns as turns of ONE `HuntOrchestratorActor` per run on the
-`hunting_orchestrator` session thread - purely stateful, exactly like the
-recon-orchestrator - and the per-hunt `HuntingHunterActor` (registered per run
-by `HuntingActorRegistry`) owns the author/judge turns of each hunt on its
-`HuntSession` thread. The factories below remain the thin SYNC lane: explicit
-stateless rollback / test seams (`invoke_role` offers the #73 escalating-timeout
-retry these degrade-prone turns want), injectable through every harness seam.
-DECISION OF RECORD (2026-08-10): the async actor lane is the production default;
-the sync factories above/existing `build_gate_reason_fn`-style seams are the
-test/rollback lane only - no production wiring uses them.
+Statefulness lives in the MAILBOX ACTORS (`attack/hunting/actors.py`,
+feat/async-actor-agents): `threat_modeller.arun_modeller_pass` drives one turn
+per gate state on ONE `ThreatModellerActor` per run (`hunting_threat_modeller`
+session thread), and the per-hunt `HuntingHunterActor` (registered per run by
+`HuntingActorRegistry`) owns the author/judge turns of each hunt on its
+`HuntSession` thread. DECISION OF RECORD (2026-08-10): the async actor lane is
+the production default; the sync factories are the test/rollback lane only.
 
-The composed turns are read directly from this module's `prompts/` dir
-(`hunt-orchestrator.md` for the gate REASON body), memoized on first call,
-FAIL-CLOSED on a missing file - the same role-prompt pattern the hunting agent
-uses; the actors reuse the SAME composers (`_gate_skill`,
-`_compose_gate_prompt`) and the SAME free-text-then-parse (`_parse_json_object`)
-as these factories, so the two lanes can never drift.
+The modeller's per-turn message is composed here (`_compose_modeller_prompt`),
+and its system prompt is read directly from this module's `prompts/` dir
+(`threat-modeller.md` via `_modeller_skill`), memoized on first call and
+FAIL-CLOSED on a missing file.
 
-This module imports no driver, but it is NOT env-free at import: it imports
-`hunt_orchestrator`, whose chain pulls `app.config`, which reads env at module
-scope (so importing `llm.py` requires the app env vars). The env-free home for
-the conciseness constant + appender re-exported below is `conciseness.py`.
-Everything that performs I/O (`invoke_role`, the message classes, and the skill
-read) still resolves lazily on call.
+This module imports no driver and no `app.config` chain: it is env-free at
+import (the planner's `hunt_orchestrator` import retired with the pass in T2b).
+The env-free home for the conciseness constant + appender re-exported below is
+`conciseness.py`; everything that performs I/O (`invoke_role`, the message
+classes, and the skill read) resolves lazily on call.
 """
 from __future__ import annotations
 
@@ -57,18 +48,10 @@ from polymerhus.attack.hunting.conciseness import (
     HUNTING_CONCISENESS_DIRECTIVE,
     append_conciseness_directive,
 )
-from polymerhus.attack.hunting.hunt_orchestrator import (
-    GateDecision,
-    GateInput,
-    PhaseTurnInput,
-)
-from polymerhus.analysis.l1_types import elide_singleton
-
 logger = logging.getLogger(__name__)
 
-# The orchestrator's gate-reasoning role and the hunting agent's authoring/judging
-# role. Single point of truth so a caller never hard-codes a role_id string.
-GATE_ROLE = "hunting_orchestrator"
+# The hunting agent's authoring/judging role. Single point of truth so a caller
+# never hard-codes a role_id string.
 HUNTER_ROLE = "hunting_hunter"
 
 # The per-hunt session context for the hunter's STATEFUL turns (#94): (run_id, hunt_id),
@@ -188,461 +171,102 @@ L1_ONTOLOGY_PRIMER = (
     "evidence, never evidence of absence."
 )
 
-# The gate role prompt, memoized on first call (no import-time I/O, CODING
-# STANDARD section 6). A missing prompt file is a defect: FAIL-CLOSED (raise),
-# so the orchestrator never reasons without its prompt.
-_GATE_SKILL: str | None = None
+# The threat modeller's role prompt, memoized on first call (no import-time
+# I/O, CODING STANDARD section 6). A missing prompt file is a defect:
+# FAIL-CLOSED (raise), so the modeller never reasons without its method.
+_MODELLER_SKILL: str | None = None
 
 
-def _gate_skill() -> str:
-    """The hunt-orchestrator's REASON system prompt, read directly from this
-    module's `prompts/` dir and carrying the shared cortex (C1) appended by the
-    one composition helper. Memoized on first call; FAIL-CLOSED."""
-    global _GATE_SKILL
-    if _GATE_SKILL is None:
+def _modeller_skill() -> str:
+    """The threat modeller's system prompt, read directly from this module's
+    `prompts/` dir. Memoized on first call; FAIL-CLOSED."""
+    global _MODELLER_SKILL
+    if _MODELLER_SKILL is None:
         from pathlib import Path  # noqa: PLC0415
 
         from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
 
-        _GATE_SKILL = with_cortex(
-            (Path(__file__).resolve().parent / "prompts" / "hunt-orchestrator.md")
+        _MODELLER_SKILL = with_cortex(
+            (Path(__file__).resolve().parent / "prompts" / "threat-modeller.md")
             .read_text(encoding="utf-8")
         )
-    return _GATE_SKILL
+    return _MODELLER_SKILL
 
 
-def _system_render(info) -> str:
-    """Deterministic one-line render of a SystemInfo (an unpacked edge target
-    or a D3 cooperating neighbour): the typed attributes (kind, discriminator,
-    exposure, description) plus the sorted raw non-identity props. A singleton
-    System's internal `__singleton__` discriminator is ELIDED (#279 follow-up):
-    the orchestrator reads the bare kind, never the sentinel. An absent or
-    empty info renders a marker, never a raise."""
-    if info is None:
-        return "(absent)"
-    kind = getattr(info, "kind", None) or "UNKNOWN"
-    parts = [f"kind={kind}"]
-    for attr in ("discriminator", "exposure", "description"):
-        val = getattr(info, attr, None)
-        if attr == "discriminator":
-            val = elide_singleton(val)
-        if val is not None:
-            parts.append(f"{attr}={val}")
-    props = getattr(info, "props", None) or {}
-    prop_items = sorted(f"{k}={v}" for k, v in props.items() if v is not None
-                        if k not in ("kind", "discriminator", "exposure",
-                                     "description"))
-    if prop_items:
-        parts.append("props={" + ", ".join(prop_items) + "}")
-    return "; ".join(parts)
+def _compose_modeller_prompt(turn) -> str:
+    """Render one gate-state reasoning turn (S1 8): the current unit, the
+    current state, the section names that gate carries, the input data (the
+    persisted model, read fresh so an evicted context is re-queried - S1 6.2),
+    and the gate instruction. The next-state hints are NOT here: they ride the
+    gate write's tool response (`threat_modeller.GATE_HINTS`).
 
-
-# RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
-# data-plane removal) -> docs/design/drop-data-modeller.md
-def _data_item_render(item) -> str:
-    """Deterministic one-line render of a DataItem (a data-flow edge's full
-    node): the named trust slots (name/type/sensitivity, fields, notes). An
-    absent or empty item renders a marker, never a raise."""
-    if item is None:
-        return "(absent)"
-    parts = []
-    for attr in ("name", "type", "sensitivity"):
-        val = getattr(item, attr, None)
-        if val is not None:
-            parts.append(f"{attr}={val}")
-    if getattr(item, "fields", None):
-        parts.append("fields=" + ",".join(sorted(map(str, item.fields))))
-    if getattr(item, "notes", None):
-        parts.append(f"notes={item.notes}")
-    return "; ".join(parts) or "(data item without typed slots)"
-
-
-def _aggregated_endpoint_render(ep) -> str:
-    """Deterministic one-line render of an aggregated L0 Endpoint (#201): the
-    typed identity props (method/path/baseurl, present ones only) plus the
-    owning service slug when the aggregate resolves through a System unit's
-    LINKED services. An absent slot is omitted - absence is not-yet-filled,
-    never a marker; an absent item renders a marker, never a raise."""
-    if ep is None:
-        return "(absent)"
-    parts = []
-    for attr in ("method", "path", "baseurl"):
-        val = getattr(ep, attr, None)
-        if val is not None:
-            parts.append(f"{attr}={val}")
-    slug = getattr(ep, "service_slug", None)
-    if slug:
-        parts.append(f"service_slug={slug}")
-    return "; ".join(parts) or "(aggregated endpoint without typed slots)"
-
-
-def _render_projection(projection) -> str:
-    """Deterministic render of the unit's typed projection (spec 3.1/3.7): the
-    typed spine keys present, per-family outgoing Service->System edges (target
-    kind + role presence + the fully-unpacked target System), and - as of T5 -
-    the RICH slots the T2 projection carries: the exploded DataItems (family ->
-    name/type/sensitivity) and the DataRelationship kind chains, and the D3
-    cooperating-systems adjacency. The data-edge counts and the DataRelationship
-    kinds are NOT rendered separately: they are redundant with the exploded
-    DataItems and the relationship chains (the operator ruling 2026-08-28). The
-    compat facets are never removed from the projection itself; each slot is
-    read via getattr and a missing facet degrades that slot only - absence
-    renders as UNKNOWN/(none) (never FALSE, never a prune signal - C16)."""
-    if projection is None:
-        return "UNKNOWN (projection read failed or absent)"
-    kind = getattr(projection, "kind", None) or "UNKNOWN"
-    spine = getattr(projection, "spine", None) or {}
-    edges = getattr(projection, "edges", None) or {}
-    data_items = getattr(projection, "data_items", None) or {}
-    data_relationships = getattr(projection, "data_relationships", None) or ()
-    cooperating_systems = getattr(projection, "cooperating_systems", None) or {}
-
-    out = [f"unit kind: {kind}"]
-    spine_keys = sorted(k for k in spine if k)
-    out.append(f"spine (present keys): {spine_keys or '(none present)'}")
-    if edges:
-        families = []
-        for family in sorted(edges):
-            infos = edges.get(family) or ()
-            rendered = []
-            for e in infos:
-                target = getattr(e, "target_kind", None) or "UNKNOWN"
-                role = getattr(e, "role", None)
-                line = f"{target}{' (role present)' if role is not None else ''}"
-                sys_info = getattr(e, "target", None)
-                if sys_info is not None and getattr(sys_info, "kind", None):
-                    line += f" -> {_system_render(sys_info)}"
-                rendered.append(line)
-            families.append(f"{family}: {sorted(rendered) or '(no edges)'}")
-        out.append("outgoing edges:")
-        out += [f"  - {line}" for line in families]
+    Every slot degrades independently: a model that cannot be read renders as
+    "(not written yet)", never as an empty claim."""
+    state = getattr(turn, "state", None)
+    state_value = getattr(state, "value", state) or "UNIT_TECHNICAL_SHARP"
+    sections = list(getattr(turn, "sections", ()) or ())
+    model = getattr(turn, "model", None)
+    lines = [
+        f"Unit under analysis: {getattr(turn, 'unit_id', '(unbound)')}",
+        f"Current workflow state: {state_value}",
+        f"Gate sections to write: {', '.join(sections)}",
+        "",
+        str(getattr(turn, "instruction", "") or ""),
+        "",
+        "Grounding inputs:",
+        "  Unit projection: " + (
+            _render_grounding(getattr(turn, "projection", None)) or "(unavailable)"),
+        "  Application-surface overview: " + (
+            _render_grounding(getattr(turn, "surface_overview", None))
+            or "(unavailable)"),
+    ]
+    for gap in getattr(turn, "context_gaps", ()) or ():
+        lines.append(f"  Grounding gap: {gap}")
+    lines += [
+        "",
+        "The persisted model at this turn's start:",
+    ]
+    if not isinstance(model, dict):
+        lines.append("  (not written yet)")
     else:
-        out.append("outgoing edges: (none)")
-    if data_items:
-        out.append("data items:")
-        for family in sorted(data_items):
-            items = data_items.get(family) or ()
-            rendered = sorted(_data_item_render(i) for i in items)
-            out.append(f"  - {family}: {', '.join(rendered) or '(none)'}")
-    else:
-        out.append("data items: (none)")
-    if data_relationships:
-        out.append("data relationships:")
-        chains = []
-        for r in data_relationships:
-            family = getattr(r, "family", None) or "?"
-            from_key = getattr(r, "from_item_key", None)
-            to_key = getattr(r, "to_item_key", None)
-            line = f"{family}: {from_key or '?'} -> {to_key or '?'}"
-            predicate = getattr(r, "predicate", None)
-            if predicate:
-                line += f" (predicate: {predicate})"
-            chains.append(line)
-        out += [f"  - {line}" for line in sorted(chains)]
-    else:
-        out.append("data relationships: (none)")
-    if cooperating_systems:
-        out.append("cooperating systems:")
-        for family in sorted(cooperating_systems):
-            infos = cooperating_systems.get(family) or ()
-            rendered = sorted(_system_render(i) for i in infos)
-            out.append(f"  - {family}: {', '.join(rendered) or '(none)'}")
-    else:
-        out.append("cooperating systems: (none)")
-    aggregated_endpoints = getattr(projection, "aggregated_endpoints", None) or ()
-    if aggregated_endpoints:
-        out.append("aggregated endpoints:")
-        rendered = sorted(_aggregated_endpoint_render(i) for i in aggregated_endpoints)
-        out += [f"  - {line}" for line in rendered or ["(none)"]]
-    else:
-        out.append("aggregated endpoints: (none)")
-    return "\n".join(out)
-
-
-def _render_materialisation(entry) -> str:
-    """Deterministic render of a fault's materialisation-facet content (the CWE
-    NL evidence, spec 3.1): name, description, extended description, alternate
-    terms, related attack patterns, likelihood, common consequences,
-    potential mitigations, functional areas - each facet sorted where it is a
-    sequence; an absent entry renders UNKNOWN (never a prune signal - C16).
-    Accepts the `FaultMaterialisation` dataclass or a plain dict (both shapes
-    occur on the `GateInput` surface)."""
-    if entry is None:
-        return "UNKNOWN (materialisation unavailable for this fault_class)"
-
-    def _f(name):
-        if isinstance(entry, dict):
-            return entry.get(name)
-        return getattr(entry, name, None)
-
-    name = _f("name")
-    description = _f("description")
-    extended = _f("extended_description")
-    alt_terms = _f("alternate_terms") or []
-    patterns = _f("related_attack_patterns") or []
-    likelihood = _f("likelihood")
-    consequences = _f("common_consequences") or []
-    mitigations = _f("potential_mitigations") or []
-    areas = _f("functional_areas") or []
-
-    out = []
-    if name:
-        out.append(f"fault: {name}")
-    if description:
-        out.append(f"description: {description}")
-    if extended:
-        out.append(f"extended description: {extended}")
-    if alt_terms:
-        out.append("alternate terms: " + "; ".join(sorted(map(str, alt_terms))))
-    if patterns:
-        out.append("related attack patterns: " + "; ".join(sorted(map(str, patterns))))
-    if likelihood:
-        out.append(f"likelihood: {likelihood}")
-    if consequences:
-        out.append("common consequences: " + "; ".join(sorted(map(str, consequences))))
-    if mitigations:
-        out.append("potential mitigations: " + "; ".join(sorted(map(str, mitigations))))
-    if areas:
-        out.append("functional areas: " + "; ".join(sorted(map(str, areas))))
-    return "\n".join(out) or "(materialisation entry empty)"
-
-
-def _render_fold_family(ids) -> str:
-    """Deterministic render of the folded sub-fault family (spec 3.1): the
-    sorted tuple of folded fault_ids captured under the parent fault class -
-    consideration material, never a prune signal. An absent key renders
-    UNKNOWN (C16)."""
-    if not ids:
-        return "UNKNOWN (no sub-fault fold family captured under this fault)"
-    return ", ".join(sorted(map(str, ids)))
-
-
-def _render_unit_block(units, unit_projection, compat_projection, kb_evidences) -> str:
-    """Deterministic render of one matched-unit block (spec 3.7 Q4): each unit's
-    identity + witness line followed by ITS OWN rich projection render. The
-    projection resolves from the per-unit slot first; the single-unit compat
-    slot (`compat_projection`) is the fallback, so a legacy hand-built `GateInput`
-    still renders. Every facet degrades independently (C16)."""
-    out = []
-    for c in units:
-        w = c.applies_witnesses
-        proj = (unit_projection or {}).get(c.unit_id)
-        if proj is None:
-            proj = compat_projection
-        out.append(
-            f"- unit={c.unit_id} fault_class={c.fault_class} "
-            f"match_verdict={c.match_verdict} "
-            f"witness_deterministic={w.deterministic!r} "
-            f"witness_llm={w.llm!r} "
-            f"kb_evidence={(kb_evidences or {}).get(c.fault_class) or '(none)'}"
+        from polymerhus.attack.hunting.threat_modeller_tools import (  # noqa: PLC0415
+            MODEL_SECTIONS,
         )
-        out += ["    Unit projection (typed facet surface):"]
-        out += [f"      {line}" for line in _render_projection(proj).split("\n")]
-    return "\n".join(out)
 
-
-_GATE_CHAIN = (
-    "Grounded in the application overview above, this hypothesise turn works "
-    "the matched units of one fault:"
-)
-
-
-def _compose_gate_prompt(inp: GateInput, *, chained: bool = False) -> str:
-    """Render the HYPOTHESISE-phase input (spec 3.7, re-scoped by #167/#168) into
-    the phase turn's user prompt. The frame OPENS with the L1 ontology primer
-    constant (G9, the conceptions of Service / System / DataItem + the domain-
-    model philosophy - a user-prompt constant, never the system prompt, spec
-    3.7), then the pair header renders the fault class, the KB-grounding line,
-    the read-only graph surface, the materialisation and the fold family; the
-    matched units split into a Services section and a Systems section, each
-    with its own adversarial-reasoning intro (Q4) and each unit's OWN rich
-    projection render; then the hypothesise-phase discipline block (Q11 prior-
-    hunt reflection on `prior_minted_keys`, Q9 knowledge-sufficiency +
-    target-knowledge loops, Q8 hypothesis elicitation, Q16 same-class merge,
-    and the hypothesise write). The phase-TRANSITION verbatims are NOT part of
-    this prompt - they ride the tool-call responses from the constants (G1/G3).
-    Deterministic sorted rendering throughout; every slot degrades
-    independently (never FALSE, never a prune signal - C16).
-
-    The Q4 model: the structured Overview rides its OWN dedicated HumanMessage
-    ahead of this one (the actor emits it once per run thread); when it does,
-    `chained=True` opens this prompt with the verbatim that couples the two
-    messages."""
-    fault_class = inp.candidates[0].fault_class if inp.candidates else None
-
-    # The section split is on the kind-qualified identity, never on the
-    # projection kind: "Service:<slug>" lands in Services, "<kind>:<key>" in
-    # Systems - so a degraded projection still reaches the right section.
-    def _section(unit_id: str) -> str:
-        return "Service" if str(unit_id).startswith("Service:") else "System"
-
-    services = sorted((c for c in inp.candidates if _section(c.unit_id) == "Service"),
-                      key=lambda c: c.unit_id)
-    systems = sorted((c for c in inp.candidates if _section(c.unit_id) == "System"),
-                     key=lambda c: c.unit_id)
-
-    lines = [L1_ONTOLOGY_PRIMER, ""]
-    if chained:
-        lines = [_GATE_CHAIN, ""] + lines
-    lines += [
-        f"KB grounding: {'DEGRADED (KB unavailable; do not prune on this)' if inp.kb_degraded else 'available'}",
-        f"Read-only graph surface (index cards): {inp.surface or '(none)'}",
-    ]
-    if fault_class is not None:
-        lines += [
-            f"Fault class (schedule unit): {fault_class}",
-            f"Fault materialisation ({fault_class}):",
-            _render_materialisation((inp.materialisation or {}).get(fault_class)),
-            f"Sub-fault fold family (consideration material):",
-            _render_fold_family((inp.fold_family or {}).get(fault_class)),
-        ]
-
-    unit_projection = inp.unit_projection or {}
-    lines += ["", "Services:"]
-    if services:
-        lines += [
-            "Adversarial reasoning over each Service: spell its surface - its "
-            "edged DataItems and Systems - and where the fault could bite.",
-            _render_unit_block(services, unit_projection, inp.projection, inp.kb_evidences),
-        ]
-    else:
-        lines.append("(no matched Service units)")
-    lines += ["", "Systems:"]
-    if systems:
-        lines += [
-            "Adversarial reasoning over each System: outline the System "
-            "distinctly - its kind, exposure, and props - and where the fault "
-            "could bite it.",
-            _render_unit_block(systems, unit_projection, inp.projection, inp.kb_evidences),
-        ]
-    else:
-        lines.append("(no matched System units)")
-
-    prior_keys = sorted(str(k) for k in (inp.prior_minted_keys or []))
+        lines.append(f"  state: {model.get('state')}")
+        written = [name for name in MODEL_SECTIONS if model.get(name)]
+        lines.append(f"  sections written: {', '.join(written) or '(none)'}")
+        if model.get("risk_profile"):
+            lines.append(f"  risk profile: {model['risk_profile']}")
+        if model.get("validation"):
+            lines.append(f"  completion validation: {model['validation']}")
     lines += [
         "",
-        "Hypothesise-phase discipline (per pair):",
-        "  Prior-hunt reflection (Q11): Prior minted-config keys to reflect on: "
-        f"{', '.join(prior_keys) if prior_keys else '(none)'}",
-        "    - You NEVER write a config that duplicates a prior one. Before "
-        "writing you MAY call hunts_store(read) to inspect a prior key's config "
-        "and assess overlap; a config you assert as a duplicate is never written.",
-        "  Knowledge-sufficiency decision point (Q9): given this fault class and "
-        "unit type, decide whether you have sufficient knowledge of the previous "
-        "dispatched hunts and all potentially useful insights collected; if not, "
-        "loop the memory reads (hunts_store(read) / notes(read)).",
-        "  Target-knowledge loop (Q9): against the materialised unit (projection "
-        "+ surface), if you lack enough technical knowledge of this unit to "
-        "concretise the abstract fault at this locus, query the attack-surface / "
-        "L1 graph via graph_view, iterating until sufficient.",
-        "  Hypothesis elicitation (Q8): for each unit above, elicit one or more "
-        "vulnerability classes - at the grain of a web-vulnerability CLASS with "
-        "a research-direction rationale (e.g. CSRF, IDOR) - never narrowed to a "
-        "surface locale, payload profile, vector, or symptom; the narrowing "
-        "belongs to the hunting agent at spec-writing.",
-        "  Same-class merge (Q16): if multiple elicited vulnerability classes at "
-        "one locus are the SAME web-vulnerability class, merge them into one; "
-        "only fundamentally discriminable classes survive as distinct configs. "
-        "Pure LLM reflection - no module-side parsing.",
-        "  The hypothesise write (spec 3.3): call hunts_store(write, config, "
-        "status='hypothesised') with ONE draft per surviving class, carrying the "
-        "identity attributes unit_id + fault_class + vulnerability_class (the "
-        "class may be empty for a carried-bare draft) and the TOP-LEVEL "
-        "rationale + research_direction attributes ONLY - the file name and "
-        "hunt_id are DERIVED by the harness from the identity, never authored. A "
-        "payload missing unit_id or fault_class is rejected with a coded error. "
-        "The preconditions / observed-defences analysis is the RATIFICATION "
-        "phase's work (the next phase) - never filled at this hypothesise turn.",
-        "",
-        "Return one direction per candidate: set carried true/false, and for a "
-        "carried direction fill rationale, research_direction, and "
-        "vulnerability_classes ONLY. The preconditions / observed_defences "
-        "are the RATIFICATION phase's work (a later phase) - never a seed you "
-        "fill at this hypothesise turn.",
-        "",
-        "ANSWER FORMAT: answer with the GateDecision structured-output tool ONLY "
-        "(its `directions` list). This is the HYPOTHESISE turn - never answer "
-        "with NoteDecision or RatifyDecision; those belong to the later RATIFY / "
-        "NOTE phase turns.",
+        "Write the gate with ONE `hunts_store` write carrying this state and its "
+        "sections. Then end the reasoning phase with ONE episodic note through "
+        "`notes`: the decision nodes and the rationales of the branches you took.",
     ]
     return "\n".join(lines)
 
 
-def _compose_ratify_prompt(inp: PhaseTurnInput) -> str:
-    """Render the RATIFY-phase input (spec 3.2, re-scoped by #167/#168): the
-    frame OPENS with the L1 ontology primer constant (G9, shared with the gate
-    and note frames), then the pair and the hypothesised drafts it may
-    update/delete/create. The phase transitions ride the tool-call responses
-    (NEXT_RATIFY_HINT on the hypothesised write, ONLY NEXT_NOTE_HINT on the
-    ratified write - G1), never this prompt: the prompt carries the pair data
-    and the ratification contract (must END with a status='ratified' write
-    carrying the filled preconditions / observed_defences, #202)."""
-    pair = inp.pair
-    lines = [L1_ONTOLOGY_PRIMER, ""]
-    lines += [
-        f"RATIFICATION phase (pair {pair.unit_id}::{pair.fault_class}):",
-        f"Hypothesised drafts to ratify: {len(inp.configs)}",
-    ]
-    for config in inp.configs:
-        lines += [
-            f"  - config {config.hunt_id} "
-            f"[vulnerability_class={config.vulnerability_class!r}, "
-            f"status={config.status!r}]",
-            f"    rationale: {config.rationale or '(none)'}",
-            f"    research_direction: {config.research_direction or '(none)'}",
-        ]
-    lines += [
-        "",
-        "Ratification contract: you may call hunts_store(write, config) "
-        "multiple times to update/delete/create configs. The hypothesise seeds "
-        "(rationale / research_direction) carry forward automatically - the "
-        "symbolic layer keeps the pair's canonical values when your write omits "
-        "them, so you need not re-author them. End ratification by a "
-        "hunts_store write carrying status='ratified' and, very likely, the "
-        "filled preconditions (the test's preconditions - the attacker's "
-        "existing capabilities AND the environment conditions the test needs, "
-        "never post-exploitation capabilities) / observed_defences (the "
-        "observed target characteristics that hinder the tests and support a "
-        "falsification). A config you delete during ratification is written "
-        "status='dropped' (it stays on disk, G6).",
-        "",
-        "Return the pair's configs at their final status.",
-    ]
-    return "\n".join(lines)
-
-
-def _compose_note_prompt(inp: PhaseTurnInput) -> str:
-    """Render the NOTE-phase input (spec 3.2/G8, re-scoped by #167/#168): the
-    frame OPENS with the L1 ontology primer constant (G9, shared with the gate
-    and ratify frames), then the pair and its ratified configs. The note-taking
-    verbatim rides the ratified write's tool-call response (NEXT_NOTE_HINT, G1)
-    and the pair-end verbatim rides the notes tool's response (NEXT_PAIR_HINT +
-    next pair) - this prompt carries the pair data and the G8 note contract
-    only."""
-    pair = inp.pair
-    lines = [L1_ONTOLOGY_PRIMER, ""]
-    lines += [
-        f"NOTE phase (pair {pair.unit_id}::{pair.fault_class}):",
-        f"Ratified configs to note: {len(inp.configs)}",
-    ]
-    for config in inp.configs:
-        lines += [
-            f"  - config {config.hunt_id} "
-            f"[vulnerability_class={config.vulnerability_class!r}]",
-            f"    rationale: {config.rationale or '(none)'}",
-            f"    research_direction: {config.research_direction or '(none)'}",
-        ]
-    lines += [
-        "",
-        "Note contract (G8): write ONE note per config covering ALL the "
-        "decisions that concern it - the observations drawn from your tool "
-        "calls (graph_view or memory reads) that drove the rationale on all "
-        "choices - more detailed than the config's rationale and walking the "
-        "reasoning that yielded it.",
-        "",
-        "Return the notes, each keyed to its config.",
-    ]
-    return "\n".join(lines)
+def _render_grounding(value, limit: int = 4000) -> str:
+    """One grounding input rendered for the turn: a mapping as its JSON, a
+    string as itself, an object as its `model_dump` when it has one. Bounded by
+    `limit` characters so one oversized read cannot flood the turn; an absent
+    value renders "" (the caller names the gap)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value[:limit]
+    if hasattr(value, "model_dump"):
+        try:
+            value = value.model_dump(mode="json")
+        except Exception:  # noqa: BLE001 - a render failure is a denoted gap
+            return ""
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)[:limit]
+    except Exception:  # noqa: BLE001 - a render failure is a denoted gap
+        return ""
 
 
 def _parse_json_object(text) -> dict | None:
@@ -676,32 +300,6 @@ def _parse_json_object(text) -> dict | None:
     except (ValueError, TypeError):
         return None
     return obj if isinstance(obj, dict) else None
-
-
-# --- production seam factories ------------------------------------------------
-
-def build_gate_reason_fn() -> Callable[[GateInput], GateDecision]:
-    """The orchestrator's `reason_fn`: the Q8 embedded gate-reasoning turn, run on
-    the `hunting_orchestrator` role with structured `GateDecision` output. Fail-open
-    is the orchestrator's responsibility (a raising `reason_fn` carries every
-    candidate); here a None/unparseable structured result surfaces as an empty
-    decision, which `run_orchestration` treats identically."""
-    def reason_fn(inp: GateInput) -> GateDecision:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        from polymerhus.app.llm.roles import invoke_role
-
-        result = invoke_role(
-            GATE_ROLE,
-            [SystemMessage(content=_gate_skill()),
-             *([HumanMessage(content=inp.overview)] if inp.overview else []),
-             HumanMessage(content=_compose_gate_prompt(
-                 inp, chained=bool(inp.overview)))],
-            schema=GateDecision,
-        )
-        return result if isinstance(result, GateDecision) else GateDecision()
-
-    return reason_fn
 
 
 def build_author_fn() -> Callable[[str], dict | None]:
@@ -765,6 +363,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
                               exec_fn=None, checkpointer=None, model_factory=None,
                               observe: bool = True,
                               http_search_fn=None, http_get_fn=None,
+                              suite_classes=None, suite_read_fn=None,
                               overview_fn=None):
     """Compose the production hunting-agent dispatch seam (as of #164 W5).
 
@@ -777,12 +376,20 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
     keeps its contract; the harness itself spawns no actor turns.
 
     Returns `(dispatch_fn, registry)`: the harness `dispatch_fn` is async-native
-    (see `hunting_agent.build_hunting_agent`); the caller passes it to
-    `run_orchestration`/`arun_orchestration` and reaps the registry (`stop_all`)
-    when the run's orchestration finishes. Construction performs no imports."""
+    (see `hunting_agent.build_hunting_agent`); the run's surfer dispatches with
+    it and reaps the registry (`stop_all`) when the hunt session settles.
+    Construction performs no imports."""
     from polymerhus.attack.hunting.actors import HuntingActorRegistry  # noqa: PLC0415
     from polymerhus.attack.hunting.hunting_agent import build_hunting_agent  # noqa: PLC0415
 
+    if suite_classes is None or suite_read_fn is None:
+        from polymerhus.app.llm.skills import (  # noqa: PLC0415
+            list_suite_leaves,
+            read_suite_raw,
+        )
+
+        suite_classes = list_suite_leaves() if suite_classes is None else suite_classes
+        suite_read_fn = read_suite_raw if suite_read_fn is None else suite_read_fn
     registry = HuntingActorRegistry(run_id, checkpointer=checkpointer,
                                     model_factory=model_factory, observe=observe,
                                     project_id=project_id)
@@ -791,8 +398,9 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
         memory_store=memory_store,
         graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
         http_search_fn=http_search_fn, http_get_fn=http_get_fn,
-        checkpointer=checkpointer, model_factory=model_factory, observe=observe,
+        suite_classes=suite_classes, suite_read_fn=suite_read_fn,
         overview_fn=overview_fn,
+        checkpointer=checkpointer, model_factory=model_factory, observe=observe,
     )
     return dispatch_fn, registry
 

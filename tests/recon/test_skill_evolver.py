@@ -212,9 +212,9 @@ def test_a_grounded_pass_publishes_and_marks_the_lessons_consumed(
     assert outcome.version == "1.1"
     # The boundary-safe composition escapes the separator inside the synthetic
     # run segment, so the id is stable and collision-free.
-    assert outcome.thread_id == "hunting:skill-evolution_proj-1:ssrf:skill_evolver"
+    assert outcome.thread_id == "skills:skill-evolution_proj-1:ssrf:skill_evolver"
     assert outcome.thread_id == ModuleScopedSession(
-        module="hunting",
+        module="skills",
         run_id=f"skill-evolution:{PROJECT}",
         tool=SKILL,
         role_id=EVOLVER_ROLE_ID,
@@ -412,7 +412,7 @@ def test_the_read_surface_is_the_four_named_target_context_tools() -> None:
 
 def test_the_graph_view_in_the_read_surface_refuses_write_shaped_cypher() -> None:
     from polymerhus.app.llm.evolver import build_evolver_read_tools
-    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphViewError
 
     graph = build_evolver_read_tools(PROJECT)[3]
 
@@ -815,8 +815,8 @@ def test_the_controller_survives_a_failing_tick(tmp_path: Path, monkeypatch) -> 
     assert passed == [SKILL]
 
 
-def test_the_evolver_session_id_is_the_run_scoped_q13_shape() -> None:
-    assert evolver_session_id("rt-1") == "hunting:rt-1:evolver"
+def test_the_evolver_session_id_is_the_project_scoped_app_shape() -> None:
+    assert evolver_session_id("rt-1") == "skills:rt-1:evolver"
 
 
 # --- the controller as a first-class hunting session ---------------------------
@@ -872,16 +872,71 @@ def test_the_controller_waits_on_the_shared_gate_at_each_tick(
     assert passed == [SKILL]
 
 
-def test_the_evolver_thread_is_a_first_class_run_session() -> None:
-    """The controller session uses the SAME Q13 run-session typing as the
-    orchestrator and surfer controllers, and the module REST thread endpoint's
-    acceptance predicate (`is_run_session_id`) accepts it. So the REST `pause`,
-    `resume`, and `stop` verbs address the controller by its thread id."""
+def test_the_evolver_thread_is_a_first_class_project_session() -> None:
+    """The controller session is project-scoped on the app `skills` module, so
+    the app project thread index (`/projects/{id}/threads`) and its hold/resume
+    verbs address it by its thread id."""
     from polymerhus.app.llm.evolver import evolver_session_id
-    from polymerhus.attack.hunting.surfer import is_run_session_id
 
-    run_id = "r9"
-    evolver_id = evolver_session_id(run_id)
-    assert evolver_id == f"hunting:{run_id}:evolver"
-    assert is_run_session_id(evolver_id, run_id)
-    assert not is_run_session_id(evolver_id, "another-run")
+    project_id = "r9"
+    evolver_id = evolver_session_id(project_id)
+    assert evolver_id == f"skills:{project_id}:evolver"
+    assert evolver_id.startswith(f"skills:{project_id}:")
+    assert not evolver_id.startswith("skills:another-project:")
+
+
+# --- the app-level project controller lifecycle --------------------------------
+
+
+class _FakeSkillsRuntime:
+    """The minimal runtime surface `ensure_project_evolver` touches."""
+
+    def __init__(self):
+        self.runs: set[str] = set()
+        self.scheduled: list[tuple[str, str]] = []
+
+    def has_run(self, module: str, session_id: str) -> bool:
+        return session_id in self.runs
+
+    def ensure_running(self, module: str) -> None:
+        return None
+
+    def gate(self, module: str):
+        return None
+
+    def schedule(self, module: str, coro, *, name: str):
+        self.scheduled.append((module, name))
+        self.runs.add(name)
+        coro.close()
+        return None
+
+
+def test_ensure_project_evolver_starts_once_per_project() -> None:
+    from polymerhus.app.llm.evolver import ensure_project_evolver
+
+    runtime = _FakeSkillsRuntime()
+
+    async def controller(project_id, *, wait_ready):
+        return None
+
+    first = ensure_project_evolver(
+        "p1", runtime=runtime, controller_fn=controller)
+    second = ensure_project_evolver(
+        "p1", runtime=runtime, controller_fn=controller)
+
+    assert first == second == "skills:p1:evolver"
+    assert runtime.scheduled == [("skills", "skills:p1:evolver")]
+
+
+def test_ensure_project_evolver_is_fail_open_when_admission_refuses() -> None:
+    from polymerhus.app.llm.evolver import ensure_project_evolver
+
+    class _Refusing(_FakeSkillsRuntime):
+        def ensure_running(self, module: str) -> None:
+            raise RuntimeError("module is stopped")
+
+    async def controller(project_id, *, wait_ready):
+        return None
+
+    assert ensure_project_evolver(
+        "p1", runtime=_Refusing(), controller_fn=controller) is None

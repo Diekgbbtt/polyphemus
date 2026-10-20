@@ -2,9 +2,9 @@
 `(project, skill)`, the cap-or-period controller, and the posted-lesson
 injection surface.
 
-There is no skills module: this lives in the app layer beside the skill store,
-because evolution is a behaviour OF the skills-access surface, not a bounded
-context of its own.
+The app-owned `skills` module lives in the app layer beside the skill store:
+evolution is a behaviour OF the skills-access surface, shared across every
+module, and not a bounded context of its own.
 
 The pass is the workflow the role prompt implements:
 
@@ -30,11 +30,13 @@ The pass is the workflow the role prompt implements:
                read - `None` only for `skill_unknown`, D-W3-3), the consumed
                keys, and the thread id
 
-The controller is a per-hunting-run session (scheduled by the hunting bootstrap
-alongside the orchestrator pass and the surfer, cancelled with the run): per
-tick it fires a pass for every skill whose unconsumed count reaches the cap OR
-whose period since the last pass elapsed. The per-skill last-pass timestamps
-are controller-local and in-memory; consumption is the only durable state.
+The controller is a per-PROJECT session on the app-owned `skills` module,
+started on any project launch and shared across every module: per tick it fires
+a pass for every skill whose unconsumed count reaches the cap OR whose period
+since the last pass elapsed. The per-skill last-pass timestamps are
+controller-local and in-memory; consumption is the only durable state. The
+controller's thread is a first-class app thread: the project thread endpoint
+lists it and the hold/resume verbs address it.
 
 Import performs no I/O (CODING_STANDARD section 6): the stores default lazily,
 the prompt is read on first use, and the session/checkpointer seams resolve
@@ -53,6 +55,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; the runtime import is lazy
     from langchain_core.messages import HumanMessage
+
+    from polymerhus.app.llm.checkpoints import FlushResult
 
 from polymerhus.app.data_root import validate_path_component
 from polymerhus.app.llm.session_address import ModuleScopedSession
@@ -84,23 +88,160 @@ EVOLVER_SESSION_SEGMENT = "evolver"
 EVOLUTION_RUN_PREFIX = "skill-evolution"
 
 
-def evolver_session_id(run_id: str) -> str:
-    """The run-scoped controller session id: `hunting:<run_id>:evolver`."""
-    if not run_id:
-        raise ValueError("run_id must be a non-empty string")
-    return f"hunting:{run_id}:{EVOLVER_SESSION_SEGMENT}"
+def evolver_session_id(project_id: str) -> str:
+    """The project-scoped controller session id: `skills:<project_id>:evolver`."""
+    if not project_id:
+        raise ValueError("project_id must be a non-empty string")
+    return f"skills:{project_id}:{EVOLVER_SESSION_SEGMENT}"
 
 
 def evolver_thread_id(project_id: str, skill: str) -> str:
-    """The pass's checkpointer thread: a module-scoped hunting session with the
+    """The pass's checkpointer thread: a module-scoped `skills` session with the
     synthetic `skill-evolution:<project_id>` run segment, discriminated by the
     skill. The same logical pass always derives the same id (no UUID/time)."""
     return ModuleScopedSession(
-        module="hunting",
+        module="skills",
         run_id=f"{EVOLUTION_RUN_PREFIX}:{project_id}",
         tool=skill,
         role_id=EVOLVER_ROLE_ID,
     ).thread_id
+
+
+def flush_skills_checkpointer() -> "FlushResult":
+    """The app-owned `skills` module's tear-down flush hook: archive the module
+    index's committed threads into the still-open pooled saver through the
+    SHARED `flush_module_index("skills")` seam. Fail-open via the shared
+    `flush_seam_result` boundary."""
+    from polymerhus.app.llm.checkpoints import (  # noqa: PLC0415
+        flush_module_index,
+        flush_seam_result,
+    )
+    return flush_seam_result(lambda: flush_module_index("skills"), module="skills")
+
+
+def skills_control_plane_available() -> bool:
+    """True when the app-owned `skills` module is registered on an active
+    runtime. The evolve REST surface fails closed when it is absent."""
+    from polymerhus.app.runtime import get_active_runtime  # noqa: PLC0415
+
+    runtime = get_active_runtime()
+    if runtime is None:
+        return False
+    try:
+        runtime.handle("skills")
+        return True
+    except KeyError:
+        return False
+
+
+async def _gate_wait(runtime) -> None:
+    """One controller-tick unit boundary on the shared `skills` gate: the module
+    pause and the per-session hold both block here."""
+    gate = runtime.gate("skills")
+    if gate is None:
+        return
+    async with gate:
+        return
+
+
+def ensure_project_evolver(
+    project_id: str, *, runtime=None, controller_fn=None
+) -> str | None:
+    """Start the project's SkillEvolver controller on the app `skills` module,
+    once per project. Called on every project launch; idempotent while the
+    controller session is live. Fail-open: a missing runtime or admission
+    refusal returns None and never blocks the launch."""
+    from polymerhus.app.runtime import get_active_runtime  # noqa: PLC0415
+
+    runtime = runtime or get_active_runtime()
+    if runtime is None:
+        return None
+    session_id = evolver_session_id(project_id)
+    coro = None
+    try:
+        if runtime.has_run("skills", session_id):
+            return session_id
+        runtime.ensure_running("skills")
+        controller = controller_fn or arun_evolver_controller
+        coro = controller(project_id, wait_ready=lambda: _gate_wait(runtime))
+        runtime.schedule("skills", coro, name=session_id)
+        return session_id
+    except Exception as exc:  # noqa: BLE001 - fail-open: never block a launch
+        if coro is not None:
+            coro.close()
+        logger.warning(
+            "skill evolver: project controller for %s not started (%s); "
+            "fail-open", project_id, exc,
+        )
+        return None
+
+
+def _finish_record(records, project_id: str, pass_id: str, outcome) -> None:
+    """Stamp the durable pass record; a record failure is warned, never a
+    reason to lose the pass outcome the caller already holds (fail-open)."""
+    try:
+        records.finish(project_id, pass_id, outcome)
+    except Exception as exc:  # noqa: BLE001 - fail-open bookkeeping
+        logger.warning(
+            "skill evolver: could not record the evolution pass %s: %s",
+            pass_id, exc,
+        )
+
+
+def _degraded_outcome(skill: str, exc: Exception) -> "EvolutionOutcome":
+    """The coded outcome a raising forced pass is recorded with."""
+    return EvolutionOutcome(
+        "degraded", skill, detail=f"turn failed: {exc}")
+
+
+def launch_evolution_pass(
+    project_id: str,
+    skill: str,
+    *,
+    pass_fn=None,
+    name=None,
+    records=None,
+    runtime=None,
+) -> Any:
+    """Schedule ONE forced SkillEvolver pass on the app `skills` module.
+
+    The REST trigger and the project controller share the module context and
+    the per-skill thread, so they can never fork the checkpointer state. The
+    pass waits on the shared `skills` gate before it starts, so a project
+    thread hold and a module pause address it like any other app thread."""
+    from polymerhus.app.runtime import get_active_runtime  # noqa: PLC0415
+
+    runtime = runtime or get_active_runtime()
+    if runtime is None:
+        raise RuntimeError("skills control plane is not active")
+    resolved_name = name or evolution_pass_id(project_id, skill)
+
+    async def _invoke():
+        try:
+            outcome = await (pass_fn or arun_evolution_pass)(project_id, skill)
+        except Exception as exc:  # noqa: BLE001 - the record still settles, then re-raise
+            if records is not None:
+                _finish_record(
+                    records, project_id, resolved_name,
+                    _degraded_outcome(skill, exc))
+            raise
+        if records is not None:
+            _finish_record(records, project_id, resolved_name, outcome)
+        return outcome
+
+    async def _run():
+        gate = runtime.gate("skills")
+        if gate is None:
+            return await _invoke()
+        async with gate:
+            return await _invoke()
+
+    coro = _run()
+    try:
+        return runtime.schedule("skills", coro, name=resolved_name)
+    except Exception:  # noqa: BLE001 - close the unscheduled coroutine, re-raise
+        coro.close()
+        raise
 
 
 # --- the durable per-pass record (D-W3-4) -------------------------------------
@@ -386,7 +527,7 @@ def build_evolver_read_tools(project_id: str) -> list:
     from polymerhus.attack.hunting.graph_view_tool import (  # noqa: PLC0415
         build_graph_view_tool,
     )
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+    from polymerhus.attack.hunting.read_only_graph import (  # noqa: PLC0415
         ReadOnlyGraphView,
     )
     from polymerhus.attack.hunting.hunter_tools import (  # noqa: PLC0415
@@ -439,9 +580,9 @@ async def _default_turn_fn(
 ):
     """The production turn seam: one stateful `arun_session_turn` on the pass's
     thread, resolving the checkpointer for the CURRENT module context (the
-    controller runs inside the hunting module context, so the thread lands in
-    the hunting index; the REST-forced pass is wrapped by the hunting
-    launcher). Imports resolve here, never at module import."""
+    controller and the REST-forced pass run inside the app-owned `skills`
+    module context, so the thread lands in the skills index). Imports resolve
+    here, never at module import."""
     from polymerhus.app.llm.checkpoints import get_session_checkpointer  # noqa: PLC0415
     from polymerhus.app.llm.session import arun_session_turn  # noqa: PLC0415
 
@@ -597,18 +738,17 @@ async def arun_evolver_controller(
     period: float | None = None,
     tick: float | None = None,
 ) -> None:
-    """The cap-or-period controller (D232-8): a per-hunting-run session that
-    fires `arun_evolution_pass` for every due skill, per tick, until its
-    `stop_event` is set or the run's terminal path cancels it. Fail-open: a
-    failing tick or pass is warned and the loop continues; the run's status is
-    never affected (the controller is not part of quiesce).
+    """The cap-or-period controller (D232-8): a per-PROJECT session on the app
+    `skills` module that fires `arun_evolution_pass` for every due skill, per
+    tick, until its `stop_event` is set or the app runtime cancels it. It is
+    shared across every module and is not part of any hunting run's quiesce.
+    Fail-open: a failing tick or pass is warned and the loop continues.
 
-    `wait_ready` is the session's unit boundary: an awaitable the run bootstrap
-    binds to the SAME shared hunting gate every agent session uses. It is
-    awaited once per tick, so a module pause and a per-session hold (the module
-    REST `pause`/`resume`/`stop` verbs, by this controller's thread id) stop and
-    release the controller exactly like any other session. `None` (the unit
-    tests and the REPL) runs ungated."""
+    `wait_ready` is the session's unit boundary: an awaitable the project
+    launcher binds to the shared `skills` gate. It is awaited once per tick, so
+    a module pause and a per-session hold (the app thread REST verbs, by this
+    controller's thread id) stop and release the controller exactly like any
+    other session. `None` (the unit tests and the REPL) runs ungated."""
     lesson_store = _resolve_lesson_store(lesson_store, skill_store)
     if stop_event is None:
         stop_event = asyncio.Event()
@@ -704,6 +844,10 @@ __all__ = [
     "append_posted_lessons",
     "arun_evolution_pass",
     "arun_evolver_controller",
+    "ensure_project_evolver",
+    "flush_skills_checkpointer",
+    "launch_evolution_pass",
+    "skills_control_plane_available",
     "build_evolver_read_tools",
     "due_skills",
     "evolution_pass_id",

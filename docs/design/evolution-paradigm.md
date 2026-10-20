@@ -184,3 +184,12 @@ Phase 1 is itself built in iterations. The **current MVP (iteration 1) is reconn
 Explicitly **not** inherited at any phase-1 iteration: anatomy abduction, verification-pod roll-up, assumption-promotion (`DD-27`/`OP-6`), dissemination (`DD-25`/`OP-7`), judge-LLM validation (`DD-31`), the expansion governor (`OP-4`), the pentest-realism wrapper (`DD-2`), manual configuration/triggering and phase-approval orchestration, and the web frontend.
 
 The line to hold across iterations: each delivers a **forward-compatible substrate** — structural seams typed, adversarial content in natural language — so the next iteration, and ultimately phase 2, swaps *reasoning* without rebuilding *substrate*.
+
+---
+
+## 7. The phase-1 unit threat model (minimal citation, 2026-10-19)
+
+Phase 1 now has a threat-model feature: the threat modeller models each L1 unit into a self-standing unit threat model before the hunter executes its ranked loops (`docs/design/hunting-67-threat-modeller-spec.md`, `docs/design/hunting-67-threat-model-artifact-spec.md`).
+Its design model differs from the attack-tree-based models this document anticipates: it is per-unit, trust-driven, flat and likelihood-ranked, and it is not a compatibility contract for the phase-2 recursive attack-chain DAG (R1-1).
+
+The development of the attack-tree-based models should draw inspiration from the insights emerging from the use of the threat model feature, rather than treating the phase-1 artifact as a schema to migrate.

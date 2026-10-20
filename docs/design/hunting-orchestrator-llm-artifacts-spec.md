@@ -1,5 +1,11 @@
 # Hunting spec: hunt-orchestrator LLM-local artifacts (the gate turn's prompt, tool surface, skills, observability)
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 Part of the [#82](https://github.com/Diekgbbtt/polyphemus/issues/82) hunt-orchestrator lineage, extending
 [`hunting-67-orchestrator-spec.md`](hunting-67-orchestrator-spec.md) (the ratified agent contract: role, goal, workflow).
 The parent, merged spec is `docs/design/hunting-67-per-agent-specs-spec.md`; the graph engine this work rides is the

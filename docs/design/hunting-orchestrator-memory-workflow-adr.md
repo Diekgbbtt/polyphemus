@@ -1,5 +1,11 @@
 # ADR: hunt-orchestrator memory + workflow-graph rework (grill dispositions, 2026-08-23)
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 Status: decided (grilling round for the hunt-orchestrator memory and workflow-graph
 rework, 2026-08-23; operator dispositions recorded verbatim where they amend).
 Ticket: #137 (memory system), #142/#143 (memory wiring + live e2e), builds on the

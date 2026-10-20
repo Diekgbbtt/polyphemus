@@ -1,5 +1,11 @@
 # Assertions - system "candidate-creation → projection → gate → mint rewrite"
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 **Source:** docs/design/hunting-orchestrator-candidates-rewrite-spec.md (amended 2026-08-23 by the memory + workflow-graph rework; ADR docs/design/hunting-orchestrator-memory-workflow-adr.md G1-G14 is the authority on the dispositions; docs/design/hunting-memory-system-spec.md is the authority on the memory topology)
 
 **Seams under assertion:** bootstrap + control plane (runtime.py / project_management/api.py), candidate intake (`normalize_candidates`), fault schedule + risk-descending ordering (`fault_risk.risk_tier`), the node-per-phase graph envelope (`orchestrator_graph.py`), the phase canon + LoopLedger + report (`hunt_orchestrator.py`), the HuntStore memory topology + config lifecycle + notes surface (`hunt_store.py`), the three-tool surface `hunts_store` / `notes` / `graph_view` (`actors.py`), the pair-frame prompts (primer + Services/Systems split + discipline verbatims, `llm.py`), the deterministic mint (`mint_hunt_config`), the rich projection (`unit_projection.build_projection`), prior-insight projection (`_prior_config_insight`).

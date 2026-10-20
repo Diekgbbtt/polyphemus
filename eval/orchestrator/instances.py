@@ -54,8 +54,8 @@ def instance_data_root(instances_root: Path | str, instance_id: str) -> Path:
 
     `<instances_root>/data/<instance_id>` is a sibling of the worktree
     (`<instances_root>/<instance_id>`), so removing the worktree never touches
-    the data root - the live evidence (hunt store, project/pod memory, L0+L1
-    graph, auth, skills). It is bind-mounted into the agent container through
+    the data root - the live evidence (threat-model store, project/pod memory,
+    L0+L1 graph, auth, skills). It is bind-mounted into the agent container through
     `INSTANCE_DATA_ROOT` and is the lsyncd sync source.
     """
     return Path(instances_root) / "data" / instance_id
@@ -222,10 +222,11 @@ def ensure_worktree(paths: InstancePaths, run: CommandRunner) -> None:
 def plan_seed_data_root(paths: InstancePaths) -> Command:
     """Copy the worktree's committed `data/` seed into the external data root.
 
-    The app-owned data root carries the TRACKED fault-KB catalogue
-    (`data/hunting/fault-kb.yaml`); the runtime evidence is written beside it.
-    Because the data root lives OUTSIDE the worktree, `up` must seed it from the
-    worktree's committed `data/` (no-clobber, so a resume keeps runtime data).
+    The app-owned data root carries the tracked per-project seed data (the
+    fault-KB catalogue was removed by T10 #383); the runtime evidence is
+    written beside it. Because the data root lives OUTSIDE the worktree, `up`
+    must seed it from the worktree's committed `data/` (no-clobber, so a resume
+    keeps runtime data).
     """
     return Command(
         argv=("cp", "-rn", f"{paths.worktree / 'data'}/.", f"{paths.data_root}/"),

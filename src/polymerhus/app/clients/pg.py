@@ -252,6 +252,62 @@ def set_hunting_run_status(
         )
 
 
+def set_hunting_run_stats(hunting_run_id: str, stats: dict) -> None:
+    """Merge a run record onto a hunting run's row (T3 #376; the `set_run_stats`
+    discipline of #34).
+
+    Additive JSONB: a top-level key REPLACES its previous value, so the driver
+    writes the whole accumulator state (`intake_position`, `risk_total`,
+    `model_sums`, ...) on every update and the row always carries a complete run
+    record. The run's STATUS is deliberately untouched - an operator stop that
+    landed between two record writes must never be resurrected by a stats write.
+    """
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE hunting_runs SET stats = COALESCE(stats, '{}'::jsonb) || %s::jsonb "
+            "WHERE hunting_run_id = %s",
+            (json.dumps(stats or {}), hunting_run_id),
+        )
+
+
+def claim_hunting_run_for_resume(
+    hunting_run_id: str, *, project_id: str, expected_status: str
+) -> dict | None:
+    """Atomically claim a resumable terminal run back to `running` (T11 #398).
+
+    The claim is a CONDITIONAL update: only a row that is still the exact row
+    the decision table read - same project, same terminal status, the run id -
+    transitions. The database serialises the two concurrent claims, so exactly
+    one resume wins and the loser reads `None` (mapped to 409). The row returns
+    to a live shape: `finished_at` is cleared and the provider-pause keys are
+    REMOVED from `stats` (`interrupted`, `interrupt_reason`, `provider_status`,
+    `quota_exhausted`, `retry_after_s`). The clear is the orphan disposition:
+    a resumed-then-crashed row must not keep the pre-resume
+    `quota_exhausted=false`, or the reconcile's restart stamp would look
+    resumable to the decision table. The run RECORD keys stay untouched.
+
+    Returns the claimed row, or None when the claim was lost (a concurrent
+    resume already claimed it, or the row moved on)."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE hunting_runs SET status = 'running', finished_at = NULL, "
+            "stats = COALESCE(stats, '{}'::jsonb) "
+            "  - 'interrupted' - 'interrupt_reason' - 'provider_status' "
+            "  - 'quota_exhausted' - 'retry_after_s' "
+            "WHERE hunting_run_id = %s AND project_id = %s AND status = %s "
+            "RETURNING hunting_run_id, project_id, status, started_at, "
+            "finished_at, COALESCE(stats, '{}'::jsonb)",
+            (hunting_run_id, project_id, expected_status),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "hunting_run_id": row[0], "project_id": row[1], "status": row[2],
+            "started_at": row[3], "finished_at": row[4], "stats": row[5],
+        }
+
+
 def get_hunting_run(hunting_run_id: str) -> dict | None:
     """The 1:1 read path for a hunting run's lifecycle row."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:

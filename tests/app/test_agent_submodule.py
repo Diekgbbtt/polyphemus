@@ -65,7 +65,7 @@ def runtime():
 
 def test_booted_run_roles_are_registered_running(runtime):
     runtime.register_module("hunting")
-    for role in ("orchestrator", "hunter", "pod"):
+    for role in ("threat_modeller", "hunter", "pod"):
         runtime.register_agent_submodule("hunting", "r1", role)
         assert runtime.agent_submodule_state("hunting", "r1", role) is ModuleState.RUNNING
 
@@ -74,7 +74,7 @@ def test_fresh_manager_reports_every_role_running(runtime):
     runtime.register_module("hunting")
     states = runtime.agent_submodule_states("hunting", "r1")
     assert states == {
-        "orchestrator": ModuleState.RUNNING,
+        "threat_modeller": ModuleState.RUNNING,
         "hunter": ModuleState.RUNNING,
         "pod": ModuleState.RUNNING,
     }
@@ -214,7 +214,7 @@ def test_reap_then_read_does_not_recreate_handles(runtime):
     a subsequent state read reports the declared roles but does not put a handle
     back in the registry (spec lines 71-73: handles never outlive the run)."""
     runtime.register_module("hunting")
-    for role in ("orchestrator", "hunter", "pod"):
+    for role in ("threat_modeller", "hunter", "pod"):
         runtime.register_agent_submodule("hunting", "r1", role)
     runtime.reap_agent_submodules("hunting", "r1")
     with runtime._agent_lock:  # noqa: SLF001
@@ -222,7 +222,7 @@ def test_reap_then_read_does_not_recreate_handles(runtime):
 
     states = runtime.agent_submodule_states("hunting", "r1")
     assert states == {
-        "orchestrator": ModuleState.RUNNING,
+        "threat_modeller": ModuleState.RUNNING,
         "hunter": ModuleState.RUNNING,
         "pod": ModuleState.RUNNING,
     }

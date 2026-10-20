@@ -154,7 +154,7 @@ def test_agent_takes_initial_turn_then_listens_and_continues_on_update():
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=saver, inbox=inbox, on_message=on_message,
             model_factory=_seq_factory("a1", "a2"),
             observe=False,
@@ -174,7 +174,7 @@ def test_agent_rests_on_idle_timeout_after_its_turn():
     stops on the idle window rather than spinning."""
     async def _drive():
         return await run_session_agent(
-            "hunting_orchestrator", "r:orch", [HumanMessage(content="hi")],
+            "hunting_threat_modeller", "r:orch", [HumanMessage(content="hi")],
             checkpointer=InMemorySaver(), inbox=AgentInbox(),
             on_message=lambda m, t: None, idle_timeout=0.05,
             model_factory=_seq_factory("a1"), observe=False,
@@ -192,7 +192,7 @@ def test_pure_listener_with_no_initial_turn_stops_on_stop_message():
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "r:orch", None,
+            "hunting_threat_modeller", "r:orch", None,
             checkpointer=InMemorySaver(), inbox=inbox,
             model_factory=_seq_factory("x"), observe=False,
         ))
@@ -228,7 +228,7 @@ def test_inbox_post_hook_delivers_from_a_worker_thread():
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "r:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "r:orch", [HumanMessage(content="start")],
             checkpointer=saver, inbox=inbox, on_message=on_message,
             model_factory=_seq_factory("a1"), observe=False,
         ))
@@ -275,7 +275,7 @@ def test_build_inbox_middleware_after_model_posts_the_result_no_tools():
     inbox = AgentInbox()
     mw = build_inbox_middleware(inbox, source="child-1", on="after_model")
     run_session_turn(
-        "hunting_orchestrator", "r:orch", [HumanMessage(content="go")],
+        "hunting_threat_modeller", "r:orch", [HumanMessage(content="go")],
         checkpointer=InMemorySaver(), middleware=[mw],
         model_factory=_seq_factory("hi"), observe=False,
     )
@@ -388,7 +388,7 @@ def test_actor_survives_a_raising_turn_then_serves_the_next():
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=saver, inbox=inbox, on_message=on_message,
             middleware=[middleware], on_turn_degraded=degraded,
             model_factory=factory, observe=False,
@@ -437,7 +437,7 @@ def test_actor_retries_a_transient_turn_then_serves_the_next(monkeypatch):
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=saver, inbox=inbox, on_message=on_message,
             middleware=[middleware], on_turn_degraded=degraded,
             model_factory=factory, observe=False,
@@ -486,7 +486,7 @@ def test_actor_degrades_after_retry_budget_exhaustion_then_serves_the_next(monke
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=saver, inbox=inbox, on_message=on_message,
             middleware=[middleware], on_turn_degraded=degraded,
             model_factory=factory, observe=False,
@@ -530,7 +530,7 @@ def test_actor_cancellation_propagates_and_never_degrades():
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=saver, inbox=AgentInbox(),
             middleware=[middleware], on_turn_degraded=degraded,
             model_factory=lambda role: _Holding(), observe=False,
@@ -565,7 +565,7 @@ def test_actor_non_retryable_raise_degrades_without_retrying(monkeypatch):
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=saver, inbox=inbox,
             middleware=[middleware], on_turn_degraded=degraded,
             model_factory=factory, observe=False,
@@ -592,7 +592,7 @@ def test_actor_rides_out_a_bare_400_window_with_rotation(monkeypatch):
     from polymerhus.app.llm import actor as llm_actor
     from polymerhus.app.llm.conversation import current_conversation_id
 
-    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.setenv("LLM_HUNTING_THREAT_MODELLER", "opencode-go:deepseek-v4.1-flash")
     monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02, 0.03))
     monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
     seen: list[str] = []
@@ -606,7 +606,7 @@ def test_actor_rides_out_a_bare_400_window_with_rotation(monkeypatch):
 
     async def _drive():
         return await run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=InMemorySaver(), inbox=AgentInbox(),
             idle_timeout=0.05, on_message=lambda m, t: None,
             model_factory=factory, observe=False,
@@ -640,7 +640,7 @@ def test_actor_contract_400_degrades_without_retrying(monkeypatch):
 
     async def _drive():
         task = asyncio.ensure_future(run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=saver, inbox=inbox,
             middleware=[middleware], on_turn_degraded=degraded,
             model_factory=factory, observe=False,
@@ -666,10 +666,10 @@ def test_actor_falls_back_to_the_model_once_on_transient_exhaustion(monkeypatch)
     from polymerhus.app.llm import actor as llm_actor
     from polymerhus.app.llm.session import SessionTurn
 
-    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.setenv("LLM_HUNTING_THREAT_MODELLER", "opencode-go:deepseek-v4.1-flash")
     monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01,))
     monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
-    monkeypatch.setenv("LLM_FALLBACK_HUNTING_ORCHESTRATOR", "opencode-go:glm-5.2")
+    monkeypatch.setenv("LLM_FALLBACK_HUNTING_THREAT_MODELLER", "opencode-go:glm-5.2")
     calls: list[dict] = []
 
     async def fake_turn(role_id, thread_id, messages, *, model_override=None,
@@ -685,7 +685,7 @@ def test_actor_falls_back_to_the_model_once_on_transient_exhaustion(monkeypatch)
 
     async def _drive():
         return await run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=InMemorySaver(), inbox=AgentInbox(),
             idle_timeout=0.05, on_message=lambda m, t: None, observe=False,
         )
@@ -709,8 +709,8 @@ def test_actor_does_not_retry_or_fall_back_on_a_non_lane_400(monkeypatch, body):
     the configured fallback - a deterministic client error stays deterministic."""
     from polymerhus.app.llm import actor as llm_actor
 
-    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode-go:deepseek-v4.1-flash")
-    monkeypatch.setenv("LLM_FALLBACK_HUNTING_ORCHESTRATOR", "opencode-go:glm-5.2")
+    monkeypatch.setenv("LLM_HUNTING_THREAT_MODELLER", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.setenv("LLM_FALLBACK_HUNTING_THREAT_MODELLER", "opencode-go:glm-5.2")
     monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02, 0.03))
     monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
     calls: list[dict] = []
@@ -724,7 +724,7 @@ def test_actor_does_not_retry_or_fall_back_on_a_non_lane_400(monkeypatch, body):
 
     async def _drive():
         return await run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=InMemorySaver(), inbox=AgentInbox(),
             idle_timeout=0.05, on_message=lambda m, t: None, observe=False)
 
@@ -742,14 +742,14 @@ def test_actor_records_one_transient_counter_per_attempt(monkeypatch):
     reset_transient_counts()
     monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02))
     monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
-    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.setenv("LLM_HUNTING_THREAT_MODELLER", "opencode-go:deepseek-v4.1-flash")
 
     def factory(role_id):
         return _Boom(exc=_bare_400())
 
     async def _drive():
         return await run_session_agent(
-            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            "hunting_threat_modeller", "run1:orch", [HumanMessage(content="start")],
             checkpointer=InMemorySaver(), inbox=AgentInbox(),
             idle_timeout=0.05, on_message=lambda m, t: None,
             model_factory=factory, observe=False,
@@ -757,5 +757,5 @@ def test_actor_records_one_transient_counter_per_attempt(monkeypatch):
 
     asyncio.run(_drive())
     counts = transient_counts()
-    assert counts[("hunting_orchestrator", "opencode-go:deepseek-v4.1-flash",
+    assert counts[("hunting_threat_modeller", "opencode-go:deepseek-v4.1-flash",
                    "model")] == 2

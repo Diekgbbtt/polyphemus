@@ -81,13 +81,29 @@ def test_variant_refs_expose_every_tried_variant():
 def test_triager_context_surfaces_prior_variants_for_non_duplication():
     log = ExperimentLog()
     log.record_variant(VariantSpec(ref="v0", spec={}))
-    log.record_variant(VariantSpec(ref="v1", parent_ref="v0", spec={}))
+    log.record_variant(VariantSpec(ref="v1", parent_ref="v0"))
     log.record_interpretation(Interpretation(variant="v0", classification="symptom-absent",
                                              note="no reflection"))
     ctx = log.triager_context({"target_identity": {"url": "http://svc/", "unit_id": "svc"}},
                               RawObservation(status=200, body="hi"))
     assert "v0" in ctx and "v1" in ctx           # sees what was tried
     assert "never mine a duplicate" in ctx.lower()
+
+
+def test_triager_context_carries_variant_bases_and_executed_probes():
+    """S5 8.6 step 2: the executed procedure comes from the D6 trail - the
+    variant bases (the duplicate guard's first half) and the probe commands."""
+    log = ExperimentLog()
+    log.record_variant(VariantSpec(
+        ref="v1", parent_ref="v0", declined_attribute="bypass-technique",
+        spec={"rationale": "swap the id in the signed URL"}))
+    log.record_observation(RawObservation(
+        variant_ref="v1", request={"command": "curl -k https://svc/item/2"}, status=404))
+    ctx = log.triager_context({"target_identity": {"url": "http://svc/", "unit_id": "svc"}},
+                              None)
+    assert "bypass-technique" in ctx
+    assert "swap the id in the signed URL" in ctx
+    assert "curl -k https://svc/item/2" in ctx
 
 
 def test_runner_context_lists_executed_signatures():

@@ -1,5 +1,11 @@
 # Hunting spec: the candidate-creation → projection → gate → mint rewrite
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 Part of the [`#82`](https://github.com/Diekgbbtt/polyphemus/issues/82) hunt-orchestrator lineage, continuing
 [`#110`](https://github.com/Diekgbbtt/polyphemus/issues/110) (the stateful per-fault-unit orchestration + graph engine),
 and realising the candidate-creation / projection scope opened by
@@ -8,7 +14,12 @@ The current integrated ancestors are `docs/design/hunting-orchestrator-llm-artif
 LLM-local artifacts) and the #67 orchestrator + hunting-agent contracts
 (`docs/design/hunting-67-orchestrator-spec.md`, `docs/design/hunting-67-p-hunting-agent-spec.md`).
 
-*Status: spec (contract), NOT implementation.* This document is the operator-locked design for a near from-scratch
+*Status: spec (contract), NOT implementation.*
+
+**SUPERSEDED 2026-10-18 for the hunt-orchestrator.** The candidate-creation, projection, gate, and mint pipeline is retired with the threat modeller rewrite (`docs/design/hunting-67-threat-modeller-spec.md`).
+The typed applies-if predicate and the sound unit-projection remain as L1 substrate contracts.
+
+This document is the operator-locked design for a near from-scratch
 rewrite of the system that turns the `FaultSource` candidate set into dispatched `HuntConfig`s, driven by the five-stage
 pipeline (`grill-me -> to-spec -> to-tickets -> to-assertions -> implement -> code-review`). The grilling is complete;
 all sixteen decisions (Q1-Q16) plus the two operator corrections (the LLM-only Q16 gate and the tool split of

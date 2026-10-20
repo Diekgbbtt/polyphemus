@@ -49,13 +49,9 @@ def _resolved(outcome) -> concurrent.futures.Future:
 
 
 def _patch(monkeypatch, *, project: bool = True, plane: bool = True):
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-
     monkeypatch.setattr(pg, "project_exists", lambda pid: project)
-    monkeypatch.setattr(
-        hunting_runtime, "hunting_control_plane_available", lambda: plane
-    )
-    return hunting_runtime
+    monkeypatch.setattr(evolver, "skills_control_plane_available", lambda: plane)
+    return evolver
 
 
 def test_launch_returns_the_identifier_and_starts_a_running_record(
@@ -63,10 +59,10 @@ def test_launch_returns_the_identifier_and_starts_a_running_record(
 ) -> None:
     """#232 D232-10 / D-W3-4: the launch does not await the pass; it hands back
     the identifier and the durable record the status endpoint answers for."""
-    hunting_runtime = _patch(monkeypatch)
+    evolver = _patch(monkeypatch)
     seen: dict = {}
     monkeypatch.setattr(
-        hunting_runtime,
+        evolver,
         "launch_evolution_pass",
         lambda pid, skill, **kw: seen.update(pid=pid, skill=skill, **kw)
         or _resolved(None),
@@ -93,9 +89,9 @@ def test_status_serves_the_finished_record_with_the_outcome(
 ) -> None:
     """D-W3-4: given the identifier, the status endpoint returns the pass
     outcome; here the launcher's finish is driven through the same store."""
-    hunting_runtime = _patch(monkeypatch)
+    evolver = _patch(monkeypatch)
     monkeypatch.setattr(
-        hunting_runtime,
+        evolver,
         "launch_evolution_pass",
         lambda pid, skill, **kw: _resolved(None),
     )
@@ -108,7 +104,7 @@ def test_status_serves_the_finished_record_with_the_outcome(
             "ssrf",
             version="1.1",
             consumed_keys=("skill:ssrf:1",),
-            thread_id="hunting:skill-evolution_p1:ssrf:skill_evolver",
+            thread_id="skills:skill-evolution_p1:ssrf:skill_evolver",
         ),
     )
 
@@ -124,7 +120,7 @@ def test_status_serves_the_finished_record_with_the_outcome(
         "skill": "ssrf",
         "version": "1.1",
         "consumed_keys": ["skill:ssrf:1"],
-        "thread_id": "hunting:skill-evolution_p1:ssrf:skill_evolver",
+        "thread_id": "skills:skill-evolution_p1:ssrf:skill_evolver",
         "detail": "",
     }
 
@@ -132,9 +128,9 @@ def test_status_serves_the_finished_record_with_the_outcome(
 def test_status_survives_a_process_restart(monkeypatch, records, records_root) -> None:
     """The record is DURABLE: a fresh store instance (a later process, a
     different service) reads the same record with no in-memory state."""
-    hunting_runtime = _patch(monkeypatch)
+    evolver = _patch(monkeypatch)
     monkeypatch.setattr(
-        hunting_runtime,
+        evolver,
         "launch_evolution_pass",
         lambda pid, skill, **kw: _resolved(None),
     )
@@ -159,9 +155,9 @@ def test_status_unknown_identifier_404(monkeypatch) -> None:
 
 
 def test_status_is_scoped_to_the_projects_records(monkeypatch, records) -> None:
-    hunting_runtime = _patch(monkeypatch)
+    evolver = _patch(monkeypatch)
     monkeypatch.setattr(
-        hunting_runtime,
+        evolver,
         "launch_evolution_pass",
         lambda pid, skill, **kw: _resolved(None),
     )
@@ -184,12 +180,12 @@ def test_status_refuses_an_unsafe_identifier_with_404(monkeypatch, records) -> N
 def test_a_refused_launch_leaves_no_record_behind(monkeypatch, records) -> None:
     from polymerhus.app.runtime import ModuleAdmissionRefused
 
-    hunting_runtime = _patch(monkeypatch)
+    evolver = _patch(monkeypatch)
 
     def refuse(pid, skill, **kw):
         raise ModuleAdmissionRefused("module 'hunting' is draining")
 
-    monkeypatch.setattr(hunting_runtime, "launch_evolution_pass", refuse)
+    monkeypatch.setattr(evolver, "launch_evolution_pass", refuse)
 
     resp = client.post("/projects/p1/skills/ssrf/evolve", json={})
 
@@ -198,7 +194,7 @@ def test_a_refused_launch_leaves_no_record_behind(monkeypatch, records) -> None:
 
 
 def test_launch_appends_posted_lessons_before_the_pass(monkeypatch, records) -> None:
-    hunting_runtime = _patch(monkeypatch)
+    evolver = _patch(monkeypatch)
     order: list[tuple] = []
 
     def record_append(pid, skill, lessons, **kw):
@@ -207,7 +203,7 @@ def test_launch_appends_posted_lessons_before_the_pass(monkeypatch, records) -> 
 
     monkeypatch.setattr(evolver, "append_posted_lessons", record_append)
     monkeypatch.setattr(
-        hunting_runtime,
+        evolver,
         "launch_evolution_pass",
         lambda pid, skill, **kw: order.append(("launch", pid, skill))
         or _resolved(None),
@@ -231,10 +227,10 @@ def test_launch_appends_posted_lessons_before_the_pass(monkeypatch, records) -> 
 
 
 def test_launch_unknown_project_404(monkeypatch, records) -> None:
-    hunting_runtime = _patch(monkeypatch, project=False)
+    evolver = _patch(monkeypatch, project=False)
     called: list[str] = []
     monkeypatch.setattr(
-        hunting_runtime,
+        evolver,
         "launch_evolution_pass",
         lambda pid, skill, **kw: called.append(pid) or _resolved(None),
     )
@@ -289,3 +285,60 @@ def test_an_unwritable_record_refuses_the_launch_503(monkeypatch) -> None:
 
     assert resp.status_code == 503
     assert "pass record unavailable" in resp.json()["detail"]
+
+
+# --- the app-level project thread index ---------------------------------------
+
+
+class _FakeSkillsRuntime:
+    def __init__(self):
+        self.runs = [
+            "skills:p1:evolver",
+            "skills:evolve:p1:ssrf",
+            "skills:p2:evolver",
+        ]
+        self.held: set[str] = set()
+
+    def handle(self, module: str):
+        return object()
+
+    def run_ids(self, module: str) -> list[str]:
+        return list(self.runs)
+
+    def is_session_held(self, module: str, thread_id: str) -> bool:
+        return thread_id in self.held
+
+    def hold_session(self, module: str, thread_id: str) -> None:
+        self.held.add(thread_id)
+
+    def resume_session(self, module: str, thread_id: str) -> None:
+        self.held.discard(thread_id)
+
+
+def test_project_thread_index_lists_and_controls_only_its_skills_threads(
+    monkeypatch,
+) -> None:
+    from polymerhus.project_management import api as api_mod
+
+    runtime = _FakeSkillsRuntime()
+    monkeypatch.setattr(api_mod, "_runtime", lambda: runtime)
+
+    listed = client.get("/projects/p1/threads")
+    assert listed.status_code == 200
+    assert [t["thread_id"] for t in listed.json()] == [
+        "skills:evolve:p1:ssrf",
+        "skills:p1:evolver",
+    ]
+
+    held = client.post("/projects/p1/threads/skills:p1:evolver/stop")
+    assert held.status_code == 200
+    assert held.json()["state"] == "held"
+    assert runtime.held == {"skills:p1:evolver"}
+
+    resumed = client.post("/projects/p1/threads/skills:p1:evolver/resume")
+    assert resumed.status_code == 200
+    assert resumed.json()["state"] == "resumed"
+    assert runtime.held == set()
+
+    foreign = client.post("/projects/p1/threads/skills:p2:evolver/stop")
+    assert foreign.status_code == 404
