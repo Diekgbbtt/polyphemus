@@ -107,6 +107,47 @@ The final section regroups the entries by failure domain and common root cause.
 - **Domain:** graph query and coupling.
 - **Root cause:** the query reads `l0.label`, while the L0 node records expose their identity on `name`/`properties`, not a top-level `label` property.
 
+### F-011 - A model-client cleanup task raised after its event loop closed
+
+- **Detected:** during the canary analysis.
+- **Signal:** `Task exception was never retrieved` with `httpx.AsyncClient.aclose` raising `RuntimeError: Event loop is closed`.
+- **Impact:** a background cleanup error; the model calls still completed.
+- **Evidence:** the app log at 22:26:28 and later.
+- **Status:** open; low severity.
+- **Domain:** async lifecycle and observability.
+- **Root cause:** a LangChain/OpenAI async client cleanup is scheduled after its worker loop closes; the request path is not failed.
+
+### F-012 - The L0 technology and observation queries use mismatched schema names
+
+- **Detected:** during the canary analysis.
+- **Signal:** Neo4j `UnknownRelationshipTypeWarning: HAS_TECHNOLOGY` and `UnknownPropertyKey: key`; the live graph uses `USES_TECHNOLOGY` and stores observation identity on `name`/`properties`.
+- **Impact:** the technology and observation projections return no rows; the analysis grounding is weaker.
+- **Evidence:** the app log at 22:12:47 and the graph label inventory.
+- **Status:** open; medium severity.
+- **Domain:** graph query and coupling.
+- **Root cause:** the read query and the write schema diverged; the warning is swallowed as a graph query result.
+
+### F-013 - The canary analysis did not drain under the global 0.4 threshold
+
+- **Detected:** canary attempt 2.
+- **Signal:** recon completed with the five-job subset; `mechanism_typist` reached 649,011 tokens against a 400,000 budget; the compaction ledger kept `over_budget=True` with no reduction; the analysis stayed `draining`; the graph stopped at 2,112 nodes and one `AGGREGATES` edge; no hunting run started.
+- **Impact:** the canary never reached hunting; no trial record was written; the 7M token budget was not the limiter (950,531 capped, 13,567,363 total, 54 calls).
+- **Evidence:** the analysis status, usage ledger, app log, and the missing hunting tree.
+- **Status:** mitigated; retest pending.
+- **Resolution:** the analysis roles `mechanism_typist` and `assigner` now override the global `0.4` with `0.2`; the hunting roles keep `0.4`. The agent was recreated with the new environment.
+- **Domain:** analysis, compaction, and configuration.
+- **Root cause:** a 1,128-asset katana family enters one mechanism-typist chunk; at `0.4` the thread grew to 649K and the compaction path did not reduce it. The 0.2 analysis threshold is the pre-0.4 behavior and gives the compaction a 200K trigger.
+
+### F-014 - The gateway sync logs a gateway key in a request URL
+
+- **Detected:** on the app restart after the canary abort.
+- **Signal:** `INFO httpx: HTTP Request: GET http://127.0.0.1:4000/key/info?key=sk-ph-...`.
+- **Impact:** an internal gateway key is written to the agent container log; the log is root-readable on the eval server.
+- **Evidence:** the agent startup log at 22:43:50.
+- **Status:** open; security finding.
+- **Domain:** secret handling and logging.
+- **Root cause:** the gateway sync uses the key as a query parameter and httpx's INFO logger records the full URL. The key should be sent in a header or the URL must be redacted before the log record.
+
 ## Runtime trials
 
 ### Canary attempt 1 - comfyui-1 - project c289978e-c321-4ff2-894d-587b12f575f2
@@ -120,6 +161,29 @@ The final section regroups the entries by failure domain and common root cause.
 - **Early tokens:** about 1.55M capped before the abort; assigner, mechanism_typist, and triager only.
 - **Trial record:** none; the client was terminated before the terminal write.
 - **Disposition:** smoke failure only; a fresh canary is required with the five-job subset.
+
+### Canary attempt 2 - comfyui-1 - project f02194fa-e6de-4fe4-a640-ebfdd434e213
+
+- **Started:** 2026-10-20T22:26:01Z.
+- **Recon:** complete with the five-job subset: `httpx`, `katana`, `jsluice`, `httpx_reprofile`, `arjun`.
+- **Target:** t-1fc05262.target, front 200.
+- **L0/L1 after recon:** 2,112 nodes; 22 L1 Services, 9 L1 Systems, 328 Endpoints, 1,722 Headers, 10 Parameters, 4 Secrets; one `AGGREGATES` edge.
+- **Analysis:** never drained; `mechanism_typist` 649,011 tokens, budget 400,000, `over_budget=True`, no reduction.
+- **Tokens at abort:** 950,531 capped, 13,567,363 raw, 54 calls.
+- **Hunting:** none.
+- **Trial record:** none; the client was terminated.
+- **Disposition:** smoke failure F-013; retest with the analysis-role `0.2` override.
+
+### Canary attempt 3 - comfyui-1 - pending
+
+- **Started:** 2026-10-20T22:45Z (approximately).
+- **Trial PID:** 2192994.
+- **Eval SHA:** `a4f47939`.
+- **Stack fingerprint:** `8d3f079c93337c4c628f100ad0cb797f11d8829a33c0a31abc2ce29afed17b36`.
+- **Instance env hash:** `577e942c0acd12e779bd54ad5199061ea8e69f75acee1a4bd023647f26fb782f`.
+- **Compaction:** global 0.4; analysis roles 0.2.
+- **Status:** running.
+- **Gate:** if the analysis drains, proceed; if it stalls again, stop and escalate the compaction path.
 
 ## Final clustering
 

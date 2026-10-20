@@ -55,7 +55,8 @@ The new app surfaces are present, including `/projects/{id}/threads` and the dat
 
 The trial record must stamp:
 - `eval_sha` = the dev commit the instance mounts.
-- `stack_fingerprint` = a deterministic hash of the dev SHA and the running agent and LightRAG image identities.
+- `stack_fingerprint` = a deterministic hash of the dev SHA, the running agent and LightRAG image identities, and the SHA-256 of the instance `.env` file.
+The `.env` hash covers the effective role, model, thinking, budget, and compaction configuration without printing any secret.
 
 ## Runtime configuration
 
@@ -369,9 +370,10 @@ The evaluation is complete when:
 ## Current preflight state
 
 Completed:
-- dev force-pushed at `5df29930`; deploy-eval succeeded;
-- instance worktree reset to `5df29930`;
+- dev force-pushed at `a4f47939`; deploy-eval succeeded;
+- instance worktree reset to `a4f47939`;
 - `.env` overwritten and preflight-clean;
+- the five-job recon subset is wired through the setup and the trial;
 - agent, LightRAG, and kali recreated;
 - app health `ok`;
 - new thread and skills endpoints present;
@@ -381,16 +383,22 @@ Completed:
 - measurement subagent prompt and role;
 - per-trial measurement wrapper `eval/measure_trial.sh`.
 
+Canary history:
+- attempt 1 used the platform default recon plan and stalled on `steel_crawl` against the remote Steel runtime;
+- the recon was stopped, the client was terminated, and no trial record was written;
+- attempt 2 used the five-job recon subset and completed recon;
+- attempt 2 then stalled in analysis: `mechanism_typist` reached 649,011 tokens against a 400,000 budget at the global `0.4`, the compaction log kept `over_budget=True` with no reduction, and the analysis never drained;
+- attempt 2 produced no hunting run and no trial record;
+- the analysis worker was cleared by an agent restart;
+- the analysis roles now compact at `0.2`; the hunting roles remain at `0.4`.
+
 Pending:
-- restart the canary with the five-job recon subset;
+- canary attempt 3 with the analysis-role compaction override;
 - canary measurement;
 - the remaining seven trials.
 
-Pre-run correction:
-- the first canary used the platform default recon plan and stalled on
-  `steel_crawl` against the remote Steel runtime;
-- the recon was stopped, the client was terminated, and no trial record was
-  written;
-- the `recon_jobs` setup field and the trial launch selector were added;
-- the failed canary is a smoke failure, not a measured trial;
-- the measured run uses the five-job subset.
+Pre-run corrections:
+- attempt 1: added the five-job recon subset, because the platform default includes `steel_crawl` and `ffuf`, and the remote Steel runtime cannot reach the synthetic host;
+- attempt 2: added the role-specific analysis compaction override, because the global `0.4` did not drain the 1,128-asset mechanism-typist chunk;
+- the failed attempts are smoke failures, not measured trials;
+- the measured run uses the five-job subset and the role-specific compaction thresholds.
