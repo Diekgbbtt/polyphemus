@@ -20,20 +20,33 @@ The production pod's replay path keeps its unit and contract coverage in
 `tests/attack/pod/test_react_seams.py` and
 `tests/attack/pod/test_request_ref.py`.
 
-A replacement LIVE replay-lineage gate is a separate ticket, not a T10b
-deliverable. T10a deleted the gate as a forced consequence of the
-`hunting_pod.py` removal; T10a also deleted
+A replacement LIVE replay-lineage gate was a separate follow-up, not a T10b
+deliverable; it is delivered below. T10a deleted the gate as a forced
+consequence of the `hunting_pod.py` removal; T10a also deleted
 `tests/e2e/test_hunting_agent_walkthrough.py`, which was restored (it
 collects and its two carried skeletons skip) because it imports neither
 removed module.
 
-## Proposed follow-up (not built)
+## Delivered follow-up - the live replay-lineage gate
 
-A replacement LIVE replay-lineage gate is proposed as a separate ticket:
-it drives the production pod's recorded-baseline replay end to end against a
-live target and asserts the replayed artifact's lineage (`derived_from`,
-`replay_kind`).
-T10b does not build it.
+`tests/e2e/test_pod_replay_lineage.py` replaces the retired
+`tests/e2e/test_http_proxy_history.py`.
+It is the live acceptance gate for the production replay path, which now lives
+on the test-executor pod's runner:
+
+- execute a safe authenticated POST through the Kali MCP;
+- find the baseline by method/header/cookie/query/status/body marker and assert
+  its request body `capture_state == "captured"` (the only replayable state);
+- author the reduced D4 with `provenance.baseline_ref` and no
+  `payload_vector_space`;
+- drive `runner_react_tools(...).replay`, bound to the real capture-plane
+  `default_replay_fn`, with a declared `query.q` mutation;
+- assert the new artifact's `derived_from` / `replay_kind`, the untouched
+  request attributes, the unchanged baseline, cross-project `not_found`, and
+  sanitized evidence.
+
+The old live policy is kept: the test fails when the Kali MCP or capture plane
+is unavailable, unless `KALI_HTTP_E2E_ALLOW_SKIP=1` is set (then it skips).
 The production replay path keeps its unit and contract coverage in
 `tests/attack/pod/test_react_seams.py` and `tests/attack/pod/test_request_ref.py`.
 

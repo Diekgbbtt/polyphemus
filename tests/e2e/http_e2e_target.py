@@ -31,28 +31,41 @@ class Handler(BaseHTTPRequestHandler):
         self._reply()
 
     def do_HEAD(self) -> None:  # noqa: N802
-        self._reply(body=False)
+        self._reply(write_body=False)
 
-    def _reply(self, *, body: bool = True) -> None:
+    def do_POST(self) -> None:  # noqa: N802
+        # The replay-lineage gate needs a CAPTURED request body: only captured
+        # bytes are replayable, and the body marker proves the replay kept them.
+        # GET stays the documented 5-line body; the echo exists only here.
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        self._reply(request_body=body.replace("\r", "").replace("\n", ""))
+
+    def _reply(
+        self, *, write_body: bool = True, request_body: str | None = None
+    ) -> None:
         query = _query(self.path)
         cookie_value = _cookie_value(self.headers.get("Cookie", ""), "sid")
         expected_cookie = os.environ.get("KALI_HTTP_E2E_COOKIE_VALUE", "e2e-session")
         marker = self.headers.get("X-E2E-Marker", "")
         auth_present = "1" if self.headers.get("Authorization") else "0"
         cookie_ok = "1" if cookie_value == expected_cookie else "0"
-        payload = (
-            f"marker={marker}\n"
-            f"query_q={query.get('q', '')}\n"
-            f"query_stable={query.get('stable', '')}\n"
-            f"cookie_ok={cookie_ok}\n"
-            f"auth_header_present={auth_present}\n"
-        ).encode("utf-8")
+        lines = [
+            f"marker={marker}",
+            f"query_q={query.get('q', '')}",
+            f"query_stable={query.get('stable', '')}",
+            f"cookie_ok={cookie_ok}",
+            f"auth_header_present={auth_present}",
+        ]
+        if request_body is not None:
+            lines.append(f"body_marker={request_body}")
+        payload = ("\n".join(lines) + "\n").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("X-E2E-Target", "http-e2e-target")
         self.end_headers()
-        if body:
+        if write_body:
             self.wfile.write(payload)
 
     def log_message(self, _format: str, *args) -> None:

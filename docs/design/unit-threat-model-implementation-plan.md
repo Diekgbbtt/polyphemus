@@ -582,7 +582,9 @@ with the legacy `hunting_pod.py`. The gate exercised the retired
 not survive the module removal. The production pod's replay path keeps its
 unit/contract coverage (`tests/attack/pod/test_react_seams.py`,
 `tests/attack/pod/test_request_ref.py`); a replacement LIVE replay-lineage
-gate is a separate ticket, not a T10b deliverable. Recorded here and on #397.
+gate was a separate follow-up, not a T10b deliverable. Recorded here and on
+#397. The follow-up is delivered as `tests/e2e/test_pod_replay_lineage.py`
+(see #397).
 
 **Acceptance criteria.**
 - The eval artifacts use the loop and spec-set vocabulary; a pre-mined config cannot pass as a satisfied prerequisite.

@@ -48,7 +48,7 @@ consequences were not cosmetic:
 | 1 | every request/response leaving the kali container is recorded, with HAR-like breadth | **partial**: it holds for **leased** traffic (with a `project_id`) on ports **80/443** |
 | 2 | artifacts can be queried by any recorded attribute | **implemented** (EAV index + FTS) |
 | 3 | artifacts are durable and addressable through a stable id | **implemented** (SQLite + blob + ULID), with a byte ceiling |
-| 4 | a hunter spec (or the pod) can reference a safe request by identifier | **implemented** (`request_ref` + `replay` tool, with no validation layer: ruling #191) |
+| 4 | a hunter spec (or the pod) can reference a safe request by identifier | **implemented** (`provenance.baseline_ref` + `replay` tool, with no validation layer: ruling #191) |
 
 ### 1.3 The defects the implementation had to close
 
@@ -111,7 +111,7 @@ Found along the way, in order of discovery (all with evidence, see §3 and the t
 Four independent units, as in the original design: **capture plane** (mitmproxy, transparent
 routing, normalization), **store** (immutable ids, index, content-addressed blobs), **access
 plane** (MCP search/get/replay with per-project isolation), **integration** (capture context, D6
-references, deterministic resolution of `request_ref`).
+references, deterministic resolution of `provenance.baseline_ref`).
 
 ### 2.2 Walkthrough: the life of a request
 
@@ -331,7 +331,8 @@ missing seed, on IPv6, on unknown jobs), the katana command byte-identical to th
 Tests: `tests/kali/*` (store and MCP surface contract), `tests/recon/test_pod_capture_context.py`
 (context and coverage in the pod), `tests/recon/test_pipeline.py` (aggregation),
 `tests/e2e/test_recon_crawl_katana_depth.py` (live crawl-only gate + capture + replay),
-`tests/e2e/test_http_proxy_history.py` (the #196 history gate), `tests/attack/*` (tool bindings).
+`tests/e2e/test_pod_replay_lineage.py` (the live replay-lineage gate that
+replaced the retired #196 history gate), `tests/attack/*` (tool bindings).
 
 ---
 
