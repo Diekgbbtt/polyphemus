@@ -477,10 +477,11 @@ class Role:
 # The `thinking` baseline is set on the agents that reason hard enough to benefit
 # (operator direction): the analysis proposers, the recon triager, and the
 # recon-orchestrator (which shares the `job_orchestrator` role, `orchestrator_agent.py`).
-# The rest stay `off`. `hunting_hunter` is `high`; `hunting_threat_modeller` is
-# `medium` (its gate turns are reasoning-heavy but turn-count-bounded); the
-# pod's roles (`pod_runner` / `pod_triager`) are `high` like the hunter (D84-1). These are TUNABLE
-# baselines; #99 makes them capability-adaptive and fail-safe per model.
+# The rest stay `off`. The eval configuration raises the two design roles to
+# `xhigh` (the app's highest declared level; the provider's own `max` is selected
+# by the nearest-at-least-as-much negotiation); the pod's roles (`pod_runner` /
+# `pod_triager`) stay `high` (D84-1). These are TUNABLE baselines; #99 makes them
+# capability-adaptive and fail-safe per model.
 # `agent_mode="session"` marks the roles that run STATEFUL per instance (#94): the
 # per-pod triager and configurator (their own pod session thread each), the
 # per-run orchestrator actor, and the analysis proposers (per-pass stateful turns).
@@ -511,8 +512,10 @@ ROLES: tuple[Role, ...] = (
 # probe/interpret work.
 HUNTING_ROLES: tuple[Role, ...] = (
     # The threat modeller (S1 4.1): the planner role renamed in place.
-    Role("hunting_threat_modeller", "LLM_HUNTING_THREAT_MODELLER", "session", "medium"),
-    Role("hunting_hunter",       "LLM_HUNTING_HUNTER",       "session", "high"),
+    # The eval runs both design roles at the highest declared level (`xhigh`,
+    # negotiated to the provider's `max`); the pod roles stay `high`.
+    Role("hunting_threat_modeller", "LLM_HUNTING_THREAT_MODELLER", "session", "xhigh"),
+    Role("hunting_hunter",       "LLM_HUNTING_HUNTER",       "session", "xhigh"),
     Role("pod_runner",           "LLM_POD_RUNNER",           "session", "high"),
     Role("pod_triager",          "LLM_POD_TRIAGER",          "session", "high"),
 )
