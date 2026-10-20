@@ -33,7 +33,7 @@
 | T11 | **DELIVERED** - the run resume trigger: the operator verb (the auto-resume health checker remains a follow-up) | T3 | S1 7.5; #331 ESCALATED item 2; impact map 3.5 |
 
 The frontier is T1, T5, and T8.
-The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4a, T4b, T5, T6, T7, T8, T9, T10a, T10b.
+The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4a, T4b, T5, T6, T7, T8, T9, T10a, T10b, T11.
 A different order is valid when the blockers are closed.
 The T2 split is recorded in the ticket tracker: #375 (T2a), #386 (T2b), and the folded T2c scope in #376, #377, and #379.
 The T4 split is recorded in the ticket tracker: #377 (T4a) and #387 (T4b).
@@ -593,6 +593,26 @@ gate is a separate ticket, not a T10b deliverable. Recorded here and on #397.
 - The doc link check passes.
 - The targeted eval, e2e, and hunting suites pass.
 
+### T11 - Run resume trigger: the operator verb
+
+Delivered at `c66967b0`; tracked on #398.
+
+**What to build.**
+The pure `resume_decision` table.
+The `POST /projects/{project_id}/hunting/{hunting_run_id}/resume` operator verb.
+The atomic claim with the pause-key clear.
+The live-run guard after the claim with the status and pause-key restore.
+The intake freeze consuming the resume decision.
+
+**Acceptance criteria.**
+- The decision table covers every row.
+- The endpoint returns 404 for an unknown project or run, 409 for a non-resumable status or a lost claim, and 202 on admission.
+- The claim is atomic; a lost claim is 409.
+- An admission failure restores the status and the pause keys.
+- The resumed run re-enters at the position and does not re-freeze; a halted run resumes dispatch only.
+- The same run's loops dispatch; a foreign run's do not.
+- The auto-resume health checker is a recorded follow-up.
+
 ## 6. TDD loop per ticket
 
 1. Read the ticket and the named spec sections.
@@ -640,7 +660,7 @@ Findings that the spec review cannot cover, such as stale docs after a retiremen
 
 ## 9. Definition of done
 
-- All twelve tickets are closed.
+- All fourteen implementation tickets are closed.
 - The targeted unit, integration, and e2e suites pass.
 - The spec review passes for every ticket.
 - The documentation sweep finds no live obsolete verbatim.
