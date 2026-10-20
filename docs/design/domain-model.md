@@ -136,6 +136,8 @@ The fault-hypothesis lives inside a technique's reasoning for the duration of th
 
 It is deliberately named ahead of the code: phase 3 and its technique/probe machinery are the deferred Stage-3 signature-evaluation engine (`NM-8`, `L1D-29`), so everything in this section is **designed-not-built** except the one built instance named below.
 
+**Boundary: this is not the hunting fault entity.** The threat-model `Fault`, `Loop`, and `Vulnerability` are model artifacts of the web-vulnerability pipeline (S1/S2). They are not this phase-3 fault-hypothesis, and no hunting path reads this primitive. The unit-threat-model redesign retired the fault-hypothesis vocabulary from the hunting prompt, the hunter store, and the eval (T7/T10). This section remains the analysis-side Stage-3 ontology, designed-not-built under `NM-8`/`L1D-29`; the owning workstream is the analysis engine, not the hunting pipeline.
+
 **What it is.** A fault-hypothesis is a *defeasible, falsifiable* claim of the form "unit U, at locus L, could exhibit fault-class F, because property P is assumed there and P may not hold" - a structured belief with an explicit refutation criterion, exactly the `define-hypothesis` discipline the analyser is meant to acquire (`AMV-1`).
 
 It is not an observation (nothing has been witnessed) and not a bare inference (it asserts a *fault*, not merely a structure); it is the escalation of an inference into a testable adversarial claim, exercised in phase 3 rather than stored in either layer.
