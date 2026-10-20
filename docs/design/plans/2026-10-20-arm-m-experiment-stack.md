@@ -591,7 +591,44 @@ Fill this section after every step.
   The prompt test asserts both edges and the account-creation rule.
 - The fix is committed and the same batch is re-run as attempt 2.
 
-### Batch 2 - attempt 2 pending
+### Batch 2 - E1 attempt 2 (pass)
+
+- Trial `white-jotter-1-20261020T125212-1618c524`, project `53dc6c5b-592a-49c4-9c33-0f984d0cb9c4`, `target_run_id: armm-wj-e1`.
+- Recon: complete; analysis: drained; hunting: stopped at the 4M token budget.
+- Spend: 4,082,214 tokens, overshoot 82,214.
+- GT: **0.760317** against the 0.696825 high.
+  The delta is **+0.063492**.
+- The runtime's 0.711111 included a run-variance `006` M4 gain (0.5) that did not repeat.
+  Against the high every non-E1 item returned to its high value, so the delta is exactly the three M4 gains:
+  `002` +0.1667, `004` +0.1667, `007` +0.1111, divided by 7 = +0.0635.
+- The three E1 M4 items land:
+  - `002` M4 rises 0.5 -> 1.0; `article-publishing` and `account-registration` both match.
+  - `004` M4 rises 0.5 -> 1.0; both match.
+  - `007` M4 rises 0.667 -> 1.0; the `AUTHORIZED_BY` item matches.
+- Per-spec (high -> E1):
+  - `001` 0.800 -> 0.800;
+  - `002` 0.589 -> 0.756;
+  - `003` 1.000 -> 1.000;
+  - `004` 0.767 -> 0.933;
+  - `005` 0.833 -> 0.833;
+  - `006` 0.333 -> 0.333;
+  - `007` 0.556 -> 0.667.
+- The committed `AUTHORIZED_BY` count is 7:
+  the five admin services (`article-management`, `book-management`, `navigation-menu`, `role-permission-administration`, `user-administration`) plus `register` (alias `account-registration`) and `sign-in`.
+  The 7 is inside the 6-7 gate; the two edges beyond the high's 5 are exactly the account-creation and sign-in links.
+- The remaining stable gaps are unchanged:
+  - `004` M3 `username` is missing (0.8);
+  - `005` M2 `keywords` is missing;
+  - `006` M4 is missing again, so the runtime's 0.5 was run variance.
+- Rec 1: zero `triager structured-channel` recoveries.
+- Rec 2: no transport error, no `Traceback` in the app log.
+- Reload: `AGENT_UVICORN_ARGS` is empty and the log has zero `StatReload` entries.
+- Source hash: `5651d301ae457ffb0193c6a028aa85423206724f03ecc2c25397e734d48b154d` on both sides; the local and instance manifests are identical.
+- The plan's earlier E1 expected 0.7746 assumed the runtime's `006` M4 gain persisted.
+  The clean high-relative result is 0.7603.
+- Decision: **pass**; advance to E3.
+
+### Batch 3 - E3 pending
 
 ### Batch 3 - pending
 
