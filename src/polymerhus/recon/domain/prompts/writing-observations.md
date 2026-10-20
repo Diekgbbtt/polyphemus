@@ -12,6 +12,13 @@ You record *what is worth a security analyst's attention about it*.
 
 Return an empty list whenever nothing rises above "already captured as an asset." Empty is the correct and common answer.
 
+## Deliver the batch as a tool call
+
+Your answer is the `_ObservationBatch` tool call.
+Pass the JSON payload as the tool arguments.
+Do not write the payload as message text.
+The workflow reads the tool call, not the message text.
+
 ## The anchor rule (this is the one that silently loses your work)
 
 Every Observation MUST anchor on exactly one of these five broad node types:

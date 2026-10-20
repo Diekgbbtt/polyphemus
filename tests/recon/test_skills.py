@@ -95,6 +95,23 @@ def test_triager_loader_reads_module_prompt():
     assert skill is _load_triager_skill()  # memoized on first call
 
 
+def test_triager_prompt_names_the_structured_delivery_tool():
+    """Arm M rec 1: the triager prompt must name the `_ObservationBatch` tool.
+
+    The prompt is the leading prefix of the structured call; without the
+    delivery line the model can return fenced JSON in message text and the
+    session has to recover it. The recovery is fail-open, so the line is the
+    primary channel, not a duplicate of the session instruction.
+    """
+    from polymerhus.recon.domain.pod import _load_triager_skill
+
+    skill = _load_triager_skill()
+
+    assert "_ObservationBatch" in skill
+    assert "tool call" in skill
+    assert "message text" in skill
+
+
 def test_triager_loader_fail_closed_on_missing_prompt(monkeypatch):
     import pathlib
 

@@ -12,6 +12,7 @@ Stdlib only. Import performs no I/O (CODING_STANDARD section 6).
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -113,13 +114,26 @@ class HttpApiRunner:
 
     A non-2xx raises `ApiError` carrying the status and the server's `detail`
     (the same best-effort detail extraction as `ph.py`); a transport failure
-    raises with status 0. The trial treats a raise as a hard failure - the
-    live-run budget/timeout handling is the caller's, not this seam's.
+    raises with status 0. An idempotent `GET`/`HEAD` transport failure is
+    retried `retries` times with an exponential backoff before the terminal
+    `ApiError`, so the trial records a failed phase instead of aborting on a
+    raw `TimeoutError`.
     """
 
-    def __init__(self, base_url: str, *, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout: float = 30.0,
+        retries: int = 2,
+        backoff_s: float = 1.0,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.retries = max(0, retries)
+        self.backoff_s = max(0.0, backoff_s)
+        self._sleep = sleep
 
     def __call__(self, call: ApiCall) -> dict:
         url = f"{self.base_url}{call.path}"
@@ -132,14 +146,25 @@ class HttpApiRunner:
             data = json.dumps(call.body).encode()
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=call.method)
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                payload = response.read()
-                return json.loads(payload) if payload else {}
-        except urllib.error.HTTPError as exc:
-            raise ApiError(call, exc.code, _http_detail(exc)) from exc
-        except urllib.error.URLError as exc:
-            raise ApiError(call, 0, str(exc.reason)) from exc
+        attempts = self.retries + 1 if call.method in {"GET", "HEAD"} else 1
+        for attempt in range(attempts):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    payload = response.read()
+                    return json.loads(payload) if payload else {}
+            except urllib.error.HTTPError as exc:
+                raise ApiError(call, exc.code, _http_detail(exc)) from exc
+            except (TimeoutError, urllib.error.URLError) as exc:
+                if attempt + 1 >= attempts:
+                    reason = getattr(exc, "reason", None) or str(exc)
+                    raise ApiError(
+                        call,
+                        0,
+                        f"{type(exc).__name__}: {reason} "
+                        f"(after {attempt + 1} attempt(s))",
+                    ) from exc
+                self._sleep(self.backoff_s * (2**attempt))
+        raise AssertionError("unreachable: the retry loop always returns or raises")
 
 
 def _http_detail(exc: urllib.error.HTTPError) -> str:

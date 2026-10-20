@@ -38,6 +38,19 @@ Every `systems` entry carries an `evidence` list of L0 node references - the hea
 - A claim with no witness in the slice is STILL emitted, with an empty `evidence` list: withholding a System you cannot ground is your judgment at hypothesise-time, never a reason to drop it here, and never a reason to invent a node.
 - On EXTEND, name the witness behind the NEW facts you folded in: the edges already in the graph stay (the write never deletes one).
 
+## Link each System to its Services
+
+A description says WHAT the System is; the `system_edges` say WHERE the hunter can reach it.
+A System with no Service edge is unusable: the hunter can see the mechanism, but it cannot reach the surface.
+Link each System to the exact Services the evidence supports - the exact `service_slug`, the exact `rel`, and the System's kind.
+
+- Emit one edge per (service, System) pair as a `system_edges` entry: `service_slug` copies the Service slug verbatim, `kind` and `discriminator` name the System, and `rel` is the one label this mechanism owns.
+- Never duplicate a pair. Two entries with the same `service_slug`, `kind`, and `discriminator` are one edge; the second is a defect, not extra signal.
+- Link every Service the evidence supports, not only the chunk's PRIMARY Service. `prefer PRIMARY` orders the links; it does not restrict them.
+- An authorization System's gate filters every route its chain covers, including anonymous-allowed routes. A public presentation route still sits behind the gate when the same Service's protected routes do, so it is evidence for the link, not against it.
+- The account-creation Service is in the same chain. The Service whose route mints the accounts or roles the gate authorizes gains `AUTHORIZED_BY` even when that route answers anonymously - the self-service registration Service is the canonical case. Link it even when the linking task lists it as SECONDARY; `prefer PRIMARY` orders the links, it never excludes an evidenced link.
+- Do not invent a gate edge. A Service gains `AUTHORIZED_BY` only when a witness shows the gate on that Service's surface; a shared login page alone is not a per-Service authorization boundary.
+
 ## Judge each proposal critically
 
 - **Evidence sufficiency.** Is the signal *necessary and specific* to this mechanism, or would it fit three others equally? Weak, non-discriminating evidence is a reason to withhold, not to guess.
@@ -49,7 +62,7 @@ Every `systems` entry carries an `evidence` list of L0 node references - the hea
 
 - Deliver the payload below by CALLING the `L1DeltaBatch` tool with the JSON as its arguments - never by writing the JSON in your message text; the tool call is the only channel the workflow reads.
 - Emit typed proposals only: `systems` (a known `kind` + `discriminator` default `__singleton__`, with a `description` in `props` and the witness nodes in `evidence`) and `system_edges` (service_slug + System kind + the exact `rel`). A `systems` entry whose key already exists UPDATES that System: the `props` you emit REPLACE the stored values, so re-emit every attribute you want kept. Leave `services`, `aggregates`, and all data lists EMPTY - dedicated proposers own those.
-- Edge labels are exactly: `EXPOSED_VIA` (REST/GraphQL API), `FRONTED_BY` / `PROTECTED_BY` / `ROUTED_BY` (perimeter: CDN / WAF / reverse proxy / gateway), `IDENTIFIED_BY` (session/cookie identification), `AUTHENTICATED_BY` (authentication mechanism), `AUTHORIZED_BY` (authorization system), `SHAPES_DATA_OF` (CSP/CORS integration). Copy each `service_slug` verbatim; prefer the PRIMARY services (those that already aggregate this chunk's assets).
+- Edge labels are exactly: `EXPOSED_VIA` (REST/GraphQL API), `FRONTED_BY` / `PROTECTED_BY` / `ROUTED_BY` (perimeter: CDN / WAF / reverse proxy / gateway), `IDENTIFIED_BY` (session/cookie identification), `AUTHENTICATED_BY` (authentication mechanism), `AUTHORIZED_BY` (authorization system), `SHAPES_DATA_OF` (CSP/CORS integration). Copy each `service_slug` verbatim; prefer the PRIMARY services (those that already aggregate this chunk's assets), but never drop an evidenced link: `prefer PRIMARY` orders the links, it never restricts them - emit a link for every Service the evidence supports, including a SECONDARY Service whose route carries the evidence.
 - You never set provenance or write status; those are stamped by the system. Return empty lists if the slice supports no confident System - an honest empty result is correct; a fabricated one is a defect.
 
 ## Worked examples - imitate the REASONING SHAPE, never the domain
@@ -66,7 +79,21 @@ Technical Systems are ubiquitous across application domains, so these span *asse
 
 **Example 5 - EXTEND an existing System (compounding by overwrite).** Currently-defined: `AuthenticationMechanism :: bearer-token auth`. New asset this batch: `/oauth/authorize` + `Set-Cookie: idp_session=…`. Observation: "OAuth authorize endpoint." Hypothesise: this EXTENDS the existing `AuthenticationMechanism` (not a new System) - an OAuth/IdP realm on the same mechanism. Verify: same mechanism, new realm. Type: reuse key `AuthenticationMechanism`, and emit the FULL rewritten description - `bearer-token auth AND an OAuth/IdP authorize flow; token issuance now spans two realms, so a token minted in one realm can be replayed against the other (confused deputy)`. That whole string REPLACES the stored one, so it restates the old fact AND the new; link `AUTHENTICATED_BY` from the newly-touched service. `evidence` names the witness of the NEW facts (the `idp_session` `Header` node and/or the `/oauth/authorize` `Endpoint`); the edge an earlier wave wrote stays in the graph, so an older witness need not be re-emitted.
 
-**Example 6 - a role-gated response (define AuthorizationSystem, no deep pyramid).** Asset: `/admin/users` returns 403 for a normal principal. Observation: "role-gated admin surface." Hypothesise an authorization System overlaying the admin service. Verify: the 403 witnesses enforcement; do NOT reverse-engineer the role hierarchy (that is deep profiling, a later phase). Type: new `AuthorizationSystem`, description "role-gated admin surface; the gate itself is the boundary to probe"; link `AUTHORIZED_BY`. Stop at existence + linkage.
+**Example 6 - a role-gated response (define AuthorizationSystem, carry the authorization primitives, then link every Service its gate covers).** Asset: `GET /api/admin/users` answers 302 to a dead-looking path for an unauthenticated caller and 403 for an authenticated non-admin, while the SPA shell `GET /admin` answers anonymously. Observation: "role-gated administration surface with a redirect-shaped refusal." Hypothesise an authorization System overlaying the admin area. Verify: the 302 and the 403 witness enforcement; the anonymous shell is the same Service's presentation route, not a second Service; one bounded READ-ONLY request to a second admin route shows whether the filter applies per-route. Type: new `AuthorizationSystem`, description "Role-gated administration surface: the gate keys on an authenticated principal, not on mere cookie presence (the login request carries the account name (`username`) in its payload, the session cookie names the principal, and the observed roles are `admin` and `user`), and enforcement is per-route over `/api/admin/*`, so `GET /api/admin/users` carries the payload, a route that omits the filter is directly reachable, and the refusal is a 302 redirect to a dead-looking path, not a 401/403 challenge. The accounts the filter authorizes are minted by the self-service registration route, so the gate reads a trust boundary the registration Service writes, and the deny path logs the attacker-controlled principal from the `username` request parameter by concatenation." The full route chain is `GET /admin` (shell, anonymous) -> `GET /api/admin/users` (302 or 403): the gate filters every route its chain covers, including anonymous-allowed routes, so the shell is evidence for the link. The account-registration Service is the second link: its `POST /api/register` answers anonymously, but it mints the accounts the gate authorizes, so it sits inside the authorization chain. Emit both edges:
+
+```yaml
+system_edges:
+  - service_slug: admin
+    kind: AuthorizationSystem
+    discriminator: __singleton__
+    rel: AUTHORIZED_BY
+  - service_slug: account-registration
+    kind: AuthorizationSystem
+    discriminator: __singleton__
+    rel: AUTHORIZED_BY
+```
+
+`evidence` names the 403 `Endpoint` node - `{label: Endpoint, identity: {method: GET, path: /api/admin/users, baseurl: <the host>}}` - the anonymous `POST /api/register` `Endpoint` - `{label: Endpoint, identity: {method: POST, path: /api/register, baseurl: <the host>}}` - and the shell `Endpoint` when the graph holds it. Do not reverse-engineer the role hierarchy (that is deep profiling, a later phase). Stop at existence + linkage.
 
 **Example 7 - mint a System and set its description to a VERBATIM text (imitate this shape).** Asset: `POST /graphql` returning `application/json`, technology "Apollo Server". Observation: "introspection answered on a production host." Hypothesise a `GraphQLApi` System. Verify: the path, the JSON content type and the technology are each specific to a GraphQL surface - confident. Type: new `GraphQLApi`, and set `description` to EXACTLY this kind of text (this length, this adversarial emphasis; never copy its words): `GraphQL API at POST /graphql (Apollo Server). Introspection is answered on a production host, so the full schema - types, fields, mutations - is enumerable unaided; aliasing and batched queries are the next levers to test.` Link `EXPOSED_VIA`.
 
@@ -75,6 +102,26 @@ Technical Systems are ubiquitous across application domains, so these span *asse
 ## Writing a System description
 
 The `description` is the one attribute the next batch reads, so write it to be imitated:
-- one or two sentences, in the present tense, naming the MECHANISM and the SERVICES-agnostic facts it rests on;
+- one or two sentences, in the present tense, naming the MECHANISM and the service-agnostic facts it rests on;
+- carry the observed primitives that make the mechanism adversarially usable - the facts the next phase would otherwise have to re-derive - and never inflate with boilerplate;
 - end on the adversarial edge - what the evidence makes attackable (the bypass, the replay, the enumerable schema);
 - fold every fact you want kept into the single string you emit; a re-emission REPLACES the stored text, so an omitted fact is a lost fact.
+
+An `AuthorizationSystem` description carries the observed primitives that shape its trust boundary:
+- the request object that carries the identification material - an `Authorization` header or JWT, a specific cookie, and every request-payload parameter the evidence shows, named literally (for example `username`) - and whether the gate keys on an authenticated principal or on mere presence of the carrier. Name EVERY observed carrier, and give the carrier class alongside the specific name: a `JSESSIONID` or `rememberMe` value is a cookie, so write "the JSESSIONID cookie"; a form field is a request parameter, so write "the `username` request parameter". A description that names only the specific token omits the class the next phase reads;
+- any privilege level the evidence shows (the application's role vocabulary), named as observed and never invented into a hierarchy;
+- the refusal shape with the literal status vocabulary - write `302 redirect` for a redirect (not just `302`), or a `401`/`403` challenge - so the next phase can tell a redirect-shaped gate from a challenge;
+- the breadth of the protected surface - whether enforcement is per-route, so a route that omits the filter is directly reachable;
+- the observed trust-agreement semantics on the authorization axis, applied to the Services the evidence supports: who grants access, what the gate reads, and where the trust boundary sits - and when the deny path logs or reflects the principal, name the request parameter that carries it (for example `username`). The account-creation route's request parameter (the `username` field) is the principal carrier the account store receives; name it.
+Keep the description to at most three sentences and name the protected route families, never every route: the primitives are the payload, an enumeration is not.
+A bounded READ-ONLY probe is allowed to shape that boundary - one request to a second route to see whether the filter applies per-route; never extensive probing and never a hierarchy dump.
+The full primitive coverage is a later threat-modelling phase; capture what the evidence shows now.
+
+Before you emit an `AuthorizationSystem` description, check that it names each observed item:
+- the cookie class, not only its `JSESSIONID` or `rememberMe` name;
+- the `username` request parameter when the account-creation route or the deny path carries the principal - read the register form or the recorded request if the map omits the field name;
+- the refusal shape as `302 redirect` or a `401`/`403` challenge;
+- the observed role vocabulary;
+- the per-route filter and the directly reachable route;
+- the Services inside the trust boundary.
+If an observed item is absent from the text, add it before the call; if the evidence does not show it, leave it out.

@@ -57,6 +57,10 @@ services:
       # same value as the CLI. Empty means the remote cloud; the instance .env
       # carries the operator's value, and no default ships in the repo.
       STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
+      # A frozen trial source must never restart the API under a live status
+      # poll. The dev overlay sets `--reload`; this overlay is applied last and
+      # wins (the arm L trial-2 abort was a reload-window read timeout).
+      AGENT_UVICORN_ARGS: ""
 
   tests:
     env_file:

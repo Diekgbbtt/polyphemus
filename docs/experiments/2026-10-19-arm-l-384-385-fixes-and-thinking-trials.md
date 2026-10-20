@@ -227,6 +227,8 @@ The next iteration's leverage is elsewhere: the hunting budget schedule (four of
 | Budget-aware hunting schedule (Tier-0/Tier-1 interleave or reserve) | next iteration | - |
 | Re-run the `max` arm end-to-end if hunting comparability is required | operator decision | - |
 
+Follow-up documents: `docs/experiments/2026-10-19-arm-l-recommendations-1-2-overview.md` (failure modes, root causes and fixes for the two accepted recommendations) and `docs/experiments/2026-10-19-arm-l-high-vs-max-analysis-comparison.md` (the analysis-only comparison and the analysis-owned residual experiments).
+
 ## Appendix
 
 ### Raw Data

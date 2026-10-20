@@ -176,6 +176,23 @@ def _merge_witnesses(primary, fallback) -> list:
     return merged
 
 
+def _union_system_edges(*groups) -> list:
+    """Union System-edge proposals from the extraction and linking calls, deduped
+    on the edge identity (service_slug, kind, discriminator, rel). The extraction
+    call may emit an edge the linking call repeats or omits; the committed set is
+    the union, not the linking call alone (arm M E4)."""
+    seen: set = set()
+    union: list = []
+    for group in groups:
+        for edge in (group or []):
+            key = (edge.service_slug, edge.kind, edge.discriminator, edge.rel)
+            if key in seen:
+                continue
+            seen.add(key)
+            union.append(edge)
+    return union
+
+
 def _reconcile_webpresentation(systems: list, edges: list) -> tuple[list, list]:
     """Deterministically enforce the two #53 invariants a two-call typist cannot -
     WebPresentation UNIQUENESS and coherent service-LINKING - and return the repaired
@@ -653,6 +670,11 @@ def type_mechanisms(
             schema=L1DeltaBatch,
         ) or L1DeltaBatch()
 
+    # arm M E4: the extraction call may already carry System edges; the linking
+    # call is a second chance, not the only source. Union both before the
+    # reconciliation, and use the union for the trace and the returned batch.
+    combined_edges = _union_system_edges(systems_batch.system_edges, link_batch.system_edges)
+
     # #18/observability: persist the typist's STRUCTURED output (systems + edges, with each
     # system's kind/discriminator) alongside its reflection prose - otherwise the WHAT it
     # proposed (not just the WHY) leaves no inspectable trace (moodique cc29fd4a).
@@ -663,12 +685,12 @@ def type_mechanisms(
                                          for s in (list(systems_batch.systems) + list(link_batch.systems))],
                              "edges": [{"service_slug": e.service_slug, "kind": e.kind,
                                         "discriminator": e.discriminator, "rel": e.rel}
-                                       for e in (link_batch.system_edges or [])]})
+                                       for e in combined_edges]})
 
     merged_systems = _merge_systems(systems_batch.systems, link_batch.systems)
     # #53: the two structured calls disagree on the WebPresentation discriminator; deterministically
     # de-duplicate the singleton and snap its orphaned edge to the real per-cluster node.
-    reconciled_systems, reconciled_edges = _reconcile_webpresentation(merged_systems, link_batch.system_edges)
+    reconciled_systems, reconciled_edges = _reconcile_webpresentation(merged_systems, combined_edges)
     combined = L1DeltaBatch(
         systems=reconciled_systems,
         system_edges=reconciled_edges,
