@@ -779,8 +779,23 @@ Fill this section after every step.
   Source hash: `a7dfefb094e7b104cc3be9d4a478e533c12944bc3e4a4cb5c3692b52a1e4b39c`.
 - Decision: fail the gate; re-run as attempt 2.
 
-### Batch 5 - E6 attempt 2 pending
+### Batch 5 - E6 attempt 2 (gate not met; metric unstable)
 
-### Batch 5 - pending
+- Project `95859030-d704-4165-aa64-9980d5aeda02`, `target_run_id: armm-wj-e6`.
+- Trial `white-jotter-1-20261020T182749-1618c524`; stopped after the analysis with **1,102,409** tokens.
+- Recon: complete; analysis: drained at 18:25; hunting: stopped after the gate.
+- GT: **0.812698**, identical to attempt 1; against the 0.696825 high the delta is +0.115873.
+- Placement recovered to **60 of 114** endpoints (**62** aggregates), near the high's 71/73, so the PRIMARY anchor restoration worked.
+- The `SHAPES_DATA_OF` gate still reads **1** service, and the committed system edges are **41** (22 lost against the E4's 62; 1 gained, `media-asset-serving` `AUTHORIZED_BY`).
+- The gate metric is not stable on identical code: the E3 attempts on the E4 base read **3, 10, 10, 1** `SHAPES_DATA_OF` services and **47, 58, 48, 31** system edges; the high reads **8** / **44**, the E4 **9** / **62**, the E6 attempts **1** / **43** and **1** / **41**.
+  The two E6 attempts land on the same floor the E3 attempt 4 (the E4's base run, without the E6 sentence) already hit.
+- Conclusion: the E6 change is not proven harmful, and its GT and placement are non-regressive, but the `SHAPES_DATA_OF` / link-retention gate **cannot be credited as passed**: the run-to-run variance (1-10 services, 31-62 edges on identical code) exceeds the effect.
+  The E6 stays on the branch as an unvalidated clarification, recorded as a caveat, not as a gate pass.
+- Rec 1: zero recoveries.
+  Rec 2: no transport abort; the provider's transient `503 Endpoint is unavailable` responses were retried.
+  Reload: zero `StatReload` entries.
+  Source hash: `65c9e8ae6918fb1778f58c5db93fcf58eaeca494fcd8bd2f1b0ea91c119a3832`.
+- Decision: **gate not met**; record the caveat and continue to E7 so the last batch is measured.
+  The E6 change can be dropped later without disturbing E1/E3/E4/E7.
 
-### Batch 6 - pending
+### Batch 6 - E7 pending
