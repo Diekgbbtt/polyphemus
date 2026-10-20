@@ -484,3 +484,22 @@ def test_D8_host_level_secret_rides_the_host_family_via_its_edge():
     (chunk,) = chunks_for_job(JOB, [_asset("BaseURL", url=BU), secret, _hdr("server")])
     assert {a.type for a in chunk.assets} == {"BaseURL", "Secret", "Header"}
     assert chunk.assets[0].type == "BaseURL"
+
+
+def test_D3b_a_family_above_the_hard_cap_splits():
+    """A single oversized family must not defeat the model context bound.
+
+    The canary's 1,128-Endpoint katana family reached 592K mechanism-typist
+    tokens. A family above CHUNK_MAX_ASSETS now splits into ordered hard-cap
+    sub-chunks; normal families stay atomic.
+    """
+    chunks = chunks_for_job(
+        JOB, [_ep(f"/hard{i}") for i in range(400)],
+        target_assets=100, max_assets=300,
+    )
+    assert [len(c.assets) for c in chunks] == [300, 100]
+    assert {a.identity["path"] for c in chunks for a in c.assets} == {
+        f"/hard{i}" for i in range(400)
+    }
+    assert [c.batch_index for c in chunks] == [0, 1]
+    assert [c.batch_total for c in chunks] == [2, 2]

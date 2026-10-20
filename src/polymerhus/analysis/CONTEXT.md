@@ -428,7 +428,7 @@ The COLLAPSE keeps the FIRST occurrence of each `(type, identity)`; recon re-emi
 The GROUP turns the deduped stream into topology FAMILIES: a `host-meta` family per BaseURL (the BaseURL with its Headers, Technologies, Certificates and host-level Secrets) and one `endpoints` family per `(baseurl, content-class bucket)`, the Endpoints with their Parameters and endpoint-anchored Secrets. Endpoint BUCKETS read the recorded `content_type` prop: `code` / `visual` / `html` / `data` / `other`. Anchorless assets (e.g. a Subdomain) keep their own singleton family and still stream (the fork-H guarantee).
 
 **Chunk target (soft)**:
-`CHUNK_TARGET_ASSETS` is a target, NOT a cap: families are ATOMIC and are added whole, so a chunk closes once the added families cross the target while a single family larger than it goes whole.
+`CHUNK_TARGET_ASSETS` is a soft target: families are ATOMIC up to `CHUNK_MAX_ASSETS`, so a chunk closes once the added families cross the target while a family larger than the hard cap splits into ordered hard-cap sub-chunks. The cap exists because one oversized family (the canary's 1,128-Endpoint katana family) drove the mechanism-typist thread to 592K tokens and defeated compaction at both 0.4 and 0.2.
 `batch_index` / `batch_total` still order the chunks and the tail is never dropped.
 A chunk is therefore a graph neighbourhood (a host's metadata, or an endpoint bucket with its parameters), never an array slice.
 

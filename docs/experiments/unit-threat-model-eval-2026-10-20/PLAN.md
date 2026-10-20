@@ -393,12 +393,14 @@ Canary history:
 - the analysis roles now compact at `0.2`; the hunting roles remain at `0.4`.
 
 Pending:
-- canary attempt 3 with the analysis-role compaction override;
+- canary attempt 4 with the analysis-role compaction override and the 300-asset chunk cap;
 - canary measurement;
 - the remaining seven trials.
 
 Pre-run corrections:
 - attempt 1: added the five-job recon subset, because the platform default includes `steel_crawl` and `ffuf`, and the remote Steel runtime cannot reach the synthetic host;
 - attempt 2: added the role-specific analysis compaction override, because the global `0.4` did not drain the 1,128-asset mechanism-typist chunk;
+- attempt 3: proved the `0.2` override alone is insufficient; the family still entered as one 592K recent block;
+- attempt 3: added the hard `CHUNK_MAX_ASSETS=300` chunk cap, which splits only an oversized family into ordered sub-chunks;
 - the failed attempts are smoke failures, not measured trials;
-- the measured run uses the five-job subset and the role-specific compaction thresholds.
+- the measured run uses the five-job subset, the role-specific compaction thresholds, and the hard chunk cap.

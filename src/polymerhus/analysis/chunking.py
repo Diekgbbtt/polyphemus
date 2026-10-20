@@ -47,10 +47,18 @@ logger = logging.getLogger(__name__)
 
 # The per-chunk SOFT target (#13's asset budget, reshaped 2026-10-15 by T3). It is
 # a target, NOT a cap: the builder adds whole topology FAMILIES and closes a chunk
-# once the added families cross this count, so a chunk can exceed it and a family
-# never splits (see `chunks_for_job`; rationale in
+# once the added families cross this count, so a chunk can exceed it. Families are
+# atomic UP TO the hard cap below (see `chunks_for_job`; rationale in
 # `docs/experiments/typist-feed-quality-diagnosis.md`).
 CHUNK_TARGET_ASSETS = 100
+
+# The hard per-chunk cap. A topology family normally stays atomic, but one family
+# can be enormous: the 2026-10-21 canary produced a single 1,128-Endpoint katana
+# family, which drove the mechanism-typist thread to 592K tokens and defeated
+# compaction at both 0.4 and 0.2. A family above this cap is split into ordered
+# hard-cap sub-chunks. The sub-chunks keep the family's deterministic member order;
+# only the oversized family is split, so normal topology cohesion is unchanged.
+CHUNK_MAX_ASSETS = 300
 
 # Endpoint sub-buckets, in match order, keyed on what the recorded response
 # SERVES (the Endpoint's `content_type` prop) - never guessed from the path. A
@@ -325,6 +333,7 @@ def chunks_for_job(
     observations: list[Observation] | None = None,
     *,
     target_assets: int = CHUNK_TARGET_ASSETS,
+    max_assets: int = CHUNK_MAX_ASSETS,
 ) -> list[Chunk]:
     """Stream a job's L0 delta into ordered, topology-cohesive `Chunk`s (#13,
     reshaped by #34 D8, the profile gate removed by #48 section 6, the family
@@ -395,12 +404,18 @@ def chunks_for_job(
     target = max(1, target_assets)
     windows: list[list[AssetDelta]] = []
     window: list[AssetDelta] = []
+    hard_cap = max(1, max_assets)
     for members in families.values():
         members.sort(key=lambda a: (_FAMILY_RANK.get(a.type, 99), order[id(a)]))
-        window.extend(members)
-        if len(window) >= target:
-            windows.append(window)
-            window = []
+        for start in range(0, len(members), hard_cap):
+            group = members[start:start + hard_cap]
+            if window and len(window) + len(group) > hard_cap:
+                windows.append(window)
+                window = []
+            window.extend(group)
+            if len(window) >= target:
+                windows.append(window)
+                window = []
     if window:
         windows.append(window)  # the tail is never dropped
 

@@ -133,10 +133,10 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** recon completed with the five-job subset; `mechanism_typist` reached 649,011 tokens against a 400,000 budget; the compaction ledger kept `over_budget=True` with no reduction; the analysis stayed `draining`; the graph stopped at 2,112 nodes and one `AGGREGATES` edge; no hunting run started.
 - **Impact:** the canary never reached hunting; no trial record was written; the 7M token budget was not the limiter (950,531 capped, 13,567,363 total, 54 calls).
 - **Evidence:** the analysis status, usage ledger, app log, and the missing hunting tree.
-- **Status:** mitigated; retest pending.
-- **Resolution:** the analysis roles `mechanism_typist` and `assigner` now override the global `0.4` with `0.2`; the hunting roles keep `0.4`. The agent was recreated with the new environment.
-- **Domain:** analysis, compaction, and configuration.
-- **Root cause:** a 1,128-asset katana family enters one mechanism-typist chunk; at `0.4` the thread grew to 649K and the compaction path did not reduce it. The 0.2 analysis threshold is the pre-0.4 behavior and gives the compaction a 200K trigger.
+- **Status:** root cause identified; hard-cap fix implemented; retest pending.
+- **Resolution:** the analysis roles `mechanism_typist` and `assigner` override the global `0.4` with `0.2`; the hunting roles keep `0.4`. The lower threshold alone was not sufficient: canary attempt 3 still jumped to 592K when the 1,128-asset katana family entered the second chunk. The chunker now has a hard `CHUNK_MAX_ASSETS=300` cap; a family above it splits into ordered hard-cap sub-chunks. The normal families stay atomic. The chunker and analysis suites pass (427 tests).
+- **Domain:** analysis, chunking, compaction, and configuration.
+- **Root cause:** a 1,128-asset katana family is atomic and enters one mechanism-typist chunk as a single recent block. The compaction backstop cannot fold a recent block of that size at either 0.4 or 0.2, so the thread grows to 592K-649K and never drains. The threshold is not the limiting control; the chunk size is.
 
 ### F-014 - The gateway sync logs a gateway key in a request URL
 
@@ -174,16 +174,26 @@ The final section regroups the entries by failure domain and common root cause.
 - **Trial record:** none; the client was terminated.
 - **Disposition:** smoke failure F-013; retest with the analysis-role `0.2` override.
 
-### Canary attempt 3 - comfyui-1 - pending
+### Canary attempt 3 - comfyui-1 - project 11cad59c-887f-4baa-ab98-dc4e71169fb8
 
-- **Started:** 2026-10-20T22:45Z (approximately).
-- **Trial PID:** 2192994.
+- **Started:** 2026-10-20T22:49:46Z.
+- **Trial PID:** 2192994; terminated.
 - **Eval SHA:** `a4f47939`.
 - **Stack fingerprint:** `8d3f079c93337c4c628f100ad0cb797f11d8829a33c0a31abc2ce29afed17b36`.
 - **Instance env hash:** `577e942c0acd12e779bd54ad5199061ea8e69f75acee1a4bd023647f26fb782f`.
-- **Compaction:** global 0.4; analysis roles 0.2.
-- **Status:** running.
-- **Gate:** if the analysis drains, proceed; if it stalls again, stop and escalate the compaction path.
+- **Recon:** five-job subset; `arjun` was still in progress when the analysis stalled.
+- **Analysis:** first chunk completed in 230.4s with 12 L0 assets and 0 AGGREGATES; the second chunk inserted the 1,128-asset katana family and jumped to 592,522 against a 200,000 budget; `over_budget=True` persisted with no reduction through 596,798.
+- **Tokens at abort:** 815,198 capped, 3,860,958 raw, 31 calls.
+- **Graph at abort:** 2,114 nodes, 328 Endpoints, 1,722 Headers, 10 Parameters, 4 Secrets; `EXPOSED_VIA` 4, `FRONTED_BY` 19, `EVIDENCED_BY` 10; no `AGGREGATES`.
+- **Hunting:** none.
+- **Trial record:** none; the client was terminated and the analysis worker cleared by an agent restart.
+- **Disposition:** the 0.2 threshold alone does not fix F-013; the chunk hard cap is the corrective fix.
+
+### Canary attempt 4 - comfyui-1 - pending
+
+- **Trigger:** after the `CHUNK_MAX_ASSETS=300` fix is deployed.
+- **Expected analysis shape:** five chunks for the comfyui delta (12, 300, 300, 300, 216 assets); the mechanism-typist should stay near 150K and below the 200K budget.
+- **Gate:** the analysis must drain, hunting must start, and the official verdict tree must complete.
 
 ## Final clustering
 
