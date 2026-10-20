@@ -30,7 +30,7 @@
 | T9 | Triager procedure-diff variant minting | T8 | S5 8.6 |
 | T10a | Code/test hygiene, role alias, fault-KB disposition | T2a, T2b, T4a, T4b, T7, T9 | S1 9.5-9.6; impact map |
 | T10b | Eval translation, e2e translation, final docs sweep | T10a | impact map; eval design |
-| T11 | **PROPOSED, not cut** - the run resume trigger: the operator verb and the orphaned-run disposition | T3 | S1 7.5; #331 ESCALATED item 2; impact map 3.5 |
+| T11 | **DELIVERED** - the run resume trigger: the operator verb (the auto-resume health checker remains a follow-up) | T3 | S1 7.5; #331 ESCALATED item 2; impact map 3.5 |
 
 The frontier is T1, T5, and T8.
 The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4a, T4b, T5, T6, T7, T8, T9, T10a, T10b.

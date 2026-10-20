@@ -105,3 +105,41 @@ def test_startup_reconcile_records_an_interrupt_reason():
     row = pg.get_hunting_run(orphan)
     assert row["status"] == "interrupted"
     assert "process ended mid-run" in row["stats"]["interrupt_reason"]
+
+
+def test_claim_resumes_a_resumable_row_atomically():
+    """T11 (#398): the resume claim is a conditional UPDATE - the first claimant
+    moves the row back to `running` (clearing `finished_at`) and keeps its
+    stats; a second claimant reads None, so two concurrent resumes can never
+    both schedule the run."""
+    pid = _seed_project()
+    hid = pg.create_hunting_run(pid)
+    pg.set_hunting_run_status(hid, "stopped", stats={
+        "intake_order": ["Service:a"], "intake_position": 1,
+    })
+
+    claimed = pg.claim_hunting_run_for_resume(
+        hid, project_id=pid, expected_status="stopped")
+
+    assert claimed is not None
+    assert claimed["hunting_run_id"] == hid
+    assert claimed["status"] == "running"
+    assert claimed["finished_at"] is None
+    assert claimed["stats"]["intake_order"] == ["Service:a"]
+    # the second concurrent claimant loses: the row is no longer `stopped`
+    assert pg.claim_hunting_run_for_resume(
+        hid, project_id=pid, expected_status="stopped") is None
+
+
+def test_claim_refuses_a_run_of_another_project_or_status():
+    """The claim is scoped to the row the decision read: a wrong project or a
+    status other than the expected one never transitions."""
+    pid, other = _seed_project(), _seed_project()
+    hid = pg.create_hunting_run(pid)
+    pg.set_hunting_run_status(hid, "complete")
+
+    assert pg.claim_hunting_run_for_resume(
+        hid, project_id=other, expected_status="complete") is None
+    assert pg.claim_hunting_run_for_resume(
+        hid, project_id=pid, expected_status="stopped") is None
+    assert pg.get_hunting_run(hid)["status"] == "complete"

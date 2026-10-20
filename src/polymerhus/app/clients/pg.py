@@ -270,6 +270,38 @@ def set_hunting_run_stats(hunting_run_id: str, stats: dict) -> None:
         )
 
 
+def claim_hunting_run_for_resume(
+    hunting_run_id: str, *, project_id: str, expected_status: str
+) -> dict | None:
+    """Atomically claim a resumable terminal run back to `running` (T11 #398).
+
+    The claim is a CONDITIONAL update: only a row that is still the exact row
+    the decision table read - same project, same terminal status, the run id -
+    transitions. The database serialises the two concurrent claims, so exactly
+    one resume wins and the loser reads `None` (mapped to 409). The row returns
+    to a live shape: `finished_at` is cleared. `stats` (the run record and the
+    interrupt cause) is untouched: the resumed run re-reads it, and a failed
+    admission restores the prior status with the cause intact.
+
+    Returns the claimed row, or None when the claim was lost (a concurrent
+    resume already claimed it, or the row moved on)."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE hunting_runs SET status = 'running', finished_at = NULL "
+            "WHERE hunting_run_id = %s AND project_id = %s AND status = %s "
+            "RETURNING hunting_run_id, project_id, status, started_at, "
+            "finished_at, COALESCE(stats, '{}'::jsonb)",
+            (hunting_run_id, project_id, expected_status),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "hunting_run_id": row[0], "project_id": row[1], "status": row[2],
+            "started_at": row[3], "finished_at": row[4], "stats": row[5],
+        }
+
+
 def get_hunting_run(hunting_run_id: str) -> dict | None:
     """The 1:1 read path for a hunting run's lifecycle row."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:

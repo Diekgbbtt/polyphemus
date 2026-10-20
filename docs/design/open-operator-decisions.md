@@ -77,6 +77,10 @@ The stop/flush/stamp leg has landed (`stop_hunting_for_provider_failure`), and t
 The resume (AC2) is deferred to a future ticket because it is underspecified: there is no bounded resume-window policy, no idempotency contract against the at-least-once produced/consumed markers, and no health signal.
 The resume decision is proven derivable from the stamped attributes alone - `quota_exhausted=false` -> resumable after `retry_after_s`; `quota_exhausted=true` -> terminal; missing/unknown -> do-not-resume (`docs/design/331-stop-only-resume-assessment-adr.md`).
 
+**Delivery update (2026-10-20, T11 #398).** AC2's ratified floor has landed: `POST /projects/{project_id}/hunting/{hunting_run_id}/resume` applies the decision table, enforces the wait window (the null hint takes a 60s default), claims the run atomically, and re-enters `start_hunting` with the existing run id.
+The auto-resume background health checker the operator chose remains a FOLLOW-UP; it is not built.
+The orphaned-run disposition is recorded: a process-restart `interrupted` row carries no provider class and is do-not-resume under the table.
+
 ## D-4. #330 Part 2 - the gateway fail-over / throttle policy
 
 ### Context

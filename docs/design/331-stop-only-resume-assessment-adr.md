@@ -97,9 +97,59 @@ Not implemented here, and not required for the derivability proof: consuming `qu
 - The stop leg adds a drain wait (bounded, fail-open) to the provider-failure path.
 - `hold_session` is unused on this path; a future resume ticket reintroduces it for the types it keeps.
 
+## Amendment (#398 T11, 2026-10-20)
+
+The operator verb - the ratified floor - has LANDED.
+The auto-resume health checker remains a FOLLOW-UP.
+
+### The operator verb
+
+`POST /projects/{project_id}/hunting/{hunting_run_id}/resume` applies the decision table in section 3 through the ONE pure function `attack/hunting/resume.py::resume_decision`.
+The function reads only the run row's status, `stats` and `finished_at`; `now` is injected, so the same row yields the same decision in every process.
+Every row is decided, and every non-resumable row is a 409:
+
+| run row | decision |
+|---|---|
+| `stopped` | resumable immediately |
+| `interrupted`, `stats.quota_exhausted == false` | resumable after `retry_after_s`, or the default backoff when the hint is null |
+| `interrupted`, `stats.quota_exhausted == true` | terminal (409) |
+| `interrupted`, missing/unknown stats | do-not-resume (409, fail-closed) |
+| `running` | 409 (already live) |
+| `complete` / `failed` | 409 (terminal) |
+| any other status | 409 (fail-closed) |
+
+The null-hint default backoff is 60 seconds (`DEFAULT_RESUME_BACKOFF_S`): one per-minute provider window, the shortest window the table names for a transient 429.
+A malformed hint (negative, non-finite, non-numeric) also takes the default, never zero.
+The operator verb ENFORCES the wait window from `finished_at + retry_after_s` (or the default) and returns a 409 with a `Retry-After` header and a human-readable wait.
+It has no `force` flag: a force would be an unratified interface.
+
+The admission is one atomic conditional update (`pg.claim_hunting_run_for_resume`): only the exact row the decision read - same project, same status - transitions back to `running`.
+Two concurrent resumes therefore yield one 202 and one 409 (lost claim).
+A post-claim admission refusal RESTORES the prior status and leaves the stats intact, so the operator can retry.
+The restore stamps a new `finished_at`, which restarts the wait window for a throttle: a conservative extension, never an early resume.
+
+The resumed run re-enters `start_hunting` with the EXISTING run id.
+It re-enters at the recorded `intake_position`, adopts the committed models, recomputes `risk_total`, and never re-freezes or re-sorts the intake; a halted run resumes dispatch only.
+The dispatch stays run-scoped: the run's own produced loops dispatch, a foreign run's stay produced, and a produced item whose hunter or pod session is already live is adopted (moved produced->consumed), never dispatched twice.
+
+### The orphaned-run disposition
+
+`reconcile_orphaned_hunting_runs` stamps a process-restart `interrupted` row with a restart reason and NO provider class (`quota_exhausted` absent).
+Under the table that row is do-not-resume (fail-closed): the operator verb does not guess a cause for a crash-orphaned run, and the reconcile never reschedules one.
+A provider-caused `interrupted` row carries the stamped class and is the only `interrupted` row the verb can resume.
+
+### The auto-resume follow-up (not built)
+
+The operator's chosen direction (D-3) is a background health checker that auto-resumes a resumable `interrupted` run with backoff.
+It is NOT built here.
+The follow-up consumes `resume_decision` and `DEFAULT_RESUME_BACKOFF_S`; the operator verb is its floor, not a replacement.
+
 ## Impact map (as built)
 
 - `src/polymerhus/attack/hunting/runtime.py` - `stop_hunting_for_provider_failure` (the stop/drain/flush/stamp handler); both provider-failure branches of `start_hunting` call it and leave `status=None` so the `finally` does not re-stamp.
+- `src/polymerhus/attack/hunting/resume.py` - the pure resume decision table (`resume_decision`), the 60s default backoff, and the operator-verb wait-window policy.
+- `src/polymerhus/project_management/api.py` - `POST .../hunting/{hunting_run_id}/resume`; the atomic claim and its 202/409 mapping; the admission-refusal restore.
+- `src/polymerhus/app/clients/pg.py` - `claim_hunting_run_for_resume` (the conditional status transition for the resume claim).
 - `eval/orchestrator/monitor.py` - `INTERRUPTED_TERMINAL`; `decide` defers an interrupted execution explicitly.
-- Tests - `tests/attack/test_hunting_runtime.py::test_provider_abort_stops_the_runs_sessions_before_the_terminal`; `tests/eval/test_orchestrator_monitor.py::test_interrupted_execution_is_deferred_never_escalated`.
+- Tests - `tests/attack/test_hunting_runtime.py::test_provider_abort_stops_the_runs_sessions_before_the_terminal`; `tests/attack/test_hunting_resume.py` (the decision table and the runtime resume path); `tests/project_management/test_hunting_api.py` (the resume endpoint); `tests/app/test_hunting_runs.py` (the claim, live PG); `tests/eval/test_orchestrator_monitor.py::test_interrupted_execution_is_deferred_never_escalated`.
 - Docs - this record; the stop-only re-scope noted in `docs/design/hunting-331-provider-resume-adr.md` and `docs/design/eval-provider-resilience.md`.

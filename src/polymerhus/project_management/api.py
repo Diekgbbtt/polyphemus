@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -671,7 +673,9 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
     return {"hunting_run_id": hunting_run_id}
 
 
-async def _hunting_live_run_guard(project_id: str) -> None:
+async def _hunting_live_run_guard(
+    project_id: str, *, exclude_run_id: str | None = None
+) -> None:
     """The API-tier ONE-live-run-per-project guard (T5, spec #169 US10 / ticket
     ruling point 2): refuse a launch while the project already holds a
     `running` hunting run - the per-project produced/consumed memory
@@ -681,6 +685,8 @@ async def _hunting_live_run_guard(project_id: str) -> None:
     tier owns, checked BEFORE the new row opens so a refusal never leaves an
     orphan. The bootstrap's own guard is belt-and-braces (it excludes the
     run's own pinned row); this check prevents the orphan in the first place.
+    `exclude_run_id` is the resume verb's own row: a claimed resume is `running`
+    by construction, and only ANOTHER live run must refuse it.
     Fail-open: with pg unavailable the guard cannot fire and the launch
     proceeds (the row open would have failed too)."""
     from polymerhus.app.clients import pg
@@ -694,7 +700,8 @@ async def _hunting_live_run_guard(project_id: str) -> None:
         )
         return
     for row in rows:
-        if row.get("status") == "running":
+        if (row.get("status") == "running"
+                and row.get("hunting_run_id") != exclude_run_id):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -723,6 +730,113 @@ async def stop_hunting_run(project_id: str, hunting_run_id: str) -> dict:
 
     await asyncio.to_thread(usage_ledger().flush, project_id)
     return {"hunting_run_id": hunting_run_id, "stopping": True}
+
+
+@router.post("/projects/{project_id}/hunting/{hunting_run_id}/resume",
+             status_code=202)
+async def resume_hunting_run(project_id: str, hunting_run_id: str) -> dict:
+    """Resume ONE stopped or `interrupted` hunting run in place (T11 #398).
+
+    The OPERATOR VERB is the ratified floor (#331 ESCALATED item 2; D-3 leaves
+    the auto-resume health checker to a follow-up). It reads the run row and
+    applies the decision table (`attack/hunting/resume.py`):
+
+    - `stopped` -> resumable immediately;
+    - `interrupted` and `stats.quota_exhausted == false` -> resumable after
+      `retry_after_s`, or the default 60s backoff when the hint is null (a 409
+      with a `Retry-After` hint inside the window);
+    - `interrupted` and `quota_exhausted == true` -> terminal (409);
+    - `interrupted` with missing/unknown stats -> do-not-resume (409). This is
+      the process-restart orphan disposition: the startup reconcile stamps a
+      restart reason and no provider class, so the verb never guesses;
+    - `running` -> already live (409);
+    - `complete` / `failed` -> terminal (409).
+
+    Admission is a CONDITIONAL claim: only the exact row the decision read
+    transitions back to `running`, so two concurrent resumes yield one 202 and
+    one 409. The resumed run re-enters `start_hunting` with the EXISTING run id:
+    it re-enters at the recorded `intake_position`, adopts the committed models,
+    recomputes `risk_total`, and resumes dispatch; a halted run resumes dispatch
+    only. An admission refusal restores the prior status (and leaves the stats
+    intact) so the operator can retry - no `running` row is left behind."""
+    from polymerhus.app.clients import pg
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.resume import resume_decision
+
+    if not await asyncio.to_thread(pg.project_exists, project_id):
+        raise HTTPException(status_code=404, detail="unknown project")
+    if not hunting_runtime.hunting_control_plane_available():
+        raise HTTPException(
+            status_code=503,
+            detail="hunting control-plane runtime has not landed",
+        )
+    row = await asyncio.to_thread(pg.get_hunting_run, hunting_run_id)
+    if row is None or row.get("project_id") != project_id:
+        # the run namespace is project-scoped: a run of another project is an
+        # unknown run through THIS path, never resumable by id alone
+        raise HTTPException(
+            status_code=404,
+            detail="no hunting run for that hunting_run_id",
+        )
+    decision = resume_decision(
+        str(row.get("status") or ""),
+        row.get("stats"),
+        row.get("finished_at"),
+        now=datetime.now(timezone.utc),
+    )
+    if not decision.resumable:
+        headers = None
+        if decision.wait_s is not None:
+            headers = {
+                "Retry-After": str(max(1, math.ceil(decision.wait_s))),
+            }
+        raise HTTPException(
+            status_code=409, detail=decision.reason, headers=headers)
+
+    await _hunting_live_run_guard(project_id, exclude_run_id=hunting_run_id)
+    prior_status = str(row.get("status"))
+    claimed = await asyncio.to_thread(
+        pg.claim_hunting_run_for_resume,
+        hunting_run_id,
+        project_id=project_id,
+        expected_status=prior_status,
+    )
+    if claimed is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "the resume claim was lost: another resume of this run "
+                "already claimed it"
+            ),
+        )
+    coro = None
+    try:
+        coro = hunting_runtime.start_hunting(project_id, run_id=hunting_run_id)
+        hunting_runtime.schedule_hunting(
+            coro,
+            name=f"hunting:{hunting_run_id}",
+        )
+    except Exception as exc:  # noqa: BLE001 - map admission refusal, restore
+        # A post-claim admission refusal must not leave the claimed `running`
+        # row behind: restore the exact prior status. The stats (the run record
+        # and the interrupt cause) are untouched, so the operator can retry. The
+        # terminal write stamps a NEW finished_at, which restarts the wait window
+        # for a throttle - a conservative extension, never an early resume.
+        # The un-admitted coroutine is closed: a refusal happens before the
+        # runtime schedules it, so it must not sit until GC warns.
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        try:
+            await asyncio.to_thread(
+                pg.set_hunting_run_status, hunting_run_id, prior_status)
+        except Exception:  # noqa: BLE001 - best-effort restore
+            logger.warning(
+                "resume_hunting_run: could not restore %r for %s "
+                "(fail-open)", prior_status, hunting_run_id,
+            )
+        _admission_refused_503(exc)
+    return {"hunting_run_id": hunting_run_id, "resumed": True}
 
 
 @router.get("/projects/{project_id}/hunting/{hunting_run_id}")

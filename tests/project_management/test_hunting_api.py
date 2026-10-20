@@ -6,6 +6,7 @@ real surface while `polymerhus.app.runtime` has not landed."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
@@ -722,3 +723,306 @@ def test_status_unknown_run_404(monkeypatch):
     resp = client.get(f"/projects/p1/hunting/{RUN_ID}")
 
     assert resp.status_code == 404
+
+
+# --- POST /projects/{pid}/hunting/{rid}/resume (T11 #398) ---------------------
+
+class _ResumeRows:
+    """The `hunting_runs` surface the resume verb reads and claims. Rows carry
+    the status, `finished_at` and `stats` the decision table reads; the claim
+    mirrors the conditional UPDATE (only the expected prior status wins, so a
+    second claimant reads None)."""
+
+    def __init__(self, *, status="stopped", stats=None,
+                 finished_at=None, project_id="p1"):
+        self.rows: dict[str, dict] = {
+            RUN_ID: {
+                "hunting_run_id": RUN_ID,
+                "project_id": project_id,
+                "status": status,
+                "started_at": None,
+                "finished_at": finished_at,
+                "stats": dict(stats or {}),
+            },
+        }
+        self.claims: list[tuple[str, str, str]] = []
+        self.status_writes: list[tuple[str, str]] = []
+
+    def get_hunting_run(self, hunting_run_id: str) -> dict | None:
+        row = self.rows.get(hunting_run_id)
+        return dict(row) if row is not None else None
+
+    def list_hunting_runs(self, project_id: str) -> list[dict]:
+        return [dict(r) for r in self.rows.values()
+                if r["project_id"] == project_id]
+
+    def claim_hunting_run_for_resume(self, hunting_run_id: str, *,
+                                     project_id: str,
+                                     expected_status: str) -> dict | None:
+        self.claims.append((hunting_run_id, project_id, expected_status))
+        row = self.rows.get(hunting_run_id)
+        if (row is None or row["project_id"] != project_id
+                or row["status"] != expected_status):
+            return None
+        row["status"] = "running"
+        row["finished_at"] = None
+        return dict(row)
+
+    def set_hunting_run_status(self, hunting_run_id: str, status: str, *,
+                               stats: dict | None = None) -> None:
+        self.status_writes.append((hunting_run_id, status))
+        row = self.rows.get(hunting_run_id)
+        if row is not None:
+            row["status"] = status
+            if stats:
+                row["stats"].update(stats)
+
+
+def _patch_resume(monkeypatch, rows: _ResumeRows, runtime=None):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "get_hunting_run", rows.get_hunting_run)
+    monkeypatch.setattr(pg, "list_hunting_runs", rows.list_hunting_runs)
+    monkeypatch.setattr(
+        pg, "claim_hunting_run_for_resume", rows.claim_hunting_run_for_resume)
+    monkeypatch.setattr(pg, "set_hunting_run_status", rows.set_hunting_run_status)
+    return _patch_control_plane(monkeypatch, runtime or _FakeRuntime())
+
+
+def _recording_start(monkeypatch, hunting_runtime, scheduled: list):
+    def fake_start(project_id, *, run_id=None, **kw):
+        scheduled.append((project_id, run_id))
+
+        async def _finish():
+            return run_id
+
+        return _finish()
+
+    monkeypatch.setattr(hunting_runtime, "start_hunting", fake_start)
+
+
+def test_resume_a_stopped_run_admits_and_reenters_with_the_same_run_id(
+        monkeypatch):
+    """T11 AC: a `stopped` run resumes immediately. The verb claims the row
+    atomically and re-enters `start_hunting` with the EXISTING run id - it
+    never mints a new run."""
+    rows = _ResumeRows(status="stopped")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 202
+    assert resp.json() == {"hunting_run_id": RUN_ID, "resumed": True}
+    assert rows.claims == [(RUN_ID, "p1", "stopped")]
+    assert rows.rows[RUN_ID]["status"] == "running"
+    assert scheduled == [("p1", RUN_ID)]
+
+
+def test_resume_unknown_project_404(monkeypatch):
+    rows = _ResumeRows(status="stopped")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/nope/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 404
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_unknown_run_404(monkeypatch):
+    rows = _ResumeRows(status="stopped")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post("/projects/p1/hunting/unknown-run/resume")
+
+    assert resp.status_code == 404
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_a_run_of_another_project_404(monkeypatch):
+    """The run namespace is project-scoped: a resumable run belonging to
+    another project is never claimable through this project's path."""
+    rows = _ResumeRows(status="stopped", project_id="other")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 404
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_consumed_quota_is_409(monkeypatch):
+    """The decision table's terminal row: consumed credits are not a pause."""
+    rows = _ResumeRows(status="interrupted",
+                       finished_at=datetime.now(timezone.utc),
+                       stats={"interrupted": True, "quota_exhausted": True})
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "quota" in resp.json()["detail"]
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_an_interrupted_run_without_a_cause_is_409(monkeypatch):
+    """The fail-closed row: an `interrupted` run with no provider stats (the
+    process-restart orphan shape) is do-not-resume - the verb never guesses."""
+    rows = _ResumeRows(
+        status="interrupted",
+        finished_at=datetime.now(timezone.utc),
+        stats={"interrupted": True, "interrupt_reason": "process ended mid-run"},
+    )
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "do-not-resume" in resp.json()["detail"]
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_a_running_run_is_409(monkeypatch):
+    rows = _ResumeRows(status="running")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "already running" in resp.json()["detail"]
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_complete_and_failed_runs_are_409(monkeypatch):
+    for terminal in ("complete", "failed"):
+        rows = _ResumeRows(status=terminal)
+        hunting_runtime = _patch_resume(monkeypatch, rows)
+        scheduled: list[tuple] = []
+        _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+        resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+        assert resp.status_code == 409, terminal
+        assert terminal in resp.json()["detail"], terminal
+        assert rows.claims == [], terminal
+        assert scheduled == [], terminal
+
+
+def test_resume_inside_the_backoff_window_is_409_with_a_retry_hint(monkeypatch):
+    """The wait window: a resumable throttle before `finished_at +
+    retry_after_s` is refused with a machine-readable `Retry-After` and a
+    human-readable wait, and nothing is claimed."""
+    rows = _ResumeRows(
+        status="interrupted",
+        finished_at=datetime.now(timezone.utc),
+        stats={"interrupted": True, "quota_exhausted": False,
+               "retry_after_s": 45.0},
+    )
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "retry in" in resp.json()["detail"]
+    retry_after = int(resp.headers["Retry-After"])
+    assert 1 <= retry_after <= 45
+    assert rows.claims == []
+    assert scheduled == []
+
+
+class _RacingResumeRows(_ResumeRows):
+    """Two concurrent resumes both read the SAME pre-claim row (the race the
+    conditional UPDATE arbitrates): `get_hunting_run` always reports the row as
+    it was, while the claim still sees the live transition."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self._read_status = self.rows[RUN_ID]["status"]
+
+    def get_hunting_run(self, hunting_run_id: str) -> dict | None:
+        row = super().get_hunting_run(hunting_run_id)
+        if row is not None:
+            row["status"] = self._read_status
+        return row
+
+
+def test_a_second_resume_loses_the_claim_and_409s(monkeypatch):
+    """T11 AC: the claim is atomic. Two resumes read the same resumable row;
+    only the first conditional UPDATE wins - the second returns 409 and never
+    schedules a second run."""
+    rows = _RacingResumeRows(status="stopped")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    first = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+    second = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert "claim was lost" in second.json()["detail"]
+    assert len(rows.claims) == 2
+    assert scheduled == [("p1", RUN_ID)]  # exactly ONE admission
+
+
+def test_resume_admission_refusal_restores_the_prior_status(monkeypatch):
+    """T11 AC: a post-claim admission refusal restores the exact prior status
+    and leaves the stats intact, so the operator can retry - no orphan
+    `running` row is left behind."""
+    from polymerhus.app.runtime import ModuleAdmissionRefused
+
+    stats = {"interrupted": True, "quota_exhausted": False,
+             "retry_after_s": 0.0}
+    rows = _ResumeRows(status="interrupted",
+                       finished_at=datetime.now(timezone.utc), stats=stats)
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+
+    def refusing_schedule(coro, *, name):
+        raise ModuleAdmissionRefused("hunting is paused")
+
+    monkeypatch.setattr(hunting_runtime, "schedule_hunting", refusing_schedule)
+    monkeypatch.setattr(
+        hunting_runtime, "start_hunting", lambda *a, **k: object())
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 503
+    assert rows.status_writes == [(RUN_ID, "interrupted")]
+    assert rows.rows[RUN_ID]["status"] == "interrupted"
+    # the stamp merge is additive; the restore writes status only, so the
+    # cause record the operator retries with is untouched
+    assert rows.rows[RUN_ID]["stats"] == stats
+
+
+def test_resume_fails_closed_503_without_the_control_plane(monkeypatch):
+    rows = _ResumeRows(status="stopped")
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(
+        pg, "claim_hunting_run_for_resume", rows.claim_hunting_run_for_resume)
+    _patch_control_plane(monkeypatch, None)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 503
+    assert rows.claims == []
