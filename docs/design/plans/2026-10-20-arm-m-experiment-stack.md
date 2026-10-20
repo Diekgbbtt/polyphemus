@@ -155,6 +155,7 @@ PYTHONPATH=eval python3 -m orchestrator trial \
   --instances-root /opt/polymerhus-dev/eval/instances \
   --branch eval \
   --api http://localhost:8080 \
+  --data-root /opt/polymerhus-dev/eval/instances/data/eval-server-1 \
   --runs-root eval/runs-armm/<batch> \
   --budget-s 7200 --poll-s 15 \
   --eval-sha "$(git rev-parse HEAD)" \
@@ -507,6 +508,15 @@ Fill this section after every step.
 - The setup file `eval/setups/webexploitbench-arm-m-runtime.yaml` parses as `armm-wj-runtime` with the 4,000,000 budget.
 - The sync script passes `bash -n`.
 - The overlay test replaced the old `--reload` assertion in `test_eval_overlay_renders_with_complete_env`.
+
+### Batch 1 - attempt 1 (aborted before recon)
+
+- The launch omitted `--data-root`, so the trial checked the authn skill under the harness worktree's `data/` directory.
+  The app wrote the skill to the instance data root, so the check failed with "the authn skill did not land".
+- The project `f85db8a6-0c9c-461f-8347-37446f6a6c0f` is orphaned: the auth files and skill landed, and no recon ran.
+- The failed log is kept at `eval/runs-armm/runtime/trial-attempt1.log`.
+- The re-run passes `--data-root /opt/polymerhus-dev/eval/instances/data/eval-server-1`.
+- This is a launch-argument error, not an app failure.
 
 ### Batch 2 - pending
 
