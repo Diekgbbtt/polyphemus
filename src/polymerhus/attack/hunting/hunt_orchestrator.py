@@ -100,9 +100,9 @@ TOOL_SURFACE = frozenset({
 # The operator's #236 READ grants (2026-09-28, the cortex decision): the
 # HTTP-history read pair (`search_http_history` / `get_http_artifact`, the SAME
 # single implementations the hunter binds; the `replay` verb stays the pod's)
-# and the skill description-only listing (`load_skill`, which on this surface
-# lists descriptions and never returns a body, never writes a lesson). They
-# reopen the frozen three-tool surface - see `build_orchestrator_read_grants`.
+# and the skill surface (`load_skill`: the all-or-regex header listing plus any
+# named body, and never a lesson write). They reopen the frozen three-tool
+# surface - see `build_orchestrator_read_grants`.
 ORCHESTRATOR_READ_GRANTS = frozenset({
     "search_http_history", "get_http_artifact", "load_skill",
 })

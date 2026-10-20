@@ -449,8 +449,8 @@ def test_actor_binds_exactly_the_tool_surface(tmp_path, monkeypatch):
     """The agent the actor builds binds exactly `ORCHESTRATOR_SURFACE`: the
     three seam-backed tools of `TOOL_SURFACE` - `hunts_store`, `notes`,
     `graph_view` (G3) - plus the #236 read grants (`search_http_history`,
-    `get_http_artifact`, and the description-only `load_skill`, which lists
-    descriptions and refuses a body). Never a HuntConfig-writing or budget
+    `get_http_artifact`, and `load_skill`, which lists headers and serves any
+    named body but never writes a lesson). Never a HuntConfig-writing or budget
     tool, never `record_skill_lesson` (the orchestrator writes no lessons).
     (#223 arms the recon orchestrator instead, through the write-capable
     binding - this actor is untouched by that.)"""
