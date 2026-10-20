@@ -15,6 +15,7 @@ def test_prompt_links_each_system_to_its_services() -> None:
     assert "system_edges:" in prompt
     assert "service_slug: admin" in prompt
     assert "anonymous-allowed routes" in prompt
+    assert "account-creation Service" in prompt
     assert "one edge per (service, System) pair" in prompt
     assert "never duplicate" in prompt.lower()
 
@@ -26,4 +27,6 @@ def test_example_six_shows_the_full_route_chain_and_the_edge() -> None:
     assert "GET /api/admin/users" in prompt
     assert "403" in prompt
     assert "AUTHORIZED_BY" in prompt
+    assert "service_slug: account-registration" in prompt
+    assert "mints the accounts" in prompt
     assert "Stop at existence + linkage" in prompt

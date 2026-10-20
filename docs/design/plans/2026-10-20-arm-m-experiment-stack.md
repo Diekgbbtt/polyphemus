@@ -560,7 +560,38 @@ Fill this section after every step.
 - Expected E1: `0.711111 + 0.0635 = 0.7746` if the three M4 items land.
 - Expected E3: `0.711111 + 0.0635 + 0.0381 - 0.0238 = 0.7889` if E1 and E3 land and E2 stays refused.
 
-### Batch 2 - pending
+### Batch 2 - E1 attempt 1 (gate failed)
+
+- Trial `white-jotter-1-20261020T115419-1618c524`, project `8b21bc29-f641-411d-b2c0-30c8bbbf2e40`, `target_run_id: armm-wj-e1`.
+- Recon: complete with the same 13-job shape as the runtime trial.
+- Analysis: drained at 11:43.
+- Hunting: started at 11:44 and stopped deliberately at 11:53 once the gate failed; the hunt cannot change the L1 graph.
+- Spend: 1,754,397 tokens.
+- GT provisional: **0.706349** against the 0.696825 high and the 0.711111 runtime.
+- The three E1 M4 items did not land:
+  - `002` M4 is 0.5; the `account-registration` edge is missing.
+  - `004` M4 is 0.5; the `account-registration` edge is missing.
+  - `007` M4 is 0.667; the `AUTHORIZED_BY` edge is missing.
+- The committed `AUTHORIZED_BY` edges are 5, from the same five admin services in all three arms:
+  `navigation-menu`, `user-administration`, `role-permission-administration`, `book-management`, `article-management`.
+- `register` (the GT alias `account-registration`) has no `AUTHORIZED_BY` edge in any arm: high 0, runtime 0, E1 0.
+  The high's committed count is also 5, so the earlier "12" figure was wrong or measured a different relation; this entry corrects it.
+- Other movement is run variance:
+  - `002` M3 rose 0.4 -> 0.6;
+  - `004` M3 rose 0.8 -> 1.0 (the `username` statement landed);
+  - `006` M4 fell 0.5 -> 0.0.
+- Diagnosis:
+  the role-prompt section asks for every evidenced Service, but the linking call's last message says "prefer PRIMARY services".
+  The typist links the admin surfaces that plainly sit behind the path filter and never treats the self-service registration Service as part of the authorization chain.
+  The worked example's anonymous route is the same Service (the admin shell), so it does not teach the cross-Service account-creation link.
+- Fix:
+  make the account-creation Service explicit in the section and in Example 6.
+  The registration Service mints the accounts the gate authorizes, so it gains `AUTHORIZED_BY` even though its own route is anonymous and it may be listed as SECONDARY.
+  Example 6 emits two edges: the admin Service and the account-registration Service.
+  The prompt test asserts both edges and the account-creation rule.
+- The fix is committed and the same batch is re-run as attempt 2.
+
+### Batch 2 - attempt 2 pending
 
 ### Batch 3 - pending
 

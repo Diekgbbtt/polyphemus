@@ -48,6 +48,7 @@ Link each System to the exact Services the evidence supports - the exact `servic
 - Never duplicate a pair. Two entries with the same `service_slug`, `kind`, and `discriminator` are one edge; the second is a defect, not extra signal.
 - Link every Service the evidence supports, not only the chunk's PRIMARY Service. `prefer PRIMARY` orders the links; it does not restrict them.
 - An authorization System's gate filters every route its chain covers, including anonymous-allowed routes. A public presentation route still sits behind the gate when the same Service's protected routes do, so it is evidence for the link, not against it.
+- The account-creation Service is in the same chain. The Service whose route mints the accounts or roles the gate authorizes gains `AUTHORIZED_BY` even when that route answers anonymously - the self-service registration Service is the canonical case. Link it even when the linking task lists it as SECONDARY; `prefer PRIMARY` orders the links, it never excludes an evidenced link.
 - Do not invent a gate edge. A Service gains `AUTHORIZED_BY` only when a witness shows the gate on that Service's surface; a shared login page alone is not a per-Service authorization boundary.
 
 ## Judge each proposal critically
@@ -80,15 +81,21 @@ Technical Systems are ubiquitous across application domains, so these span *asse
 
 **Example 6 - a role-gated response (define AuthorizationSystem, then link every Service its gate covers).** Asset: `GET /api/admin/users` returns 403 for a normal principal, while the SPA shell `GET /admin` answers anonymously. Observation: "role-gated admin surface." Hypothesise an authorization System overlaying the admin area. Verify: the 403 witnesses enforcement on the API route; the anonymous shell is the same Service's presentation route, not a second Service. Type: new `AuthorizationSystem`, description "role-gated admin surface; the gate itself is the boundary to probe". The full route chain is `GET /admin` (shell, anonymous) -> `GET /api/admin/users` (403): the gate filters every route its chain covers, including anonymous-allowed routes, so the shell is evidence for the link. Emit the edge as a concrete `system_edges` entry:
 
+The account-registration Service is the second link: its `POST /api/register` answers anonymously, but it mints the accounts the gate authorizes, so it sits inside the authorization chain. Emit both edges:
+
 ```yaml
 system_edges:
   - service_slug: admin
     kind: AuthorizationSystem
     discriminator: __singleton__
     rel: AUTHORIZED_BY
+  - service_slug: account-registration
+    kind: AuthorizationSystem
+    discriminator: __singleton__
+    rel: AUTHORIZED_BY
 ```
 
-`evidence` names the 403 `Endpoint` node - `{label: Endpoint, identity: {method: GET, path: /api/admin/users, baseurl: <the host>}}` - and the shell `Endpoint` when the graph holds it. Do not reverse-engineer the role hierarchy (that is deep profiling, a later phase). Stop at existence + linkage.
+`evidence` names the 403 `Endpoint` node - `{label: Endpoint, identity: {method: GET, path: /api/admin/users, baseurl: <the host>}}` - the anonymous `POST /api/register` `Endpoint` - `{label: Endpoint, identity: {method: POST, path: /api/register, baseurl: <the host>}}` - and the shell `Endpoint` when the graph holds it. Do not reverse-engineer the role hierarchy (that is deep profiling, a later phase). Stop at existence + linkage.
 
 **Example 7 - mint a System and set its description to a VERBATIM text (imitate this shape).** Asset: `POST /graphql` returning `application/json`, technology "Apollo Server". Observation: "introspection answered on a production host." Hypothesise a `GraphQLApi` System. Verify: the path, the JSON content type and the technology are each specific to a GraphQL surface - confident. Type: new `GraphQLApi`, and set `description` to EXACTLY this kind of text (this length, this adversarial emphasis; never copy its words): `GraphQL API at POST /graphql (Apollo Server). Introspection is answered on a production host, so the full schema - types, fields, mutations - is enumerable unaided; aliasing and batched queries are the next levers to test.` Link `EXPOSED_VIA`.
 
