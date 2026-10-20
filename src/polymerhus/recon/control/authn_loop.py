@@ -132,8 +132,8 @@ GENERATION_HINT = (
 GENERATION_SIGNIN_HINT = (
     "No usable account on record. Run the sign-in procedure from the authn "
     "skill to mint one (request replay or browser flow per the branch "
-    "directive), then persist the profile key plus extracted tokens and "
-    "assert the account status valid. There is no mechanical attempt cap; "
+    "directive), then persist the extracted tokens and assert the account "
+    "status valid. Never write a profile key. There is no mechanical attempt cap; "
     "declare the space exhausted through the terminal failed verdict when "
     "no sign-in path remains."
 )

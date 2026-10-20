@@ -65,7 +65,7 @@ def test_interact_batch_reference_lands_the_value_and_releases(workroot, steel):
     assert scaffold.read_state(steel)["sessions"] == {}
 
 
-def test_catalogue_reference_reads_both_families(workroot, steel):
+def test_catalogue_reference_reads_live_sessions(workroot, steel):
     out = _steel_exec(
         script=_script("catalogue.sh"), script_lang="sh", session_id="e2e-catalogue"
     )

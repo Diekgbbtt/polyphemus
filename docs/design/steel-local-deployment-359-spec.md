@@ -23,7 +23,7 @@ The client choice is deliberately neutral: whether the recon browser phase drive
 1. As the operator, I want browser-based recon to reach a target that the public internet cannot route to, so that internal eval instances, lab hosts, and intranet applications are covered.
 2. As the operator, I want a single deployment-level value to select the Steel runtime, so that I never edit module code to move the stack.
 3. As the operator, I want the value unset by default, so that an unconfigured deployment reaches the remote Steel cloud exactly as today.
-4. As the operator, I want the `steel` CLI to address the local runtime in `--local` mode when the value is set, so that the authn browser path and every `steel_exec` caller reach it without per-command edits.
+4. As the operator, I want the `steel` wrapper to address the local runtime in `--local` mode when the value is set, so that the authn browser path and every `steel_exec` caller reach it without per-command edits.
 5. As the operator, I want the Steel SDK consumer to read the same value, so that `steel_crawl` and the CLI never disagree about the endpoint.
 6. As the operator, I want the runtime deployed as the API container alone, so that the stack stays minimal and reproducible and no dashboard or UI ships.
 7. As the operator, I want the API port reachable only from the polymerhus stack and my admin address, so that an unauthenticated browser service is not open to the internet.
@@ -43,7 +43,7 @@ The client choice is deliberately neutral: whether the recon browser phase drive
 - The value is the CLI's canonical self-hosted endpoint, and it carries the `/v1` path: `http://<host>:<port>/v1`. The CLI appends the operation path to the value (`{base_url}{path}`), and the API mounts every route under `/v1` (verified in the CLI source and the API route table).
 - A thin resolver in the shared `app` layer returns the SDK-native base URL: the value with one terminal `/v1` removed. The Python SDK appends `/v1` itself, so the origin form reaches the same routes. The resolver is the one construction point for the SDK side, and it is the one place the form is adapted. It is not owned by recon, because the Steel browser capability is shared infrastructure, not a recon-only knob (D359-1, D359-4).
 - The CLI reads the same name natively (precedence step 2). No new CLI-side name is invented.
-- `steel_exec` injects the global `--local` flag into a command-mode invocation when the value is set; script-mode callers and a bare CLI pass `--local` themselves, and the browser skill states the rule.
+- The deployment `steel` wrapper injects the global `--local` flag for `browser` and `scrape` when the value is set; the gateway passes command text through unchanged, scripts reach the wrapper too, and the browser skill states the one runtime-agnostic command form.
 - The SDK consumer passes the resolver's value as `base_url` and uses `session.websocket_url` for the CDP connect, falling back to the cloud pattern only when the field is absent (D359-5).
 
 ### The deployment
@@ -68,7 +68,7 @@ The internal-reachability case needs no public-egress proxy: the runtime egresse
 ## Testing Decisions
 
 - A good test asserts external behaviour only: the value the resolver returns for a given environment, and the endpoint the CLI and the SDK actually address. It never inspects a private helper.
-- Contract tier (integration): the resolver seam - unset returns no base URL; set returns the value verbatim; a consumer sees the same value; the CLI's `--local` injection is present exactly when the value is set.
+- Contract tier (integration): the resolver seam - unset returns no base URL; set returns the value verbatim; a consumer sees the same value; the wrapper owns the CLI `--local` injection exactly when the value is set.
 - Walkthrough tier (e2e, live): a Steel session against the deployed local runtime navigates the internal `comfyui` target end to end and lands on a rendered page; the evidence is a session id, a final URL, and a screenshot or HAR.
 - The regression check is red-capable: the same walkthrough fails when a session cannot reach the internal target (for example with the runtime stopped, or the target not routable), and it has been observed red then green.
 - Prior art: the crawl-provider tests with injected fakes; the `steel_exec` gateway unit tests with a stubbed binary; the eval e2e targets (`tests/e2e/fixtures/eval-targets.yaml`).

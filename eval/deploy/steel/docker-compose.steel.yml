@@ -21,6 +21,10 @@ services:
     # reach (D359-2). Required: a missing value fails the deploy loudly.
     environment:
       DOMAIN: ${STEEL_DOMAIN:?STEEL_DOMAIN is required - set <host>:<port>, for example 192.33.91.87:3000}
+      # Disable the random fingerprint injection so the deployment wrapper can
+      # set one fixed user agent immediately after start. Skip-injection alone
+      # exposes HeadlessChrome/155, a bot tell (#395).
+      SKIP_FINGERPRINT_INJECTION: "1"
     ports:
       - "3000:3000"
     # Durable application state (D359-2): the Puppeteer/Chromium cache and any

@@ -54,8 +54,9 @@ def test_postrun_checksum_verifies_both_arches():
 
 def test_postrun_stanza_is_idempotent_and_best_effort():
     text = _postrun_text()
-    # Idempotent: skip when the pinned version is already present.
-    assert "steel --version" in text
+    # Idempotent: skip when the pinned version is already present. The real
+    # binary lives beside the wrapper (#395), so the probe names steel-real.
+    assert "steel-real --version" in text
     assert "0.5.0-preview.6" in text
     # Best-effort: never abort boot (no active `set -e` command line -
     # the header only names it in a comment; script always exits 0).

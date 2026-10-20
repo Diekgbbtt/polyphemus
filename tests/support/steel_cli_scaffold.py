@@ -248,6 +248,16 @@ def _browser(args: list[str], state: dict) -> None:
         sess["title"] = _title_for(url)
         _out({"data": {"title": sess["title"], "url": url}, "success": True})
 
+    if verb == "set":
+        opts, positional = _parse(rest)
+        sess = _session(state, opts, required=True)
+        if not positional:
+            _err("set needs a property and a value", code=2)
+        prop = positional[0]
+        value = " ".join(positional[1:])
+        sess[f"set_{prop}"] = value
+        _out({"data": {"property": prop, "value": value}, "success": True})
+
     if verb in {"fill", "type", "setvalue", "select", "upload"}:
         opts, selector, values, boundary = _variadic(rest)
         sess = _session(state, opts, required=True)

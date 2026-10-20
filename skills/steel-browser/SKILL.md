@@ -3,22 +3,23 @@ name: steel-browser
 description: >-
   Operate a real Steel browser through the `steel_exec` gateway: named
   sessions, navigation, ref-based interaction, waiting, inline JS, cookie and
-  storage reads, one-shot scraping, bounded spidering, and cloud profile mounts,
-  against the Steel cloud or a self-hosted local runtime with session-context
-  state.
+  storage reads, one-shot scraping, and bounded spidering.
   Use when a target needs JavaScript rendering, element-level interaction, a form
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '1.12'
+  version: '2.0'
 ---
 
 # Steel browser operation
 
 Drive a real Steel browser through `steel_exec` - one `steel ...` command, or a whole `.sh`/`.py` script chaining several.
-The browser is the Steel cloud by default, or the self-hosted runtime when the deployment sets `STEEL_BROWSER_API_URL`.
 This skill carries operation mechanics, not a goal: no login procedure, no scraping recipe, only the framework any browser task composes.
 Reach for it when a target needs JavaScript to render, an element driven, or client-side browser state read.
+
+The runtime is selected below this skill.
+A cloud deployment and a self-hosted deployment present the same commands.
+Do not add a runtime flag, a profile, or a cloud/local branch to a command.
 
 ## The tool surface
 
@@ -28,35 +29,32 @@ A refusal is typed and nothing runs (`returncode` 2): `refused:ambiguous-input`,
 Fix the input and reissue; a refusal is not a transient to retry.
 On a bare CLI you hold the same guards yourself.
 
-**Local runtime.** When the deployment sets `STEEL_BROWSER_API_URL`, the browser runs on a self-hosted Steel runtime, not the cloud.
-In command mode the gateway injects the global `--local` flag for you, and the CLI reads the endpoint value itself, so a plain `steel ...` command needs no change.
-A command that already carries `--local` or `--api-url` is left untouched.
-Script text is never rewritten, so a script must pass `--local` itself, and so must a bare CLI (there the value is still read from the environment).
-An invocation hidden inside a quoted shell string (`sh -c "steel ..."`) is not rewritten either; pass `--local` yourself in that form.
-When the value is unset, everything addresses the cloud exactly as before.
 The pinned CLI is 0.5.0-preview.6, the first release whose daemon maps the local API's `timeout: 0` to "no expiry" (#395).
-`--session-timeout` is therefore enforced by the daemon, and the local runtime releases the session when the daemon exits.
+`--session-timeout` is therefore enforced by the daemon, and a local runtime releases the session when the daemon exits.
 The local API itself still ignores a create-time timeout (upstream issue #350), so the server does not expire a session on its own.
 
-**Profiles are cloud-only.** The local API has no `/v1/profiles` route and its create schema strips `profileId` and `persistProfile`, so a local `start --profile` succeeds without mounting anything; `steel profile list` only reads the CLI's own name-to-id mapping. For local state, capture `GET /v1/sessions/<id>/context` while the session is live, store it, then release, and pass the stored JSON as `sessionContext` on the next create. The evidence is `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md`.
-
-## The path: survey, open, mount, operate, close
+## The path: survey, open, operate, close
 
 A spine with an open middle - pick the path the goal needs, not a fixed sequence.
 
 ```
-survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
-                                                    |
-                       each operation takes a shape: single | batch | wait | script
+survey -> open or reuse -> OPERATE ... -> close
+                                  |
+             each operation takes a shape: single | batch | wait | script
 ```
 
-**Survey.** `steel browser sessions --json` lists every live session this key owns as `{id, mode, name, status, viewerUrl}`, and `{"data":[]}` when none is live. `steel profile list --json` lists profiles as `{name, profileId}`. Read both before opening anything.
+**Survey.** `steel browser sessions --json` lists every live session this key owns as `{id, mode, name, status, viewerUrl}`, and `{"data":[]}` when none is live. Read it before opening anything.
 
 **Open, or reuse.** A live session's name is already addressable, so reuse one rather than start a twin. Otherwise `steel browser start --session <name> --session-timeout 600000 --json`, naming it `polymerhus-<flow>-<id>`.
 `start` silently attaches to a live name, so check the catalogue first: `steel_exec` refuses a command-mode start on a catalogued name with `<name> is already used`, and a script holds its own check.
 `remainingMs` on receipt sits below what you asked for - provisioning spends the session clock.
 
-**Mount a profile (optional, cloud only).** `start --profile <name>` mounts server-side identity and state; read-only by default, `--update-profile` accumulates it back on release. On the local OSS runtime this call is a no-op: use `sessionContext` capture and restore instead (see the local runtime note). There is no state-poll primitive, so prove a mount with a settle pause then a navigation - an unverified mount never passes a verdict. One live session per profile holds the last writer.
+**State.** The browser keeps cookies, localStorage, sessionStorage, and indexedDB for the life of the session.
+These four fields are the only durable browser state; there is no profile, no saved fingerprint, and no server-side identity bundle.
+A fresh session is a fresh browser context. It is not a new fingerprint claim and not a new egress identity.
+For a crawl, the programmatic provider restores the account state and captures it again on release.
+The CLI `start` has no state field, so an interactive flow must reuse a live session when it needs continuity; do not claim that a new CLI session restored state.
+Never log, print, or paste cookie values, storage values, or the state file. Print names and counts only.
 
 **Operate.** Any web-interaction operation or client-side browser-state inspection: the command families below proxy to the CDP API, and they are the taught subset, not an allowlist - `steel_exec` routes on the `steel` token, so any `steel browser` subcommand runs. Choose each operation's shape:
 - **single** - one atomic act whose result is the answer; no sequencing, no ref to discover.
@@ -65,7 +63,7 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
   Wait on the challenge's OWN marker (its iframe or selector) with a bounded `--timeout`, then escalate to the operator: an outcome gated by an out-of-band human action (a CAPTCHA solve, an operator click, a manual approval) cannot appear until the human acts, so a wait on it burns its whole timeout first.
 - **script** - a whole flow with a lifecycle, a loop, or several operations; it owns its stop.
 
-**Close.** Stop the session with `steel browser stop --session <name> --json` when you own it, or let the stop owner fire, then prove it gone against the catalogue (`sessions --json` back to `[]`). Where the mount was write-oriented, that stop is what backs the profile up.
+**Close.** Stop the session with `steel browser stop --session <name> --json` when you own it, or let the stop owner fire, then prove it gone against the catalogue (`sessions --json` back to `[]`).
 
 ## Rules a decision can violate
 
@@ -110,13 +108,14 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
 - Clear a consent, region, or guest gate before snapshotting for refs; the gate's own click changes cookie and storage state, so take any pre-state baseline after it settles.
 - Decide a state change on a UI signal plus a pre/post baseline, never on cookie names alone: `PHPSESSID` and `PrestaShop-<hash>` exist pre-login, and login changes their values, not their names. Read the pre/post signal as a `get count` of the selector - presence and how many match, which a hidden twin cannot fool; reserve `is visible` for the distinct question of whether a specific first-matching element is shown. A surprising read is in-flight absence, not a stale value (a session whose `start` has not returned is legitimately missing), so re-read once before believing it.
 - Pass `get count` a CSS selector, never a ref: it does not resolve refs and returns `count 0` for a ref or a missing selector alike, so a 0 means no CSS match.
+- For an authenticated crawl, the provider replicates cookies, required headers, header-located tokens, and storage-located tokens, then gates the attempt on the application state or the response to an authenticated part of the surface. A login redirect, a 401, or a 403 fails the gate; a failure is reduced coverage, never a silent authenticated crawl.
 
 ## Command families
 
 Every `steel browser` command carries `--session <name>`; every command in this skill carries `--json`.
-The `steel scrape` and `steel profile` families are sessionless and carry only `--json`.
+The `steel scrape` family is sessionless and carries only `--json`.
 
-- Session: `start [--session-timeout ms] [--inactivity-timeout ms] [--stealth] [--proxy url] [--profile name] [--update-profile]`, `stop [-a]`, `sessions`, `live` (viewer).
+- Session: `start [--session-timeout ms] [--inactivity-timeout ms] [--stealth] [--proxy url]`, `stop [-a]`, `sessions`, `live` (viewer).
 - `--stealth` on `start` bundles humanization with automatic CAPTCHA solving; on a challenge, wait on the challenge's own marker with a bounded timeout and escalate to the operator - the solving half is excluded by operator ruling (D237-15).
 - Navigation: `navigate <url> [--wait-until load|domcontentloaded|networkidle]` (aliases `open`, `goto`), `back`, `forward`, `reload`. Settle on a condition (`wait --url`/`wait --text`) for a login or SPA page: `networkidle` never arrives on a continuously-active page and burns the whole timeout.
 - Page reading: `snapshot [-i] [-c] [-s css] [-d n] [-u]`, `get text|html|value|attr|url|title|count|box|styles`, `find <css>`, `content`, `is visible|enabled|checked`.
@@ -128,13 +127,12 @@ The `steel scrape` and `steel profile` families are sessionless and carry only `
 - Batch: `batch [OPTIONS] -- "cmd" "cmd" ...` (options such as `--bail` precede the `--`; each element carries its own boundary when variadic).
 - One-shot scraping (no session): `steel scrape <url> [--format html|readability|cleaned_html|markdown] [--pdf] [--screenshot] [--use-proxy]`.
 - Spidering: enumerate links with `eval`, `navigate` per link, both capped.
-- Profiles (cloud only): `steel profile list|import|sync|delete`; mount through `start --profile`. The local OSS runtime has no profile store.
 
 ## References
 
 Runnable scripts beside this skill; each is self-guarding, `--json`, bounded output, and runs verbatim through `steel_exec(script, script_lang="sh")` or `bash <file>`.
 
-- `references/catalogue.sh` - list live sessions and profiles; the survey read.
+- `references/catalogue.sh` - list live sessions; the survey read.
 - `references/session-lifecycle.sh` - survey, open a free name, use it, release under a trap, prove the catalogue clean.
 - `references/stop-owner.sh` - arm or defuse a dead-man watchdog for a flow that spans separate calls.
 - `references/navigate-read.sh` - navigate, then read title, URL, and a compact tree slice.
@@ -144,4 +142,3 @@ Runnable scripts beside this skill; each is self-guarding, `--json`, bounded out
 - `references/eval-interact.sh` - one form submission from `eval` (values plus events, then a chosen JS route), with a boolean read-back and one summary line.
 - `references/scrape-page.sh` - one-shot `steel scrape` with a bounded slice.
 - `references/spider-bounded.sh` - enumerate links, then fetch a capped same-host set.
-- `references/profile-mount.sh` - mount a profile, settle, verify by navigation, persist on release.

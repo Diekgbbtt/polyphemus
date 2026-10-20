@@ -1,73 +1,93 @@
-"""Unit tests for non-interactive cookie injection into the Steel provider.
+"""Unit tests for the Steel provider's session-only wiring (#395).
 
-Covers the pure auth-context-cookie -> Playwright-cookie mapping and the
-provider's constructor storage of the injected cookies. No live Steel, no
-network I/O: the mapping is a pure function and the constructor performs none.
-
-Secret handling: these tests use fabricated placeholder values only; cookie
-NAMES mirror the real peoplecert fixture (`.AspNet.Cookies`, `ASP.NET_SessionId`,
-`__RequestVerificationToken`) but every value here is a dummy.
+Covers the deterministic create options, auth-material merge, constructor
+storage, and non-HTML filtering. No live Steel, no network I/O.
 """
 import pytest
 
-from polymerhus.recon.crawl.steel_provider import _to_playwright_cookies, SteelCrawlProvider
+from polymerhus.recon.crawl.steel_provider import (
+    SteelCrawlProvider,
+    _merge_browser_auth,
+    _session_opts,
+)
 
 
-def test_cookie_with_domain_maps_to_domain_path():
-    out = _to_playwright_cookies(
-        [{"name": ".AspNet.Cookies", "value": "TOKENVAL", "domain": ".peoplecert.org"}],
-        "https://www.peoplecert.org/x",
-    )
-    assert out == [{"name": ".AspNet.Cookies", "value": "TOKENVAL", "domain": ".peoplecert.org", "path": "/"}]
+def test_session_opts_are_deterministic_and_profile_free():
+    opts = _session_opts(True)
+    assert opts == {"use_proxy": True, "headless": False}
+    assert "profile_id" not in opts
+    assert "persist_profile" not in opts
+    assert "user_agent" not in opts
+    assert "dimensions" not in opts
+    assert "region" not in opts
+    assert "stealth_config" not in opts
 
 
-def test_cookie_with_explicit_path_preserved():
-    out = _to_playwright_cookies(
-        [{"name": "ASP.NET_SessionId", "value": "SID", "domain": "www.peoplecert.org", "path": "/app"}],
-        "https://www.peoplecert.org/x",
-    )
-    assert out == [{"name": "ASP.NET_SessionId", "value": "SID", "domain": "www.peoplecert.org", "path": "/app"}]
+def test_session_opts_restore_the_sdk_state_shape():
+    opts = _session_opts(False, {
+        "cookies": [{"name": "sid", "value": "S"}],
+        "localStorage": {"https://x.example": {"token": "T"}},
+        "sessionStorage": {},
+        "indexedDB": {},
+        "extra": "dropped",
+    })
+    assert opts["session_context"] == {
+        "cookies": [{"name": "sid", "value": "S"}],
+        "local_storage": {"https://x.example": {"token": "T"}},
+        "session_storage": {},
+        "indexed_db": {},
+    }
 
 
-def test_cookie_without_domain_falls_back_to_url():
-    out = _to_playwright_cookies(
-        [{"name": "__RequestVerificationToken", "value": "CSRF"}],
-        "https://www.peoplecert.org/certifications-and-memberships",
-    )
-    assert out == [{"name": "__RequestVerificationToken", "value": "CSRF", "url": "https://www.peoplecert.org/certifications-and-memberships"}]
-
-
-def test_malformed_entries_are_skipped():
-    out = _to_playwright_cookies(
-        [
-            {"name": "ok", "value": "v"},
-            {"value": "no-name"},
-            {"name": "no-value"},
-            {"name": 123, "value": "x"},
-            "not-a-dict",
+def test_merge_browser_auth_replaces_cookies_and_merges_storage():
+    state = {
+        "cookies": [{"name": "sid", "value": "OLD", "domain": "x.example"}],
+        "localStorage": {"https://x.example": {"keep": "1", "token": "OLD"}},
+    }
+    merged = _merge_browser_auth(state, {
+        "cookies": [
+            {"name": "sid", "value": "NEW", "domain": "x.example"},
+            {"name": "csrf", "value": "C"},
         ],
-        "https://example.com",
-    )
-    assert out == [{"name": "ok", "value": "v", "url": "https://example.com"}]
+        "headers": {"X-Api-Key": "K"},
+        "storage": {"https://x.example": {"token": "T", "fresh": "2"}},
+    }, "https://x.example/dashboard")
+    assert merged["cookies"] == [
+        {"name": "sid", "value": "NEW", "domain": "x.example"},
+        {"name": "csrf", "value": "C", "url": "https://x.example/dashboard"},
+    ]
+    assert merged["localStorage"] == {
+        "https://x.example": {"keep": "1", "token": "T", "fresh": "2"},
+    }
+    assert "headers" not in merged
 
 
-def test_empty_input_maps_to_empty_list():
-    assert _to_playwright_cookies([], "https://example.com") == []
-    assert _to_playwright_cookies(None, "https://example.com") == []
+def test_merge_browser_auth_without_state_still_replicates_material():
+    assert _merge_browser_auth(None, {
+        "cookies": [{"name": "sid", "value": "S"}],
+        "storage": {"https://x.example": {"token": "T"}},
+    }) == {
+        "cookies": [{"name": "sid", "value": "S"}],
+        "localStorage": {"https://x.example": {"token": "T"}},
+    }
 
 
-def test_provider_stores_auth_cookies(monkeypatch):
+def test_provider_stores_state_and_browser_auth(monkeypatch):
     from polymerhus.recon import config
     monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
-    provider = SteelCrawlProvider(auth_cookies=[{"name": "a", "value": "b"}])
-    assert provider._auth_cookies == [{"name": "a", "value": "b"}]
+    material = {"cookies": [{"name": "a", "value": "b"}]}
+    provider = SteelCrawlProvider(steel_state="/state/alice.json",
+                                  browser_auth=material)
+    assert provider._steel_state == "/state/alice.json"
+    assert provider._browser_auth == material
 
 
-def test_provider_defaults_auth_cookies_to_empty(monkeypatch):
+def test_provider_defaults_to_empty_state_and_material(monkeypatch):
     from polymerhus.recon import config
     monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
     provider = SteelCrawlProvider()
-    assert provider._auth_cookies == []
+    assert provider._steel_state is None
+    assert provider._browser_auth == {}
 
 
 def test_looks_non_html_detects_asset_extensions():
@@ -106,82 +126,3 @@ def test_enqueue_skips_non_html_but_keeps_html(monkeypatch):
     queued_urls = {f["url"] for f in crawl.frontier}
     assert "https://app.daytona.io/dashboard/keys" in queued_urls
     assert "https://app.daytona.io/static/app.js" not in queued_urls
-
-
-def test_regions_include_eu_datacenters():
-    from polymerhus.recon.crawl.steel_provider import _REGIONS
-    assert {"eu-west", "eu-central"} <= set(_REGIONS)
-    # The US datacenters must not be dropped.
-    assert {"lax", "ord", "iad"} <= set(_REGIONS)
-
-
-def test_random_session_opts_region_is_a_known_region():
-    from polymerhus.recon.crawl.steel_provider import _REGIONS, _random_session_opts
-    for _ in range(20):
-        assert _random_session_opts(False)["region"] in _REGIONS
-
-
-def test_provider_stores_steel_profile(monkeypatch):
-    from polymerhus.recon import config
-    from polymerhus.recon.crawl.steel_provider import SteelCrawlProvider
-    monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
-    assert SteelCrawlProvider(steel_profile="p1-alice")._steel_profile == "p1-alice"
-    assert SteelCrawlProvider()._steel_profile is None
-
-
-def test_session_opts_mount_profile_read_only_when_bound():
-    from polymerhus.recon.crawl.steel_provider import _random_session_opts
-    opts = _random_session_opts(False, "p1-alice")
-    assert opts["profile_id"] == "p1-alice"
-    assert "persist_profile" not in opts  # read-only mount, never write-back
-
-
-def test_session_opts_omit_profile_when_unbound():
-    from polymerhus.recon.crawl.steel_provider import _random_session_opts
-    assert "profile_id" not in _random_session_opts(False, None)
-    assert "profile_id" not in _random_session_opts(False)
-
-
-def test_create_session_forwards_profile_id_to_the_sdk(monkeypatch):
-    pytest.importorskip("steel")
-    import steel as steel_module
-    from polymerhus.recon.crawl import steel_provider
-
-    seen = {}
-
-    class _Sessions:
-        def create(self, **kwargs):
-            seen.update(kwargs)
-            return object()
-
-    class _Steel:
-        def __init__(self, steel_api_key=None):
-            self.sessions = _Sessions()
-
-    monkeypatch.setattr(steel_module, "Steel", _Steel)
-    steel_provider._create_steel_session("k", False, "p1-alice")
-    assert seen["profile_id"] == "p1-alice"
-
-
-def test_create_session_falls_back_unprofiled_when_profile_rejected(monkeypatch):
-    pytest.importorskip("steel")
-    import steel as steel_module
-    from polymerhus.recon.crawl import steel_provider
-
-    attempts = []
-
-    class _Sessions:
-        def create(self, **kwargs):
-            attempts.append(kwargs)
-            if "profile_id" in kwargs:
-                raise RuntimeError("unknown profile")
-            return object()
-
-    class _Steel:
-        def __init__(self, steel_api_key=None):
-            self.sessions = _Sessions()
-
-    monkeypatch.setattr(steel_module, "Steel", _Steel)
-    steel_provider._create_steel_session("k", False, "p1-alice")
-    assert attempts[0]["profile_id"] == "p1-alice"  # tried mounted first
-    assert all("profile_id" not in a for a in attempts[1:])  # ladder retries bare

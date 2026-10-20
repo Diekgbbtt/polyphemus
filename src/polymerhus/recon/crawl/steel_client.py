@@ -15,15 +15,16 @@ cloud pattern:
 
     wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<session id>
 
-The only credential is the steel.dev API key (`STEEL_API_KEY`); there is no
-`STEEL_MCP_URL`.
+A cloud deployment is configured by the steel.dev API key (`STEEL_API_KEY`);
+a local deployment is keyless and configured by `STEEL_BROWSER_API_URL`. There
+is no `STEEL_MCP_URL`.
 
 PROVIDER SEAM
 ------------
 The concrete provider is `steel_provider.SteelCrawlProvider` (see that
 module's docstring). This module pins the stable public contract:
 
-  * `steel_configured()` checks only the steel.dev credential.
+  * `steel_configured()` accepts a key or an endpoint.
   * `get_crawl_tools(*, client_factory=None)` returns the `steel_*` tools from
     the in-process provider, filtered to `CRAWL_TOOL_NAMES`. `client_factory`
     is injectable so tests exercise the whole contract without live Steel.
@@ -31,8 +32,10 @@ module's docstring). This module pins the stable public contract:
     (`playwright` + `steel-sdk`) are not importable in this build, it raises
     `SteelProviderUnavailable`, which the crawl pod's best-effort path turns
     into an empty manifest (reduced coverage), never a crash. `SteelNotConfigured`
-    is raised earlier by `get_crawl_tools` when the credential itself is absent.
+    is raised earlier by `get_crawl_tools` when neither a key nor an endpoint is
+    configured.
 """
+from polymerhus.app.steel_endpoint import steel_browser_api_url
 from polymerhus.recon import config
 
 CRAWL_TOOL_NAMES = frozenset({
@@ -62,17 +65,17 @@ class SteelProviderUnavailable(RuntimeError):
 
 
 def steel_configured() -> bool:
-    """True when the steel.dev credential is present.
+    """True when the Steel runtime is configured.
 
-    The credential is independent of the runtime address: the provider is
-    in-process and reaches either the cloud or the self-hosted runtime over
-    CDP. The address is the shared `STEEL_BROWSER_API_URL` value, resolved by
-    the provider itself.
+    A cloud deployment is configured by `STEEL_API_KEY`; a local deployment
+    is configured by `STEEL_BROWSER_API_URL` alone and needs no key (#395,
+    D359-12). The provider resolves the address through the same shared
+    resolver.
     """
-    return bool(config.STEEL_API_KEY)
+    return bool(config.STEEL_API_KEY or steel_browser_api_url())
 
 
-def _default_client_factory(auth_cookies=None, steel_profile=None):
+def _default_client_factory(steel_state=None, browser_auth=None):
     """Build the in-process Steel crawl-tool provider.
 
     Returns a `steel_provider.SteelCrawlProvider`, which opens a browser
@@ -81,11 +84,9 @@ def _default_client_factory(auth_cookies=None, steel_profile=None):
     `websocket_url`, lazily, only when `steel_crawl_start` is invoked - so
     constructing the provider performs no network I/O.
 
-    `auth_cookies` (a list of `{name, value, [domain], [path]}` dicts, the
-    feed-projected persisted session cookies) is forwarded to the provider,
-    which seeds the browser context with them before the crawl
-    (profile-mount-only auth). `steel_profile` (the feed-bound persisted
-    profile key) is mounted read-only at session creation (`profile_id`).
+    `steel_state` is the resolved per-account state file; `browser_auth` is
+    the feed-projected material (cookies, headers, storage tokens). The
+    provider restores state, replicates the material, and runs the auth gate.
 
     Raises `SteelProviderUnavailable` when the provider's runtime dependencies
     (`playwright` and `steel-sdk`) are not importable in this build, so the
@@ -108,28 +109,26 @@ def _default_client_factory(auth_cookies=None, steel_profile=None):
 
     from polymerhus.recon.crawl.steel_provider import SteelCrawlProvider  # noqa: PLC0415
 
-    return SteelCrawlProvider(auth_cookies=auth_cookies, steel_profile=steel_profile)
+    return SteelCrawlProvider(steel_state=steel_state, browser_auth=browser_auth)
 
 
-async def get_crawl_tools(*, client_factory=None, auth_cookies=None, steel_profile=None) -> list:
+async def get_crawl_tools(*, client_factory=None, steel_state=None, browser_auth=None) -> list:
     """Return the `steel_*` crawl tools from the in-process provider.
 
     The default provider (`_default_client_factory`) exposes
     `async get_tools() -> list`; the result is filtered to `CRAWL_TOOL_NAMES`.
-    `auth_cookies` (the feed-projected persisted session cookies) and
-    `steel_profile` (the feed-bound persisted profile key, mounted read-only)
-    are threaded to the default provider for profile-mount-only auth.
+    `steel_state` and `browser_auth` are threaded to the default provider.
     An injected `client_factory` stays a zero-arg callable (tests build the
-    provider themselves) and receives nothing. Raises `SteelNotConfigured` when
-    the steel.dev credential is absent.
+    provider themselves) and receives nothing. Raises `SteelNotConfigured`
+    when neither a key nor an endpoint is configured.
     """
     if not steel_configured():
         raise SteelNotConfigured(
-            "STEEL_API_KEY (steel.dev credential) must be set to use the crawl tools"
+            "STEEL_API_KEY or STEEL_BROWSER_API_URL must be set to use the crawl tools"
         )
     if client_factory is not None:
         client = client_factory()
     else:
-        client = _default_client_factory(auth_cookies=auth_cookies, steel_profile=steel_profile)
+        client = _default_client_factory(steel_state=steel_state, browser_auth=browser_auth)
     tools = await client.get_tools()
     return [t for t in tools if getattr(t, "name", "") in CRAWL_TOOL_NAMES]

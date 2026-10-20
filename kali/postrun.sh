@@ -137,7 +137,7 @@ fi
 # daemon treats a self-hosted `timeout: 0` as "no expiry" instead of an
 # already-expired session (#395). 0.4.4 remains the latest stable tag, and it
 # carries the defect; replace this pin with 0.5.0 (or later) when it ships.
-if ! /opt/localbin/steel --version 2>/dev/null | grep -q "0.5.0-preview.6"; then
+if ! /opt/localbin/steel-real --version 2>/dev/null | grep -q "0.5.0-preview.6"; then
   (
     _SVER="0.5.0-preview.6"
     _ARCH=$(uname -m)
@@ -151,9 +151,16 @@ if ! /opt/localbin/steel --version 2>/dev/null | grep -q "0.5.0-preview.6"; then
       echo "${_SSHA}  ${_STGZ}" | sha256sum -c - && \
       tar xz -C /tmp/steel-cli-extract -f "$_STGZ" && \
       _SBIN=$(find /tmp/steel-cli-extract -name steel -type f | head -1) && \
-      [ -n "$_SBIN" ] && cp "$_SBIN" /opt/localbin/steel && chmod +x /opt/localbin/steel
+      [ -n "$_SBIN" ] && cp "$_SBIN" /opt/localbin/steel-real && chmod +x /opt/localbin/steel-real
     rm -rf /tmp/steel-cli-extract "$_STGZ"
   ) || true
+fi
+
+# The one runtime edge (#395): the wrapper owns local mode and the fixed local
+# user agent. It is installed under the name the skill calls; the pinned
+# binary stays beside it as steel-real.
+if [ -x /opt/localbin/steel-real ] && [ -f /opt/kali/steel_wrapper.sh ]; then
+  install -m 0755 /opt/kali/steel_wrapper.sh /opt/localbin/steel
 fi
 
 echo "[postrun] gap-fill complete"

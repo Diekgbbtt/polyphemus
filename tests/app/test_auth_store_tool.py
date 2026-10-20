@@ -86,7 +86,7 @@ def test_description_carries_the_full_contract(tmp_path):
 def test_contract_teaches_the_domain_model():
     for marker in ("auth store", "account record", "operator section",
                    "agent section", "technical condition",
-                   "browser-profile reference", "concrete snapshot",
+                   "browser session-state reference", "concrete snapshot",
                    "operator seed", "procedure label"):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 

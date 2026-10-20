@@ -63,16 +63,18 @@ it never replaces the write.
 ### 4. Sign-in and debug (no mechanical cap)
 
 On `not_valid`, run the sign-in procedure from the `authn` skill (request
-replay or browser flow per the branch directive). The browser path mints
-under the project-scoped key `<project_id>-<account>` (`steel start
---profile <key> --update-profile`); a missing or unauthenticated mount fails
-open into sign-in with the account asserted `not_valid`, never a silent
-anonymous turn.
+replay or browser flow per the branch directive). The browser path reuses or
+starts a live session; it does not mount a profile. Do not write a
+`steel.profile` reference. A new CLI session cannot restore state, so a later
+CLI flow must reuse the live session. A missing or unauthenticated session
+fails open into sign-in with the account asserted `not_valid`, never a silent
+anonymous turn. The crawl provider captures the session state on its own
+release.
 
 There is NO attempt cap and no duplicate-command rejection: adjust one
 variable per attempt and keep debugging while progress is real. The span ends
 in exactly two ways: success (one `auth_store` write of `accounts.<account>`
-carrying `steel.profile`, the extracted `tokens`, and `status: valid`), or
+carrying the extracted `tokens` and `status: valid`; never a profile key), or
 your declaration that the tweaking space is exhausted - the terminal failed
 verdict. A failed authentication is explicit and loud, never
 silent-anonymous.

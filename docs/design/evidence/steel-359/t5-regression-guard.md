@@ -7,7 +7,7 @@ Date: 2026-10-19. Host: the operator workstation (on the runtime allowlist), wor
 - Contract tier: `tests/integration/test_steel_endpoint_contract.py` (4 tests).
 - Live tier: `tests/e2e/test_steel_internal_reachability.py` (1 test).
 
-The contract test composes the resolver, the CLI gateway's `--local` injection, and the SDK provider over one `STEEL_BROWSER_API_URL` value.
+The contract test composes the resolver, the deployment wrapper's `--local` injection, and the SDK provider over one `STEEL_BROWSER_API_URL` value. The gateway passes command text through unchanged (#395, D359-13).
 The live test opens a real Steel session with the SDK (`base_url` plus `session.websocket_url`), navigates the internal `comfyui` target through the eval front, and asserts the final URL plus a rendered-title marker.
 
 The live test never skips: a missing endpoint fails with a clear message.

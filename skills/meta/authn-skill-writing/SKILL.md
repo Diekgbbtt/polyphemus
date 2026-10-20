@@ -21,7 +21,7 @@ You need no polymerhus internals beyond the seed-face contract and that parametr
 
 ## The two planes and the one join
 
-The store holds the WHAT: durable verified state (credentials, tokens, steel profile key, snapshot, roles, the anti-bot and replayability facts, overview).
+The store holds the WHAT: durable verified state (credentials, tokens, steel session-state reference, snapshot, roles, the anti-bot and replayability facts, overview).
 The authn skill holds the HOW: the replayable procedure a follower executes.
 The only formal edge between them is the `procedure` label on an account record, naming the skill procedure that minted or serves that account.
 Every procedure cites the account and token NAMES it uses, never their values.
@@ -42,7 +42,7 @@ An unknown project returns 404.
 The in-process agent store tool is the in-system agent path, not yours: do not use it and do not document it.
 Name every account `<username>-<minting_context>`: the credential username with its email location suffix stripped (`diegogobbetti69@gmail.com` -> `diegogobbetti69`), a hyphen, then the run or flow that minted it (`first_authn_bootstrap`, `hunting_misauthr`, ...), which you assess at write time.
 The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share ONE account name; a second name for the same credential identity is a fork, not a second account.
-Per account record: `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `steel` (`{profile}` key only, never browser state), `snapshot` (`{cookies, params, captured_at}`; the required header fact single-sources on the overview's `required_headers`, never duplicated here), `roles` with `default_role` where multiple roles exist, `notes`.
+Per account record: `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `steel` (`{state}` key only, never browser state; an old `profile` key is ignored), `snapshot` (`{cookies, params, captured_at}`; the required header fact single-sources on the overview's `required_headers`, never duplicated here), `roles` with `default_role` where multiple roles exist, `notes`.
 Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` (a list of `{name, check}`), `anti-bot`, `http-client-replayability`, `notes`.
 `anti-bot` is the defence type (a vendor, product, or challenge name such as `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, or `waf:<name>`) or null when none; `http-client-replayability` is `true` or `false`, and leaving it unset means UNKNOWN, never false.
 Procedural prose never lands in the store.
@@ -71,7 +71,7 @@ Whatever the target, establish and record these two facts before you record its 
 4. Replay the trusted context surgically. When a browser session holds the trusted context, attempt to reproduce it with a plain HTTP client. Start from the overview's `required_headers` (the single source of the required header fact), the account `snapshot` (cookies, params) and the stored tokens with their locations. Identify line by line what carries the trust: header set and order, cookies, token values and locations, user-agent and client hints, query and body parameters, request and network parameters you control, and TLS/HTTP signature specifics where your tooling lets you control them. Change one variable at a time and read the response; iterate until the replay reaches the authenticated state or you can name what blocks it.
 5. Record the verdict honestly. When a plain-client replay reaches the authenticated state, record `http-client-replayability: true` and record which shape elements are static (replayable as-is) and which are dynamic (must be re-minted or are browser-bound): the continuation facts a follower needs. When replay cannot reach the authenticated state, record `http-client-replayability: false`; browser-only is a complete, honest result, never a failure.
 6. Script-driven logins. When the sign-in is programmed by client-side script, fetch and read the script; replay the exact request shape it builds (endpoints, headers, nonces, parameter order); where the script derives values dynamically (nonces, signatures, fingerprints), say so and treat those parts as browser-bound.
-7. Re-verify stale state. Treat an expired or missing session or profile as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
+7. Re-verify stale state. Treat an expired or missing session as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
 8. Persist through the operator seed face. Write both facts into the overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. This seed face is your write path: the in-process agent store tool is the in-system agents' path (their writes merge into the same overview, D220-12), so never use it here and never put `origin` in the payload.
 
 Two rules bind every target: facts live in the store, steps live in the skill; secret values stay in the store, the skill cites names only.
@@ -91,19 +91,17 @@ The static and dynamic element lists from step 5 are replay PROCEDURE, so they l
 The store keeps the concrete values they describe (`snapshot`, `tokens`) plus the two typed facts (`anti-bot`, `http-client-replayability`).
 A static element that proves to be a stable target property graduates into the overview's typed fields (`required_headers`, `defences`, `fingerprinting`), not a new field.
 
-### Browser fallback: the steel profile discipline
+### Browser fallback: the steel session discipline
 
-Durable browser identity is a Steel profile; the store holds only its `{profile}` key, and a follower rebinds it.
-Mount by name: `steel browser start --session <name> --profile <profile-name> --json` (the `--profile` flag takes the name the store holds, not the id).
-Mount first, every time, and read-only: the account's profile accumulates nothing until a write is earned.
-Mint only when the store holds no profile: add `--update-profile`, so the login that follows is written back.
-Log in only when the mount does not yield the authenticated landing: a missing OR unauthenticated mount is one fail-open trigger (the runtime gateway's D223-14 rule), and that login runs on the account's own profile with `--update-profile`, never on a disposable one.
-A warm profile is the point: it carries the site's cookies and history, so the mount presents a returning user, while a fresh profile on a fresh login presents a stranger.
-Settle then verify every mount: there is no CLI state-poll primitive (`steel profile list --json` returns name plus id only), so navigate to the authenticated landing URL and read it back before trusting the mount; an unverified mount never passes a verdict.
-Release is the persistence call, so any abnormal end (a timeout, a failure) forces a re-verify before the profile is trusted again.
-One live session per profile holds the last writer; there is no merge, so never mount one profile in two sessions at once.
+Durable browser state is the four-field session context: cookies, localStorage, sessionStorage, and indexedDB. There is no Steel profile.
+The store holds only a `steel: {state}` reference when a state file exists; secrets never touch the store.
+A fresh CLI session is a fresh context. The pinned CLI has no state field, so a later CLI flow must reuse the live session; never claim that a new session restored state.
+Start by name: `steel browser start --session <name> --session-timeout <ms> --json`.
+Log in when the live session does not yield the authenticated landing.
+Settle then verify: navigate to the authenticated landing URL and read it back before trusting the session; an unverified session never passes a verdict.
+The programmatic crawl provider restores state, replicates auth material, and captures state on release. The CLI login path does not mint a profile and does not write one.
 Stop on every path with `steel browser stop --session <name> --json`, then prove it gone against `steel browser sessions --json`.
-The scripts beside the steel-browser skill are optional helpers for these acts: `references/profile-mount.sh`, `references/session-lifecycle.sh`, `references/catalogue.sh`, `references/extract-reads.sh`.
+The scripts beside the steel-browser skill are optional helpers for these acts: `references/session-lifecycle.sh`, `references/catalogue.sh`, `references/extract-reads.sh`.
 
 ### Browser fast path (read this before you touch the CLI)
 
@@ -135,8 +133,8 @@ Gate: each flow states its endpoint or form plus its required headers and anti-f
 ## P3 - Execute and verify
 
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
-Browser path: mount the profile first and verify it per the fallback discipline above; log in only when the mount does not yield the authenticated landing, and pace that login per the mechanics skill's cadence and escalation rules.
-Record the profile name from the mint to the account `steel` reference in P4.
+Browser path: reuse or start a live session and verify it per the fallback discipline above; log in only when it does not yield the authenticated landing, and pace that login per the mechanics skill's cadence and escalation rules.
+Do not write a profile reference. Record `steel.state` only when a state file exists.
 Verify with concrete commands: `navigate` to the target URL, then settle with `wait --url <authenticated-landing-substr>` or `wait --text <marker>` (a condition, not a fixed pause), then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
 Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead.
 Gate: a verification predicate fired for the flow, where request success means a new session cookie plus a non-login URL and browser success means navigation to the authenticated landing state.
@@ -145,7 +143,7 @@ An unverified flow never yields a verdict and never advances to P4.
 ## P4 - Record the facts (WHAT)
 
 Write the verified facts into the store through the seed face from the contract section above.
-Record per account only what P3 verified: `credentials`, `tokens`, `steel` profile key, `snapshot`, `roles` and `default_role`, `notes`.
+Record per account only what P3 verified: `credentials`, `tokens`, `steel` state reference when one exists, `snapshot`, `roles` and `default_role`, `notes`.
 Record overview only what P0 through P2 established: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `notes`.
 Set `anti-bot` to the named defence or null; set `http-client-replayability` to `true` or `false` only once the replay was actually run, otherwise leave it unset so it reads UNKNOWN.
 Gate: no procedure prose landed in the store and no secret value landed in the skill.
@@ -157,8 +155,8 @@ Every sign-up procedure carries this line verbatim, so every target mints new ac
 Cite for EVERY step the tool it uses AND why it uses it (request-based because no blocking defence was observed, steel because a named WAF, anti-bot, or fingerprinting signal forced it).
 When `http-client-replayability` is `true`, the procedure carries the replay steps and the static/dynamic element lists: which headers, cookies, parameters, and token locations to send as-is, and which values must be re-minted or are browser-bound.
 When it is `false`, the procedure carries the browser steps instead, and says plainly that a plain-client replay cannot reach the authenticated state.
-Name for every steel step the profile to load, the concrete CLI commands, and the script they come from.
-Resolve script citations to the steel-browser skill's published references beside that skill (`references/session-lifecycle.sh`, `references/profile-mount.sh`, `references/extract-reads.sh`, `references/eval-inline.sh`, `references/eval-interact.sh`) or the authn skill's own `references/` scripts.
+Name for every steel step the live session, the concrete CLI commands, and the script they come from.
+Resolve script citations to the steel-browser skill's published references beside that skill (`references/session-lifecycle.sh`, `references/extract-reads.sh`, `references/eval-inline.sh`, `references/eval-interact.sh`) or the authn skill's own `references/` scripts.
 Keep login-specific scripts in the authn skill's own `references/`, and mechanics in the steel-browser references.
 
 ### Where the project skill lands
@@ -185,7 +183,7 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 | Account NAME | Procedure account citation | Known name means duplicate, never fork |
 | `credentials` | Sign-in or sign-up step | Secrets stay in store, skill cites account |
 | `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels |
-| `steel: {profile}` | Browser mount step | Store holds key, skill names profile |
+| `steel: {state}` | Browser session step | Store holds key when a state file exists; no profile |
 | `snapshot` | Request replay step | Replay the account snapshot exactly |
 | `overview.anti-bot` | Defence-naming step (P1) | Store holds the vendor name, skill names it for the mode decision |
 | `overview.http-client-replayability` | Replay verdict and continuation facts (P1/P5) | true means the skill carries replay steps; false means browser steps; unset means unknown |

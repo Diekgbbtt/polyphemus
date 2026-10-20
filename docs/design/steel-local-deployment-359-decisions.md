@@ -53,8 +53,9 @@ The value carries the `/v1` path because the CLI appends the operation path to i
 The CLI reads this name natively (its precedence step 2). A thin shared resolver in the `app` layer exposes the same value to any SDK consumer.
 The resolver returns the SDK-native origin form: it drops one terminal `/v1` and any trailing slash, because the Python SDK appends `/v1` to `base_url` itself (`steel/_client.py`, `sessions.py`).
 The resolver is therefore the one place the form is adapted, and it stays the single construction point for the SDK side.
-`steel_exec` injects the global `--local` flag into a command-mode invocation when the value is set, because the CLI selects local mode only through a flag.
-Script-mode callers (and a bare CLI) pass `--local` themselves; the skill states the rule.
+D359-13 moves mode selection to the `steel` wrapper, because the CLI selects local mode only through a flag.
+The gateway passes command text through unchanged; scripts reach the wrapper too.
+The skill states one runtime-agnostic command form.
 _Wiring must stay neutral to the future client choice_: whether the recon browser phase drives the Steel SDK or the Steel CLI, both read the same one value.
 
 ## D359-5 - The SDK consumer reads the same value and the session's own connect URL

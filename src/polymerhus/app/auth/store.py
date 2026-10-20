@@ -192,6 +192,12 @@ class AuthStore:
         `<repo>/data/`)."""
         self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
 
+    @property
+    def root(self) -> Path:
+        """The data root this store is rooted under (the tests' temp root in
+        the unit tier, the app-owned root in production)."""
+        return self._root
+
     # --- path helpers ----------------------------------------------------------
 
     def _bucket_dir(self, project_id: str) -> Path:

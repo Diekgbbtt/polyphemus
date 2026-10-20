@@ -4,8 +4,8 @@ This module does NOT reimplement the crawl loop - it wraps `crawl_agentic.py`
 (see its module docstring). This adapter only:
 
   * builds the minimal `mcp_manager` shim (`get_tools()`) the loop expects,
-    defaulting to `steel_client.get_crawl_tools()` but accepting injected
-    `tools` for tests;
+    defaulting to `steel_client.get_crawl_tools(steel_state=...,
+    browser_auth=...)` but accepting injected `tools` for tests;
   * builds `build_llm_fn` from `chat_model_for(model_role)` (or wraps an
     injected `llm` directly), so the vendored module's lazy
     `from api import _build_llm_with_model_for_user` fallback never fires;
@@ -75,19 +75,17 @@ async def run_crawl(
     max_pages: Optional[int] = None,
     max_depth: Optional[int] = None,
     max_iters: Optional[int] = None,
-    auth_cookies: Optional[list] = None,
-    steel_profile: Optional[str] = None,
+    steel_state: Optional[str] = None,
+    browser_auth: Optional[dict] = None,
 ) -> dict:
     """Run the bounded agentic-crawl ReAct loop and return its manifest.
 
-    `auth_cookies` (the feed-projected persisted session cookies, resolved
-    from the store through the bound account identifier) and `steel_profile`
-    (the feed-bound persisted profile key, mounted read-only) are forwarded
-    to `steel_client.get_crawl_tools` when the tools are built here, so the
-    default Steel provider opens the crawl session under the persisted
-    profile and seeds the browser context before the crawl
-    (profile-mount-only auth). Ignored when `tools` are injected
-    (tests build the provider themselves).
+    `steel_state` (the resolved per-account state file) and `browser_auth`
+    (cookies, headers, and storage tokens projected from the account) are
+    forwarded to `steel_client.get_crawl_tools` when the tools are built
+    here, so the default Steel provider restores state, replicates auth
+    material, and runs the gate. Ignored when `tools` are injected (tests
+    build the provider themselves).
 
     Best-effort: any exception (Steel unconfigured, tool/LLM failure, ...)
     yields the empty manifest rather than propagating, so callers (the crawl
@@ -97,7 +95,7 @@ async def run_crawl(
         resolved_tools = tools
         if resolved_tools is None:
             resolved_tools = await steel_client.get_crawl_tools(
-                auth_cookies=auth_cookies, steel_profile=steel_profile)
+                steel_state=steel_state, browser_auth=browser_auth)
         mcp_manager = _ToolsManager(resolved_tools)
 
         if llm is not None:

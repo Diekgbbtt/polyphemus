@@ -5,8 +5,8 @@ It is an IN-PROCESS provider driven from the crawl ReAct loop's asyncio event
 loop (ASYNC Playwright API - the sync API cannot run inside a running event
 loop).
 
-Architecture (operator correction, SP4): the browser runtime is the
-authenticated CLOUD BROWSER by default, or the self-hosted runtime when the
+Architecture (operator correction, SP4; session-only #395 D20): the browser
+runtime is the Steel cloud by default, or the self-hosted runtime when the
 deployment names one. The provider opens a session with the Steel SDK and drives
 it with Playwright connected over CDP at the session's own `websocket_url`:
 
@@ -17,10 +17,17 @@ cloud pattern:
 
     wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<session id>
 
-The only credential is `config.STEEL_API_KEY`; there is no MCP host URL.
+A cloud deployment is configured by `config.STEEL_API_KEY`; a local deployment
+is keyless and configured by `STEEL_BROWSER_API_URL`. There is no MCP host URL.
 The address comes from the shared `STEEL_BROWSER_API_URL` resolver (#390,
 D359-4): unset keeps the SDK default (the cloud), set passes the resolver's
 SDK-native origin as `base_url` on session create and release (D359-5).
+
+The create options are deterministic: no random user agent, viewport, region,
+stealth bundle, or profile. The four durable state fields are restored from the
+account state file. Auth material (cookies, scoped headers, storage tokens) is
+merged into that state, and the first navigation runs the replication gate.
+The provider captures the live state before release.
 
 Contract: `SteelCrawlProvider.get_tools()` returns a list of LangChain
 `StructuredTool`s, one per name in `steel_client.CRAWL_TOOL_NAMES`. Each tool is
@@ -43,6 +50,7 @@ import crash.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import threading
 import time
@@ -50,7 +58,16 @@ import uuid
 from urllib.parse import parse_qsl, urlparse
 
 from polymerhus.app.steel_endpoint import steel_browser_api_url
+from polymerhus.app.steel_session_state import (
+    SteelStateError,
+    load_session_context,
+    save_session_context,
+    to_sdk_session_context,
+)
 from polymerhus.recon import config
+from polymerhus.recon.crawl.auth_gate import evaluate_auth_gate
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Scope predicate (the crawl-frontier / recorded-asset scope filter)
@@ -101,77 +118,82 @@ def _is_html_content_type(ct: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Per-session fingerprint randomisation - ported verbatim
+# Session options and auth-material merge (sessions only, #395 D20)
 # ---------------------------------------------------------------------------
 
-# US datacenters (lax/ord/iad) plus the current EU region aliases (eu-west/
-# eu-central). The old scl/fra/nrt codes were deprecated in favor of these
-# aliases; keeping an EU egress in the pool lets fresh-session rotation escape
-# an IP/session-bound bot wall by moving to a different region/IP. If Steel ever
-# rejects a region, `_create_steel_session`'s create fallback ladder retries
-# without it, so an unknown alias degrades gracefully rather than failing.
-_REGIONS = ["lax", "ord", "iad", "eu-west", "eu-central"]
-# Linux-only UAs ON PURPOSE: Steel runs on Linux and does not override
-# navigator.platform, so a Windows/Mac UA would mismatch the platform (a bot tell).
-_UAS = [
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-]
-_VIEWPORTS = [(1920, 1080), (1536, 864), (1440, 900), (1366, 768), (1600, 900)]
 
+def _session_opts(use_proxy: bool, session_context: dict | None = None) -> dict:
+    """Return deterministic `sessions.create` kwargs.
 
-def _random_session_opts(use_proxy: bool, profile_id: str | None = None) -> dict:
-    """Return a randomised set of Steel sessions.create kwargs for fingerprint diversity.
-
-    `profile_id` (the feed-bound persisted profile key, #243) mounts the
-    account's profile READ-ONLY - no `persist_profile`, matching the skill
-    discipline (a mount writes back only past the verify gate, and concurrent
-    crawl pods must never race on one profile's last-writer state). Omitted
-    entirely when no profile rides, so anonymous sessions are byte-identical
-    to before."""
-    w, h = random.choice(_VIEWPORTS)
-    opts = {
-        "use_proxy": use_proxy,
-        "region": random.choice(_REGIONS),
-        "user_agent": random.choice(_UAS),
-        "dimensions": {"width": w, "height": h},
-        "headless": False,
-        "stealth_config": {"humanize_interactions": True},
-    }
-    if profile_id:
-        opts["profile_id"] = profile_id
+    The tool never randomises the user agent, viewport, region, stealth, or
+    profile. The only variables are the caller's proxy choice and the restored
+    application context. Cloud-native fingerprint jitter remains a platform
+    behaviour."""
+    opts: dict = {"use_proxy": use_proxy, "headless": False}
+    if session_context:
+        opts["session_context"] = to_sdk_session_context(session_context)
     return opts
+
+
+def _cookie_key(cookie: dict) -> tuple:
+    return (
+        cookie.get("name"),
+        cookie.get("domain") or "",
+        cookie.get("path") or "",
+        cookie.get("url") or "",
+    )
+
+
+def _merge_browser_auth(
+    session_context: dict | None,
+    browser_auth: dict | None,
+    default_url: str | None = None,
+) -> dict:
+    """Merge auth material into the stored application context.
+
+    Auth cookies replace a same-key state cookie. A cookieless domain/url is
+    anchored to `default_url` so the runtime can place it. Storage-located
+    tokens merge per origin and replace same-named state keys. Header material
+    is not part of `sessionContext`; the provider scopes it at the browser
+    context."""
+    context = dict(session_context or {})
+    material = browser_auth or {}
+
+    cookies: list = []
+    by_key: dict[tuple, int] = {}
+    for cookie in list(context.get("cookies") or []) + list(material.get("cookies") or []):
+        if not isinstance(cookie, dict):
+            continue
+        name, value = cookie.get("name"), cookie.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        if default_url and not cookie.get("domain") and not cookie.get("url"):
+            cookie = {**cookie, "url": default_url}
+        key = _cookie_key(cookie)
+        if key in by_key:
+            cookies[by_key[key]] = cookie
+        else:
+            by_key[key] = len(cookies)
+            cookies.append(cookie)
+    if cookies:
+        context["cookies"] = cookies
+
+    storage = material.get("storage")
+    if isinstance(storage, dict) and storage:
+        local = dict(context.get("localStorage") or {})
+        for origin, values in storage.items():
+            if not isinstance(origin, str) or not isinstance(values, dict):
+                continue
+            bucket = dict(local.get(origin) or {})
+            bucket.update(values)
+            local[origin] = bucket
+        context["localStorage"] = local
+
+    return context
 
 
 def _extract_links_expr() -> str:
     return "els => els.map(a => a.href)"
-
-
-def _to_playwright_cookies(cookies, default_url: str) -> list:
-    """Map auth_context cookies ({name, value, [domain], [path]}) to the
-    Playwright `context.add_cookies` shape.
-
-    With a domain -> {name, value, domain, path} (path defaults to "/").
-    Without a domain -> {name, value, url} so Playwright infers domain/path
-    from `default_url` (the crawl target's URL). Entries lacking a string
-    name/value are skipped so one malformed fixture entry never aborts the set.
-    """
-    out = []
-    for c in cookies or []:
-        if not isinstance(c, dict):
-            continue
-        name, value = c.get("name"), c.get("value")
-        if not isinstance(name, str) or not isinstance(value, str):
-            continue
-        pc = {"name": name, "value": value}
-        if c.get("domain"):
-            pc["domain"] = c["domain"]
-            pc["path"] = c.get("path", "/")
-        else:
-            pc["url"] = default_url
-        out.append(pc)
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +201,8 @@ def _to_playwright_cookies(cookies, default_url: str) -> list:
 class _Crawl:
     """Holds all mutable state for a single Steel crawl session (async page)."""
 
-    def __init__(self, crawl_id, scope, max_depth, max_pages, session, browser, page, pw, api_key):
+    def __init__(self, crawl_id, scope, max_depth, max_pages, session, browser,
+                 page, pw, api_key, client=None):
         self.id = crawl_id
         self.scope = scope
         self.max_depth = max_depth
@@ -189,6 +212,7 @@ class _Crawl:
         self.page = page
         self.pw = pw
         self.api_key = api_key
+        self.client = client
         self.started = time.time()
         self.last_active = time.time()
         self.current_depth = 0
@@ -198,6 +222,9 @@ class _Crawl:
         self.pages_done = 0
         self.requests: list = []
         self.responses: dict = {}
+        self.auth_required = False
+        self.auth_checked = False
+        self.auth_result: dict | None = None
         self._req_lock = threading.Lock()
         self._attach_listeners()
 
@@ -285,12 +312,15 @@ def _build_manifest(crawl: _Crawl) -> dict:
 
 
 def _steel_client_kwargs(api_key: str, base_url: str | None) -> dict:
-    """Return the `Steel(...)` kwargs, omitting `base_url` when it is unset.
+    """Return the `Steel(...)` kwargs.
 
-    An omitted `base_url` leaves the SDK's own default (the steel.dev cloud)
-    untouched, so an unconfigured deployment is byte-identical to before.
+    An omitted `base_url` leaves the SDK default (the cloud) untouched. An
+    empty key is omitted too: a local deployment is keyless and authenticated
+    by its address (#395, D359-12).
     """
-    kwargs = {"steel_api_key": api_key}
+    kwargs: dict = {}
+    if api_key:
+        kwargs["steel_api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
     return kwargs
@@ -311,31 +341,20 @@ def _cdp_connect_url(session, api_key: str) -> str:
 def _create_steel_session(
     api_key: str,
     use_proxy: bool,
-    profile_id: str | None = None,
     base_url: str | None = None,
+    session_context: dict | None = None,
 ):
-    """Create a Steel session (SYNC SDK), with the reference's opts fallback ladder.
+    """Create a Steel session (SYNC SDK).
 
     Runs off the event loop via `asyncio.to_thread`. Returns the client and the
-    session object. A profile mount that the platform rejects falls back to the
-    unprofiled ladder below - an auth-establishment concern, never a crawl
-    crash. `base_url` addresses a self-hosted runtime; None keeps the SDK
-    default (the cloud)."""
+    session object. `base_url` addresses a self-hosted runtime; None keeps the
+    SDK default (the cloud). A rejected restore fails loudly: silently
+    dropping state would turn an authenticated crawl into an anonymous one
+    while claiming otherwise."""
     from steel import Steel  # noqa: PLC0415
 
     client = Steel(**_steel_client_kwargs(api_key, base_url))
-    opts = _random_session_opts(use_proxy, profile_id)
-    try:
-        return client, client.sessions.create(**opts)
-    except Exception:
-        try:
-            return client, client.sessions.create(
-                use_proxy=use_proxy,
-                user_agent=opts["user_agent"],
-                dimensions=opts["dimensions"],
-            )
-        except Exception:
-            return client, client.sessions.create()
+    return client, client.sessions.create(**_session_opts(use_proxy, session_context))
 
 
 class SteelCrawlProvider:
@@ -354,8 +373,8 @@ class SteelCrawlProvider:
         api_key: str | None = None,
         *,
         session_lifetime_s: int | None = None,
-        auth_cookies=None,
-        steel_profile: str | None = None,
+        steel_state: str | None = None,
+        browser_auth: dict | None = None,
         base_url: str | None = None,
     ):
         self._api_key = api_key if api_key is not None else config.STEEL_API_KEY
@@ -368,15 +387,11 @@ class SteelCrawlProvider:
             if session_lifetime_s is not None
             else int(getattr(config, "CRAWL_JOB_TIMEOUT_S", 480))
         )
-        # Profile-mount-only auth (#243): persisted session cookies to seed
-        # the browser context with (via context.add_cookies) BEFORE the
-        # crawl, so it runs authenticated with no human step. Empty for an
-        # anonymous crawl.
-        self._auth_cookies = list(auth_cookies or [])
-        # Profile-mount-only auth (#243): the feed-bound persisted Steel
-        # profile key, mounted read-only at session creation (`profile_id`).
-        # None for an anonymous crawl or an account with no profile.
-        self._steel_profile = steel_profile or None
+        # The resolved per-account state file, and the feed-projected browser
+        # material (cookies, scoped headers, storage-located tokens). Empty
+        # for an anonymous crawl.
+        self._steel_state = steel_state or None
+        self._browser_auth = dict(browser_auth or {})
         self._crawls: dict[str, _Crawl] = {}
         self._lock = threading.Lock()
 
@@ -388,7 +403,11 @@ class SteelCrawlProvider:
             crawl = self._crawls.pop(crawl_id, None)
         if not crawl:
             return {"endpoints": [], "js_urls": []}
-        manifest = _build_manifest(crawl)
+        auth_failed = bool(
+            crawl.auth_result is not None
+            and not crawl.auth_result.get("authenticated"))
+        manifest = {"endpoints": [], "js_urls": []} if auth_failed else _build_manifest(crawl)
+        await self._capture_state(crawl)
         try:
             await crawl.browser.close()
         except Exception:
@@ -407,6 +426,31 @@ class SteelCrawlProvider:
         except Exception:
             pass
         return manifest
+
+    async def _capture_state(self, crawl: _Crawl) -> None:
+        """Capture the live context and write it to the account's state file.
+
+        A capture failure never cancels the release. The state carries secrets,
+        so neither the context nor the failure detail is logged."""
+        if not self._steel_state or crawl.client is None:
+            return
+        if crawl.auth_required and not (
+            crawl.auth_checked
+            and crawl.auth_result is not None
+            and crawl.auth_result.get("authenticated")
+        ):
+            # Never overwrite a good account state with an unauthenticated or
+            # untested context.
+            return
+        try:
+            context = await asyncio.to_thread(
+                crawl.client.sessions.context, crawl.session.id)
+            await asyncio.to_thread(
+                save_session_context, self._steel_state, context)
+        except Exception:  # noqa: BLE001 - release must still run
+            logger.warning(
+                "steel provider: state capture failed for session %s; "
+                "releasing without a state update", crawl.session.id)
 
     async def _reap_expired(self):
         """Release crawls idle longer than the session lifetime (inactivity-based)."""
@@ -437,34 +481,35 @@ class SteelCrawlProvider:
         use_proxy: bool = False,
         user_id: str = "",
     ) -> dict:
-        if not self._api_key:
-            return {"error": "steel_api_key_unavailable"}
+        if not self._api_key and not self._base_url:
+            return {"error": "steel_runtime_unconfigured"}
 
         from playwright.async_api import async_playwright  # noqa: PLC0415
 
         await self._reap_expired()
+        session_context = None
+        if self._steel_state:
+            try:
+                session_context = load_session_context(self._steel_state)
+            except SteelStateError:
+                logger.warning(
+                    "steel provider: state %s is unreadable; continuing with "
+                    "auth material only", self._steel_state)
+        session_context = _merge_browser_auth(
+            session_context, self._browser_auth, target)
         client, session = await asyncio.to_thread(
             _create_steel_session,
             self._api_key,
             use_proxy,
-            self._steel_profile,
             self._base_url,
+            session_context or None,
         )
         p = await async_playwright().start()
         cdp_url = _cdp_connect_url(session, self._api_key)
         try:
             browser = await p.chromium.connect_over_cdp(cdp_url)
             ctx = browser.contexts[0]
-            if self._auth_cookies:
-                # PROFILE-MOUNT-ONLY AUTH: seed the browser context with the
-                # feed-projected persisted session cookies BEFORE any
-                # navigation, so the crawl runs authenticated with no human
-                # step. Best-effort: a malformed cookie must degrade to an
-                # unauthenticated crawl, never crash the session.
-                try:
-                    await ctx.add_cookies(_to_playwright_cookies(self._auth_cookies, target))
-                except Exception:
-                    pass
+            await self._install_scoped_headers(ctx, target)
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         except Exception:
             try:
@@ -477,7 +522,9 @@ class SteelCrawlProvider:
                 pass
             raise
         crawl_id = uuid.uuid4().hex
-        crawl = _Crawl(crawl_id, scope, max_depth, max_pages, session, browser, page, p, self._api_key)
+        crawl = _Crawl(crawl_id, scope, max_depth, max_pages, session, browser,
+                       page, p, self._api_key, client=client)
+        crawl.auth_required = bool(self._browser_auth)
         crawl.enqueue([target], depth=0)
         with self._lock:
             self._crawls[crawl_id] = crawl
@@ -485,7 +532,52 @@ class SteelCrawlProvider:
             "crawl_id": crawl_id,
             "frontier": list(crawl.frontier),
             "viewer_url": getattr(session, "session_viewer_url", ""),
+            "auth_required": crawl.auth_required,
         }
+
+    async def _install_scoped_headers(self, ctx, target: str) -> None:
+        """Attach auth headers only to requests for the target origin.
+
+        Global extra headers would leak token material to third-party
+        origins the page contacts. The route interceptor leaves every other
+        origin untouched."""
+        headers = self._browser_auth.get("headers")
+        if not isinstance(headers, dict) or not headers:
+            return
+        target_netloc = urlparse(target).netloc.lower()
+
+        async def _add_headers(route):
+            request = route.request
+            if urlparse(request.url).netloc.lower() == target_netloc:
+                merged = dict(request.headers)
+                merged.update({str(k): str(v) for k, v in headers.items()})
+                await route.continue_(headers=merged)
+            else:
+                await route.continue_()
+
+        await ctx.route("**/*", _add_headers)
+
+    async def _check_auth_gate(self, crawl: _Crawl, status: int) -> None:
+        """Evaluate the gate once, on the first authenticated navigation."""
+        if not crawl.auth_required or crawl.auth_checked:
+            return
+        crawl.auth_checked = True
+        local_storage: dict = {}
+        try:
+            current = await crawl.page.evaluate(
+                "() => Object.fromEntries(Object.entries(localStorage))")
+            parsed = urlparse(crawl.page.url or "")
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            local_storage = {origin: current if isinstance(current, dict) else {}}
+        except Exception:
+            local_storage = {}
+        crawl.auth_result = evaluate_auth_gate(
+            status=status,
+            final_url=crawl.page.url,
+            login_url=self._browser_auth.get("login_url"),
+            storage=self._browser_auth.get("storage"),
+            local_storage=local_storage,
+        )
 
     async def _steel_navigate(self, crawl_id: str, url: str, wait_ms: int = 800) -> dict:
         with self._lock:
@@ -494,6 +586,9 @@ class SteelCrawlProvider:
             return {"error": "unknown crawl_id"}
         if crawl.pages_done >= crawl.max_pages:
             return {"error": "page_cap_reached", **crawl.frontier_view()}
+        if crawl.auth_checked and crawl.auth_result and not crawl.auth_result.get("authenticated"):
+            return {"error": "auth_replication_failed",
+                    "auth": crawl.auth_result, **crawl.frontier_view()}
         # No navigation allowlist: the agent may navigate to ANY url its
         # reasoning chooses, on or off the frontier. The operator prefers to
         # trust the agent's navigation judgment; scope is enforced on what gets
@@ -537,6 +632,11 @@ class SteelCrawlProvider:
                     is_html = True
         except Exception as e:
             return {"error": str(e), **crawl.frontier_view()}
+
+        await self._check_auth_gate(crawl, status)
+        if crawl.auth_result is not None and not crawl.auth_result.get("authenticated"):
+            return {"error": "auth_replication_failed",
+                    "auth": crawl.auth_result, **crawl.frontier_view()}
 
         new_links: list = []
         if status not in (401, 403, 404) and is_html:

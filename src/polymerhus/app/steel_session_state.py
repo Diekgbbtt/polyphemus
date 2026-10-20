@@ -4,10 +4,12 @@ The local Steel runtime has no profile store, so a session's identity leaves
 with the session unless the caller captures it first. This module is the ONE
 construction point for that sequence:
 
-1. ``capture_session_context`` reads ``GET /v1/sessions/<id>/context``, the
-   live browser state (``cookies``, ``localStorage``, ``sessionStorage``,
-   ``indexedDB``).
-2. ``save_session_context`` writes it atomically to a caller-owned file.
+1. ``capture_session_context`` reads ``GET /v1/sessions/<id>/context`` and
+   projects it to the four durable browser fields (``cookies``,
+   ``localStorage``, ``sessionStorage``, ``indexedDB``); every other captured
+   field is dropped.
+2. ``save_session_context`` writes the projection atomically and owner-only
+   to a caller-owned file.
 3. ``release_session`` ends the session (``POST .../release``); the API closes
    the browser and the container init reaps the Chromium children (the
    ``init: true`` compose setting).
@@ -15,7 +17,8 @@ construction point for that sequence:
 ``teardown_with_state`` runs the three in order and always releases, even when
 the capture fails, so an unreadable state can never leave a session alive.
 ``restore_session`` feeds a stored context back through the create call's
-``sessionContext`` field, the same shape the capture returns.
+``sessionContext`` field. ``state_path`` is the one per-account location under
+the shared project layout.
 
 The endpoint comes from the shared ``STEEL_BROWSER_API_URL`` resolver (#390);
 an explicit ``base_url`` (the SDK-native origin form) overrides it for tests.
@@ -30,14 +33,80 @@ from pathlib import Path
 import httpx
 
 from polymerhus.app.atomic_write import write_text_atomic
+from polymerhus.app.data_root import project_dir, validate_path_component
 from polymerhus.app.steel_endpoint import steel_browser_api_url
 
 API_KEY_ENV = "STEEL_API_KEY"
 DEFAULT_TIMEOUT_S = 60.0
 
+# The only durable browser-state fields (#395, D20). The canonical spellings
+# are the HTTP/JSON aliases; the SDK's snake_case spellings are accepted on
+# input and emitted at the SDK seam.
+_STATE_FIELDS = (
+    ("cookies", "cookies"),
+    ("localStorage", "local_storage"),
+    ("sessionStorage", "session_storage"),
+    ("indexedDB", "indexed_db"),
+)
+
 
 class SteelStateError(RuntimeError):
     """A Steel session-state call failed, or no endpoint was configured."""
+
+
+def _as_mapping(context: object) -> dict:
+    """Accept a dict or an SDK model and return its alias-keyed mapping."""
+    if isinstance(context, dict):
+        return context
+    if hasattr(context, "model_dump"):
+        dumped = context.model_dump(by_alias=True)
+        if isinstance(dumped, dict):
+            return dumped
+    if hasattr(context, "to_dict"):
+        dumped = context.to_dict()
+        if isinstance(dumped, dict):
+            return dumped
+    raise SteelStateError("session context is not a mapping")
+
+
+def project_session_context(context: object) -> dict:
+    """Keep only the four durable browser-state fields, in canonical spelling.
+
+    Missing fields are omitted; every other captured field is dropped. The
+    SDK's snake_case aliases are accepted, so the same projection serves the
+    HTTP capture and the SDK capture."""
+    source = _as_mapping(context)
+    projected: dict = {}
+    for canonical, sdk_name in _STATE_FIELDS:
+        if canonical in source:
+            projected[canonical] = source[canonical]
+        elif sdk_name in source:
+            projected[canonical] = source[sdk_name]
+    return projected
+
+
+def to_sdk_session_context(context: object) -> dict:
+    """Map canonical state to the SDK's snake_case create argument."""
+    source = project_session_context(context)
+    return {
+        sdk_name: source[canonical]
+        for canonical, sdk_name in _STATE_FIELDS
+        if canonical in source
+    }
+
+
+def state_path(
+    project_id: str,
+    state_ref: str,
+    *,
+    root: str | os.PathLike[str] | None = None,
+) -> Path:
+    """The one per-account state-file location.
+
+    The account reference is the file stem; it must be one safe path
+    component. The parent bucket comes from the shared project layout."""
+    account = validate_path_component(state_ref, "steel state reference")
+    return project_dir(project_id, f"steel-state/{account}.json", root=root)
 
 
 def _base_url(base_url: str | None) -> str:
@@ -103,7 +172,7 @@ def capture_session_context(
     """Read the live browser state of ``session_id`` (cookies + storage)."""
     if not session_id:
         raise SteelStateError("session_id is required")
-    return _request(
+    raw = _request(
         "GET",
         f"/sessions/{session_id}/context",
         base_url=base_url,
@@ -111,13 +180,25 @@ def capture_session_context(
         client=client,
         timeout=timeout,
     )
+    return project_session_context(raw)
 
 
 def save_session_context(path: str | os.PathLike[str], context: dict) -> Path:
-    """Write the captured context atomically to ``path`` and return the path."""
+    """Project, write atomically, and owner-only the captured context."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    write_text_atomic(target, json.dumps(context, indent=2, sort_keys=True) + "\n")
+    try:
+        target.parent.chmod(0o700)
+    except OSError:
+        pass
+    write_text_atomic(
+        target,
+        json.dumps(project_session_context(context), indent=2, sort_keys=True) + "\n",
+    )
+    try:
+        target.chmod(0o600)
+    except OSError:
+        pass
     return target
 
 
@@ -134,7 +215,7 @@ def load_session_context(path: str | os.PathLike[str]) -> dict:
         raise SteelStateError(f"session state {target} is not JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise SteelStateError(f"session state {target} is not a JSON object")
-    return data
+    return project_session_context(data)
 
 
 def create_session(
@@ -249,8 +330,11 @@ __all__ = [
     "capture_session_context",
     "create_session",
     "load_session_context",
+    "project_session_context",
     "release_session",
     "restore_session",
     "save_session_context",
+    "state_path",
     "teardown_with_state",
+    "to_sdk_session_context",
 ]

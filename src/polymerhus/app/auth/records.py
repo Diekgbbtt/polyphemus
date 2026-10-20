@@ -186,13 +186,16 @@ def _check_tokens(tokens: object) -> None:
 
 
 def _check_steel(steel: object) -> None:
-    # The minimal durable reference: the cloud profile key only (D220-4).
-    # Nothing else is required, so extras ride along unchecked.
+    # The durable reference is the per-account session-state key (#395, D20).
+    # `state` is validated only when present; a retired `profile` key is
+    # silently ignored, never warned about, aliased, or migrated (Q5). An
+    # empty object is a record with no browser state.
     if not isinstance(steel, dict):
-        _fail("account.steel.profile", "must be an object carrying a profile")
-    profile = steel.get("profile")
-    if not isinstance(profile, str) or not profile:
-        _fail("account.steel.profile", "must be a non-empty string")
+        _fail("account.steel.state", "must be an object carrying a state key")
+    if "state" in steel:
+        state = steel.get("state")
+        if not isinstance(state, str) or not state:
+            _fail("account.steel.state", "must be a non-empty string")
 
 
 def validate_overview(record: object) -> dict:

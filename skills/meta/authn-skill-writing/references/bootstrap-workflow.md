@@ -20,7 +20,6 @@ It is the prompt form of the mandatory workflow in `../SKILL.md`; the skill is t
 - `<meta_skill_path>` - the path to `SKILL.md` beside this file.
 - `<mechanics_skill_path>` - the path to the `steel-browser` operation-mechanics skill (`skills/steel-browser/SKILL.md`), with its `references/` scripts beside it.
 - `<session_name>` - the agent-chosen session name for a browser step.
-- `<profile_name>` - the Steel profile name the account's `steel` reference holds.
 - `<session_timeout_ms>` - the session hard timeout in milliseconds.
 - `<authenticated_landing_substr>` - a substring of the authenticated landing URL.
 - `<marker>` - a text marker that appears only in the authenticated state.
@@ -31,7 +30,7 @@ You are the EXTERNAL authentication bootstrapper for the target `<target>` in pr
 You run outside the system under test, with your own request tooling and the authenticated steel CLI.
 You are the operator, by hand: you write store facts only through the seed face, and you write the procedure only as the project skill bundle. Facts live in the store, steps live in the skill, and secret values never leave the store.
 
-Read `<meta_skill_path>` and follow its phases P0 through P6 in order, including its seed-face contract and its steel profile discipline.
+Read `<meta_skill_path>` and follow its phases P0 through P6 in order, including its seed-face contract and its steel session discipline.
 Before the first browser step, read `<mechanics_skill_path>` (and its `references/` scripts beside it) for the operation MECHANICS - snapshot, batch, waiting, ref flow, variadic encoding, session lifecycle; do not re-derive the steel CLI from `--help`.
 Interfaces: write store facts with `PUT <seed_face_url>` and body `{overview?, accounts?}`; read state with `GET <read_face_url>`; write the project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md` with references beside it.
 Target: sign-in at `<login_url>`; sign-up at `<signup_url>`; account `<credentials>`.
@@ -48,27 +47,27 @@ The interaction mode defaults to request-based; the browser is taken only when t
 3. Name the defence as precisely as the evidence allows (for example `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, a named challenge, or `waf:<name>`); research unfamiliar block patterns before naming them; no defence signal means the type is null.
 4. Derive the mode: no defence signal -> request-based (reproduce the flow with a plain HTTP client, discovering the request shape from the client-side script when the sign-in is JS-programmed); a defence signal or a block-signalling 403 -> browser through steel.
 5. Record the verdict honestly: `http-client-replayability: true` with the static (replayable as-is) and dynamic (re-minted or browser-bound) shape elements, or `false` with the browser steps when a plain-client replay cannot reach the authenticated state. Browser-only is a complete, honest result, never a failure.
-6. Re-verify stale state loudly: an expired or missing session or profile is a failure to re-run the verification predicate, never a silent fall back to anonymous state.
+6. Re-verify stale state loudly: an expired or missing session is a failure to re-run the verification predicate, never a silent fall back to anonymous state.
 7. Persist both facts through the seed face, merging the overview you read first; a shape violation returns 400 `auth_invalid` and lands nothing.
 8. Keep the shared vocabulary: `waf_protected` and `waf_detection` for a block, `rate_limited` for a throttle; an application-level 401/403 takes no blocking-signature name.
 
 ## Browser branch (only when the probe forces it)
 
-Mount first, read-only: `steel browser start --session <session_name> --profile <profile_name> --json`.
-Log in only when the mount does not yield the authenticated landing.
-Run that login on the account's own profile - add `--update-profile`, minting with `--session-timeout <session_timeout_ms>` only when the store holds no profile - so the warm identity is written back and never discarded.
+Start or reuse a named live session: `steel browser start --session <session_name> --session-timeout <session_timeout_ms> --json`.
+Log in only when the session does not yield the authenticated landing.
+The pinned CLI has no state field, so a later CLI flow must reuse this live session. Do not mount or mint a profile.
 Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `steel browser wait --url <authenticated_landing_substr>` or `steel browser wait --text <marker>`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
 Wait on the challenge's own marker with a bounded `--timeout`, then escalate to the operator: the post-gate state cannot appear until the human acts, so a wait on it burns its whole timeout.
 Stop every session with `steel browser stop --session <session_name> --json` and prove it gone against `steel browser sessions --json`.
-Record the profile NAME (not the id) under the account's `steel: {profile: <profile_name>}`.
+Do not record a profile key. Record `steel.state` only when a state file exists.
 
 ## Report back
 
-Return a concise report: the mode decision with its forcing evidence (status codes, headers, body markers); the `anti-bot` name or null; the `http-client-replayability` verdict with its static and dynamic continuation facts; the steel profile name and the authenticated landing URL; the token names and locations; the exact skill path written and the store read-back with secret values redacted; and any error verbatim, plus anything you could not establish.
+Return a concise report: the mode decision with its forcing evidence (status codes, headers, body markers); the `anti-bot` name or null; the `http-client-replayability` verdict with its static and dynamic continuation facts; the authenticated landing URL; the token names and locations; the exact skill path written and the store read-back with secret values redacted; and any error verbatim, plus anything you could not establish.
 Cite secret names only: no secret VALUE in the report or in the skill.
 
 ## Deliverable
 
-- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `credentials`, `tokens` (with locations), `steel` (profile key only), `snapshot`, and the `procedure` label joining the account to the skill procedure.
+- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `credentials`, `tokens` (with locations), `steel` state reference only when a state file exists, `snapshot`, and the `procedure` label joining the account to the skill procedure.
 - The project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md`, with the mandatory block embedded verbatim and target-specific ordered steps (tool plus why per step), sign-up and sign-in as separate named procedures, and secret values cited by name only.
-- Report: the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; the steel profile key and token names/locations if a browser was used; the written skill path; and any error verbatim.
+- Report: the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; the token names/locations if a browser was used; the written skill path; and any error verbatim.

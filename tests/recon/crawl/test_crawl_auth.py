@@ -1,20 +1,17 @@
-"""Profile-mount-only agentic crawl (#243, D223-19): the crawl runs under the
+"""Session-only agentic crawl (#395, D20): the crawl runs under the
 gateway-established auth state and carries no interactive auth path.
 
 Fully mocked - no live Steel/LLM. Covers three seams:
 
 * `crawl_pod`'s `crawl` node runs the plain `run_crawl_fn` for every crawl,
-  forwarding the feed-projected `auth_context` cookies (resolved from the
-  store through the bound account identifier) so the provider seeds the
-  browser context - and nothing else. There is no precreate, no viewer URL,
-  no operator prompt: a `use_auth` job with feed material crawls
-  authenticated, a non-auth crawl (or an auth job with no material) crawls
-  anonymously.
-* `crawl_agent.run_crawl` forwards `auth_cookies` to `get_crawl_tools`
-  (the provider seam), unchanged.
-* `pipeline.run_pipeline` binds the persisted Steel profile key plus the
-  cookie subset onto the crawl job's extra, and carries no `viewer_url`
-  into the job status row.
+  forwarding the resolved state path and the browser auth material. There is
+  no precreate, no viewer URL, no operator prompt: a `use_auth` job with feed
+  material crawls authenticated, a non-auth crawl (or an auth job with no
+  material) crawls anonymously.
+* `crawl_agent.run_crawl` forwards state and browser auth to
+  `get_crawl_tools` (the provider seam), unchanged.
+* `pipeline.run_pipeline` binds `steel.state` and the browser material onto
+  the crawl job's extra, and carries no `viewer_url` into the job status row.
 """
 import asyncio
 
@@ -75,11 +72,11 @@ def base_pod_state(job, extra=None):
 # ---------------------------------------------------------------------------
 
 
-def test_auth_job_with_feed_cookies_forwards_them_and_crawls_plain():
+def test_auth_job_with_browser_material_forwards_it_and_crawls_plain():
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
-        run_calls.append((target, scope, auth_cookies))
+    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+        run_calls.append((target, scope, steel_state, browser_auth))
         return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
@@ -89,11 +86,17 @@ def test_auth_job_with_feed_cookies_forwards_them_and_crawls_plain():
         curate_fn=make_capturing_curate_fn(),
     )
 
-    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": COOKIES}}))
+    browser_auth = {"cookies": COOKIES,
+                    "headers": {"X-Api-Key": "K"}}
+    result = pod.invoke(base_pod_state(
+        AUTH_JOB,
+        extra={"steel_state": "/state/alice.json", "browser_auth": browser_auth},
+    ))
     export = result["export"]
 
     # scope folds to the registrable domain at the crawl-node resolution point
-    assert run_calls == [("https://app.example.com", ["example.com"], COOKIES)]
+    assert run_calls == [(
+        "https://app.example.com", ["example.com"], "/state/alice.json", browser_auth)]
     assert export.verdict == "success"
     assert not (export.stats or {}).get("viewer_url")  # no operator prompt, ever
 
@@ -101,8 +104,8 @@ def test_auth_job_with_feed_cookies_forwards_them_and_crawls_plain():
 def test_non_auth_crawl_runs_anonymous():
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
-        run_calls.append(auth_cookies)
+    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+        run_calls.append((steel_state, browser_auth))
         return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
@@ -114,16 +117,16 @@ def test_non_auth_crawl_runs_anonymous():
 
     result = pod.invoke(base_pod_state(NON_AUTH_JOB, extra={}))
     assert result["export"].verdict == "success"
-    assert run_calls == [[]]
+    assert run_calls == [(None, None)]
 
 
 def test_auth_job_without_material_runs_anonymous():
-    # A use_auth job whose account resolved to nothing: no cookies present,
+    # A use_auth job whose account resolved to nothing: no state or material,
     # so the crawl runs anonymous (fail-open) rather than prompting.
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
-        run_calls.append(auth_cookies)
+    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
+        run_calls.append((steel_state, browser_auth))
         return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
@@ -135,11 +138,11 @@ def test_auth_job_without_material_runs_anonymous():
 
     result = pod.invoke(base_pod_state(AUTH_JOB, extra={}))
     assert result["export"].verdict == "success"
-    assert run_calls == [[]]
+    assert run_calls == [(None, None)]
 
 
 def test_crawl_node_best_effort_on_run_failure():
-    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
+    def run_crawl_fn(target, *, scope, steel_state=None, browser_auth=None):
         raise RuntimeError("steel down")
 
     pod = crawl_pod.build_crawl_pod(
@@ -149,7 +152,8 @@ def test_crawl_node_best_effort_on_run_failure():
         curate_fn=make_capturing_curate_fn(),
     )
 
-    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": COOKIES}}))
+    result = pod.invoke(base_pod_state(
+        AUTH_JOB, extra={"browser_auth": {"cookies": COOKIES}}))
     assert result["export"].verdict == "failed"
 
 
@@ -187,7 +191,7 @@ class FakeRegistry:
         )
 
 
-def test_pipeline_binds_steel_profile_and_cookies_to_crawl(tmp_path):
+def test_pipeline_binds_steel_state_and_browser_auth_to_crawl(tmp_path):
     from polymerhus.app.auth.store import AuthStore
     from polymerhus.recon.control.authn_loop import GatewayVerdict
 
@@ -197,7 +201,7 @@ def test_pipeline_binds_steel_profile_and_cookies_to_crawl(tmp_path):
         accounts={"alice": {
             "credentials": {"username": "u", "password": "p",
                             "login_url": "https://x/login"},
-            "steel": {"profile": "proj1-alice"},
+            "steel": {"state": "alice"},
             "snapshot": {"cookies": COOKIES},
         }})
 
@@ -228,8 +232,12 @@ def test_pipeline_binds_steel_profile_and_cookies_to_crawl(tmp_path):
         )
     )
 
-    assert seen["steel_crawl"]["steel_profile"] == "proj1-alice"
-    assert seen["steel_crawl"]["auth_context"] == {"cookies": COOKIES}
+    assert seen["steel_crawl"]["steel_state"].endswith(
+        "/proj1/steel-state/alice.json")
+    assert seen["steel_crawl"]["browser_auth"] == {
+        "cookies": COOKIES,
+        "login_url": "https://x/login",
+    }
     assert seen["steel_crawl"]["auth_account"] == "alice"
 
 

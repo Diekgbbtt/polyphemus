@@ -127,3 +127,10 @@ def test_eval_reads_the_document(steel):
     _run("steel browser start --session s1 --json")
     _run("steel browser navigate https://example.com --session s1 --json")
     assert _run("steel browser eval 'document.title' --session s1 --json")["data"] == "Example Domain"
+
+
+def test_set_useragent_records_the_fixed_local_value(steel):
+    _run("steel browser start --session s1 --json")
+    ua = "Mozilla/5.0 (X11; Linux x86_64) Chrome/155.0.0.0 Safari/537.36"
+    out = _run(f"steel browser set useragent --local --session s1 --json '{ua}'")
+    assert out["data"] == {"property": "useragent", "value": ua}

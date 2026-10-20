@@ -7,11 +7,10 @@ FastAPI application (websockets, uvicorn, etc. not required here).
 Notable design points (kept minimal + marked in-line with `D23`/`SP4`):
 1. `_load_steel_crawl_skill` reads the steel-crawl role prompt directly from
    this module's `prompts/` dir, memoized on first call, fail-closed.
-2. The crawl runs profile-mount only (#223 T4 #243): the loop starts its own
-   session and crawls what the seeded browser context reaches - the
-   persisted session cookies the provider seeds before the crawl. The
-   retired interactive `steel_await_auth` human-in-the-viewer path and the
-   autonomous credentialed-login branch are gone with their prompts.
+2. The crawl is session-only (#395, D20): the loop starts its own session
+   and crawls what the restored state and replicated auth material reach.
+   The retired interactive `steel_await_auth` human-in-the-viewer path and
+   the autonomous credentialed-login branch are gone with their prompts.
 3. The T5 (#108) capability gate `_refuse_crawl_without_tool_calling` runs
    BEFORE `llm.bind_tools`: a model whose `supports_tool_calling` resolves
    `false`/`unknown` (T3 reader, ADR D5 Rule 1) refuses the tool-loop with a

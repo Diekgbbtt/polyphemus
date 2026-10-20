@@ -34,7 +34,7 @@ Whatever the target, establish and record these two facts before you record its 
 4. Replay the trusted context surgically. When a browser session holds the trusted context, attempt to reproduce it with a plain HTTP client. Start from the overview's `required_headers` (the single source of the required header fact), the account `snapshot` (cookies, params) and the stored tokens with their locations. Identify line by line what carries the trust: header set and order, cookies, token values and locations, user-agent and client hints, query and body parameters, request and network parameters you control, and TLS/HTTP signature specifics where your tooling lets you control them. Change one variable at a time and read the response; iterate until the replay reaches the authenticated state or you can name what blocks it.
 5. Record the verdict honestly. When a plain-client replay reaches the authenticated state, record `http-client-replayability: true` and record which shape elements are static (replayable as-is) and which are dynamic (must be re-minted or are browser-bound): the continuation facts a follower needs. When replay cannot reach the authenticated state, record `http-client-replayability: false`; browser-only is a complete, honest result, never a failure.
 6. Script-driven logins. When the sign-in is programmed by client-side script, fetch and read the script; replay the exact request shape it builds (endpoints, headers, nonces, parameter order); where the script derives values dynamically (nonces, signatures, fingerprints), say so and treat those parts as browser-bound.
-7. Re-verify stale state. Treat an expired or missing session or profile as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
+7. Re-verify stale state. Treat an expired or missing session as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
 8. Persist through the operator seed face. Write both facts into the overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. This seed face is your write path: the in-process agent store tool is the in-system agents' path (their writes merge into the same overview, D220-12), so never use it here and never put `origin` in the payload.
 
 Two rules bind every target: facts live in the store, steps live in the skill; secret values stay in the store, the skill cites names only."""
@@ -97,13 +97,12 @@ def test_names_the_parametrizable_project_skill_write_location():
     assert "<project_id>" in body
 
 
-def test_profile_discipline_mounts_by_name_not_by_id():
-    """The CLI's `--profile` takes the name and the store holds the name, so the
-    skill must not say "mount by id" (the #237 e2e wording defect)."""
+def test_session_discipline_has_no_profile_and_names_the_state_reference():
     body = _body()
-    assert "Mount by name:" in body
-    assert "Mount by id" not in body
-    assert "Record the profile name from the mint" in body
+    assert "steel: {state}" in body
+    assert "--profile" not in body
+    assert "profile-mount.sh" not in body
+    assert "Do not write a profile reference" in body
 
 
 def test_account_identity_is_the_credential_not_the_procedure():
@@ -195,25 +194,22 @@ def test_bootstrap_prompt_cites_the_mechanics_skill():
     assert "do not re-derive the steel CLI from `--help`" in prompt
 
 
-def test_browser_discipline_mounts_first_and_logs_in_only_on_failure():
-    """The reCAPTCHA diagnosis (D237-14): a fresh login is the score-gated
-    action, so the profile is mounted first and a login happens only when the
-    mount does not verify - never on a disposable profile (D237-15)."""
+def test_browser_discipline_reuses_a_live_session_and_logs_in_only_on_failure():
     body = _body()
-    assert "Mount first, every time" in body
-    assert "log in only when the mount does not yield the authenticated landing" in body
-    assert "never on a disposable one" in body
-    assert "mint or mount" not in body
+    assert "reuse the live session" in body
+    assert "Log in when the live session does not yield the authenticated landing" in body
+    assert "programmatic crawl provider restores state" in body
+    assert "--profile" not in body
 
 
-def test_bootstrap_prompt_mounts_first_and_keeps_the_login_warm():
+def test_bootstrap_prompt_reuses_a_live_session_and_cannot_restore_state():
     prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
         encoding="utf-8"
     )
-    assert "Mount first, read-only" in prompt
-    assert "Log in only when the mount does not yield the authenticated landing" in prompt
-    assert "warm identity is written back and never discarded" in prompt
-    assert "Mint the profile in flow on first login" not in prompt
+    assert "Start or reuse a named live session" in prompt
+    assert "pinned CLI has no state field" in prompt
+    assert "Do not mount or mint a profile" in prompt
+    assert "--profile" not in prompt
 
 
 def test_mechanics_skill_paces_the_login_and_sizes_the_clock():

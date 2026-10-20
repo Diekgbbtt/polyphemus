@@ -41,10 +41,11 @@ from datetime import datetime, timezone
 
 from polymerhus.app.config import config
 from polymerhus.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
+from polymerhus.app.steel_session_state import state_path as steel_state_path
 from polymerhus.recon.control.auth_feed import (
-    project_auth_cookies,
+    project_browser_auth,
     project_request_auth,
-    project_steel_profile,
+    project_steel_state,
     resolve_account,
     resolve_overview,
 )
@@ -572,10 +573,10 @@ async def run_pipeline(
                         # request projection through the existing
                         # `extra["auth_context"]` transport (the pod
                         # serialises it per tool at fill time); the
-                        # agent-driven crawl additionally gets the persisted
-                        # Steel profile key. `use_auth` stays the single
-                        # eligibility gate; a dead account fails open
-                        # (unauthenticated, loudly - resolve_account warns).
+                        # agent-driven crawl gets the resolved session-state
+                        # path and the browser auth material. `use_auth` stays
+                        # the single eligibility gate; a dead account fails
+                        # open (unauthenticated, loudly - resolve_account warns).
                         extra["auth_account"] = auth_account
                         account = resolve_account(
                             project_id, auth_account, store=auth_store)
@@ -585,12 +586,20 @@ async def run_pipeline(
                             overview = resolve_overview(
                                 project_id, store=auth_store)
                             if job.configurator_mode == "agent":
-                                profile = project_steel_profile(account)
-                                if profile:
-                                    extra["steel_profile"] = profile
-                                cookies = project_auth_cookies(account)
-                                if cookies:
-                                    extra["auth_context"] = {"cookies": cookies}
+                                state_ref = project_steel_state(account)
+                                if state_ref:
+                                    try:
+                                        extra["steel_state"] = str(steel_state_path(
+                                            project_id, state_ref,
+                                            root=getattr(auth_store, "root", None)))
+                                    except ValueError:
+                                        logger.warning(
+                                            "auth feed: invalid steel.state %r for "
+                                            "account %s; crawling without state",
+                                            state_ref, auth_account)
+                                browser_auth = project_browser_auth(account, overview)
+                                if browser_auth:
+                                    extra["browser_auth"] = browser_auth
                             else:
                                 material = project_request_auth(account, overview)
                                 if material:

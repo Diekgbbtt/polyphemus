@@ -11,9 +11,10 @@ projects only the subset its tools need:
   the existing `extra["auth_context"]` transport, serialised per tool by
   `serialize_auth_flags` (the pod-side serialiser moved here unchanged -
   same flag tables, same reserved keys, same shell quoting);
-- the crawler and browser tools: the account's persisted Steel profile key
-  (`extra["steel_profile"]`, D223-14) plus the cookie subset for providers
-  that seed the browser context;
+- the crawler and browser tools: the resolved session-state reference
+  (`extra["steel_state"]`) plus browser auth material
+  (`extra["browser_auth"]`: cookies, required headers, header-located tokens,
+  and storage-located tokens);
 - non-auth jobs: nothing - `use_auth` stays the single eligibility gate.
 
 Role/default_role selection resolves over the account record
@@ -192,24 +193,75 @@ def project_request_auth(account: dict | None,
     return material
 
 
-def project_auth_cookies(account: dict | None) -> list:
-    """The cookie subset of the request projection, for browser-context
-    seeding providers. Empty when the account carries no cookies."""
-    material = project_request_auth(account)
-    cookies = material.get("cookies") or []
-    return list(cookies) if isinstance(cookies, list) else []
+def project_browser_auth(account: dict | None,
+                         overview: dict | None = None) -> dict:
+    """Project an account onto browser auth material.
+
+    Cookies come from the snapshot and cookie-located tokens. Headers come
+    from the overview's `required_headers` plus header-located tokens.
+    Storage-located tokens group under their `target` origin; a storage token
+    with no target is skipped because it cannot be placed in a browser origin.
+
+    An absent/empty overview projects no required headers. A stale
+    `snapshot.headers` bag is never replayed. The result is empty when the
+    account carries no browser material."""
+    if not isinstance(account, dict):
+        return {}
+    headers = _parse_required_headers(overview)
+    cookies: list = []
+    storage: dict = {}
+    snapshot = account.get("snapshot") or {}
+    if isinstance(snapshot, dict):
+        source_cookies = snapshot.get("cookies") or []
+        if isinstance(source_cookies, list):
+            cookies.extend(
+                c for c in source_cookies
+                if isinstance(c, dict) and isinstance(c.get("name"), str)
+                and isinstance(c.get("value"), str))
+    tokens = account.get("tokens") or {}
+    if isinstance(tokens, dict):
+        for name, entry in tokens.items():
+            if not isinstance(entry, dict):
+                continue
+            value = entry.get("value")
+            if not isinstance(value, str) or not value:
+                continue
+            location = entry.get("location")
+            if location == "header" and isinstance(name, str) and name:
+                headers[name] = value
+            elif location == "cookie" and isinstance(name, str) and name:
+                cookies.append({"name": name, "value": value})
+            elif location == "storage" and isinstance(name, str) and name:
+                target = entry.get("target")
+                if isinstance(target, str) and target:
+                    storage.setdefault(target, {})[name] = value
+    material: dict = {}
+    if cookies:
+        material["cookies"] = cookies
+    if headers:
+        material["headers"] = headers
+    if storage:
+        material["storage"] = storage
+    if material:
+        credentials = account.get("credentials")
+        if isinstance(credentials, dict):
+            login_url = credentials.get("login_url")
+            if isinstance(login_url, str) and login_url:
+                material["login_url"] = login_url
+    return material
 
 
-def project_steel_profile(account: dict | None) -> str | None:
-    """The account's persisted Steel profile key (D223-14), or None when the
-    account mounts no profile."""
+def project_steel_state(account: dict | None) -> str | None:
+    """The account's session-state reference (`steel.state`), or None.
+
+    The retired `steel.profile` key is silently ignored (Q5)."""
     if not isinstance(account, dict):
         return None
     steel = account.get("steel") or {}
     if isinstance(steel, dict):
-        profile = steel.get("profile")
-        if isinstance(profile, str) and profile:
-            return profile
+        state = steel.get("state")
+        if isinstance(state, str) and state:
+            return state
     return None
 
 

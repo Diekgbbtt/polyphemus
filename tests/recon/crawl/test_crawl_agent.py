@@ -152,18 +152,17 @@ def test_skill_has_fresh_session_rotation_hard_rule():
     assert "3" in hard_rules
 
 
-def test_run_crawl_forwards_auth_cookies_and_profile_to_get_crawl_tools(monkeypatch):
+def test_run_crawl_forwards_state_and_browser_auth_to_get_crawl_tools(monkeypatch):
     # When tools are NOT injected, run_crawl builds them via
-    # steel_client.get_crawl_tools and must forward auth_cookies AND the
-    # persisted profile key so the default provider opens the session mounted
-    # and seeds the browser context for profile-mount-only auth.
+    # steel_client.get_crawl_tools and must forward the state path and browser
+    # material so the default provider restores, replicates, and gates.
     from polymerhus.recon.crawl import steel_client
 
     seen = {}
 
-    async def fake_get_crawl_tools(*, client_factory=None, auth_cookies=None, steel_profile=None):
-        seen["auth_cookies"] = auth_cookies
-        seen["steel_profile"] = steel_profile
+    async def fake_get_crawl_tools(*, client_factory=None, steel_state=None, browser_auth=None):
+        seen["steel_state"] = steel_state
+        seen["browser_auth"] = browser_auth
         return []
 
     async def fake_run_agentic(body, mcp_manager, build_llm_fn=None):
@@ -172,9 +171,10 @@ def test_run_crawl_forwards_auth_cookies_and_profile_to_get_crawl_tools(monkeypa
     monkeypatch.setattr(steel_client, "get_crawl_tools", fake_get_crawl_tools)
     monkeypatch.setattr(crawl_agent, "_run_agentic_crawl", fake_run_agentic)
 
+    material = {"cookies": [{"name": "a", "value": "b"}]}
     asyncio.run(crawl_agent.run_crawl(
         "https://t.example", scope=["https://t.example"], llm=object(),
-        auth_cookies=[{"name": "a", "value": "b"}], steel_profile="p1-alice",
+        steel_state="/state/alice.json", browser_auth=material,
     ))
-    assert seen["auth_cookies"] == [{"name": "a", "value": "b"}]
-    assert seen["steel_profile"] == "p1-alice"
+    assert seen["steel_state"] == "/state/alice.json"
+    assert seen["browser_auth"] == material

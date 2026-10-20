@@ -98,8 +98,9 @@ def test_scaffold_carries_the_module_buckets(tmp_path: Path) -> None:
     writes files only, never directories."""
     project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
 
-    for rel in ("skills", "auth", "analysis", "hunting/orchestration",
-                "hunting/hunter", "hunting/test-executor-pod"):
+    for rel in ("skills", "auth", "steel-state", "analysis",
+                "hunting/orchestration", "hunting/hunter",
+                "hunting/test-executor-pod"):
         assert (project_dir_ / rel).is_dir(), f"missing module bucket {rel}"
 
 

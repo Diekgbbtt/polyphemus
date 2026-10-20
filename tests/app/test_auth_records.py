@@ -48,7 +48,7 @@ def _full_account() -> dict:
             "api": {"value": "Bearer xyz", "location": "header", "expiry": "2026-10-01"},
             "vault": {"value": "v1", "location": "storage"},
         },
-        "steel": {"profile": "ops-profile-1"},
+        "steel": {"state": "ops-profile-1"},
         "snapshot": {
             "headers": {"Authorization": "Bearer xyz"},
             "cookies": [{"name": "sessionid", "value": "abc123"}],
@@ -273,15 +273,34 @@ def test_token_target_and_expiry_must_be_strings():
     assert exc.value.field == "account.tokens.s.target"
 
 
-# --- steel: minimal profile reference ---
+# --- steel: session-state reference; profile silently disregarded ---
 
-def test_steel_reference_requires_a_profile():
-    good = {"origin": "agent", "steel": {"profile": "prof-1"}}
+def test_steel_reference_accepts_a_state_key():
+    good = {"origin": "agent", "steel": {"state": "alice"}}
     assert validate_account(good) == good
-    for bad_steel in ({}, {"profile": ""}, {"profile": 5}, ["prof-1"]):
+
+
+def test_steel_reference_requires_a_nonempty_string_state_when_present():
+    for bad in ("", 5, None, ["alice"]):
         with pytest.raises(AuthInvalidError) as exc:
-            validate_account({"origin": "agent", "steel": bad_steel})
-        assert exc.value.field == "account.steel.profile"
+            validate_account({"origin": "agent", "steel": {"state": bad}})
+        assert exc.value.field == "account.steel.state"
+
+
+def test_steel_reference_non_object_is_refused_at_state():
+    with pytest.raises(AuthInvalidError) as exc:
+        validate_account({"origin": "agent", "steel": ["alice"]})
+    assert exc.value.field == "account.steel.state"
+
+
+def test_old_profile_reference_is_silently_accepted_and_left_stale():
+    record = {"origin": "agent", "steel": {"profile": "prof-1"}}
+    assert validate_account(record) == record
+
+
+def test_empty_steel_object_is_a_record_with_no_browser_state():
+    record = {"origin": "agent", "steel": {}}
+    assert validate_account(record) == record
 
 
 # --- snapshot shape corners ---

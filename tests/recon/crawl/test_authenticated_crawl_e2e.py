@@ -20,8 +20,8 @@ CAVEATS (baked into the skip/xfail behavior):
       not hold. The test degrades gracefully (xfail, never hangs) in that case.
   (b) Session cookies EXPIRE; this is a point-in-time fixture to be refreshed.
 
-Injection is COOKIE-ONLY: Steel drives real Chrome, so browser headers
-(user-agent, sec-*, accept) are emitted natively; no header injection.
+Injection is cookie-based: the browser auth material carries the fixture's
+cookies; the provider builds the session context and runs the auth gate.
 
 Manual run (serialized, main tree only - shared stack + external Steel + creds):
     STEEL_API_KEY=<key> RECON_AUTH_E2E_FILE=secrets/peoplecert-auth.json \\
@@ -67,12 +67,14 @@ pytestmark = pytest.mark.skipif(
 
 
 async def _crawl_navigate_result(auth_cookies, scope):
-    """Drive the real steel_* tools (production factory, with auth_cookies
-    injected into the browser context) and return the navigate result dict for
-    the target - it carries {status, blocked, block_type}."""
+    """Drive the real steel_* tools (production factory, with cookies in the
+    browser auth material) and return the navigate result dict for the target -
+    it carries {status, blocked, block_type}."""
     from polymerhus.recon.crawl import steel_client
 
-    tools = {t.name: t for t in await steel_client.get_crawl_tools(auth_cookies=auth_cookies)}
+    browser_auth = {"cookies": auth_cookies} if auth_cookies else None
+    tools = {t.name: t for t in await steel_client.get_crawl_tools(
+        browser_auth=browser_auth)}
     start = await tools["steel_crawl_start"].ainvoke(
         {"target": TARGET, "scope": scope, "max_depth": 1, "max_pages": 3}
     )

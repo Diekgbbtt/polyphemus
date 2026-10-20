@@ -16,10 +16,10 @@ crawl is driven deterministically so the assertion surface is stable.
 `test_steel_crawl_agentic_loop_flows_to_neo4j` additionally exercises the LLM
 ReAct loop (`crawl_agent.run_crawl`) and is gated on an OpenRouter key too.
 
-The retired interactive `steel_await_auth` login flow is gone with the
-profile-mount-only crawl (#243): authenticated live coverage now runs under
-a persisted account (the feed binds its profile key and cookies), never a
-human at the viewer.
+The retired interactive `steel_await_auth` login flow is gone. Authenticated
+live coverage now runs under a persisted account: the feed supplies the state
+path and browser auth material, and the provider gates the replication. There
+is no profile and no human at the viewer.
 
 Run (from the repo root, live stack up):
 

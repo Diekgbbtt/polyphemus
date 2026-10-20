@@ -27,7 +27,7 @@ RUN /opt/venv/bin/pip install --no-cache-dir "httpx[http2]==0.28.1"
 # Source is normally bind-mounted at /opt/kali by compose; copying it here keeps
 # the image usable standalone.
 COPY kali /opt/kali
-RUN chmod +x /opt/kali/entrypoint.sh /opt/kali/postrun.sh
+RUN chmod +x /opt/kali/entrypoint.sh /opt/kali/postrun.sh /opt/kali/steel_wrapper.sh
 
 ENV KALI_HTTP_HISTORY_ROOT=/data \
     KALI_HTTP_CAPTURE_ENABLED=true \

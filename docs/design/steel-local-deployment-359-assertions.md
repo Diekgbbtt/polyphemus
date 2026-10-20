@@ -6,7 +6,7 @@
 ## Seams under assertion
 
 - S1 `src/polymerhus/app/steel_endpoint.py::steel_browser_api_url` - the one construction point for the SDK side.
-- S2 `kali/mcp_server.py::_steel_exec_sync` - the `--local` injection for command-mode invocations.
+- S2 `kali/steel_wrapper.sh` - the `--local` injection for `browser` and `scrape`; `kali/mcp_server.py::_steel_exec_sync` passes command text through.
 - S3 `src/polymerhus/recon/crawl/steel_provider.py` - the SDK `base_url` and the session CDP URL.
 - S4 `docker-compose.yml`, `docker-compose.dev.yml`, `eval/docker-compose.eval.yml` - the optional passthrough into `kali` and `agent`.
 - S5 `eval/deploy/steel/docker-compose.steel.yml` - the pinned deployment artifact.
@@ -24,7 +24,7 @@ The live wiring is covered by C7 and the walkthrough tier.
 | id | seam | tier | input | observable | yields |
 |---|---|---|---|---|---|
 | C1 | S1 | unit | the variable absent; then present with surrounding whitespace; then present as `http://h:3000/v1`; then present as `http://h:3000/v1/`; then present as `http://h:3000` | absent returns `None`; whitespace-only returns `None`; the `/v1` forms return `http://h:3000`; the origin form returns `http://h:3000`; one terminal `/v1` is removed and no other path is touched | `tests/test_steel_endpoint.py` and `tests/test_steel_exec.py` (stub binary) |
-| C2 | S2 | unit | the variable set to `http://h:3000/v1`; a command-mode invocation `steel browser start --session s`; a command already carrying `--local`; a command already carrying `--api-url` | set injects exactly one `--local` immediately after the leading `steel` token and leaves the value for the CLI to read; unset leaves the command byte-identical; a command carrying `--local` or `--api-url` is not rewritten | `tests/test_steel_exec.py` (stub binary, no live Steel) |
+| C2 | S2 | unit | the variable set to `http://h:3000/v1`; a wrapper call for `browser` and `scrape`; a command already carrying `--local`; a cloud call | set injects exactly one `--local`; unset leaves the command byte-identical; a command carrying `--local` is not duplicated; the gateway never rewrites the command | `tests/test_steel_wrapper.py`, `tests/test_steel_exec.py` (fake binary, no live Steel) |
 | C3 | S2 | unit | the gateway imported in a process where `polymerhus` cannot be imported | the module imports and the injection still reads the variable name directly, so the kali image needs no package dependency | same module |
 | C4 | S3 | unit | a fake SDK client factory; the variable set to `http://h:3000/v1`; then unset | set passes `http://h:3000` as `base_url` on session create; unset passes no `base_url` override | `tests/test_steel_provider.py` |
 | C5 | S3 | unit | a fake SDK client factory; the variable set | session release passes the same value as `base_url` | same module |
@@ -32,7 +32,7 @@ The live wiring is covered by C7 and the walkthrough tier.
 | C7 | S4 | unit | the rendered configuration of the base file and the dev file, plus the parsed eval overlay | `kali` and `agent` receive `STEEL_BROWSER_API_URL` as an optional passthrough; the unset render is an empty value (both readers treat empty as unset), no non-empty default is invented; the variable is absent from services that do not consume it; the eval overlay passes it through optionally without leaking other keys into `kali` | `tests/test_compose_config.py` |
 | C8 | S5 | unit | the parsed `eval/deploy/steel/docker-compose.steel.yml` | the image is a digest pin; `latest` appears nowhere; only port 3000 is published; the volume mounts at `/app/.cache`; `DOMAIN` is required; the target alias defaults to an inert pair; the restart policy is set | `tests/eval/test_steel_deployment_contract.py` |
 | C9 | S6 | unit | the allowlist script run twice with a stub `iptables` on `PATH`; two allowed sources | both allow rules and the drop rule are applied once; the second run changes nothing | same module |
-| C10 | S9 | unit | the rendered `skills/steel-browser/SKILL.md` | the skill states that the gateway injects `--local` in command mode, and that script mode and the bare CLI pass it themselves | `tests/test_steel_skill_rule.py` |
+| C10 | S9 | unit | the rendered `skills/steel-browser/SKILL.md` | the skill is runtime-agnostic and carries no `--local`, profile, endpoint, or cloud/local branch | `tests/test_steel_skill_rule.py` |
 | C11 | S5 | unit | the rendered `eval/OPERATOR.md` | the deploy, allowlist, teardown, and move sections exist; the portability boundary lists the five excluded cloud capabilities, concurrency 1, and build-time extensions | `tests/eval/test_steel_deployment_contract.py` |
 
 ## Walkthrough predicates (end-to-end tier)

@@ -60,6 +60,13 @@ def test_the_container_runs_an_init_that_reaps_chromium_children():
     assert _service()["init"] is True
 
 
+def test_fingerprint_injection_is_disabled_for_the_local_runtime():
+    # #395: skip-injection alone exposes HeadlessChrome/155, so the wrapper
+    # sets a fixed user agent immediately after start. The platform flag stays
+    # local-only.
+    assert _service()["environment"]["SKIP_FINGERPRINT_INJECTION"] == "1"
+
+
 def test_the_cache_volume_is_durable_and_mounted():
     service = _service()
     mounts = [str(v) for v in service["volumes"]]

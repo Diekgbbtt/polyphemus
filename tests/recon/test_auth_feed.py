@@ -16,9 +16,9 @@ import pytest
 from polymerhus.app.auth.store import AuthStore
 from polymerhus.recon.control import auth_feed
 from polymerhus.recon.control.auth_feed import (
-    project_auth_cookies,
+    project_browser_auth,
     project_request_auth,
-    project_steel_profile,
+    project_steel_state,
     resolve_account,
     resolve_overview,
     select_account_role,
@@ -40,9 +40,10 @@ def _seeded_store(tmp_path):
                 "tokens": {
                     "session": {"value": "TOK", "location": "cookie"},
                     "Authorization": {"value": "Bearer T", "location": "header"},
-                    "csrf-store": {"value": "C", "location": "storage"},
+                    "csrf-store": {"value": "C", "location": "storage",
+                                   "target": "https://x.example"},
                 },
-                "steel": {"profile": "p1-alice"},
+                "steel": {"state": "alice"},
                 "snapshot": {
                     # Stale by design: snapshot headers are NEVER replayed -
                     # the header fact single-sources on overview.required_headers.
@@ -73,7 +74,7 @@ def _request_material(store, project="p1", name="alice"):
 def test_resolve_account_returns_the_named_record(tmp_path):
     store = _seeded_store(tmp_path)
     account = resolve_account("p1", "alice", store=store)
-    assert account["steel"] == {"profile": "p1-alice"}
+    assert account["steel"] == {"state": "alice"}
 
 
 def test_resolve_account_unknown_name_fails_open_to_empty(tmp_path):
@@ -196,17 +197,55 @@ def test_project_request_auth_empty_account_projects_empty():
     assert project_request_auth(None, None) == {}
 
 
-def test_project_auth_cookies_carries_only_cookies(tmp_path):
-    account = resolve_account("p1", "alice", store=_seeded_store(tmp_path))
-    cookies = project_auth_cookies(account)
-    assert {c["name"] for c in cookies} == {"sid", "session"}
-    assert project_auth_cookies({}) == []
+def test_project_browser_auth_carries_cookies_headers_and_storage(tmp_path):
+    store = _seeded_store(tmp_path)
+    account = resolve_account("p1", "alice", store=store)
+    overview = resolve_overview("p1", store=store)
+    material = project_browser_auth(account, overview)
+    assert {c["name"] for c in material["cookies"]} == {"sid", "session"}
+    assert material["headers"]["X-Api-Key"] == "K"
+    assert material["headers"]["Authorization"] == "Bearer T"
+    assert material["storage"] == {"https://x.example": {"csrf-store": "C"}}
+    assert material["login_url"] == "https://x/login"
 
 
-def test_project_steel_profile_reads_the_persisted_key(tmp_path):
+def test_project_browser_auth_never_replays_snapshot_headers(tmp_path):
+    store = _seeded_store(tmp_path)
+    material = project_browser_auth(
+        resolve_account("p1", "alice", store=store),
+        resolve_overview("p1", store=store),
+    )
+    assert "X-Snapshot" not in material["headers"]
+
+
+def test_project_browser_auth_skips_storage_without_a_target_origin():
+    account = {
+        "tokens": {
+            "csrf-store": {"value": "C", "location": "storage"},
+            "ok": {"value": "V", "location": "storage", "target": "https://x.example"},
+        },
+    }
+    material = project_browser_auth(account)
+    assert material["storage"] == {"https://x.example": {"ok": "V"}}
+    assert "csrf-store" not in str(material)
+
+
+def test_project_browser_auth_empty_projects_empty():
+    assert project_browser_auth({}, {}) == {}
+    assert project_browser_auth(None, None) == {}
+    # A login URL alone is gate metadata, not auth material.
+    assert project_browser_auth(
+        {"credentials": {"login_url": "https://x/login"}}, {}) == {}
+
+
+def test_project_steel_state_reads_the_session_reference(tmp_path):
     account = resolve_account("p1", "alice", store=_seeded_store(tmp_path))
-    assert project_steel_profile(account) == "p1-alice"
-    assert project_steel_profile({}) is None
+    assert project_steel_state(account) == "alice"
+    assert project_steel_state({}) is None
+
+
+def test_project_steel_state_silently_ignores_an_old_profile():
+    assert project_steel_state({"steel": {"profile": "old"}}) is None
 
 
 # --- serialize_auth_flags: per-tool header serialisation, unchanged behaviour ---

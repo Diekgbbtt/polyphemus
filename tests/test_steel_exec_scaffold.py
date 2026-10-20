@@ -1,8 +1,9 @@
 """Gateway integration against the `steel` CLI scaffold (#395).
 
 The real `steel_exec` tool drives the scaffold on PATH, so the routing, the
-`--local` injection, the catalogue guard, the variadic-boundary guard, and the
-envelope are all exercised end to end without docker or the cloud.
+catalogue guard, the variadic-boundary guard, and the envelope are exercised
+end to end without docker or the cloud. Runtime selection belongs to the
+wrapper, not the gateway.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ def _joined(handle):
     return [" ".join(call) for call in scaffold.calls(handle)]
 
 
-def test_command_mode_injects_local_and_completes_a_lifecycle(workroot, tmp_path, monkeypatch):
+def test_command_mode_passes_through_and_completes_a_lifecycle(workroot, tmp_path, monkeypatch):
     handle = scaffold.install(tmp_path, monkeypatch)
     monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://steel.test:3000/v1")
 
@@ -49,7 +50,8 @@ def test_command_mode_injects_local_and_completes_a_lifecycle(workroot, tmp_path
     )
     assert start["returncode"] == 0, start
     assert json.loads(start["stdout"])["success"] is True
-    assert any("browser start" in call and "--local" in call for call in _joined(handle))
+    # The wrapper owns local mode; the gateway does not rewrite the command.
+    assert all("--local" not in call for call in _joined(handle))
 
     navigating = _steel_exec(
         command="steel browser navigate https://example.com --session s1 --json",

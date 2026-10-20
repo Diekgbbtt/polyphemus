@@ -1,27 +1,33 @@
-"""The steel-browser skill states the local-runtime rule (#390, D359-4).
+"""The steel-browser skill is one runtime-agnostic surface (#395, D20).
 
 Seam under test: `skills/steel-browser/SKILL.md`. Drift guard only - the
-behaviour is pinned by `tests/test_steel_exec.py` and the resolver tests.
+behaviour is pinned by the provider, wrapper, and gateway tests.
 """
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1] / "skills" / "steel-browser" / "SKILL.md"
 
 
-def test_skill_names_the_endpoint_value_and_the_local_flag():
+def test_skill_has_no_runtime_branch_and_no_profile_language():
     text = SKILL.read_text(encoding="utf-8")
-    assert "STEEL_BROWSER_API_URL" in text
-    # The gateway injects `--local` in command mode.
-    assert "--local" in text
-    # Scripts are never rewritten, so the skill must say they pass it themselves.
-    assert "Script text is never rewritten" in text or "script must pass `--local` itself" in text
+    assert "selected below this skill" in text
+    assert "steel profile" not in text.lower()
+    assert "--profile" not in text
+    assert "--local" not in text
+    assert "cloud-only" not in text.lower()
 
 
-def test_skill_marks_profiles_cloud_only_on_the_local_runtime():
-    # #395: the local API strips profileId/persistProfile, so a local
-    # --profile mount is a no-op. The skill must say so and name the local
-    # state path (sessionContext) instead.
+def test_skill_names_the_four_durable_state_fields_and_the_cli_limit():
     text = SKILL.read_text(encoding="utf-8")
-    assert "Profiles are cloud-only" in text
-    assert "sessionContext" in text
-    assert "t395-local-capability-profile-gap.md" in text
+    for field in ("cookies", "localStorage", "sessionStorage", "indexedDB"):
+        assert field in text
+    assert "CLI `start` has no state field" in text
+    assert "reuse a live session" in text
+
+
+def test_skill_states_the_auth_gate_signals():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "login redirect" in text
+    assert "401" in text and "403" in text
+    assert "storage-located" in text
+    assert "reduced coverage" in text

@@ -7,6 +7,7 @@ asserted by path, method, and body.
 from __future__ import annotations
 
 import json
+import stat
 
 import httpx
 import pytest
@@ -165,3 +166,74 @@ def test_load_rejects_a_missing_or_malformed_store(tmp_path):
     bad.write_text("[1, 2]")
     with pytest.raises(st.SteelStateError, match="not a JSON object"):
         st.load_session_context(bad)
+
+
+def test_project_session_context_keeps_only_the_four_state_fields():
+    raw = {
+        "cookies": [{"name": "sid", "value": "v1"}],
+        "localStorage": {"https://x.example": {"k": "v"}},
+        "sessionStorage": {"https://x.example": {"s": "v"}},
+        "indexedDB": {"https://x.example": []},
+        "history": ["https://x.example"],
+        "fingerprint": {"ua": "x"},
+    }
+    assert st.project_session_context(raw) == {
+        "cookies": raw["cookies"],
+        "localStorage": raw["localStorage"],
+        "sessionStorage": raw["sessionStorage"],
+        "indexedDB": raw["indexedDB"],
+    }
+
+
+def test_project_session_context_accepts_the_sdk_snake_case_shape():
+    raw = {
+        "cookies": [],
+        "local_storage": {"https://x.example": {"k": "v"}},
+        "session_storage": {},
+        "indexed_db": {},
+    }
+    assert st.project_session_context(raw) == {
+        "cookies": [],
+        "localStorage": {"https://x.example": {"k": "v"}},
+        "sessionStorage": {},
+        "indexedDB": {},
+    }
+
+
+def test_to_sdk_session_context_maps_the_canonical_fields():
+    assert st.to_sdk_session_context({
+        "cookies": [],
+        "localStorage": {},
+        "sessionStorage": {},
+        "indexedDB": {},
+        "extra": 1,
+    }) == {
+        "cookies": [],
+        "local_storage": {},
+        "session_storage": {},
+        "indexed_db": {},
+    }
+
+
+def test_save_session_context_is_owner_only(tmp_path):
+    path = st.save_session_context(tmp_path / "state.json", {
+        "cookies": [],
+        "localStorage": {},
+        "sessionStorage": {},
+        "indexedDB": {},
+        "extra": "dropped",
+    })
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert json.loads(path.read_text()) == {
+        "cookies": [],
+        "localStorage": {},
+        "sessionStorage": {},
+        "indexedDB": {},
+    }
+
+
+def test_state_path_is_the_one_per_account_location(tmp_path):
+    path = st.state_path("proj-1", "alice", root=tmp_path)
+    assert path == tmp_path / "proj-1" / "steel-state" / "alice.json"
+    with pytest.raises(ValueError):
+        st.state_path("proj-1", "../alice", root=tmp_path)
