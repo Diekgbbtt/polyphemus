@@ -41,6 +41,11 @@ def test_authorization_system_description_requires_the_observed_primitives() -> 
     assert "every request-payload parameter" in prompt
     assert "named literally" in prompt
     assert "Name EVERY observed carrier" in prompt
+    assert "give the carrier class alongside the specific name" in prompt
+    assert "value is a cookie" in prompt
+    assert "the JSESSIONID cookie" in prompt
+    assert "a form field is a request parameter" in prompt
+    assert "account-creation route's request parameter" in prompt
     assert "authenticated principal" in prompt
     assert "mere presence of the carrier" in prompt
     assert "privilege level" in prompt

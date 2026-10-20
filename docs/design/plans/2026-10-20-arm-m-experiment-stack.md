@@ -652,7 +652,31 @@ Fill this section after every step.
   bound the description to at most three sentences and the protected route families, never every route.
 - The fix is committed and the same batch is re-run as attempt 2.
 
-### Batch 3 - attempt 2 pending
+### Batch 3 - E3 attempt 2 (gate failed)
+
+- Trial `white-jotter-1-20261020T141549-1618c524`, project `3a98b8fb-22dd-4e50-be78-cd1cbc0de952`, `target_run_id: armm-wj-e3`.
+- Recon: complete; analysis: drained at 14:11; hunting: stopped deliberately at 14:16 once the gate failed.
+- Spend: 1,365,521 tokens.
+- GT: **0.793651**.
+  The +0.0238 against attempt 1 is entirely the `006` M4 run-variance flip (0.0 -> 0.5); the `002` and `004` M3 shares are unchanged at 0.8.
+- The primary gate still fails: `white-jotter-004` M3 is **4/5**.
+  - S2 (`username`) is still missing.
+- `white-jotter-002` M3 is 4/5:
+  - S1 (`302 redirect`) is regained;
+  - S3 and S4 stay;
+  - S2 (`principal` + `cookie`) is lost: the description says "JSESSIONID session" and "rememberMe token" and never the word "cookie".
+- The committed description is an exhaustive route enumeration.
+  It names the session/token principal, the role vocabulary, the coverage and the registration route, but not the generic carrier classes (`cookie`, `username`).
+- Diagnosis:
+  the model writes the specific carrier names and route functions, not the carrier class;
+  the GT sufficiency statements read the class words.
+  The length bound was also not followed.
+- Fix:
+  require the carrier class alongside the specific name: a `JSESSIONID` or `rememberMe` value is a cookie, so write "the JSESSIONID cookie"; a form field is a request parameter, so write "the `username` request parameter";
+  name the account-creation route's `username` parameter as the principal carrier the account store receives.
+- The fix is committed and the same batch is re-run as attempt 3.
+
+### Batch 3 - attempt 3 pending
 
 ### Batch 4 - pending
 
