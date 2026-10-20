@@ -630,8 +630,6 @@ Fill this section after every step.
 
 ### Batch 3 - E3 pending
 
-### Batch 3 - pending
-
 ### Batch 4 - pending
 
 ### Batch 5 - pending
