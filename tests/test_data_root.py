@@ -55,7 +55,7 @@ def test_ensure_project_scaffold_is_idempotent_and_never_destructive(
 ) -> None:
     root = tmp_path / "data"
     project_dir = ensure_project("proj-1", root=root)
-    kept = project_dir / "skills" / "already-here.md"
+    kept = project_dir / "auth" / "already-here.md"
     kept.write_text("keep me", encoding="utf-8")
 
     ensure_project("proj-1", root=root)
@@ -68,7 +68,7 @@ def test_ensure_project_isolates_projects(tmp_path: Path) -> None:
 
     ensure_project("proj-a", root=root)
 
-    assert (root / "proj-a" / "skills").is_dir()
+    assert (root / "proj-a" / "auth").is_dir()
     assert not (root / "proj-b").exists()
 
 
@@ -93,12 +93,15 @@ def test_project_dir_validates_the_project_id(tmp_path: Path) -> None:
 
 
 def test_scaffold_carries_the_module_buckets(tmp_path: Path) -> None:
-    """Every module bucket lands at project creation - skills (#234), auth
-    (#220), and the analysis episodic-memory bucket (T3) included - so a store
-    writes files only, never directories."""
+    """Every module bucket lands at project creation - auth (#220) and the
+    analysis episodic-memory bucket (T3) included - so a store writes files
+    only, never directories.
+    The project's skill area (bundles, lesson shards, evolution pass records)
+    lives in the `target-specific-procedure/` branch of the live skills root,
+    not in the data root (topology ruling, 2026-10-20)."""
     project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
 
-    for rel in ("skills", "auth", "analysis", "hunting/orchestration",
+    for rel in ("auth", "analysis", "hunting/orchestration",
                 "hunting/hunter", "hunting/test-executor-pod"):
         assert (project_dir_ / rel).is_dir(), f"missing module bucket {rel}"
 

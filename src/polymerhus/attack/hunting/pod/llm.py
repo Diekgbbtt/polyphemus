@@ -76,6 +76,12 @@ class PodHarnessContext:
     # Absent (None) -> no `replay` tool is bound, so an existing pod is
     # byte-for-byte unchanged.
     replay_fn: Any = None
+    # #236: the artifact-declared skill configuration of the CURRENT spec - the
+    # `skills` list the hunter authored on the TestImplementationSpec, as a
+    # stable tuple the pod roles' skill binding resolves and unions with the
+    # `pod_runner` / `pod_triager` baseline. Default `()` (an existing pod is
+    # unchanged).
+    task_skills: tuple = ()
 
 
 def _pod_ctx():

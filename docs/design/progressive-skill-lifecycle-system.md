@@ -75,7 +75,7 @@ The system keeps them in distinct stores.
 | Shape | free-text records, key-encoded, append-ordered | canonical skill layout, whole-file rewrites |
 | Writer | executing agents (all) | executor direct-write (transitional) / `SkillEvolver` (target) |
 | Reader | agents and `SkillEvolver` | agents (through the loader), `SkillEvolver` |
-| Home | `<codebase_root>/data/<project_id>/hunting/` | `<codebase_root>/data/<project_id>/skills/<skill_name>/` |
+| Home | `<codebase_root>/data/<project_id>/hunting/` | `skills/target-specific-procedure/<project_id>/<skill_name>/` |
 
 The bridge between them is provenance: a skill revision cites the lesson notes it was derived from, so the chain experience -> knowledge -> skill stays auditable.
 
@@ -111,7 +111,7 @@ A single shared app-layer module owns the data root and every scaffold directory
 - The `<codebase_root>/data/` tree is migrated from the current hunting-owned root (`attack/hunting/data`) to this layout, adjusting the on-disk distribution seamlessly.
 
 - There is **no general/canonical `auth_workflow` procedure**. The per-project file is the original, created lazily on first write; it is not a clone of a shared skill.
-- The loader resolves `skills/<name>` across two source roots: repo `skills/` (shared skills) and `<codebase_root>/data/<project_id>/skills/` (project skills). For `auth_workflow` only the project root holds it.
+- The loader resolves `skills/<name>` across two source roots: repo `skills/` (shared skills) and `skills/target-specific-procedure/<project_id>/` (project skills). For `auth_workflow` only the project root holds it.
 - `SKILL.md` stays compact and well-structured per `writing-great-skills`: single source of truth, no sediment, no sprawl. Bulky target-specific material (endpoint snapshots, header dumps, role matrices) lives under `references/`; the body carries only a context pointer.
 - Every `SKILL.md` carries spec frontmatter: `name` == directory, `description` (what + when), `metadata` string map with `version`.
 - A revision block records lineage: `base_version`, `revision`, run/session provenance, `source_note_ids`.

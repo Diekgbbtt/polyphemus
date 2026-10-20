@@ -332,6 +332,81 @@ def resume_pod_session(runtime, session_id: str) -> None:
     runtime.resume_session("hunting", session_id)
 
 
+def launch_evolution_pass(
+    project_id: str,
+    skill: str,
+    *,
+    pass_fn=None,
+    name=None,
+    records=None,
+) -> Any:
+    """The skill-evolution launcher seam (#232 D232-10): schedule ONE forced
+    SkillEvolver pass onto the hunting loop UNDER the hunting module context,
+    so the pass's per-`(project, skill)` thread resolves the hunting
+    checkpointer index exactly like the controller's - the REST trigger and the
+    controller can never fork the thread state.
+
+    Returns the runtime's schedule handle (a `concurrent.futures.Future` the
+    API tier awaits for the outcome); admission refusals raise
+    `ModuleAdmissionRefused` exactly like every other launch. `pass_fn` is the
+    injectable pass seam (tests); the default is `arun_evolution_pass`.
+
+    `records` is the durable pass-record store (D-W3-4) the REST launch tier
+    starts the record in: when given, this seam stamps the finished record with
+    the pass outcome, so the status endpoint can serve it after the request
+    ended. A raising pass is stamped `degraded` before the raise propagates.
+    The default (None) records nothing - the controller's passes are not
+    REST-addressable and pay nothing."""
+    from polymerhus.app.llm.evolver import (  # noqa: PLC0415
+        arun_evolution_pass,
+        evolution_pass_id,
+    )
+
+    resolved_name = name or evolution_pass_id(project_id, skill)
+
+    async def _run():
+        async with hunting_module_context():
+            try:
+                outcome = await (pass_fn or arun_evolution_pass)(project_id, skill)
+            except Exception as exc:  # noqa: BLE001 - the record still settles, then re-raise
+                if records is not None:
+                    _finish_record(
+                        records, project_id, resolved_name, _degraded_outcome(skill, exc)
+                    )
+                raise
+            if records is not None:
+                _finish_record(records, project_id, resolved_name, outcome)
+            return outcome
+
+    coro = _run()
+    try:
+        return _require_runtime().schedule("hunting", coro, name=resolved_name)
+    except Exception:  # noqa: BLE001 - close the unscheduled coroutine, re-raise
+        coro.close()
+        raise
+
+
+def _finish_record(records, project_id: str, pass_id: str, outcome) -> None:
+    """Stamp the durable pass record; a record failure is warned, never a
+    reason to lose the pass outcome the caller already holds (fail-open)."""
+    try:
+        records.finish(project_id, pass_id, outcome)
+    except Exception as exc:  # noqa: BLE001 - fail-open bookkeeping
+        logger.warning(
+            "hunting runtime: could not record the evolution pass %s: %s",
+            pass_id,
+            exc,
+        )
+
+
+def _degraded_outcome(skill: str, exc: Exception):
+    """The coded outcome a raising pass is recorded with (the pass's own
+    outcomes are coded; a raise here is the wiring/degrade edge)."""
+    from polymerhus.app.llm.evolver import EvolutionOutcome  # noqa: PLC0415
+
+    return EvolutionOutcome("degraded", skill, detail=f"turn failed: {exc}")
+
+
 async def launch_orchestrator(
     project_id: str,
     *,
@@ -635,6 +710,7 @@ async def start_hunting(
     hunter_builder=None,
     pod_builder=None,
     orchestrator_fn=None,
+    evolver_controller_fn=None,
     fault_entries=None,
     read_fn=None,
     match_fn=None,
@@ -710,6 +786,7 @@ async def start_hunting(
             run_surfer_loop,
             surfer_session_id,
         )
+        from polymerhus.app.llm.evolver import evolver_session_id  # noqa: PLC0415
         from polymerhus.app.llm.provider_failure import (  # noqa: PLC0415
             ProviderUnavailableError,
         )
@@ -894,6 +971,26 @@ async def start_hunting(
                 tick_interval=tick_interval,
             )
 
+        async def _evolver_wait_ready() -> None:
+            """One controller-tick unit boundary on the run's SHARED hunting
+            gate: the per-session hold and the module pause both block here,
+            exactly like every agent session, so the REST `pause`/`resume`/
+            `stop` verbs address the controller by its thread id."""
+            if gate is None:
+                return
+            async with gate:
+                return
+
+        async def _evolver_loop():
+            from polymerhus.app.llm.evolver import (  # noqa: PLC0415
+                arun_evolver_controller,
+            )
+            controller = evolver_controller_fn or arun_evolver_controller
+            return await controller(
+                project_id, wait_ready=_evolver_wait_ready
+            )
+
+        evolver_id = evolver_session_id(hunting_run_id)
         status = None
         terminal_stats: dict | None = None
 
@@ -946,8 +1043,22 @@ async def start_hunting(
                         control.cancel_session(orchestrator_id)
                     status = "failed"
                 else:
+                    # #232 D232-8: the SkillEvolver controller is a per-run
+                    # session, scheduled alongside the pass and the surfer.
+                    # Fail-open: an unadmitted controller degrades evolution
+                    # (warned), never the run.
+                    if control.start_session(evolver_id, _evolver_loop()) is None:
+                        logger.warning(
+                            "start_hunting: evolver session %s not admitted; "
+                            "skill evolution is off for this run (fail-open)",
+                            evolver_id,
+                        )
                     await _await_session_outcome(orchestrator_outcome)
                     await _await_session_outcome(surfer_outcome)
+                    # The controller never settles on its own: cancel it at the
+                    # run terminal BEFORE the quiesce drain (it is not part of
+                    # quiesce - a period tick must never delay `complete`).
+                    control.cancel_session(evolver_id)
                     # Quiesce is proven: the surfer settled only when the
                     # orchestrator was done, produced held no dispatchable
                     # item, no pod was live, and no hunter was mid-graph.
@@ -1009,6 +1120,13 @@ async def start_hunting(
             )
             status = "failed"
         finally:
+            try:
+                control.cancel_session(evolver_id)
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.warning(
+                    "start_hunting: evolver cancel failed for %s (fail-open)",
+                    hunting_run_id,
+                )
             try:
                 await _reap_orchestrator(hunting_run_id)
             except Exception:  # noqa: BLE001 - teardown must never raise

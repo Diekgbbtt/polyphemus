@@ -586,7 +586,13 @@ async def _run_hunter_idle(
         with module_context("hunting"):
             from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-            binding = auth_capable_binding(hunt_session.role_id)
+            # The idle-loop turns are hunter turns of the SAME hunt, so the
+            # ratified config's artifact-declared skills (#236) ride the SAME
+            # bounded set as the graph-phase turns: one index, byte-stable
+            # across the hunt's whole thread (the prompt-cache prefix).
+            binding = auth_capable_binding(
+                hunt_session.role_id, task_skills=getattr(config, "skills", None)
+            )
             await run_session_agent(
                 hunt_session.role_id, hunt_session.thread_id, None,
                 checkpointer=get_session_checkpointer(),

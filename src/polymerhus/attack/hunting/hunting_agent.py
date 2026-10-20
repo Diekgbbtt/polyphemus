@@ -143,16 +143,19 @@ def _load_hunting_agent_skill() -> str:
     """The stable system prompt, read directly from this module's `prompts/`
     dir: `hunting-agent.md` plus its companion `examples.md`, concatenated into
     ONE prompt (the off-path worked examples are part of the same system
-    message, so the reference in the body resolves). Memoized in-process,
+    message, so the reference in the body resolves), and carrying the shared
+    cortex (C1) appended by the one composition helper: memoized in-process,
     FAIL-CLOSED on a missing file (raise)."""
     global _HUNTING_AGENT_SKILL
     if _HUNTING_AGENT_SKILL is None:
         from pathlib import Path  # noqa: PLC0415
 
+        from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+
         prompts = Path(__file__).resolve().parent / "prompts"
         main = (prompts / "hunting-agent.md").read_text(encoding="utf-8")
         examples = (prompts / "examples.md").read_text(encoding="utf-8")
-        _HUNTING_AGENT_SKILL = main.rstrip("\n") + "\n\n" + examples
+        _HUNTING_AGENT_SKILL = with_cortex(main.rstrip("\n") + "\n\n" + examples)
     return _HUNTING_AGENT_SKILL
 
 
@@ -548,7 +551,10 @@ def build_hunting_agent(
         # request-only alongside the five hunter tools AND registered in the
         # harness executor map, joined by the tool name; the index middleware
         # joins the turn middleware and carries the role's bounded skill set.
-        binding = auth_capable_binding(_HUNTER_ROLE)
+        # The ratified config's artifact-declared skills (#236) union into that
+        # set: the binding resolves each name, warns and skips an unresolvable
+        # one, and the L1 index renders every resolved description.
+        binding = auth_capable_binding(_HUNTER_ROLE, task_skills=config.skills)
         tools = list(tools) + binding.tools
         tools_by_name = {tool.name: tool for tool in tools}
         middleware = list(middleware) + binding.middleware

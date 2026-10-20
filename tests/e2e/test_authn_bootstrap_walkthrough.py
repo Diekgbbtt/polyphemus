@@ -41,7 +41,9 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 PROJECT_ID = os.environ.get("AUTHN_E2E_PROJECT_ID", "authn-e2e")
 DATA = REPO / "data" / PROJECT_ID
-SKILL_PATH = DATA / "skills" / "authn" / "SKILL.md"
+SKILL_PATH = (
+    REPO / "skills" / "target-specific-procedure" / PROJECT_ID / "authn" / "SKILL.md"
+)
 OVERVIEW_PATH = DATA / "auth" / "overview.yaml"
 CREDENTIALS_PATH = DATA / "auth" / "credentials.yaml"
 META_SKILL = REPO / "skills" / "meta" / "authn-skill-writing" / "SKILL.md"

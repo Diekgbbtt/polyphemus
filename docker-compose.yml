@@ -14,6 +14,7 @@ volumes:
   resolvers:
   work:
   http-history:    # durable per-project HTTP/HTTPS history (#196)
+  skills-procedures:  # per-project skill bundles, lessons, revisions, evolution pass records
 
 services:
   lightrag:
@@ -261,4 +262,7 @@ services:
       neo4j: { condition: service_healthy }
     volumes:
       - ./lightrag/data/ingestion:/data/ingestion
+      # The project-specific skill branch persists across container recreation;
+      # the rest of /srv/skills stays baked catalogue content.
+      - skills-procedures:/srv/skills/target-specific-procedure
     networks: [polymerhus-net]

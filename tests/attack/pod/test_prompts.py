@@ -152,6 +152,28 @@ def test_kb_bullet_is_the_neutral_methodology_signature():
             assert stale not in prompt
 
 
+# --- #236: the skills surface in the pod prompts ------------------------------
+
+def test_both_prompts_name_the_two_skill_tools():
+    """The pod roles' tool sections name the two bound skill tools. The read and
+    usage discipline itself arrives through the `meta-usage-skill` protocol
+    appended on every load, so the prompt never duplicates it."""
+    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM):
+        assert "- load_skill -" in prompt
+        assert "- record_skill_lesson -" in prompt
+        assert "# Lesson sub-phase" not in prompt
+
+
+def test_both_prompts_carry_the_shared_cortex():
+    """The served prompt is the base markdown plus the shared cortex, through
+    the ONE composition helper every hunting agent uses."""
+    from polymerhus.attack.hunting.cortex import cognitive_architecture_map
+
+    cortex = cognitive_architecture_map()
+    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM):
+        assert prompt.endswith(cortex)
+
+
 # --- the D84-30 guard: no differential anywhere --------------------------------
 
 def test_prompts_carry_no_differential_reference():

@@ -264,7 +264,7 @@ The analysis-domain agents never bind the write/authenticate capability - since 
 _Avoid_: a per-site auth binding (one seam, attached through `tools=` / `middleware=` / `context=` like every other capability).
 
 **`authn` (per-project authentication procedure)**:
-The project-authored skill (no canonical catalogue copy) that the meta skill `meta/authn-skill-writing` produces; it is collected into an auth-capable agent's L1 index only when its bundle exists at `<data_root>/<project_id>/skills/authn/SKILL.md`.
+The project-authored skill (no canonical catalogue copy) that the meta skill `meta/authn-skill-writing` produces; it is collected into an auth-capable agent's L1 index only when its bundle exists at `skills/target-specific-procedure/<project_id>/authn/SKILL.md`.
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 **Auth feed** (#223 T4 #243, D223-19):
@@ -311,7 +311,7 @@ A role with no bearing skill is declared EXEMPT (an empty tuple) and binds nothi
 _Avoid_: per-site skill lists (drift), a `skills` field on the `Role` record (skill policy in the model-transport module), an empty index on a role that cannot use one.
 
 **Per-project skill bundle**:
-The project-owned skill directory (`<data_root>/<project_id>/skills/<skill>/`: `SKILL.md`, `references/`, `scripts/`, `assets/`) where an executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - so sibling and later agents start from accumulated ground truth.
+The project-owned skill directory (`skills/target-specific-procedure/<project_id>/<skill>/`: `SKILL.md`, `references/`, `scripts/`, `assets/`) where an executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - so sibling and later agents start from accumulated ground truth.
 There is no canonical shared original; a project's copy is its original, created lazily on first write.
 _Avoid_: editing the shared catalogue (a live run never mutates `skills/`).
 

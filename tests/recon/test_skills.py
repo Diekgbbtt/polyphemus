@@ -18,13 +18,13 @@ def _clear_skill_cache():
 # --- AST-SKILLIF-01: loads the SKILL.md body, frontmatter stripped ---
 
 def test_skill_for_loads_and_strips_frontmatter(tmp_path, monkeypatch):
-    d = tmp_path / "some" / "skill"
+    d = tmp_path / "some-skill"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text(
         "---\nname: x\ndescription: y\n---\n\n# Body\nreal content here\n", encoding="utf-8")
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
-    out = skills.skill_for("some/skill")
+    out = skills.skill_for("some-skill")
     assert not out.startswith("---")  # frontmatter stripped
     assert out.startswith("# Body")
     assert "real content here" in out

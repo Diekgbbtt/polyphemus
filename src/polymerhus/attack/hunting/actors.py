@@ -251,6 +251,9 @@ _SERVICE_KEYS = ("unit_id", "fault_class", "vulnerability_class",
 
 _HUNTS_STORE_DESCRIPTION = (
     "Read or write hunt configs through the per-project store (G3).\n"
+    "A written config may carry `skills` (#236): the flat skill names the "
+    "downstream hunter should carry for the hunt direction; the dispatch "
+    "resolves and renders them.\n"
     "cmd='read': pass the config identifier `key` (a revival key "
     "'<unit>::<fault>' or a full semantic key '<unit>::<CWE>::<class>') and "
     "optionally the specific `attributes` you want; the service keys are "
@@ -287,6 +290,42 @@ _ORCH_NOTES_DESCRIPTION = (
 )
 
 
+class HuntConfigWrite(BaseModel):
+    """The hunt-config WRITE payload (#236): the top-level fields the
+    orchestrator authors, typed so the tool schema itself teaches the contract.
+    `extra="allow"` keeps the write surface open for the config's long tail
+    (adversarial capabilities, preconditions, prior insights, and the wider
+    projection), while the named fields - `skills` above all - carry their
+    descriptions into the model-facing schema. The fields stay loose (`str`
+    defaults, not required) because the store owns the CODED identity and status
+    rejections; pydantic must never pre-empt them with a bare validation error.
+    """
+
+    status: str = Field(
+        default="",
+        description="The lifecycle verbatim: 'hypothesised' | 'ratified' | "
+                    "'dropped'. It drives the write (create vs re-author).")
+    unit_id: str = Field(default="", description="The L1 unit identity.")
+    fault_class: str = Field(default="", description="The fault/CWE identity.")
+    vulnerability_class: str = Field(
+        default="", description="The human class name (may be empty).")
+    rationale: str = Field(default="", description="Why this direction.")
+    research_direction: str = Field(
+        default="", description="The hypothesised direction to pursue.")
+    skills: list[str] = Field(
+        default_factory=list,
+        description="The artifact-declared skill configuration (#236): flat "
+                    "skill names (e.g. 'ssrf') the downstream HUNTER should "
+                    "carry for this hunt direction. The dispatch resolves each "
+                    "name project-first through the shared catalogue, unions it "
+                    "with the hunter's role baseline, refuses the meta family, "
+                    "caps the added set after resolution, and warns and skips "
+                    "an unresolvable name. Omit it or leave it empty for no "
+                    "added skills; never write a path or a meta skill.")
+
+    model_config = ConfigDict(extra="allow")
+
+
 class OrchestratorHuntsStoreArgs(BaseModel):
     """The orchestrator `hunts_store` ARGS contract (G3): typed `read`/`write`
     cmds over the produced/consumed config files. `extra="forbid"` plus a
@@ -302,13 +341,14 @@ class OrchestratorHuntsStoreArgs(BaseModel):
         default_factory=list,
         description="Read projection: return only these config attributes "
                     "(surface_context is never readable here).")
-    hunt_config: dict = Field(
-        default_factory=dict,
+    hunt_config: HuntConfigWrite = Field(
+        default_factory=HuntConfigWrite,
         description="Write payload: the hunt config object; its `status` "
                     "attribute ('hypothesised' | 'ratified' | 'dropped') "
                     "drives the write. The hypothesise seeds are TOP-LEVEL "
                     "`rationale` + `research_direction` (never nested in a "
-                    "`prompt_template` object).")
+                    "`prompt_template` object). `skills` declares the flat "
+                    "skill names the downstream hunter should carry (#236).")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -478,7 +518,11 @@ class _OrchestratorHuntsStoreTool(StoreToolBase):
             DuplicateConfigError,
         )
 
-        hunt_config = args.hunt_config
+        hunt_config = (
+            args.hunt_config.model_dump(exclude_unset=True)
+            if hasattr(args.hunt_config, "model_dump")
+            else args.hunt_config
+        )
         if not isinstance(hunt_config, dict) or not hunt_config:
             return {"error": "hunts_store write needs the hunt_config object"}
         status = str(hunt_config.get("status") or "hypothesised")
@@ -625,6 +669,47 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
     return [hunts_store, notes, graph_view]
 
 
+def build_orchestrator_read_grants(project_id: str | None) -> list:
+    """The hunt-orchestrator's two operator-ruled READ grants (#236; the cortex
+    decision of 2026-09-28, which reopens the frozen three-tool surface):
+
+    - `search_http_history` / `get_http_artifact` - the HTTP-history read pair,
+      the SAME single implementations the hunter and the SkillEvolver bind, over
+      the production Kali client seams. The `replay` verb stays the pod's: the
+      orchestrator inspects request history, it never executes.
+    - `load_skill` - the full loader: the all-or-regex description listing, and
+      any named skill body on demand. The orchestrator designs attacks, so it
+      loads freely; it writes nothing - no lesson, no skill revision.
+
+    Both grants are read-only by construction (no mutation or execution verb;
+    the load tool writes nothing), and they ride the orchestrator's session
+    surface through the SAME `tools=` seam the three store/graph tools use -
+    never a per-site reimplementation. The
+    `build_orchestrator_tool_surface` builder stays the SEAM-BACKED half
+    (`TOOL_SURFACE`); this builder is the grant half
+    (`ORCHESTRATOR_READ_GRANTS`), and the actor composes both. The Kali-client
+    import resolves lazily inside the call (CODING_STANDARD section 6)."""
+    from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
+        default_http_get_fn,
+        default_http_search_fn,
+    )
+    from polymerhus.app.llm.skills import build_load_skill_tool  # noqa: PLC0415
+    from polymerhus.attack.hunting.hunter_tools import (  # noqa: PLC0415
+        HttpHistoryGetTool,
+        HttpHistorySearchTool,
+    )
+
+    return [
+        HttpHistorySearchTool(
+            http_search_fn=default_http_search_fn, project_id=project_id or ""
+        ),
+        HttpHistoryGetTool(
+            http_get_fn=default_http_get_fn, project_id=project_id or ""
+        ),
+        build_load_skill_tool(project_id),
+    ]
+
+
 class HuntOrchestratorActor(_TurnActor):
     """The hunt-orchestrator as a persistent MAILBOX actor (feat/async-actor-agents).
 
@@ -697,15 +782,21 @@ class HuntOrchestratorActor(_TurnActor):
         middleware_extra = None
         if self._compaction is not False:
             middleware_extra = [self._compaction]
-        surface = ()
+        surface = []
         if (getattr(self.tools, "back_edge", None) is not None
                 or getattr(self.tools, "graph_view", None) is not None
                 or getattr(self.tools, "store_reads", None) is not None):
-            surface = build_orchestrator_tool_surface(
+            surface = list(build_orchestrator_tool_surface(
                 self.tools,
                 run_id=self._run_id,
                 project_id=self.project_id,
-            )
+            ))
+        # The #236 READ grants (the cortex decision) are UNCONDITIONAL: the
+        # HTTP-history read pair and the full `load_skill` tool (listing and
+        # body) are the role's considered surface, not a function of which store
+        # seam this pass injected. They carry no mutation, no execution, and no
+        # lesson or skill writing.
+        surface += build_orchestrator_read_grants(self.project_id)
         # The static gate skill is the run's ONE system message on this thread
         # (#187): passed ONCE via `system_prompt`, never re-added per phase turn
         # (the per-turn re-add used to stack a byte-identical copy on every
@@ -713,10 +804,10 @@ class HuntOrchestratorActor(_TurnActor):
         # timeout). The phase-transition verbatims stay in the tool-call
         # responses (G1/G3), never here.
         # A6: the structured verdict is negotiated, not pinned - computed from
-        # the REAL binding fact (the surface may be empty); a
-        # forced-choice-constrained profile lands on ToolStrategy over the
-        # relaxed model (voluntary).
-        tools = list(surface) or None
+        # the REAL binding fact (with the #236 read grants bound the surface is
+        # never empty); a forced-choice-constrained profile lands on ToolStrategy
+        # over the relaxed model (voluntary).
+        tools = surface or None
         response_format = structured_response_format(
             "hunting_orchestrator",
             GateDecision | RatifyDecision | NoteDecision,

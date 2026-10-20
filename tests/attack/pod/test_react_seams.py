@@ -391,8 +391,29 @@ def test_triager_turn_binds_its_react_tools_and_never_exec(tmp_path, monkeypatch
 
     _run(_drive_triager(SPEC, hc, log))
 
-    assert {"note", "query_lightrag", "load_skill"} <= set(seen)
+    # #236: the full skill surface rides the critic's turn (load_skill plus the
+    # lesson sub-phase's record_skill_lesson); exec stays off it.
+    assert {"note", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "exec" not in seen  # the critic never touches the target
+    assert "write_skill" not in seen
+
+
+def test_runner_turn_binds_the_full_skill_surface(tmp_path):
+    """#236: the pod runner binds the full `load_skill` plus
+    `record_skill_lesson` (the lesson sub-phase's tool) alongside its react
+    tools - the settled target-agent decision - and never `write_skill`."""
+    log = ExperimentLog()
+    store = PodMemoryStore(tmp_path)
+    seen: list = []
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
+                           log=log, variant_ref="v0",
+                           model_factory=_tool_recording_factory(
+                               [AIMessage(content="stretch concluded")], seen))
+
+    _run(_drive_runner(SPEC, hc))
+
+    assert {"exec", "note", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert "write_skill" not in seen
 
 
 # --- the graph's production lane (D84-29) --------------------------------------

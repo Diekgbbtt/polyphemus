@@ -47,8 +47,6 @@ def _phase_seams(tools):
     with one CSRF class and writes the draft, ratify amends to ratified and
     writes it, note appends one note - all through the pass's wrapped store
     seam, so the harness never persists anything itself."""
-    import uuid
-
     from polymerhus.attack.hunting.hunt_orchestrator import (
         EnvisionedDirection,
         GateDecision,
@@ -1042,3 +1040,210 @@ def test_surfer_not_started_when_the_orchestrator_is_refused(monkeypatch):
     # only the orchestrator session was attempted; the surfer was NOT started.
     assert control.started == ["hunting:rt-hunt-0001:orchestrator"]
     assert fake.statuses[-1] == ("rt-hunt-0001", "failed")
+
+
+def test_a_raising_pass_is_recorded_degraded_then_re_raised(tmp_path, monkeypatch):
+    from polymerhus.app.llm.evolver import (
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id("p1", "ssrf")
+    store.start("p1", "ssrf", pass_id)
+
+    async def broken_pass(project_id, skill, **kwargs):
+        raise RuntimeError("transport down")
+
+    class _Runtime:
+        def schedule(self, module, coro, *, name):
+            return asyncio.run(coro)
+
+    monkeypatch.setattr(hunting_runtime, "_require_runtime", lambda: _Runtime())
+
+    with pytest.raises(RuntimeError):
+        hunting_runtime.launch_evolution_pass(
+            "p1", "ssrf", pass_fn=broken_pass, records=store
+        )
+
+    record = store.get("p1", pass_id)
+    assert record["status"] == "finished"
+    assert record["outcome"]["decision"] == "degraded"
+    assert "transport down" in record["outcome"]["detail"]
+
+
+def test_launch_evolution_pass_finishes_the_durable_pass_record(
+    tmp_path, monkeypatch
+):
+    """D-W3-4: the REST launch starts the record and the launcher stamps the
+    outcome into it, so the status endpoint can serve the outcome after the
+    request ended. Without a record store the launcher records nothing."""
+    from polymerhus.app.llm.evolver import (
+        EvolutionOutcome,
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id("p1", "ssrf")
+    store.start("p1", "ssrf", pass_id)
+
+    async def fake_pass(project_id, skill, **kwargs):
+        return EvolutionOutcome(
+            "published", skill, version="1.1", consumed_keys=("skill:ssrf:1",)
+        )
+
+    class _Runtime:
+        def schedule(self, module, coro, *, name):
+            return asyncio.run(coro)
+
+    monkeypatch.setattr(hunting_runtime, "_require_runtime", lambda: _Runtime())
+
+    hunting_runtime.launch_evolution_pass(
+        "p1", "ssrf", pass_fn=fake_pass, records=store
+    )
+
+    record = store.get("p1", pass_id)
+    assert record["status"] == "finished"
+    assert record["finished_at"]
+    assert record["outcome"]["decision"] == "published"
+    assert record["outcome"]["version"] == "1.1"
+
+
+def test_launch_evolution_pass_runs_under_the_hunting_module_context(monkeypatch):
+    """#232 D232-10: the REST-forced pass rides the hunting launcher seam - it
+    is scheduled on the hunting module under the hunting module context, so its
+    per-(project, skill) thread resolves the hunting checkpointer index exactly
+    like the controller's."""
+    import polymerhus.app.llm.checkpoints as checkpoints
+
+    seen: dict = {}
+    outside = checkpoints.get_session_checkpointer()
+
+    async def fake_pass(project_id, skill, **kwargs):
+        seen["project_id"] = project_id
+        seen["skill"] = skill
+        seen["checkpointer"] = checkpoints.get_session_checkpointer()
+        return "outcome"
+
+    class _Runtime:
+        def schedule(self, module, coro, *, name):
+            seen["module"] = module
+            seen["name"] = name
+            return asyncio.run(coro)
+
+    monkeypatch.setattr(hunting_runtime, "_require_runtime", lambda: _Runtime())
+
+    out = hunting_runtime.launch_evolution_pass("p1", "ssrf", pass_fn=fake_pass)
+
+    assert out == "outcome"
+    assert seen["module"] == "hunting"
+    assert seen["name"] == "skills:evolve:p1:ssrf"
+    assert seen["project_id"] == "p1" and seen["skill"] == "ssrf"
+    # Inside the pass the module context resolved the hunting index, not the
+    # shared fallback an un-contexted turn would get.
+    assert seen["checkpointer"] is not outside
+
+
+def test_start_hunting_schedules_the_evolver_controller_and_cancels_it_at_terminal(
+    tmp_path, monkeypatch
+):
+    """#232 D232-8: the SkillEvolver controller is a per-run session - scheduled
+    alongside the orchestrator pass and the surfer and cancelled at the run's
+    terminal path, so it never blocks quiesce and never outlives the run."""
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    control = _FakeControl()
+
+    run_tools = _tools(HuntStore(tmp_path))
+    h, r, n = _phase_seams(run_tools)
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()], tools=run_tools,
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        control=control,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert hid == "rt-hunt-0001"
+    assert f"hunting:{hid}:evolver" in control.started
+    # The terminal path cancelled it: no run session is left live.
+    assert f"hunting:{hid}:evolver" not in control.live_session_ids()
+    assert fake.statuses[-1] == ("rt-hunt-0001", "complete")
+
+
+
+def test_the_evolver_controller_is_bound_to_the_shared_hunting_gate(monkeypatch):
+    """The controller session runs under the SAME gate as every hunting
+    session: the bootstrap hands it a `wait_ready` that enters the run's
+    resolved gate. So the module pause and the per-session hold (the REST
+    thread verbs, by thread id) reach the controller's next tick."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    entries: list[int] = []
+    seen: dict = {}
+
+    class _RecordingGate:
+        async def __aenter__(self):
+            entries.append(1)
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    control = _FakeControl(gate=_RecordingGate())
+
+    async def fake_controller(project_id, *, wait_ready=None):
+        seen["project_id"] = project_id
+        seen["wait_ready"] = wait_ready
+        if wait_ready is not None:
+            await wait_ready()
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()], control=control,
+        evolver_controller_fn=fake_controller,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen["project_id"] == "rt-project"
+    assert seen["wait_ready"] is not None
+    assert entries, "the controller tick must acquire the run's shared gate"
+
+
+def test_a_provider_abort_cancels_the_evolver_controller(monkeypatch):
+    """#331 x #232: a provider-caused abort must not leave the SkillEvolver
+    controller ticking. The run starts the controller with the run and the
+    interrupted terminal path cancels it, exactly like the complete path."""
+    from polymerhus.app.llm.evolver import evolver_session_id
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        HuntOrchestrationDegradedError,
+    )
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    control = _FakeControl()
+
+    async def provider_abort(*args, **kwargs):
+        raise HuntOrchestrationDegradedError(
+            phase="hypothesise", streak=5, threshold=5, provider_cause=True,
+            provider_error=ProviderUnavailableError(
+                "Go usage limit exceeded", status_code=429, quota_exhausted=True))
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
+        provider_abort)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()], control=control,
+        tick_interval=0.001,
+    ))
+
+    evolver_id = evolver_session_id("rt-hunt-0001")
+    assert evolver_id in control.started, "the controller starts with the run"
+    assert evolver_id not in control.live_session_ids(), (
+        "the interrupted terminal must cancel the controller")
+    assert fake.statuses[-1] == ("rt-hunt-0001", "interrupted")

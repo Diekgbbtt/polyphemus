@@ -8,12 +8,15 @@ patterns exactly - a declared, minimal surface attached by its owner through
 the native `tools=` / `middleware=` / `context=` seams, never a per-site
 reimplementation of either the tool or the skill surface.
 
-Scope rules (operator rulings): the analysis-domain agents never bind
-authentication capability - since #364 the two proposers bind the READ-ONLY
-store view alone (`with_readonly_auth_store`: the read-only `auth_store`, no
-skill surface, no `write_skill`, no `authn` procedure), which is all a request
-shape needs; since #223 the recon orchestrator (`job_orchestrator`) arms the
-write-capable auth surface (the roster still declares it exempt - no
+Scope rules (operator rulings): the analysis-domain agents never bind the
+authenticate/write capability - since #364 the two proposers bind the
+project's `authn` procedure as their whole bounded skill set (its header
+rendered in the L1 index, its body on demand with the meta-usage protocol
+appended, usage lessons recordable) plus the READ-ONLY auth-store DATA view
+(`with_readonly_auth_store`: a project data context, never a skill), which is
+what a request shape needs - no `write_skill`, no authenticate capability,
+and no other skill; since #223 the recon orchestrator (`job_orchestrator`)
+arms the write-capable auth surface (the roster still declares it exempt - no
 catalogue skill bears - so the arming rides `with_write_skill`, never the
 roster, D223-13); the recon job-specific agents bind only the read-only
 surface (the pod triager's `auth_capable_binding("triager")`, no `write_skill`;
@@ -38,8 +41,9 @@ AUTHN_SKILL = "authn"
 
 
 def auth_capable_binding(
-    role_id: str, *, store=None, skill_store=None, project_id: str | None = None,
-    with_write_skill: bool = False, with_readonly_auth_store: bool = False,
+    role_id: str, *, store=None, skill_store=None, lesson_store=None,
+    project_id: str | None = None, with_write_skill: bool = False,
+    with_readonly_auth_store: bool = False, task_skills=None,
 ):
     """Wrap `skill_agent_binding(role_id)` with the auth capability.
 
@@ -56,15 +60,21 @@ def auth_capable_binding(
     project, resolved lazily), production resolves the project scope
     tool-owned, so neither the site nor the harness passes an identity.
 
-    `with_readonly_auth_store` (#364) arms the READ-ONLY store view: the same
-    `auth_store` tool name over the same store, with the read-only form's
-    argument surface, redacted read, and `auth_readonly` refusal - never
-    `load_skill`, `write_skill`, the `authn` procedure, or any authenticate
-    capability (D223-5). On an EXEMPT role it is the whole arming, which is how
-    the analysis proposers (no skill surface, operator ruling 2026-09-17) carry
-    it; on a bound role it swaps the shared read/write `auth_store` for the
-    read-only form, so the flag means the same thing wherever a roster change
-    lands it. `with_write_skill` wins if both are passed (the gateway arming).
+    `with_readonly_auth_store` (#364) arms the analysis-domain surface: the
+    project's `authn` procedure as the whole bounded skill set (the L1 index
+    renders its header, `load_skill` loads its body with the meta-usage
+    protocol appended, and `record_skill_lesson` records usage lessons) plus
+    the READ-ONLY `auth_store` DATA view - a project data context, never a
+    skill - with the read-only form's argument surface, redacted read, and
+    `auth_readonly` refusal. It never arms `write_skill`, the authenticate
+    capability, or any other skill (D223-5). On a BOUND role the flag swaps
+    the shared read/write `auth_store` for the read-only form, so the flag
+    means the same thing wherever a roster change lands it.
+    `with_write_skill` wins if both are passed (the gateway arming).
+
+    `task_skills` is the artifact-declared skill configuration (#236): it
+    reaches `skill_agent_binding` verbatim, which resolves, unions, caps, and
+    warns - the auth wrapper never re-implements that policy.
     """
     from polymerhus.app.auth.tool import build_auth_store_tool  # noqa: PLC0415
     from polymerhus.app.llm.skills import (  # noqa: PLC0415
@@ -75,7 +85,10 @@ def auth_capable_binding(
         skill_index_middleware,
     )
 
-    binding = skill_agent_binding(role_id, store=skill_store)
+    binding = skill_agent_binding(
+        role_id, store=skill_store, lesson_store=lesson_store,
+        task_skills=task_skills,
+    )
     if not binding.tools:
         if with_write_skill:
             # The gateway arming (D223-13): the roster exemption is lifted here,
@@ -89,20 +102,30 @@ def auth_capable_binding(
                 role_id=role_id,
                 middleware=[skill_index_middleware(store=skill_store)],
                 tools=[*build_skill_tools(
-                    project_id, with_write_skill=True, store=skill_store),
+                    project_id, with_write_skill=True, store=skill_store,
+                    lesson_store=lesson_store, role_id=role_id),
                     build_auth_store_tool(project_id=project_id, store=store)],
                 context={"skills": [AUTHN_SKILL], "project_id": project_id},
             )
         if with_readonly_auth_store:
-            # The analysis-domain arming (#364): the read-only store view ALONE -
-            # no skill surface (the operator ruling for these roles), no
-            # authenticate capability, and no write command in the bound schema.
+            # The analysis-domain arming (#364): the project's `authn` procedure
+            # as the whole bounded skill set - its header in the L1 index, its
+            # body on demand with the meta-usage protocol appended, usage
+            # lessons recordable - plus the READ-ONLY auth-store DATA view (a
+            # project data context, never a skill): no authenticate capability,
+            # no write command, and no other skill.
+            if project_id is None:
+                from polymerhus.app.config import config  # noqa: PLC0415 - lazy, no env at import
+                project_id = config.PROJECT_ID
             return SkillAgentBinding(
                 role_id=role_id,
-                middleware=[],
-                tools=[build_auth_store_tool(
-                    project_id=project_id, store=store, read_only=True)],
-                context={},
+                middleware=[skill_index_middleware(store=skill_store)],
+                tools=[*build_skill_tools(
+                    project_id, store=skill_store,
+                    lesson_store=lesson_store, role_id=role_id),
+                    build_auth_store_tool(
+                        project_id=project_id, store=store, read_only=True)],
+                context={"skills": [AUTHN_SKILL], "project_id": project_id},
             )
         # An exempt role binds no skill surface: no auth capability either.
         return binding

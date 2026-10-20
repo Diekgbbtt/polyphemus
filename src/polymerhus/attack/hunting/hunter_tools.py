@@ -203,6 +203,53 @@ def _notes_extra_rejection(tool_input: dict, errors: list) -> dict | None:
 # --- the tool args schemas (extra="forbid", the pod's D84-22 discipline) -------
 
 
+class SpecWrite(BaseModel):
+    """The `TestImplementationSpec` WRITE payload (#236): the top-level fields
+    the hunter authors, typed so the tool schema itself teaches the contract.
+    `extra="allow"` keeps the spec's long tail open, while the named fields
+    carry their descriptions into the model-facing schema. The fields stay
+    loose (`str` defaults, not required) because the symbolic layer owns the
+    CODED identity and status rejections; pydantic must never pre-empt them with
+    a bare validation error.
+    """
+
+    status: str = Field(
+        default="",
+        description="The lifecycle verbatim: 'hypothesised' | 'verified' | "
+                    "'dropped' | 'specified'.")
+    fault_keyword: str = Field(
+        default="", description="The fault half of the derived spec file name.")
+    strategy_keyword: str = Field(
+        default="", description="The strategy half of the derived spec file name.")
+    target_identity: dict = Field(
+        default_factory=dict,
+        description="The target identity object {'url': <base url>, 'unit_id': "
+                    "<L1 service/system identity>}; a spec without a url is "
+                    "INIT-rejected by the pod.")
+    verification_symptoms: list[str] = Field(
+        default_factory=list,
+        description="The observable symptoms that verify the fault.")
+    testing_pattern: str = Field(
+        default="", description="The named testing pattern the runner follows.")
+    payload_vector_space: dict = Field(
+        default_factory=dict,
+        description="The payload/vector space the runner works within.")
+    skills: list[str] = Field(
+        default_factory=list,
+        description="The artifact-declared skill configuration (#236): flat "
+                    "skill names the downstream POD RUNNER should carry for "
+                    "this test spec. The dispatch resolves each name "
+                    "project-first through the shared catalogue, unions it with "
+                    "the runner's role baseline, refuses the meta family, caps "
+                    "the added set after resolution, and warns and skips an "
+                    "unresolvable name. A triager-minted variant inherits the "
+                    "parent spec's declaration unless it states its own. Omit it "
+                    "or leave it empty for no added skills; never write a path "
+                    "or a meta skill.")
+
+    model_config = ConfigDict(extra="allow")
+
+
 class HuntsStoreArgs(BaseModel):
     """The `hunts_store` tool's ARGS contract: `read` / `write` cmds.
 
@@ -239,15 +286,17 @@ class HuntsStoreArgs(BaseModel):
         default_factory=list,
         description="Read projection: return only these attributes per spec.")
     # -- write path (ONE payload) --------------------------------------------
-    spec: dict = Field(
-        default_factory=dict,
+    spec: SpecWrite = Field(
+        default_factory=SpecWrite,
         description="Write payload: the authored spec object. It MUST carry "
                     "`status` (hypothesised | verified | dropped | specified) "
                     "and the file-name identity attributes `fault_keyword` and "
                     "`strategy_keyword`; the spec file name "
                     "`<fault_keyword>_<strategy_keyword>.yaml` is DERIVED from "
                     "them. A payload missing one is rejected with a coded "
-                    "`hunts_store_write_rejected` error naming the field.")
+                    "`hunts_store_write_rejected` error naming the field. "
+                    "`skills` declares the flat skill names the downstream pod "
+                    "runner should carry (#236).")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -362,7 +411,10 @@ class HuntsStoreTool(StoreToolBase):
         "the target identity object: {'url': <base url>, 'unit_id': <L1 "
         "service/system identity>} - author the url from the projected L0 "
         "attack surface (read via graph_view); the pod probes that url and "
-        "INIT-rejects a spec without it. read takes optional "
+        "INIT-rejects a spec without it. The spec may carry `skills` (#236): "
+        "the flat skill names the downstream pod runner should carry; the "
+        "dispatch resolves and renders them, and a minted variant inherits "
+        "them unless it states its own. read takes optional "
         "statuses / attributes filters and returns the fault's produced specs - "
         "never the whole surface."
     )
@@ -430,7 +482,11 @@ class HuntsStoreTool(StoreToolBase):
             return self._unavailable(args)
         if not self._fault_key:
             return self._unbound()
-        spec = args.spec
+        spec = (
+            args.spec.model_dump(exclude_unset=True)
+            if hasattr(args.spec, "model_dump")
+            else args.spec
+        )
         if not isinstance(spec, dict) or not spec:
             return self._write_rejected(
                 ["spec"],

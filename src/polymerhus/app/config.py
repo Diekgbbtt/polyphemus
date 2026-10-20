@@ -94,5 +94,11 @@ class Config:
     # of concurrently running hunting agent sessions per project. One width (the
     # operator's ruling: effectively single-project execution, so one width).
     HUNTING_DISPATCH_GATE_WIDTH = int(os.environ.get("HUNTING_DISPATCH_GATE_WIDTH", "20"))
+    # The skill-evolution controller (D232-8): a pass fires per skill when the
+    # unconsumed count reaches the cap OR the period since that skill's last
+    # pass elapsed; the tick is the controller's lap period.
+    SKILL_EVOLVER_LESSON_CAP = _int_env("SKILL_EVOLVER_LESSON_CAP", 5)
+    SKILL_EVOLVER_PERIOD_S = _float_env("SKILL_EVOLVER_PERIOD_S", 300.0)
+    SKILL_EVOLVER_TICK_S = _float_env("SKILL_EVOLVER_TICK_S", 60.0)
 
 config = Config()

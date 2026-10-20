@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "skills" / "steel-browser" / "references" / "profile-mount.sh"
+SCRIPT = REPO_ROOT / "skills" / "internal" / "tools" / "steel-browser" / "references" / "profile-mount.sh"
 
 
 def _stub(path: Path, body: str) -> None:

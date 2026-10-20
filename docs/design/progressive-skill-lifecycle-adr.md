@@ -123,7 +123,7 @@ Correcting a binding, or moving a role between bound and exempt, is a one-line e
 
 ### B3 - Per-project skill bundles in the canonical layout
 
-**Decision.** A project's skills live at `<codebase_root>/data/<project_id>/skills/<skill_name>/` with the canonical layout (`SKILL.md`, `references/`, `scripts/`, `assets/`). The loader resolves the per-project bundle first, then the shared repo `skills/` catalogue. The loader and the writer share one store.
+**Decision.** A project's skills live at `skills/target-specific-procedure/<project_id>/<skill_name>/` with the canonical layout (`SKILL.md`, `references/`, `scripts/`, `assets/`). The loader resolves the per-project bundle first, then the shared repo `skills/` catalogue. The loader and the writer share one store.
 **Alternatives rejected.** A flat `<data_dir>/<project_id>/skills/<name>.md` file. Mirroring the canonical layout only for shared skills and a bespoke shape per-project. A per-submodule fixed data root (see B10).
 **Consequences.** One layout rule for shared and project skills; `references/` carries bulky target material so `SKILL.md` stays compact; project skills shadow shared skills without copying.
 
@@ -184,6 +184,49 @@ Correcting a binding, or moving a role between bound and exempt, is a one-line e
 **Context.** #232 section 9 forbids the executing agent from deploying to canonical skills; the transitional direct-write confines blast radius to one project and is reversible via revision provenance.
 **Alternatives rejected.** Executor edits to canonical `skills/` (leaks one project's discoveries into every project; violates #232 section 9). Waiting for the full evolver before unblocking #220/#221/#223/#224.
 **Consequences.** Revisions carry `base_version`, `revision`, run/session provenance, and the motivating `source_note_ids`, so the eventual evolver can audit and roll back. #232's SkillCommit pattern (instance-specific patches first, generalisation after cross-instance validation) is honoured from the start.
+
+---
+
+## Part C - the #232 round (2026-09-23): the lesson layer and the SkillEvolver
+
+*The binding record is `skill-evolution-232-decisions.md` (D232-1..D232-14); this part records only how the #232 rulings AMEND Part B, so no reader carries a superseded clause forward.*
+
+### C1 - B6 is superseded: the notes store is NOT the lesson store
+
+**Ruling (D232-1).** Usage lessons live in a new skill-scoped store owned by the skills-access domain: per-skill shards `skills/target-specific-procedure/<project_id>/lessons/<skill>.yaml`, resolved through the one `LessonStore`/`SkillStore` project-area builder; the data-root `PROJECT_SCAFFOLD` no longer carries the skills entries (topology amendment 2026-10-20).
+B6's premise ("the hunting notes store already is it") was evidenced-wrong: all three notes surfaces require a hunt identity (`fault_key` grammar, spec id + order, hunt provenance) and cannot accept a skill-scoped key.
+B6's key grammar `skill:<skill_name>:<lesson_header>` is replaced by store-generated ordinals plus the `:consumed` code (D232-2).
+
+### C2 - B7 is superseded: consumption is a key code, not a cursor and not a revision stamp
+
+**Ruling (D232-2).** No high-water mark AND no `consumed_by` revision stamp: the controller rewrites a lesson's key with the reserved `:consumed` suffix when it loads the lesson for prompt pasting.
+`read(unconsumed_only=True)` selects keys lacking the code; the union of a revision's `source_note_ids` remains available as audit.
+The trigger is the operator's controller: one loop armed when the hunting phase starts, checking cap (5) OR period (300 s) per skill; the REST endpoint forces a pass and may inject posted lessons (D232-8, D232-10).
+
+### C3 - B9's migration boundary is executed in-ticket
+
+**Ruling (D232-6).** `meta-usage-skill`'s body migrates in the #232 ticket to the lesson lifecycle (emission via `record_skill_lesson` with the three type semantics); the authoring direction leaves the usage protocol for the authoring meta-skills.
+`meta-write-skill` stays content-stable and reusable by the evolver (B9's other half unchanged).
+
+### C4 - B8 stands, now with a safe universal instrument
+
+Emitting a lesson remains optional; there is no gate or nudge.
+The difference is that the read-only lesson tool now rides every bound role's binding (D232-4), so the cheap call exists everywhere the protocol is delivered.
+
+### C5 - The evolver is app-owned, stateful, and project-scoped
+
+**Ruling (D232-7/9).** There is no skills module: `app/llm/evolver.py` holds `arun_evolution_pass` and the controller; the role record is the app-owned `skill_evolver` (`LLM_SKILL_EVOLVER`, session, high); its prompt lives at `app/llm/prompts/skill_evolver.md`; the pass pastes all unconsumed lessons into one HumanMessage and the agent publishes through project-bound `write_skill`.
+The LLM-judge quality gate is NOT built; quality is guaranteed by the prompt's workflow and guardrail verbatims, and automated evaluation is deferred to `/to-assertions` (D232-13).
+
+### C6 - The corpus moved in-repo; the provider abstraction stays future
+
+**Ruling (D232-12).** The operator's `~/purple-swan/skills` corpus (63 skills) moved into the repo `skills/` catalogue, flat, with A3 headers enriched (`metadata.version: '1.0'` added, stale duplicate group dirs dropped, the one unique artifact preserved under `ssti/references/`).
+`SkillProvider` as a filesystem/REST abstraction (issue #232 section 2) remains future work; the loader contract and the conformance sweep are unchanged.
+
+### C7 - Transcript grounding: the identifier is captured, the read is designed-not-built
+
+**Ruling (D232-11).** Lessons carry the writing agent's session id (role + thread id). The trajectory/reasoning surface is the session's persisted thread memory (`read_session_memory`) plus the Langfuse session trace; the pod experiment log alone does NOT hold trajectory or reasoning.
+The evolver does not yet read transcripts; the captured id makes that a future context-only change.
 
 ---
 

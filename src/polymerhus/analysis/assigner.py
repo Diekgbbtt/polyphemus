@@ -547,13 +547,16 @@ def default_invoke_fn():
     `assign` treats as a valid empty outcome. The role prompt is prepended into the
     message list here, exactly where the stateful seam's `system_prompt=` binding puts
     it. Production now uses `stateful_invoke_fn` (below)."""
-    from polymerhus.analysis.proposer_turn import prepend_prompt
-    from polymerhus.app.llm.roles import invoke_role
+    from polymerhus.analysis.proposer_turn import prepend_prompt, _served_prompt
 
     def invoke(messages, *, schema=L1DeltaBatch, system_prompt=None):
         from polymerhus.app.llm.roles import invoke_role
 
-        return invoke_role("analyser", prepend_prompt(messages, system_prompt), schema=schema)
+        return invoke_role(
+            "analyser",
+            prepend_prompt(messages, _served_prompt("assigner", system_prompt)),
+            schema=schema,
+        )
 
     return invoke
 

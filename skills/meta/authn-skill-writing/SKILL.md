@@ -16,7 +16,7 @@ Record nothing until its gate passes.
 You need generic request tooling for probe and replay work.
 You need the steel CLI, authenticated (`steel login`, `steel doctor --preflight`, smoke test `steel scrape https://example.com`).
 You need reachability of the seed face `PUT /projects/{project_id}/auth` and the state-read face `GET /projects/{project_id}/auth`.
-You need write access to the target project's skill bundle at `<data_root>/<project_id>/skills/authn/` (the location P5 pins).
+You need write access to the target project's skill bundle at `skills/target-specific-procedure/<project_id>/authn/` (the location P5 pins).
 You need no polymerhus internals beyond the seed-face contract and that parametrized bundle location.
 
 ## The two planes and the one join
@@ -107,7 +107,7 @@ The scripts beside the steel-browser skill are optional helpers for these acts: 
 
 ### Browser fast path (read this before you touch the CLI)
 
-The operation MECHANICS are the `steel-browser` skill (`skills/steel-browser/SKILL.md`) and its `references/` scripts; this skill owns only the login PROCEDURE.
+The operation MECHANICS are the `steel-browser` skill (`skills/internal/tools/steel-browser/SKILL.md`) and its `references/` scripts; this skill owns only the login PROCEDURE.
 Read the mechanics skill before the first browser step; do not re-derive the CLI from `--help`.
 Four habits carry almost all the latency and reliability:
 1. Snapshot with `-i`: `steel browser snapshot -i --session <name> --json` returns only interactive elements with their refs, not the whole tree.
@@ -163,8 +163,8 @@ Keep login-specific scripts in the authn skill's own `references/`, and mechanic
 
 ### Where the project skill lands
 
-Write the authn skill as one whole file at `<data_root>/<project_id>/skills/authn/SKILL.md`, with login-specific scripts under `<data_root>/<project_id>/skills/authn/references/`.
-`<data_root>` is the system's app-owned data root (`<codebase_root>/data/`), visible to you as an operator path; `<project_id>` is the target project you were pointed at; `authn` is the fixed project-skill name, so a follower resolves the project bundle first.
+Write the authn skill as one whole file at `skills/target-specific-procedure/<project_id>/authn/SKILL.md`, with login-specific scripts under `skills/target-specific-procedure/<project_id>/authn/references/`.
+`<project_id>` is the target project you were pointed at; `authn` is the fixed project-skill name, so a follower resolves the project bundle first. The project's skill area is the `target-specific-procedure/` branch of the live `skills/` catalogue root.
 Write frontmatter and body together in that one file, atomically; never route the skill through the store seed face, and never route store facts through this path.
 Gate: the skill file exists at that path with valid frontmatter (name equal to the bundle directory, a description, a `metadata.version`), and no store write touched it.
 

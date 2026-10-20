@@ -40,8 +40,11 @@ DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 # runtime id (a hunt fault key, a pod spec id) is the only thing a store ever
 # creates lazily, and only its own leaf. Adding a fixed module dir is a change
 # HERE, never a change in the module store.
+# The project's skill area is NOT here: the bundles, the lesson shards, and the
+# evolution pass records live in the live skills root's
+# `target-specific-procedure/<project_id>/` branch (topology ruling,
+# 2026-10-20), which the stores create lazily like any runtime-keyed branch.
 PROJECT_SCAFFOLD: tuple[str, ...] = (
-    "skills",
     "auth",
     "usage",
     "analysis",

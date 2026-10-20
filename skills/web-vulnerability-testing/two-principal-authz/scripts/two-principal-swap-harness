@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""Replay the owner's request beside the second principal's attempt, per operation.
+
+The harness is the methodology's proof pair in executable form: for each
+operation it sends the owner's request, then the same request under the second
+principal's credentials with the owner's identifier, and records the verdict from
+the differential rather than from a single status. It serves every class that
+references this methodology at the authorization-principal step.
+
+Usage:
+  two-principal-swap-harness --base https://target.test --plan plan.json
+  two-principal-swap-harness --base https://target.test --plan plan.json --execute
+  two-principal-swap-harness --base https://target.test --plan plan.json --execute \\
+      --allow-mutating --json-out swap.json
+
+  plan.json:
+
+  {
+    "owner": {"headers": {"Cookie": "session=<owner>"}},
+    "foreign": {"headers": {"Cookie": "session=<second-principal>"}},
+    "operations": [
+      {"name": "read order", "method": "GET", "path": "/api/orders/<owner-id>",
+       "owner_id": "<owner's order identifier>"},
+      {"name": "read invoice", "method": "GET", "path": "/api/invoices/<owner-id>",
+       "owner_id": "<owner's invoice identifier>"}
+    ],
+    "route_control": {"name": "gated sibling", "method": "GET",
+                      "path": "/api/admin/settings"}
+  }
+
+  The `<owner-id>` placeholder is replaced by the operation's `owner_id`.
+
+Discipline:
+  - Dry run by default: the operation count and the shapes print, and nothing is
+    sent until `--execute` is given.
+  - Read-only by default: a mutating method needs `--allow-mutating` as well.
+  - Bounded: `--max-requests` caps the run and `--delay` paces it.
+  - The verdict vocabulary is the methodology's: `foreign-read`, `foreign-effect`,
+    `denied`, `silent-enforcement`, `differential`, and `unknown`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+
+MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def send(
+    base: str,
+    spec: dict[str, object],
+    headers: dict[str, str],
+    owner_id: str,
+    timeout: float,
+    context: ssl.SSLContext | None,
+) -> dict[str, object]:
+    path = str(spec.get("path", "")).replace("<owner-id>", owner_id)
+    method = str(spec.get("method", "GET")).upper()
+    body = spec.get("body")
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(base.rstrip("/") + path, data=payload, method=method)
+    merged = dict(spec.get("headers", {}))
+    merged.update(headers)
+    for key, value in merged.items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            raw = response.read()
+            return {
+                "status": response.status,
+                "size": len(raw),
+                "digest": digest(raw),
+                "empty": len(raw.strip()) == 0,
+                "error": "",
+            }
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        return {
+            "status": error.code,
+            "size": len(raw),
+            "digest": digest(raw),
+            "empty": len(raw.strip()) == 0,
+            "error": "",
+        }
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"status": 0, "size": 0, "digest": "", "empty": True, "error": str(error)}
+
+
+def verdict(owner: dict[str, object], foreign: dict[str, object], mutating: bool) -> str:
+    if int(foreign["status"]) == 0:
+        return "unreachable"
+    if int(foreign["status"]) >= 400:
+        if owner["digest"] and foreign["digest"] != owner["digest"] and int(foreign["status"]) == 200:
+            return "differential"
+        return "denied"
+    if owner["digest"] and foreign["digest"] == owner["digest"]:
+        return "differential"
+    if foreign["empty"] and not owner["empty"]:
+        return "silent-enforcement"
+    return "foreign-effect" if mutating else "foreign-read"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="target base URL")
+    parser.add_argument("--plan", required=True, help="JSON plan with the two principals and the operations")
+    parser.add_argument("--execute", action="store_true", help="send the replays; the default is a dry run")
+    parser.add_argument("--allow-mutating", action="store_true", help="permit state-changing methods")
+    parser.add_argument("--max-requests", type=int, default=200, help="hard cap on requests sent")
+    parser.add_argument("--timeout", type=float, default=15.0, help="per-request timeout in seconds")
+    parser.add_argument("--delay", type=float, default=0.0, help="pause between requests in seconds")
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    parser.add_argument("--json-out", help="write the per-operation records to this path")
+    args = parser.parse_args(argv)
+
+    with open(args.plan, encoding="utf-8") as handle:
+        plan = json.load(handle)
+    owner_headers = dict(plan.get("owner", {}).get("headers", {}))
+    foreign_headers = dict(plan.get("foreign", {}).get("headers", {}))
+    operations = plan.get("operations", [])
+    control = plan.get("route_control")
+    if not owner_headers or not foreign_headers or not operations:
+        print("the plan needs both principals' headers and a non-empty operation list", file=sys.stderr)
+        return 2
+    mutating = [
+        operation
+        for operation in operations
+        if str(operation.get("method", "GET")).upper() in MUTATING_METHODS
+    ]
+    print(f"plan: {len(operations)} operations, {len(mutating)} mutating")
+    if mutating and not args.allow_mutating:
+        print("refusing: a mutating operation needs --allow-mutating as well as --execute", file=sys.stderr)
+        return 2
+    if not args.execute:
+        for operation in operations:
+            print(f"  {str(operation.get('method', 'GET')).upper():6} {operation['path']}")
+        if control:
+            print(f"  route control: {control.get('method', 'GET')} {control.get('path')}")
+        print("dry run: pass --execute to send")
+        return 0
+
+    context = ssl._create_unverified_context() if args.insecure else None
+    if control:
+        control_owner = send(args.base, control, owner_headers, "", args.timeout, context)
+        control_foreign = send(args.base, control, foreign_headers, "", args.timeout, context)
+        print(
+            f"route control {control.get('path')}: owner={control_owner['status']} "
+            f"foreign={control_foreign['status']}"
+        )
+        if int(control_owner["status"]) < 400 and int(control_foreign["status"]) < 400:
+            print("the control is not gated, so a later difference attributes to the stack rather than to the binding")
+
+    records: list[dict[str, object]] = []
+    sent = 0
+    for operation in operations:
+        if sent + 2 > args.max_requests:
+            print(f"stopping at --max-requests {args.max_requests}", file=sys.stderr)
+            break
+        owner_id = str(operation.get("owner_id", ""))
+        is_mutating = str(operation.get("method", "GET")).upper() in MUTATING_METHODS
+        owner = send(args.base, operation, owner_headers, owner_id, args.timeout, context)
+        foreign = send(args.base, operation, foreign_headers, owner_id, args.timeout, context)
+        sent += 2
+        row = {
+            "operation": operation["name"],
+            "method": str(operation.get("method", "GET")).upper(),
+            "owner_status": owner["status"],
+            "foreign_status": foreign["status"],
+            "owner_size": owner["size"],
+            "foreign_size": foreign["size"],
+            "verdict": verdict(owner, foreign, is_mutating),
+        }
+        records.append(row)
+        if args.delay:
+            time.sleep(args.delay)
+
+    print(f"\n{'operation':28} {'method':7} {'owner':6} {'foreign':8} verdict")
+    for row in records:
+        print(
+            f"{row['operation'][:28]:28} {row['method']:7} {row['owner_status']:6} "
+            f"{row['foreign_status']:8} {row['verdict']}"
+        )
+    positives = [row for row in records if row["verdict"] in ("foreign-read", "foreign-effect")]
+    print(f"\ncross-principal positives: {len(positives)} of {len(records)} operations")
+    if positives:
+        print("file on the first confirmed cross-principal effect, with the owner and foreign pair as evidence")
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as handle:
+            json.dump({"base": args.base, "operations": records}, handle, indent=2)
+        print(f"wrote {args.json_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

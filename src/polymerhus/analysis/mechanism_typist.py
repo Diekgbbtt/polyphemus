@@ -518,12 +518,10 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
     stays byte-identical to the stateful seam (which defaults `system_prompt` to
     `_role_prompt(role_id)`) - a call site may therefore omit it and still send the
     role prompt on every call."""
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    from polymerhus.analysis.proposer_turn import prepend_prompt
+    from polymerhus.analysis.proposer_turn import prepend_prompt, _served_prompt
     from polymerhus.app.llm.roles import invoke_role
 
-    prompt = system_prompt or _load_skill()
+    prompt = _served_prompt("mechanism_typist", system_prompt)
     return invoke_role("analyser", prepend_prompt(messages, prompt), schema=schema)
 
 

@@ -34,7 +34,11 @@ def test_create_project_scaffolds_into_the_given_root(tmp_path, monkeypatch):
     project_id = repository.create_project("acme", root=tmp_path / "data")
 
     assert created == [project_id]
-    assert (tmp_path / "data" / project_id / "skills").is_dir()
+    assert (tmp_path / "data" / project_id / "auth").is_dir()
+    assert not (tmp_path / "data" / project_id / "skills").exists(), (
+        "the project skill area lives in the live skills root's "
+        "target-specific-procedure/ branch, not in the data root"
+    )
     assert (tmp_path / "data" / project_id / "hunting" / "orchestration").is_dir()
 
 

@@ -57,6 +57,9 @@ BOUND_ROLES = {
     "hunting_hunter": ("lightrag-query", "steel-browser"),
     "pod_runner": ("lightrag-query", "steel-browser"),
     "pod_triager": ("lightrag-query",),
+    # #232 D232-7: the SkillEvolver is a bound role - its authoring discipline
+    # is the meta-write-skill procedure; its pass arms its own write capability.
+    "skill_evolver": ("meta/meta-write-skill",),
 }
 
 
@@ -86,19 +89,25 @@ def _render(middleware, *, system_prompt="BASE", context=None) -> str:
 # --- the #234 read/write tool surface -----------------------------------------
 
 
-def test_read_only_agent_gets_load_skill_alone() -> None:
+def test_read_only_agent_gets_the_read_only_pair() -> None:
+    # #232 D232-4: load_skill + record_skill_lesson ride every bound role; the
+    # append-only lesson observation is the one surface safe to bind universally.
     tools = skills.build_skill_tools()
 
-    assert [t.name for t in tools] == ["load_skill"]
+    assert [t.name for t in tools] == ["load_skill", "record_skill_lesson"]
 
 
-def test_write_capable_agent_gets_load_skill_plus_bound_write_skill(tmp_path) -> None:
+def test_write_capable_agent_gets_the_pair_plus_bound_write_skill(tmp_path) -> None:
     store = skills.SkillStore(root_dir=tmp_path)
 
     tools = skills.build_skill_tools("proj-1", with_write_skill=True, store=store)
 
-    assert [t.name for t in tools] == ["load_skill", "write_skill"]
-    write_tool = tools[1]
+    assert [t.name for t in tools] == [
+        "load_skill",
+        "record_skill_lesson",
+        "write_skill",
+    ]
+    write_tool = tools[2]
     out = write_tool.invoke(
         {
             "skill": "auth_workflow",
@@ -108,7 +117,7 @@ def test_write_capable_agent_gets_load_skill_plus_bound_write_skill(tmp_path) ->
     )
     assert out["ok"] is True
     assert (
-        tmp_path / "proj-1" / "skills" / "auth_workflow" / "references" / "r.md"
+        tmp_path / "target-specific-procedure" / "proj-1" / "auth_workflow" / "references" / "r.md"
     ).is_file()
 
 
@@ -117,7 +126,11 @@ def test_write_tool_defaults_to_the_deployment_project(monkeypatch) -> None:
 
     monkeypatch.setattr(config, "PROJECT_ID", "proj-cfg")
     tools = skills.build_skill_tools(with_write_skill=True)
-    assert [t.name for t in tools] == ["load_skill", "write_skill"]
+    assert [t.name for t in tools] == [
+        "load_skill",
+        "record_skill_lesson",
+        "write_skill",
+    ]
 
 
 # --- the #221 per-role binding ------------------------------------------------
@@ -131,7 +144,7 @@ def test_binding_carries_the_roles_bounded_skill_set(monkeypatch) -> None:
 
     assert isinstance(binding, SkillAgentBinding)
     assert binding.role_id == "pod_runner"
-    assert [t.name for t in binding.tools] == ["load_skill"]
+    assert [t.name for t in binding.tools] == ["load_skill", "record_skill_lesson"]
     assert len(binding.middleware) == 1
     # The project scope is tool-owned: unset -> the deployment's single project.
     assert binding.context == {
@@ -148,7 +161,7 @@ def test_binding_defaults_to_read_only_and_can_carry_the_write_tool(
 
     monkeypatch.setattr(config, "PROJECT_ID", "proj-cfg")
     read_only = skill_agent_binding("pod_runner")
-    assert [t.name for t in read_only.tools] == ["load_skill"]
+    assert [t.name for t in read_only.tools] == ["load_skill", "record_skill_lesson"]
     # Unset project -> the tool-owned deployment default.
     assert read_only.context["project_id"] == "proj-cfg"
 
@@ -158,7 +171,11 @@ def test_binding_defaults_to_read_only_and_can_carry_the_write_tool(
         with_write_skill=True,
         store=skills.SkillStore(root_dir=tmp_path),
     )
-    assert [t.name for t in write_capable.tools] == ["load_skill", "write_skill"]
+    assert [t.name for t in write_capable.tools] == [
+        "load_skill",
+        "record_skill_lesson",
+        "write_skill",
+    ]
     # The bounded set is the role's, independent of the write capability.
     assert write_capable.context["skills"] == read_only.context["skills"]
     # An explicit project overrides the deployment default.
@@ -256,10 +273,19 @@ def test_every_tool_calling_role_declares_its_skill_set() -> None:
     assert "crawler" not in ROLE_SKILLS
 
 
-def test_the_two_meta_skills_are_never_advertised() -> None:
-    """The protocol skills load through the read path itself; advertising them
-    in an index would invite a pointless load."""
+def test_the_meta_skills_are_never_advertised_outside_the_evolver() -> None:
+    """The usage protocol loads through the read path itself; advertising it in
+    an index would invite a pointless load. The authoring discipline
+    (`meta-write-skill`) is advertised ONLY for the SkillEvolver role, whose
+    pass authors revisions (#232 D232-7, operator ruling)."""
     advertised = {name for names in ROLE_SKILLS.values() for name in names}
-
     assert skills.META_USAGE_SKILL not in advertised
-    assert skills.META_WRITE_SKILL not in advertised
+
+    assert ROLE_SKILLS["skill_evolver"] == (skills.META_WRITE_SKILL,)
+    outside = {
+        name
+        for role, names in ROLE_SKILLS.items()
+        if role != "skill_evolver"
+        for name in names
+    }
+    assert skills.META_WRITE_SKILL not in outside

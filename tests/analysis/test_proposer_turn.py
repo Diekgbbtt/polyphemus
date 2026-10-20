@@ -45,6 +45,7 @@ class _CapturingSeam:
             "usage_scope": kw.get("usage_scope"),
             "middleware": kw.get("middleware"),
             "tools": kw.get("tools"),
+            "context": kw.get("context"),
         })
         return None
 
@@ -90,10 +91,11 @@ def test_the_stateful_leg_honours_an_explicit_prompt_over_the_role_default(monke
     invoke = session_invoke_fn("assigner", "runX", object())
 
     invoke([HumanMessage(content="reflect")], schema=None, system_prompt="THE-MODE-PROMPT")
-    assert seam.seen[-1]["system_prompt"] == "THE-MODE-PROMPT"
+    assert seam.seen[-1]["system_prompt"] == _served("THE-MODE-PROMPT")
 
     invoke([HumanMessage(content="create")])
-    assert seam.seen[-1]["system_prompt"] != "THE-MODE-PROMPT", "the role default applies"
+    assert seam.seen[-1]["system_prompt"] != _served("THE-MODE-PROMPT"), \
+        "the role default applies"
 
 
 def test_the_stateful_leg_keys_a_distinct_thread_per_role(monkeypatch):
@@ -144,11 +146,32 @@ def test_the_stateful_leg_carries_each_roles_own_prompt(monkeypatch):
         assert isinstance(prompt, str) and prompt.strip()
 
 
-def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
-    """Operator ruling (2026-09-17), preserved: the analysis proposers carry no
-    SKILL surface - no skill tool, no skill context, and no L1 skill-index
-    middleware. Their adjacent-surface read/probe tools (D-A2) are a separate
-    binding, never a skill surface.
+def test_the_served_prompt_carries_the_shared_cortex(monkeypatch):
+    """The analysis proposers serve the SAME cortex composition the hunting
+    agents use: each role's stable prompt ends with the shared map, and a
+    caller-supplied prompt wins before the append."""
+    seam = _CapturingSeam()
+    _patch_stateful_turn(monkeypatch, seam)
+    from polymerhus.attack.hunting.cortex import cognitive_architecture_map
+
+    cortex = cognitive_architecture_map()
+    for role in ("assigner", "mechanism_typist"):
+        session_invoke_fn(role, "runX", object())([HumanMessage(content="m")])
+        assert seam.seen[-1]["system_prompt"].endswith(cortex)
+
+    session_invoke_fn("assigner", "runX", object())(
+        [HumanMessage(content="m")], system_prompt="CALLER")
+    assert seam.seen[-1]["system_prompt"].startswith("CALLER")
+    assert seam.seen[-1]["system_prompt"].endswith(cortex)
+
+
+def test_the_stateful_leg_carries_no_skill_surface_without_a_project(monkeypatch):
+    """A proposer turn with NO project scope carries no skill surface: no skill
+    tool, no skill context, and no L1 skill-index middleware. Their
+    adjacent-surface read/probe tools (D-A2) are a separate binding, never a
+    skill surface. (With a project scope, the #364 analysis-domain auth
+    surface rides: the project `authn` procedure as the whole bounded skill
+    set - see the #364 tests below - and no other skill.)
 
     The cross-call constant-shape fix binds the role's OWN structured-output tool on
     a prose turn; that is not a skill tool, and the assertion below pins exactly
@@ -183,19 +206,27 @@ def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
     assert roles == ["mechanism_typist"], "one middleware per turn, for its OWN role"
 
 
-def test_the_assigner_structured_turn_binds_the_http_pair_and_the_auth_view(monkeypatch):
-    """Rollback on the turn seam: the assigner's structured turn binds the
-    HTTP-history pair - no `graph_view` (the recorded-transaction read is the
-    assigner's widening seam) - plus, since #364, the READ-ONLY auth-store view
-    so an ownership judgment can be typed against the recorded session
+def test_the_assigner_structured_turn_binds_the_http_pair_and_the_auth_surface(monkeypatch):
+    """The assigner's structured turn binds the HTTP-history pair - no
+    `graph_view` (the recorded-transaction read is the assigner's widening
+    seam) - plus, since #364, the analysis-domain auth surface: the project
+    `authn` procedure as its whole bounded skill set (header in the L1 index,
+    `load_skill`, `record_skill_lesson`) and the READ-ONLY auth-store data
+    view, so an ownership judgment can be typed against the recorded session
     material. Fail-open: without a project scope it binds nothing."""
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
 
     session_invoke_fn("assigner", "runX", object(), project_id="proj-1")(
         [HumanMessage(content="the per-chunk task")])
-    tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
-    assert tool_names == {"search_http_history", "get_http_artifact", "auth_store"}
+    turn = seam.seen[-1]
+    tool_names = {getattr(t, "name", "") for t in turn.get("tools") or ()}
+    assert tool_names == {
+        "search_http_history", "get_http_artifact",
+        "load_skill", "record_skill_lesson", "auth_store",
+    }
+    assert turn.get("context") == {"skills": ["authn"], "project_id": "proj-1"}
+    assert len(turn.get("middleware") or ()) == 2, "compaction + the L1 index"
 
     session_invoke_fn("assigner", "runX", object())(
         [HumanMessage(content="the per-chunk task")])
@@ -205,9 +236,10 @@ def test_the_assigner_structured_turn_binds_the_http_pair_and_the_auth_view(monk
 def test_the_typist_structured_turn_binds_the_surface_and_exec_tools(monkeypatch):
     """D-A2 extended past assigner-only: the mechanism-typist's structured turns
     bind the read-only `graph_view`, the HTTP-history pair, the bounded
-    `exec` term, and the read-only auth-store view (#364), so its ORIENT / VERIFY
-    phases can ground a hypothesis in the target's real responses rather than
-    path nouns alone."""
+    `exec` term, and the analysis-domain auth surface (#364: the project
+    `authn` procedure plus the read-only auth-store data view), so its ORIENT /
+    VERIFY phases can ground a hypothesis in the target's real responses rather
+    than path nouns alone."""
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
     from polymerhus.analysis.analyser_types import L1DeltaBatch
@@ -216,7 +248,7 @@ def test_the_typist_structured_turn_binds_the_surface_and_exec_tools(monkeypatch
         [HumanMessage(content="extraction")], schema=L1DeltaBatch)
     tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
     assert {"graph_view", "search_http_history", "get_http_artifact", "exec",
-            "auth_store"} <= tool_names
+            "load_skill", "record_skill_lesson", "auth_store"} <= tool_names
 
 
 def test_the_typist_reflection_turn_binds_the_same_surface_tools(monkeypatch):
@@ -242,20 +274,28 @@ def test_the_typist_reflection_turn_binds_the_same_surface_tools(monkeypatch):
 
 def test_only_the_surface_owners_bind_surface_tools():
     """The end state: the mechanism-typist binds the full surface
-    (graph_view + HTTP pair + exec + the read-only auth view) and the assigner
-    binds the HTTP-history pair plus that view; every other role binds none. The
-    seam gates on the role, so a role outside that set gets an empty tuple
-    whatever the project scope - and an owner with no project scope fails open
-    to none."""
-    from polymerhus.analysis.proposer_turn import _surface_tools
+    (graph_view + HTTP pair + exec) and the assigner binds the HTTP-history
+    pair; the analysis-domain auth surface (#364) is a SEPARATE binding on the
+    same two roles (the project `authn` skill plus the read-only auth-store
+    data view). Every other role binds none. The seams gate on the role, so a
+    role outside that set gets nothing whatever the project scope - and an
+    owner with no project scope fails open to none."""
+    from polymerhus.analysis.proposer_turn import _auth_binding, _surface_tools
 
     assigner = {getattr(t, "name", "") for t in _surface_tools("assigner", "proj-1")}
-    assert assigner == {"search_http_history", "get_http_artifact", "auth_store"}
+    assert assigner == {"search_http_history", "get_http_artifact"}
     typist = {getattr(t, "name", "") for t in _surface_tools("mechanism_typist", "proj-1")}
-    assert {"graph_view", "search_http_history", "get_http_artifact", "exec",
-            "auth_store"} <= typist
+    assert {"graph_view", "search_http_history", "get_http_artifact", "exec"} <= typist
+    for role in ("assigner", "mechanism_typist"):
+        binding = _auth_binding(role, "proj-1", None)
+        assert binding is not None, role
+        assert {"load_skill", "record_skill_lesson", "auth_store"} <= {
+            getattr(t, "name", "") for t in binding.tools}
+        assert binding.context == {"skills": ["authn"], "project_id": "proj-1"}
     assert _surface_tools("some-other-role", "proj-1") == ()
     assert _surface_tools("assigner", None) == ()
+    assert _auth_binding("some-other-role", "proj-1", None) is None
+    assert _auth_binding("assigner", "", None) is None
 
 
 def test_the_typist_turn_degrades_fail_open_when_surface_tools_are_unbuildable(monkeypatch):
@@ -280,7 +320,7 @@ def test_the_typist_turn_degrades_fail_open_when_surface_tools_are_unbuildable(m
     assert "auth_store" in tool_names
 
 
-# --- #364: the read-only auth-store view on the two proposer turns ------------
+# --- #364: the analysis-domain auth surface on the two proposer turns ---------
 
 AUTH_PROJECT = "proj-turn-auth-1"
 TOKEN_SECRET = "turn-token-value-do-not-leak"
@@ -320,11 +360,11 @@ def test_both_analysis_roles_bind_the_read_only_auth_store_view(tmp_path):
     """#364 acceptance 1: BOTH proposer turns can read the project's auth store -
     the assigner (ownership against a recorded session shape) and the typist
     (mechanism typing against it)."""
-    from polymerhus.analysis.proposer_turn import _surface_tools
+    from polymerhus.analysis.proposer_turn import _auth_binding
 
     store = _seeded_auth_store(tmp_path)
     for role in ("assigner", "mechanism_typist"):
-        tool = _bound_auth_tool(_surface_tools(role, AUTH_PROJECT, store))
+        tool = _bound_auth_tool(_auth_binding(role, AUTH_PROJECT, store).tools)
         assert tool is not None, role
         out = tool.invoke({"command": "read", "path": "overview"})
         assert out["value"]["required_headers"] == ["X-CSRF-Token"]
@@ -334,10 +374,10 @@ def test_the_bound_auth_view_is_bound_to_the_injected_store(tmp_path):
     """The store handle threads the seam (the recon constructor-injection
     precedent): the turn's view reads the INJECTED store at the turn's project,
     so a test never touches the production bucket."""
-    from polymerhus.analysis.proposer_turn import _surface_tools
+    from polymerhus.analysis.proposer_turn import _auth_binding
 
     store = _seeded_auth_store(tmp_path)
-    tool = _bound_auth_tool(_surface_tools("mechanism_typist", AUTH_PROJECT, store))
+    tool = _bound_auth_tool(_auth_binding("mechanism_typist", AUTH_PROJECT, store).tools)
     out = tool.invoke({"command": "read", "path": "accounts.alice-login.status"})
     assert out["value"] == "valid"
 
@@ -346,10 +386,10 @@ def test_the_bound_auth_view_carries_no_write_capability(tmp_path):
     """#364 acceptance 2 (D223-5 preserved): the turn's view refuses every
     command but `read`, its schema cannot express a value to write, and the
     store's tokens stay unwritten."""
-    from polymerhus.analysis.proposer_turn import _surface_tools
+    from polymerhus.analysis.proposer_turn import _auth_binding
 
     store = _seeded_auth_store(tmp_path)
-    tool = _bound_auth_tool(_surface_tools("assigner", AUTH_PROJECT, store))
+    tool = _bound_auth_tool(_auth_binding("assigner", AUTH_PROJECT, store).tools)
     assert set(tool.args) == {"command", "path"}
     out = tool.invoke({"command": "write", "path": "accounts.mallory",
                        "value": {"notes": "nope"}})
@@ -364,10 +404,10 @@ def test_the_bound_auth_view_reads_no_secret_value(tmp_path):
     replayer would need are the marker, the names are usable."""
     import json
 
-    from polymerhus.analysis.proposer_turn import _surface_tools
+    from polymerhus.analysis.proposer_turn import _auth_binding
 
     store = _seeded_auth_store(tmp_path)
-    tool = _bound_auth_tool(_surface_tools("mechanism_typist", AUTH_PROJECT, store))
+    tool = _bound_auth_tool(_auth_binding("mechanism_typist", AUTH_PROJECT, store).tools)
     rendered = json.dumps(tool.invoke(
         {"command": "read", "path": "accounts.alice-login"}))
     for secret in (TOKEN_SECRET, COOKIE_SECRET, "turn-password-do-not-leak"):
@@ -410,15 +450,17 @@ def test_the_turn_binds_no_auth_view_without_a_project_scope(monkeypatch, tmp_pa
 
 
 def test_the_turn_degrades_fail_open_when_the_auth_seam_cannot_build(monkeypatch):
-    """Fail-open at the auth seam: an unbuildable auth view binds nothing while
-    the surface tools survive, and the turn still runs."""
-    from polymerhus.analysis.proposer_turn import _surface_tools
+    """Fail-open at the auth seam: an unbuildable auth surface binds nothing
+    while the surface tools survive, and the turn still runs."""
+    from polymerhus.analysis.proposer_turn import _auth_binding, _surface_tools
     import polymerhus.app.auth.seams as auth_seams
 
     def boom(*args, **kwargs):
         raise RuntimeError("auth seam unbuildable")
 
     monkeypatch.setattr(auth_seams, "auth_capable_binding", boom)
+    assert _auth_binding("assigner", "proj-1", None) is None
+    assert _auth_binding("mechanism_typist", "proj-1", None) is None
     assigner = {getattr(t, "name", "") for t in _surface_tools("assigner", "proj-1")}
     assert assigner == {"search_http_history", "get_http_artifact"}
     typist = {getattr(t, "name", "") for t in _surface_tools("mechanism_typist", "proj-1")}
@@ -430,7 +472,9 @@ def test_the_turn_degrades_fail_open_when_the_auth_seam_cannot_build(monkeypatch
 
     invoke = session_invoke_fn("mechanism_typist", "runX", object(), project_id="proj-1")
     invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)  # must not raise
-    assert "auth_store" not in {getattr(t, "name", "") for t in seam.seen[-1]["tools"]}
+    tool_names = {getattr(t, "name", "") for t in seam.seen[-1]["tools"]}
+    assert "auth_store" not in tool_names
+    assert "load_skill" not in tool_names
 
 
 # --- the one-shot legacy leg: the same prompt, headed -------------------------
@@ -496,6 +540,13 @@ class _RecordingModel(BaseChatModel):
         return self
 
 
+def _served(prompt: str) -> str:
+    """The served system prompt: the role prompt with the shared cortex."""
+    from polymerhus.analysis.proposer_turn import serve_prompt
+
+    return serve_prompt(prompt)
+
+
 def _drive_real_seam(role_prompt: str, monkeypatch, *, calls: int = 1):
     """Drive the REAL proposer seam for this role and return the model, the
     checkpointer, and the recorded wire requests.
@@ -545,16 +596,16 @@ def test_the_two_legs_send_a_byte_identical_prompt_at_the_same_position(monkeypa
 
     PROMPT = "THE ONE ROLE PROMPT - byte-identical across every call"
     _model, _saver, requests = _drive_real_seam(PROMPT, monkeypatch, calls=1)
-    one_shot = prepend_prompt([HumanMessage(content="the per-chunk task 0")], PROMPT)
+    one_shot = prepend_prompt([HumanMessage(content="the per-chunk task 0")], _served(PROMPT))
 
     wire = requests[0]
     # Same length, same order, same content, byte for byte.
     assert [type(m).__name__ for m in wire] == [type(m).__name__ for m in one_shot]
     assert [m.content for m in wire] == [m.content for m in one_shot]
     # The prompt LEADS the stateful leg, not merely appears somewhere in it.
-    assert wire[0].content == PROMPT
+    assert wire[0].content == _served(PROMPT)
     assert wire[0].content == one_shot[0].content
-    assert wire[0].content.encode("utf-8") == PROMPT.encode("utf-8")
+    assert wire[0].content.encode("utf-8") == _served(PROMPT).encode("utf-8")
 
 
 def test_the_wire_prompt_sits_at_position_zero_on_every_call(monkeypatch):
@@ -572,11 +623,11 @@ def test_the_wire_prompt_sits_at_position_zero_on_every_call(monkeypatch):
     assert len(requests) >= 4, "the model was invoked once per call"
     for index, request in enumerate(requests):
         # 1. The prompt LEADS, and leads byte-identically, every single call.
-        assert request[0].content == PROMPT, (
+        assert request[0].content == _served(PROMPT), (
             f"the prompt leads call {index}")
         # 2. It appears EXACTLY ONCE. A second copy later in the request is the
         #    old stacking defect, which the leading copy alone cannot expose.
-        assert sum(1 for m in request if m.content == PROMPT) == 1, (
+        assert sum(1 for m in request if m.content == _served(PROMPT)) == 1, (
             f"exactly one prompt copy in call {index}")
         # 3. Nothing after position 0 carries the prompt: it is NOT trail content.
         assert all(
@@ -598,7 +649,7 @@ def test_the_prompt_leads_a_request_that_grows_only_by_the_task(monkeypatch):
     assert len(requests) >= 3
     for previous, current in zip(requests, requests[1:]):
         # The head is byte-identical.
-        assert current[0].content == previous[0].content == PROMPT
+        assert current[0].content == previous[0].content == _served(PROMPT)
         # The previous TRAIL is a strict PREFIX of the next one - append-only.
         # Nothing earlier is rewritten, inserted or removed, which is exactly
         # what a provider needs in order to extend its cached prefix.
@@ -660,7 +711,7 @@ def test_the_stateful_leg_is_read_through_the_real_seam(monkeypatch):
     invoke = session_invoke_fn("mechanism_typist", "runbyte", InMemorySaver())
     invoke([HumanMessage(content="the task")], schema=None)
     assert model._seen, "the real seam reached the model"
-    assert model._seen[0][0].content == "P"
+    assert model._seen[0][0].content == _served("P")
 
 
 # --- per-chunk reset: ONE session, reset at each chunk boundary ---------------

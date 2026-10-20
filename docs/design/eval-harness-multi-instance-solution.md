@@ -127,7 +127,7 @@ Verified against the code; each item is a place the current architecture breaks 
 - There is no import/seed API for hunting artifacts; the only seam is the implicit file-drop into `data/<pid>/hunting/orchestration/hunt_configs/produced/*.yaml` (ratified) and `<pid>/hunting/hunter/test-specs/<fault_key>/produced/*.yaml`, read lazily.
 
 **6.5 Auth bootstrap.**
-- The parameterised external-agent prompt exists (`skills/meta/authn-skill-writing/references/bootstrap-workflow.md`), and the store seed face is `PUT /projects/{id}/auth`; there is no catalogue `skills/authn/` - it is authored per project at `<data_root>/<project_id>/skills/authn/SKILL.md`.
+- The parameterised external-agent prompt exists (`skills/meta/authn-skill-writing/references/bootstrap-workflow.md`), and the store seed face is `PUT /projects/{id}/auth`; there is no catalogue `skills/authn/` - it is authored per project at `skills/target-specific-procedure/<project_id>/authn/SKILL.md`.
 
 ## 7. Grey areas (the grill queue)
 

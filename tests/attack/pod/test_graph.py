@@ -397,7 +397,7 @@ def test_runner_channel_accumulates_appended_messages_in_order():
     msgs = final["runner_messages"]
     assert all(isinstance(m, BaseMessage) for m in msgs)     # the typed channel
     assert [m.type for m in msgs] == ["system", "human", "ai", "human", "ai"]
-    assert msgs[0].content == RUNNER_SYSTEM                  # the system prompt
+    assert msgs[0].content == RUNNER_SYSTEM         # the system prompt
     assert "action: tool_call" in msgs[2].content            # turn 1's proposal
     assert "TOOL RESULT" in msgs[3].content                  # the recorded observation
     assert "action: conclude" in msgs[4].content             # turn 2: appended, not replaced
