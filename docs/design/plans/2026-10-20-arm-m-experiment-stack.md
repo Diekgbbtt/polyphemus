@@ -752,7 +752,34 @@ Fill this section after every step.
   Source hash: `3519cb97a9cdc20728a1fe6753273c71ecc5c11caba545e69ac8b7587643d0a6` on both sides; the local and instance manifests are identical.
 - Decision: **pass**; advance to E6.
 
-### Batch 5 - E6 pending
+### Batch 5 - E6 attempt 1 (fail)
+
+- Project `05586b40-e8dd-485d-8295-10f03ece40e4`, `target_run_id: armm-wj-e6`.
+- Trial `white-jotter-1-20261020T174627-1618c524`; stopped after the analysis with **1,758,185** tokens.
+- Recon: complete; analysis: drained at 17:38; hunting: stopped after the gate.
+- GT: **0.812698** against the 0.793651 E4 and the 0.696825 high; delta +0.019047 / +0.115873.
+  The GT is the highest of the stack, but the batch gate fails on the edge inventory:
+  - `SHAPES_DATA_OF` coverage is **1** service (`library-catalog`), not the required 8; the E4 had 9.
+  - **19** supported links are lost and **0** gained:
+    8 `SHAPES_DATA_OF`, 6 `AUTHENTICATED_BY` (`article-management`, `book-management`, `navigation-menu`, `password-recovery`, `role-permission-administration`, `user-administration`), the four remaining `password-recovery` system edges, and `register`'s `IDENTIFIED_BY`.
+- The loss is the model's own emission: the six `typist-systems-and-edges` generations emit **43** edge identities and all 43 commit; the E4's same six calls emitted **62**.
+  The only source difference from E4 is the E6 sentence, which dropped the "PRIMARY services (those that already aggregate this chunk's assets)" anchor the E4 run followed.
+- Per-spec (high -> E6):
+  - `001` 0.800 -> 0.800;
+  - `002` 0.589 -> 0.889;
+  - `003` 1.000 -> 1.000;
+  - `004` 0.767 -> 1.000;
+  - `005` 0.833 -> 0.833;
+  - `006` 0.333 -> 0.500;
+  - `007` 0.556 -> 0.667.
+- Fix: restore the PRIMARY anchor and keep the non-restriction rule - "prefer the PRIMARY services (those that already aggregate this chunk's assets), but never drop an evidenced link: `prefer PRIMARY` orders the links, it never restricts them".
+- Rec 1: zero recoveries.
+  Rec 2: no transport abort; the provider's transient `503 Endpoint is unavailable` responses during recon were retried and the recon completed.
+  Reload: zero `StatReload` entries.
+  Source hash: `a7dfefb094e7b104cc3be9d4a478e533c12944bc3e4a4cb5c3692b52a1e4b39c`.
+- Decision: fail the gate; re-run as attempt 2.
+
+### Batch 5 - E6 attempt 2 pending
 
 ### Batch 5 - pending
 
