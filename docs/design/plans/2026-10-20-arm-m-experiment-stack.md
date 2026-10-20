@@ -728,8 +728,8 @@ Fill this section after every step.
 ### Batch 4 - E4 (pass)
 
 - Project `402fa3de-bced-482a-99d3-73109d93923b`, `target_run_id: armm-wj-e4`.
-- Trial: running to the 4M budget for protocol consistency; the trial id and spend are recorded at termination.
-- Recon: complete; analysis: drained at 16:31; hunting: running.
+- Trial `white-jotter-1-20261020T170107-1618c524`; stopped at the 4M budget with **4,008,655** tokens (overshoot 8,655).
+- Recon: complete; analysis: drained at 16:31; hunting: stopped at the budget.
 - GT: **0.793651** against the 0.696825 high; delta **+0.096825**.
   Against the E3 attempt 4 it is **+0.028572**.
 - The primary gate passes: the `navigation-menu` `AUTHENTICATED_BY` (AuthenticationMechanism) and `IDENTIFIED_BY` (IdentificationSystem) pair commits.
@@ -746,6 +746,10 @@ Fill this section after every step.
 - The E3 gains hold where they are causal: `004` M3 stays 5/5.
   `002` M3 reads 0.6 on this run (E3 attempt 4: 1.0); the edge union does not touch the description, so this is the known description-run variance.
   The `005` M2 recovery and the `006` M4 flip are likewise run variance.
+- Rec 1: zero `triager structured-channel` recoveries.
+  Rec 2: no transport error.
+  Reload: zero `StatReload` entries.
+  Source hash: `3519cb97a9cdc20728a1fe6753273c71ecc5c11caba545e69ac8b7587643d0a6` on both sides; the local and instance manifests are identical.
 - Decision: **pass**; advance to E6.
 
 ### Batch 5 - E6 pending
