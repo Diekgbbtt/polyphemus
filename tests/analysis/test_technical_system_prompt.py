@@ -79,3 +79,12 @@ def test_example_six_extends_the_description_with_the_authorization_primitives()
     assert "logs the attacker-controlled principal" in prompt
     assert "from the `username` request parameter" in prompt
     assert "observed roles are `admin` and `user`" in prompt
+
+
+def test_prefer_primary_orders_links_without_restricting_them() -> None:
+    prompt = _load_skill()
+
+    assert (
+        "`prefer PRIMARY` orders the links by evidence, it never restricts them - "
+        "emit a link for every Service the evidence supports"
+    ) in prompt
