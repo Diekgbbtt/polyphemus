@@ -73,7 +73,7 @@ class PreloadedArtifacts:
 
 @dataclass(frozen=True)
 class TargetConfig:
-    """The per-trial data configuration of a Target (seed, KB, data dir).
+    """The per-trial data configuration of a Target (seed, KB, data dir, jobs).
 
     The bring-up configuration lives separately, in the target's
     `eval/targets/<dataset>/<target>.yaml` (spec #301); this object carries only
@@ -90,6 +90,10 @@ class TargetConfig:
     target_seed: str | None = None
     operator_kb: str | None = None
     data_dir: str | None = None
+    # Optional recon job subset (the eval OPERATOR single-host contract). Empty
+    # means the platform default phase plan; a non-empty tuple is sent as the
+    # launch `jobs` list. The bring-up configuration has no job selector.
+    recon_jobs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -457,11 +461,12 @@ def _parse_target_config(payload: object, where: str) -> TargetConfig:
     if payload is None:
         return TargetConfig()
     mapping = _mapping(payload, where)
-    _check_keys(mapping, ("target_seed", "operator_kb", "data_dir"), where)
+    _check_keys(mapping, ("target_seed", "operator_kb", "data_dir", "recon_jobs"), where)
     return TargetConfig(
         target_seed=_optional_str(mapping, "target_seed", where),
         operator_kb=_optional_str(mapping, "operator_kb", where),
         data_dir=_optional_str(mapping, "data_dir", where),
+        recon_jobs=_string_tuple(mapping, "recon_jobs", where),
     )
 
 

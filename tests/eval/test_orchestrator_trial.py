@@ -1840,3 +1840,20 @@ def test_premined_source_resolution_uses_the_file_store_seam(tmp_path) -> None:
     assert [path.name for path in paths] == ["unit_CWE-1_x.yaml"]
     # It asks the seam whether the source is a file before walking it.
     assert files.is_file_calls[0] == source
+
+
+def test_recon_jobs_are_sent_when_configured(tmp_path) -> None:
+    """The eval OPERATOR single-host contract is expressible in the setup.
+
+    Without a selector the launch is the platform default plan; a configured
+    subset rides the same `jobs` field the manual `ph.py recon launch` uses.
+    """
+    api_runner = FakeApi(_full_routes())
+
+    _trial(tmp_path, api_runner, recon_jobs=("httpx", "arjun")).run()
+
+    recon_launch = next(c for c in api_runner.calls if c.path.endswith("/recon"))
+    assert recon_launch.body == {
+        "with_analysis": True,
+        "jobs": ["httpx", "arjun"],
+    }

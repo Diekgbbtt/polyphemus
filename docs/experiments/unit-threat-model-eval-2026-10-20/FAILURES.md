@@ -51,14 +51,75 @@ The final section regroups the entries by failure domain and common root cause.
 - **Detected:** before the first trial.
 - **Signal:** `web_comfyui` and `web_white_jotter` containers remain up from an earlier run; `ph-eval-front` remains up with their host configurations.
 - **Impact:** resource contention and stale routing entries for the canary.
-- **Status:** open.
-- **Next step:** tear down the old target stacks and stale front configurations before the canary, preserving the images and data dependencies.
+- **Status:** resolved.
+- **Resolution:** the old `web_comfyui` and `web_white_jotter` stacks were removed, their volumes and networks dropped, the stale front configurations deleted, and the kali target aliases cleared. The images and staged data dependencies were preserved.
 - **Domain:** target lifecycle.
+
+### F-006 - The trial re-runs target bring-up after `next-target`
+
+- **Detected:** during the canary start.
+- **Signal:** `next-target` reported the target ready, then the trial's scoped bring-up recreated the target and the front returned 502 for about two minutes while the app booted.
+- **Impact:** a startup delay; the trial waited and proceeded.
+- **Evidence:** the front probe history and the target container start time.
+- **Status:** observed, not fatal.
+- **Domain:** target lifecycle.
+- **Root cause:** the native driver calls `next-target` and then `trial`, while `trial` also calls the scoped `orchestrator.up`; both are by design, but the duplicate bring-up costs a boot window.
+
+### F-007 - The automated trial's recon plan differs from the manual target profile
+
+- **Detected:** during the canary recon.
+- **Signal:** the recon run has seven jobs, including `whois`, `subdomain_takeover`, and `naabu`.
+- **Impact:** the automated trial runs tools the manual OPERATOR target profile excludes for a single-host web app; the off-scope host assets can enter L0 and the analysis.
+- **Evidence:** the recon per-job rows and `eval/OPERATOR.md` section 1.2.
+- **Status:** resolved in the harness; the measured run uses the subset.
+- **Resolution:** `TargetConfig.recon_jobs` and `TrialConfig.recon_jobs` now carry the subset, the CLI passes it, and the trial sends it as the recon launch `jobs` list. The setup uses `httpx`, `httpx_reprofile`, `katana`, `jsluice`, and `arjun`.
+- **Domain:** eval configuration and measurement provenance.
+- **Root cause:** `TargetRun`/`TrialConfig` had no recon-job selector; the automated trial launched the platform default phase plan. The manual `ph.py recon launch --jobs` contract was not expressible in the orchestrator setup.
+
+### F-008 - The canary stalled on the remote Steel crawl
+
+- **Detected:** during the first canary recon.
+- **Signal:** `steel_crawl` was in progress for more than eight minutes with no stats; the Steel API was reachable from kali (`200`), but the Steel browser is remote and the target is the synthetic host `t-1fc05262.target`, which only the eval host and kali resolve.
+- **Impact:** the recon phase waited indefinitely on the crawl; the analysis was stuck at its first chunk; the trial could not reach hunting.
+- **Evidence:** the recon per-job rows, the Steel API probe, the target alias, and the phase-4 timing.
+- **Status:** resolved by aborting the smoke and using the five-job contract.
+- **Resolution:** the trial client was terminated and the recon was stopped; the analysis queue was left to drain. The measured run excludes `steel_crawl`.
+- **Domain:** recon tool reachability and eval configuration.
+- **Root cause:** the full platform plan combined with a remote Steel runtime that cannot resolve or route the local synthetic host. The documented single-host contract excludes `steel_crawl`.
+
+### F-009 - The provider returns reasoning tokens without `reasoning_content`
+
+- **Detected:** during the canary analysis.
+- **Signal:** repeated `reasoning gap: profile expects reasoning_content ... but the response message carries no matching value` warnings from `polymerhus.app.llm.reasoning`.
+- **Impact:** the reasoning replay/observability surface cannot read the reasoning text, although the usage ledger still records reasoning tokens.
+- **Evidence:** the app log warnings at 22:12:47 to 22:14:10.
+- **Status:** open; recorded for the quality measurement.
+- **Domain:** provider capability and observability.
+- **Root cause:** the models.dev capability profile advertises a `reasoning_content` surface that the relay did not populate on these responses.
+
+### F-010 - The L1 system query references a missing `l0.label` property
+
+- **Detected:** during the canary analysis.
+- **Signal:** Neo4j `UnknownPropertyKeyWarning` for `label` in the L1 system witness query.
+- **Impact:** the witness-label projection is degraded; the query still returns rows.
+- **Evidence:** the Neo4j warning at 22:12:47 and the graph node properties.
+- **Status:** open; recorded for the quality measurement.
+- **Domain:** graph query and coupling.
+- **Root cause:** the query reads `l0.label`, while the L0 node records expose their identity on `name`/`properties`, not a top-level `label` property.
 
 ## Runtime trials
 
-No runtime trial has started.
-Entries will be appended after each probe and each trial.
+### Canary attempt 1 - comfyui-1 - project c289978e-c321-4ff2-894d-587b12f575f2
+
+- **Started:** 2026-10-20T22:11:38Z.
+- **Aborted:** during phase 4 on the stalled `steel_crawl` (F-008).
+- **Recon run:** 15a1810f-e6fc-4bc1-a5a7-3042cb9ce254; stopped.
+- **Target:** t-1fc05262.target, front 200.
+- **App-level evolver thread:** `skills:c289978e-c321-4ff2-894d-587b12f575f2:evolver` was listed by `/projects/{id}/threads`.
+- **Early L0/L1:** 969 nodes after the first analysis chunk; 22 L1 Services, 9 L1 Systems, 117 Endpoints, 793 Headers; one AGGREGATES edge.
+- **Early tokens:** about 1.55M capped before the abort; assigner, mechanism_typist, and triager only.
+- **Trial record:** none; the client was terminated before the terminal write.
+- **Disposition:** smoke failure only; a fresh canary is required with the five-job subset.
 
 ## Final clustering
 

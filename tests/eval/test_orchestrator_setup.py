@@ -209,6 +209,18 @@ def test_target_config_is_optional(sample_setup) -> None:
 
     assert run.target_config.operator_kb is None
     assert run.target_config.target_seed is None
+    assert run.target_config.recon_jobs == ()
+
+
+def test_target_config_recon_jobs_are_parsed(sample_setup) -> None:
+    _target(sample_setup)["target_config"] = {
+        "recon_jobs": ["httpx", "httpx_reprofile", "katana", "jsluice", "arjun"]
+    }
+
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.target_config.recon_jobs == (
+        "httpx", "httpx_reprofile", "katana", "jsluice", "arjun")
 
 
 def test_target_config_unknown_key_is_named(sample_setup) -> None:

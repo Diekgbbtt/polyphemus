@@ -162,6 +162,8 @@ class TrialConfig:
     # data-dependency endpoints; None means the target has no source dir.
     data_dir: Path | None = None
     auth_surface: bool = False
+    # The optional recon job subset; empty means the platform default phase plan.
+    recon_jobs: tuple[str, ...] = ()
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     # The trial-wide token budget (capped tokens: new output + uncached input)
     # and its carried baseline: None budget means no usage call at all; None
@@ -482,7 +484,9 @@ class Trial:
             steps.append(
                 TrialPlanStep(
                     "recon entry + launch",
-                    calls=(api.launch_recon(project, with_analysis=cfg.with_analysis),),
+                    calls=(api.launch_recon(
+                        project, with_analysis=cfg.with_analysis,
+                        jobs=cfg.recon_jobs or None),),
                     note=f"poll recon to terminal (budget {cfg.budget_s:g}s)",
                 )
             )
@@ -763,7 +767,9 @@ class Trial:
             return PhaseRecord(phase="recon", blocks=list(gate.blocks))
         run_id = api.run_id_of(
             self._call(
-                api.launch_recon(state.project_id, with_analysis=self.config.with_analysis)
+                api.launch_recon(
+                    state.project_id, with_analysis=self.config.with_analysis,
+                    jobs=self.config.recon_jobs or None)
             )
         )
         status, _terminal_row = self._poll(

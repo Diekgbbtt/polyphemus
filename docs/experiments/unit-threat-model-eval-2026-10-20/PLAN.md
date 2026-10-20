@@ -63,6 +63,14 @@ All agent roles use `opencode-go:deepseek-v4.1-flash`.
 The threat modeller and hunter declare `xhigh`, which negotiates to the provider's `max`.
 The pod runner and pod triager declare `high`.
 The compaction threshold is `0.4`.
+The recon job subset is the documented five-job single-host contract:
+`httpx`, `httpx_reprofile`, `katana`, `jsluice`, and `arjun`.
+The trial setup carries it as `recon_jobs`; the automated trial sends it as the
+launch `jobs` list.
+The full platform plan is not used because it adds `steel_crawl`, `ffuf`,
+`whois`, `subdomain_takeover`, and `naabu`, which the single-host eval contract
+excludes and whose remote Steel runtime cannot reach the synthetic host.
+
 The token budget is `7,000,000` capped tokens per trial.
 Capped tokens are generated output plus uncached input, excluding cache reads.
 The native trial process polls `GET /projects/{id}/usage` and stops the whole project execution at the bound.
@@ -374,6 +382,15 @@ Completed:
 - per-trial measurement wrapper `eval/measure_trial.sh`.
 
 Pending:
-- target stack cleanup and canary readiness;
-- canary trial and measurement;
+- restart the canary with the five-job recon subset;
+- canary measurement;
 - the remaining seven trials.
+
+Pre-run correction:
+- the first canary used the platform default recon plan and stalled on
+  `steel_crawl` against the remote Steel runtime;
+- the recon was stopped, the client was terminated, and no trial record was
+  written;
+- the `recon_jobs` setup field and the trial launch selector were added;
+- the failed canary is a smoke failure, not a measured trial;
+- the measured run uses the five-job subset.

@@ -90,10 +90,11 @@ That identity names the artifact store's middle level and is resolved CLI overri
 _Avoid_: job, task
 
 **TargetConfig**:
-The per-trial data configuration of a Target: seed, operator KB, auth context, and bootstrapped L1 surface.
+The per-trial data configuration of a Target: seed, operator KB, auth context, bootstrapped L1 surface, and the optional recon job subset.
 The bring-up configuration is not here: it lives in the target's `eval/targets/<dataset>/<target>.yaml` (**TargetConfiguration**).
 The seed is the bare Synthetic Host; when a setup leaves it unset the harness derives it from the target-run identity, so routing and scope cannot disagree.
 The inline `auth` mapping is RETIRED for delivery: the AuthContext, the `authn` skill, and the L1 surface are placed through the **Data-dependency placement endpoint** instead.
+`recon_jobs` is the optional list sent as the recon launch `jobs` field; an empty list keeps the platform default phase plan. The single-host eval contract uses `httpx`, `httpx_reprofile`, `katana`, `jsluice`, and `arjun`.
 _Avoid_: target definition
 
 **Target image provisioning**:

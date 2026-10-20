@@ -662,6 +662,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         operator_kb=kb,
         data_dir=data_dir,
         auth_surface=auth_surface,
+        recon_jobs=run.target_config.recon_jobs,
         preloaded_hunting_artifacts=run.preloaded_hunting_artifacts,
         token_budget=run.token_budget,
         target_run_id=target_run_id,
