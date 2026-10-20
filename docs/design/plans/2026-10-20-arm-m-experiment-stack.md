@@ -518,6 +518,48 @@ Fill this section after every step.
 - The re-run passes `--data-root /opt/polymerhus-dev/eval/instances/data/eval-server-1`.
 - This is a launch-argument error, not an app failure.
 
+### Batch 1 - runtime result (pass)
+
+- Trial `white-jotter-1-20261020T103730-1618c524`, project `f6fc851b-d2f4-43fe-a123-e193d3898c86`, `target_run_id: armm-wj-runtime`.
+- Recon: 13 jobs, 12 success, 1 skipped (`graphql-cop`); complete at 09:53.
+- Analysis: drained at 10:05.
+  `passes` 9, `advanced` 8, `dispatches_entered` 12, `l0_assets_read` 681, `pass_seconds_total` 1353.
+- Hunting: started at 10:05, stopped at 10:37 on the token budget.
+- Spend: 4,012,199 capped tokens, overshoot 41,625.
+- GT final: **0.711111** against the **0.696825** high baseline.
+  The delta is **+0.014286**, inside the 0.02 regression gate.
+- Per-spec (runtime against high):
+  - `white-jotter-001` sign-in: 0.800 against 0.800.
+  - `white-jotter-002` AuthorizationSystem: 0.522 against 0.589.
+    M3 fell from 0.6 to 0.4, so the runtime lost one run-specific description statement (S1, S2, and S4 are absent; S3 is present).
+  - `white-jotter-003` article-publishing: 1.000 against 1.000.
+  - `white-jotter-004` AuthorizationSystem: 0.767 against 0.767.
+    M3 is 0.8 and the `username` statement (S2) is still missing.
+  - `white-jotter-005` book-search: 0.833 against 0.833.
+    The `keywords` M2 item is still missing.
+  - `white-jotter-006` book-cover-serving: 0.500 against 0.333.
+    M4 rose from 0.0 to 0.5, so one presentation link now commits.
+  - `white-jotter-007` account-registration: 0.556 against 0.556.
+    The `AUTHORIZED_BY` M4 item is still missing.
+- The five stable items keep their baseline outcomes:
+  - `002`, `004`, and `007` still miss `account-registration` / `AUTHORIZED_BY` from `account-registration`;
+  - `005` still misses the `keywords` M2 item;
+  - `004` still misses the `username` M3 statement.
+- The committed `AUTHORIZED_BY` count is 6, already inside the 6-7 E1 gate range.
+  The missing edge is `account-registration -> AuthorizationSystem`, so E1 adds at most one edge.
+- Rec 1: zero `triager structured-channel` recoveries over the whole trial.
+- Rec 2: no transport abort; no `TimeoutError`, `URLError`, or `Traceback` in the app log.
+  The recon, analysis, and hunting status polls all completed.
+- Reload: `AGENT_UVICORN_ARGS` is empty and the log has zero `StatReload` entries.
+- Source hash: the `src` manifest stayed at `d38753c139b6dfef7dc970acf9e510c9d71019b28a7667eeb101d75fd11101d2`, and the local and instance manifests are identical.
+- Diagnosis of the GT movement:
+  the rec 1 recovery count is zero, so the triager delivery channel did not change the graph input.
+  The movement is run-to-run model variation: `002` lost one run-specific statement while `006` gained a presentation link.
+  The five stable items are unchanged, so the batch gate holds.
+- Decision: **pass**; advance to E1.
+- Expected E1: `0.711111 + 0.0635 = 0.7746` if the three M4 items land.
+- Expected E3: `0.711111 + 0.0635 + 0.0381 - 0.0238 = 0.7889` if E1 and E3 land and E2 stays refused.
+
 ### Batch 2 - pending
 
 ### Batch 3 - pending
