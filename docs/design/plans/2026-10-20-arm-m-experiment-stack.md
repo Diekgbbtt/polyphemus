@@ -725,7 +725,30 @@ Fill this section after every step.
   Source hash: `ee6be96e6cc5a1fd073d05b0790cfc67350ace7af434b8bf06213bb8811e6eae` on both sides; the local and instance manifests are identical.
 - Decision: **pass**; advance to E4.
 
-### Batch 4 - pending
+### Batch 4 - E4 (pass)
+
+- Project `402fa3de-bced-482a-99d3-73109d93923b`, `target_run_id: armm-wj-e4`.
+- Trial: running to the 4M budget for protocol consistency; the trial id and spend are recorded at termination.
+- Recon: complete; analysis: drained at 16:31; hunting: running.
+- GT: **0.793651** against the 0.696825 high; delta **+0.096825**.
+  Against the E3 attempt 4 it is **+0.028572**.
+- The primary gate passes: the `navigation-menu` `AUTHENTICATED_BY` (AuthenticationMechanism) and `IDENTIFIED_BY` (IdentificationSystem) pair commits.
+- The emitted-versus-committed dropped set is empty:
+  the six `typist-systems-and-edges` generations emit **62** edge identities and the committed graph holds the same **62**; `dropped=0`, `committed-but-not-emitted=0`.
+- Per-spec (high -> E4):
+  - `001` 0.800 -> 0.800;
+  - `002` 0.589 -> 0.756;
+  - `003` 1.000 -> 1.000;
+  - `004` 0.767 -> 1.000;
+  - `005` 0.833 -> 0.833;
+  - `006` 0.333 -> 0.500;
+  - `007` 0.556 -> 0.667.
+- The E3 gains hold where they are causal: `004` M3 stays 5/5.
+  `002` M3 reads 0.6 on this run (E3 attempt 4: 1.0); the edge union does not touch the description, so this is the known description-run variance.
+  The `005` M2 recovery and the `006` M4 flip are likewise run variance.
+- Decision: **pass**; advance to E6.
+
+### Batch 5 - E6 pending
 
 ### Batch 5 - pending
 
