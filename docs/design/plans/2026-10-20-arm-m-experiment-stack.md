@@ -798,4 +798,46 @@ Fill this section after every step.
 - Decision: **gate not met**; record the caveat and continue to E7 so the last batch is measured.
   The E6 change can be dropped later without disturbing E1/E3/E4/E7.
 
-### Batch 6 - E7 pending
+### Batch 6 - E7 (gate not met on placement volume; tag mechanism passes)
+
+- Project `c36d6fb0-8526-4657-ab82-87aa1681f6f3`, `target_run_id: armm-wj-e7`.
+- Trial `white-jotter-1-20261020T190443-1618c524`; stopped after the gate with **935,852** tokens.
+- Recon: complete; analysis: drained at 19:04; hunting: stopped after the gate.
+- GT: **0.779365** against the 0.696825 high; delta **+0.082540**.
+  Against the E4 0.793651 the delta is -0.014286, inside the 0.02 band; against the unvalidated E6 0.812698 it is -0.033333.
+- Placement: **28 of 114** endpoints, **29** aggregates, 1 multi-owner.
+  The high is 71/73; the E4 33/34; the E6 attempt 2 60/62.
+- Ten-path precision sample: **passes**. All **29** aggregates carry a surface tag: **27** `live route`, **2** `mirror shell`.
+  The sampled ten all pair a tag with a concrete path segment or method, and the owner follows from the contract:
+  - `article-management` owns `/api/admin/content/article` (POST save), `/api/admin/content/article/` and `/api/admin/content/article/{id}` (DELETE);
+  - `book-management` owns `/api/admin/content/book`, `/api/admin/content/books` (POST), `/api/admin/content/books/covers` and `/api/admin/content/books/delete`;
+  - `jotter-reading` owns `/api/article/{id}` and its variants.
+- `SHAPES_DATA_OF` is **4** services; the metric range on identical code is 1-10, so no gate is read from it.
+- Gates:
+  - placement completeness 71/114: **fail** (28/114);
+  - ten-path precision with tags and defensible owners: **pass**;
+  - aggregate count near the high: **fail** (29 vs 73);
+  - GT regression within 0.02 against the last validated batch (E4): **pass** (-0.014286); strict no-regression against the unvalidated E6: **fail** (-0.033333).
+- Diagnosis: the placement volume is the assigner's documented run-to-run variance (the same stack produced 27, 28, 33, 60, 64-70 and 71 assigned endpoints across runs), not a tag-mechanism defect.
+  The tag mechanism itself landed on every aggregate.
+  The E7 change cannot be credited with the volume gate.
+- Per-spec (high -> E7):
+  - `001` 0.800 -> 0.800;
+  - `002` 0.589 -> 0.822 (M3 0.8, S1 `302 redirect` missing);
+  - `003` 1.000 -> 1.000;
+  - `004` 0.767 -> 1.000 (M3 5/5, the E3 `username` gain holds);
+  - `005` 0.833 -> 0.833;
+  - `006` 0.333 -> 0.333;
+  - `007` 0.556 -> 0.667.
+- Rec 1: zero recoveries.
+  Rec 2: no transport abort; the transient provider `503 Endpoint is unavailable` responses were retried.
+  Reload: zero `StatReload` entries.
+  Source hash: `93d98f5e2401bb81dfd0ddc1ede990711213984854c4e0656bc8bdf103a963c6` on both sides; the local and instance manifests are identical.
+- Decision: **gate not met on placement volume**; the tag mechanism passes. This is the last batch.
+
+## Final experiment state
+
+- The validated stack is runtime + E1 + E3 + E4: GT **0.793651** on the E4 run (+0.096825 over the high).
+- E6 is unvalidated: its edge gate was not met, and the `SHAPES_DATA_OF` and system-edge metrics vary 1-10 services and 31-62 edges on identical code.
+- E7's tag mechanism lands on every aggregate (29/29), but the placement and aggregate-volume gates are not met (28/114, 29 aggregates against the high's 71/73).
+- The E7 branch carries the full stack. No branch is merged into the canonical dev trunk.
