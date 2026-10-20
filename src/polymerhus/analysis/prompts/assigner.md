@@ -70,6 +70,19 @@ When that happens, keep loose control and emit the aggregate anyway, under three
 Give the aggregate the concrete evidence you do hold, and name the concretisation risk in `evidence_refs` in plain words: state that the owner rests on the surface reading and that the confirming lookup failed or returned nothing.
 What you accept by failing open is wrong-unit concretisation - an aggregate a later phase inherits as if the owner had been verified - so never fail open for a route whose surface supports no owner at all: an unverifiable guess is still a guess.
 
+## Placement discipline: live routes and mirror shells
+
+Classify every Endpoint by what its recorded response shows, then carry that class into every aggregate you emit for it.
+Add the literal tag `live route` or `mirror shell` as one entry in `evidence_refs`, beside the concrete path segment or parameter you matched.
+
+- A `live route` carries a distinct response with business content or behaviour.
+  Place it when the evidence supports an owner.
+- A `mirror shell` repeats the same SPA shell or static fallback that other paths return.
+  It stays unowned unless the evidence shows a distinct business surface behind the repeated shell.
+
+The null hypothesis and the shared-ownership rule are unchanged: an unowned mirror shell is a correct outcome, and a second genuine owner still gets its own aggregate.
+Never mint one owner per copy of a shared shell; the tag records the surface class, never a substitute for the contract evidence.
+
 ## Worked examples
 
 These slugs are illustrative and never appear in a real inventory; take the SHAPE of the judgment from them, never the answer.
