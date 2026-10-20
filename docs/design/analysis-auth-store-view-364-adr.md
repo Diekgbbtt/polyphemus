@@ -25,7 +25,7 @@ Resolves #364 (found by the arm-J re-pass measurement; related #224, #243, #239)
   | `snapshot.cookies[].name` | kept |
   | `snapshot.cookies[].value` | `<redacted>` (the decided level: the cookie NAME is the request shape, the value is the reusable credential) |
   | `snapshot.headers.<name>` value, `snapshot.params.<key>` value | `<redacted>`, name/key kept |
-  | `snapshot.captured_at`, `steel.profile` | kept - a timestamp and a reference key, not secrets |
+  | `snapshot.captured_at`, `steel.state` | kept - a timestamp and a reference key, not secrets. `steel.profile` is retired (#395, D20). |
   | `overview.*` (`login_endpoint`, `required_headers` header NAMES, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `notes`) | kept verbatim - the overview carries no secret slot by the record contract |
   | `status`, `updated_at`, `procedure`, `origin`, `notes` | kept |
 - **D364-3 (argument surface).** Bound handle: project id plus store, bound at build time - no identity parameter (the recon precedent). Request fields: `path` (the dotted projection) and `command` (default `read`). The `value` field is NOT on the read-only schema, so a write-shaped payload cannot be expressed; every command but `read` refuses in-band with a new coded envelope `auth_readonly`, raised BEFORE the store is touched - the code names the mode, so a refused write is never confusable with a store failure.

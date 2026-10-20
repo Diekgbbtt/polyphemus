@@ -4,7 +4,7 @@
 *Scope: the local Steel runtime and the polymerhus browser tool. Cloud behaviour is the baseline, not the target.*
 *Sources: `docs/design/browser-cli-221-spec.md` and `browser-cli-221-decisions.md` (D16, D17); `docs/design/steel-local-deployment-359-spec.md` (D359-7); `docs/design/steel-session-lifecycle-395-decisions.md`; `docs/design/auth-store-220-decisions.md`; `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md`; `docs/design/evidence/steel-359/t395-oss-profile-research.md`.*
 *Live checks: Steel CLI 0.5.0-preview.6 help and source; Steel Python SDK 0.19.0 `SessionCreateParams`; local Steel API 0.5.3 schema and controller; `steel_exec` source; eval kali runtime.*
-*Revision note: the CLI session semantics and the cloud-profile recommendation are corrected in `steel-session-first-395.md`. The tool is moving to session-first; profiles are retired from the tool.*
+*Revision note: the CLI session semantics and the cloud-profile recommendation are corrected in `steel-session-first-395.md`. The tool is moving to session-first; profiles are retired from the tool. Superseded 2026-10-20: `steel-session-only-395-decisions.md` retires profiles in the cloud too and records the one-skill, state-only, local-user-agent design. Keep this map as the historical capability analysis.*
 
 ## Bottom line
 

@@ -179,3 +179,16 @@ The mechanics skill carries the non-reactive hardening: submit once and wait on 
 Explicitly excluded: any Steel-side CAPTCHA solving (`--stealth`'s auto-CAPTCHA half, `--session-solve-captcha`, the `captcha` family), because it is costly and does not port to a local Steel deployment; and any tool-layer guard, because the defended-target knowledge belongs to the procedure, not to the thin `steel_exec` gateway.
 The residual score risk is the environment and network identity: the local Steel deployment that removes the `UNEXPECTED_ENVIRONMENT` and impossible-travel exposure is filed as #245, and the design risk stays recorded in `docs/design/recon-auth-gateway-223-spec.md` until that lands.
 Content tests pin the ordering markers in both artifacts and the cadence and clock rules in the mechanics skill.
+
+## Amendment 2026-10-20 - profile discipline retired (#395)
+
+*Supersedes D237-15's profile mount and every `steel.profile` reference. Full record: `docs/design/steel-session-only-395-decisions.md`.*
+
+The authn meta skill and the bootstrap prompt no longer mount a Steel profile.
+They restore the account's session state (cookies, localStorage, sessionStorage, indexedDB), verify the authenticated landing, and capture the state again on close.
+The store holds `steel.state`, not `steel.profile`.
+The warm identity is the state file, not a profile.
+The profile script is deleted from the `steel-browser` references.
+There is one runtime-agnostic `steel-browser` skill.
+The local wrapper fixes the local user agent; the agent does not branch on cloud or local.
+The non-reactive login and clock rules are unchanged.

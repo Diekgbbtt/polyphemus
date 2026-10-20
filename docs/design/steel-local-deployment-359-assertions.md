@@ -49,6 +49,15 @@ The live wiring is covered by C7 and the walkthrough tier.
 | E8 | D359-10, #395 - the interactive daemon starts | the pinned CLI in `kali` with `STEEL_BROWSER_API_URL` set | a unique session name, `--session-timeout 120000`, `--local`, and the endpoint | S10, S7 | `browser start --json`; then `browser navigate ... about:blank --json` over the same daemon socket; then `browser stop` | start returns `success:true` with a positive `remainingMs`; navigate returns `success:true`, so the daemon socket stayed open; the session is stopped | `tests/e2e/test_steel_interactive_local.py`; the 0.4.4 red run and the preview green run are recorded in `docs/design/evidence/steel-359/t395-cli-timeout-root-cause.md` |
 | E9 | D359-7, #395 - the profile boundary is real | the local API on S7 | a create with `profileId` and `persistProfile`; a `GET /v1/profiles` | S7 | POST the create; read the response; probe the profile route | the session is created but carries no `profile_id`; the route answers 404 | `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md` |
 
+E9 remains a capability proof, not a tool requirement: the tool retires profiles in the cloud too (D20, D359-12).
+New assertions are required for the session-only design:
+
+| id | grounds | assertion |
+|---|---|---|
+| E10 | D20, D359-12 | A session created with cookies, localStorage, sessionStorage, and indexedDB restores the same four fields after capture and release. |
+| E11 | D359-13 | The local wrapper starts a session, sets one fixed user agent, and two consecutive sessions report the same user agent. |
+| E12 | D359-12 | A local deployment with `STEEL_BROWSER_API_URL` set and no `STEEL_API_KEY` runs the crawl path. |
+
 ## Bootstrap only the operator can supply
 
 - The admin addresses for the allowlist: the IPv4 egress used for the dj-viscon ssh session, and the IPv6 egress. E1 and C9 need them.

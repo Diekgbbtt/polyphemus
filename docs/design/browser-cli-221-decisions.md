@@ -194,13 +194,17 @@ No `steel.log` file. The execution transcript (tool args, stdout JSON, returncod
 
 ## D16 - Steel skill data: operation references under skills/, coupled to #220 on the data plane
 
-Reusable browsing-operation scripts live as `references/` beside the steel CLI skill under repo-root `skills/` (one script per reusable operation; no exploitation PoCs, no vulnerability-testing payloads - that boundary is absolute). Session workdirs hold a run's copies and evidence only; the canonical login scripts are AUTH-SKILL-1's (`#220`, which owns login procedures and per-method references authored with the auth skill). The data-plane split, so neither stream authors twice: the auth store holds WHAT (accounts, credentials, tokens, profile refs, snapshots, technical conditions, the `procedure` label hook); the auth skill holds the login PROCEDURES; this steel skill holds the operation MECHANICS the procedures are written in (session lifecycle, snapshot-ref handling, inline-eval escaping and bounding, trap-stop, timeout ordering). Arrows: `procedure` labels resolve to procedures composing steel operations; extraction reads (cookies/storage/eval) produce the material agents write as concrete request snapshots (the #220 bootstrap-capture future); technical-condition checks execute through steel reads. Joint out-of-scope on both sides: Steel profile lifecycle administration.
+Reusable browsing-operation scripts live as `references/` beside the steel CLI skill under repo-root `skills/` (one script per reusable operation; no exploitation PoCs, no vulnerability-testing payloads - that boundary is absolute). Session workdirs hold a run's copies and evidence only; the canonical login scripts are AUTH-SKILL-1's (`#220`, which owns login procedures and per-method references authored with the auth skill). The data-plane split, so neither stream authors twice: the auth store holds WHAT (accounts, credentials, tokens, session-state refs, snapshots, technical conditions, the `procedure` label hook); the auth skill holds the login PROCEDURES; this steel skill holds the operation MECHANICS the procedures are written in (session lifecycle, snapshot-ref handling, inline-eval escaping and bounding, trap-stop, timeout ordering). Arrows: `procedure` labels resolve to procedures composing steel operations; extraction reads (cookies/storage/eval) produce the material agents write as concrete request snapshots (the #220 bootstrap-capture future); technical-condition checks execute through steel reads. Joint out-of-scope on both sides: Steel profile lifecycle administration, retired with the profile path (D20).
 
 ## D17 - Server-side profiles replace session-context shuttling
+
+*Superseded 2026-10-20 by D20: profiles are retired from the tool in the cloud and local deployments. Keep this record as history.*
 
 Operator decision from the #220 stream: durable browser identity lives in Steel profiles (long-lived named server-side state), not in client-side session-context JSON. What the skill procedures and references must encode, concisely: mint on first login (`start --profile <name> --update-profile`, profile NAME recorded to the auth store steel reference - D237-11 corrected the earlier "id" wording); mount by NAME with an explicit write discipline (`--update-profile` present accumulates, absent mounts read-only - recon-style browsing defaults read-only, write-back only past the verify gate); settle-then-verify on every mount (the API's poll-READY has NO CLI equivalent - `profile list` returns name plus id only, verified live - so settle pause plus verify-by-navigation is the procedure, and an unverified mount never passes a verdict); explicit release on every path (release is the persistence call; timed-out sessions still write, Failed ones skip it, so any abnormal end forces re-verify); one live session per profile (last-writer-wins, no merge - skill rule plus the #220 per-project locks); hard timeout at create plus inactivity backstop. Tool side impacts: none on the tool contract (profile flags ride in command strings; the uniqueness oracle is orthogonal); two honest constraints - no state-poll primitive exists to offer, concurrent-mount guarding stays out of the tool (would couple it to flag parsing), and `stop --all` is unusable for reaping (kills foreign sessions) while prefix-scoped reaping was blocked by the `sessions` listing then believed unreliable (re-probed reliable 2026-09-16, D13 amended), so platform inactivity stays the primary orphan defense with best-effort reaping over skill-tracked names.
 
 ### D17 amendment (#395, 2026-10-19)
+
+*Superseded 2026-10-20 by D20. The local capability finding remains true; the tool no longer uses profiles in either deployment.*
 
 D17 is the Steel Cloud contract.
 The OSS local API has no profile store: its create schema strips `profileId` and `persistProfile`, and `/v1/profiles` answers 404.
@@ -216,6 +220,8 @@ Project scope is TOOL-OWNED, never threaded through an agent harness: `build_aut
 AMENDED (#364, 2026-10-18): the exemption is from the authenticate/WRITE capability (D223-5), not from the read of the store - `assigner`/`mechanism_typist` now bind the READ-ONLY `auth_store` form (`with_readonly_auth_store`: no write field on the args schema, every command but `read` refusing `auth_readonly`, no skill surface and no `authn` procedure); see `docs/design/analysis-auth-store-view-364-adr.md`.
 
 ### D18 amendment (#223, 2026-09-18)
+
+*Superseded in part 2026-10-20 by D20: the profile mount and profile-key persistence are retired in favour of session state. The binding and auth-path rulings stand.*
 
 The #223 rulings land the binding D18 anticipated and retire the interactive auth path:
 
@@ -268,6 +274,58 @@ The live red/green repro is recorded in the assertions file.
 
 **Sibling-branch convergence.** The auth-context branches (220, 223, 237, meta) branched off this branch at `8e3d1b3`, before this decision landed, and one of them re-applied the same fix under the number `D19` (`c332329`); this branch's own copy carried `D18`.
 In the merged workstream head the two decisions coexist as D18 (the auth-store binding, the base's numbering) and D19 (this boundary), so the duplicate carries one number and the guard is one implementation.
+
+## D20 - Sessions only; profiles retired; one runtime-agnostic skill
+
+*Added 2026-10-20 by operator ruling. Supersedes D17 and the D17 #395 amendment. Full record: `docs/design/steel-session-only-395-decisions.md`; impact map: `docs/design/steel-session-only-impact-map-395.md`; fingerprint evidence: `docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.*
+
+The tool uses Steel sessions only, in the cloud and locally.
+Profiles are not part of the tool contract.
+The Steel product may retain profiles for other consumers; this tool does not mount, mint, import, or reference them.
+
+The durable browser state is exactly cookies, localStorage, sessionStorage, and indexedDB.
+Dimensions, proxy configuration, credentials configuration, extension IDs, history, cache, and the full fingerprint object are not first-class.
+A resumed session restores the four state fields.
+The auth store holds a per-account state reference, not the state itself.
+The recommended field is `steel.state`.
+The state file is owner-only, atomic, per-account, and single-writer.
+
+There is one `steel-browser` skill.
+It is identical in the cloud and local deployments.
+It does not mention the deployment, the endpoint, the API key, `--local`, profiles, or `sessionContext`.
+The agent remains blind to the infrastructure.
+
+Runtime selection is an internal wiring edge.
+A `steel` wrapper injects `--local` for `browser` and `scrape` when `STEEL_BROWSER_API_URL` is set.
+The wrapper also sets the fixed local user agent after `browser start`.
+The gateway keeps its version, timeout, session-name, and variadic guards.
+The wrapper covers scripts, which the gateway does not rewrite.
+
+The only cloud-specific configuration attribute is `STEEL_API_KEY`.
+The local runtime needs no key.
+`STEEL_BROWSER_API_URL` is a generic runtime address.
+A runtime is configured when it has a key or an endpoint.
+`steel_configured()` must reflect that.
+
+Fingerprint policy:
+
+- The cloud may jitter natively; no tool logic is added.
+- The tool never randomises the user agent, viewport, or region.
+- The local deployment disables random fingerprint injection and fixes one user agent through the CLI `set useragent` primitive after `start`.
+- The fixed user agent matches the pinned browser image major version.
+- The local screen and viewport mismatch remains a residual, with an optional `set viewport` action.
+
+The crawl prompt must not claim that a fresh local session creates a new fingerprint or region.
+A local fresh session is a fresh context only.
+At most one fresh-context retry is recommended.
+
+The known critical gap is the CLI `start` state field.
+The SDK can restore state through `sessionContext`.
+The CLI cannot.
+Interactive state restore therefore requires an upstream `--session-state` flag, or the project accepts live reuse only.
+
+Risks are recorded in the decision record: local user-agent drift, HeadlessChrome exposure, full fingerprint loss, history and cache loss, state-file sensitivity, concurrent writers, local keyless configuration, and migration of existing profile records.
+Migration is re-authentication, not data conversion.
 
 ## What was deliberately NOT decided here
 

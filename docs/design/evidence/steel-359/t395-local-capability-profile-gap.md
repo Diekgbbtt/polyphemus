@@ -1,6 +1,7 @@
 # Local Steel capability check: profiles vs session context (#395)
 
 *Status: recorded 2026-10-19, against the pinned local runtime (`ghcr.io/steel-dev/steel-browser-api@sha256:eb8567...`) and the rebuilt kali images.*
+*Historical note 2026-10-20: the tool now retires profiles in the cloud too (D20). This document remains the local capability evidence, not a tool requirement.*
 *Question: does the open-source local stack satisfy the browser capability surface the tool layer uses, and is the profile feature still a capability?*
 
 ## Verdict

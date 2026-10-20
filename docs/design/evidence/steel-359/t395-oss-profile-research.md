@@ -1,6 +1,7 @@
 # OSS profile-management research (#395)
 
 *Status: recorded 2026-10-19. Research executed on `dj-viscon-workshop-1` (`ubuntu@192.33.91.87`). No code was modified.*
+*Historical note 2026-10-20: the tool now retires profiles in the cloud too (D20). This document remains the OSS history proof.*
 
 ## Verdict
 

@@ -57,6 +57,7 @@ The client choice is deliberately neutral: whether the recon browser phase drive
 ### The portability boundary (#245)
 
 Recorded as D359-7: no Steel-managed residential proxies, no dedicated IPs, no managed CAPTCHA handling, no Credentials API, no Files API, no Profiles API (local state is `sessionContext`), concurrency 1, extensions by build-time injection.
+The tool retires profiles in the cloud too (D20, D359-12); the missing local Profiles API is no longer a tool capability branch.
 The internal-reachability case needs no public-egress proxy: the runtime egresses from the operator's network.
 
 ### Documentation

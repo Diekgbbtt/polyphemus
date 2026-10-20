@@ -232,10 +232,11 @@ _Avoid_: reading absence as false (unknown is a third state).
 The replay procedure content - which headers, cookies, parameters, and token locations are replayable as-is versus must be re-minted or are browser-bound - authored into the per-project `authn` skill rather than stored; the store keeps the concrete values (`snapshot`, `tokens`) and the two typed facts.
 _Avoid_: procedural prose in the store (steps live in the skill, facts live in the store).
 
-**Browser-profile reference** (`steel: {profile}`):
-The minimal durable Steel profile key on an account record: the next agent rebinds the same profile through its browser tool, secrets never touching the store.
-Since #223 the key is project-scoped (`<project_id>-<account>`, D223-14); the browser path mints through `steel start --profile <key> --update-profile` and persists the key plus extracted tokens back to the record; a missing or unauthenticated mount fail-opens into sign-in with the account asserted `not_valid`, never a silent anonymous turn.
-Cloud only: the local OSS runtime has no profile store, so a local mount is a no-op; the local state path is `sessionContext` (#395).
+**Browser session-state reference** (`steel: {state}`):
+The per-account key that locates stored browser session state: cookies, localStorage, sessionStorage, and indexedDB, never the state itself.
+The state file is owner-only, atomic, and single-writer; the auth store holds only the reference.
+The profile reference (`steel.profile`) is retired in the cloud and local deployments (#395, D20); a missing or unauthenticated state fail-opens into sign-in with the account asserted `not_valid`, never a silent anonymous turn.
+_Avoid_: profile key, Steel profile, browser-profile reference.
 _Avoid_: storing browser state itself (only the key lives here).
 
 **Concrete snapshot** (`snapshot: {headers, cookies, params, captured_at}`):
@@ -268,8 +269,8 @@ The project-authored skill (no canonical catalogue copy) that the meta skill `me
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 **Auth feed** (#223 T4 #243, D223-19):
-How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the persisted Steel profile key (`extra["steel_profile"]`, mounted read-only at Steel session creation via the SDK `profile_id`) plus the cookie subset seeding the browser context for the agent-driven crawl; nothing for non-auth jobs. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
-On a self-hosted local runtime the profile key is not honored; the cookie subset and `sessionContext` carry auth state (D17 amendment, #395).
+How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the per-account session-state reference (`extra["steel_state"]`, restored into the SDK `session_context` and captured before release) for the agent-driven crawl; nothing for non-auth jobs. The request-cookie subset remains for request tools and no longer seeds the browser. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
+The browser path carries auth state through session state only; the cookie subset remains for request tools and no longer seeds the browser (#395, D20).
 _Avoid_: threading material through the pipeline state (the identifier rides; the projection resolves per phase).
 
 **Authn loop** (the auth gateway, #223):
@@ -344,7 +345,7 @@ Its only knowledge is grammar-shape guards: the steel token, the pinned-version 
 _Avoid_: per-subcommand allowlist, in-process driver, operation knowledge in the tool.
 
 **Named session**:
-A cloud-browser session under an agent-chosen semantic `polymerhus-<flow>-<id>` name whose uniqueness is checked at creation against the live session catalogue (`steel browser sessions --json`: one read lists every live session with its name), stopped by script-trap on every path with platform inactivity as the backstop.
+A Steel browser session under an agent-chosen semantic `polymerhus-<flow>-<id>` name whose uniqueness is checked at creation against the live session catalogue (`steel browser sessions --json`: one read lists every live session with its name), stopped by script-trap on every path with platform inactivity as the backstop. The same session shape runs on the cloud and the local deployment.
 _Avoid_: the default session, an unchecked name, an orphaned session.
 
 **Variadic boundary**:
@@ -352,14 +353,16 @@ The mandatory `--` end-of-options marker separating a variadic CLI verb's `[OPTI
 The verb set is read from the pinned CLI's `--help`, so a pin bump re-derives it.
 _Avoid_: the leading-options habit, a hand-maintained flag denylist, reordering a command to guess the boundary.
 
-**Browser profiles**:
-Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by NAME, read-only first, and logs in only when the mount does not yield the authenticated landing, so the warm identity is written back on the account's own profile (D237-15).
-Cloud only: the local OSS runtime has no profile store; the local deployment uses `sessionContext` capture/restore and never treats a local mount as evidence (#395).
-_Avoid_: duplicating #220's profile vocabulary.
+**Browser session state**:
+The four durable browser stores: cookies, localStorage, sessionStorage, and indexedDB.
+A session captures them before release and restores them at the next create; the state file is per account, owner-only, atomic, and single-writer.
+Profiles are retired in the cloud and local deployments (#395, D20); the tool never mounts, mints, or imports one.
+The one `steel-browser` skill is runtime-agnostic; local mode and the local user agent are hidden by the deployment wrapper.
+_Avoid_: profile, Steel profile, browser-profile reference, sessionContext as the capability name.
 
 **Steel endpoint** (`STEEL_BROWSER_API_URL`):
 The one deployment-level value that names the Steel runtime the browser capability addresses. Unset (the default) means the remote Steel cloud servers, unchanged. Set means a self-hosted runtime in the CLI's canonical form, `http://<host>:<port>/v1` (for example the local deployment on the operator's server), which the CLI reaches in `--local` mode and the SDK reaches through its `base_url`.
-It is a deployment fact, never a module constant: the CLI reads the name natively, a shared `app`-layer resolver returns it to any SDK consumer as the SDK-native origin (it removes one terminal `/v1`, because the Python SDK appends `/v1` itself), and `steel_exec` injects `--local` when it is set (D359-4).
+It is a deployment fact, never a module constant: the CLI reads the name natively, a shared `app`-layer resolver returns it to any SDK consumer as the SDK-native origin (it removes one terminal `/v1`, because the Python SDK appends `/v1` itself), and the deployment wrapper injects `--local` when it is set (D359-4, D359-13).
 It exists so the same runtime serves internal (non-internet) targets, which the cloud pool cannot route to (D359-1, D359-7).
 _Avoid_: a recon-owned endpoint constant; a second name per consumer; reading absence as "local" (absence is remote).
 

@@ -84,7 +84,9 @@ Errors are typed, so a caller can distinguish "released but state lost" from "re
 The design is deliberately a caller-owned file store, not a server-side profile: the OSS API has no profile routes, and inventing one would fork the cloud contract.
 The store path is the caller's policy: the `steel-cache` volume for a deployment-level store, or the session workdir for a per-flow store.
 
-## 5. Local capability boundary: profiles are cloud-only
+## 5. Session-only capability boundary: profiles retired (#395)
+
+*Amended 2026-10-20 by D20. The original section title was "profiles are cloud-only"; the tool now retires profiles in both deployments.*
 
 The local OSS API has no profile store.
 `POST /v1/sessions` strips `profileId` and `persistProfile`; `GET`/`POST /v1/profiles` answer 404.
@@ -92,21 +94,30 @@ The CLI keeps a client-side name-to-id map, so `profile list` works, but a local
 The SDK returns `profile_id=None` even when the caller sends one.
 The same silent strip applies to `stealthConfig`, `solveCaptcha`, `useProxy`, `region`, and `namespace`.
 
-`persist: true` is not a profile substitute: it resolves to one fixed `/app/api/user-data-dir` on the container overlay, shared by every persistent session and absent from the durable volume.
+The cloud tool path also stops using profiles.
+The durable browser state is cookies, localStorage, sessionStorage, and indexedDB.
+The state file is per account, owner-only, atomic, and single-writer.
+The auth store holds a `steel.state` reference, not the state.
+Dimensions, proxy configuration, credentials configuration, extension IDs, history, cache, and the full fingerprint object are not first-class.
+
+`persist: true` is not a state substitute: it resolves to one fixed `/app/api/user-data-dir` on the container overlay, shared by every persistent session and absent from the durable volume.
 An explicit `userDataDir` is not honored as a path; any value selects that fixed directory.
 `sessionContext` remains the supported local state path.
 
-The interactive client is cloud-designed for profiles (the skill's `--profile`/`--update-profile` and `profile-mount.sh`), and so is the crawl provider's `profile_id`.
-`profile-mount.sh` now probes `/v1/profiles` and refuses a runtime that answers 404, instead of printing a false success.
-The crawl provider still degrades silently; a local capability guard is a follow-up item.
-
-The full matrix, wire capture, and cloud comparison are in `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md`.
+The interactive client no longer carries profile flags.
+The crawl provider no longer carries `profile_id`.
+The profile script and the profile command family are deleted.
+The local wrapper fixes the user agent; the tool and skill do not randomise identity.
+The full matrix, wire capture, and cloud comparison remain in `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md` as capability evidence.
 
 ## 6. Residuals
 
 - The API still ignores create-time `timeout` and reports `0`; that is upstream steel-dev/steel-browser#350 and is orthogonal to this fix (the CLI pin handles the client side, D359-10).
 - Session state is only as fresh as the last capture; a capture after a navigation is required for localStorage and sessionStorage.
 - The container init fixes reaping, not browser crashes; a crashed browser still surfaces through the release/health path.
+- The CLI `start` has no session-state field, so interactive restore needs an upstream flag or live reuse only.
+- The local user agent is fixed by the wrapper; the full canvas, WebGL, font, and audio fingerprint is not restored.
+- The local screen is 800x600 while the default inner viewport is 1920x992; the optional `set viewport` action closes that mismatch.
 
 ## 7. Test tiers
 

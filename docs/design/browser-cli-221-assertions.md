@@ -109,3 +109,13 @@ The next live tier (E1) must re-verify or delete them rather than leave them ass
   The pinned CLI documents `Control+a` as a key example, so the negative half of this claim either needs a fresh live capture or should be dropped.
 - A `navigate` can fail transiently with `ERR_HTTP_RESPONSE_CODE_FAILURE`, so one retry is a sound default.
 
+### Session-only assertions (pending, #395 D20)
+
+- The `steel-browser` skill body contains no cloud, local, endpoint, API key, `--local`, profile, or `sessionContext` text.
+- The local wrapper injects `--local` for `browser` and `scrape`, passes through `--version`, and does not touch cloud mode.
+- After a local `browser start`, the wrapper sets one fixed user agent; two consecutive sessions report the same value.
+- A local deployment with `STEEL_BROWSER_API_URL` set and no `STEEL_API_KEY` runs the crawl path.
+- Session state round-trips cookies, localStorage, sessionStorage, and indexedDB and drops every other field.
+- The state file is owner-only and the account stores only `steel.state`.
+- Existing `steel.profile` values are not treated as state.
+

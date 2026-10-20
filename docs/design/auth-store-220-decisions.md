@@ -160,3 +160,16 @@ The store built under this ledger carries only the hooks (`procedure`, `technica
 Auth store (the per-project `data/<project_id>/auth/` bucket), account record (one named bundle of credentials, tokens, and Steel browser-state), operator section vs agent section (the trust split inside `credentials.yaml` plus the operator-owned overview), technical condition (an optional assertable procedure condition for unexpected login failure), browser-profile reference (the minimal durable Steel profile key), concrete snapshot (point-in-time captured request state, never a stored query), operator seed (the `PUT /auth` replace-operator-state operation), procedure label (the store-to-skill coupling name).
 Owning glossary: `src/polymerhus/recon/CONTEXT.md` (auth is recon execution vocabulary: `use_auth` jobs, selection, and now the store the tool serves); `src/polymerhus/project_management/CONTEXT.md` keeps the seed-endpoint pointer beside the existing `AuthContext` entry.
 `app/` itself gets no `CONTEXT.md` (helper rule, `CONTEXT-MAP.md`), following the session-seam precedent.
+
+## Amendment 2026-10-20 - profile reference retired (#395)
+
+*Supersedes the `steel.profile` reference and the "browser-profile reference" glossary candidate. Full record: `docs/design/steel-session-only-395-decisions.md`.*
+
+The tool no longer uses Steel profiles, cloud or local.
+The account browser reference becomes `steel.state`: a per-account key for a stored session state, not a Steel profile.
+The state is cookies, localStorage, sessionStorage, and indexedDB.
+The state file is owner-only, atomic, and single-writer.
+The auth store still holds only the reference, never the state.
+Existing `steel.profile` values are not valid state and must not be treated as state.
+Migration is re-authentication, not data conversion.
+The `steel` field remains an opaque validated blob with a non-empty state string.

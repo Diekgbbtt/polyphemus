@@ -79,7 +79,7 @@ Recorded for #245, without a public-egress proxy:
 - Managed CAPTCHA handling: not available; it stays excluded by operator ruling (D237-15).
 - The Credentials API: not supported in Steel Local.
 - The Files API: not supported in Steel Local.
-- The Profiles API: not available. `profileId` and `persistProfile` are stripped from the create body and `/v1/profiles` is absent; local state rides `sessionContext` (D359-11, #395).
+- The Profiles API: not available. `profileId` and `persistProfile` are stripped from the create body and `/v1/profiles` is absent; local state rides `sessionContext` (D359-11, #395). The tool retires profiles in the cloud too, so this gap is no longer a tool branch (D20, D359-12).
 - Concurrency: 1 (one session at a time).
 - Extensions load by build-time injection under `api/src/extensions/`, not by API call.
 
@@ -136,6 +136,50 @@ The client is `src/polymerhus/app/steel_session_state.py`, and it always release
 Restore feeds the stored JSON back through the create call's `sessionContext`.
 The full capability fingerprint and client design are in `docs/design/steel-session-lifecycle-395-decisions.md`.
 
+## D359-12 - The local runtime is keyless and session-only (#395)
+
+*Recorded 2026-10-20 by operator ruling. Supersedes the profile-retention half of D359-7.*
+
+The local runtime needs no Steel API key.
+`STEEL_BROWSER_API_URL` remains a generic deployment address.
+A deployment is configured when it has a key or an endpoint, so `steel_configured()` must not require the key when the endpoint is set.
+
+The tool uses session state only: cookies, localStorage, sessionStorage, and indexedDB.
+The local API's missing profile store is no longer a capability branch in the tool.
+Profiles are retired in the cloud too.
+
+The local state file is per account, owner-only, atomic, and single-writer.
+The auth store holds a `steel.state` reference, not the state.
+
+## D359-13 - The wrapper hides local mode and fixes the local user agent (#395)
+
+*Recorded 2026-10-20. Evidence: `docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.*
+
+A local `steel` wrapper is the single runtime edge.
+It injects `--local` for `browser` and `scrape` when the endpoint is set.
+It passes through `--version`, login, and a command that already carries `--local` or `--api-url`.
+
+After a local `browser start`, the wrapper sets one fixed user agent through the existing CLI primitive:
+
+```
+steel browser set useragent --local --session <name> --json '<fixed UA>'
+```
+
+The local API sets `SKIP_FINGERPRINT_INJECTION=1` so the random injected user agent does not precede the fixed override.
+The wrapper runs before any navigation, so the HeadlessChrome native value is not exposed to a page.
+The fixed value matches the pinned browser image major version.
+
+The cloud path is untouched.
+The cloud keeps native jitter.
+The tool and the one skill never send a random user agent.
+
+`CHROME_ARGS` is not the carrier.
+The local API splits it on spaces, so a full user-agent string cannot survive as one argument.
+
+The optional viewport fix is `set viewport` with the native screen size.
+It is not required for user-agent stability.
+
 ## Open queue
 
-None - the grilling round is complete.
+The remaining frontier is recorded in `docs/design/steel-session-only-395-decisions.md` section 11.
+The grilling round is not complete until the operator answers it.

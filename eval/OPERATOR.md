@@ -1119,8 +1119,16 @@ Tearing a session down without losing its identity costs three calls, in order:
 Restore by passing the stored JSON as `sessionContext` on the next create
 (`POST /v1/sessions`), the same shape the capture returns.
 `src/polymerhus/app/steel_session_state.py` implements this sequence.
-The local API has no profile store, so the store is the caller's own file, and
-the restore rides the create call's `sessionContext` field.
+The tool is session-only in the cloud and locally; profiles are retired (#395,
+D20). The store is the caller's own file, per account, owner-only, atomic, and
+single-writer. The account holds a `steel.state` reference, not the state.
+The four state fields are cookies, localStorage, sessionStorage, and indexedDB.
+
+The local runtime needs no `STEEL_API_KEY`; `STEEL_BROWSER_API_URL` alone
+configures it. The local API sets `SKIP_FINGERPRINT_INJECTION=1`, and the local
+`steel` wrapper sets one fixed user agent after `browser start`. The cloud path
+keeps native jitter. See
+`docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.
 
 #### Moving the stack to another host
 

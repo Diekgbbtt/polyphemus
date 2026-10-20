@@ -1,6 +1,6 @@
 # Session-first browser design (#395): correction and profile retirement
 
-*Status: revision, 2026-10-19. Supersedes the profile-retention recommendation in `steel-profile-replacement-impact-map-395.md`.*
+*Status: revision, 2026-10-19. Superseded in part 2026-10-20 by `steel-session-only-395-decisions.md`: profiles are retired in the cloud too, there is one runtime-agnostic skill (not two primitive packs), and local user-agent consistency uses the CLI `set useragent` primitive rather than `CHROME_ARGS`. Keep this record as the session-first analysis; read the newer decision record for the binding decisions.*
 *Scope: the tool's use of the Steel browser, cloud and local. The Steel product may keep profiles; the tool will not use them.*
 *Evidence: CLI 0.5.0-preview.6 source and live local runtime; CLI `main` source; SDK 0.19.0; local API 0.5.3; D17; D359-7; D395-2.*
 

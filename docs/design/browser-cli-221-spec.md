@@ -2,7 +2,7 @@
 
 Parent ticket: #221 (auth-context: pluggable browser capability via steel CLI).
 Companion decisions: `docs/design/browser-cli-221-decisions.md` (D1-D10 as amended 2026-09-11, plus binding D11-D19: D2/D6/D7/D8/D10/D13/D14 inline-amended, D18 the auth-store binding amendment, D19 the variadic boundary).
-Glossary: `src/polymerhus/recon/CONTEXT.md` (exec gateway, named session; profiles split per D16/D17).
+Glossary: `src/polymerhus/recon/CONTEXT.md` (exec gateway, named session, browser session state; profiles retired per D20).
 Prior spec version (seam/tool-factory design) superseded in full by the operator-ruled just-exec design below.
 
 ## Problem Statement
@@ -45,8 +45,8 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 - Eval: inline default with skill-carried escaping verbatim and pitfall specimens; file promotion for reuse; result bounding as hard rule (D14).
 - Transcript: Langfuse tool spans via the established callback pattern; per-command granularity through script stdout markers; no log files (D15).
 - Skill data: reusable operation scripts as `references/` beside the steel CLI skill under repo-root `skills/` (one per operation; never exploitation PoCs or testing payloads); canonical login scripts owned by AUTH-SKILL-1; session workdirs hold run copies and evidence only (D16).
-- Data-plane split with #220: the auth store holds WHAT (accounts, credentials, tokens, profile refs, snapshots, technical conditions, the `procedure` hook); the auth skill holds login PROCEDURES; this steel skill holds the operation MECHANICS. Extraction reads feed concrete-snapshot writes; technical-condition checks execute through steel reads; profile lifecycle administration is jointly out of scope.
-- Profiles: server-side profile identity replaces session-context shuttling (D17) - mint-with-persist, mount-by-name with read-only default (D237-11), settle-plus-verify (no CLI state poll exists), explicit release as the persistence call, one live session per profile, bearer-id handling per #220. On the local OSS runtime the Profiles API is absent; local state uses `sessionContext` (D17 amendment, #395).
+- Data-plane split with #220: the auth store holds WHAT (accounts, credentials, tokens, session-state refs, snapshots, technical conditions, the `procedure` hook); the auth skill holds login PROCEDURES; this steel skill holds the operation MECHANICS. Extraction reads feed concrete-snapshot writes; technical-condition checks execute through steel reads; profile lifecycle administration is retired with the profile path.
+- Sessions only (D20, supersedes D17): profiles are retired from the tool in the cloud and local deployments. The durable browser state is cookies, localStorage, sessionStorage, and indexedDB; the auth store holds a per-account `steel.state` reference, not the state. There is one runtime-agnostic `steel-browser` skill; the wrapper hides local mode and the local user-agent fix. Cloud native jitter is accepted; the tool never randomises the user agent. Full record: `docs/design/steel-session-only-395-decisions.md`.
 - The crawl duplicate readers are already consolidated upstream (#222): `crawl_agent._load_skill` and `crawl_agentic._load_steel_crawl_skill` both serve the crawler role prompt `recon/crawl/prompts/steel-crawl.md`, so this stream edits no crawl content; the browser skill is a flat repo skill (`skills/steel-browser/SKILL.md` with `references/*.sh`) loaded through the shared loader (`src/polymerhus/app/llm/skills.py::skill_for`) and, on demand, the `load_skill` tool (D8 amended on rebase).
 - D2's batch-routing survives as skill knowledge (a latency/state choice; the spike's `fill` failure was a flag-order artifact - D2 amended 2026-09-16), not code.
 - Variadic boundary: the CLI's variadic verbs (`fill`/`type`/`setvalue`/`select`/`upload`, and `batch`) require the `--` end-of-options marker, and `steel_exec` refuses a variadic command without a top-level one (`refused:variadic-boundary`) rather than guess where the value ends or reorder the command; the canonical `[OPTIONS] <selector> -- <value>...` encoding is taught by the skill (D19).
@@ -62,7 +62,7 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 
 ## Out of Scope
 
-- steel_crawl migration; manifest/network-capture collection; the consuming login verdict and fallback legs (tickets 4/5); anything outside steel-flavoured commands; model-invoked skill triggering (phase-gated loading per #222); Steel profile lifecycle administration (jointly with #220); exploitation PoCs and vulnerability-testing payloads in references.
+- steel_crawl migration; manifest/network-capture collection; the consuming login verdict and fallback legs (tickets 4/5); anything outside steel-flavoured commands; model-invoked skill triggering (phase-gated loading per #222); Steel profile lifecycle administration (retired with the profile path, D20); exploitation PoCs and vulnerability-testing payloads in references.
 
 ## Further Notes
 

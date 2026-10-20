@@ -507,6 +507,21 @@ established never runs silently anonymous (D223-17).
 `feat/223-stateful-recon-job-auth` pushed to origin per D223-7. At the time of this record `dev` was NOT fast-forwarded here: `origin/dev` did not contain this branch's base (`c126f86`), so a true fast-forward was impossible - the lineage conflict was surfaced, not forced, and `main` was never touched.
 Correction (2026-09-25): the work has since reached `dev` by merge - `origin/dev` now contains `efa3826 merge(workstream): forward dev with the #223 auth-gateway workstream`; `main` remains untouched.
 
+## Amendment 2026-10-20 - session state replaces the profile mount (#395)
+
+*Supersedes D223-14, D223-19, and IR-11 where they mount or persist a Steel profile. Full record: `docs/design/steel-session-only-395-decisions.md`.*
+
+The browser path uses session state only.
+The account reference is `steel.state`, not `steel.profile`.
+The crawl restores cookies, localStorage, sessionStorage, and indexedDB from the account state file.
+The crawl captures the state before release.
+The crawl no longer mounts a profile and no longer seeds the browser context with the request-cookie subset.
+The request-cookie projection remains for request-based tools.
+The local runtime needs no Steel API key when `STEEL_BROWSER_API_URL` is set.
+A missing state is a fail-open into sign-in, never a silent anonymous verdict.
+Existing profile records are not state; migration is re-authentication.
+The one `steel-browser` skill is runtime-agnostic; the wrapper hides local mode and the local user-agent fix.
+
 ### V-6 - Integration precondition: the eval-target e2e tier is unverified on-branch
 
 `tests/e2e/fixtures/eval-targets.yaml` is not committed on this branch (it is gitignored/untracked), though an on-disk working-tree copy exists, and that copy still describes the retired settings-blob `auth_context` input (V-4) - so it remains an active precondition risk, not merely a historical note.
