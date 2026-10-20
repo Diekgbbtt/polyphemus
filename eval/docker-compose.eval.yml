@@ -52,6 +52,10 @@ services:
       LLM_POD_RUNNER: ${LLM_POD_RUNNER:?LLM_POD_RUNNER is required - '<provider>:<model>' in the instance .env}
       LLM_POD_TRIAGER: ${LLM_POD_TRIAGER:?LLM_POD_TRIAGER is required - '<provider>:<model>' in the instance .env}
       LLM_CAPABILITY_OVERRIDES: ${LLM_CAPABILITY_OVERRIDES:?LLM_CAPABILITY_OVERRIDES is required - the A6 capability override for the eval relay; run eval/env_preflight.py}
+      # A frozen trial source must never restart the API under a live status
+      # poll. The dev overlay sets `--reload`; this overlay is applied last and
+      # wins (the arm L trial-2 abort was a reload-window read timeout).
+      AGENT_UVICORN_ARGS: ""
 
   tests:
     env_file:
