@@ -628,7 +628,31 @@ Fill this section after every step.
   The clean high-relative result is 0.7603.
 - Decision: **pass**; advance to E3.
 
-### Batch 3 - E3 pending
+### Batch 3 - E3 attempt 1 (gate failed)
+
+- Trial `white-jotter-1-20261020T134507-1618c524`, project `2fedc478-1bfc-4fc7-971b-9eaef4bb340d`, `target_run_id: armm-wj-e3`.
+- Recon: complete (13 jobs); analysis: drained at 13:38; hunting: stopped deliberately at 13:45 once the gate failed.
+- Spend: 1,896,680 tokens.
+- GT provisional: **0.769841**, up from the E1 0.760317.
+- The primary gate fails: `white-jotter-004` M3 is **4/5**, not 5/5.
+  - S2 (`username`) is missing.
+- `white-jotter-002` M3 is 4/5:
+  - the E3 primitives landed S2 (`principal`, `cookie`) and S4 (`filter`, `reachable`);
+  - the high's S1 was lost: the description says "302 with Location" but never the word "redirect", and the GT matches the literal `302` and `redirect` pair.
+- The committed AuthorizationSystem description names the authenticated session principal, the cookie, the per-route filter and the directly reachable route, and the role vocabulary.
+  It never names the `username` request parameter, and it states the refusal as "302 with `Location: ...`".
+- Diagnosis:
+  the rule lists the carriers as alternatives ("an `Authorization` header or JWT, a specific cookie, or a request-payload parameter"), so the model named the cookie and dropped the parameter carrier.
+  The refusal bullet does not exist, so the model paraphrased the 302 and lost the `redirect` vocabulary.
+  The example's `username` and `302 redirect` words did not transfer to the evidence-driven text.
+- Fix:
+  require EVERY observed carrier, literally naming each request-payload parameter (for example `username`);
+  require the refusal shape with the literal status vocabulary ("302 redirect", not just "302");
+  name the request parameter on the deny path inside the trust-agreement bullet;
+  bound the description to at most three sentences and the protected route families, never every route.
+- The fix is committed and the same batch is re-run as attempt 2.
+
+### Batch 3 - attempt 2 pending
 
 ### Batch 4 - pending
 

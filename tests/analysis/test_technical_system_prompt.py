@@ -38,15 +38,22 @@ def test_authorization_system_description_requires_the_observed_primitives() -> 
     assert "An `AuthorizationSystem` description carries the observed primitives" in prompt
     assert "identification material" in prompt
     assert "Authorization` header or JWT" in prompt
-    assert "request-payload parameter" in prompt
+    assert "every request-payload parameter" in prompt
+    assert "named literally" in prompt
+    assert "Name EVERY observed carrier" in prompt
     assert "authenticated principal" in prompt
     assert "mere presence of the carrier" in prompt
     assert "privilege level" in prompt
     assert "role vocabulary" in prompt
+    assert "302 redirect" in prompt
+    assert "not just `302`" in prompt
     assert "breadth of the protected surface" in prompt
     assert "per-route" in prompt
     assert "directly reachable" in prompt
+    assert "name the request parameter that carries it" in prompt
     assert "trust-agreement semantics" in prompt
+    assert "at most three sentences" in prompt
+    assert "never every route" in prompt
     assert "bounded READ-ONLY probe" in prompt
     assert "never extensive probing" in prompt
     assert "never a hierarchy dump" in prompt
@@ -61,4 +68,5 @@ def test_example_six_extends_the_description_with_the_authorization_primitives()
     assert "302 redirect" in prompt
     assert "per-route over `/api/admin/*`" in prompt
     assert "logs the attacker-controlled principal" in prompt
+    assert "from the `username` request parameter" in prompt
     assert "observed roles are `admin` and `user`" in prompt
