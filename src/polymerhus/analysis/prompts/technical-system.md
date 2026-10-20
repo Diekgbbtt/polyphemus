@@ -116,3 +116,12 @@ An `AuthorizationSystem` description carries the observed primitives that shape 
 Keep the description to at most three sentences and name the protected route families, never every route: the primitives are the payload, an enumeration is not.
 A bounded READ-ONLY probe is allowed to shape that boundary - one request to a second route to see whether the filter applies per-route; never extensive probing and never a hierarchy dump.
 The full primitive coverage is a later threat-modelling phase; capture what the evidence shows now.
+
+Before you emit an `AuthorizationSystem` description, check that it names each observed item:
+- the cookie class, not only its `JSESSIONID` or `rememberMe` name;
+- the `username` request parameter when the account-creation route or the deny path carries the principal - read the register form or the recorded request if the map omits the field name;
+- the refusal shape as `302 redirect` or a `401`/`403` challenge;
+- the observed role vocabulary;
+- the per-route filter and the directly reachable route;
+- the Services inside the trust boundary.
+If an observed item is absent from the text, add it before the call; if the evidence does not show it, leave it out.

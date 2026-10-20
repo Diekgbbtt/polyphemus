@@ -676,7 +676,28 @@ Fill this section after every step.
   name the account-creation route's `username` parameter as the principal carrier the account store receives.
 - The fix is committed and the same batch is re-run as attempt 3.
 
-### Batch 3 - attempt 3 pending
+### Batch 3 - E3 attempt 3 (gate failed)
+
+- Trial `white-jotter-1-20261020T144917-1618c524`, project `f735e35f-c7b6-413e-8c6e-2874ee195f92`, `target_run_id: armm-wj-e3`.
+- Recon: complete; analysis: drained at 14:47; hunting: stopped deliberately at 14:49 once the gate failed.
+- Spend: 998,159 tokens.
+- GT: **0.779365**.
+  The `002` M3 gain is offset by the `005` M4 run-variance loss (1.0 -> 0.5).
+- `white-jotter-002` M3 is now **5/5**:
+  the carrier-class fix landed S2 (`principal` + `cookie`), and S1 (`302 redirect`), S3 and S4 stay.
+  The spec score is 0.8889.
+- The primary gate still fails: `white-jotter-004` M3 is **4/5**.
+  - S2 (`username`) is still missing after three attempts.
+- The description (1,711 characters) carries the cookie class, the 302 redirect, the principal, the role vocabulary, the per-route filter and the registration trust boundary.
+  It says "the anonymous /api/register resource whose registrants land in the back office" but never names the `username` request parameter.
+- Diagnosis:
+  the descriptive bullets do not force the account-creation parameter;
+  the model paraphrases the register route and never reads the field name.
+- Fix:
+  add a pre-emit checklist that names each observed item, including the `username` request parameter, and read the register form or recorded request when the map omits the field name.
+- The fix is committed and the same batch is re-run as attempt 4.
+
+### Batch 3 - attempt 4 pending
 
 ### Batch 4 - pending
 

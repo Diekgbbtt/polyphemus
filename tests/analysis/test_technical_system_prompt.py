@@ -63,6 +63,10 @@ def test_authorization_system_description_requires_the_observed_primitives() -> 
     assert "never extensive probing" in prompt
     assert "never a hierarchy dump" in prompt
     assert "full primitive coverage is a later threat-modelling phase" in prompt
+    assert "Before you emit an `AuthorizationSystem` description" in prompt
+    assert "the `username` request parameter when the account-creation route" in prompt
+    assert "read the register form" in prompt
+    assert "If an observed item is absent" in prompt
 
 
 def test_example_six_extends_the_description_with_the_authorization_primitives() -> None:
