@@ -170,6 +170,7 @@ The account browser reference becomes `steel.state`: a per-account key for a sto
 The state is cookies, localStorage, sessionStorage, and indexedDB.
 The state file is owner-only, atomic, and single-writer.
 The auth store still holds only the reference, never the state.
-Existing `steel.profile` values are not valid state and must not be treated as state.
-Migration is re-authentication, not data conversion.
-The `steel` field remains an opaque validated blob with a non-empty state string.
+Existing `steel.profile` values are silently disregarded.
+There is no warning, alias, or migration branch, and the old field may remain stale on disk.
+A profile-only record behaves as a record with no browser state.
+The `steel` field validates `state` when present and ignores `profile`.

@@ -185,9 +185,10 @@ Content tests pin the ordering markers in both artifacts and the cadence and clo
 *Supersedes D237-15's profile mount and every `steel.profile` reference. Full record: `docs/design/steel-session-only-395-decisions.md`.*
 
 The authn meta skill and the bootstrap prompt no longer mount a Steel profile.
-They restore the account's session state (cookies, localStorage, sessionStorage, indexedDB), verify the authenticated landing, and capture the state again on close.
+They restore the account's session state as application context, replicate auth material (cookies, required headers, header-located tokens, and storage-located tokens), and gate the attempt on application state or an authenticated-surface response.
+They capture the state again on close.
 The store holds `steel.state`, not `steel.profile`.
-The warm identity is the state file, not a profile.
+Old profile references are silently disregarded, with no warning, alias, or migration branch.
 The profile script is deleted from the `steel-browser` references.
 There is one runtime-agnostic `steel-browser` skill.
 The local wrapper fixes the local user agent; the agent does not branch on cloud or local.

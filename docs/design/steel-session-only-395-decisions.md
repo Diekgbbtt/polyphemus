@@ -52,6 +52,17 @@ Rate-limit policy:
 - A local fresh session does not change the fingerprint or the egress IP.
 - The crawl prompt must not claim that a fresh local session creates a new fingerprint or region.
 
+Two caveats are settled:
+
+- Q5 is resolved by silent disregard.
+  An old `steel.profile` reference is not read, warned about, aliased, or migrated.
+  It may remain stale on disk.
+  There is no compatibility branch for it.
+- Q6 is resolved by authenticated replication, not state-only or cookie-only.
+  The crawl attempts to replicate an authenticated session from cookies or other authentication material.
+  It gates that attempt on application state or on the response to an authenticated part of the surface.
+  Session state supplies application context; it is not authentication evidence by itself.
+
 ## 2. Why profiles were chosen
 
 D17 chose profiles because they are a durable, server-side bundle.
@@ -200,13 +211,47 @@ The provider change is a removal:
 
 ## 7. Crawl auth and state
 
-The crawl should restore session state, not mount a profile.
-The state file supplies cookies and storage before the first navigation.
-The browser context cookie seeding path becomes redundant when state restore is present.
-The recommended design uses one browser auth path: session state.
-The request-tool auth feed remains separate and unchanged.
+The crawl does not mount a profile.
+It uses two inputs:
 
-The crawl should capture the session state before release.
+1. session state, as application context;
+2. auth material, as the authentication attempt.
+
+Auth material is cookies plus any other material the auth store records:
+
+- cookies from the snapshot and cookie-located tokens;
+- required headers and header-located tokens;
+- storage-located tokens, grouped by their target origin.
+
+The provider builds the create context from the stored state and merges the auth cookies and storage tokens.
+Cookies and storage are merged into `sessionContext`.
+Header material is scoped to the target origin through a route interceptor, not set as global extra headers.
+
+The auth attempt is not trusted until a gate passes.
+The gate has two accepted signals:
+
+- application state: a replicated storage token or cookie is present in the live application state;
+- authenticated surface response: a request to an authenticated part of the surface returns a response that is not a login redirect, a 401, or a 403.
+
+The verification target defaults to the crawl target.
+When the account or its skill records an authenticated landing URL, that URL is used instead.
+The login endpoint from the overview is the negative marker, never the verification target.
+
+The gate must use the authenticated surface, not a cookie name alone.
+A cookie name can exist before login.
+A login page can answer 200.
+The gate therefore accepts either a verified application-state signal or a verified authenticated-surface response.
+The authenticated-surface response is the stronger signal when it is available.
+
+If the gate fails, the crawl records a typed `auth_replication_failed` and does not present the session as authenticated.
+The crawl pod degrades to reduced coverage.
+It does not silently run an anonymous crawl under an authenticated job.
+
+The request-tool auth feed remains separate.
+The browser projection is a new `project_browser_auth` beside `project_request_auth`.
+It shares the token and snapshot rules and adds the storage-token projection.
+
+The crawl captures session state before release.
 The capture happens while the session is live.
 The release always runs.
 A failed capture is a typed failure and must not leave the session alive.
@@ -248,85 +293,46 @@ Recommended policy:
 | Local crawl fails without an API key | High | Certain if `steel_configured` is unchanged | Treat endpoint presence as configured. |
 | State file leak | High | Medium | Owner-only permissions, atomic write, no logs, per-account file. |
 | Concurrent writers on one account | Medium | Medium | One writer lock per account. |
-| Existing `steel.profile` records become invalid | Medium | Certain | Migrate by re-authentication; do not silently treat a profile as state. |
+| Old `steel.profile` remains stale on disk | Low | Certain | Silently disregard it; no warning, alias, or migration branch (Q5). |
+| Auth material is stale or partial | High | Medium | Replicate the material, run the gate, and fail with `auth_replication_failed` when the gate fails. |
+| Gate false positive | High | Medium | Prefer the authenticated-surface response; use application state as a corroborating signal, never a cookie name alone. |
+| Gate false negative | Medium | Medium | Use the target and the login URL as the baseline; allow a configured authenticated-surface URL when the account records one. |
+| Header auth material leaks to third-party origins | High | Medium | Scope injected headers to the target origin; do not set global extra headers for token material. |
+| Storage token has no target origin | Medium | Medium | Skip the token and fail the gate loudly; the auth skill must record a target for storage tokens. |
 | Cloud native jitter changes the user agent | Medium | Accepted | No tool logic; accept the platform behaviour. |
 | One-skill wrapper misroutes cloud commands | Medium | Medium | Inject only for `browser` and `scrape`; pass through `--version` and login. |
 | Docs and tests still assert profiles | Medium | Certain | The impact map lists every file; update in one change set. |
 | `sessionContext` size or cloud support limits | Medium | Unknown | Measure; state only four fields; fail loud on restore rejection. |
 
-## 10. Migration
+## 10. Stale profile records
 
-Existing `steel.profile` records cannot be converted into session state.
+Existing `steel.profile` records are disregarded.
 A cloud profile is a server-side user data directory, not a captured context.
 A local profile never mounted.
-The migration is therefore a re-authentication, not a data conversion.
 
-Recommended migration:
+There is no warning and no migration branch.
+The old field may remain stale on disk.
+No code reads it, aliases it, or reports it.
+A record with only a profile reference behaves as a record with no browser state.
+The next successful login captures state and writes `steel.state`.
+The next crawl without state attempts auth-material replication and runs the gate.
+No warning code is added, so no warning can become stale.
 
-1. Stop reading `steel.profile`.
-2. Treat a record with only a profile reference as having no browser state.
-3. Capture state on the next successful login.
-4. Write `steel.state`.
-5. Leave the old profile untouched until the operator deletes it.
+## 11. Resolved decisions
 
-No silent alias is recommended.
-A silent alias hides a real capability loss.
+All frontier decisions were accepted on 2026-10-20.
+Q5 and Q6 carry the operator caveats above.
 
-## 11. Grilling frontier
-
-These decisions remain open.
-The impact map assumes the recommended answer and flags the files that change if the answer differs.
-
-**Q1. State reference shape.**
-Should the auth store hold `steel.state` as a key, or should the pipeline derive the state path from the account name with no store field?
-
-Recommended: `steel.state` key.
-It mirrors the old reference without carrying browser state, and it keeps account renames and per-project paths explicit.
-
-**Q2. CLI state restore.**
-Should the project require an upstream `steel --session-state <file>` flag, or accept live reuse only for interactive flows?
-
-Recommended: require the upstream flag.
-Without it, a resumed interactive session cannot restore state, and the one-skill promise is not true for the interactive path.
-
-**Q3. Local user-agent value.**
-Should the fixed user agent match the pinned browser major version, or should it be a stable older Chrome value?
-
-Recommended: match the pinned image major version.
-The current image reports Chrome 155.
-A version mismatch is a cheaper bot signal than an outdated version.
-
-**Q4. Fresh-context retry.**
-Should the crawl keep one fresh-context retry, or remove session rotation entirely?
-
-Recommended: keep at most one fresh context, with no fingerprint or region claim.
-It can clear session-bound state without pretending to change identity.
-
-**Q5. Existing profile records.**
-Should `steel.profile` remain as a deprecated read path, or be rejected loudly?
-
-Recommended: ignore the profile as state, warn, and require re-authentication.
-Do not treat a profile mount as evidence.
-
-**Q6. Crawl auth source.**
-Should the crawl use session state only, or keep cookie seeding as a fallback?
-
-Recommended: state only.
-Two browser auth paths are two behaviours and two failure modes.
-The request-tool cookie path remains for non-browser tools.
-
-**Q7. Cloud user agent.**
-Should the cloud pin a user agent per account, or leave the native jitter?
-
-Recommended: leave the native jitter.
-The operator accepted cloud jitter and asked for no added consistency logic.
-
-**Q8. Local mode seam.**
-Should the local mode be hidden by a `steel` wrapper, or by the `steel_exec` gateway only?
-
-Recommended: the wrapper owns mode selection; the gateway keeps the grammar and lifecycle guards.
-The wrapper covers scripts, which the gateway does not rewrite, and it keeps the one skill free of `--local`.
-The gateway's token-insertion path is then removed.
+| # | Decision | Resolution |
+|---|---|---|
+| Q1 | State reference shape | `steel.state` key. |
+| Q2 | CLI state restore | Require upstream `--session-state`. Live reuse is the fallback only if the flag is refused. |
+| Q3 | Local user-agent value | Match the pinned image major version; currently Chrome 155. |
+| Q4 | Fresh-context retry | At most one, with no fingerprint or region claim. |
+| Q5 | Existing profile records | Silently disregard. No warning, no alias, no migration branch, no compatibility path. |
+| Q6 | Crawl auth source | Auth-material replication with a verification gate; not state-only and not cookie-only. |
+| Q7 | Cloud user agent | Leave native cloud jitter. |
+| Q8 | Local mode seam | The wrapper owns mode selection; the gateway keeps the grammar and lifecycle guards. |
 
 ## 12. Evidence
 
@@ -335,7 +341,7 @@ The gateway's token-insertion path is then removed.
 - Local API env: `SKIP_FINGERPRINT_INJECTION` accepts `1`; `CHROME_ARGS` is appended to the launch arguments.
 - Local native browser: HeadlessChrome 155.
 - Default generated user agent: Chrome 142 and Chrome 145 in separate sessions.
-- CLI local sessions: Chrome 142 in the sampled runs.
+- CLI local sessions: Chrome 142, Chrome 144, and Chrome 142 in the sampled runs.
 - Fixed `userAgent`: exact string observed in `navigator.userAgent`.
 - The session create API has no fingerprint object.
 - The CLI `start` has no state flag.

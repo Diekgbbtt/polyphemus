@@ -57,6 +57,7 @@ New assertions are required for the session-only design:
 | E10 | D20, D359-12 | A session created with cookies, localStorage, sessionStorage, and indexedDB restores the same four fields after capture and release. |
 | E11 | D359-13 | The local wrapper starts a session, sets one fixed user agent, and two consecutive sessions report the same user agent. |
 | E12 | D359-12 | A local deployment with `STEEL_BROWSER_API_URL` set and no `STEEL_API_KEY` runs the crawl path. |
+| E13 | D20, Q6 | Auth-material replication passes the application-state or authenticated-surface gate; a login redirect, 401, or 403 fails the gate with `auth_replication_failed`. |
 
 ## Bootstrap only the operator can supply
 

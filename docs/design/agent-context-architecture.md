@@ -68,7 +68,7 @@ They compose: an agent working a `BaseURL` can pull both its graph neighborhood 
 
 ### 1.3 Global memory: the Postgres control plane
 
-> Superseded by #223 (D223-4): the settings face carries no auth - the shared auth store (seeded via `PUT /projects/{id}/auth`) is the sole auth source, and per-job auth material arrives through the gateway feed (the account identifier rides `extra["auth_account"]`, each phase resolves and projects it into `extra["auth_context"]` / `extra["steel_state"]`), never from settings. The profile key is retired (#395, D20). The `auth_context`-from-settings passages below (§1.3, §1.4, §2.1, §5) are dated history kept as the record of what was removed (cf. ledger IR-10).
+> Superseded by #223 (D223-4): the settings face carries no auth - the shared auth store (seeded via `PUT /projects/{id}/auth`) is the sole auth source, and per-job auth material arrives through the gateway feed (the account identifier rides `extra["auth_account"]`, each phase resolves and projects it into `extra["auth_context"]` / `extra["steel_state"]` / `extra["browser_auth"]`), never from settings. The profile key is retired (#395, D20); the browser auth material is replicated and gated. The `auth_context`-from-settings passages below (§1.3, §1.4, §2.1, §5) are dated history kept as the record of what was removed (cf. ledger IR-10).
 
 Postgres holds three unrelated things behind one connection:
 - **Settings** (`settings.recon` JSONB), authoritative for `target_domain`, `max_pods`, and `auth_context` (the authN cookies). Loaded once per run into `ReconState.settings`.

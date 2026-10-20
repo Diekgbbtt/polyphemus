@@ -117,5 +117,7 @@ The next live tier (E1) must re-verify or delete them rather than leave them ass
 - A local deployment with `STEEL_BROWSER_API_URL` set and no `STEEL_API_KEY` runs the crawl path.
 - Session state round-trips cookies, localStorage, sessionStorage, and indexedDB and drops every other field.
 - The state file is owner-only and the account stores only `steel.state`.
-- Existing `steel.profile` values are not treated as state.
+- Crawl auth replicates cookies, required headers, header-located tokens, and storage-located tokens, then passes the application-state or authenticated-surface gate.
+- A failed gate is `auth_replication_failed` with reduced coverage, not a silent authenticated crawl.
+- Existing `steel.profile` values are silently disregarded; no warning, alias, or migration branch.
 

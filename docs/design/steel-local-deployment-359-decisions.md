@@ -144,12 +144,15 @@ The local runtime needs no Steel API key.
 `STEEL_BROWSER_API_URL` remains a generic deployment address.
 A deployment is configured when it has a key or an endpoint, so `steel_configured()` must not require the key when the endpoint is set.
 
-The tool uses session state only: cookies, localStorage, sessionStorage, and indexedDB.
+The tool uses session state as application context: cookies, localStorage, sessionStorage, and indexedDB.
+The crawl replicates auth material (cookies, required headers, header-located tokens, and storage-located tokens) and gates the attempt on application state or an authenticated-surface response.
+A failed gate is `auth_replication_failed` with reduced coverage, not a silent authenticated crawl.
 The local API's missing profile store is no longer a capability branch in the tool.
 Profiles are retired in the cloud too.
 
 The local state file is per account, owner-only, atomic, and single-writer.
 The auth store holds a `steel.state` reference, not the state.
+Old `steel.profile` references are silently disregarded; no warning, alias, or migration branch.
 
 ## D359-13 - The wrapper hides local mode and fixes the local user agent (#395)
 
@@ -181,5 +184,6 @@ It is not required for user-agent stability.
 
 ## Open queue
 
-The remaining frontier is recorded in `docs/design/steel-session-only-395-decisions.md` section 11.
-The grilling round is not complete until the operator answers it.
+None - the grilling round is complete.
+All frontier decisions are resolved in `docs/design/steel-session-only-395-decisions.md` section 11.
+The implementation is the remaining work.

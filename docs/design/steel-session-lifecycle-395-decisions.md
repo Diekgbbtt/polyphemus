@@ -106,6 +106,9 @@ An explicit `userDataDir` is not honored as a path; any value selects that fixed
 
 The interactive client no longer carries profile flags.
 The crawl provider no longer carries `profile_id`.
+The crawl restores state as application context, replicates auth material (cookies, required headers, header-located tokens, and storage-located tokens), and gates the attempt on application state or an authenticated-surface response.
+A failed gate is `auth_replication_failed` with reduced coverage, not a silent authenticated crawl.
+Old `steel.profile` references are silently disregarded; no warning, alias, or migration branch.
 The profile script and the profile command family are deleted.
 The local wrapper fixes the user agent; the tool and skill do not randomise identity.
 The full matrix, wire capture, and cloud comparison remain in `docs/design/evidence/steel-359/t395-local-capability-profile-gap.md` as capability evidence.

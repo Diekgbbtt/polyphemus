@@ -319,13 +319,22 @@ The crawl prompt must not claim that a fresh local session creates a new fingerp
 A local fresh session is a fresh context only.
 At most one fresh-context retry is recommended.
 
+The crawl auth path is auth-material replication, not state-only.
+Cookies, required headers, header-located tokens, and storage-located tokens are projected into a fresh session beside the stored application state.
+The attempt is gated on application state or on the response to an authenticated part of the surface.
+A failed gate is a typed `auth_replication_failed`, not a silent authenticated crawl.
+
+Old `steel.profile` references are silently disregarded.
+There is no warning, alias, or migration branch.
+The field may remain stale on disk.
+A record with only a profile reference behaves as a record with no browser state.
+
 The known critical gap is the CLI `start` state field.
 The SDK can restore state through `sessionContext`.
 The CLI cannot.
 Interactive state restore therefore requires an upstream `--session-state` flag, or the project accepts live reuse only.
 
-Risks are recorded in the decision record: local user-agent drift, HeadlessChrome exposure, full fingerprint loss, history and cache loss, state-file sensitivity, concurrent writers, local keyless configuration, and migration of existing profile records.
-Migration is re-authentication, not data conversion.
+Risks are recorded in the decision record: local user-agent drift, HeadlessChrome exposure, full fingerprint loss, history and cache loss, state-file sensitivity, concurrent writers, local keyless configuration, auth-material staleness, gate false positives and negatives, and header leakage to third-party origins.
 
 ## What was deliberately NOT decided here
 

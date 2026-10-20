@@ -71,7 +71,7 @@ Three real nesting levels: **pipeline orchestrator -> per-job orchestrator agent
 - Loads project settings once (`load_settings`, default `polymerhus.app.clients.pg.load_settings`) - `pipeline.py:381`.
 - Builds the phase plan from the static job registry (`control/jobs.py::JOBS`, `PHASES`) via `build_phase_plan` (`pipeline.py:420`, `jobs.py:532-544`), optionally restricted to a validated `job_subset` (`jobs.py:512-529`).
 - For each phase (index order), for each job in that phase: resolves `input_assets` - phase 0 seeds from the resolved target seed via `seed_assets` (`pipeline.py:153-167`), phase>0 re-queries Neo4j via `read_assets(job.consumes, project_id)` (`pipeline.py:253-291`), which validates `node_type` against `curator.ALLOWED_LABELS` before interpolating it into the Cypher label position (the only place a label appears unparameterised - `pipeline.py:271-272`).
-- Builds `extra = {"project_id": project_id}`, plus the auth feed for `use_auth` jobs: the gateway-bound account identifier rides `extra["auth_account"]` (never the material) and each phase's assembly resolves it from the shared store, projecting the flat request material as `extra["auth_context"]` (the pod serialises it per tool at fill time) and the per-account session-state reference as `extra["steel_state"]` for the agent-driven crawl (#395, supersedes the profile key of #223 T4 #243 and the retired settings-blob injection).
+- Builds `extra = {"project_id": project_id}`, plus the auth feed for `use_auth` jobs: the gateway-bound account identifier rides `extra["auth_account"]` (never the material) and each phase's assembly resolves it from the shared store, projecting the flat request material as `extra["auth_context"]` (the pod serialises it per tool at fill time), the per-account session-state reference as `extra["steel_state"]`, and the browser auth material as `extra["browser_auth"]` for the agent-driven crawl (#395, supersedes the profile key of #223 T4 #243 and the retired settings-blob injection).
 - Runs every job in a phase concurrently via `asyncio.gather` (`pipeline.py:169`) - this is the **phase barrier**: phase `i+1`'s `input_assets` are not even resolved until every phase-`i` job has returned (`_run_one` wraps `run_job` and is awaited as a batch).
 - The run reaches the terminal `registry.set_run_status(run_id, "complete")` only on the full happy path, as the function's last statement (`pipeline.py:819`); a gateway `GatewayStop` (`pipeline.py:466-471`) or a `browser_only` verdict that prunes the plan empty (`pipeline.py:480-493`) terminates the run as `"failed"` first, and a deliberate stop (module cancel / forced teardown, `pipeline.py:815-816`) terminates it as the first-class `"stopped"` - so `"complete"` is not unconditional and a stop is no longer indistinguishable from a crash (#287).
 
@@ -437,16 +437,18 @@ sequenceDiagram
     participant PROV as SteelCrawlProvider
     participant LOOP as _run_agentic_crawl (blocking)
 
-    CP->>CP: feed state = extra.steel_state
-    CP->>CA: run_crawl_fn(target, scope, steel_state)
-    CA->>PROV: get_crawl_tools(steel_state)
-    PROV->>PROV: sessions.create(session_context=stored state) + capture on release
+    CP->>CP: feed = extra.steel_state + extra.browser_auth
+    CP->>CA: run_crawl_fn(target, scope, steel_state, browser_auth)
+    CA->>PROV: get_crawl_tools(steel_state, browser_auth)
+    PROV->>PROV: sessions.create(session_context=state + auth cookies/storage)
+    PROV->>PROV: set scoped auth headers; navigate; run auth gate
+    PROV->>PROV: capture state on release
     CA->>LOOP: _run_agentic_crawl(body, mcp_manager) [BLOCKS]
     LOOP-->>CA: manifest
     CA-->>CP: manifest
 ```
 
-Session-state only (#395, D20): the crawl restores the account's cookies, localStorage, sessionStorage, and indexedDB, and captures the state before release. It does not mount a profile and does not seed the browser with the request-cookie subset. The retired `steel_await_auth` human-in-the-viewer flow and its viewer-URL surfacing remain gone with their machinery.
+Auth-material replication (#395, D20): the crawl restores the account's cookies, localStorage, sessionStorage, and indexedDB as application context, then replicates cookies, required headers, header-located tokens, and storage-located tokens. It gates the attempt on application state or on the response to an authenticated part of the surface. A failed gate is `auth_replication_failed` with reduced coverage; it is not a silent authenticated crawl. The crawl does not mount a profile. The retired `steel_await_auth` human-in-the-viewer flow and its viewer-URL surfacing remain gone with their machinery.
 
 ---
 

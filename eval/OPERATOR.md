@@ -1123,6 +1123,7 @@ The tool is session-only in the cloud and locally; profiles are retired (#395,
 D20). The store is the caller's own file, per account, owner-only, atomic, and
 single-writer. The account holds a `steel.state` reference, not the state.
 The four state fields are cookies, localStorage, sessionStorage, and indexedDB.
+The state is application context; the crawl also replicates auth material (cookies, required headers, header-located tokens, and storage-located tokens) and gates the attempt on application state or an authenticated-surface response.
 
 The local runtime needs no `STEEL_API_KEY`; `STEEL_BROWSER_API_URL` alone
 configures it. The local API sets `SKIP_FINGERPRINT_INJECTION=1`, and the local

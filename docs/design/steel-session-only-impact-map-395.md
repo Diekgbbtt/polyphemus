@@ -46,6 +46,7 @@ They are marked as historical where they can mislead a reader.
 |---|---|
 | R | Remove the profile path. |
 | S | Add or reshape session state. |
+| A | Add auth-material replication and the verification gate. |
 | U | Stabilise the local user agent. |
 | K | Make the runtime keyless-aware. |
 | W | Hide runtime mode from the skill and scripts. |
@@ -57,10 +58,11 @@ They are marked as historical where they can mislead a reader.
 
 | Component | Current role | Required change | Class | Risk | Tests |
 |---|---|---|---|---|---|
-| `src/polymerhus/recon/crawl/steel_provider.py` | Creates sessions with random UA, viewport, region, stealth, and `profile_id`; mounts profile; releases without capture. | Remove `_UAS`, `_VIEWPORTS`, `_REGIONS`, `_random_session_opts` randomness, and `profile_id`; accept a state path; load state into `session_context`; capture state before release; never send a random user agent; keep `use_proxy` as caller input. | R, S, U | High | `test_steel_provider_cookies.py`, `test_steel_provider_endpoint.py`, new state provider tests |
-| `src/polymerhus/recon/crawl/steel_client.py` | Requires `STEEL_API_KEY`; threads `steel_profile`. | Treat endpoint presence as configured; thread `steel_state`; remove profile docs and arguments. | K, S, R | High | `test_steel_client.py` |
-| `src/polymerhus/recon/crawl/crawl_agent.py` | Threads `steel_profile` and auth cookies. | Thread `steel_state`; remove profile and browser-cookie seeding; update docs. | S, R | Medium | `test_crawl_agent.py` |
-| `src/polymerhus/recon/crawl/crawl_pod.py` | Reads `extra["steel_profile"]`; passes profile and cookies. | Read `extra["steel_state"]`; pass state; remove profile and cookie seeding; update the module docstring. | S, R | High | `test_crawl_pod.py`, `test_crawl_auth.py`, `test_crawl_e2e.py` |
+| `src/polymerhus/recon/crawl/steel_provider.py` | Creates sessions with random UA, viewport, region, stealth, and `profile_id`; mounts profile; seeds cookies; releases without capture. | Remove `_UAS`, `_VIEWPORTS`, `_REGIONS`, `_random_session_opts` randomness, and `profile_id`; accept a state path and browser auth material; merge auth cookies and storage tokens into `session_context`; scope header material to the target origin; run the auth gate; capture state before release; never send a random user agent; keep `use_proxy` as caller input. | R, S, U, A | High | `test_steel_provider_cookies.py`, `test_steel_provider_endpoint.py`, new state and gate provider tests |
+| `src/polymerhus/recon/crawl/steel_client.py` | Requires `STEEL_API_KEY`; threads `steel_profile`. | Treat endpoint presence as configured; thread `steel_state` and browser auth material; remove profile docs and arguments. | K, S, R, A | High | `test_steel_client.py` |
+| `src/polymerhus/recon/crawl/crawl_agent.py` | Threads `steel_profile` and auth cookies. | Thread `steel_state` and browser auth material; update docs. | S, R, A | Medium | `test_crawl_agent.py` |
+| `src/polymerhus/recon/crawl/crawl_pod.py` | Reads `extra["steel_profile"]`; passes profile and cookies. | Read `extra["steel_state"]` and `extra["browser_auth"]`; pass both; remove profile; update the module docstring. | S, R, A | High | `test_crawl_pod.py`, `test_crawl_auth.py`, `test_crawl_e2e.py` |
+| New `src/polymerhus/recon/crawl/auth_gate.py` | Does not exist. | Verify application state or an authenticated-surface response; verify the target or a recorded authenticated landing, with the login endpoint as a negative marker; return a typed pass or `auth_replication_failed`; never pass on a cookie name alone. | A | High | New `test_auth_replication_gate.py` |
 | `src/polymerhus/recon/crawl/crawl_agentic.py` | Loads the crawl prompt; no profile logic. | No code change; verify the prompt contract. | D | Low | `test_crawl_agentic` through existing suites |
 | `src/polymerhus/recon/crawl/prompts/steel-crawl.md` | Claims a fresh session is a new fingerprint and a new region; requests up to three rotations. | Remove the fingerprint and region claims; state that a local fresh session is a fresh context only; allow at most one fresh context retry; keep the blocked and captcha signals. | D, R | Medium | Prompt content test or review |
 | `src/polymerhus/app/steel_session_state.py` | Captures and stores the full context; no field projection; no per-account path helper. | Store only cookies, localStorage, sessionStorage, and indexedDB; add a per-account path helper; keep atomic write, release-always, and typed errors; add owner-only permissions. | S | High | `test_steel_session_state.py`, `test_steel_session_state_http.py` |
@@ -73,9 +75,9 @@ They are marked as historical where they can mislead a reader.
 
 | Component | Current role | Required change | Class | Risk | Tests |
 |---|---|---|---|---|---|
-| `src/polymerhus/recon/control/auth_feed.py` | Projects `steel.profile`; projects cookies for browser seeding. | Replace `project_steel_profile` with `project_steel_state`; keep request cookie projection for request tools; remove browser cookie projection or leave it unused with a clear comment. | S, R | High | `test_auth_feed.py` |
-| `src/polymerhus/recon/control/pipeline.py` | Injects `extra["steel_profile"]`. | Inject `extra["steel_state"]`; import the new projector; update comments. | S, R | High | `test_pipeline.py`, `test_crawl_auth.py` |
-| `src/polymerhus/app/auth/records.py` | `_check_steel` requires `steel.profile`. | Accept `steel.state` as a non-empty string; treat `steel.profile` as retired; decide whether to reject or warn (frontier Q5). | S, R, M | High | `test_auth_records.py` |
+| `src/polymerhus/recon/control/auth_feed.py` | Projects `steel.profile`; projects cookies for browser seeding. | Replace `project_steel_profile` with `project_steel_state`; add `project_browser_auth` returning cookies, required and header-located headers, and storage-located tokens grouped by target origin; keep `project_request_auth` for request tools. | S, R, A | High | `test_auth_feed.py`, new browser-auth projection tests |
+| `src/polymerhus/recon/control/pipeline.py` | Injects `extra["steel_profile"]`. | Inject `extra["steel_state"]` and `extra["browser_auth"]`; import the new projectors; update comments. | S, R, A | High | `test_pipeline.py`, `test_crawl_auth.py` |
+| `src/polymerhus/app/auth/records.py` | `_check_steel` requires `steel.profile`. | Accept `steel.state` when present; silently disregard `steel.profile`; no warning, alias, or migration branch (Q5). | S, R, M | High | `test_auth_records.py` |
 | `src/polymerhus/app/auth/tool.py` | Contract teaches `steel: {profile}`. | Teach `steel: {state}`; remove browser-profile vocabulary; keep the no-browser-state rule. | D, R | Medium | Auth tool contract tests |
 | `src/polymerhus/app/auth/store.py` | Merges `steel`; no profile-specific logic. | No code change; verify merge and null removal for `steel.state`. | None | Low | `test_auth_store` |
 | `src/polymerhus/app/auth/seams.py` | Read-only auth view. | No change; the `steel` field remains non-secret. | None | Low | `analysis-auth-store-view-364` tests |
@@ -125,24 +127,25 @@ They are marked as historical where they can mislead a reader.
 
 | Test file | Current coverage | Required change | Class |
 |---|---|---|---|
-| `tests/app/test_auth_records.py` | Rejects a bad `steel.profile`. | Validate `steel.state`; test the retired profile handling. | T, S, R |
+| `tests/app/test_auth_records.py` | Rejects a bad `steel.profile`. | Validate `steel.state`; a profile-only record validates, projects no state, and emits no warning. | T, S, R |
 | `tests/conftest.py` | May seed a profile fixture. | Replace with a state reference fixture where used. | T |
 | `tests/e2e/gateway_stack.py` | Profile environment in the gateway stack. | State path and keyless local environment. | T |
 | `tests/e2e/harness/recaptcha_challenge_probe.py` | Optional profile path. | Optional state path; no profile mount. | T, R |
 | `tests/e2e/test_authn_bootstrap_walkthrough.py` | Profile workflow. | State workflow. | T, R |
 | `tests/recon/crawl/test_crawl_agent.py` | Threads `steel_profile`. | Threads `steel_state`. | T, S |
-| `tests/recon/crawl/test_crawl_auth.py` | Pipeline binds profile and cookies. | Pipeline binds state; no profile. | T, S, R |
-| `tests/recon/crawl/test_crawl_e2e.py` | `run_crawl_fn` signature with profile. | State signature. | T, S |
-| `tests/recon/crawl/test_crawl_pod.py` | Profile and cookie seeding. | State-only seeding. | T, S, R |
+| `tests/recon/crawl/test_crawl_auth.py` | Pipeline binds profile and cookies. | Pipeline binds state and browser auth material; no profile. | T, S, R, A |
+| `tests/recon/crawl/test_crawl_e2e.py` | `run_crawl_fn` signature with profile. | State and browser-auth signature. | T, S, A |
+| `tests/recon/crawl/test_crawl_pod.py` | Profile and cookie seeding. | State plus auth-material seeding; gate failure path. | T, S, R, A |
 | `tests/recon/crawl/test_full_stack_live_llm_e2e.py` | Profile signature. | State signature. | T, S |
 | `tests/recon/crawl/test_login_host_and_scope.py` | Profile signature. | State signature. | T, S |
 | `tests/recon/crawl/test_steel_client.py` | Profile forwarding. | State forwarding; keyless configured check. | T, S, K |
 | `tests/recon/crawl/test_steel_crawl_real_e2e.py` | Profile environment. | State environment; local no key. | T, K |
-| `tests/recon/crawl/test_steel_provider_cookies.py` | Random options, profile mount, cookie seeding. | No random options; state restore and capture; no profile; no browser cookie seeding. | T, R, S, U |
+| `tests/recon/crawl/test_steel_provider_cookies.py` | Random options, profile mount, cookie seeding. | No random options; state restore and capture; no profile; auth-material replication and gate; header scoping. | T, R, S, U, A |
 | `tests/recon/crawl/test_steel_provider_endpoint.py` | Endpoint and SDK client kwargs. | Keep; add keyless endpoint check. | T, K |
-| `tests/recon/test_auth_feed.py` | Projects `steel.profile`. | Projects `steel.state`. | T, S |
+| `tests/recon/test_auth_feed.py` | Projects `steel.profile`. | Projects `steel.state` and browser auth material; storage-token grouping; profile silently ignored. | T, S, A |
 | `tests/recon/test_authn_skill_writing.py` | Profile content. | State content; no profile; one skill. | T, D |
-| `tests/recon/test_pipeline.py` | Asserts `steel_profile`. | Asserts `steel_state`. | T, S |
+| `tests/recon/crawl/test_auth_replication_gate.py` | Does not exist. | Gate passes on an authenticated-surface response or application state; fails on a login redirect, 401, or 403; header material is scoped. | T, A |
+| `tests/recon/test_pipeline.py` | Asserts `steel_profile`. | Asserts `steel_state` and browser auth material. | T, S, A |
 | `tests/support/steel_cli_scaffold.py` | CLI scaffold, profile args. | Wrapper-aware scaffold; remove profile args; add `set useragent`. | T, W, U |
 | `tests/test_steel_cli_scaffold.py` | CLI scaffold fidelity. | Add wrapper behavior and user-agent call. | T, W, U |
 | `tests/test_steel_exec.py` | Local mode injection. | Wrapper handles mode; remove injection tests; keep guards. | T, W |
@@ -231,13 +234,14 @@ These areas were checked and need no change:
 
 | Work package | Files | Code lines | Test lines | Notes |
 |---|---:|---:|---:|---|
-| Provider and crawl threading | 5 | 150 to 220 | 250 to 350 | Remove random options and profile; add state restore and capture. |
+| Provider and crawl threading | 5 | 170 to 250 | 280 to 390 | Remove random options and profile; add state restore, auth-material replication, gate, and capture. |
 | State client and store | 2 | 80 to 140 | 100 to 160 | Four-field projection, path helper, permissions. |
-| Control, auth, and prompts | 8 | 80 to 120 | 120 to 180 | State projection, schema, prompt changes. |
+| Auth material and gate | 4 | 70 to 110 | 100 to 160 | Browser projection, header scoping, gate predicates. |
+| Control, auth, and prompts | 8 | 80 to 120 | 120 to 180 | State and auth projections, schema, prompt changes. |
 | Wrapper, gateway, deployment | 5 | 80 to 140 | 80 to 140 | Wrapper, keyless check, compose. |
 | One skill and references | 8 | 100 to 180 | 40 to 80 | Mostly Markdown and shell; delete profile script. |
 | Documentation bank | about 20 | 0 | 0 | Amendments and glossary. |
-| **Repository total** | **about 48** | **410 to 620** | **590 to 810** | Excludes the upstream CLI flag. |
+| **Repository total** | **about 50** | **580 to 840** | **720 to 1,010** | Excludes the upstream CLI flag. |
 
 The upstream CLI `--session-state` flag is the critical path for interactive state restore.
 It is 120 to 180 Rust lines plus 60 to 100 test lines.
@@ -257,26 +261,28 @@ The user-agent consistency package alone is:
 1. Record the decisions and supersede D17. Done in this change set.
 2. Add the one-skill rule and remove profile text from the skill.
 3. Add `steel.state` to the auth schema and the feed.
-4. Add state restore and capture to the provider; remove the profile path.
-5. Make `steel_configured` endpoint-or-key.
-6. Add the wrapper with `--local` and `set useragent`.
-7. Remove the gateway local-mode tokenizer.
-8. Add the local skip-injection setting.
-9. Update the crawl prompt.
-10. Update tests and docs in the same change set.
-11. Add the upstream CLI `--session-state` flag, or accept live-only interactive state.
+4. Add `project_browser_auth` for cookies, headers, and storage tokens.
+5. Add state restore and auth-material replication to the provider; remove the profile path.
+6. Add the auth gate: authenticated-surface response or application state.
+7. Make `steel_configured` endpoint-or-key.
+8. Add the wrapper with `--local` and `set useragent`.
+9. Remove the gateway local-mode tokenizer.
+10. Add the local skip-injection setting.
+11. Update the crawl prompt.
+12. Update tests and docs in the same change set.
+13. Add the upstream CLI `--session-state` flag, or accept live-only interactive state.
 
-## 12. Open decisions that change this map
+## 12. Resolved decisions that shape this map
 
-| Frontier question | Default in this map | Files affected if changed |
+| Decision | Resolution | Files affected |
 |---|---|---|
 | Q1 state reference shape | `steel.state` key | `auth/records.py`, `auth/tool.py`, `auth_feed.py`, `pipeline.py`, tests |
 | Q2 CLI state flag | Required; live-only is fallback | `steel-browser` skill, interactive state helper, upstream CLI |
 | Q3 local UA value | Chrome 155, matching the image | wrapper env, local compose, evidence |
 | Q4 fresh-context retry | At most one | `steel-crawl.md` only |
-| Q5 old profile records | Warn and require re-authentication | `auth/records.py`, migration note, operator docs |
-| Q6 crawl auth source | Session state only | provider, crawl pod, auth feed |
-| Q7 cloud UA | Native jitter | none if accepted |
+| Q5 old profile records | Silently disregard; no warning, alias, or migration | `auth/records.py`, tests only; no operator warning |
+| Q6 crawl auth source | Auth-material replication with the gate | provider, crawl pod, auth feed, pipeline, tests |
+| Q7 cloud UA | Native jitter | none |
 | Q8 local mode seam | Wrapper owns mode; gateway keeps guards | `kali/mcp_server.py`, `kali/postrun.sh`, wrapper tests |
 
 ## 13. Search proof

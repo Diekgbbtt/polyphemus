@@ -511,15 +511,18 @@ Correction (2026-09-25): the work has since reached `dev` by merge - `origin/dev
 
 *Supersedes D223-14, D223-19, and IR-11 where they mount or persist a Steel profile. Full record: `docs/design/steel-session-only-395-decisions.md`.*
 
-The browser path uses session state only.
 The account reference is `steel.state`, not `steel.profile`.
-The crawl restores cookies, localStorage, sessionStorage, and indexedDB from the account state file.
+The crawl restores the four state fields as application context and replicates auth material on top.
+The auth material is cookies, required headers, header-located tokens, and storage-located tokens.
+The crawl gates the replication attempt on application state or on the response to an authenticated part of the surface.
+A failed gate is a typed `auth_replication_failed` and reduced coverage, not a silent authenticated crawl.
 The crawl captures the state before release.
-The crawl no longer mounts a profile and no longer seeds the browser context with the request-cookie subset.
-The request-cookie projection remains for request-based tools.
+The crawl no longer mounts a profile.
+The request-cookie projection remains for request-based tools; the browser uses the new `project_browser_auth`.
 The local runtime needs no Steel API key when `STEEL_BROWSER_API_URL` is set.
-A missing state is a fail-open into sign-in, never a silent anonymous verdict.
-Existing profile records are not state; migration is re-authentication.
+A missing state does not by itself fail the crawl; the auth material can still replicate the session, and the gate decides.
+A failed gate is a loud reduced-coverage outcome, never a silent anonymous verdict.
+Old `steel.profile` records are silently disregarded; there is no warning, alias, or migration branch.
 The one `steel-browser` skill is runtime-agnostic; the wrapper hides local mode and the local user-agent fix.
 
 ### V-6 - Integration precondition: the eval-target e2e tier is unverified on-branch

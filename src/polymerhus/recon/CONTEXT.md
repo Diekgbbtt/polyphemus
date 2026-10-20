@@ -235,9 +235,11 @@ _Avoid_: procedural prose in the store (steps live in the skill, facts live in t
 **Browser session-state reference** (`steel: {state}`):
 The per-account key that locates stored browser session state: cookies, localStorage, sessionStorage, and indexedDB, never the state itself.
 The state file is owner-only, atomic, and single-writer; the auth store holds only the reference.
-The profile reference (`steel.profile`) is retired in the cloud and local deployments (#395, D20); a missing or unauthenticated state fail-opens into sign-in with the account asserted `not_valid`, never a silent anonymous turn.
+The profile reference (`steel.profile`) is retired in the cloud and local deployments (#395, D20); it is silently disregarded, with no warning, alias, or migration branch.
+The state supplies application context; it is not authentication evidence by itself.
+Auth material replication plus the gate decide authentication; a failed gate is a loud reduced-coverage outcome, never a silent anonymous turn.
 _Avoid_: profile key, Steel profile, browser-profile reference.
-_Avoid_: storing browser state itself (only the key lives here).
+_Avoid_: storing browser state itself (only the key lives here); treating state as auth evidence.
 
 **Concrete snapshot** (`snapshot: {headers, cookies, params, captured_at}`):
 Point-in-time captured request state on an account record, validated by `_check_snapshot`: the point-in-time cookies (plus `captured_at`) request-based followers replay, never a stored graph query.
@@ -269,8 +271,8 @@ The project-authored skill (no canonical catalogue copy) that the meta skill `me
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 **Auth feed** (#223 T4 #243, D223-19):
-How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the per-account session-state reference (`extra["steel_state"]`, restored into the SDK `session_context` and captured before release) for the agent-driven crawl; nothing for non-auth jobs. The request-cookie subset remains for request tools and no longer seeds the browser. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
-The browser path carries auth state through session state only; the cookie subset remains for request tools and no longer seeds the browser (#395, D20).
+How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the per-account session-state reference (`extra["steel_state"]`, restored into the SDK `session_context` and captured before release) and the browser auth material (`extra["browser_auth"]`: cookies, required headers, header-located tokens, and storage-located tokens) for the agent-driven crawl; nothing for non-auth jobs. The browser gates the replication attempt on application state or on an authenticated-surface response; a failed gate is `auth_replication_failed` with reduced coverage. The request-cookie subset remains for request tools. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
+The browser path does not treat session state as auth evidence; it replicates auth material and verifies the result (#395, D20).
 _Avoid_: threading material through the pipeline state (the identifier rides; the projection resolves per phase).
 
 **Authn loop** (the auth gateway, #223):
