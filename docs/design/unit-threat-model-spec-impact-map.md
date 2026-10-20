@@ -158,11 +158,18 @@ The orphaned-run disposition is recorded and executable: a process-restart
 `interrupted` row carries no `quota_exhausted` class, so the table answers
 do-not-resume (fail-closed); the reconcile never reschedules one, and the verb
 does not guess a cause.
+The claim clears the provider-pause keys in the same UPDATE, so a
+resumed-then-crashed row is the same do-not-resume orphan.
+The intake freeze consumes the decision too: an `interrupted` producer whose
+decision is terminal or do-not-resume has its produced model archived to
+`abandoned/` and its unit retried, while a resumable throttle (including one
+inside its backoff window) keeps its model `in-flight`.
 CONSEQUENCE (STATE): a unit whose produced model is in flight under a live
-`running` / `interrupted` / `stopped` producing run is still excluded from every
-later run; the operator resumes that producing run (or waits for its terminal)
-before a later run can model the unit. The freeze logs the producing run and its
-status for every such unit, and the exclusion is recorded in `intake_excluded`.
+`running` / `stopped` / resumable-`interrupted` producing run is still excluded
+from every later run; the operator resumes that producing run (or waits for its
+terminal) before a later run can model the unit. The freeze logs the producing
+run and its status for every such unit, and the exclusion is recorded in
+`intake_excluded`.
 
 ## 4. Affected document ledger
 

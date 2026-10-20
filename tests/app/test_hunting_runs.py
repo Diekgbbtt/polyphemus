@@ -109,13 +109,20 @@ def test_startup_reconcile_records_an_interrupt_reason():
 
 def test_claim_resumes_a_resumable_row_atomically():
     """T11 (#398): the resume claim is a conditional UPDATE - the first claimant
-    moves the row back to `running` (clearing `finished_at`) and keeps its
-    stats; a second claimant reads None, so two concurrent resumes can never
-    both schedule the run."""
+    moves the row back to `running` (clearing `finished_at`) and keeps its run
+    record; a second claimant reads None, so two concurrent resumes can never
+    both schedule the run. The claim also CLEARS the provider interrupt class
+    (T11 review): a resumed-then-crashed row must carry no stale
+    `quota_exhausted`, so the reconcile's restart stamp fails closed."""
     pid = _seed_project()
     hid = pg.create_hunting_run(pid)
     pg.set_hunting_run_status(hid, "stopped", stats={
         "intake_order": ["Service:a"], "intake_position": 1,
+        "interrupted": True,
+        "interrupt_reason": "provider unavailable (status=429)",
+        "provider_status": 429,
+        "quota_exhausted": False,
+        "retry_after_s": 45.0,
     })
 
     claimed = pg.claim_hunting_run_for_resume(
@@ -126,6 +133,11 @@ def test_claim_resumes_a_resumable_row_atomically():
     assert claimed["status"] == "running"
     assert claimed["finished_at"] is None
     assert claimed["stats"]["intake_order"] == ["Service:a"]
+    # the pause and its provider class are CLEARED: a later crash + reconcile
+    # must not inherit the pre-resume `quota_exhausted=false`
+    for key in ("interrupted", "interrupt_reason", "provider_status",
+                "quota_exhausted", "retry_after_s"):
+        assert key not in claimed["stats"], key
     # the second concurrent claimant loses: the row is no longer `stopped`
     assert pg.claim_hunting_run_for_resume(
         hid, project_id=pid, expected_status="stopped") is None

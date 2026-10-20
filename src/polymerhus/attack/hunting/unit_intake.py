@@ -27,10 +27,12 @@ resumable is STALE - its unit directory moves to `abandoned/` and the unit is
 retried, and when that archive does not land the unit is excluded `stale` (never
 modelled into the stale model). Every removal is recorded with its reason.
 
-STATE: the run-resume TRIGGER is not built (the #331 ADR's ESCALATED item 2;
-proposed as ticket T11 in the impact map). An `in-flight` unit therefore stays
-un-modelled until an operator resumes or drains its producing run, and the freeze
-logs that run and its status for every such unit.
+An `interrupted` producing run's resumability is decided by the ONE resume
+decision table (`attack/hunting/resume.py`, T11 #398): a transient throttle
+(including one still inside its backoff window) keeps its model in flight, while
+a consumed-quota or unknown-cause pause is terminal and its model is stale.
+The operator verb `POST /projects/{id}/hunting/{run_id}/resume` is the ratified
+trigger; the auto-resume background health checker remains a follow-up.
 
 This module owns the pure ordering; the driver (`run_lifecycle`) owns the run
 record and the accumulator. The read seam is injectable (CODING_STANDARD s6):
@@ -207,24 +209,20 @@ IN_FLIGHT_REASON = "in-flight"
 STALE_REASON = "stale"
 
 # The producing-run statuses that still hold a produced model (S2 9.3): a
-# `running` run is live, and `interrupted` (the resumable provider pause) and
-# `stopped` (the operator's deliberate end, which resumes from the persisted run
-# record, S1 7.5) are both RESUMABLE - the earlier run must be resumed to drain
-# its produced loops, so its model is in flight, never stale. A status we cannot
-# read (None) is treated as in flight too: the freeze never destroys a produced
-# model it cannot attribute.
+# `running` run is live, and `stopped` (the operator's deliberate end, which
+# resumes from the persisted run record, S1 7.5) is RESUMABLE - the earlier run
+# must be resumed to drain its produced loops, so its model is in flight, never
+# stale. A status we cannot read (None) is treated as in flight too: the freeze
+# never destroys a produced model it cannot attribute.
 #
-# OWNED ELSEWHERE: the finer #331 derivation (`interrupted` with
-# `quota_exhausted=true` is terminal, `quota_exhausted=false` is resumable after
-# `retry_after_s`) belongs to the deferred #331 resume ticket; until it lands,
-# every `interrupted` run is treated as resumable. The same ticket owns the run
-# RESUME TRIGGER: no production path re-enters `start_hunting` with an existing
-# run id today, so an in-flight unit stays un-modelled until the operator
-# resumes or drains its producing run (see the STATE note in `CONTEXT.md` and
-# the disposition in the impact map).
-RESUMABLE_RUN_STATUSES: frozenset[str] = frozenset(
-    {"running", "interrupted", "stopped"}
-)
+# `interrupted` is decided by the resume decision table (#331, T11 #398), not by
+# the status alone: a transient throttle (resumable now, or after its
+# `retry_after_s` window) keeps its model in flight, while consumed quota and a
+# missing/unknown cause are terminal - their produced model is stale and is
+# archived exactly like a `complete` / `failed` run's. The caller supplies that
+# per-run answer in `run_resumability`; an absent entry is in flight (fail-open).
+RESUMABLE_RUN_STATUSES: frozenset[str] = frozenset({"running", "stopped"})
+INTERRUPTED_STATUS = "interrupted"
 
 
 def freeze_intake(
@@ -233,6 +231,7 @@ def freeze_intake(
     completed_ids: Sequence[str] = (),
     produced: Sequence[Mapping[str, str]] = (),
     run_statuses: Mapping[str, str] | None = None,
+    run_resumability: Mapping[str, bool] | None = None,
     archive_fn: ArchiveFn | None = None,
 ) -> IntakePlan:
     """Freeze the unit set: order it, then apply the exclusions (S2 9.3).
@@ -244,6 +243,12 @@ def freeze_intake(
       sole-writer invariant. A run with NO readable status is treated as
       in-flight too - the freeze never destroys a produced model it cannot
       attribute.
+    - An `interrupted` producing run's resumability comes from
+      `run_resumability` (the ONE resume decision table, T11 #398): True (a
+      transient throttle, including one inside its backoff window) keeps the
+      model in flight; False (consumed quota, or a missing/unknown cause) is
+      terminal, so the model is STALE. A run with NO entry is in flight -
+      fail-open, like an unreadable status.
     - A produced model whose producing run is terminal and not resumable is
       STALE: its unit directory moves to `abandoned/` (`archive_fn`) and the
       unit is retried. `archived` records ONLY the units that actually MOVED;
@@ -260,6 +265,7 @@ def freeze_intake(
     `IN_FLIGHT_REASON` / `STALE_REASON` (S1 7.1, S2 9.2).
     """
     statuses = dict(run_statuses or {})
+    resumability = dict(run_resumability or {})
     completed = set(completed_ids)
     produced_run: dict[str, str] = {}
     for entry in produced:
@@ -280,17 +286,24 @@ def freeze_intake(
             kept.append(unit)
             continue
         status = statuses.get(run_id)
-        if status is None or status in RESUMABLE_RUN_STATUSES:
+        in_flight = status is None or status in RESUMABLE_RUN_STATUSES
+        if status == INTERRUPTED_STATUS:
+            # the #331 resume decision (T11 #398): only a RESUMABLE throttle
+            # still owns its produced model; a terminal/do-not-resume pause is
+            # stale. No entry means the caller could not classify it: in flight.
+            in_flight = resumability.get(run_id, True)
+        if in_flight:
             excluded.append(IntakeExclusion(unit.unit_id, IN_FLIGHT_REASON))
             detail = (
                 f"its producing run {run_id!r} is {status!r}" if run_id
                 else "its producing run is unknown"
             )
             logger.warning(
-                "unit intake: %s is in flight (%s); that run must be RESUMED to "
-                "drain its produced model, or the unit stays un-modelled until "
-                "the run-resume trigger lands (proposed ticket, see the impact "
-                "map's T3 disposition)", unit.unit_id, detail,
+                "unit intake: %s is in flight (%s); that run must be RESUMED "
+                "(POST /projects/<project_id>/hunting/<run_id>/resume) to drain "
+                "its produced model. The operator verb is the ratified trigger; "
+                "the auto-resume health checker is a follow-up", unit.unit_id,
+                detail,
             )
             continue
         reason = (
@@ -393,6 +406,7 @@ __all__ = [
     "AGGREGATES_FAMILY",
     "COMPLETED_REASON",
     "IN_FLIGHT_REASON",
+    "INTERRUPTED_STATUS",
     "STALE_REASON",
     "ArchiveFn",
     "IntakeExclusion",

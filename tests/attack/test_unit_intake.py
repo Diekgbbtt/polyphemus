@@ -269,6 +269,71 @@ def test_a_stopped_producing_run_is_resumable_so_its_model_is_in_flight():
     assert archived == []
 
 
+def test_a_terminal_interrupted_producer_is_stale_and_archived():
+    """T11 review: the freeze CONSUMES the resume decision. An `interrupted`
+    producer whose decision is terminal or do-not-resume (quota exhausted,
+    missing/unknown cause) will never resume, so its produced model is stale
+    exactly like a `complete` / `failed` run's: archive it and retry the unit."""
+    archived: list[tuple[str, str]] = []
+
+    def _archive(unit_id: str, reason: str) -> str:
+        archived.append((unit_id, reason))
+        return f"abandoned/{unit_id}"
+
+    plan = freeze_intake(
+        [_unit("Service:a", live_edges=2)],
+        produced=[{"unit_id": "Service:a", "run_id": "quota-run"}],
+        run_statuses={"quota-run": "interrupted"},
+        run_resumability={"quota-run": False},
+        archive_fn=_archive,
+    )
+
+    assert plan.order == ("Service:a",)   # archived and retried
+    assert plan.archived == ("Service:a",)
+    assert plan.excluded == ()
+    assert "interrupted" in archived[0][1]
+
+
+def test_a_resumable_interrupted_producer_stays_in_flight():
+    """T11 review: an `interrupted` producer whose decision is resumable (now,
+    or after its backoff window) still owns its produced model - the freeze
+    skips the unit `in-flight` and never archives it."""
+    archived: list[str] = []
+
+    plan = freeze_intake(
+        [_unit("Service:a", live_edges=2)],
+        produced=[{"unit_id": "Service:a", "run_id": "throttled-run"}],
+        run_statuses={"throttled-run": "interrupted"},
+        run_resumability={"throttled-run": True},
+        archive_fn=lambda unit_id, reason: archived.append(unit_id) or "moved",
+    )
+
+    assert plan.order == ()
+    assert [(entry.unit_id, entry.reason) for entry in plan.excluded] == [
+        ("Service:a", "in-flight")]
+    assert plan.archived == ()
+    assert archived == []
+
+
+def test_an_interrupted_producer_without_a_resumability_entry_stays_in_flight():
+    """Fail-open: a caller that cannot classify an `interrupted` producer (a
+    degraded run read) keeps its model in flight - the freeze never destroys a
+    produced model it cannot attribute."""
+    archived: list[str] = []
+
+    plan = freeze_intake(
+        [_unit("Service:a", live_edges=2)],
+        produced=[{"unit_id": "Service:a", "run_id": "unknown-run"}],
+        run_statuses={"unknown-run": "interrupted"},
+        archive_fn=lambda unit_id, reason: archived.append(unit_id) or "moved",
+    )
+
+    assert plan.order == ()
+    assert [(entry.unit_id, entry.reason) for entry in plan.excluded] == [
+        ("Service:a", "in-flight")]
+    assert archived == []
+
+
 def test_an_in_flight_skip_names_the_producing_run_and_its_status(caplog):
     """I2 disposition: no production path re-enters a run yet (the resume
     trigger is the deferred #331 ticket), so the freeze must make a blocked unit

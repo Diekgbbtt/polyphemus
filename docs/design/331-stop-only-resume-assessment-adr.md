@@ -114,6 +114,7 @@ Every row is decided, and every non-resumable row is a 409:
 | `interrupted`, `stats.quota_exhausted == false` | resumable after `retry_after_s`, or the default backoff when the hint is null |
 | `interrupted`, `stats.quota_exhausted == true` | terminal (409) |
 | `interrupted`, missing/unknown stats | do-not-resume (409, fail-closed) |
+| `interrupted`, missing/unusable `finished_at` (`timing_unknown`) | do-not-resume (409, fail-closed) |
 | `running` | 409 (already live) |
 | `complete` / `failed` | 409 (terminal) |
 | any other status | 409 (fail-closed) |
@@ -125,8 +126,12 @@ It has no `force` flag: a force would be an unratified interface.
 
 The admission is one atomic conditional update (`pg.claim_hunting_run_for_resume`): only the exact row the decision read - same project, same status - transitions back to `running`.
 Two concurrent resumes therefore yield one 202 and one 409 (lost claim).
-A post-claim admission refusal RESTORES the prior status and leaves the stats intact, so the operator can retry.
+The SAME update CLEARS the provider-pause keys from `stats` (`interrupted`, `interrupt_reason`, `provider_status`, `quota_exhausted`, `retry_after_s`) and keeps the run record: after a resume the row advertises no pause, so a later crash + reconcile cannot inherit the pre-resume `quota_exhausted=false` and look resumable.
+A post-claim conflict (another live run in the project) or admission refusal RESTORES the prior status AND re-stamps those pause keys, so the operator can retry.
 The restore stamps a new `finished_at`, which restarts the wait window for a throttle: a conservative extension, never an early resume.
+
+The INTAKE FREEZE consumes the same decision (S2 9.3): an `interrupted` producer whose decision is terminal or do-not-resume has its produced model archived to `abandoned/` and its unit retried; a resumable throttle - including one still inside its backoff window - keeps its model `in-flight`.
+An `interrupted` producer with no classification available (a degraded run read) stays `in-flight` (fail-open).
 
 The resumed run re-enters `start_hunting` with the EXISTING run id.
 It re-enters at the recorded `intake_position`, adopts the committed models, recomputes `risk_total`, and never re-freezes or re-sorts the intake; a halted run resumes dispatch only.
@@ -137,6 +142,7 @@ The dispatch stays run-scoped: the run's own produced loops dispatch, a foreign 
 `reconcile_orphaned_hunting_runs` stamps a process-restart `interrupted` row with a restart reason and NO provider class (`quota_exhausted` absent).
 Under the table that row is do-not-resume (fail-closed): the operator verb does not guess a cause for a crash-orphaned run, and the reconcile never reschedules one.
 A provider-caused `interrupted` row carries the stamped class and is the only `interrupted` row the verb can resume.
+A RESUMED-then-crashed row is the same case as a cold-start orphan: the claim cleared the pre-resume class, so the reconcile's restart stamp carries none and the table answers do-not-resume.
 
 ### The auto-resume follow-up (not built)
 
@@ -147,9 +153,10 @@ The follow-up consumes `resume_decision` and `DEFAULT_RESUME_BACKOFF_S`; the ope
 ## Impact map (as built)
 
 - `src/polymerhus/attack/hunting/runtime.py` - `stop_hunting_for_provider_failure` (the stop/drain/flush/stamp handler); both provider-failure branches of `start_hunting` call it and leave `status=None` so the `finally` does not re-stamp.
-- `src/polymerhus/attack/hunting/resume.py` - the pure resume decision table (`resume_decision`), the 60s default backoff, and the operator-verb wait-window policy.
-- `src/polymerhus/project_management/api.py` - `POST .../hunting/{hunting_run_id}/resume`; the atomic claim and its 202/409 mapping; the admission-refusal restore.
-- `src/polymerhus/app/clients/pg.py` - `claim_hunting_run_for_resume` (the conditional status transition for the resume claim).
+- `src/polymerhus/attack/hunting/resume.py` - the pure resume decision table (`resume_decision`), the 60s default backoff, the operator-verb wait-window policy, and the pause-key/terminal-code constants the claim and the intake freeze consume.
+- `src/polymerhus/attack/hunting/unit_intake.py` - the freeze's `interrupted` resumability branch: a terminal/do-not-resume producer's model is stale; a resumable one stays in flight.
+- `src/polymerhus/project_management/api.py` - `POST .../hunting/{hunting_run_id}/resume`; the atomic claim and its 202/409 mapping; the live-run conflict and admission-refusal restore (status + pause keys).
+- `src/polymerhus/app/clients/pg.py` - `claim_hunting_run_for_resume` (the conditional status transition; it clears the provider-pause keys in the same UPDATE).
 - `eval/orchestrator/monitor.py` - `INTERRUPTED_TERMINAL`; `decide` defers an interrupted execution explicitly.
 - Tests - `tests/attack/test_hunting_runtime.py::test_provider_abort_stops_the_runs_sessions_before_the_terminal`; `tests/attack/test_hunting_resume.py` (the decision table and the runtime resume path); `tests/project_management/test_hunting_api.py` (the resume endpoint); `tests/app/test_hunting_runs.py` (the claim, live PG); `tests/eval/test_orchestrator_monitor.py::test_interrupted_execution_is_deferred_never_escalated`.
 - Docs - this record; the stop-only re-scope noted in `docs/design/hunting-331-provider-resume-adr.md` and `docs/design/eval-provider-resilience.md`.

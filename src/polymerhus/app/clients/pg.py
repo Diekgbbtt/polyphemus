@@ -279,15 +279,21 @@ def claim_hunting_run_for_resume(
     the decision table read - same project, same terminal status, the run id -
     transitions. The database serialises the two concurrent claims, so exactly
     one resume wins and the loser reads `None` (mapped to 409). The row returns
-    to a live shape: `finished_at` is cleared. `stats` (the run record and the
-    interrupt cause) is untouched: the resumed run re-reads it, and a failed
-    admission restores the prior status with the cause intact.
+    to a live shape: `finished_at` is cleared and the provider-pause keys are
+    REMOVED from `stats` (`interrupted`, `interrupt_reason`, `provider_status`,
+    `quota_exhausted`, `retry_after_s`). The clear is the orphan disposition:
+    a resumed-then-crashed row must not keep the pre-resume
+    `quota_exhausted=false`, or the reconcile's restart stamp would look
+    resumable to the decision table. The run RECORD keys stay untouched.
 
     Returns the claimed row, or None when the claim was lost (a concurrent
     resume already claimed it, or the row moved on)."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE hunting_runs SET status = 'running', finished_at = NULL "
+            "UPDATE hunting_runs SET status = 'running', finished_at = NULL, "
+            "stats = COALESCE(stats, '{}'::jsonb) "
+            "  - 'interrupted' - 'interrupt_reason' - 'provider_status' "
+            "  - 'quota_exhausted' - 'retry_after_s' "
             "WHERE hunting_run_id = %s AND project_id = %s AND status = %s "
             "RETURNING hunting_run_id, project_id, status, started_at, "
             "finished_at, COALESCE(stats, '{}'::jsonb)",

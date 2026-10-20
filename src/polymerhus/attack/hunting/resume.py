@@ -28,6 +28,27 @@ from typing import Any, Mapping
 # the future auto-resume checker uses the same constant.
 DEFAULT_RESUME_BACKOFF_S = 60.0
 
+# The keys the resume claim removes from the run row's `stats`, and the keys an
+# admission-refusal restore re-stamps: the provider pause and its
+# machine-readable class. A resumed row must not advertise a pause, and a later
+# crash + reconcile must not inherit the pre-resume class (otherwise the stale
+# `quota_exhausted=false` would make the orphan look resumable).
+PAUSE_STATS_KEYS: tuple[str, ...] = (
+    "interrupted",
+    "interrupt_reason",
+    "provider_status",
+    "quota_exhausted",
+    "retry_after_s",
+)
+
+# The decision codes that mean an `interrupted` run will NEVER resume: the
+# table's terminal and do-not-resume rows. `backoff_window` is deliberately NOT
+# here - the throttle resumes once the window elapses, so its produced model
+# stays in flight. The intake freeze consumes this classification (T11 review).
+TERMINAL_INTERRUPT_CODES: frozenset[str] = frozenset({
+    "quota_exhausted", "cause_unknown", "timing_unknown",
+})
+
 
 @dataclass(frozen=True)
 class ResumeDecision:

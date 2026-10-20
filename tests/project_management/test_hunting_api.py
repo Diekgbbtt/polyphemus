@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from polymerhus.app.clients import pg
 from polymerhus.app.main import app
+from polymerhus.attack.hunting.resume import PAUSE_STATS_KEYS
 
 client = TestClient(app)
 
@@ -766,6 +767,9 @@ class _ResumeRows:
             return None
         row["status"] = "running"
         row["finished_at"] = None
+        # the production claim clears the provider-pause keys in the same UPDATE
+        for key in PAUSE_STATS_KEYS:
+            row["stats"].pop(key, None)
         return dict(row)
 
     def set_hunting_run_status(self, hunting_run_id: str, status: str, *,
@@ -1010,9 +1014,37 @@ def test_resume_admission_refusal_restores_the_prior_status(monkeypatch):
     assert resp.status_code == 503
     assert rows.status_writes == [(RUN_ID, "interrupted")]
     assert rows.rows[RUN_ID]["status"] == "interrupted"
-    # the stamp merge is additive; the restore writes status only, so the
-    # cause record the operator retries with is untouched
+    # the claim cleared the pause keys; the restore re-stamps them, so the cause
+    # record the operator retries with is intact
     assert rows.rows[RUN_ID]["stats"] == stats
+
+
+def test_resume_conflicts_with_another_live_run_and_restores(monkeypatch):
+    """T11 review: the live-run guard runs AFTER the claim, so the resume's own
+    `running` row is excluded and the parameter is load-bearing. Another live
+    run conflicts; the claim is undone (prior status + pause keys) so the run is
+    never left `running`."""
+    stats = {"interrupted": True, "quota_exhausted": False,
+             "retry_after_s": 0.0}
+    rows = _ResumeRows(status="interrupted",
+                       finished_at=datetime.now(timezone.utc), stats=stats)
+    rows.rows["other-run"] = {
+        "hunting_run_id": "other-run", "project_id": "p1",
+        "status": "running", "started_at": None, "finished_at": None,
+        "stats": {},
+    }
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "already live" in resp.json()["detail"]
+    assert rows.claims == [(RUN_ID, "p1", "interrupted")]  # after the claim
+    assert rows.rows[RUN_ID]["status"] == "interrupted"    # the claim undone
+    assert rows.rows[RUN_ID]["stats"] == stats             # pause keys restored
+    assert scheduled == []
 
 
 def test_resume_fails_closed_503_without_the_control_plane(monkeypatch):

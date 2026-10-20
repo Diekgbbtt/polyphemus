@@ -364,15 +364,29 @@ def test_a_halted_run_resumes_dispatch_only(tmp_path, monkeypatch):
 
 def test_the_freeze_excludes_the_completed_and_the_in_flight_units(
         tmp_path, monkeypatch):
-    """S2 9.3: a unit whose COMPLETED model already lives in `consumed/` is
-    excluded (`completed`) and a unit whose model is in flight in `produced/`
-    under a RESUMABLE run is skipped (`in-flight`) - both recorded with their
-    reason and never modelled."""
+    """S2 9.3 / T11 #398: a unit whose COMPLETED model already lives in
+    `consumed/` is excluded (`completed`) and a unit whose model is in flight in
+    `produced/` under a RESUMABLE `interrupted` run (a transient throttle whose
+    backoff elapsed) is skipped (`in-flight`) - both recorded with their reason
+    and never modelled."""
+    from datetime import datetime, timedelta, timezone
+
     fake = _FakePg()
-    # the producing run paused as `interrupted`: resumable, so its produced
-    # model is in flight (a second writer would break the sole-writer rule)
-    fake.statuses.append(("paused-run", "interrupted"))
     _patch_pg(monkeypatch, fake)
+    # the producing run paused on a TRANSIENT throttle with its class stamped:
+    # the resume decision is resumable, so its produced model is in flight (a
+    # second writer would break the sole-writer rule)
+    monkeypatch.setattr(
+        "polymerhus.app.clients.pg.list_hunting_runs",
+        lambda project_id: [{
+            "hunting_run_id": "paused-run",
+            "project_id": PROJECT,
+            "status": "interrupted",
+            "finished_at": datetime.now(timezone.utc) - timedelta(seconds=5),
+            "stats": {"interrupted": True, "quota_exhausted": False,
+                      "retry_after_s": 0.0},
+        }],
+    )
     hunter, models = _stores(tmp_path)
     _write_completed_model(models, UNIT_A)
     # the model moves with its last loop file: the unit is decided in consumed/

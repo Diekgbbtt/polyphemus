@@ -179,6 +179,37 @@ def test_a_process_restart_orphan_is_do_not_resume():
     assert decision.code == "cause_unknown"
 
 
+def test_a_resumed_then_crashed_run_fails_closed_on_the_reconcile_shape():
+    """The resume-then-crash disposition (T11 review): a 429 stamps a
+    TRANSIENT class (`quota_exhausted=false`, `retry_after_s=45`), the operator
+    resumes, and the process then dies. The resume claim CLEARS the provider
+    class (pinned live in `test_claim_resumes_a_resumable_row_atomically`), so
+    the reconcile's restart stamp carries no class and the table answers
+    do-not-resume. Without the clear, the stale `quota_exhausted=false` would
+    make the crash-orphaned row resumable - exactly the guess the ADR forbids."""
+    transient = {"interrupted": True, "quota_exhausted": False,
+                 "retry_after_s": 45.0}
+    # the pre-resume class is resumable once its window elapsed ...
+    assert resume_decision(
+        "interrupted", transient, NOW - timedelta(seconds=45), now=NOW,
+    ).resumable is True
+
+    # ... and the crash-orphaned row after the claim's clear carries no class,
+    # so it fails closed even though its pre-resume stats once said "resumable"
+    reconcile_shape = {
+        "interrupted": True,
+        "interrupt_reason": (
+            "process ended mid-run: the in-memory orchestration actor did "
+            "not survive the restart"
+        ),
+    }
+    decision = resume_decision(
+        "interrupted", reconcile_shape, NOW - timedelta(days=1), now=NOW)
+
+    assert decision.resumable is False
+    assert decision.code == "cause_unknown"
+
+
 def test_an_interrupted_run_without_finished_at_is_do_not_resume():
     """The wait window is anchored on `finished_at`; a terminal row without one
     has no derivable window, so it fails closed rather than resuming on an
@@ -276,17 +307,24 @@ def _record(**overrides) -> dict:
 
 class _ResumePg:
     """The fake pg accessors at the resume seam: the run row carries the record
-    and the claimed `running` status. A resume never mints a new row."""
+    and the claimed `running` status. A resume never mints a new row.
+    `producer_rows` are the OTHER hunting runs the intake freeze reads (the
+    produced models' producing runs)."""
 
-    def __init__(self, record: dict, *, status: str = "running"):
+    def __init__(self, record: dict, *, status: str = "running",
+                 run_id: str = RUN, producer_rows: tuple[dict, ...] = ()):
         self.record = dict(record)
         self.status = status
+        self.run_id = run_id
+        self.producer_rows = tuple(producer_rows)
         self.status_writes: list[tuple[str, str]] = []
 
     def create_hunting_run(self, project_id: str) -> str:
         raise AssertionError("a resume must never mint a new hunting run row")
 
     def get_hunting_run(self, hunting_run_id: str) -> dict | None:
+        if hunting_run_id != self.run_id:
+            return None
         return {
             "hunting_run_id": hunting_run_id,
             "project_id": PROJECT,
@@ -307,7 +345,9 @@ class _ResumePg:
         self.record.update(stats or {})
 
     def list_hunting_runs(self, project_id: str) -> list[dict]:
-        return [self.get_hunting_run(RUN)]
+        rows = [self.get_hunting_run(self.run_id)]
+        rows.extend(dict(row) for row in self.producer_rows)
+        return [row for row in rows if row is not None]
 
 
 class _ResumeControl:
@@ -344,6 +384,11 @@ class _ResumeControl:
 
 async def _noop_hunter_dispatch(payload):
     return None
+
+
+async def _noop_pod_builder(spec, **kw):
+    return {"verdict": "successful", "terminal_reason": "symptom-confirmed",
+            "evidence": {"trail": []}, "clean": True, "iterations": 0}
 
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
@@ -402,6 +447,7 @@ def _resume_run(tmp_path, monkeypatch, *, record, threat, hunter, seen,
             _recording_hunter_builder(dispatched)
             if dispatched is not None else _noop_hunter_builder
         ),
+        pod_builder=_noop_pod_builder,
         modeller_pass_fn=_recording_pass(seen),
     ))
     return fake
@@ -519,6 +565,7 @@ def test_a_resumed_run_never_redispatches_a_live_loop(tmp_path, monkeypatch):
         control=control)
 
     assert dispatched == []  # never a second hunter for a live dispatch
+    assert session_id not in control.started  # the live session is never re-run
     assert threat.read_produced_loops(PROJECT) == []  # the move completed
 
 
@@ -545,3 +592,68 @@ def test_a_resumed_run_never_redispatches_a_live_pod(tmp_path, monkeypatch):
         threat=threat, hunter=hunter, seen=seen, control=control)
 
     assert hunter.produced_spec_files(PROJECT, LOOP_A_DISPATCH) == []
+    assert session_id not in control.started  # the live pod is never re-run
+
+
+# --- the intake freeze consumes the resume decision (T11 review) --------------
+
+def test_the_intake_freeze_consumes_the_resume_decision(tmp_path, monkeypatch):
+    """T11 review integration: the freeze reads each `interrupted` producer's
+    resume decision. A terminal producer (quota exhausted) will never resume, so
+    its produced model is stale: it is archived to `abandoned/` and the unit is
+    retried. A resumable throttle keeps its model in flight - including one still
+    inside its backoff window, which is NOT terminal."""
+    threat = ThreatModelStore(root_dir=tmp_path / "models")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    produce_model(threat, project_id=PROJECT, unit_id=UNIT_A,
+                  run_id="quota-producer", loops=[loop_row(likelihood="high")])
+    produce_model(threat, project_id=PROJECT, unit_id=UNIT_B,
+                  run_id="throttled-producer",
+                  loops=[loop_row(likelihood="high")])
+    produce_model(threat, project_id=PROJECT, unit_id=UNIT_C,
+                  run_id="backoff-producer", loops=[loop_row(likelihood="high")])
+    now = datetime.now(timezone.utc)
+    fake = _ResumePg(
+        {}, run_id="freeze-launch-run",
+        producer_rows=(
+            {"hunting_run_id": "quota-producer", "project_id": PROJECT,
+             "status": "interrupted", "finished_at": now,
+             "stats": {"interrupted": True, "quota_exhausted": True}},
+            {"hunting_run_id": "throttled-producer", "project_id": PROJECT,
+             "status": "interrupted",
+             "finished_at": now - timedelta(seconds=5),
+             "stats": {"interrupted": True, "quota_exhausted": False,
+                       "retry_after_s": 0.0}},
+            {"hunting_run_id": "backoff-producer", "project_id": PROJECT,
+             "status": "interrupted", "finished_at": now,
+             "stats": {"interrupted": True, "quota_exhausted": False,
+                       "retry_after_s": 3600.0}},
+        ))
+    _patch_pg(monkeypatch, fake)
+    seen: list[str] = []
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT,
+        run_id="freeze-launch-run",
+        intake_units=[intake_unit(UNIT_A), intake_unit(UNIT_B),
+                      intake_unit(UNIT_C)],
+        tools=ModellerTools(threat_store=threat, project_id=PROJECT,
+                            run_id="freeze-launch-run"),
+        control=_ResumeControl(),
+        tick_interval=0.01,
+        hunter_store=hunter,
+        pod_store=PodMemoryStore(root_dir=tmp_path / "pod"),
+        hunter_builder=_noop_hunter_builder,
+        pod_builder=_noop_pod_builder,
+        modeller_pass_fn=_recording_pass(seen),
+    ))
+
+    # the quota-exhausted producer's stale model was archived and its unit
+    # retried; both resumable throttles kept their models in flight
+    assert seen == [UNIT_A]
+    assert fake.record["intake_order"] == [UNIT_A]
+    assert [(entry["unit_id"], entry["reason"])
+            for entry in fake.record["intake_excluded"]] == [
+        (UNIT_B, "in-flight"), (UNIT_C, "in-flight")]
+    assert [entry["unit_id"] for entry in threat.read_produced_units(PROJECT)] == [
+        UNIT_B, UNIT_C]

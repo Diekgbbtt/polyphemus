@@ -754,14 +754,22 @@ async def resume_hunting_run(project_id: str, hunting_run_id: str) -> dict:
 
     Admission is a CONDITIONAL claim: only the exact row the decision read
     transitions back to `running`, so two concurrent resumes yield one 202 and
-    one 409. The resumed run re-enters `start_hunting` with the EXISTING run id:
-    it re-enters at the recorded `intake_position`, adopts the committed models,
-    recomputes `risk_total`, and resumes dispatch; a halted run resumes dispatch
-    only. An admission refusal restores the prior status (and leaves the stats
-    intact) so the operator can retry - no `running` row is left behind."""
+    one 409. The claim CLEARS the provider-pause keys from the run's stats (so a
+    resumed-then-crashed row cannot inherit a stale `quota_exhausted` and look
+    resumable to the reconcile), and keeps the run record. The live-run guard
+    runs AFTER the claim, so this run's own `running` row is excluded and only
+    ANOTHER live run is a conflict; both a conflict and an admission refusal
+    restore the prior status AND the pause keys, so the operator can retry - no
+    `running` row is left behind. The resumed run re-enters `start_hunting` with
+    the EXISTING run id: it re-enters at the recorded `intake_position`, adopts
+    the committed models, recomputes `risk_total`, and resumes dispatch; a halted
+    run resumes dispatch only."""
     from polymerhus.app.clients import pg
     from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.resume import resume_decision
+    from polymerhus.attack.hunting.resume import (
+        PAUSE_STATS_KEYS,
+        resume_decision,
+    )
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
@@ -793,8 +801,11 @@ async def resume_hunting_run(project_id: str, hunting_run_id: str) -> dict:
         raise HTTPException(
             status_code=409, detail=decision.reason, headers=headers)
 
-    await _hunting_live_run_guard(project_id, exclude_run_id=hunting_run_id)
     prior_status = str(row.get("status"))
+    prior_stats = dict(row.get("stats") or {})
+    prior_pause_stats = {
+        key: prior_stats[key] for key in PAUSE_STATS_KEYS if key in prior_stats
+    }
     claimed = await asyncio.to_thread(
         pg.claim_hunting_run_for_resume,
         hunting_run_id,
@@ -809,6 +820,32 @@ async def resume_hunting_run(project_id: str, hunting_run_id: str) -> dict:
                 "already claimed it"
             ),
         )
+
+    async def _restore_prior_status() -> None:
+        """Undo the claim: the exact prior status and the pause keys, so the
+        operator can retry (the stats merge is additive; the run record was
+        never touched)."""
+        try:
+            await asyncio.to_thread(
+                pg.set_hunting_run_status, hunting_run_id, prior_status,
+                stats=prior_pause_stats or None)
+        except Exception:  # noqa: BLE001 - best-effort restore
+            logger.warning(
+                "resume_hunting_run: could not restore %r for %s "
+                "(fail-open)", prior_status, hunting_run_id,
+            )
+
+    # The one-live-run guard runs AFTER the claim, so this resume's own row is
+    # `running` by construction and `exclude_run_id` is load-bearing: only
+    # ANOTHER live run conflicts. The conflict is undone exactly like an
+    # admission refusal - the claim must not leave this run `running`.
+    try:
+        await _hunting_live_run_guard(
+            project_id, exclude_run_id=hunting_run_id)
+    except HTTPException:
+        await _restore_prior_status()
+        raise
+
     coro = None
     try:
         coro = hunting_runtime.start_hunting(project_id, run_id=hunting_run_id)
@@ -818,23 +855,15 @@ async def resume_hunting_run(project_id: str, hunting_run_id: str) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 - map admission refusal, restore
         # A post-claim admission refusal must not leave the claimed `running`
-        # row behind: restore the exact prior status. The stats (the run record
-        # and the interrupt cause) are untouched, so the operator can retry. The
-        # terminal write stamps a NEW finished_at, which restarts the wait window
-        # for a throttle - a conservative extension, never an early resume.
-        # The un-admitted coroutine is closed: a refusal happens before the
-        # runtime schedules it, so it must not sit until GC warns.
+        # row behind: restore the exact prior status and its pause keys. The
+        # terminal write stamps a NEW finished_at, which restarts the wait
+        # window for a throttle - a conservative extension, never an early
+        # resume. The un-admitted coroutine is closed: a refusal happens before
+        # the runtime schedules it, so it must not sit until GC warns.
         close = getattr(coro, "close", None)
         if callable(close):
             close()
-        try:
-            await asyncio.to_thread(
-                pg.set_hunting_run_status, hunting_run_id, prior_status)
-        except Exception:  # noqa: BLE001 - best-effort restore
-            logger.warning(
-                "resume_hunting_run: could not restore %r for %s "
-                "(fail-open)", prior_status, hunting_run_id,
-            )
+        await _restore_prior_status()
         _admission_refused_503(exc)
     return {"hunting_run_id": hunting_run_id, "resumed": True}
 

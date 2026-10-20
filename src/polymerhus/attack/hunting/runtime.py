@@ -62,6 +62,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from collections.abc import Mapping
@@ -383,21 +384,27 @@ def _read_model_document(store: Any, project_id: str, unit_id: str) -> dict | No
         return None
 
 
-def _produced_run_statuses(
+def _produced_run_states(
     project_id: str, produced: Sequence[Mapping[str, str]],
-) -> dict[str, str]:
-    """The producing runs' statuses for the intake freeze (S2 9.3).
+) -> tuple[dict[str, str], dict[str, bool]]:
+    """The producing runs' statuses AND `interrupted` resumability for the
+    intake freeze (S2 9.3, T11 #398).
 
-    Blocking pg read (the caller offloads). Fail-open: with no readable row the
-    status map stays empty, and the freeze then treats the produced model as
-    in-flight - it never destroys a model it cannot attribute. A run id with no
-    row (the modeller-only launch writes models under a run that never opened a
-    row) is therefore never mistaken for a stale one.
-    """
+    Blocking pg read (the caller offloads). Fail-open: with no readable row both
+    maps stay empty, and the freeze then treats the produced model as in-flight
+    - it never destroys a model it cannot attribute. A run id with no row (the
+    modeller-only launch writes models under a run that never opened a row) is
+    therefore never mistaken for a stale one.
+
+    The resumability map is the ONE resume decision table
+    (`attack/hunting/resume.py`): an `interrupted` run is resumable when its
+    decision is not terminal/do-not-resume. A `backoff_window` decision counts
+    as resumable - the throttle will resume when the window elapses, so its
+    produced model is still owned, never stale."""
     run_ids = {str(entry.get("run_id") or "") for entry in produced}
     run_ids.discard("")
     if not run_ids:
-        return {}
+        return {}, {}
     try:
         from polymerhus.app.clients import pg  # noqa: PLC0415
 
@@ -407,12 +414,27 @@ def _produced_run_statuses(
             "hunting: run-status read for project %s degraded (%s); produced "
             "models are treated as in-flight (fail-open)", project_id, exc,
         )
-        return {}
-    return {
-        str(row.get("hunting_run_id")): str(row.get("status"))
-        for row in rows
-        if row.get("hunting_run_id") in run_ids
-    }
+        return {}, {}
+    from polymerhus.attack.hunting.resume import (  # noqa: PLC0415
+        TERMINAL_INTERRUPT_CODES,
+        resume_decision,
+    )
+
+    now = datetime.now(timezone.utc)
+    statuses: dict[str, str] = {}
+    resumability: dict[str, bool] = {}
+    for row in rows:
+        run_id = str(row.get("hunting_run_id") or "")
+        if run_id not in run_ids:
+            continue
+        status = str(row.get("status") or "")
+        statuses[run_id] = status
+        if status == "interrupted":
+            decision = resume_decision(
+                status, row.get("stats"), row.get("finished_at"), now=now)
+            resumability[run_id] = (
+                decision.code not in TERMINAL_INTERRUPT_CODES)
+    return statuses, resumability
 
 
 def _freeze_intake(
@@ -449,11 +471,13 @@ def _freeze_intake(
         """Move the stale produced directory to `abandoned/` (S2 9.3)."""
         return archive(project_id, unit_id, reason) if callable(archive) else None
 
+    statuses, resumability = _produced_run_states(project_id, produced)
     return freeze_intake(
         units,
         completed_ids=completed,
         produced=produced,
-        run_statuses=_produced_run_statuses(project_id, produced),
+        run_statuses=statuses,
+        run_resumability=resumability,
         archive_fn=archive_fn if produced else None,
     )
 
