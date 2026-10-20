@@ -38,6 +38,18 @@ Every `systems` entry carries an `evidence` list of L0 node references - the hea
 - A claim with no witness in the slice is STILL emitted, with an empty `evidence` list: withholding a System you cannot ground is your judgment at hypothesise-time, never a reason to drop it here, and never a reason to invent a node.
 - On EXTEND, name the witness behind the NEW facts you folded in: the edges already in the graph stay (the write never deletes one).
 
+## Link each System to its Services
+
+A description says WHAT the System is; the `system_edges` say WHERE the hunter can reach it.
+A System with no Service edge is unusable: the hunter can see the mechanism, but it cannot reach the surface.
+Link each System to the exact Services the evidence supports - the exact `service_slug`, the exact `rel`, and the System's kind.
+
+- Emit one edge per (service, System) pair as a `system_edges` entry: `service_slug` copies the Service slug verbatim, `kind` and `discriminator` name the System, and `rel` is the one label this mechanism owns.
+- Never duplicate a pair. Two entries with the same `service_slug`, `kind`, and `discriminator` are one edge; the second is a defect, not extra signal.
+- Link every Service the evidence supports, not only the chunk's PRIMARY Service. `prefer PRIMARY` orders the links; it does not restrict them.
+- An authorization System's gate filters every route its chain covers, including anonymous-allowed routes. A public presentation route still sits behind the gate when the same Service's protected routes do, so it is evidence for the link, not against it.
+- Do not invent a gate edge. A Service gains `AUTHORIZED_BY` only when a witness shows the gate on that Service's surface; a shared login page alone is not a per-Service authorization boundary.
+
 ## Judge each proposal critically
 
 - **Evidence sufficiency.** Is the signal *necessary and specific* to this mechanism, or would it fit three others equally? Weak, non-discriminating evidence is a reason to withhold, not to guess.
@@ -66,7 +78,17 @@ Technical Systems are ubiquitous across application domains, so these span *asse
 
 **Example 5 - EXTEND an existing System (compounding by overwrite).** Currently-defined: `AuthenticationMechanism :: bearer-token auth`. New asset this batch: `/oauth/authorize` + `Set-Cookie: idp_session=…`. Observation: "OAuth authorize endpoint." Hypothesise: this EXTENDS the existing `AuthenticationMechanism` (not a new System) - an OAuth/IdP realm on the same mechanism. Verify: same mechanism, new realm. Type: reuse key `AuthenticationMechanism`, and emit the FULL rewritten description - `bearer-token auth AND an OAuth/IdP authorize flow; token issuance now spans two realms, so a token minted in one realm can be replayed against the other (confused deputy)`. That whole string REPLACES the stored one, so it restates the old fact AND the new; link `AUTHENTICATED_BY` from the newly-touched service. `evidence` names the witness of the NEW facts (the `idp_session` `Header` node and/or the `/oauth/authorize` `Endpoint`); the edge an earlier wave wrote stays in the graph, so an older witness need not be re-emitted.
 
-**Example 6 - a role-gated response (define AuthorizationSystem, no deep pyramid).** Asset: `/admin/users` returns 403 for a normal principal. Observation: "role-gated admin surface." Hypothesise an authorization System overlaying the admin service. Verify: the 403 witnesses enforcement; do NOT reverse-engineer the role hierarchy (that is deep profiling, a later phase). Type: new `AuthorizationSystem`, description "role-gated admin surface; the gate itself is the boundary to probe"; link `AUTHORIZED_BY`. Stop at existence + linkage.
+**Example 6 - a role-gated response (define AuthorizationSystem, then link every Service its gate covers).** Asset: `GET /api/admin/users` returns 403 for a normal principal, while the SPA shell `GET /admin` answers anonymously. Observation: "role-gated admin surface." Hypothesise an authorization System overlaying the admin area. Verify: the 403 witnesses enforcement on the API route; the anonymous shell is the same Service's presentation route, not a second Service. Type: new `AuthorizationSystem`, description "role-gated admin surface; the gate itself is the boundary to probe". The full route chain is `GET /admin` (shell, anonymous) -> `GET /api/admin/users` (403): the gate filters every route its chain covers, including anonymous-allowed routes, so the shell is evidence for the link. Emit the edge as a concrete `system_edges` entry:
+
+```yaml
+system_edges:
+  - service_slug: admin
+    kind: AuthorizationSystem
+    discriminator: __singleton__
+    rel: AUTHORIZED_BY
+```
+
+`evidence` names the 403 `Endpoint` node - `{label: Endpoint, identity: {method: GET, path: /api/admin/users, baseurl: <the host>}}` - and the shell `Endpoint` when the graph holds it. Do not reverse-engineer the role hierarchy (that is deep profiling, a later phase). Stop at existence + linkage.
 
 **Example 7 - mint a System and set its description to a VERBATIM text (imitate this shape).** Asset: `POST /graphql` returning `application/json`, technology "Apollo Server". Observation: "introspection answered on a production host." Hypothesise a `GraphQLApi` System. Verify: the path, the JSON content type and the technology are each specific to a GraphQL surface - confident. Type: new `GraphQLApi`, and set `description` to EXACTLY this kind of text (this length, this adversarial emphasis; never copy its words): `GraphQL API at POST /graphql (Apollo Server). Introspection is answered on a production host, so the full schema - types, fields, mutations - is enumerable unaided; aliasing and batched queries are the next levers to test.` Link `EXPOSED_VIA`.
 
