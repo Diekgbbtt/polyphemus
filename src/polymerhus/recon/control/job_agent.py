@@ -133,7 +133,7 @@ def default_preprocess_fn(
         # fills `{target}` from the asset's own url - degraded but runnable).
         from polymerhus.recon.control.batching import endpoint_url
 
-        raw = list(input_assets or [])
+        raw = list(input_assets or [])[:MAX_JOB_ASSETS]
         if job.consumption.pack == "one_pod":
             derived = [{"endpoints": raw}]
         elif job.consumption.pack == "batches":
