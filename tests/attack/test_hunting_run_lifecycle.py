@@ -107,8 +107,13 @@ def _write_completed_model(models: ThreatModelStore, unit_id: str,
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     """The agent-seam hunter builder fake: it is a SYNCHRONOUS factory (the seam
-    is called, not awaited) returning an async dispatch - the real shape."""
+    is called, not awaited) returning an async dispatch - the real shape. It
+    concludes immediately and writes the zero-spec terminal set (F-026), so the
+    consumed loop is a completed hunt and the run can quiesce."""
     async def dispatch(payload):
+        hunt_key = payload.get("dispatch_id")
+        if hunt_key:
+            hunter_store.finalize_specs(project_id, hunt_key, run_id=run_id)
         return None
     return dispatch, None
 
@@ -514,6 +519,8 @@ def test_the_modeller_does_not_wait_for_dispatch(tmp_path, monkeypatch):
     def hunter_builder(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
             events.append("dispatch")
+            hunter.finalize_specs(
+                PROJECT, payload["dispatch_id"], run_id=run_id)
             return None
         return dispatch, None
 

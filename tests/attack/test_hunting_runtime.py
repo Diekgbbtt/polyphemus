@@ -145,14 +145,16 @@ class _FakeControl:
         return self._gate
 
 
-async def _noop_hunter_dispatch(config):
-    """The fake hunt-session graph: concludes immediately (no specs
-    authored), so the run quiesces without producing pods."""
-    return None
-
-
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
-    return _noop_hunter_dispatch, None
+    """The fake hunt-session graph: concludes immediately (no specs authored)
+    and writes the zero-spec terminal set, so the F-026 loop recovery sees a
+    completed hunt and the run quiesces without producing pods."""
+    async def dispatch(config):
+        hunt_key = config.get("dispatch_id")
+        if hunt_key:
+            hunter_store.finalize_specs(project_id, hunt_key, run_id=run_id)
+        return None
+    return dispatch, None
 
 
 async def _noop_pod_builder(spec, **kw):

@@ -307,6 +307,45 @@ def test_unknown_feedback_value_is_rejected():
         deduce_delivery([item], feedback={item.message_id: "admitted"})
 
 
+def test_a_recovered_loop_dispatches_but_its_move_is_already_satisfied():
+    """F-026: a consumed loop recovered from consumed/ has already landed its
+    produced->consumed move. It is dispatched when idle (at-least-once), but an
+    admitted or live recovered loop NEVER lands in `to_move` again."""
+    loop = ThreatLoopItem(
+        message_id="Service-a__loop-1",
+        session_id="hunting:run-1:hunt:Service-a__loop-1",
+        unit_id="Service:a",
+        unit_name="Service-a",
+        loop_id="loop-1",
+        dispatch_id="Service-a__loop-1",
+        likelihood="high",
+        record={},
+        recovered=True,
+    )
+    assert deduce_delivery([loop]).to_dispatch == (loop,)
+    admitted = deduce_delivery(
+        [loop], feedback={loop.message_id: DispatchFeedback.ADMITTED})
+    assert admitted == DeliveryPlan(
+        to_dispatch=(), to_move=(), to_retry=())
+    live = deduce_delivery([loop], live_session_ids={loop.session_id})
+    assert live == DeliveryPlan(to_dispatch=(), to_move=(), to_retry=())
+    refused = deduce_delivery(
+        [loop], feedback={loop.message_id: DispatchFeedback.REFUSED})
+    assert refused.to_retry == (loop,)
+
+
+def test_the_one_loop_predicate_carries_the_recovered_flag():
+    record = _loop_record()
+    item = threat_loop_item(
+        project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
+        loop_id="loop-1", record=record, run_id=RUN, recovered=True)
+    assert item is not None and item.recovered is True
+    produced = threat_loop_item(
+        project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
+        loop_id="loop-1", record=record, run_id=RUN)
+    assert produced is not None and produced.recovered is False
+
+
 def test_family_items_mix_in_one_deduction():
     loop = ThreatLoopItem(
         message_id="Service-a__loop-1",

@@ -231,6 +231,9 @@ def test_bootstrap_schedules_orchestrator_and_surfer_sessions(stores, monkeypatc
 
 def _noop_hunts(*, run_id, project_id, hunter_store, **kw):
     async def dispatch(payload):
+        hunt_key = payload.get("dispatch_id")
+        if hunt_key:
+            hunter_store.finalize_specs(project_id, hunt_key, run_id=run_id)
         return None
     return dispatch, None
 
@@ -388,6 +391,8 @@ def test_n_loops_fan_out_but_the_gate_caps_concurrent_hunters(stores, monkeypatc
                 await asyncio.sleep(0.05)
             finally:
                 tracking["now"] -= 1
+            hunter_store.finalize_specs(
+                project_id, payload["dispatch_id"], run_id=run_id)
             return None
         return dispatch, None
 
@@ -437,6 +442,8 @@ def test_ratified_spec_dispatches_one_pod_through_the_same_mover(stores, monkeyp
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
             _write_ratified_spec(hunter_store)
+            hunter_store.finalize_specs(
+                project_id, payload["dispatch_id"], run_id=run_id)
             return None
         return dispatch, None
 
@@ -483,6 +490,8 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
             _write_ratified_spec(hunter_store)
+            hunter_store.finalize_specs(
+                project_id, payload["dispatch_id"], run_id=run_id)
             return None
         return dispatch, None
 
@@ -573,6 +582,8 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
             _write_ratified_spec(hunter_store)
+            hunter_store.finalize_specs(
+                project_id, payload["dispatch_id"], run_id=run_id)
             return None
         return dispatch, None
 
@@ -707,6 +718,8 @@ def test_run_does_not_complete_while_a_session_is_live(stores, monkeypatch):
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
             _write_ratified_spec(hunter_store)
+            hunter_store.finalize_specs(
+                project_id, payload["dispatch_id"], run_id=run_id)
             return None
         return dispatch, None
 
@@ -866,16 +879,12 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    _preproduce(models)
-
-    def draft_hunts(*, run_id, project_id, hunter_store, **kw):
-        async def dispatch(payload):
-            hunter_store.write_specs(
-                project_id, DISPATCH_ID,
-                [{"status": "hypothesised", "fault_keyword": "sqli",
-                  "strategy_keyword": "blind"}])
-            return None
-        return dispatch, None
+    # Seed the produced draft directly: no loop file exists, so F-026 has no
+    # consumed loop to recover and the test isolates the mover's own-status gate.
+    hunter.write_specs(
+        PROJECT, DISPATCH_ID,
+        [{"status": "hypothesised", "fault_keyword": "sqli",
+          "strategy_keyword": "blind"}])
 
     control = _FakeControl()
     asyncio.run(hunting_runtime.start_hunting(
@@ -887,7 +896,7 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
         threat_store=models,
         hunter_store=hunter,
         pod_store=pod,
-        hunter_builder=draft_hunts,
+        hunter_builder=_noop_hunts,
         pod_builder=_noop_pods,
     ))
     # the hypothesised draft stayed produced but never blocked completion

@@ -382,23 +382,29 @@ class _ResumeControl:
             task.cancel()
 
 
-async def _noop_hunter_dispatch(payload):
-    return None
-
-
 async def _noop_pod_builder(spec, **kw):
     return {"verdict": "successful", "terminal_reason": "symptom-confirmed",
             "evidence": {"trail": []}, "clean": True, "iterations": 0}
 
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
-    return _noop_hunter_dispatch, None
+    """Conclude the fake hunt AND write its zero-spec terminal set (F-026)."""
+    async def dispatch(payload):
+        hunt_key = payload.get("dispatch_id")
+        if hunt_key:
+            hunter_store.finalize_specs(project_id, hunt_key, run_id=run_id)
+        return None
+
+    return dispatch, None
 
 
 def _recording_hunter_builder(dispatched: list):
     def build(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
             dispatched.append(payload["dispatch_id"])
+            if payload.get("dispatch_id"):
+                hunter_store.finalize_specs(
+                    project_id, payload["dispatch_id"], run_id=run_id)
             return None
 
         return dispatch, None
@@ -553,8 +559,21 @@ def test_a_resumed_run_never_redispatches_a_live_loop(tmp_path, monkeypatch):
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_A, run_id=RUN,
                   loops=[loop_row(likelihood="high")])
     session_id = hunter_session_id(RUN, LOOP_A_DISPATCH)
-    control = _ResumeControl(live_extra=lambda: (
-        {session_id} if threat.read_produced_loops(PROJECT) else set()))
+
+    def _live_while_adopting():
+        # The pre-registered session is live until the move lands; after the
+        # admission, it completes like a real hunter and writes its zero-spec
+        # terminal set (F-026). It reports live for the tick that writes the
+        # marker, then settles: the consumed loop was already read as recovered
+        # in that tick, so it must never be re-dispatched.
+        if threat.read_produced_loops(PROJECT):
+            return {session_id}
+        if hunter.read_terminal_set(PROJECT, LOOP_A_DISPATCH) is None:
+            hunter.finalize_specs(PROJECT, LOOP_A_DISPATCH, run_id=RUN)
+            return {session_id}
+        return set()
+
+    control = _ResumeControl(live_extra=_live_while_adopting)
     seen: list[str] = []
     dispatched: list[str] = []
 

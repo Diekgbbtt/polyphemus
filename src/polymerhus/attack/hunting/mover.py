@@ -217,7 +217,12 @@ class ThreatLoopItem(ProducedItem):
     came from: the payload is materialised from it at dispatch time (S2 8.2, "the
     surfer reads the model document for the unit context"), so the dispatch needs
     no second read. It defaults to None for a directly constructed item, which
-    then reads the store itself."""
+    then reads the store itself.
+
+    F-026: `recovered` is True when the item came from consumed/ because the
+    loop's hunter left no terminal spec set. The identity and dispatch are
+    identical; the produced->consumed move is already satisfied, so the
+    deduction never asks for it again."""
 
     unit_id: str
     unit_name: str
@@ -226,6 +231,7 @@ class ThreatLoopItem(ProducedItem):
     likelihood: str
     record: Mapping[str, Any]
     model: Mapping[str, Any] | None = None
+    recovered: bool = False
 
 
 @dataclass(frozen=True)
@@ -282,15 +288,19 @@ def threat_loop_item(
     record: Any,
     run_id: str,
     model: Mapping[str, Any] | None = None,
+    recovered: bool = False,
 ) -> ThreatLoopItem | None:
     """The ONE loop validity predicate (S2 8.1, 8.4; T4 #377): the dispatch
-    record for one produced loop file, or None when the file is refused.
+    record for one loop file, or None when the file is refused.
 
     Both the run's work read (`run_work_remaining`) and its dispatch read
     (`build_run_dispatch`) build on this predicate through the ONE produced read
     (`read_produced_inbox`), so the quiesce predicate and the dispatch decision
     can never disagree: whatever is not an item is neither dispatched nor
     counted as pending work.
+
+    `recovered` marks an item read from consumed/ (F-026): the same validity
+    checks apply, and the produced->consumed move is already satisfied.
 
     Refused (None), each named by the file it contradicts:
 
@@ -367,14 +377,16 @@ def threat_loop_item(
         likelihood=str(likelihood),
         record=record,
         model=model,
+        recovered=recovered,
     )
 
 
 def _refuse_loop(
     project_id: str, run_id: str, unit_name: str, loop_id: str, why: str,
 ) -> None:
-    """Refuse ONE produced loop file: never dispatched, never counted as work,
-    logged once per project + run + file (the mover re-reads every tick)."""
+    """Refuse ONE loop file (produced or recovered): never dispatched, never
+    counted as work, logged once per project + run + file (the mover re-reads
+    every tick)."""
     log_refusal_once(
         project_id, run_id, loop_refusal_detail("loop", unit_name, loop_id),
         "mover: produced loop file %s/%s refused - %s; never dispatched and "
@@ -446,6 +458,10 @@ def deduce_delivery(
       never dropped, never moved.
     - otherwise -> `to_dispatch`.
 
+    F-026: a recovered consumed loop never lands in `to_move` - its
+    produced->consumed move is already satisfied. It dispatches, retries, or
+    (when its session is live) waits, exactly like a produced item.
+
     Pure by construction: no I/O, no clock, no side effects; equal inputs ->
     equal outputs. A feedback entry for a message id absent from `produced` is
     ignored; a feedback value outside `DispatchFeedback` is rejected (typed
@@ -461,12 +477,17 @@ def deduce_delivery(
     to_move: list[ProducedItem] = []
     to_retry: list[ProducedItem] = []
     for item in produced:
+        already_moved = (
+            isinstance(item, ThreatLoopItem) and item.recovered
+        )
         if item.session_id in live_session_ids:
-            to_move.append(item)
+            if not already_moved:
+                to_move.append(item)
             continue
         outcome = by_item.get(item.message_id)
         if outcome is DispatchFeedback.ADMITTED:
-            to_move.append(item)
+            if not already_moved:
+                to_move.append(item)
         elif outcome is DispatchFeedback.REFUSED:
             to_retry.append(item)
         else:
@@ -928,6 +949,13 @@ def read_produced_inbox(
       spec to consumed/ before its pod finishes, so a provider pause can leave
       it consumed with no export; without this read the resume path would
       quiesce with the test never executed.
+    - F-026 loop recovery: a CONSUMED loop file of THIS run whose hunter left
+      no terminal spec set is recovered as dispatchable work. The move is the
+      admission marker, never the completion marker; the terminal spec set is
+      completion. The item carries the consumed model document, so the
+      recovery dispatch reuses the original unit context and never re-models
+      the unit. A malformed consumed loop is refused once and never counted as
+      work.
 
     The config family retired in T4b (#387): there is no hunt-store read and no
     `HuntConfigItem` - a produced hunt config is not dispatch input at all.
@@ -995,6 +1023,9 @@ def read_produced_inbox(
                 # loop files are refused). The refused files stay in produced/ -
                 # they are evidence, never pending loops.
                 models_to_consume[unit_id] = tuple(sorted(set(refused)))
+        items.extend(_recoverable_loop_items(
+            project_id, run_id, threat_store=threat_store,
+            hunter_store=hunter_store))
     return ProducedInbox(
         items=tuple(items), models_to_consume=models_to_consume,
     )
@@ -1090,6 +1121,108 @@ def _recoverable_spec_items(
                 recovered=True,
             ))
     return tuple(recovered)
+
+
+def _recoverable_loop_items(
+    project_id: str,
+    run_id: str,
+    *,
+    threat_store: Any,
+    hunter_store: HunterMemoryStore,
+) -> tuple[ThreatLoopItem, ...]:
+    """Consumed loop files of THIS run whose hunter left no terminal spec set.
+
+    The produced->consumed move is the admission marker (S2 8.4); the hunter's
+    terminal spec set is the completion marker (F-026). A consumed loop with no
+    CURRENT-RUN terminal set is recovered: after a provider pause the hunter
+    may have been interrupted after admission and before finalize. The item
+    carries the consumed model document, so the dispatch reuses the original
+    unit context and the unit is never re-modelled.
+
+    A terminal set from another run does not settle this run's loop: the
+    marker is run-scoped, exactly like the loop body. A malformed consumed loop
+    is refused once and never counted as work; a consumed loop whose model is
+    unreadable is refused once too (the consumed family moved the model with
+    its last loop, so a missing model is a storage failure, not a re-model
+    request)."""
+    reader = getattr(threat_store, "read_consumed_loops", None)
+    if reader is None:
+        return ()
+    try:
+        entries = reader(project_id)
+    except Exception as exc:  # noqa: BLE001 - fail-open read (O4)
+        logger.warning(
+            "mover: consumed-loop read for %s degraded (%s); no loops "
+            "recovered this tick", project_id, exc,
+        )
+        return ()
+    recovered: list[ThreatLoopItem] = []
+    for entry in entries:
+        unit_id = str(entry.get("unit_id") or "")
+        unit_name = str(entry.get("unit_name") or "")
+        if entry.get("run_id") != run_id:
+            continue  # another run's loop: its own mover recovers it
+        model = _entry_model(entry, threat_store, project_id, unit_id)
+        if model is None:
+            for loop_id in _entry_loop_ids(entry):
+                log_refusal_once(
+                    project_id, run_id,
+                    loop_refusal_detail("loop-model-recovered", unit_name, loop_id),
+                    "mover: consumed loop %s/%s refused - the consumed model "
+                    "document for %s is unreadable; not dispatched and not "
+                    "counted as work", unit_name, loop_id, unit_id,
+                )
+            continue
+        for broken in entry.get("malformed_loops") or ():
+            loop_id = str(broken.get("loop_id") or "")
+            log_refusal_once(
+                project_id, run_id,
+                loop_refusal_detail("loop-file-recovered", unit_name, loop_id),
+                "mover: consumed loop file %s/%s refused - its body is "
+                "unreadable; left in consumed/, never dispatched and not "
+                "counted as a pending loop", unit_name, loop_id,
+            )
+        for entry_loop in entry.get("loops") or ():
+            loop_id = str(entry_loop.get("loop_id") or "")
+            if _hunter_finalized(
+                hunter_store, project_id, dispatch_id(unit_name, loop_id), run_id,
+            ):
+                continue
+            item = threat_loop_item(
+                project_id=project_id, unit_id=unit_id, unit_name=unit_name,
+                loop_id=loop_id, record=entry_loop.get("record"),
+                run_id=run_id, model=model, recovered=True,
+            )
+            if item is not None:
+                recovered.append(item)
+    return tuple(recovered)
+
+
+def _hunter_finalized(
+    hunter_store: HunterMemoryStore,
+    project_id: str,
+    hunt_key: str,
+    run_id: str,
+) -> bool:
+    """True when `hunt_key` has a terminal spec set written by THIS run.
+
+    The terminal set is the durable loop-completion marker (F-025/F-026). A
+    read failure recovers (fail-open at-least-once: re-hunting is safe and the
+    next finalize overwrites the marker); a marker from another run does not
+    settle this run's loop."""
+    reader = getattr(hunter_store, "read_terminal_set", None)
+    if reader is None:
+        return False
+    try:
+        marker = reader(project_id, hunt_key)
+    except Exception as exc:  # noqa: BLE001 - fail-open recovery
+        log_refusal_once(
+            project_id, run_id, f"terminal-set-read:{hunt_key}",
+            "mover: terminal spec-set read for %s failed (%s); recovering "
+            "the consumed loop (at-least-once)", hunt_key, exc,
+        )
+        return False
+    return isinstance(marker, Mapping) and marker.get("run_id") == run_id
 
 
 def _entry_loop_ids(entry: Mapping[str, Any]) -> tuple[str, ...]:

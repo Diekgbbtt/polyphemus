@@ -144,12 +144,15 @@ def _patch_pg(monkeypatch, fake):
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
 
-async def _noop_hunter_dispatch(config):
-    return None
-
-
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
-    return _noop_hunter_dispatch, None
+    """Conclude the fake hunt immediately AND write its zero-spec terminal set:
+    the move is admission, the terminal set is completion (F-026)."""
+    async def dispatch(config):
+        hunt_key = config.get("dispatch_id")
+        if hunt_key:
+            hunter_store.finalize_specs(project_id, hunt_key, run_id=run_id)
+        return None
+    return dispatch, None
 
 
 async def _noop_pod_builder(spec, **kw):

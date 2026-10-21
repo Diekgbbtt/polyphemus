@@ -591,37 +591,38 @@ class ThreatModelStore(BoundedRecordStore):
             return "not-a-mapping", None
         return "record", loaded
 
-    def read_produced_loops(self, project_id: str) -> list[dict]:
-        """The mover's dispatch inbox read (S2 8.1/8.4, T4 #377): one entry per
-        PRODUCED, consumable unit - `{unit_id, unit_name, run_id, loops,
-        malformed_loops, model}` - with `loops` the unit's produced loop file
-        records in rank order, each as `{loop_id, record}` (the file stem plus the
-        record verbatim, so the mover's validity predicate can check the two
-        agree), `malformed_loops` the file stems whose body is unreadable or not a
-        mapping, each as `{loop_id, reason}`, and `model` the document this read
-        already parsed (the mover's payload context, S2 8.2: the loop file does
-        not duplicate the model).
+    def _read_family_loops(self, project_id: str, family: str) -> list[dict]:
+        """One family's consumable units and their loop files.
 
-        A malformed file is REPORTED, never dropped (T4a review F1): dropping it
-        would read as "the unit holds no loop file", the mover would consume the
-        model, and the store would refuse while the `loop-*.yaml` remains - the
-        run would never quiesce (S2 10.5). The mover refuses it once and never
-        counts it as a pending loop.
+        The mover reads BOTH families (F-026): produced/ is the dispatch
+        inbox, and consumed/ is the recovery inbox. A consumed loop whose
+        hunter wrote no terminal spec set is work again after a provider pause
+        - the produced->consumed move is the admission marker, never the
+        completion marker. The model document rides the entry so the recovery
+        dispatch needs no second read and never re-models the unit.
 
-        The produced family only: a consumed unit is decided and never
-        re-dispatched, and a model below COMPLETED or invalid is never dispatch
-        input (S2 4.3, 5.7). A zero-loop consumable model IS an entry with no
-        loops and no malformed files - the mover consumes it without a
-        dispatch."""
+        A malformed file is REPORTED, never dropped (T4a review F1): dropping
+        it would read as "the unit holds no loop file", the mover would consume
+        the model, and the store would refuse while the `loop-*.yaml` remains -
+        the run would never quiesce (S2 10.5). The mover refuses it once and
+        never counts it as a pending loop.
+        """
         with self._lock_for(project_id):
-            produced = self._family_dir(project_id, "produced")
-            if not produced.exists():
+            root = self._family_dir(project_id, family)
+            if not root.exists():
                 return []
             entries: list[dict] = []
-            for directory in sorted(produced.iterdir()):
+            for directory in sorted(root.iterdir()):
                 if not directory.is_dir():
                     continue
                 raw = self._load_document(directory / f"{directory.name}.yaml")
+                if raw is None and family == "consumed":
+                    # The model moves with its LAST loop file (S2 8.4), so a
+                    # consumed loop from a multi-loop unit still has its model
+                    # in produced/. Read that same original document: the
+                    # recovery never re-models the unit.
+                    raw = self._load_document(
+                        self._model_path(project_id, directory.name, "produced"))
                 if raw is None or not self._consumable(raw):
                     continue
                 unit_id = raw.get("unit_id")
@@ -652,6 +653,38 @@ class ThreatModelStore(BoundedRecordStore):
                     "model": raw,
                 })
             return entries
+
+    def read_produced_loops(self, project_id: str) -> list[dict]:
+        """The mover's dispatch inbox read (S2 8.1/8.4, T4 #377): one entry per
+        PRODUCED, consumable unit - `{unit_id, unit_name, run_id, loops,
+        malformed_loops, model}` - with `loops` the unit's produced loop file
+        records in rank order, each as `{loop_id, record}` (the file stem plus the
+        record verbatim, so the mover's validity predicate can check the two
+        agree), `malformed_loops` the file stems whose body is unreadable or not a
+        mapping, each as `{loop_id, reason}`, and `model` the document this read
+        already parsed (the mover's payload context, S2 8.2: the loop file does
+        not duplicate the model).
+
+        A zero-loop consumable model IS an entry with no loops and no malformed
+        files - the mover consumes it without a dispatch. A model below
+        COMPLETED or invalid is never dispatch input (S2 4.3, 5.7)."""
+        return self._read_family_loops(project_id, "produced")
+
+    def read_consumed_loops(self, project_id: str) -> list[dict]:
+        """The mover's recovery inbox read (F-026): one entry per CONSUMED,
+        consumable unit, in the same shape as `read_produced_loops`.
+
+        The consumed family is not "decided and never re-dispatched": the
+        produced->consumed move is admission, and the hunter's terminal spec
+        set is completion. After a provider pause a consumed loop can have no
+        terminal set, so the mover recovers it from here.
+
+        The model dependency is the ORIGINAL model document, never a re-model.
+        The model moves to consumed/ with the unit's LAST loop file, so for a
+        multi-loop unit the consumed loop still finds its model in produced/;
+        the read falls back to it. A zero-loop consumed unit is not work and
+        carries no recovery entry (its loops list is empty)."""
+        return self._read_family_loops(project_id, "consumed")
 
     def read_produced_units(self, project_id: str) -> list[dict]:
         """Every produced model's `{unit_id, run_id, state}` (S2 9.3).

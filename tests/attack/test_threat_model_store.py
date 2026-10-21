@@ -846,6 +846,51 @@ def test_read_produced_loops_is_empty_for_a_consumed_or_unconsumable_model(tmp_p
     assert other.read_produced_loops(PROJECT) == []
 
 
+def test_read_consumed_loops_reports_the_consumed_unit_and_its_model(tmp_path):
+    """F-026: the recovery read is the SAME entry shape as the produced read,
+    over the consumed family. The model document is the consumed one - the
+    model moved with its last loop file - so a recovery dispatch never needs a
+    re-model."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store, loops=[_loop("high")])
+    assert store.consume_loop(PROJECT, UNIT, "loop-1") is True
+
+    entries = store.read_consumed_loops(PROJECT)
+
+    assert [(e["unit_id"], e["unit_name"], e["run_id"]) for e in entries] == [
+        (UNIT, "Service-catalogue-and-discovery", RUN),
+    ]
+    assert [loop["loop_id"] for loop in entries[0]["loops"]] == ["loop-1"]
+    assert entries[0]["loops"][0]["record"]["loop_id"] == "loop-1"
+    assert entries[0]["model"]["unit_id"] == UNIT
+    assert store.read_produced_loops(PROJECT) == []
+
+
+def test_read_consumed_loops_falls_back_to_the_produced_model_for_a_multi_loop_unit(
+        tmp_path):
+    """F-026 model dependency: the model moves with the unit's LAST loop file.
+    A consumed loop from a multi-loop unit therefore finds its original model
+    still in produced/; the recovery read falls back to it and never re-models.
+    Consuming the last loop moves the model, and both reads still agree."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store, loops=[_loop("high"), _loop("low")])
+    assert store.consume_loop(PROJECT, UNIT, "loop-1") is True
+
+    entries = store.read_consumed_loops(PROJECT)
+
+    assert [loop["loop_id"] for loop in entries[0]["loops"]] == ["loop-1"]
+    assert entries[0]["model"]["unit_id"] == UNIT
+    assert [loop["loop_id"] for loop in
+            store.read_produced_loops(PROJECT)[0]["loops"]] == ["loop-2"]
+
+    assert store.consume_loop(PROJECT, UNIT, "loop-2") is True
+    assert store.read_produced_loops(PROJECT) == []
+    entries = store.read_consumed_loops(PROJECT)
+    assert [loop["loop_id"] for loop in entries[0]["loops"]] == [
+        "loop-1", "loop-2"]
+    assert entries[0]["model"]["unit_id"] == UNIT
+
+
 def test_read_produced_loops_reports_a_zero_loop_produced_model(tmp_path):
     """S2 8.4: a zero-loop produced COMPLETED valid model IS the mover's input -
     it carries no loop file, so the entry proves the model is consumable, and

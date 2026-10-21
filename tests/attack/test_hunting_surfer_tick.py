@@ -44,8 +44,10 @@ from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
     ProducedItem,
     RuntimeControlPlane,
+    ThreatLoopItem,
     hunter_session_id,
     pod_session_id,
+    read_produced_inbox,
     run_delivery_tick,
 )
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
@@ -306,6 +308,12 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores):
         control=control, coro_for=_real_coro_for(threat, hunter),
     )
     assert report.admitted == 2 and report.moved == 2
+    # F-026: the move is admission, not completion. The tick's admitted hunter
+    # did not run in this fake plane, so the consumed loop has no terminal spec
+    # set yet and IS still work. The hunter's finalize settles it.
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is True
+    hunter.finalize_specs(PROJECT, DISPATCH_ID, run_id=RUN)
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
     # and with nothing left and no live session, quiesce is REACHABLE - the
@@ -314,6 +322,136 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores):
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
         control=RecordingControlPlane(), state=RunDispatchState(),
     )) is True
+
+
+# --- F-026: the consumed-loop recovery family -----------------------------------
+
+def _consumed_loop(stores):
+    """One loop consumed at admission: the loop file and model live in
+    consumed/, and no hunter has written a terminal spec set yet."""
+    threat, hunter = stores
+    _produce(stores)
+    assert threat.consume_loop(PROJECT, UNIT, LOOP_ID) is True
+    assert threat.read_produced_loops(PROJECT) == []
+    return threat, hunter
+
+
+def test_a_consumed_loop_without_a_terminal_set_is_recovered(stores):
+    """F-026: the produced->consumed move is admission, not completion. The
+    recovery item carries the consumed model document (never a re-model) and
+    the same loop identity/session; the hunter's zero-spec finalize settles it."""
+    threat, hunter = _consumed_loop(stores)
+
+    inbox = read_produced_inbox(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter)
+
+    loops = [item for item in inbox.items if isinstance(item, ThreatLoopItem)]
+    assert len(loops) == 1
+    item = loops[0]
+    assert item.recovered is True
+    assert item.message_id == DISPATCH_ID
+    assert item.session_id == HUNTER_SESSION
+    assert item.model is not None and item.model["unit_id"] == UNIT
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is True
+
+    hunter.finalize_specs(PROJECT, DISPATCH_ID, run_id=RUN)
+
+    assert [i for i in read_produced_inbox(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter).items
+        if isinstance(i, ThreatLoopItem)] == []
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
+
+
+def test_a_consumed_loop_is_recovered_while_its_sibling_stays_produced(stores):
+    """F-026 model dependency: a multi-loop unit consumes its model only with
+    the LAST loop. The consumed loop is recovered from the still-produced
+    model, while the sibling produced loop stays a normal dispatch candidate."""
+    threat, hunter = stores
+    _produce(stores, loops=[loop_row(), loop_row(likelihood="low")])
+    assert threat.consume_loop(PROJECT, UNIT, "loop-1") is True
+    assert [e["unit_id"] for e in threat.read_consumed_loops(PROJECT)] == [UNIT]
+    assert [e["unit_id"] for e in threat.read_produced_loops(PROJECT)] == [UNIT]
+
+    inbox = read_produced_inbox(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter)
+
+    recovered = [i for i in inbox.items
+                 if isinstance(i, ThreatLoopItem) and i.recovered]
+    produced = [i for i in inbox.items
+                if isinstance(i, ThreatLoopItem) and not i.recovered]
+    assert [i.loop_id for i in recovered] == ["loop-1"]
+    assert [i.loop_id for i in produced] == ["loop-2"]
+    assert recovered[0].model is not None
+    assert recovered[0].model["unit_id"] == UNIT
+
+
+def test_a_terminal_set_from_another_run_does_not_settle_this_loop(stores):
+    """The terminal-set marker is run-scoped, like the loop body: a stale marker
+    from an earlier run must not suppress recovery of the current run's loop."""
+    threat, hunter = _consumed_loop(stores)
+    hunter.finalize_specs(PROJECT, DISPATCH_ID, run_id="run-earlier")
+
+    assert any(
+        isinstance(item, ThreatLoopItem) and item.recovered
+        for item in read_produced_inbox(
+            PROJECT, RUN, threat_store=threat, hunter_store=hunter).items
+    )
+
+    hunter.finalize_specs(PROJECT, DISPATCH_ID, run_id=RUN)
+    assert not any(
+        isinstance(item, ThreatLoopItem)
+        for item in read_produced_inbox(
+            PROJECT, RUN, threat_store=threat, hunter_store=hunter).items
+    )
+
+
+def test_a_recovered_loop_redispatches_without_a_second_move(stores):
+    """At-least-once: a recovered loop is dispatched again, and its move is
+    already satisfied - the tick lands no second produced->consumed move. A live
+    recovered session is never re-dispatched."""
+    threat, hunter = _consumed_loop(stores)
+
+    live = RecordingControlPlane(live={HUNTER_SESSION})
+    report = run_delivery_tick(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        control=live, coro_for=_real_coro_for(threat, hunter),
+    )
+    assert live.calls == []
+    assert report.dispatched == 0 and report.moved == 0
+
+    control = RecordingControlPlane()
+    report = run_delivery_tick(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        control=control, coro_for=_real_coro_for(threat, hunter),
+    )
+    assert control.calls == [HUNTER_SESSION]
+    assert report.produced == 1 and report.admitted == 1
+    assert report.moved == 0 and report.models_consumed == 0
+    # the loop stays in consumed/ (the move is already satisfied), and the
+    # still-unsettled hunter keeps the work pending for the next tick
+    assert [loop["loop_id"] for loop in
+            threat.read_consumed_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is True
+
+    hunter.finalize_specs(PROJECT, DISPATCH_ID, run_id=RUN)
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
+
+
+def test_a_foreign_run_consumed_loop_is_not_recovered(stores):
+    """The recovery read is run-scoped: another run's consumed loop is its own
+    mover's work, never stolen by this run."""
+    threat, hunter = stores
+    _produce(stores, run_id="run-other")
+    assert threat.consume_loop(PROJECT, UNIT, LOOP_ID) is True
+
+    assert read_produced_inbox(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter).items == ()
+    assert run_work_remaining(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
 
 
 def test_undispatchable_statuses_are_not_work(stores):
