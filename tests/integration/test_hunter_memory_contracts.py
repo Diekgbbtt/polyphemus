@@ -133,6 +133,7 @@ def test_C8_read_specs_listing_sides_and_statuses(tmp_path):
     store.write_specs(PROJECT, HUNT_KEY, [
         _spec(fault_keyword="f1"), _spec(fault_keyword="f2")])
     store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(status="ratified", fault_keyword="f1"),
         _spec(status="dropped", fault_keyword="f2")])
     assert len(store.read_specs(PROJECT, HUNT_KEY)) == 2
     assert store.read_specs(PROJECT, HUNT_KEY, statuses=["dropped"]) == [

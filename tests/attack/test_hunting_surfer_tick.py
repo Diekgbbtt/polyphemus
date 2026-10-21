@@ -485,8 +485,10 @@ def test_consume_spec_requires_a_safe_hunt_key(tmp_path):
 
 def test_list_hunt_keys_and_produced_spec_files_are_deterministic(tmp_path):
     hunter = HunterMemoryStore(tmp_path)
-    _write_spec(hunter, hunt_key=DISPATCH_ID, keyword="sqli", strategy="blind")
-    _write_spec(hunter, hunt_key=DISPATCH_ID, keyword="xss", strategy="reflected")
+    hunter.write_specs(PROJECT, DISPATCH_ID, [
+        _spec(status="ratified", fault_keyword="sqli", strategy_keyword="blind"),
+        _spec(status="ratified", fault_keyword="xss", strategy_keyword="reflected"),
+    ])
     other = "Service-b__loop-2"                 # a distinct loop dispatch id
     _write_spec(hunter, hunt_key=other, keyword="sqli", strategy="blind")
     assert hunter.list_hunt_keys(PROJECT) == [other, DISPATCH_ID]  # lexical order

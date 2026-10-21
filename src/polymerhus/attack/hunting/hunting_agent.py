@@ -529,6 +529,7 @@ def build_hunting_agent(
         compiled = build_hunter_graph().compile()
         tools = build_hunter_tools(
             store=memory_store, project_id=project_id, hunt_key=hunt_key,
+            run_id=run_id,
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
             http_search_fn=http_search_fn, http_get_fn=http_get_fn,
             suite_classes=suite_classes, suite_read_fn=suite_read_fn,

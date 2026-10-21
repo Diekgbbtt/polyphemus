@@ -1340,6 +1340,7 @@ async def start_hunting(
                 project_id, hunting_run_id,
                 threat_store=run_threat_store,
                 hunter_store=hunter_store,
+                pod_store=pod_store,
                 control=control,
                 coro_for=coro_for,
                 state=state,

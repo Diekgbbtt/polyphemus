@@ -251,6 +251,29 @@ class DuplicateSpecError(Exception):
     """
 
 
+class IncompleteSpecSetError(ValueError):
+    """A terminal spec-set write omitted a previously authored draft.
+
+    The terminal VERIFY-CLAIMS write carries the WHOLE set: every earlier
+    hypothesised spec must be promoted (`ratified`) or explicitly declassed
+    (`dropped`). Silently omitting one drops it from the pod path without any
+    recorded decision (the comfyui-003 `/view` SVG draft was lost exactly this
+    way). The error names the missing derived identities so the hunter can
+    close the set instead of forgetting a branch.
+    """
+
+    def __init__(self, missing: Sequence[str], hunt_key: str):
+        self.missing = list(missing)
+        self.hunt_key = hunt_key
+        super().__init__(
+            "hunter store: the terminal spec-set write for "
+            f"{hunt_key!r} omits {len(self.missing)} previously authored "
+            f"draft(s): {', '.join(self.missing)}. The terminal write carries "
+            "the WHOLE set: promote each survivor to `ratified` or declass "
+            "each unfeasible spec to `dropped`; do not silently omit a draft."
+        )
+
+
 class HunterMemoryStore(BoundedRecordStore):
     """The hunter-owned per-project spec-set store (S3 8.8/T6).
 
@@ -486,6 +509,47 @@ class HunterMemoryStore(BoundedRecordStore):
             prepared.append((spec_id, spec))
         written: list[tuple[str, Path]] = []
         with self._lock_for(project_id):
+            # The terminal set is COMPLETE: every earlier hypothesised draft is
+            # either promoted or explicitly dropped. A silent omission would
+            # remove a branch from the pod path with no recorded decision, which
+            # is the comfyui-003 defect. The check reads the produced side
+            # under the same lock as the write, so a concurrent move cannot
+            # race it.
+            terminal = bool(statuses) and all(
+                status in ("ratified", "dropped") for status in statuses)
+            if side == "produced" and terminal:
+                batch_runs = {
+                    str((spec.get("provenance") or {}).get("run_id") or "")
+                    for spec in specs
+                    if isinstance(spec.get("provenance"), dict)
+                }
+                batch_run = (
+                    next(iter(batch_runs))
+                    if len(batch_runs) == 1 and next(iter(batch_runs))
+                    else ""
+                )
+                missing: list[str] = []
+                for existing in self.produced_spec_files(project_id, hunt_key):
+                    if existing in seen:
+                        continue
+                    try:
+                        body = self.read_spec(
+                            project_id, hunt_key, existing, side="produced")
+                    except Exception:  # noqa: BLE001 - a corrupt draft is not silently ignored
+                        missing.append(existing)
+                        continue
+                    if not body or body.get("status") != "hypothesised":
+                        continue
+                    existing_run = str(
+                        (body.get("provenance") or {}).get("run_id") or ""
+                    )
+                    if batch_run and existing_run != batch_run:
+                        # a draft of another run (or a legacy draft) is not this
+                        # terminal set's responsibility
+                        continue
+                    missing.append(existing)
+                if missing:
+                    raise IncompleteSpecSetError(missing, hunt_key)
             for spec_id, spec in prepared:
                 path = self._spec_file(project_id, hunt_key, spec_id, side)
                 consumed_path = self._spec_file(
@@ -569,6 +633,17 @@ class HunterMemoryStore(BoundedRecordStore):
         (S3 8.9). `consumed/` contributes nothing. A missing side contributes
         nothing (a valid empty result)."""
         side_dir = self._spec_dir(project_id, hunt_key) / "produced"
+        if not side_dir.exists():
+            return []
+        return sorted(child.stem for child in side_dir.glob("*.yaml"))
+
+    def consumed_spec_files(self, project_id: str, hunt_key: str) -> list[str]:
+        """The CONSUMED-side spec file stems under one hunt key, in file-name
+        order. F-017: the mover reconciles this inventory against terminal
+        PodExports on resume, so a spec admitted before a provider pause is
+        re-dispatched instead of being lost. A missing side contributes
+        nothing (a valid empty result)."""
+        side_dir = self._spec_dir(project_id, hunt_key) / "consumed"
         if not side_dir.exists():
             return []
         return sorted(child.stem for child in side_dir.glob("*.yaml"))
@@ -730,6 +805,7 @@ class HunterMemoryStore(BoundedRecordStore):
 __all__ = [
     "DuplicateSpecError",
     "HunterMemoryStore",
+    "IncompleteSpecSetError",
     "NOTE_KINDS",
     "spec_identifier",
 ]

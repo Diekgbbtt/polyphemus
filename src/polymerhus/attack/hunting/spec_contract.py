@@ -36,6 +36,7 @@ SKILL_PROCEDURE_MAX_CHARS = 4000
 """The bounded skill-procedure excerpt (S3 8.6): the total of the seven fields."""
 
 SPEC_PROVENANCE_FIELDS: tuple[str, ...] = (
+    "run_id",
     "loop_id",
     "unit_id",
     "canonical_class",
@@ -83,6 +84,10 @@ class SpecProvenance(BaseModel):
     seven-field excerpt the triager reads; it is never prose.
     """
 
+    run_id: str = Field(
+        default="",
+        description="The hunting run id the spec was authored under; bound by "
+                    "the hunts_store tool, never authored by the model.")
     loop_id: str = Field(default="", description="The dispatching loop id.")
     unit_id: str = Field(default="", description="The L1 unit identity.")
     canonical_class: str = Field(

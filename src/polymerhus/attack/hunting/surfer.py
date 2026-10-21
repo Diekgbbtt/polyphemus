@@ -239,6 +239,7 @@ def run_work_remaining(
     *,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
+    pod_store: Any = None,
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
 ) -> bool:
     """True when a DISPATCHABLE-NOW produced item remains for this run.
@@ -264,7 +265,7 @@ def run_work_remaining(
     `is_run_quiesced` holds on the mid-graph clause in that window."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
-        hunter_store=hunter_store,
+        hunter_store=hunter_store, pod_store=pod_store,
     )
     if inbox.models_to_consume:
         # a produced COMPLETED valid model with no dispatchable loop left: the
@@ -279,6 +280,7 @@ async def is_run_quiesced(
     *,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
+    pod_store: Any = None,
     control,
     state: RunDispatchState,
 ) -> bool:
@@ -310,7 +312,8 @@ async def is_run_quiesced(
         return False
     return not run_work_remaining(
         project_id, run_id, threat_store=threat_store,
-        hunter_store=hunter_store, live_loop_likelihoods=state.loop_likelihoods,
+        hunter_store=hunter_store, pod_store=pod_store,
+        live_loop_likelihoods=state.loop_likelihoods,
     )
 
 
@@ -814,6 +817,7 @@ async def run_surfer_loop(
     *,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
+    pod_store: Any = None,
     control,
     coro_for: Callable[[ProducedItem], Any],
     state: RunDispatchState,
@@ -844,6 +848,7 @@ async def run_surfer_loop(
             project_id, run_id,
             threat_store=threat_store,
             hunter_store=hunter_store,
+            pod_store=pod_store,
             control=control, coro_for=coro_for,
             live_loop_likelihoods=state.loop_likelihoods,
         )
@@ -861,6 +866,7 @@ async def run_surfer_loop(
                 project_id, run_id,
                 threat_store=threat_store,
                 hunter_store=hunter_store,
+                pod_store=pod_store,
                 control=control, state=state,
             )
         )

@@ -223,6 +223,27 @@ def test_hunts_store_read_is_bound_to_the_loop_key(tmp_path):
                              statuses=["ratified"]))["specs"] == []
 
 
+def test_hunts_store_terminal_write_omitting_a_draft_is_a_coded_rejection(tmp_path):
+    """The F-017 quality repair at the tool seam: a terminal set that omits a
+    previously hypothesised draft is rejected with a coded list of the missing
+    identities, so the hunter must ratify or drop each draft explicitly."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    assert json.loads(_hunts(store, command="write", specs=[
+        {"status": "hypothesised", "target_identity": {"url": "https://a"},
+         "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "hypothesised", "target_identity": {"url": "https://a"},
+         "fault_keyword": "f2", "strategy_keyword": "probe"},
+    ]))["ok"] is True
+    out = json.loads(_hunts(store, command="write", specs=[
+        {"status": "ratified", "target_identity": {"url": "https://a"},
+         "fault_keyword": "f1", "strategy_keyword": "probe"},
+    ]))
+    assert out["ok"] is False
+    assert out["error"] == "incomplete_spec_set"
+    assert out["missing"] == ["f2_probe"]
+    assert "drop" in out["detail"]
+
+
 def test_hunts_store_refuses_a_mixed_status_set(tmp_path):
     """S3 8.7: only the GENERATE (all hypothesised) and terminal
     (ratified/dropped) shapes exist. A mixed set is a coded rejection naming
@@ -269,6 +290,24 @@ def test_unknown_parameter_is_a_coded_teaching_rejection(tmp_path):
     assert parsed["ok"] is False
     assert parsed["error"] == "hunts_store_args_rejected"
     assert "bogus" in " ".join(parsed["fields"])
+
+
+def test_hunts_store_injects_the_bound_run_id_into_spec_provenance(tmp_path):
+    """F-017: every spec carries the hunting run id, so a consumed spec with no
+    terminal PodExport can be attributed to the current run on resume. The model
+    never has to author a run id; the tool binds it."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    tool = HuntsStoreTool(store=store, project_id=PROJECT,
+                          hunt_key=HUNT_KEY, run_id="run-42")
+    out = json.loads(tool.invoke({
+        "command": "write",
+        "specs": [{"status": "ratified",
+                   "target_identity": {"url": "https://a"},
+                   "fault_keyword": "f1", "strategy_keyword": "probe"}],
+    }))
+    assert out["ok"] is True
+    stored = store.read_spec(PROJECT, HUNT_KEY, "f1_probe")
+    assert stored["provenance"]["run_id"] == "run-42"
 
 
 # --- S3 8.7: the skill pair is bound ------------------------------------------

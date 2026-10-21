@@ -181,10 +181,42 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** the ratified spec `shared-store-namespace_manager-config-read` was admitted and moved from `produced/` to `consumed/` at 2026-10-21T00:18:20Z, then the run paused on the provider failure at 00:27:30. The spec has no `test-executor-pod/` directory and no PodExport. The run later completed at 01:05:04 without re-dispatching it.
 - **Impact:** the pod never executed the exact ground-truth read that the threat model and hunter had bound; comfyui-001 was scored missed even though the model and spec were correct.
 - **Evidence:** `diagnoses.yaml` comfyui-001; `mover.py::_spec_items`, `deduce_delivery`, `consume_spec`; `surfer.py::_run_pod_session`.
-- **Status:** open; high severity.
+- **Status:** fixed; regression covered.
 - **Domain:** pod delivery, resume, and at-least-once semantics.
-- **Root cause:** `DispatchFeedback.ADMITTED` moves a spec to `to_move`, and `consume_spec` renames it into `consumed/` at admission. `mover._spec_items` re-reads only `produced/`, so a spec consumed before its pod finishes is never re-dispatched. A provider pause that cancels the pod session leaves a consumed spec with no terminal export; the resume path does not reconcile `consumed/` against terminal exports.
-- **Fix direction:** reconcile `consumed/` against terminal PodExports on resume and re-dispatch every consumed spec with no export; or model pod delivery as an explicit in-flight state and move produced->consumed only on terminal completion. Add a regression test that pauses after admission and asserts re-queue or re-dispatch.
+- **Root cause:** `DispatchFeedback.ADMITTED` moves a spec to `to_move`, and `consume_spec` renames it into `consumed/` at admission. `mover._spec_items` re-read only `produced/`, so a spec consumed before its pod finished was never re-dispatched. A provider pause that cancelled the pod session left a consumed spec with no terminal export; the resume path did not reconcile `consumed/` against terminal exports.
+- **Fix:** `mover.read_produced_inbox` now reconciles the consumed side when the pod store is bound. A consumed `ratified` spec whose typed `provenance.run_id` names THIS run and whose `PodMemoryStore.read_pod_export(spec_id, run_id)` is empty is recovered as a `TestSpecItem` (`recovered=True`) and dispatched through the same pod session. A terminal export of either verdict ends recovery; a foreign run or a legacy spec without a run id is never guessed. `HuntsStoreTool` binds the current run id into every spec's provenance, so the attribution is durable and model-independent. The surfer's `run_work_remaining`/quiesce read uses the same reconciliation, so the run cannot quiesce past a lost spec. Tests: `test_C40_consumed_ratified_spec_without_export_is_redispatched`, `test_C41_consumed_spec_with_an_export_or_a_foreign_run_is_not_redispatched`, and the store's consumed-side inventory.
+
+### F-018 - The progressive risk halt stopped the intake after one unit
+
+- **Detected:** by the comfyui canary layer attribution.
+- **Signal:** `intake_position=1`, `crossing_unit=RESTApi:core-http`, `blocked_unit=ReverseProxy`, `risk_total=44`, `risk_threshold=12`; the expected manager units sat at positions 24, 28, and 29 and were never modelled.
+- **Impact:** comfyui-005 and comfyui-006 had no model, loop, spec, or pod.
+- **Status:** mitigated for the retest; calibration remains open.
+- **Fix:** `HUNT_RISK_THRESHOLD=1000` is set in the eval instance `.env` for the coverage runs, so the intake is not halted before the manager surfaces. The structural follow-up is a coverage floor or a calibrated threshold, not a per-run override.
+
+### F-019 - L1 service links and L0 route families were missing
+
+- **Detected:** by the comfyui canary layer attribution.
+- **Signal:** `workflow-library`, `extension-manager-configuration`, and `model-installation` exist in L1 with zero links; `RESTApi:manager-http` is a bare data-dependency node; L0 has zero `/userdata` and zero `/manager` endpoints.
+- **Impact:** the analysis layer contributed to four misses, and the manager units ranked below the halt.
+- **Status:** open; the comfyui retest reuses the frozen surface, so this is held constant. The white-jotter fresh trial exercises the same analysis path.
+- **Structural follow-up:** ingest or link the service-to-API edges, and seed the target's route inventory into L0.
+
+### F-020 - The hunter terminal set silently omitted a drafted spec
+
+- **Detected:** by the comfyui canary layer attribution (comfyui-003).
+- **Signal:** the `/view` SVG spec was written as `hypothesised` at 00:10:24, but the terminal write at 00:27:02 persisted only the three `/userdata` specs and claimed `/view` coverage.
+- **Impact:** the correct artefact-route test never reached a pod.
+- **Status:** fixed.
+- **Fix:** `HunterMemoryStore.write_specs` rejects a terminal write that omits a previously produced hypothesised spec, and the `hunts_store` tool returns a coded `incomplete_spec_set` response naming the missing identities. The hunter must promote or explicitly drop every draft; the refusal is atomic.
+
+### F-021 - Path traversal was closed on literal-only probes
+
+- **Detected:** by the comfyui canary layer attribution (comfyui-004).
+- **Signal:** IA-3 probed literal and single-encoded `/view` traversal only, then declined the class; the path-traversal suite skill was not loaded.
+- **Impact:** no loop or spec for the double-decoding bypass.
+- **Status:** prompt hardened; retest pending.
+- **Fix:** the threat-modeller prompt now states the encoding floor for arbitrary-file-read/path-traversal/LFI/RFI: a literal or single-encoded probe is not a fundamental technical-infeasibility finding; the class skill's normalization and double-encoding bypass must run before a drop.
 
 ## Runtime trials
 

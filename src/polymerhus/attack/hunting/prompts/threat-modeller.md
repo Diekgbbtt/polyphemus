@@ -156,6 +156,10 @@ A drop requires a **fundamental technical-infeasibility finding**:
 A drop is a backward correction: it corrects the interface and trust agreements it was mapped from, and you record the finding, the correction, and the discriminating probe shape that would have falsified it.
 A drop NEVER rests on absence of evidence in the sharpening - breadth is the point of this phase, and the kept set maps the research directions the hunters deepen.
 
+**Encoding floor for path and file classes.** A literal or single-encoded probe is not a fundamental technical-infeasibility finding for arbitrary-file-read, path-traversal, LFI, or RFI.
+Before you drop one of those classes, load its suite skill with `skill_load` and run the skill's normalization and bypass technique, including double URL encoding, mixed case, overlong forms, and repeated decoding.
+A framework that validates `subfolder` with `normpath` and then decodes it again is exploitable by a double-encoded `../` sequence; a probe that sends only `../` or `..%2F` does not close the class.
+
 An unprobed carrier keeps its loop at `ASSUMED`.
 A vulnerability with no feasible failure mode keeps its loop with likelihood `none`; it contributes zero to the risk sum and is not dispatched.
 
