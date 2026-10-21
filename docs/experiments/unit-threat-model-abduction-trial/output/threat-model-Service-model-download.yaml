@@ -1,0 +1,1153 @@
+unit_id: Service:model-download
+kind: Service
+state: COMPLETED
+trial: t1-tbsg-service-model-download
+environment:
+  base_url: http://46.224.225.245:47745
+  baseurl_in_projection: http://comfyui-manager:8288
+  http_history: none
+  previous_models: none
+  target_stack: >-
+    aiohttp/3.14.3 on Python/3.11; ComfyUI core v0.3.76 + ComfyUI-Manager V3.37;
+    single application, no TLS, no login surface, single seeded default profile;
+    manager routes mirrored under /api; background work queue publishes over a
+    websocket client channel keyed by caller-supplied client id.
+  oracle: >-
+    ssrf-listener:8000 callback container on the target network; read via ssh
+    docker exec; no hits recorded during the whole trial.
+technical_sharpening:
+  interface_agreements:
+    - id: IA-1
+      statement: >-
+        A model install is requested by POSTing a full catalog record plus a caller-chosen
+        ui_id; the receiving side admits the record to the global work queue after
+        per-field membership checks against the served catalog.
+      artifact: >-
+        JSON object with catalog fields {name, type, base, save_path, description,
+        reference, filename, url, size, installed} plus ui_id.
+      establishes:
+        - item: generic HTTP layer accepts the request; route resolves on POST only (GET -> 404)
+          layer: edge routing and gateway
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/queue/install_model -> 404 | method discipline", "probes.log: POST /manager/queue/install_model (verbatim record) -> 200"]
+        - item: >-
+            JSON body is parsed regardless of the declared Content-Type
+            (application/json accepted; text/plain with a JSON body produces the same
+            validation outcome); "no validation present" for the media type
+          layer: parsing and validation
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 400 | content-type text/plain w/ forged url"]
+        - item: >-
+            url must equal a value present in the served catalog url set; a deviation
+            returns 403 with body "A security error has occurred. Please check the terminal logs"
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 403 | url with catalog-url prefix + suffix", "probes.log: POST /manager/queue/install_model -> 400 | correct md5 ui_id, forged url+filename"]
+        - item: >-
+            filename must equal a value present in the served catalog filename set;
+            a deviation returns 400 with body "Invalid model install request is detected";
+            traversal-shaped filenames are rejected by the same equality test
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 400 | forged filename only", "probes.log: POST /manager/queue/install_model -> 400 | filename with traversal suffix"]
+        - item: >-
+            save_path must equal a value present in the served catalog save_path set;
+            deviation and traversal-shaped values return 400
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 400 | forged save_path=vae_approx->checkpoints", "probes.log: POST /manager/queue/install_model -> 400 | save_path traversal variant vae_approx/.."]
+        - item: >-
+            name, type, base, description, reference and size carry "no validation present":
+            description and reference can be forged while the record is accepted; a record can
+            declare a size that does not match the url's artifact
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 200 | forged description+reference only", "probes.log: POST /manager/queue/install_model -> 200 | field mixing (url from A, filename/save_path from B)"]
+        - item: >-
+            ui_id carries "no validation present": any value is accepted (bogus hex string and
+            free-form marker both queued); it is not bound to a session or principal
+          layer: authentication and identity
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 200 | verbatim record with bogus ui_id", "probes.log: POST /manager/queue/install_model -> 200 | field mixing ... ui_id=tmprobe-mix1"]
+        - item: >-
+            the membership test is per-field over the union of catalog values, not a
+            record-identity test: url from record A combined with filename and save_path
+            from record B is accepted
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 200 | field mixing (url from A, filename/save_path from B)", "probes.log: POST /manager/queue/install_model -> 400 | forged save_path", "probes.log: POST /manager/queue/install_model -> 400 | forged filename only"]
+        - item: >-
+            input shape is not validated: a body of {} returns 500 and a non-string filename
+            (number 123) returns 500 "Server got itself in trouble" from an unhandled exception
+          layer: parsing and validation
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 500 | empty body probe", "probes.log: POST /manager/queue/install_model -> 500 | filename as number"]
+        - item: >-
+            an accepted request enqueues one pending job; duplicate submissions enqueue
+            duplicates (three verbatim posts produced total_count 3)
+          layer: internal services and dependencies
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/queue/status -> 200 | queue state after accepted verbatim installs (total_count 3, is_processing false)"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:11:40Z .. 13:18:13Z"]
+    - id: IA-2
+      statement: >-
+        Queue advancement and queue clearing are unauthenticated GET requests; start begins
+        processing of the pending set and reset removes pending jobs while retaining the
+        completed history.
+      artifact: HTTP GET request with no body.
+      establishes:
+        - item: "no validation present: no body, token, origin or identity check on start or reset"
+          layer: authentication and identity
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/queue/start -> 200 | start processing: e2e transition", "probes.log: GET /manager/queue/reset -> 200 | restore: clear queued probe jobs"]
+        - item: start on an empty queue is a no-op returning 200 with an empty body
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/queue/start -> 200 | queue start endpoint shape (idle)"]
+        - item: reset clears pending jobs and retains completed entries (after reset the queue showed the done e2e job only)
+          layer: data access and persistence
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/queue/status -> 200 | final queue state (total 1, done 1 after reset of a pending job)"]
+        - item: GET /manager/queue/start with the wrong method (POST) is refused with 405
+          layer: edge routing and gateway
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/start -> 405 | method discipline"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:11:28Z, 13:15:02Z, 13:18:35Z"]
+    - id: IA-3
+      statement: >-
+        Queue state is readable without authentication; the status endpoint returns global
+        counts {total_count, done_count, in_progress_count, is_processing} and is mirrored
+        under /api.
+      artifact: HTTP GET request.
+      establishes:
+        - item: "no validation present: no identity filtering; the single queue is reported whole, whoever asks"
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/queue/status -> 200 (five reads across the trial, all unfiltered JSON)", "probes.log: GET /api/manager/queue/status -> 200 | api mirror of queue status"]
+        - item: >-
+            per-job correlation data (ui_target and target=ui_id) is delivered to clients over
+            the websocket channel and consumed by the shell to match grid rows
+          layer: response construction
+          rung: INFERRED
+          evidences: ["/extensions/comfyui-manager/model-manager.js (target-served): onQueueStatus matches event.detail.target against item.hash and ui_target against 'model_manager'", "note: websocket channel not probeable with curl; recorded in evidence_gaps"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:11:28Z .. 13:18:35Z"]
+    - id: IA-4
+      statement: >-
+        The external model catalog is served as one JSON document of 564 records; the mode
+        parameter is accepted but does not change the served list.
+      artifact: 'HTTP GET request with ?mode=, response JSON {"models": [...]}'
+      establishes:
+        - item: the route requires a mode parameter in practice (no-mode request returns 500) but does not validate its value
+          layer: parsing and validation
+          rung: OBSERVED
+          evidences: ["probes.log: GET /api/externalmodel/getlist -> 500 | external model catalog list (no mode)", "probes.log: GET /externalmodel/getlist?mode=__tm_unknown_mode__ -> 200"]
+        - item: >-
+            mode values default, recent, __tm_unknown_mode__ and a URL-shaped value all return
+            byte-identical 265778-byte responses (md5 e691130fe522a680d803f955b72ef61b)
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: GET /externalmodel/getlist?mode=<default|recent|__tm_unknown_mode__|http://ssrf-listener:8000/...> -> 200", "local md5 comparison of the four response bodies"]
+        - item: the installed flag is recomputed against disk state at request time (False -> True after a completed download)
+          layer: data access and persistence
+          rung: OBSERVED
+          evidences: ["probes.log: GET /externalmodel/getlist?mode=default -> 200 | catalog state after e2e: installed flag flip (GroundingDINO_SwinT_OGC.cfg.py installed True)"]
+        - item: the /api mirror serves the same 265778-byte document
+          layer: edge routing and gateway
+          rung: OBSERVED
+          evidences: ["probes.log: GET /api/externalmodel/getlist?mode=default -> 200 | api mirror of catalog list with mode"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:11:40Z .. 13:16:52Z"]
+    - id: IA-5
+      statement: >-
+        The catalog channel selection is read and mutated through
+        /manager/channel_url_list; mutation accepts only predefined channel names.
+      artifact: HTTP GET request with optional ?value=<channel name>.
+      establishes:
+        - item: 'read returns {"selected": ..., "list": [<6 name::url pairs>]} with selected default at rest'
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/channel_url_list -> 200 | channel config recon (default/recent/legacy/forked/dev/tutorial)"]
+        - item: a known name mutates the selection (selected tutorial observed, then restored to default)
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/channel_url_list?value=tutorial -> 200 | select mutation", "probes.log: GET /manager/channel_url_list -> 200 | read back selected after tutorial select"]
+        - item: >-
+            an injected value shaped name::url is accepted with 200 but produces no observable
+            state change and no outbound fetch; the url list itself is not client-editable
+          layer: application and business logic
+          rung: OBSERVED
+          evidences: ["probes.log: GET /manager/channel_url_list?value=tmprobe::http://ssrf-listener:8000/... -> 200 | list unchanged, selected default", "ssh oracle: no listener hits"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:17:22Z .. 13:18:05Z"]
+    - id: IA-6
+      statement: >-
+        The outbound fetch worker downloads the catalog record's url and writes the bytes
+        under the record's save_path and filename inside the model directories.
+      artifact: outbound HTTPS GET of the catalog url; downloaded bytes written to disk.
+      establishes:
+        - item: "no validation present of response content: no hash, signature or size check on the downloaded artifact surfaces anywhere in the response path"
+          layer: internal services and dependencies
+          rung: INFERRED
+          evidences: ["probes.log: POST ... -> 200 | field mixing (declared size 1.01KB paired with a 4.71MB artifact url accepted)", "no integrity error observed on the completed e2e download"]
+        - item: >-
+            end-to-end completion: one accepted 1.01KB record was processed (total 1, done 1) and
+            the catalog then reported installed True for exactly that record
+          layer: data access and persistence
+          rung: OBSERVED
+          evidences: ["probes.log: POST /manager/queue/install_model -> 200 | e2e accepted job (GroundingDINO_SwinT_OGC.cfg.py)", "probes.log: GET /manager/queue/start -> 200 | e2e transition", "probes.log: GET /manager/queue/status -> 200 | post-start status (total 1, done 1)", "probes.log: GET /externalmodel/getlist?mode=default -> 200 | installed False -> True"]
+        - item: >-
+            the fetch target observed during the trial is the catalog host (huggingface.co for the
+            e2e record); the worker is also the manager's requests/urllib/huggingface machinery
+          layer: internal services and dependencies
+          rung: INFERRED
+          evidences: ["record url https://huggingface.co/ShilongLiu/GroundingDINO/raw/main/GroundingDINO_SwinT_OGC.cfg.py", "unit dossier: IntegrationSystem:model-download::outbound-fetch"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:16:34Z .. 13:16:52Z"]
+    - id: IA-7
+      statement: >-
+        The manager shell renders catalog records; record fields are interpolated into the
+        grid DOM by string concatenation.
+      artifact: catalog record fields (name, reference, description, url) consumed by the shell.
+      establishes:
+        - item: >-
+            "no validation present": the name column formatter returns
+            `<a href=${rowItem.reference} target="_blank"><b>${name}</b></a>` (unquoted href
+            attribute, raw interpolation); description is rendered into an auto-height cell
+          layer: response construction
+          rung: OBSERVED
+          evidences: ["GET /extensions/comfyui-manager/model-manager.js -> 200: formatter at the name column returns the interpolated anchor; autoHeightColumns includes description"]
+        - item: the rendered name/reference originate from the remote catalog document (channel sourced from raw.githubusercontent.com)
+          layer: internal services and dependencies
+          rung: OBSERVED
+          evidences: ["IA-5 channel list: default::https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main", "IA-4 catalog records carry name/reference"]
+      rung: OBSERVED
+      evidences: ["probes.log: GET /extensions/comfyui-manager/model-manager.js -> 200 | model manager ui js"]
+  control_flows:
+    - id: CF-1
+      statement: >-
+        Install flow: shell selection -> per item POST /manager/queue/install_model
+        (item.originalData + ui_id = md5(name+reference)) -> per-field membership check ->
+        enqueue pending -> explicit GET /manager/queue/start -> worker loop -> per job fetch and
+        file write -> status events (cm-queue-status with ui_target/target) and counts -> shell
+        refresh of getlist/status.
+      rung: OBSERVED
+      evidences: ["model-manager.js installModels(): install_model then queue/start then showTerminal", "probes.log end-to-end sequence 13:16:28Z..13:16:52Z"]
+    - id: CF-2
+      statement: >-
+        Queue administration flow: GET /manager/queue/reset clears pending work; GET
+        /manager/queue/start advances it; both are reachable by any caller with no prior state.
+      rung: OBSERVED
+      evidences: ["probes.log: GET /manager/queue/reset -> 200 (clears pending)", "probes.log: GET /manager/queue/start -> 200 (idle no-op and processing start)"]
+    - id: CF-3
+      statement: >-
+        Listing flow: GET /externalmodel/getlist?mode=<channel> -> server-side catalog document
+        with installed flags computed from disk.
+      rung: OBSERVED
+      evidences: ["probes.log: GET /externalmodel/getlist?mode=default -> 200, 265778 bytes", "probes.log: installed flag flip after e2e"]
+    - id: CF-4
+      statement: >-
+        Channel selection flow: GET /manager/channel_url_list?value=<name> mutates the selected
+        channel among six predefined names; the served model list is unaffected.
+      rung: OBSERVED
+      evidences: ["probes.log: select tutorial -> selected tutorial; restore default -> selected default", "probes.log: model list byte-identical across modes"]
+  data_flows:
+    - id: DF-1
+      statement: >-
+        Catalog record fields (url, filename, save_path) -> request body -> validated per-field ->
+        worker download parameters -> filesystem path models/<save_path>/<filename> receives the
+        fetched bytes; disk state then feeds the installed flag.
+      rung: OBSERVED
+      evidences: ["probes.log e2e run: installed False->True for GroundingDINO_SwinT_OGC.cfg.py", "probes.log: field mixing accepted (destination fields need not belong to the url's record)"]
+    - id: DF-2
+      statement: >-
+        Caller-supplied ui_id -> queue job correlation key -> status events (target=ui_id,
+        ui_target=model_manager) -> shell row matching and install-state refresh.
+      rung: INFERRED
+      evidences: ["model-manager.js: data.ui_id = item.hash; onQueueStatus uses event.detail.target/ui_target", "probes.log: bogus ui_id accepted (no validation)"]
+    - id: DF-3
+      statement: >-
+        Disk state (model files present) -> installed flags in the catalog document -> shell
+        rendering of installed/not-installed rows.
+      rung: OBSERVED
+      evidences: ["probes.log: getlist before/after the e2e download (False -> True)"]
+    - id: DF-4
+      statement: >-
+        Remote catalog document fields (name, reference, description) -> manager shell DOM via
+        string interpolation.
+      rung: OBSERVED
+      evidences: ["model-manager.js formatter interpolating name/reference", "catalog sourced from raw.githubusercontent.com per IA-5"]
+trust_model:
+  trust_agreements:
+    - id: TA-1
+      statement: >-
+        The receiving side of IA-1 treats the posted record as a single catalog record: one
+        legitimate artifact, one legitimate destination, submitted by an entitled caller.
+      requires:
+        - item: url, filename and save_path jointly belong to one catalog record (the destination belongs to the source)
+          kind: attribute
+          rung: OBSERVED
+          evidences: ["gap: field mixing url A + filename/save_path B accepted -> 200", "probes.log: field mixing probe"]
+        - item: the declared size bounds the artifact that will be fetched
+          kind: attribute
+          rung: OBSERVED
+          evidences: ["gap: mixing record declared 1.01KB with a 4.71MB url and was accepted", "probes.log: no size enforcement observed"]
+        - item: ui_id identifies the submitting client's own job and cannot steer other clients' views
+          kind: attribute
+          rung: OBSERVED
+          evidences: ["gap: arbitrary ui_id accepted; UI matches rows by it", "probes.log: bogus ui_id -> 200"]
+        - item: the request originates from the manager shell operated by the deployment's single user
+          kind: context
+          rung: OBSERVED
+          evidences: ["gap: no origin or CSRF check observed; JSON parsed for text/plain bodies", "probes.log: text/plain probe -> same validation"]
+        - item: the caller holds the privilege to trigger outbound fetches and writes into shared model storage
+          kind: privilege
+          rung: OBSERVED
+          evidences: ["gap: no privilege layer exists (auth_methods [none]); every request is the default profile", "probes.log: unauthenticated 200s on install/start/reset"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:11:40Z .. 13:18:13Z"]
+    - id: TA-2
+      statement: >-
+        The receiving side of IA-2 treats queue advancement as the operator's decision over the
+        operator's own pending work.
+      requires:
+        - item: the caller is entitled to advance or clear the shared queue
+          kind: privilege
+          rung: OBSERVED
+          evidences: ["gap: start/reset are unauthenticated GETs; no entitlement check observed"]
+        - item: the pending set is stable between enqueue and start (the submitter's work is not removable by third parties)
+          kind: attribute
+          rung: OBSERVED
+          evidences: ["gap: reset cleared a pending job queued by another probe sequence without ownership binding", "probes.log: reset cleared pending, kept done history"]
+        - item: completed history observed by a caller reflects only work that caller cares about
+          kind: context
+          rung: OBSERVED
+          evidences: ["gap: global queue view, no filtering", "probes.log: status shows other probes' jobs"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:15:02Z, 13:18:35Z"]
+    - id: TA-3
+      statement: >-
+        The receiving side of IA-3/IA-4 treats queue counts and the catalog document as
+        non-sensitive operational state of the deployment.
+      requires:
+        - item: the caller is entitled to read the global queue state and the full model catalog
+          kind: privilege
+          rung: OBSERVED
+          evidences: ["gap: no auth on status/getlist; full 564-record document served", "probes.log: getlist/status anonymous 200s"]
+        - item: the catalog document faithfully represents the operator's configured channel
+          kind: attribute
+          rung: OBSERVED
+          evidences: ["gap: mode ignored for the model list (byte-identical across modes); channel selection has no observable effect on it", "probes.log: mode probes"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:11:40Z, 13:15:10Z"]
+    - id: TA-4
+      statement: >-
+        The receiving side of IA-6 treats the remote origin as the authoritative publisher of
+        the artifact named by the catalog record, and the resolved path as confined to the
+        intended model directory.
+      requires:
+        - item: the origin serves exactly the artifact the catalog intends (identity, integrity)
+          kind: attribute
+          rung: INFERRED
+          evidences: ["gap: no hash/signature/size verification observed end to end", "probes.log: e2e download accepted with no integrity assertion"]
+        - item: the resolved destination path stays inside the model root
+          kind: attribute
+          rung: OBSERVED
+          evidences: ["established by exact catalog-value checks on save_path and filename (traversal-shaped deviations rejected 400)", "probes.log: traversal probes rejected"]
+        - item: every catalog value is itself path-safe (the allowlist carries the whole guarantee)
+          kind: attribute
+          rung: ASSUMED
+          evidences: ["no probe can forge a catalog value; blocked with reason (see evidence_gaps)", "nested save_path values such as embeddings/SD1.5 exist in the catalog"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:16:34Z .. 13:16:52Z"]
+    - id: TA-5
+      statement: >-
+        The receiving side of IA-5 treats the selected channel as the operator's intended
+        catalog source.
+      requires:
+        - item: the caller is entitled to change the selected channel
+          kind: privilege
+          rung: OBSERVED
+          evidences: ["gap: select mutation works without authentication (tutorial observed)", "probes.log: channel select probe"]
+        - item: the channel cannot be pointed outside the predefined name::url list
+          kind: attribute
+          rung: OBSERVED
+          evidences: ["established: injected name::url value produced no state change and no fetch", "probes.log: channel injection probe"]
+      rung: OBSERVED
+      evidences: ["probes.log lines 2026-10-18T13:17:22Z .. 13:18:05Z"]
+    - id: TA-6
+      statement: >-
+        The receiving side of IA-7 (the manager shell) treats catalog-derived strings as inert
+        text when rendering the model grid.
+      requires:
+        - item: catalog fields are safe for direct DOM interpolation (escaping, quoted attributes)
+          kind: attribute
+          rung: OBSERVED
+          evidences: ["gap: `<a href=${rowItem.reference} ...>${name}</a>` interpolation with an unquoted attribute", "GET model-manager.js -> 200"]
+        - item: the catalog document that reaches the shell is the trusted one fetched from the configured channel
+          kind: context
+          rung: ASSUMED
+          evidences: ["the shell trusts whatever the manager serves as the model list", "see evidence_gaps: catalog refresh source not observable"]
+      rung: OBSERVED
+      evidences: ["probes.log: GET /extensions/comfyui-manager/model-manager.js -> 200"]
+  dynamic_state_trust:
+    states:
+      - id: S0
+        name: IDLE
+        definition: no pending jobs; done history may exist; is_processing false
+        rung: OBSERVED
+        evidences: ["probes.log: queue/status 0/0/0 at rest", "probes.log: total 1 done 1 after reset of pending work"]
+      - id: S1
+        name: PENDING
+        definition: one or more queued jobs not yet started; total_count > done_count; is_processing false
+        rung: OBSERVED
+        evidences: ["probes.log: total_count 3 after three accepted installs", "probes.log: total 2 done 1 with the mixing job pending"]
+      - id: S2
+        name: PROCESSING
+        definition: the worker loop is consuming the pending set; is_processing true
+        rung: OBSERVED
+        evidences: ["probes.log: post-start status done 1/1 (the 1.01KB job completed inside the status round trip; in_progress window too short to sample)", "unit dossier: background work queue publishes progress over the client channel"]
+      - id: S3
+        name: DONE_HISTORY
+        definition: jobs completed and retained in the queue record until a reset clears pending items; done_count >= 1
+        rung: OBSERVED
+        evidences: ["probes.log: done_count 1 retained across resets", "probes.log: final queue state total 1 done 1"]
+      - id: S4
+        name: INSTALLED
+        definition: the artifact exists in the model directory and the catalog reports installed True for its record
+        rung: OBSERVED
+        evidences: ["probes.log: installed flag False -> True after the e2e download", "note: a file at S4 survives any queue reset (no rollback path observed)"]
+      - id: S5
+        name: JOB_FAILED
+        definition: a job that fails during fetch/write; the queue count semantics for failed jobs
+        rung: ASSUMED
+        evidences: ["not observed: the single e2e job succeeded", "unit dossier: work queue reports progress per job"]
+    transitions:
+      - id: T-1
+        state_from: S0
+        state_to: S1
+        trigger: "POST /manager/queue/install_model (+/api mirror) with a membership-passing record"
+        artifact: posted catalog record plus ui_id; queue write
+        establishes:
+          - item: per-field membership of url/filename/save_path in the served catalog sets
+            rung: OBSERVED
+            evidences: ["probes.log: verbatim -> 200; single-field deviations -> 400/403; mixing -> 200"]
+          - item: "no validation present for name/description/reference/size/ui_id and no input-shape validation"
+            rung: OBSERVED
+            evidences: ["probes.log: bogus ui_id -> 200; filename=123 -> 500; {} -> 500"]
+        requires:
+          - item: the queued job's destination fields belong to the record's url (joint identity)
+            kind: invariant
+            rung: OBSERVED
+            evidences: ["not established: mixing accepted"]
+          - item: the enqueued job is owned by the submitting client
+            kind: trust_transition
+            rung: OBSERVED
+            evidences: ["not established: no session/ownership binding; ui_id is free-form"]
+          - item: the queue carries the state attributes (pending count, ui_id) that later steps rely on
+            kind: state_attribute
+            rung: OBSERVED
+            evidences: ["queue status counts observed; ui_id echoed per the shell JS"]
+        side_effects: pending count +1; job record in the global queue; status events
+        rung: OBSERVED
+        evidences: ["probes.log sequence 13:11:40Z..13:18:13Z"]
+      - id: T-2
+        state_from: S0
+        state_to: S0
+        trigger: "POST install_model with a non-membership record or malformed body"
+        artifact: posted record
+        establishes:
+          - item: rejection with 400 (filename/save_path), 403 (url) or 500 (shape/type faults)
+            rung: OBSERVED
+            evidences: ["probes.log: 400/403/500 rows"]
+        requires:
+          - item: rejected requests leave no partial queue state
+            kind: invariant
+            rung: OBSERVED
+            evidences: ["queue count unchanged after rejected probes", "probes.log: status reads"]
+        side_effects: none observed
+        rung: OBSERVED
+        evidences: ["probes.log lines 13:11:40Z, 13:14:17Z, 13:14:27Z"]
+      - id: T-3
+        state_from: S1
+        state_to: S2
+        trigger: "GET /manager/queue/start"
+        artifact: GET request (no body) plus the pending set
+        establishes:
+          - item: "no guard present: no identity, origin or entitlement check; the sole condition is a non-empty pending set"
+            rung: OBSERVED
+            evidences: ["probes.log: start while idle -> 200 no-op; start with pending -> processing; POST -> 405"]
+        requires:
+          - item: the caller advancing the queue is entitled to run those jobs
+            kind: trust_transition
+            rung: OBSERVED
+            evidences: ["not established: any caller can start any pending work"]
+          - item: the pending set is the set the caller intends to run
+            kind: state_attribute
+            rung: OBSERVED
+            evidences: ["not established: the set is global and mutable by reset"]
+        side_effects: worker loop started; per-job fetch/write; done_count increments; installed flips
+        rung: OBSERVED
+        evidences: ["probes.log: e2e start and completion"]
+      - id: T-4
+        state_from: S2
+        state_to: S3
+        trigger: worker completes a job (fetch + write)
+        artifact: HTTP response bytes from the catalog url; written file
+        establishes:
+          - item: the origin answered with some bytes (no integrity assertion observed)
+            rung: INFERRED
+            evidences: ["no hash/size check in the response path", "probes.log: e2e download with mismatched declared size tolerated in an accepted record"]
+          - item: the file is written under models/<save_path>/<filename>
+            rung: OBSERVED
+            evidences: ["probes.log: installed False -> True for the e2e record"]
+        requires:
+          - item: the bytes are the artifact the catalog intended (integrity)
+            kind: invariant
+            rung: INFERRED
+            evidences: ["not established: no verification observed"]
+          - item: the write stays inside the intended model directory
+            kind: invariant
+            rung: OBSERVED
+            evidences: ["relies on catalog-value exactness; traversal deviations rejected at T-1"]
+          - item: the destination directory state (existing files, installed flags) is consistent after the write
+            kind: state_attribute
+            rung: OBSERVED
+            evidences: ["installed flag recomputed from disk"]
+        side_effects: file persisted (S4); done_count +1; status event with target=ui_id
+        rung: OBSERVED
+        evidences: ["probes.log 13:16:34Z..13:16:52Z"]
+      - id: T-5
+        state_from: S1
+        state_to: S0
+        trigger: "GET /manager/queue/reset"
+        artifact: GET request plus the pending set
+        establishes:
+          - item: "no guard present: no identity or ownership check"
+            rung: OBSERVED
+            evidences: ["probes.log: reset cleared the pending mixing job"]
+        requires:
+          - item: the cleared jobs belong to the caller
+            kind: trust_transition
+            rung: OBSERVED
+            evidences: ["not established: reset cleared work enqueued by another probe sequence"]
+          - item: cleared work is reported to its submitter
+            kind: invariant
+            rung: OBSERVED
+            evidences: ["not established: no error or event observed for the dropped job"]
+        side_effects: pending set cleared; done history retained; no filesystem rollback
+        rung: OBSERVED
+        evidences: ["probes.log: reset/status counts"]
+      - id: T-6
+        state_from: S0
+        state_to: S0
+        trigger: "GET /manager/queue/start with an empty pending set"
+        artifact: GET request
+        establishes:
+          - item: idempotent no-op returning 200 with an empty body
+            rung: OBSERVED
+            evidences: ["probes.log: start idle -> 200"]
+        requires:
+          - item: no side effects on installed state
+            kind: invariant
+            rung: OBSERVED
+            evidences: ["no count or file change observed"]
+        side_effects: none observed
+        rung: OBSERVED
+        evidences: ["probes.log: 13:11:40Z"]
+      - id: T-7
+        state_from: S2
+        state_to: S1
+        trigger: "POST install_model while is_processing is true"
+        artifact: posted record during processing
+        establishes:
+          - item: server-side acceptance of an enqueue during processing
+            rung: ASSUMED
+            evidences: ["not probed: would require a long-running job (blocked with reason)", "the shell blocks this client-side only (stats.is_processing check in model-manager.js)"]
+        requires:
+          - item: adding work mid-run does not invalidate the running job's state assumptions
+            kind: invariant
+            rung: ASSUMED
+            evidences: ["unverified; in evidence_gaps"]
+        side_effects: unknown
+        rung: ASSUMED
+        evidences: ["model-manager.js installModels() blocks on is_processing; the server contract is not observed"]
+      - id: T-8
+        state_from: S2
+        state_to: S0
+        trigger: "GET /manager/queue/reset while is_processing is true"
+        artifact: GET request during processing
+        establishes:
+          - item: whether in-progress work is cancelled, orphaned or allowed to finish
+            rung: ASSUMED
+            evidences: ["not probed: needs a long-running job (blocked with reason)"]
+        requires:
+          - item: an in-flight write is not left half-committed by a concurrent reset
+            kind: invariant
+            rung: ASSUMED
+            evidences: ["unverified; in evidence_gaps"]
+        side_effects: unknown
+        rung: ASSUMED
+        evidences: ["observed reset semantics apply to pending work only (T-5); in-progress behaviour unprobed"]
+    violations:
+      - id: V-1
+        statement: no ownership binding on queue transitions; any caller can start or clear work enqueued by another
+        rung: OBSERVED
+        evidences: ["probes.log: reset cleared a pending probe job; start advanced it"]
+      - id: V-2
+        statement: the pending set is mutable without notice to its submitter; dropped work produces no event or error
+        rung: OBSERVED
+        evidences: ["probes.log: pending mixing job vanished on reset; no status event observed (ws not probed)"]
+      - id: V-3
+        statement: processing/pending interleaving (T-7/T-8) is unverified; the guard that protects in-flight jobs exists only client-side
+        rung: ASSUMED
+        evidences: ["model-manager.js client-side is_processing block", "no server-side guard observed or probed"]
+assumptions:
+  - id: A-1
+    statement: >-
+      Developer assumption: a posted model record is validated as a unit, so the fields the
+      worker uses (url, filename, save_path) describe one artifact and its destination.
+    induced_fault: >-
+      membership is checked per field over the union of catalog values instead of binding the
+      record, so catalog values can be recombined freely (induced fault F-1).
+    boundary_ref: IA-1
+    dimension: [interpretation, spatial]
+    propagation:
+      kind: local
+      origin_ref: null
+    rung: OBSERVED
+    evidences: ["probes.log: field mixing -> 200", "probes.log: single-field deviations -> 400/403"]
+  - id: A-2
+    statement: >-
+      Developer assumption: ui_id is the caller's job identity and can be trusted as the
+      correlation key for status reporting.
+    induced_fault: >-
+      an unvalidated, unbound client string is stored on the job record and echoed in broadcast
+      status events (induced fault F-2).
+    boundary_ref: IA-1
+    dimension: [identity, interpretation]
+    propagation:
+      kind: local
+      origin_ref: null
+    rung: OBSERVED
+    evidences: ["probes.log: bogus ui_id -> 200", "model-manager.js onQueueStatus matches event.detail.target === item.hash"]
+  - id: A-3
+    statement: >-
+      Developer assumption: only the deployment's operator reaches the manager routes, so
+      triggering downloads and advancing the queue need no principal gate.
+    induced_fault: >-
+      no privilege layer exists on state-changing, egress-producing, filesystem-writing
+      operations (induced fault F-3).
+    boundary_ref: IA-2
+    dimension: [identity]
+    propagation:
+      kind: local
+      origin_ref: null
+    rung: OBSERVED
+    evidences: ["auth_methods [none]; exposure public in the unit spine", "probes.log: anonymous 200s on install/start/reset"]
+  - id: A-4
+    statement: >-
+      Developer assumption: the pending queue belongs to the caller that filled it and stays
+      stable until that caller starts it.
+    induced_fault: >-
+      the queue is a single global set with no ownership binding, so third-party resets and
+      starts act on foreign work (induced fault F-4).
+    boundary_ref: IA-2
+    dimension: [temporal, identity]
+    propagation:
+      kind: local
+      origin_ref: null
+    rung: OBSERVED
+    evidences: ["probes.log: reset cleared a pending job queued by another probe sequence", "probes.log: start advanced the pending job"]
+  - id: A-5
+    statement: >-
+      Developer assumption: queue transitions are atomic with respect to in-flight work; a
+      reset cannot disturb a job the worker is already consuming.
+    induced_fault: >-
+      pending/in-progress states are not distinguished for reset, and the in-flight guard is
+      client-side only (induced fault F-5).
+    boundary_ref: T-8
+    dimension: [temporal]
+    propagation:
+      kind: local
+      origin_ref: null
+    rung: ASSUMED
+    evidences: ["unprobed: needs a long-running job", "model-manager.js client-side is_processing block only"]
+  - id: A-6
+    statement: >-
+      Developer assumption: the bytes fetched from the catalog url are the artifact the
+      catalog intends; size is informational and integrity need not be verified.
+    induced_fault: >-
+      no hash, signature or size enforcement gates the install (induced fault F-6).
+    boundary_ref: IA-6
+    dimension: [interpretation]
+    propagation:
+      kind: local
+      origin_ref: null
+    rung: OBSERVED
+    evidences: ["probes.log: accepted record with declared size 1.01KB paired with a 4.71MB url", "probes.log: e2e installed True with no integrity assertion in the response path"]
+  - id: A-7
+    statement: >-
+      Developer assumption: catalog-derived strings are inert when the manager shell renders
+      them.
+    induced_fault: >-
+      catalog fields are interpolated into the grid DOM with an unquoted attribute and no
+      escaping (induced fault F-7).
+    boundary_ref: IA-7
+    dimension: [interpretation]
+    propagation:
+      kind: propagated
+      origin_ref: IA-6
+    rung: OBSERVED
+    evidences: ["model-manager.js (target-served): `<a href=${rowItem.reference} target=\"_blank\"><b>${name}</b></a>`", "catalog and content arrive from outside the unit (raw.githubusercontent.com channel)"]
+  - id: A-8
+    statement: >-
+      Developer assumption: membership in the catalog value sets is sufficient proof that a
+      save_path/filename is path-safe.
+    induced_fault: >-
+      path safety is delegated entirely to catalog membership; no normalization or canonical
+      check guards accepted values (induced fault F-8).
+    boundary_ref: IA-1
+    dimension: [spatial]
+    propagation:
+      kind: local
+      origin_ref: null
+    rung: ASSUMED
+    evidences: ["traversal-shaped values are rejected because they are not catalog values (observed)", "the same check would admit a traversal-shaped catalog value; no such value could be forged in a probe"]
+  - id: A-9
+    statement: >-
+      Developer assumption: malformed bodies cannot reach business logic (missing keys and
+      wrong types are impossible through the shell).
+    induced_fault: >-
+      unguarded field access and type use in the validation path raise unhandled exceptions
+      (induced fault F-9).
+    boundary_ref: IA-1
+    dimension: [interpretation]
+    propagation:
+      kind: local
+      origin_ref: null
+    rung: OBSERVED
+    evidences: ["probes.log: {} -> 500", "probes.log: filename as number -> 500"]
+faults:
+  - id: F-1
+    name: per-field membership check in place of record-identity binding (validation scope confusion)
+    rung: OBSERVED
+    evidences: ["probes.log: mixing accepted -> 200", "probes.log: single-field deviations rejected"]
+  - id: F-2
+    name: unvalidated, unbound client-supplied ui_id used as job identity and echoed in status events
+    rung: OBSERVED
+    evidences: ["probes.log: bogus ui_id -> 200", "model-manager.js onQueueStatus row matching"]
+  - id: F-3
+    name: no principal gate, no CSRF/origin check, no media-type check on download-triggering and queue-advancing operations; state transitions reachable with GET
+    rung: OBSERVED
+    evidences: ["probes.log: anonymous install/start/reset 200s", "probes.log: text/plain body accepted", "probes.log: GET start/reset"]
+  - id: F-4
+    name: global, unowned pending queue with no binding between job and submitter
+    rung: OBSERVED
+    evidences: ["probes.log: reset cleared foreign pending work", "probes.log: global queue status"]
+  - id: F-5
+    name: non-atomic queue transitions; pending/in-progress not distinguished for reset; in-flight guard exists only in the client
+    rung: ASSUMED
+    evidences: ["unprobed in-progress reset", "model-manager.js client-side is_processing check"]
+  - id: F-6
+    name: no content integrity verification of downloaded artifacts (no hash, signature or size enforcement)
+    rung: INFERRED
+    evidences: ["no integrity check surfaced in the response path", "probes.log: declared size not enforced"]
+  - id: F-7
+    name: unescaped interpolation of catalog-derived strings into the manager shell DOM (unquoted href attribute)
+    rung: OBSERVED
+    evidences: ["model-manager.js name-column formatter, served by the target over HTTP"]
+  - id: F-8
+    name: path-safety delegated entirely to catalog value membership (no normalization or canonicalization of accepted values)
+    rung: ASSUMED
+    evidences: ["observed equality-based rejection of traversal-shaped deviations", "observed acceptance of nested save_path values"]
+  - id: F-9
+    name: unguarded parsing of malformed bodies (missing keys, non-string types) raising 500s
+    rung: OBSERVED
+    evidences: ["probes.log: {} -> 500", "probes.log: filename as number -> 500"]
+vulnerabilities:
+  - id: V-1
+    fault_ref: F-1
+    class: >-
+      catalog record recombination (validation-scope confusion): any catalog url can be paired
+      with any other record's filename and save_path, so the fetch source and the write
+      destination need not belong together
+    suite_class: business-logic
+    rung: OBSERVED
+    evidences: ["probes.log: field mixing url A + filename/save_path B -> 200", "probes.log: single-field deviations -> 400/403"]
+  - id: V-2
+    fault_ref: F-2
+    class: >-
+      unbound job-identifier spoofing: ui_id is a caller-chosen correlation key rendered by
+      other clients' shells, with no binding to the submitting session
+    suite_class: two-principal-authz
+    rung: OBSERVED
+    evidences: ["probes.log: arbitrary ui_id accepted", "model-manager.js onQueueStatus matching by target/ui_target"]
+  - id: V-3
+    fault_ref: F-3
+    class: >-
+      forced operations via cross-site request forgery: download-triggering POSTs accept
+      simple content types without a token or origin check, and queue advancement/clearing
+      happens over GET
+    suite_class: csrf
+    rung: OBSERVED
+    evidences: ["probes.log: text/plain body -> same validation", "probes.log: GET /manager/queue/start|reset -> 200", "no auth: auth_methods [none]"]
+  - id: V-4
+    fault_ref: F-4
+    class: >-
+      shared-queue manipulation without ownership binding: any caller can clear pending work
+      or advance another submitter's jobs, with no notification to the owner
+    suite_class: business-logic
+    rung: OBSERVED
+    evidences: ["probes.log: reset cleared a foreign pending job; start advanced it", "probes.log: global unfiltered queue status"]
+  - id: V-5
+    fault_ref: F-5
+    class: >-
+      TOCTOU/race between queue reset-start and the worker's fetch-write: state transitions are
+      not atomic and the in-flight guard is client-side only
+    suite_class: race-conditions
+    rung: ASSUMED
+    evidences: ["probes.log: reset semantics observed for pending jobs", "server-side in-progress behaviour unprobed (blocked)"]
+  - id: V-6
+    fault_ref: F-6
+    class: >-
+      unverified third-party artifact installation: model files land in the model directories
+      with no integrity check; the artifacts are later loaded by a pickle-capable stack
+    suite_class: rce
+    rung: INFERRED
+    evidences: ["probes.log: declared size not enforced; e2e install with no integrity assertion", "unit context: models consumed by ComfyUI loaders"]
+  - id: V-7
+    fault_ref: F-7
+    class: >-
+      catalog-driven DOM injection in the manager shell: record name and reference are
+      interpolated into the grid with an unquoted attribute and no escaping (stored XSS shape)
+    suite_class: xss
+    rung: OBSERVED
+    evidences: ["model-manager.js formatter served by the target over HTTP", "catalog records carry name/reference from the remote channel"]
+  - id: V-8
+    fault_ref: F-8
+    class: >-
+      path traversal contingent on a catalog entry value: membership is the only path-safety
+      control, so a catalog value containing traversal segments would be admitted verbatim
+    suite_class: path-traversal-lfi-rfi
+    rung: ASSUMED
+    evidences: ["observed equality-based rejection of traversal-shaped client values", "no catalog value with traversal could be forged in a probe"]
+  - id: V-9
+    fault_ref: F-9
+    class: >-
+      validation-layer oracle: differentiated rejections (400 invalid request / 403 security
+      error / 500 server trouble) tell a caller which field failed and which layer guards it
+    suite_class: information-disclosure
+    rung: OBSERVED
+    evidences: ["probes.log: 403 url deviation, 400 filename/save_path deviation, 500 malformed body"]
+  - id: V-D1
+    fault_ref: F-1
+    class: >-
+      DROPPED (falsified): server-side request forgery via the client-supplied url field of an
+      install record
+    suite_class: ssrf
+    rung: FALSIFIED
+    evidences: ["probes.log: forced-listener url -> 400; url with catalog prefix + suffix -> 403", "ssh oracle: no listener hits", "dropped per the drop rule: the runtime failure mode is not technically feasible; the url must equal a catalog value"]
+  - id: V-D2
+    fault_ref: F-1
+    class: >-
+      DROPPED (falsified): SSRF via the catalog mode parameter driving the outbound catalog
+      fetch
+    suite_class: ssrf
+    rung: FALSIFIED
+    evidences: ["probes.log: mode=http://ssrf-listener:8000/... -> byte-identical cached list", "ssh oracle: no listener hits", "dropped: no attacker-controlled fetch is reachable through mode"]
+  - id: V-D3
+    fault_ref: F-1
+    class: >-
+      DROPPED (falsified): untrusted fetch via the record reference field (a forged reference
+      was accepted into the queue)
+    suite_class: ssrf
+    rung: FALSIFIED
+    evidences: ["probes.log: forged reference -> 200 accepted", "ssh oracle: no listener hits", "dropped: reference is never fetched (display-only)"]
+  - id: V-D4
+    fault_ref: F-3
+    class: >-
+      DROPPED (falsified): catalog-source redirection by injecting a name::url value into the
+      channel selection (would have enabled a stored SSRF/XSS precondition)
+    suite_class: ssrf
+    rung: FALSIFIED
+    evidences: ["probes.log: injected channel value -> 200 with no list change and no selection change", "ssh oracle: no listener hits", "dropped: only predefined channel names are selectable and the url list is not client-editable"]
+failure_modes:
+  - id: FM-1
+    vulnerability_ref: V-1
+    runtime_failure_mode: >-
+      a caller submits a mixed record; the worker fetches url A's bytes and writes them under
+      record B's filename and save_path; the model directory holds content whose name and
+      location do not correspond to its source, and a later loader consumes the misplaced or
+      mistyped artifact
+    feasible: true
+    drop_reason: null
+    rung: OBSERVED
+    evidences: ["probes.log: mixing accepted -> 200", "probes.log: e2e write mechanics observed for a verbatim record (installed False -> True)"]
+  - id: FM-2
+    vulnerability_ref: V-3
+    runtime_failure_mode: >-
+      a third-party page visited by the operator issues a simple-content-type POST with a
+      catalog-valid record and a GET to /manager/queue/start; downloads start and run
+      without the operator's intent
+    feasible: true
+    drop_reason: null
+    rung: OBSERVED
+    evidences: ["probes.log: text/plain JSON accepted", "probes.log: GET start/reset are state changing", "no token or origin check observed"]
+  - id: FM-3
+    vulnerability_ref: V-4
+    runtime_failure_mode: >-
+      a caller repeatedly clears the shared queue; the operator's pending download work
+      disappears without notice, and a later start runs only the remainder
+    feasible: true
+    drop_reason: null
+    rung: OBSERVED
+    evidences: ["probes.log: reset cleared a pending job; no owner notification observed"]
+  - id: FM-4
+    vulnerability_ref: V-7
+    runtime_failure_mode: >-
+      a catalog record whose name/reference carries markup is rendered in the manager shell;
+      script executes in the ComfyUI origin with access to the same-origin manager and
+      ComfyUI APIs
+    feasible: true
+    drop_reason: null
+    rung: INFERRED
+    evidences: ["model-manager.js interpolates name/reference without escaping", "catalog content arrives from the configured remote channel"]
+  - id: FM-5
+    vulnerability_ref: V-6
+    runtime_failure_mode: >-
+      a malicious artifact reached through the catalog is installed into the model
+      directories; a later model load unpickles the file and executes attacker code in the
+      ComfyUI process
+    feasible: true
+    drop_reason: null
+    rung: INFERRED
+    evidences: ["probes.log: download-and-install path observed end to end", "no integrity check observed on the artifact"]
+  - id: FM-6
+    vulnerability_ref: V-5
+    runtime_failure_mode: >-
+      reset or start interleaves with the worker's fetch-write; an in-progress job is
+      orphaned or reprocessed and the counts disagree with the filesystem state
+    feasible: true
+    drop_reason: null
+    rung: ASSUMED
+    evidences: ["in-progress reset was not probed (needs a long job)", "pending-state reset semantics observed"]
+  - id: FM-7
+    vulnerability_ref: V-8
+    runtime_failure_mode: >-
+      a catalog entry whose save_path or filename contains traversal segments passes the
+      membership check and a download writes outside the intended model directory
+    feasible: true
+    drop_reason: null
+    rung: ASSUMED
+    evidences: ["membership is the sole path control (observed)", "no catalog value with traversal could be forged in a probe"]
+  - id: FM-8
+    vulnerability_ref: V-2
+    runtime_failure_mode: >-
+      a caller submits a job whose ui_id equals another client's row hash; that client's
+      shell renders the foreign job's progress and state for its own row
+    feasible: true
+    drop_reason: null
+    rung: INFERRED
+    evidences: ["probes.log: arbitrary ui_id accepted", "model-manager.js row matching by hash"]
+  - id: FM-9
+    vulnerability_ref: V-3
+    runtime_failure_mode: >-
+      a caller or drive-by page enqueues many large catalog records and starts processing;
+      the model directories fill to disk exhaustion
+    feasible: true
+    drop_reason: null
+    rung: INFERRED
+    evidences: ["probes.log: repeated submissions all enqueue (duplicates allowed)", "catalog contains multi-GB artifacts (564 records)"]
+  - id: FM-10
+    vulnerability_ref: V-9
+    runtime_failure_mode: >-
+      a caller uses the differentiated rejection responses to enumerate which fields are
+      checked and which layers guard them, then targets the unchecked paths
+    feasible: true
+    drop_reason: null
+    rung: OBSERVED
+    evidences: ["probes.log: 403 vs 400 vs 500 differentiation observed directly"]
+  - id: FM-D1
+    vulnerability_ref: V-D1
+    runtime_failure_mode: the target fetches an attacker-supplied url during a model install
+    feasible: false
+    drop_reason: >-
+      falsified by probe: url must equal a catalog value (403 on deviation) and the
+      forced-listener url produced no fetch (oracle empty)
+    rung: FALSIFIED
+    evidences: ["probes.log: url suffix -> 403; forged url -> 400", "ssh oracle: no hits"]
+  - id: FM-D2
+    vulnerability_ref: V-D2
+    runtime_failure_mode: the target fetches an attacker-supplied url through the catalog mode parameter
+    feasible: false
+    drop_reason: >-
+      falsified by probe: byte-identical model list for default/recent/unknown/URL-shaped
+      mode; no fetch recorded
+    rung: FALSIFIED
+    evidences: ["probes.log: mode probes -> identical 265778-byte responses", "ssh oracle: no hits"]
+  - id: FM-D3
+    vulnerability_ref: V-D3
+    runtime_failure_mode: the target fetches the record's reference field
+    feasible: false
+    drop_reason: >-
+      falsified by probe: a forged reference pointing at the listener was accepted into the
+      queue but produced no fetch; the field is display-only
+    rung: FALSIFIED
+    evidences: ["probes.log: forged reference -> 200", "ssh oracle: no hits"]
+  - id: FM-D4
+    vulnerability_ref: V-D4
+    runtime_failure_mode: the target fetches catalog content from an attacker-controlled channel url
+    feasible: false
+    drop_reason: >-
+      falsified by probe: injected name::url values produce no state change; only predefined
+      channel names select; no fetch recorded
+    rung: FALSIFIED
+    evidences: ["probes.log: channel injection -> no list change", "ssh oracle: no hits"]
+loops:
+  - loop_id: loop-1
+    fault_ref: F-1
+    vulnerability_ref: V-1
+    failure_mode_refs: [FM-1]
+    likelihood: high
+    likelihood_rationale: >-
+      one crafted request suffices; no authentication or timing condition stands in the way,
+      and the recombining acceptance is directly probe-observed
+    rung: OBSERVED
+  - loop_id: loop-2
+    fault_ref: F-3
+    vulnerability_ref: V-3
+    failure_mode_refs: [FM-2, FM-9]
+    likelihood: high
+    likelihood_rationale: >-
+      the routes need no credentials, accept simple content types and advance over GET, so a
+      single cross-site or scripted request chain runs unrequested downloads
+    rung: OBSERVED
+  - loop_id: loop-3
+    fault_ref: F-4
+    vulnerability_ref: V-4
+    failure_mode_refs: [FM-3]
+    likelihood: medium
+    likelihood_rationale: >-
+      trivially reachable with one GET, but the effect requires another submitter's pending
+      work to exist and the deployment is single-user, which lowers the chance of impact
+    rung: OBSERVED
+  - loop_id: loop-4
+    fault_ref: F-9
+    vulnerability_ref: V-9
+    failure_mode_refs: [FM-10]
+    likelihood: medium
+    likelihood_rationale: >-
+      the differentiated errors are free to observe for any prober (observed directly), but
+      they only accelerate other loops rather than producing state change themselves
+    rung: OBSERVED
+  - loop_id: loop-5
+    fault_ref: F-5
+    vulnerability_ref: V-5
+    failure_mode_refs: [FM-6]
+    likelihood: low
+    likelihood_rationale: >-
+      needs concurrency between a reset/start and an in-flight job, and the in-progress
+      behaviour was not observable without a long-running job
+    rung: ASSUMED
+  - loop_id: loop-6
+    fault_ref: F-7
+    vulnerability_ref: V-7
+    failure_mode_refs: [FM-4]
+    likelihood: low
+    likelihood_rationale: >-
+      requires a malicious or compromised catalog record in the configured remote channel;
+      the rendering fault itself is observed, the delivery precondition is not controllable
+      from this unit's interface
+    rung: INFERRED
+  - loop_id: loop-7
+    fault_ref: F-6
+    vulnerability_ref: V-6
+    failure_mode_refs: [FM-5]
+    likelihood: low
+    likelihood_rationale: >-
+      requires an attacker-controlled artifact to enter the catalog and the operator to
+      install and load it; the install mechanics are observed, the catalog-entry precondition
+      is not
+    rung: INFERRED
+  - loop_id: loop-8
+    fault_ref: F-8
+    vulnerability_ref: V-8
+    failure_mode_refs: [FM-7]
+    likelihood: low
+    likelihood_rationale: >-
+      contingent on a catalog value containing traversal segments; no such value can be
+      forged through the unit's own interface, so the loop hangs on catalog-source integrity
+    rung: ASSUMED
+  - loop_id: loop-9
+    fault_ref: F-2
+    vulnerability_ref: V-2
+    failure_mode_refs: [FM-8]
+    likelihood: low
+    likelihood_rationale: >-
+      needs two concurrent clients viewing the grid, and the single-user deployment normally
+      has one; the acceptance of arbitrary ui_id is observed
+    rung: INFERRED
+evidence_gaps:
+  - id: EG-1
+    gap: >-
+      websocket client channel not probeable with curl: the status-event payload fields
+      (ui_target, target, nodepack_result) are inferred from the shell JS, not observed
+    rung: INFERRED
+    evidences: ["model-manager.js onQueueStatus", "no ws probe run under the curl-only discipline"]
+  - id: EG-2
+    gap: >-
+      in-progress queue transitions (install or reset while is_processing is true) were not
+      probed: they need a long-running job, which risked heavy disk and network mutation
+    rung: ASSUMED
+    evidences: ["T-7, T-8, V-3, FM-6 all inherit this gap"]
+  - id: EG-3
+    gap: >-
+      catalog refresh semantics are not observable black-box: the model list is byte-identical
+      across modes, leaving cache-versus-live-fetch and the refresh channel unresolved
+    rung: OBSERVED
+    evidences: ["probes.log: identical md5 across four mode values", "channel selection has no observable effect on the model list"]
+  - id: EG-4
+    gap: >-
+      the manager security-level mechanism is only partially observable (403 on url deviation);
+      its configuration surface and the operations it gates cannot be enumerated from outside
+    rung: OBSERVED
+    evidences: ["probes.log: 403 with 'A security error has occurred'"]
+  - id: EG-5
+    gap: >-
+      no HTTP path was found to remove an installed model file; the e2e download
+      (models/groundingdino/GroundingDINO_SwinT_OGC.cfg.py, 1.01KB) could not be restored and
+      remains as a labelled trial artefact
+    rung: OBSERVED
+    evidences: ["probes.log: e2e run; no delete route surfaced in the fetched shell JS or by probe"]
+  - id: EG-6
+    gap: >-
+      whether the worker follows redirects, accepts http origins or verifies TLS for catalog
+      urls cannot be probed: the url set is closed to catalog values
+    rung: ASSUMED
+    evidences: ["url deviation -> 403"]
+  - id: EG-7
+    gap: >-
+      the string-truth of the acceptance predicate beyond the probed fields (for example
+      case-sensitivity, unicode normalization or whitespace handling of url/filename/save_path)
+      was not exhausted; the probe matrix covered one catalog record plus cross-record mixing
+    rung: OBSERVED
+    evidences: ["13 install_model probes total"]
+  - id: EG-8
+    gap: >-
+      client-id keying of the websocket channel (caller-supplied) suggests a subscribe surface
+      beyond curl reach; the isolation between clients' queue events remains unmodelled
+    rung: ASSUMED
+    evidences: ["unit dossier: channel keyed by caller-supplied client id"]
+  - id: EG-9
+    gap: >-
+      the pickled-artifact execution path (FM-5) lives outside this unit's runtime (model
+      loaders); its feasibility is accepted from standard ComfyUI behaviour, not observed here
+    rung: ASSUMED
+    evidences: ["unit scope: download and install only; load path is another unit"]
+
+
+
+

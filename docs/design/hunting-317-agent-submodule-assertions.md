@@ -36,21 +36,21 @@
 
 ## Walkthrough predicates (end-to-end)
 
-- **E1 - a down hunter holds the run open.** Grounds: user stories 1, 3, 9; the quiesce decision.
+- **E1 - a down hunter holds the run open.** Grounds: user stories 1, 3, 9; the quiesce decision. **Carried on T6 (#379) after T4b (#387)**: the predicate's entry was an enqueued config, retired with the config family; a hunter dispatches per produced loop file, and the payload harness is designed-not-built.
   Entry seam: `POST /projects/{id}/hunting` (start a run) after one `POST /projects/{id}/hunting/hunt` enqueues a produced RATIFIED config, with `POST .../agent-submodules/hunter/stop` issued BEFORE the run's first surfer tick dispatches it.
   Input: project `P`, run `R`, one hunt config with the stated fault identity, hunter role `paused`.
   Live edge: the model provider (the configured eval model, live). Nothing inside this edge is substituted.
-  Path: the bootstrap schedules the orchestrator and the surfer; the surfer ticks, reads the produced config, consults the hunter role state (`paused`) -> no coroutine, refused; the config stays in `hunting/orchestration/hunt_configs/produced/`; `run_work_remaining` stays true, so the run never quiesces.
+  Path: the bootstrap schedules the orchestrator and the surfer; the surfer ticks, reads the produced loop file, consults the hunter role state (`paused`) -> no coroutine, refused; the loop stays in `hunting/threat_modeller/produced/<unit_name>/`; `run_work_remaining` stays true, so the run never quiesces (T10b #397 translation).
   Terminal: `hunting_runs.status = "running"`; the config is still in `produced/`; zero hunter sessions live.
   Observed: `GET .../{R}` -> `running`; `GET .../agent-submodules` -> `hunter: paused`; `GET .../{R}/threads` -> the orchestrator and surfer threads, no `hunt:` thread; the produced file present on disk.
-- **E2 - starting the role completes the run.** Grounds: user stories 2, 12; the at-least-once decision.
+- **E2 - starting the role completes the run.** Grounds: user stories 2, 12; the at-least-once decision. **Carried on T6 (#379) after T4b (#387)**: no hunter dispatch work exists to release until the loop payload harness lands.
   Entry seam: `POST .../agent-submodules/hunter/start` on the run from E1.
   Input: run `R`, hunter role transitioned `paused -> running`.
   Live edge: the model provider (live).
   Path: the next surfer tick sees the hunter role `running`, dispatches the hunter for the produced config, the config moves `produced -> consumed`; the hunter authors a spec, the surfer dispatches the pod, the pod exports, the run quiesces.
   Terminal: `hunting_runs.status = "complete"`; the config in `consumed/`; the hunter and pod role gates released.
   Observed: `GET .../{R}` -> `complete`; the produced/consumed move; `GET .../threads` empty or settled for role threads.
-- **E3 - a single thread stops and resumes.** Grounds: user story 7; the per-session reuse decision.
+- **E3 - a single thread stops and resumes.** Grounds: user story 7; the per-session reuse decision. **Carried on T6 (#379) after T4b (#387)**: no live `hunt:` thread can register yet; the pod session path keeps the surface's live coverage.
   Entry seam: `POST .../threads/{thread_id}/stop` on a live `hunt:` thread.
   Input: run `R`, live thread id `hunting:{R}:hunt:{config_id}`, `held` initially false.
   Live edge: the model provider (live).

@@ -11,7 +11,7 @@ The module is two things at once:
 
 Fidelity that matters for the assertions:
 
-- the JSON envelopes the `skills/steel-browser/SKILL.md` command families
+- the JSON envelopes the `skills/internal/tools/steel-browser/SKILL.md` command families
   document (`sessions`, `start`, `stop`, `navigate`, `snapshot`, `get`,
   `eval`, `fill`/`type`/`setvalue`, `wait`, `batch`, `cookies`, `storage`,
   `scrape`, `profile`);

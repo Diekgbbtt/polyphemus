@@ -1,11 +1,18 @@
 """The `verdicts.yaml` schema, its validation, and the atomic write (#271).
 
 One row per ground-truth vuln, exactly the spec block: `vuln_id`,
-`identified | partial | missed`, `confidence`, `matched{unit,fault_class,
-symptom}`, `evidence_chain` (required for `identified`/`partial`), `eval_sha`,
-and `stack_fingerprint`. The SHA and fingerprint are carried from the trial
-record - never invented: a row whose identity does not match the record, or a
-record with no identity at all, is refused.
+`identified | partial | missed`, `confidence`, `matched{unit,
+web_vulnerability_class, fault, symptom}`, `evidence_chain` (required for
+`identified`/`partial`), `eval_sha`, and `stack_fingerprint`. The SHA and
+fingerprint are carried from the trial record - never invented: a row whose
+identity does not match the record, or a record with no identity at all, is
+refused.
+
+T10b (#397) translated the match triple to the unit threat model vocabulary:
+the retired `fault_class` splits into the model's `web_vulnerability_class`
+(the suite directory name) and its `fault` (the assumption's named programming
+fault). The evidence chain's parent artifact is the threat-model loop file, not
+the retired hunt config.
 
 A malformed verdict is rejected loudly on write; the write itself is temp +
 rename so a crash never leaves a half-written file. PyYAML is the one
@@ -41,8 +48,8 @@ _ROW_FIELDS = (
     "eval_sha",
     "stack_fingerprint",
 )
-_MATCHED_FIELDS = ("unit", "fault_class", "symptom")
-_CHAIN_FIELDS = ("hunt_config", "spec_dir", "experiment_logs", "pod_export", "reasoning")
+_MATCHED_FIELDS = ("unit", "web_vulnerability_class", "fault", "symptom")
+_CHAIN_FIELDS = ("loop", "spec_dir", "experiment_logs", "pod_export", "reasoning")
 
 
 class VerdictError(ValueError):
@@ -51,12 +58,14 @@ class VerdictError(ValueError):
 
 @dataclass(frozen=True)
 class Matched:
-    """The unit/fault-class/symptom triple a verdict reconciles to. A `missed`
-    row has no match to describe: its fields are None (the positive verdicts
-    are the ones that must name all three - the same rule as the chain)."""
+    """The unit/web-vulnerability-class/fault/symptom tuple a verdict
+    reconciles to. A `missed` row has no match to describe: its fields are None
+    (the positive verdicts are the ones that must name all four - the same rule
+    as the chain)."""
 
     unit: str | None
-    fault_class: str | None
+    web_vulnerability_class: str | None
+    fault: str | None
     symptom: str | None
 
 
@@ -234,7 +243,7 @@ def _parse_chain(
         )
     try:
         chain = evidence.EvidenceChain(
-            hunt_config=_non_empty(raw["hunt_config"], "hunt_config"),
+            loop=_non_empty(raw["loop"], "loop"),
             spec_dir=_non_empty(raw["spec_dir"], "spec_dir"),
             experiment_logs=tuple(logs),
             pod_export=_non_empty(raw["pod_export"], "pod_export"),
@@ -256,15 +265,19 @@ def _matched(raw: object, vuln_id: str, identified: str) -> Matched:
         )
     if identified == "missed":
         # A missed row describes no match: null/empty subfields are the honest
-        # shape; a positive verdict is the one that must name all three.
+        # shape; a positive verdict is the one that must name all four.
         return Matched(
             unit=_optional(raw.get("unit")),
-            fault_class=_optional(raw.get("fault_class")),
+            web_vulnerability_class=_optional(raw.get("web_vulnerability_class")),
+            fault=_optional(raw.get("fault")),
             symptom=_optional(raw.get("symptom")),
         )
     return Matched(
         unit=_non_empty(raw.get("unit"), "matched.unit"),
-        fault_class=_non_empty(raw.get("fault_class"), "matched.fault_class"),
+        web_vulnerability_class=_non_empty(
+            raw.get("web_vulnerability_class"), "matched.web_vulnerability_class"
+        ),
+        fault=_non_empty(raw.get("fault"), "matched.fault"),
         symptom=_non_empty(raw.get("symptom"), "matched.symptom"),
     )
 

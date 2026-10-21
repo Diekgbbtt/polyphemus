@@ -15,7 +15,7 @@ Run modes (per `hunting_wiring_stack`):
   never errors on a broken fixture.
 - Live `hunting_runs` row assertions ride `hunting_wiring_stack.hunting_run_rows`
   / `wait_for_hunting_run_status` (real PG reads); produced/consumed
-  quantities ride `produced_config_keys` / `produced_spec_files` (real store
+  quantities ride `produced_loop_files` / `produced_spec_files` (real store
   reads) - never the code's return, so no tautology.
 
 Policy notes:
@@ -40,14 +40,11 @@ import pytest
 
 from . import hunting_wiring_stack as stack
 
-# The production fault identity conventions (G4 / ADR Q13), matching the
-# contract-tier fixtures: a CWE fault class so the `_`-joined fault_key folder
-# is representable, and a real vulnerability class so the produced config's
-# semantic key round-trips with its file name.
+# The production identity conventions, matching the contract-tier fixtures: the
+# hunter memory key is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9).
 UNIT = "Service:slug:a"
-FAULT = "CWE-352"
-CLASS = "CSRF"
-FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
+UNIT_NAME = "Service-slug-a"
+DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 
 
 def _need_stack() -> None:
@@ -84,7 +81,7 @@ def _runtime_landed(client, project_id: str) -> bool:
 
 def _maybe_live_pod_session(client, project_id: str, *, timeout: float = 60.0):
     """Try to establish a REAL live pod session on the live stack: seed a
-    produced `specified` spec, launch a whole run (the surfer dispatches one
+    produced `ratified` spec, launch a whole run (the surfer dispatches one
     pod for the spec via the own-status gate), and wait for the constructed
     ADR Q13 pod session id to register (observable by a per-session `pause`
     returning `{"state":"held"}`).
@@ -93,13 +90,13 @@ def _maybe_live_pod_session(client, project_id: str, *, timeout: float = 60.0):
     live pod session can be established within the deadline - the caller
     carries with a precise reason (never fabricated)."""
     spec_file = stack.seed_test_spec(
-        project_id, fault_key=FAULT_KEY,
+        project_id, hunt_key=DISPATCH_ID,
         fault_keyword="sqli", strategy_keyword="blind")
     r = client.post(f"/projects/{project_id}/hunting", json={"candidates": []})
     if r.status_code != 201:
         return None, None
     run_id = r.json()["hunting_run_id"]
-    sid = f"hunting:{run_id}:pod:{FAULT_KEY}:{spec_file}"
+    sid = f"hunting:{run_id}:pod:{DISPATCH_ID}:{spec_file}"
     deadline = time.time() + timeout
     while time.time() < deadline:
         resp = client.post(
@@ -263,105 +260,67 @@ def test_C9_get_unknown_id_404(client):
 # REST perimeter - singular component launches (C10-C20)
 # ===========================================================================
 
-def test_C10_orchestrator_launch_canonical(client):
-    """C10: POST .../hunting/orchestrator `{candidates:[...]}` -> 202 mirror
-    shape `{component: orchestrator, run_id, dispatched_asynchronously}`.
-    The pass is a real async LLM orchestration on the live stack; the produced
-    family may or may not have ratified configs within the observation window -
-    the 202 shape is the hard contract, and any produced configs observed are
-    asserted ratified."""
+def test_C10_modeller_launch_canonical(client):
+    """C10 (renamed by T10): POST .../hunting/modeller `{}` -> 202 mirror
+    shape `{component: threat_modeller, run_id, dispatched_asynchronously}`.
+    The pass is a real async LLM modelling pass on the live stack; the produced
+    family may or may not have models within the observation window - the 202
+    shape is the hard contract."""
     _need_pg()
     p = _new_project(client)
-    r = client.post(
-        f"/projects/{p}/hunting/orchestrator",
-        json={"candidates": [{"unit_id": UNIT, "fault_class": FAULT}]})
+    r = client.post(f"/projects/{p}/hunting/modeller", json={})
     assert r.status_code == 202, r.text
     body = r.json()
-    assert body["component"] == "orchestrator"
+    assert body["component"] == "threat_modeller"
     assert body["dispatched_asynchronously"] is True
     assert isinstance(body.get("run_id"), str) and body["run_id"]
-    # The pass runs asynchronously on the live stack; any produced config the
-    # real pass writes must be ratified (the produced read is real, never the
-    # return). Non-emptiness depends on the live LLM pass landing configs.
-    produced = stack.produced_config_keys(p)
-    assert all(isinstance(_k, str) for _k in produced)
+    # The pass runs asynchronously on the live stack; any produced loop files
+    # the real pass writes are read from the physical store (never the return
+    # value). Non-emptiness depends on the live LLM pass landing loops.
+    produced = stack.produced_loop_files(p)
+    # The read-back identity is `<unit_name>/loop-<rank>` (S2 8.4). The pass is
+    # asynchronous, so non-emptiness depends on the live LLM pass; what is
+    # asserted is the exact identity shape and its uniqueness, never a type
+    # check the helper's f-string already implies.
+    assert len(produced) == len(set(produced)), produced
+    for identity in produced:
+        unit_name, _, loop_id = identity.partition("/")
+        assert unit_name and loop_id.startswith("loop-"), identity
+        assert loop_id.removeprefix("loop-").isdigit(), identity
 
 
-def test_C11_orchestrator_unknown_project_404(client):
-    """C11: orchestrator launch on an unknown project -> 404. (The control-plane
+def test_C11_modeller_unknown_project_404(client):
+    """C11: modeller launch on an unknown project -> 404. (The control-plane
     absent -> 503 half is blocked on the live sibling, exactly as C4.)"""
     _need_pg()
     bogus = f"nope-{uuid.uuid4().hex[:8]}"
-    r = client.post(
-        f"/projects/{bogus}/hunting/orchestrator",
-        json={"candidates": [{"unit_id": UNIT, "fault_class": FAULT}]})
+    r = client.post(f"/projects/{bogus}/hunting/modeller", json={})
     assert r.status_code == 404, r.text
     assert "unknown project" in r.text
 
 
-def test_C12_hunt_enqueue_canonical(client):
-    """C12: POST .../hunting/hunt canonical `{unit_id, fault_class,
-    vulnerability_class}` -> 202 `{component: hunt, enqueued: True,
-    enqueued_key, dispatched_asynchronously}`; the enqueued config EXISTS under
-    produced/ with `status == ratified` (real store read, never the return).
-    #300: a caller-supplied `hunt_id` (and the removed #202 slots) cannot
-    diverge - the persisted config's `hunt_id` is the DERIVED identity."""
-    _need_pg()
+def test_C12_hunt_enqueue_is_retired_loudly(client):
+    """C12 (re-pointed by T4b #387): the hunter-only hunt-config enqueue RETIRED
+    with the config family - a produced loop file is the dispatch record and a
+    live run's surfer dispatches it. The wire path must never silently accept a
+    config into a family nothing reads: the live stack answers a LOUD 410 naming
+    the replacement, and nothing lands in the retired produced family.
+
+    C13-C15 (replay 409 / malformed 422 / unknown project 404) retired with the
+    enqueue: there is no novelty gate, no body validation and no project lookup
+    left on a tombstone. The eval translation is T10b (#397)."""
     p = _new_project(client)
     r = client.post(
         f"/projects/{p}/hunting/hunt",
         json={"unit_id": UNIT, "fault_class": FAULT,
-              "vulnerability_class": CLASS,
-              "hunt_id": "caller-supplied",
-              "adversarial_capabilities": ["x"], "assumptions": ["y"],
-              "technique_primitives": ["z"]})
-    assert r.status_code == 202, r.text
-    body = r.json()
-    assert body["component"] == "hunt"
-    assert body["enqueued"] is True
-    assert body["dispatched_asynchronously"] is True
-    key = body["enqueued_key"]
-    assert key == f"{UNIT}::{FAULT}::{CLASS}"
-    produced = stack.produced_config_keys(p)
-    assert key in produced
-    assert stack.produced_config_body(p, key)["hunt_id"] == key
-
-
-def test_C13_hunt_enqueue_replay_409(client):
-    """C13: the same hunt enqueue replayed (same identity) -> 409 `this hunt
-    config is already enqueued (at-most-once)`; produced count stays ONE (the
-    novelty gate is idempotent)."""
-    _need_pg()
-    p = _new_project(client)
-    body = {"unit_id": UNIT, "fault_class": FAULT,
-            "vulnerability_class": CLASS}
-    first = client.post(f"/projects/{p}/hunting/hunt", json=body)
-    assert first.status_code == 202, first.text
-    second = client.post(f"/projects/{p}/hunting/hunt", json=body)
-    assert second.status_code == 409, second.text
-    assert "already enqueued" in second.text
-    assert stack.produced_config_keys(p) == [f"{UNIT}::{FAULT}::{CLASS}"]
-
-
-def test_C14_hunt_enqueue_malformed_422(client):
-    """C14: hunt enqueue with missing `unit_id` / `fault_class` -> 422; nothing
-    written (produced family stays empty)."""
-    p = _new_project(client)
-    r = client.post(
-        f"/projects/{p}/hunting/hunt", json={"vulnerability_class": CLASS})
-    assert r.status_code == 422, r.text
-
-
-def test_C15_hunt_enqueue_unknown_project_404(client):
-    """C15: hunt enqueue on an unknown project -> 404."""
-    _need_pg()
-    bogus = f"nope-{uuid.uuid4().hex[:8]}"
-    r = client.post(
-        f"/projects/{bogus}/hunting/hunt",
-        json={"unit_id": UNIT, "fault_class": FAULT,
               "vulnerability_class": CLASS})
-    assert r.status_code == 404, r.text
-    assert "unknown project" in r.text
+    assert r.status_code == 410, r.text
+    detail = r.json()["detail"]
+    assert "retired" in detail.lower()
+    assert "loop file" in detail.lower()
+    assert "T10b" in detail and "#397" in detail
+    assert stack.produced_loop_files(p) == [], (
+        "the retired enqueue must not write the produced loop family")
 
 
 def test_C16_pod_resume_canonical(client):
@@ -392,11 +351,11 @@ def test_C17_pod_resume_unregistered_404(client):
     produced family for the project."""
     _need_pg()
     p = _new_project(client)
-    sid = f"hunting:{uuid.uuid4().hex}:pod:{FAULT_KEY}:sqli_blind"
+    sid = f"hunting:{uuid.uuid4().hex}:pod:{DISPATCH_ID}:sqli_blind"
     r = client.post(f"/projects/{p}/hunting/pod", json={"session_id": sid})
     assert r.status_code == 404, r.text
     assert "no stored/paused pod session" in r.text
-    assert stack.produced_spec_files(p, FAULT_KEY) == []
+    assert stack.produced_spec_files(p, DISPATCH_ID) == []
 
 
 def test_C18_pod_resume_empty_session_422(client):
@@ -469,7 +428,7 @@ def test_C22_pause_unregistered_and_sibling_404(client):
     r1 = client.post(
         f"/projects/{p}/hunting/{rid}/sessions/{never_registered}/pause")
     assert r1.status_code == 404, r1.text
-    sibling = f"hunting:{uuid.uuid4().hex}:pod:{FAULT_KEY}:sqli_blind"
+    sibling = f"hunting:{uuid.uuid4().hex}:pod:{DISPATCH_ID}:sqli_blind"
     r2 = client.post(
         f"/projects/{p}/hunting/{rid}/sessions/{sibling}/pause")
     assert r2.status_code == 404, r2.text

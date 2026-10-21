@@ -1,0 +1,58 @@
+2026-10-15T21:32:25Z GETI / -> 200 | HTTP/1.1 200 OK Cache-Control: no-cache Pragma: no-cache Expires: 0 Content-Type: text/html Etag: "18dacc788ef8b800-feb0" Last-Modified: Fri, 02 Oct 2026 19:17:00 GMT Content-Length: 65200 Accept-Ranges: bytes Date: Thu, 15 Oct 2026 21:32:25 GMT Server: Python/3.11 aiohttp/3.14.3  <!doct
+2026-10-15T21:33:54Z GET /manager/version -> 200 | V3.37
+2026-10-15T21:34:17Z GET /api/manager/version -> 200 | V3.37
+2026-10-15T21:34:24Z GET /externalmodel/getlist?mode=default -> 200 | {"models": [{"name": "TAEF1 Decoder", "type": "TAESD", "base": "FLUX.1", "save_path": "vae_approx", "description": "(FLUX.1 Verison) To view the preview in high quality while running samples in ComfyUI, you will need this model.", "reference": "https://github.com/madebyollin/taesd", "filename": "tae
+2026-10-15T21:34:42Z GET /manager/queue/status -> 200 | {"total_count": 0, "done_count": 0, "in_progress_count": 0, "is_processing": false}
+2026-10-15T21:34:56Z GET /manager/queue/start -> 200 | 
+2026-10-15T21:35:15Z GET /manager/queue/status -> 200 | {"total_count": 0, "done_count": 0, "in_progress_count": 0, "is_processing": false}
+2026-10-15T21:35:19Z POST /manager/queue/install_model -> 500 | empty-body schema probe :: 500 Internal Server Error Server got itself in trouble
+2026-10-15T21:35:26Z POST /manager/queue/install_model -> 200 | non-whitelisted triple :: 
+2026-10-15T21:35:40Z GET /manager/queue/status -> 200 | {"total_count": 1, "done_count": 0, "in_progress_count": 0, "is_processing": false}
+2026-10-15T21:35:47Z POST /manager/queue/install_model -> 400 | fully random triple + non-safetensors :: Invalid model install request is detected
+2026-10-15T21:36:00Z POST /manager/queue/install_model -> 400 | default save_path + .bin random name :: Invalid model install request is detected
+2026-10-15T21:36:04Z POST /manager/queue/install_model -> 200 | unknown save_path + random .safetensors name :: 
+2026-10-15T21:36:23Z GET /manager/queue/start -> 200 | 
+2026-10-15T21:36:31Z GET /manager/queue/status -> 200 | {"total_count": 1, "done_count": 1, "in_progress_count": 0, "is_processing": false}
+2026-10-15T21:36:44Z GET /models/checkpoints -> 200 | ["t1-not-in-catalog.safetensors"]
+2026-10-15T21:36:50Z GET /models -> 200 | ["checkpoints", "configs", "loras", "vae", "text_encoders", "diffusion_models", "clip_vision", "style_models", "embeddings", "diffusers", "vae_approx", "controlnet", "gligen", "upscale_models", "latent_upscale_models", "custom_nodes", "hypernetworks", "photomaker", "classifiers", "model_patches", "a
+2026-10-15T21:36:55Z GET /models/checkpoints/t1-not-in-catalog.safetensors -> 404 | 
+2026-10-15T21:37:04Z GET /experiment/models/checkpoints -> 200 | [{"name": "t1-not-in-catalog.safetensors", "pathIndex": 0, "modified": 1792100184.153831, "created": 1792100184.153831, "size": 29}]
+2026-10-15T21:37:10Z GET /experiment/models/checkpoints/t1-not-in-catalog.safetensors -> 404 | 
+2026-10-15T21:37:47Z GET /externalmodel/getlist?mode=default -> 200 | {"models": [{"name": "TAEF1 Decoder", "type": "TAESD", "base": "FLUX.1", "save_path": "vae_approx", "description": "(FLUX.1 Verison) To view the preview in high quality while running samples in ComfyUI, you will need this model.", "reference": "https://github.com/madebyollin/taesd", "filename": "tae
+2026-10-15T21:37:55Z POST /manager/queue/install_model -> 403 | .pth catalog triple with swapped URL :: A security error has occurred. Please check the terminal logs
+2026-10-15T21:38:38Z POST /manager/queue/install_model -> 200 | .pth triple with DIFFERENT catalog URL :: 
+2026-10-15T21:38:46Z GET /manager/queue/reset -> 200 | 
+2026-10-15T21:38:57Z GET /manager/queue/status -> 200 | {"total_count": 1, "done_count": 1, "in_progress_count": 0, "is_processing": false}
+2026-10-15T21:39:26Z POST /manager/queue/install_model -> 400 | file scheme url :: Invalid model install request is detected
+2026-10-15T21:39:26Z POST /manager/queue/install_model -> 200 | custom_nodes save_path :: 
+2026-10-15T21:39:26Z POST /manager/queue/install_model -> 200 | loopback fetch url :: 
+2026-10-15T21:39:26Z POST /manager/queue/install_model -> 200 | dotdot save_path :: 
+2026-10-15T21:39:45Z POST /manager/queue/install_model -> 200 | ftp scheme with safetensors name :: 
+2026-10-15T21:39:45Z POST /manager/queue/install_model -> 403 | catalog pth triple with file scheme url :: A security error has occurred. Please check the terminal logs
+2026-10-15T21:39:59Z POST /manager/queue/install_model -> 200 | dup ui_id a :: 
+2026-10-15T21:39:59Z POST /api/manager/queue/install_model -> 200 | api mirror post :: 
+2026-10-15T21:39:59Z POST /manager/queue/install_model -> 200 | dup ui_id b :: 
+2026-10-15T21:39:59Z POST /manager/queue/install_model -> 400 | uppercase FILE scheme :: Invalid model install request is detected
+2026-10-15T21:40:07Z POST /manager/queue/install_model -> 200 | file scheme with localhost authority :: 
+2026-10-15T21:40:33Z POST /manager/queue/install_model -> 200 | file localhost environ read :: 
+2026-10-15T21:40:33Z POST /manager/queue/install_model -> 200 | file localhost passwd read :: 
+2026-10-15T21:40:45Z GET /manager/queue/start -> 200 | 
+2026-10-15T21:40:57Z GET /manager/queue/status -> 200 | {"total_count": 2, "done_count": 2, "in_progress_count": 0, "is_processing": false}
+2026-10-15T21:41:21Z GET /experiment/models/checkpoints -> 200 | [{"name": "t1-api-mirror.safetensors", "pathIndex": 0, "modified": 1792100445.521641, "created": 1792100445.521641, "size": 29}, {"name": "t1-dup-a.safetensors", "pathIndex": 0, "modified": 1792100445.5036857, "created": 1792100445.5036857, "size": 29}, {"name": "t1-dup-b.safetensors", "pathIndex": 
+2026-10-15T21:41:55Z POST /manager/queue/status -> 405 | 405: Method Not Allowed
+2026-10-15T21:41:55Z GET /manager/queue/install_model -> 404 | 
+2026-10-15T21:42:10Z GET /manager/channel_url_list -> 200 | {"selected": "default", "list": ["default::https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main", "recent::https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/node_db/new", "legacy::https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/node_db/legacy", "forked::https
+2026-10-15T21:42:10Z GET /manager/version (headers) -> 200 | HTTP/1.1 200 OK;Content-Type: text/plain; charset=utf-8;Date: Thu, 15 Oct 2026 21:42:10 GMT;Server: Python/3.11 aiohttp/3.14.3;
+2026-10-15T21:42:10Z POST /manager/queue/install_model -> 500 | malformed body :: 500 Internal Server Error Server got itself in trouble
+2026-10-15T21:42:21Z POST /manager/queue/install_model -> 400 | uppercase extension :: Invalid model install request is detected
+2026-10-15T21:42:21Z POST /manager/queue/install_model -> 403 | catalog url + query param (strict equality) :: A security error has occurred. Please check the terminal logs
+2026-10-15T21:42:21Z GET /api/manager/queue/status -> 200 | {"total_count": 2, "done_count": 2, "in_progress_count": 0, "is_processing": false}
+2026-10-15T21:42:46Z POST /manager/queue/install_model -> 200 | non-hashable ui_id poison item :: 
+2026-10-15T21:42:51Z POST /manager/queue/install_model -> 200 | trailing item after poison :: 
+2026-10-15T21:43:03Z GET /manager/queue/start -> 200 | 
+2026-10-15T21:43:11Z GET /manager/queue/status -> 200 | {"total_count": 1, "done_count": 0, "in_progress_count": 0, "is_processing": false}
+2026-10-15T21:43:20Z ORACLE /tmp/ssrf_hits.log (read 3) -> 200 | poison batch: 
+2026-10-15T21:43:47Z GET /manager/queue/start -> 200 | 
+2026-10-15T21:43:57Z VERIFY queue/status + oracle -> 200 | status={"total_count": 1, "done_count": 1, "in_progress_count": 0, "is_processing": false} hit=t1-15-dead
+retro-log: 2026-10-15T21:43:58Z ORACLE /tmp/ssrf_hits.log (read 1) -> 200 | t1-2-not-whitelisted and t1-7-safetensors-unknown-dir fetched
+retro-log: 2026-10-15T21:43:58Z ORACLE /tmp/ssrf_hits.log (read 2) -> 200 | batch hits t1-10-savepath-dotdot t1-13-dup-a t1-12-api-mirror t1-14-dup-b; no t1-11-cnodes

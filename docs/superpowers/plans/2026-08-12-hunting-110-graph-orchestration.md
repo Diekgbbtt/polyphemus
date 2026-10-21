@@ -1,5 +1,8 @@
 # Hunting-110: Stateful per-fault-unit graph orchestration + app-runtime seam wiring
 
+*Historical plan.*
+The planner-era pass it plans is RETIRED (T2b #386, T10 #383); the live pipeline is the unit threat model.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the single batched gate turn of the hunting orchestration pass with ONE flexible LangGraph `StateGraph` workflow: a supervisor-state schedule loop that drives per-fault-unit(s) stateful LLM-analysis stretches (each stretch chaining multiple tool_call-responses with deterministic termination) interleaved with deterministic stages (park/resume, mint, dispatch, budget), keeping the current async-native actor model shape - the `HuntOrchestratorActor` per run stays stateful throughout all pairs and remains live listening for messages after the graph completes. Then wire the hunting module's runtime obligations against the ratified seam (`hunting-module-runtime-seam.md`): `start_hunting` lifecycle, `hunting_runs` status table + startup reconcile, three endpoints, fixed store path, tear-down flush. Re-derive the existing assertion catalogue (unit / C1-C12 / E3-E16) to the new engine.

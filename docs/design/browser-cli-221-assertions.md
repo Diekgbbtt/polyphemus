@@ -31,7 +31,7 @@ Given the repo at rest, exercising the delivery semantic, `kali/postrun.sh` pins
 Yields `tests/test_steel_cli_delivery.py` (five static pin/wiring assertions).
 
 C7 - Skill data-section conformance.
-Given `skills/steel-browser/SKILL.md`, exercising the catalogue semantic, `validate_skill` reports zero violations and the sweep over every `skills/*/SKILL.md` stays green.
+Given `skills/internal/tools/steel-browser/SKILL.md`, exercising the catalogue semantic, `validate_skill` reports zero violations and the sweep over every `skills/*/SKILL.md` stays green.
 Yields `tests/recon/test_skill_data_section.py::test_every_repo_skill_conforms_to_data_section`.
 
 C8 - Skill resolves through the one loader.
@@ -62,7 +62,7 @@ Terminal: the crawl suites stay green and the diff shows zero hunks under `recon
 Yields the existing `tests/recon/crawl/` suites.
 
 E3 - Skill live validation (the writer's evidence, recorded here for PR review).
-Input entering at the shell with the pinned CLI: every `skills/steel-browser/references/*.sh` run end to end against public fixtures.
+Input entering at the shell with the pinned CLI: every `skills/internal/tools/steel-browser/references/*.sh` run end to end against public fixtures.
 Live edge: the Steel cloud, 2026-09-16, CLI 0.4.4, `steel doctor` pass.
 Terminal: each script exits 0 with the expected envelope shapes, and afterwards `steel doctor` reports 0 active sessions with `steel browser sessions --json` empty; no `polymerhus-*` session survives.
 Observed: the commands and outputs recorded below; the verbatim script text was also driven through `kali.mcp_server.steel_exec.fn(script=..., script_lang="sh")` to prove the tool path (returncode 0, the unchanged envelope keys).
@@ -102,7 +102,7 @@ Recorded from the external authn-bootstrapper e2e (Steel session `fc26ae1f-d483-
 
 ### Ungrounded skill rules to re-verify (named, not faked)
 
-Two rules in `skills/steel-browser/SKILL.md` are not corroborated by any record in this repo, and the campaign traces that would have carried them are no longer available.
+Two rules in `skills/internal/tools/steel-browser/SKILL.md` are not corroborated by any record in this repo, and the campaign traces that would have carried them are no longer available.
 The next live tier (E1) must re-verify or delete them rather than leave them asserted:
 
 - `press` takes one key: a single character types, a multi-character string is a silent no-op behind `success:true`, and a modifier chord such as `Control+a` does nothing.

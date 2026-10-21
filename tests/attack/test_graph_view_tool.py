@@ -44,7 +44,7 @@ def test_raising_seam_degrades_fail_open():
 
 
 def test_write_shaped_cypher_raises_read_only_error():
-    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphViewError
 
     tool = build_graph_view_tool(_rows)
     for query in ("MATCH (u) MERGE (u)-[:X]->(m)",
@@ -64,7 +64,7 @@ def test_write_shaped_cypher_raises_read_only_error():
 def test_write_guard_precedes_the_absent_seam_check():
     # The read-only guard is defense-in-depth: even with NO seam, write-shaped
     # cypher must be rejected before the absent-seam fail-open fires.
-    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphViewError
 
     tool = build_graph_view_tool(None)
     try:
@@ -75,7 +75,7 @@ def test_write_guard_precedes_the_absent_seam_check():
 
 
 def test_read_only_guard_is_case_insensitive():
-    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphViewError
 
     tool = build_graph_view_tool(_rows)
     try:
@@ -142,7 +142,7 @@ def test_write_word_inside_comments_or_backticks_is_allowed():
 
 def test_real_write_keywords_still_refused_after_stripping():
     """FM-A fails closed: stripping never lets a genuine keyword through."""
-    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphViewError
 
     tool = build_graph_view_tool(_rows)
     for query in ("MATCH (n) SET n.x = 1 RETURN n",

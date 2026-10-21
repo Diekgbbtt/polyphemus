@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Reconstruct a schema from unknown-field suggestions, one probe at a time.
+
+Where live introspection is closed, an interface frequently still answers an
+unknown-field probe with a suggestion naming a field it does know. The helper
+walks that feedback: it submits one probe per candidate name, harvests the
+suggested names from the response text, and feeds each new name back into the
+queue until the queue empties or the probe budget runs out. It is the
+schema-reconstruction step of `stored-artifact-disclosure` in executable form;
+the query dialect stays owned by the `graphql` skill, which is why the probe
+template is supplied by the tester rather than built in.
+
+Usage:
+  schema-reconstruction --base https://target.test --probe probe.json \\
+      --seeds seeds.txt --execute --json-out schema.json
+
+  probe.json carries the request the interface accepts, with one placeholder:
+
+  {
+    "method": "POST",
+    "path": "/api/graphql",
+    "headers": {"Content-Type": "application/json"},
+    "body": "{\\"query\\":\\"query { __typename <field> }\\"}"
+  }
+
+  The script replaces `<field>` with each candidate name. seeds.txt carries one
+  candidate name per line; a leading '#' comments a line out.
+
+Discipline:
+  - Dry run by default: the seed count and the probe budget print, and nothing is
+    sent until `--execute` is given.
+  - Read-only: the probe template is the tester's, and the helper refuses a
+    template whose method is not a read verb.
+  - Bounded: `--max-probes` caps the walk and `--delay` paces it, so a
+    suggestion walk never becomes a flood.
+  - The harvested names are recorded with the probe that produced them, so the
+    schema skeleton is evidence rather than a reconstruction by inference.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+
+SUGGESTION_PATTERNS = (
+    re.compile(r"[Dd]id you mean[^?]*\?([^\n]*)"),
+    re.compile(r"suggest(?:ion|ions)?[^:]*:([^\n]*)"),
+    re.compile(r"[Uu]nknown field[^.]*\.([^\n]*)"),
+)
+NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,48}")
+
+
+def read_names(path: str) -> list[str]:
+    with open(path, encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip() and not line.lstrip().startswith("#")]
+
+
+def harvest(text: str) -> set[str]:
+    """Pull candidate names out of the suggestion text, and nothing else."""
+    found: set[str] = set()
+    for pattern in SUGGESTION_PATTERNS:
+        for match in pattern.finditer(text):
+            for name in NAME_PATTERN.findall(match.group(1)):
+                found.add(name)
+    return found
+
+
+def send(
+    base: str,
+    probe: dict[str, object],
+    field: str,
+    timeout: float,
+    context: ssl.SSLContext | None,
+) -> tuple[int, str]:
+    body = str(probe.get("body", "")).replace("<field>", field)
+    method = str(probe.get("method", "POST")).upper()
+    req = urllib.request.Request(base.rstrip("/") + str(probe["path"]), data=body.encode("utf-8"), method=method)
+    for key, value in dict(probe.get("headers", {})).items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            return response.status, response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return 0, str(error)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="target base URL")
+    parser.add_argument("--probe", required=True, help="JSON request template carrying the <field> placeholder")
+    parser.add_argument("--seeds", required=True, help="file of candidate field names, one per line")
+    parser.add_argument("--execute", action="store_true", help="send the probes; the default is a dry run")
+    parser.add_argument("--max-probes", type=int, default=200, help="hard cap on probes sent")
+    parser.add_argument("--timeout", type=float, default=10.0, help="per-probe timeout in seconds")
+    parser.add_argument("--delay", type=float, default=0.0, help="pause between probes in seconds")
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    parser.add_argument("--json-out", help="write the harvested names and their probes to this path")
+    args = parser.parse_args(argv)
+
+    with open(args.probe, encoding="utf-8") as handle:
+        probe = json.load(handle)
+    if "<field>" not in str(probe.get("body", "")):
+        print("the probe template body must carry the <field> placeholder", file=sys.stderr)
+        return 2
+    method = str(probe.get("method", "POST")).upper()
+    if method not in ("GET", "POST", "HEAD", "OPTIONS"):
+        print(f"refusing: the probe method {method} is not a read verb", file=sys.stderr)
+        return 2
+
+    queue = read_names(args.seeds)
+    print(f"seeds: {len(queue)} candidate names, probe budget {args.max_probes}, method {method}")
+    if not args.execute:
+        print("sample: " + ", ".join(queue[:5]))
+        print("dry run: pass --execute to send")
+        return 0
+
+    context = ssl._create_unverified_context() if args.insecure else None
+    seen: set[str] = set()
+    harvested: dict[str, dict[str, object]] = {}
+    probes = 0
+    while queue and probes < args.max_probes:
+        field = queue.pop(0)
+        if field in seen:
+            continue
+        seen.add(field)
+        status, text = send(args.base, probe, field, args.timeout, context)
+        probes += 1
+        names = harvest(text)
+        harvested[field] = {"status": status, "suggestions": sorted(names)}
+        for name in sorted(names):
+            if name not in seen:
+                queue.append(name)
+        if args.delay:
+            time.sleep(args.delay)
+
+    known = sorted(seen | {name for entry in harvested.values() for name in entry["suggestions"]})
+    print(f"\nprobes sent: {probes}; names harvested: {len(known)}")
+    for name in known:
+        print(f"  {name}")
+    print("record each name with the probe that produced it, then confirm the schema against live behaviour")
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as handle:
+            json.dump({"base": args.base, "probes": harvested, "names": known}, handle, indent=2)
+        print(f"wrote {args.json_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

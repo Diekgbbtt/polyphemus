@@ -1,5 +1,8 @@
 # Hunting spec: test-executor pod memory system (per-project experiment logs + notes)
 
+**AMENDED 2026-10-18 (T9, #382; carried by T10 #383).** The variant record keeps its four-field shape, and `declined_attribute` now carries the variant BASIS from the procedure diff (S5 8.6) instead of a declined spec attribute. The D4 references are the REDUCED D4 (S5 8.4): `testing_pattern`, `payload_vector_space`, and `interpretation_guidance` are retired. The rest of this spec stands.
+
+
 *Status: spec (contract), NOT implementation.* The build specification for the pod memory-system adaptation of
 ticket [#84](https://github.com/Diekgbbtt/polyphemus/issues/84). Synthesised 2026-08-23 from the grilling recorded in
 `docs/design/hunting-84-regrounding-decisions.md` (D84-33 through D84-38 VERDICTED 2026-08-23, plus the two
@@ -7,6 +10,10 @@ operator corrections in this grilling round) and the memory-system pattern docum
 `docs/design/hunting-memory-system-spec.md`. The adaptation trades the pod's content-addressed in-memory
 `ExperimentLog` plus `_seq`/`_ref` notes model for the per-project deterministic-key pattern, keeping the pod's
 memorization kernel (the note store semantics + the note tool) as-is.
+
+**NOTE 2026-10-18.** The variant record shape stays.
+The `declined_attribute` field now carries the variant basis from `docs/design/hunting-67-test-executor-pod-spec.md` section 8.6.
+The other records are unchanged.
 
 Lineage: the pod spec is `docs/design/hunting-67-test-executor-pod-spec.md`; the underlying decisions are
 `docs/design/hunting-84-regrounding-decisions.md`. The spec identifier is minted by the #164 hunter

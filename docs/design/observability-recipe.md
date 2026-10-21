@@ -86,7 +86,7 @@ Pinned by `test_build_chat_model_requests_stream_usage_for_streamed_calls` + `te
 
 ## Witness index (mutual-mirror chain)
 
-`analysis/bootstrap.py::_bootstrap_span` is the original; `app/observability/analyser_tracing.py` replicates it for proposer dispatches; `attack/hunting/hunting_tracing.py` and `attack/hunting/orchestrator_tracing.py` mirror the analyser module exactly; `app/llm/negotiation.py::_emit_probe_span` is the minimal one-shot form; recon LangGraph runtimes use the `CallbackHandler` seam instead (`app/observability/langfuse_tracing.py`).
+`analysis/bootstrap.py::_bootstrap_span` is the original; `app/observability/analyser_tracing.py` replicates it for proposer dispatches; `attack/hunting/hunting_tracing.py` mirrors the analyser module exactly (the planner-era `orchestrator_tracing.py` retired with T2b #386); `app/llm/negotiation.py::_emit_probe_span` is the minimal one-shot form; recon LangGraph runtimes use the `CallbackHandler` seam instead (`app/observability/langfuse_tracing.py`).
 
 ## Convergence migration (2026-09-15)
 
@@ -99,9 +99,9 @@ Each site migrates exactly once, by row, and the row states what survives.
 - Hunting agent (`attack/hunting/hunting_agent.py` + `hunting_tracing.py`): DELETE the `hunting_span` wrapper - every step is an attributed session turn.
 - The hunt passes its run id as an extra turn tag for the same join.
 - `trace_span` survives as a thin-exception step span with explicit correlation arguments; the flush call stays until #235 unifies delivery.
-- Hunt orchestrator (`attack/hunting/hunt_orchestrator.py`, `runtime.py` + `orchestrator_tracing.py`): DELETE the `orchestrator_gate_span` wrapper - actor turns ride the session seam.
+- Threat modeller (`attack/hunting/threat_modeller.py`, `runtime.py`): the pass rides the session seam like every actor turn; no gate-span wrapper exists.
 - The pass threads its run id as an extra turn tag.
-- `trace_gate_step` survives as a thin-exception step span with explicit correlation arguments; the flush call stays until #235.
+- `hunting_tracing.py::trace_span` survives as the thin-exception step span with explicit correlation arguments; the flush call stays until #235.
 - Bootstrapper (`analysis/bootstrap.py`): KEEPS `_bootstrap_span` UNCHANGED as the canonical thin exception.
 - Its `invoke_role` calls carry no handler config, so no LangChain run exists to carry the trace - deletion would lose the trace, not migrate it.
 - Negotiation probe (`app/llm/negotiation.py::_emit_probe_span`): KEEPS its one-shot span UNCHANGED as the minimal thin exception (no run context exists at probe time).

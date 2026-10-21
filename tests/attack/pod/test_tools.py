@@ -37,7 +37,8 @@ SPEC_ID = spec_identifier("sqli", "blind")
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
+    "assumptions": ["network egress allowed"],
+    "rationale": "reachability",
 }
 
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
@@ -110,7 +111,7 @@ def test_runner_graph_view_carries_the_contract_and_is_read_only(tmp_path):
     # absent seam -> the tool's own fail-open error, never a raise into the turn
     out = gv.invoke({"cypher": "MATCH (s) RETURN s", "params": {}})
     assert "error" in out
-    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+    from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphViewError
     try:
         gv.invoke({"cypher": "MATCH (s) MERGE (x)"})
         raise AssertionError("write-shaped cypher not rejected")

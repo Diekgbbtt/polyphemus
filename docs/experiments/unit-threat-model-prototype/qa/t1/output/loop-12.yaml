@@ -1,0 +1,106 @@
+loop_id: loop-12
+unit_id: Service:model-download
+class: Improper error handling on request parsing (unhandled exceptions)
+class_skill: business-logic
+slice:
+  source: trust_agreement
+  statement: "CF1/IA4: the install handler's request-body pipeline (body -> JSON decode -> key extraction) is contracted to answer 400 for invalid requests, but unhandled body errors surface as 500 (P08 empty body, P46 malformed body). The loop opens the request-body error-mode space of the install handler family, where parsing and schema failures cross the 400/500 boundary."
+discrimination:
+  axes_used: [payload-vector, chaining-advanced, tech-misconfiguration]
+  boundary: "the pipeline stage whose failure is tested: decode (s1), post-decode key extraction and field use (s2), delivery path and request framing holding the body class fixed (s3); fault fixed at F6."
+  narrow_broad_tradeoff: "broad across the three pipeline regions and narrow per region (one owning spec each); the fault is OBSERVED at the decode stage, so the set extends coverage to the untested extraction stage and the mirror routing rather than deepening the decode samples."
+specs:
+- spec_id: loop-12-s1
+  label: "decode-failure class"
+  sub_slice: "Bodies that never reach a decoded JSON object: absent or empty body (anchor P08 -> 500), truncated or syntactically invalid JSON (anchor P46 -> 500), undecodable byte sequences or charset mismatch; region = failures at the JSON decode stage of the install handler."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {sink: "request-body decode of POST install_model (CF1)", technique: "malformed-shape submission per the class's input-surface discipline (null/empty/negative, alternate encodings) with the IA4 status contract as the independent expectation", anchors: "P08 empty body -> 500; P46 malformed body -> 500"}
+  concretisation:
+    protocol: http
+    technology: "aiohttp 3.14.3 request handling; V3.37 handler; default error text 'Server got itself in trouble' observed on 500"
+    endpoint: "POST /manager/queue/install_model"
+    parameter: "request body only"
+    method: POST
+    body: "empty; truncated JSON; invalid syntax (P46 anchor); invalid UTF-8 bytes; wrong charset declaration"
+    headers: {"Content-Type": "application/json; charset variants as body-family features"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns bodies that fail before a JSON object exists. s2 owns bodies that decode and then fail extraction; s3 varies route/framing while holding the body class fixed. The nearest sibling question is 'which stage saw the malformed body', not which bytes were sent."
+  chaining_advanced_note: null
+  proxy_technique: "Send one body family per request against the install handler; record the status and error body; compare against the IA4 contract (400 invalid request). The absence of queue side effects (counters unchanged, no item) is checked alongside to separate a handled refusal from an unhandled exception mid-transaction."
+  verification_symptoms: ["500 with the default error body for the empty/invalid/truncated families (anchors P08/P46)", "no queue side effect accompanies the 500 (counters and items unchanged), showing the failure is unhandled rather than a handled refusal"]
+  payload_vector_space:
+    method: POST
+    path: "/manager/queue/install_model, /api/manager/queue/install_model"
+    parameter: null
+    body: "empty, truncated, syntax-invalid, undecodable, charset-mismatched"
+    headers: "Content-Type: application/json; charset variants"
+  assumptions: ["the IA4 contract (400 invalid request) is the intended behaviour for malformed bodies", "the 500 text observed on P08/P46 is the server's unhandled-error rendering"]
+  rationale: "If F6 is implemented, the decode stage raises without a handler, so every body that fails decoding is answered 500 instead of the contracted 400. The failure is already anchored; the spec fixes the family boundary and the no-side-effect property so the error mode is attributable to the decode stage."
+  interpretation_guidance: "Symptom-present = the contracted 400 boundary is crossed: 500 for a decode-stage family, with no queue side effect. Symptom-absent = 400 (or another handled status) for every family in the class, with the error body bounded: the decode stage is guarded; record per family. A 500 with partial side effects is a different finding (mid-transaction failure) and is recorded as such, not folded in."
+- spec_id: loop-12-s2
+  label: "schema-shape failure class"
+  sub_slice: "Decoded JSON whose shape violates the expected install schema: missing required keys (name/url/filename/save_path), wrong value types (strings where objects expected and vice versa), wrong container shapes, unexpected extra keys, boundary scalars; region = failures after decode, at key extraction and field use (CF1's second half)."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {sink: "key extraction and field use after decode", technique: "input-surface shape families from the class skill: arrays instead of scalars, objects with unexpected keys, null/empty/0/negative values; expectation oracle: the IA4 status contract plus the observed 200/400/403 vocabulary"}
+  concretisation:
+    protocol: http
+    technology: "same handler; Python dict access after json.loads"
+    endpoint: "POST /manager/queue/install_model"
+    parameter: "name, url, filename, save_path, ui_id shapes"
+    method: POST
+    body: '{"name": [], "url": {"x": 1}, "filename": null, "save_path": 0} and per-field variants; missing-key variants'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the post-decode stage: the body is valid JSON, so any failure comes from extraction or use, a different programming fault surface than s1's decode raise. s3 holds these bodies fixed while varying the route; s2 is the only spec probing the extraction stage."
+  chaining_advanced_note: "Structural stage split of F6's pipeline: the payload's CF1 names body -> JSON decode -> key extraction as separate steps, and the fault's evidence covers only the decode step; unhandled errors can also originate at extraction and field use. The business-logic class skill lacks error-handling entities; the shape families come from its input-surface vocabulary, and the stage split is carried structurally from CF1."
+  proxy_technique: "One shape family per request: valid JSON, single field altered (missing, wrong type, wrong container), remaining fields benign; record the status and whether any queue side effect occurred. The 400/500/200 triage across families maps which extraction failures are handled and which raise."
+  verification_symptoms: ["status mapping per shape family: refusal (400/403) for malformed schema versus 500 (unhandled) for at least one decoded-but-invalid shape", "any accepted (200) shape whose field types later surface in status or execution metadata, showing absent type validation on the accepted path"]
+  payload_vector_space:
+    method: POST
+    path: "/manager/queue/install_model, /api/manager/queue/install_model"
+    parameter: "one field family per submission; keys: name, url, filename, save_path, ui_id; missing-key combinations"
+    body: "valid JSON with schema-shape violations"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the handler extracts the five contract keys after decoding (IA1)", "the IA4 vocabulary (200/400/403/500) is the intended contract for schema outcomes; unobserved in the payload, so the triage map is the deliverable"]
+  rationale: "If F6 is implemented weakly (only the decode call is wrapped, or nothing is), schema-shape failures at extraction have the same unhandled fate as their decode siblings; a decoded body reaching dict access with wrong types raises. The failure mode is stage-shifted, so it needs its own spec even though the surface symptom (500) coincides."
+  interpretation_guidance: "Symptom-present = a decoded-but-invalid shape crosses to 500, or an invalid type is accepted with 200 and surfaces later (absent validation). Symptom-absent = the whole shape list maps to handled statuses with no side effects: extraction is guarded; record the map. Coinciding 500s from s1 and s2 stay separate findings because the failing stage differs; do not merge their evidence."
+- spec_id: loop-12-s3
+  label: "mirror and framing delivery"
+  sub_slice: "The same malformed classes delivered through the /api mirror and alternate request framing (form-encoded, text/plain, multipart, charset-decorated content-type): region = whether the mirror routing layer and content negotiation change the error mode (proxy-generated errors, different 500 rendering, 400 from a guarded layer)."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {sink: "same handler reached through a second route and alternate framings", technique: "content-type switching and channel alternation from the class skill's bypass section (content-type switching to hit different code paths)", anchors: "P33 /api/mirror route 200s; P42/P43 method contract"}
+  concretisation:
+    protocol: http
+    technology: "V3.37 /api mirror in front of the same handler on aiohttp"
+    endpoint: "POST /api/manager/queue/install_model versus POST /manager/queue/install_model"
+    parameter: "same body classes as s1/s2, one delivery variant per request"
+    method: POST
+    body: "decode-failure bodies and schema-shape bodies, re-encoded as form/multipart/text-plain variants"
+    headers: "alternate Content-Types; absence of Content-Type"
+  discrimination_axis: tech-misconfiguration
+  discrimination_note: "Owns the delivery path: route prefix and framing held constant per body class, so any error-mode difference attributes to the mirror layer or content negotiation, not the body. s1/s2 own stage failures on the primary route; s3 never claims a stage, only the path-dependent handling difference."
+  chaining_advanced_note: null
+  proxy_technique: "Deliver each body class twice through the primary and the /api route, and per framing family (json, form, multipart, text/plain, none); record status plus error-body shape per cell. A difference between cells with identical bodies isolates the mirror/negotiation layer as the variable."
+  verification_symptoms: ["per-cell error-mode matrix: status and body-shape per (route x framing x body class)", "any cell divergence for the same body class (for example a proxy-generated error on /api while the primary route raises, or framing-dependent 400 versus 500) marks the layer that changed the handling"]
+  payload_vector_space:
+    method: POST
+    path: "/manager/queue/install_model, /api/manager/queue/install_model"
+    parameter: null
+    body: "same classes as s1/s2 re-framed: form-encoded, multipart, text/plain, no body"
+    headers: "Content-Type per framing; charset variants; absent Content-Type"
+  assumptions: ["the /api prefix serves the same handler through a distinct routing layer (IA1/P33) whose failure rendering may differ", "content negotiation selects the decode behaviour (unprobed; the matrix reads it)"]
+  rationale: "If F6 is implemented, the error mode is a property of the handler, but the handler family has two routings and several framings; the mirror layer is a concrete stack component that can add its own error rendering or guard. Mapping the matrix completes the fault's observable surface without deepening either stage."
+  interpretation_guidance: "Symptom-present = at least one (route, framing) cell diverges from the others for the same body class, indicating the mirror or negotiation layer changes handling. Symptom-absent = a uniform matrix across routes and framings for each class: the error mode is path-invariant; record the matrix as the negative. Diverging statuses between decode and schema classes are expected (s1/s2 scope) and do not count as a framing difference."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns decode-stage failures, s2 owns post-decode extraction failures, s3 owns delivery-path differences with both body classes held fixed. Stages and variables are disjoint; coinciding 500 statuses do not merge the sub-slices because the failing stage and the inferred fault differ, and s3 claims no stage at all."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "The install handler family's pipeline (decode, extraction/use) and its delivery surface (primary route, /api mirror, framing families) are each owned once. Other JSON handlers are not evidenced and stay outside the slice statement rather than uncovered."
+  well_formedness_statement: "Three specs partition F6's observable space by pipeline stage and delivery path: decode failures, extraction failures, and mirror/framing handling. Each spec's sub-slice, oracle, and variable are disjoint, and the union covers the handler family's error surface as the payload evidences it; the split is structural because no error-handling skill exists in the suite."
+degradations: ["No error-handling class skill exists in the suite; business-logic is loaded per the payload's suite_class mapping, and the stage split is carried structurally from CF1/IA4.", "Only status and error-body-level modes are observable; exception internals are not in evidence (the loop notes the 500 body exposes no internals).", "The intended status contract is read from IA4; every spec's interpretation records the contract it judges against."]

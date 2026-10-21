@@ -1,5 +1,9 @@
 # Hunting #66 - the fold seams the hunt-orchestrator graph logic consumes
 
+*Historical contract (superseded).*
+The fault-KB seams below were DELETED in T10 (#383).
+The unit threat model's assumptions carry the fault, and the hunter's procedure diff replaced the fold materialisation.
+
 The folded recipes in the fault-KB are latent in the matching facet: `load_fault_entries` filters them out ("fold at curation, filter at read"), so a folded recipe only surfaces if the orchestration explicitly attaches it to its selection-tier parent.
 That is a materialisation failure: without the seams below, a folded recipe is never materialised into a hunting-agent prompt and the taxonomy corrections are invisible to the hunt.
 

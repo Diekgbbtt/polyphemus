@@ -1,0 +1,140 @@
+loop_id: loop-1
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: csrf
+class_skill: csrf
+slice:
+  source: trust_agreement
+  statement: "TA-4: the manager preference routes (/manager/channel_url_list, /manager/db_mode, /manager/preview_method, /manager/policy/*) persist state on GET with no token, no origin check, no cookie requirement and no confirmation, so any crossing participant - the operator's browser on a foreign page or any network peer - attains the operator's mutation privilege (A-4 -> F-4 -> V-5). T6/T7 trust 'the caller is the operator acting intentionally'."
+discrimination:
+  axes_used: [payload-vector, chaining-advanced]
+  boundary: "delivery proxy x preference-route family: how the GET is emitted (click-mediated navigation, silent embedded resource, script-initiated fetch) crossed with the persisted state it lands on (channel identity, db mode, preview/policy), plus one ordered multi-route composition. No spec discriminates on a payload string."
+  narrow_broad_tradeoff: "Broad on routes: one missing proof of intent covers all four mutation families, so none is dropped. Narrow on delivery: three browser-proxy reachability claims plus one ordering claim, each separately falsifiable rather than a payload catalogue."
+specs:
+  - spec_id: loop-1-s1
+    label: "clicked cross-site link switches the catalogue channel"
+    sub_slice: "Channel-identity write over /manager/channel_url_list?value=<name> reached by a click-mediated top-level cross-site navigation; owns the single-request source-identity mutation on the route that has a membership check but no intent proof."
+    class_skill_parametrisation:
+      skill: csrf
+      inputs:
+        route: "/manager/channel_url_list"
+        value_source: "names readable from GET /manager/channel_url_list; observed 6 name::URL entries"
+        only_validation: "channel name must exist in the configured channel dict"
+        ambient_authority: none
+        patterns_used: ["navigation CSRF (parent skill)", "csrf-navigation-get single-link probe", "before-versus-after state comparison"]
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoint: "/manager/channel_url_list?value=recent"
+      method: GET
+      interaction: "one operator click on a foreign-origin page"
+      read_back: "GET /manager/channel_url_list -> selected=recent; next GET /customnode/getlist?mode=cache resolves the switched source (recent channel served 1021 packs in probes)"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-1-s2: both write one preference with no token, but this spec owns the click-mediated navigation proxy (reachability rests on a gesture) and the channel-identity state; s2 owns the no-interaction proxy and the db-mode state."
+    chaining_advanced_note: null
+    proxy_technique: "Foreign page carries <a href=\"http://46.224.225.245:44177/manager/channel_url_list?value=recent\">; the click issues a top-level GET and the route needs no cookie or token, so neither SameSite nor CORS constrains delivery."
+    verification_symptoms:
+      - "read-back GET /manager/channel_url_list returns selected=<value> after the foreign click"
+      - "a later getlist resolves rows from the switched channel with no same-origin UI action"
+      - "no token, nonce, Origin or Referer check and no cookie appear anywhere in the exchange"
+    payload_vector_space: {method: GET, path: /manager/channel_url_list, parameter: "value=<valid channel name>", body: null, headers: "Origin and Referer foreign; no cookie required; server reads neither"}
+    assumptions: ["at least one valid channel name is known or readable from the list route", "the unit is reachable from the operator's browser"]
+    rationale: "TA-4 places no privilege requirement on the write and T6's single precondition is channel-name membership; a foreign-origin link supplies exactly those inputs, so the mutation completes on click and persists for later read-back."
+    interpretation_guidance: "symptom-present = read-back shows selected=<value> and a later getlist follows the switched channel. symptom-absent = rejection (4xx/403), value ignored, or read-back unchanged. A combo change without server persistence is absent. A CORS-blocked fetch probe is inconclusive, not negative: top-level navigation needs no CORS permission, so only read-back arbitrates."
+  - spec_id: loop-1-s2
+    label: "silent image-loader GET flips the db mode"
+    sub_slice: "DB-mode write over /manager/db_mode?value=<cache|local|remote> reached by a non-interactive embedded-resource GET (image, iframe, link prefetch); owns the datasource-state mutation and its latent per-request effect - mode=remote turns every later getlist into a blocking outbound fetch."
+    class_skill_parametrisation:
+      skill: csrf
+      inputs:
+        route: "/manager/db_mode"
+        value_domain: "cache|local|remote, unvalidated per T6"
+        interaction: none
+        patterns_used: ["simple request delivery (parent skill, method/content-type inventory)", "before-versus-after state comparison", "inventory endpoints across state-changing GETs"]
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoint: "/manager/db_mode?value=remote"
+      method: GET
+      interaction: "foreign page load; no click"
+      read_back: "GET /manager/db_mode -> 'remote'; subsequent getlist blocks on the outbound channel fetch (observed remote-mode shape: client timeout at 8.011s, 0 bytes)"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-1-s1: same missing-token failure, but the proxy is a silent subresource rather than a gesture, and the owned state is the datasource mode whose value is unvalidated, not the channel identity."
+    chaining_advanced_note: null
+    proxy_technique: "Foreign page embeds <img src=\"http://46.224.225.245:44177/manager/db_mode?value=remote\">; the browser issues the GET during page load with no click, no navigation and no permission from the target origin."
+    verification_symptoms:
+      - "GET /manager/db_mode returns 'remote' after the embedding page loads"
+      - "the next getlist in the operator's shell shows the changed datasource behaviour (remote-mode blocking fetch)"
+      - "no interaction with the manager UI is required for the write"
+    payload_vector_space: {method: GET, path: /manager/db_mode, parameter: "value=remote (value unvalidated)", body: null, headers: "none required; the embedded GET carries no credentials to check"}
+    assumptions: ["the operator's browser loads the foreign page while the unit is reachable", "no unit-side check refuses embedded cross-origin GETs (none evidenced)"]
+    rationale: "The handler treats any caller as the operator and T6 validates only channel names, so the mode value is free; an image GET is the cheapest carrier and mode=remote changes every later catalogue resolution into an outbound fetch."
+    interpretation_guidance: "symptom-present = read-back 'remote' plus changed subsequent getlist behaviour with no UI interaction. symptom-absent = rejection, value ignored, or read-back unchanged. The remote-mode hang is expected handler behaviour, so a hung probe is inconclusive, not a negative; only read-back decides."
+  - spec_id: loop-1-s3
+    label: "script-driven no-cors sweep over preview and policy routes"
+    sub_slice: "Route-family extension: /manager/preview_method and /manager/policy/* writes reached by a script-initiated cross-origin fetch (mode no-cors); owns the preference routes outside the catalogue UI's own combo handlers and their unvalidated arbitrary values."
+    class_skill_parametrisation:
+      skill: csrf
+      inputs:
+        routes: ["/manager/preview_method", "/manager/policy/*"]
+        value_domain: "unconstrained (T6: db_mode/policy values unvalidated)"
+        delivery: "script-initiated fetch, no preflight"
+        patterns_used: ["preflightless delivery with simple request shape (parent skill)", "method and content-type inventory", "before-versus-after state comparison"]
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoint: "/manager/policy/<policy-name>?value=<arbitrary>"
+      method: GET
+      interaction: "foreign-origin page script; no click"
+      read_back: "independent GET read of the affected route shows the written value; persistence per T6 config write"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-1-s2: both are silent, but this proxy is script-initiated (no markup carrier, repeatable) and owns the preview/policy families whose values have no membership check, not the db mode."
+    chaining_advanced_note: null
+    proxy_technique: "Foreign page runs fetch('http://46.224.225.245:44177/manager/preview_method?value=<x>', {mode:'no-cors'}); no preflight and no credentials are needed because the route requires neither, and the opaque response satisfies no read requirement."
+    verification_symptoms:
+      - "read-back of the affected route returns the written value"
+      - "an arbitrary or invalid value persists (no enum check on db_mode/policy per T6)"
+      - "the write repeats from script with no same-origin context or token"
+    payload_vector_space: {method: GET, path: "/manager/preview_method, /manager/policy/*", parameter: "value=<arbitrary>", body: null, headers: "none required; no-cors fetch sends no custom headers"}
+    assumptions: ["policy subroute names are enumerable (the policy dict layout is not observed)", "no per-request nonce or rate limit exists (none observed across 26 probes)"]
+    rationale: "TA-4 grants the mutation privilege to every HTTP caller, so a scripted fetch adds no requirement the route lacks; unvalidated values let an attacker plant arbitrary preference state that later reads consume (T6 value write, T7 resolution)."
+    interpretation_guidance: "symptom-present = the written value is read back from the route by an independent request. symptom-absent = rejection, value normalised, or read-back unchanged. Because a no-cors response cannot be read, the attacker page showing no error proves nothing; only the independent read-back is evidence."
+  - spec_id: loop-1-s4
+    label: "forced ordered db-mode then channel composition"
+    sub_slice: "Ordered multi-route preference sequence (db_mode then channel, or the reverse) reproducing the manager's own configuration workflow from a foreign origin; owns the ordered-chain mutation and the composed-state effect on the next catalogue resolution."
+    class_skill_parametrisation:
+      skill: csrf
+      inputs:
+        routes: ["/manager/db_mode", "/manager/channel_url_list"]
+        ordering: "forced two-step sequence; no confirmation step exists between writes (T6)"
+        patterns_used: ["chained confirmation navigation primitive from csrf-navigation-get (per-step completion)", "inventory endpoints", "state-effect confirmation per step"]
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoints: ["/manager/db_mode?value=remote", "/manager/channel_url_list?value=<name>"]
+      method: GET
+      interaction: "two deliveries in order; navigations or no-cors fetches"
+      read_back: "per-step GET read-back; then one getlist that resolves the composed state (remote mode over the switched channel)"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-1-s1: same channel endpoint, but s1 owns the single write, while this spec owns the composition (a sequence the UI intends the operator to drive) and the resolved end state; it introduces ordering, not a payload primitive."
+    chaining_advanced_note: "Structural: the csrf class skill has no entity for a configuration workflow forced as a chain. Its nearest entity is csrf-navigation-get's chained confirmation navigation, whose parent owns one top-level GET; the per-step chain procedure is therefore carried structurally - each step records completion, then an end-state resolution check confirms the composition."
+    proxy_technique: "Foreign page emits the two GETs in order (two navigations or two no-cors fetches) so the config ends in a composed state the operator never chose; read-back runs after each step to attribute partial chains."
+    verification_symptoms:
+      - "step-by-step read-back shows db_mode and channel both changed in the forced order"
+      - "the next getlist resolves the composed state with no operator intent recorded"
+      - "no confirmation or token step interrupts the pair"
+    payload_vector_space: {method: GET, path: "/manager/db_mode then /manager/channel_url_list", parameter: "value=<mode> then value=<name>", body: null, headers: "none required per step"}
+    assumptions: ["the two routes share no lock or confirmation between them (no evidence of one)", "the composed state is reachable in either order"]
+    rationale: "T6 trusts the write as operator intent and T7 resolves whatever config holds next, so an ordered pair lands a composed datasource configuration; no confirmation step exists to break the chain, and each step succeeds on its own."
+    interpretation_guidance: "symptom-present = both read-backs change in the forced order and a later getlist resolves the composed configuration. symptom-absent = either step is rejected or a later write resets the earlier one (no composition). Record partial chains per step rather than collapsing them into one negative."
+checks:
+  overlap:
+    status: none
+    notes: "s1, s2, s3 differ on delivery proxy and on the preference family each owns; s4 owns ordering and the composed end state. No two specs share a sub-slice and none differs from a sibling by a payload string alone."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Union covers all four preference families (channel, db mode, preview, policy), the three reachability classes (click, silent markup, script) and the ordered composition. Cross-products (for example policy via navigation) are the same proxy x route instantiations and ride as aspects inside the owning spec. Post-render queue actions (CF-6) are outside this unit. Direct delivery by a non-browser network peer rides as an aspect of every spec because no browser authority is required at all."
+  well_formedness_statement: "Four specs over disjoint sub-slices: one per delivery proxy plus the ordering region. Overlap is absent - each spec owns a distinct (proxy, preference-family) region and s4 owns composition, with no payload-string variants. Coverage is exhaustive over TA-4's preference-route mutation space as instantiated by the observed route set; out-of-unit queue actions and non-browser peer delivery are named as aspects or exclusions rather than gaps."
+degradations:
+  - "Class-skill mismatch: csrf presumes cookie-based ambient authority; these routes need no cookie, session or token at all (26 probes, none observed). The skill's SameSite, token-lifecycle and parser-differential entities do not apply, so the reasoning is carried structurally."
+  - "The /manager/policy/* subroute names are not observed (IA-5 gives only the route family), so s3 names its enumeration assumption rather than concretising names."

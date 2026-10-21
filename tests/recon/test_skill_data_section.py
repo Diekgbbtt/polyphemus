@@ -75,14 +75,17 @@ def test_validate_skill_never_raises_on_missing_file(tmp_path, monkeypatch):
 
 # --- AST-222-03: list_skills indexes the catalogue ---
 
-def test_list_skills_returns_sorted_loader_paths(tmp_path, monkeypatch):
-    _write_skill(tmp_path, "b/skill", "# B\n")
-    _write_skill(tmp_path, "a/deep/skill", "# A\n")
+def test_list_skills_returns_sorted_loader_names(tmp_path, monkeypatch):
+    # The `meta/` branch is the only path-named branch; every other bundle
+    # reports its flat leaf name whatever its depth (the layout-agnostic
+    # client contract).
+    _write_skill(tmp_path, "meta/b-skill", "# B\n")
+    _write_skill(tmp_path, "meta/a-skill", "# A\n")
     (tmp_path / "not-a-skill").mkdir()
     (tmp_path / "not-a-skill" / "notes.md").write_text("no SKILL.md here\n")
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
-    assert skills.list_skills() == ["a/deep/skill", "b/skill"]
+    assert skills.list_skills() == ["meta/a-skill", "meta/b-skill"]
 
 
 # --- AST-222-04: build_load_skill_tool is the agent-callable loader ---
@@ -432,8 +435,8 @@ def _write_project_bundle(root, project_id, name, description):
     """Write a per-project bundle FILE directly (the external author's output),
     NOT through `write_skill` - a project-authored skill such as `authn` has no
     bootstrapped catalogue metadata, so it lands as a plain file at the designed
-    data-dir location."""
-    bundle = root / project_id / "skills" / name / "SKILL.md"
+    location under the `target-specific-procedure/` branch."""
+    bundle = root / "target-specific-procedure" / project_id / name / "SKILL.md"
     bundle.parent.mkdir(parents=True, exist_ok=True)
     bundle.write_text(
         f"---\nname: {name}\ndescription: {description}\nmetadata:\n  version: '1.0'\n"

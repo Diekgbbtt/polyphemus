@@ -61,13 +61,3 @@ def test_directive_appears_verbatim_in_the_hunter_role_prompt():
     text = (prompts_dir / "hunting-agent.md").read_text(encoding="utf-8")
     assert hunting_status.TARGET_UNAVAILABLE_DIRECTIVE in text
 
-
-def test_pod_defence_classifier_reuses_the_shared_status_set():
-    """Single-source: the pod's `_defence_signal` classifies the target-front
-    5xx family through the shared set, so the pod and the hunter agree."""
-    from polymerhus.attack.hunting import hunting_pod
-
-    for code in (502, 503, 504):
-        assert hunting_pod._defence_signal(code) == "server-error"
-    assert hunting_pod._defence_signal(429) == "rate-limited"
-    assert hunting_pod._defence_signal(404) is None

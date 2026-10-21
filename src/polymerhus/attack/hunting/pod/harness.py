@@ -4,7 +4,8 @@ G1 (the per-stretch tool-call cap `HUNT_POD_MAX_TOOL_CALLS`), G4 (the hanging
 guarantee that every exec result is recorded RAW in the D6 log), and O7 (the
 one-execution-per-identical-probe dedup gate) move HERE, onto the `create_agent`
 agent - the tool-call loop lives inside `create_agent`, so the graph's `tool_exec`
-node disappears from the production lane.
+node disappears from the production lane. O7 covers both executing verbs: an
+identical `exec` command and an identical baseline `replay` (S5 8.5).
 
 The middleware owns ONLY the cap + the dedup/malformed-command gates. Tool
 ARGUMENT validation is the tool's own contract (`extra="forbid"` args schemas,
@@ -23,7 +24,7 @@ from langchain.agents.middleware.types import hook_config
 from langchain_core.messages import ToolMessage
 
 from polymerhus.attack.hunting.pod.config import HUNT_POD_MAX_TOOL_CALLS
-from polymerhus.attack.hunting.pod.tools import command_signature
+from polymerhus.attack.hunting.pod.tools import command_signature, replay_signature
 
 
 class _HarnessMiddleware(AgentMiddleware):
@@ -54,7 +55,18 @@ class _HarnessMiddleware(AgentMiddleware):
 
     def wrap_tool_call(self, request, handler):
         self.calls += 1
-        if request.tool_call.get("name") != "exec":
+        name = request.tool_call.get("name")
+        if name == "replay":
+            args = request.tool_call.get("args") or {}
+            sig = replay_signature(self.variant_ref,
+                                   str(args.get("artifact_id") or ""),
+                                   dict(args.get("overrides") or {}))
+            if self.log.has_executed(sig):  # O7/C10: a repeated baseline replay
+                return ToolMessage(
+                    content="TOOL RESULT: (already executed; deduped)",
+                    tool_call_id=request.tool_call.get("id") or "", name="replay")
+            return handler(request)
+        if name != "exec":
             return handler(request)
         args = request.tool_call.get("args") or {}
         command = str(args.get("command") or "")
@@ -76,7 +88,18 @@ class _HarnessMiddleware(AgentMiddleware):
         the production seams run the agent via `arun_session_turn`/`ainvoke`, so
         the middleware must surface the async hook."""
         self.calls += 1
-        if request.tool_call.get("name") != "exec":
+        name = request.tool_call.get("name")
+        if name == "replay":
+            args = request.tool_call.get("args") or {}
+            sig = replay_signature(self.variant_ref,
+                                   str(args.get("artifact_id") or ""),
+                                   dict(args.get("overrides") or {}))
+            if self.log.has_executed(sig):
+                return ToolMessage(
+                    content="TOOL RESULT: (already executed; deduped)",
+                    tool_call_id=request.tool_call.get("id") or "", name="replay")
+            return await handler(request)
+        if name != "exec":
             return await handler(request)
         args = request.tool_call.get("args") or {}
         command = str(args.get("command") or "")

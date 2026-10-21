@@ -1,7 +1,7 @@
 """The surfer loop (#275, D5/D31/N17).
 
 The surfer asserts instance state in the background and prompts the orchestrator
-on a cap-reached or failed state; the orchestrator decides terminate, destroy or
+on a legacy cap-reached or failed state; the orchestrator decides terminate, destroy or
 a bounded fix-and-restart, or escalates into a hold. Every effect is injected -
 the state source, the decider agent turn, the command runner, the REST client,
 the repair kit, the trial resumer, the clock, and the hold state - so the loop is
@@ -16,7 +16,7 @@ import pytest
 from orchestrator.app_state import AppState
 from orchestrator import alignment, api, instances, surfer, trial
 from orchestrator.commands import CommandResult
-from orchestrator.files import FileStore, hunt_configs_dir
+from orchestrator.files import FileStore, threat_model_dir
 from orchestrator.instances import InstancePaths
 from orchestrator.setup import (
     EvalSetup,
@@ -990,11 +990,12 @@ def test_replace_artifacts_needs_preloaded_configuration(tmp_path) -> None:
     assert kit.supports(surfer.REPAIR_REPLACE_ARTIFACTS) is False
 
 
-def test_replace_artifacts_replaces_the_premined_configs(tmp_path) -> None:
-    source = tmp_path / "premined" / "c1.yaml"
-    source.parent.mkdir(parents=True)
-    source.write_text("id: c1\n", encoding="utf-8")
-    preloaded = PreloadedArtifacts(configs=str(source))
+def test_replace_artifacts_replaces_the_premined_models(tmp_path) -> None:
+    source = tmp_path / "premined" / "unit-web-sqli"
+    source.mkdir(parents=True)
+    source.joinpath("unit-web-sqli.yaml").write_text("state: COMPLETED\n", encoding="utf-8")
+    source.joinpath("loop-1.yaml").write_text("loop:\n  id: loop-1\n", encoding="utf-8")
+    preloaded = PreloadedArtifacts(models=str(source))
     kit = surfer.SurferRepairKit(
         make_paths(tmp_path), runner=None, data_root=tmp_path / "data", preloaded=preloaded
     )
@@ -1002,8 +1003,9 @@ def test_replace_artifacts_replaces_the_premined_configs(tmp_path) -> None:
     assert kit.supports(surfer.REPAIR_REPLACE_ARTIFACTS) is True
     kit.apply(surfer.REPAIR_REPLACE_ARTIFACTS, project_id="pid")
 
-    produced = hunt_configs_dir(tmp_path / "data", "pid", "produced")
-    assert (produced / "c1.yaml").is_file()
+    produced = threat_model_dir(tmp_path / "data", "pid", "produced") / "unit-web-sqli"
+    assert (produced / "loop-1.yaml").is_file()
+    assert (produced / "unit-web-sqli.yaml").is_file()
 
 
 # --- structural enforcement: no code change is ever applied -------------------
@@ -1166,7 +1168,7 @@ def test_two_cycles_on_the_same_terminal_state_act_once(tmp_path) -> None:
 
 
 def test_a_second_distinct_trigger_is_handled_too(tmp_path) -> None:
-    # Two real triggers on one state: a failed hunting run and a cap-reached
+    # Two real triggers on one state: a failed hunting run and a legacy cap-reached
     # run. Both name a run, so `terminate` stops both; the second cycle is a
     # no-op because both identities were recorded.
     state = alignment.AlignmentState(tmp_path / "alignment.yaml")

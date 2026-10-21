@@ -75,7 +75,7 @@ The system keeps them in distinct stores.
 | Shape | free-text records, key-encoded, append-ordered | canonical skill layout, whole-file rewrites |
 | Writer | executing agents (all) | executor direct-write (transitional) / `SkillEvolver` (target) |
 | Reader | agents and `SkillEvolver` | agents (through the loader), `SkillEvolver` |
-| Home | `<codebase_root>/data/<project_id>/hunting/` | `<codebase_root>/data/<project_id>/skills/<skill_name>/` |
+| Home | `<codebase_root>/data/<project_id>/hunting/` | `skills/target-specific-procedure/<project_id>/<skill_name>/` |
 
 The bridge between them is provenance: a skill revision cites the lesson notes it was derived from, so the chain experience -> knowledge -> skill stays auditable.
 
@@ -94,8 +94,8 @@ The per-project data root is `<codebase_root>/data/`, module-scoped per project:
 │       ├── scripts/
 │       └── assets/
 ├── hunting/                # the hunting module owns this
-│   ├── orchestration/      # HuntStore (configs.yaml, hunt_configs/, memory.yaml)
-│   ├── hunter/             # HunterMemoryStore (test-specs/, notes.yaml)
+│   ├── threat_modeller/    # ThreatModelStore (model documents, loop files, notes.yaml)
+│   ├── hunter/             # HunterMemoryStore (test-specs/<dispatch_id>/, notes.yaml)
 │   └── test-executor-pod/  # PodMemoryStore
 └── ...                     # recon/, analysis/ and later modules, same one-dir-per-module rule
 ```
@@ -105,13 +105,13 @@ The per-project data root is `<codebase_root>/data/`, module-scoped per project:
 A single shared app-layer module owns the data root and every scaffold directory.
 
 - `ensure_data_root()` runs at **system bootstrap** (`app.main` startup): creates `<codebase_root>/data/` if absent.
-- `ensure_project(project_id)` runs at **project creation** (`project_management` create path): creates the whole `<project_id>/` scaffold - `skills/`, `hunting/orchestration/`, `hunting/hunter/`, `hunting/test-executor-pod/`, and every later module dir - in one place.
+- `ensure_project(project_id)` runs at **project creation** (`project_management` create path): creates the whole `<project_id>/` scaffold - `skills/`, `hunting/threat_modeller/`, `hunting/hunter/`, `hunting/test-executor-pod/`, and every later module dir - in one place.
 - Both are **fail-safe** (create if not present) and **idempotent**.
 - **No module scaffolds its own directories.** After the app-owned scaffold, a module writes only the files it owns inside its already-created directory. The hunting stores therefore stop doing `mkdir` on write; the skill writer does not create directories either.
 - The `<codebase_root>/data/` tree is migrated from the current hunting-owned root (`attack/hunting/data`) to this layout, adjusting the on-disk distribution seamlessly.
 
 - There is **no general/canonical `auth_workflow` procedure**. The per-project file is the original, created lazily on first write; it is not a clone of a shared skill.
-- The loader resolves `skills/<name>` across two source roots: repo `skills/` (shared skills) and `<codebase_root>/data/<project_id>/skills/` (project skills). For `auth_workflow` only the project root holds it.
+- The loader resolves `skills/<name>` across two source roots: repo `skills/` (shared skills) and `skills/target-specific-procedure/<project_id>/` (project skills). For `auth_workflow` only the project root holds it.
 - `SKILL.md` stays compact and well-structured per `writing-great-skills`: single source of truth, no sediment, no sprawl. Bulky target-specific material (endpoint snapshots, header dumps, role matrices) lives under `references/`; the body carries only a context pointer.
 - Every `SKILL.md` carries spec frontmatter: `name` == directory, `description` (what + when), `metadata` string map with `version`.
 - A revision block records lineage: `base_version`, `revision`, run/session provenance, `source_note_ids`.

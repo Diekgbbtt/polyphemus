@@ -4,14 +4,13 @@ One shared module owns the on-disk data root every module writes under, so
 the layout is defined once and no module scaffolds its own directories:
 
     <data_root>/<project_id>/
-    ├── skills/                 # the skills module owns this
     ├── auth/                   # the auth module owns this (#220)
     ├── steel-state/            # per-account browser session state (#395)
     ├── usage/                  # the durable token-usage record (#326)
     ├── analysis/               # the analysis episodic memory (T3)
     ├── hunting/
-    │   ├── orchestration/      # HuntStore
     │   ├── hunter/             # HunterMemoryStore
+    │   ├── threat_modeller/    # ThreatModelStore (produced|consumed|abandoned)
     │   └── test-executor-pod/  # PodMemoryStore
     └── ...                     # later module dirs, same one-dir-per-module rule
 
@@ -41,18 +40,22 @@ DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 # runtime id (a hunt fault key, a pod spec id) is the only thing a store ever
 # creates lazily, and only its own leaf. Adding a fixed module dir is a change
 # HERE, never a change in the module store.
+# The project's skill area is NOT here: the bundles, the lesson shards, and the
+# evolution pass records live in the live skills root's
+# `target-specific-procedure/<project_id>/` branch (topology ruling,
+# 2026-10-20), which the stores create lazily like any runtime-keyed branch.
 PROJECT_SCAFFOLD: tuple[str, ...] = (
-    "skills",
     "auth",
     "steel-state",
     "usage",
     "analysis",
-    "hunting/orchestration",
-    "hunting/orchestration/hunt_configs/produced",
-    "hunting/orchestration/hunt_configs/consumed",
     "hunting/hunter",
     "hunting/hunter/test-specs",
     "hunting/test-executor-pod",
+    "hunting/threat_modeller",
+    "hunting/threat_modeller/produced",
+    "hunting/threat_modeller/consumed",
+    "hunting/threat_modeller/abandoned",
 )
 
 

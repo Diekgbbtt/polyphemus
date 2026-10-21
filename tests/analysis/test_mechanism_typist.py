@@ -689,3 +689,32 @@ def test_repeated_identities_render_one_row_after_the_stream_collapse():
     assert reflect.count("Header {'name': 'server'") == 1
     assert reflect.count(f"BaseURL {{'url': '{bu}'}}") == 1
     assert bu in reflect, "the row keeps the owning baseurl visible (the topology link)"
+
+
+# --- arm M E4: the extraction + linking edge union ----------------------------
+
+def test_extraction_call_edges_survive_an_empty_linking_call():
+    """Arm M E4: the extraction call may already emit the System edge; a linking
+    call that emits none must not drop it. The two calls' edges are a union, not
+    an either/or."""
+    extraction = L1DeltaBatch(
+        systems=[SystemProposal(kind="AuthorizationSystem", discriminator="__singleton__")],
+        system_edges=[SystemEdgeProposal(service_slug="admin", kind="AuthorizationSystem",
+                                         discriminator="__singleton__", rel="AUTHORIZED_BY")])
+    out = type_mechanisms(
+        _service_chunk(), invoke_fn=_Recorder(systems=extraction, edges=L1DeltaBatch()))
+    assert [(e.service_slug, e.kind, e.discriminator, e.rel) for e in out.system_edges] == [
+        ("admin", "AuthorizationSystem", "__singleton__", "AUTHORIZED_BY")]
+
+
+def test_duplicate_edges_across_the_two_calls_commit_once():
+    """Arm M E4: the same edge emitted by both calls is one committed edge."""
+    edge = SystemEdgeProposal(service_slug="admin", kind="AuthorizationSystem",
+                              discriminator="__singleton__", rel="AUTHORIZED_BY")
+    extraction = L1DeltaBatch(
+        systems=[SystemProposal(kind="AuthorizationSystem", discriminator="__singleton__")],
+        system_edges=[edge])
+    linking = L1DeltaBatch(system_edges=[edge])
+    out = type_mechanisms(_service_chunk(), invoke_fn=_Recorder(systems=extraction, edges=linking))
+    assert len(out.system_edges) == 1
+    assert (out.system_edges[0].service_slug, out.system_edges[0].rel) == ("admin", "AUTHORIZED_BY")

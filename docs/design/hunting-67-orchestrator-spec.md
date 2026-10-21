@@ -1,11 +1,22 @@
 # Hunting agent spec: hunt-orchestrator (planner)
 
+*Historical record (superseded).*
+This document describes the pre-redesign hunt-orchestrator and its artifacts.
+The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).
+The config family, the planner pass, and the hypothesis verdict derivation are RETIRED.
+A term here is a record of what was built, never a live dependency.
+
 Part of [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (per-agent specs), top of the agent hierarchy.
 The parent, merged spec is `docs/design/hunting-67-per-agent-specs-spec.md`; it holds the inter-agent logic (walkthrough S0-S7, domain data contracts D1-D11, interface agreements IA-1..IA-8, failure-handling canon, agent-attribute compliance).
 This document disambiguates the orchestration agent from the combined spec: everything below is the hunt-orchestrator's contract alone, written to the depth an implementation session can build from without re-reading the parent.
 Decisions cited as D67-n live in `docs/design/hunting-67-per-agent-specs-decisions.md`.
 
 *Status: spec (contract), NOT implementation.*
+
+**SUPERSEDED 2026-10-18.** The planner contract in this document is superseded in full by `docs/design/hunting-67-threat-modeller-spec.md`.
+The hunt-orchestrator is rewritten in place into the threat modeller.
+The candidate intake, the in-turn gate, the back-edge need, `HuntConfig` minting, and the materialisation are retired.
+The old text is retained for history.
 
 ## 1. Identity
 

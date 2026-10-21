@@ -39,7 +39,7 @@ from polymerhus.analysis.l1_curator import (
     SYSTEM_EDGE_RELS,
     _DATA_FLOW_RELS,
 )
-from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphViewError
 
 # The write-shaped tokens the read-only view refuses, single-sourced here (the
 # hunter's old local copy and the orchestrator's `ReadOnlyGraphView._WRITE_SHAPED`

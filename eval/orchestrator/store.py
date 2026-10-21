@@ -450,7 +450,7 @@ def _chain_sources(rows: Sequence) -> list[str]:
             continue
         if not isinstance(chain, Mapping):
             raise StoreError("evidence_chain is not a mapping", failure="chain_unresolved")
-        for key in ("hunt_config", "spec_dir", "pod_export"):
+        for key in ("loop", "spec_dir", "pod_export"):
             value = chain.get(key)
             if value:
                 paths.add(str(value))

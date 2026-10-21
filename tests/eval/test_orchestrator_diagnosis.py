@@ -37,7 +37,12 @@ def verdict(vuln_id: str, identified: str) -> verdicts.Verdict:
         vuln_id=vuln_id,
         identified=identified,
         confidence=0.5,
-        matched=verdicts.Matched(unit="u", fault_class="CWE-89", symptom="s"),
+        matched=verdicts.Matched(
+            unit="service:web:viewer",
+            web_vulnerability_class="sql-injection",
+            fault="fault-1",
+            symptom="s",
+        ),
         evidence_chain=None,
         eval_sha=SHA,
         stack_fingerprint=FINGERPRINT,

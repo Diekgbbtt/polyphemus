@@ -1,88 +1,329 @@
-"""Unit tier: the state-graph hunter's payload-shape consumer (#313).
+"""Unit tier: the hunter's pass-chain tracker (S4 14, S3 8.4) - the pure module.
 
-The hunter memory is a status-varying schema: a non-`specified` write is a
-hypothesis-only FaultItem draft; a `specified` write is the typed
-`TestImplementationSpec` base (`target_identity` / `verification_symptoms` /
-`testing_pattern` / `assumptions` / `payload_vector_space` + the two NL fields),
-carrying the file-name identity keywords `fault_keyword` / `strategy_keyword`.
-The passive state machine consumes that payload, so it must derive the
-canonical semantic spec id `<fault_keyword>_<strategy_keyword>` - never an empty
-identity that collapses every ratified spec under one key.
+The #164 fault lifecycle (`hypothesised -> verified -> dropped -> specified`
+and its four list moves) is retired in T5 (#378): the pure state
+module now owns the eight pass literals, the phase-summary note contract, the
+signal extraction off the observed tool call, the signal-acceptance rule, and
+the passive advance. This file pins those seams; the graph topology rides
+`tests/attack/test_hunter_graph.py`, the harness wiring the integration tier.
 """
 from __future__ import annotations
 
-from polymerhus.attack.hunting.hunter_state import push_transition
+from polymerhus.attack.hunting import hunter_state as S
 
 
-def _typed_specified(**extra) -> dict:
-    body = {
-        "target_identity": {"url": "http://t/", "unit_id": "Service:slug:a"},
-        "verification_symptoms": ["state-changing request accepted"],
-        "testing_pattern": "cross-site form submission",
-        "assumptions": ["authenticated session"],
-        "payload_vector_space": {"method": "POST", "path": "/x"},
-        "rationale": "r", "interpretation_guidance": "g",
-        "status": "specified",
-        "fault_keyword": "csrf", "strategy_keyword": "probe",
+# --- the pass vocabulary (S4 14.6) --------------------------------------------
+
+
+def test_the_eight_pass_literals_are_the_chain_order():
+    """S4 14.6/S3 8.4: the eight pass literals, in the declared order."""
+    assert S.PASS_SEQUENCE == (
+        "grounding", "slice", "collect", "discriminate",
+        "generate", "well_formedness", "verify_claims", "complete",
+    )
+    assert set(S.HunterPass.__args__) == set(S.PASS_SEQUENCE)
+
+
+def test_the_spec_status_vocabulary_is_the_ratified_three():
+    """S4 14.6/Q52a: exactly `{hypothesised, ratified, dropped}`; the retired
+    `verified`/`specified` values are gone from the state vocabulary."""
+    assert S.SPEC_STATUSES == ("hypothesised", "ratified", "dropped")
+    assert set(S.SpecStatus.__args__) == {"hypothesised", "ratified", "dropped"}
+
+
+def test_the_phase_note_contract_is_the_state_literal_name():
+    """S4 14.8/Q51a: the kind is `phase_summary`; the name is `phase:<state>`."""
+    assert S.PHASE_SUMMARY_KIND == "phase_summary"
+    assert S.phase_note_name("grounding") == "phase:grounding"
+    assert S.phase_note_name("well_formedness") == "phase:well_formedness"
+    assert S.phase_note_name("verify_claims") == "phase:verify_claims"
+
+
+# --- the signal extraction off the observed tool call (S4 14.9) ---------------
+
+
+def _note(name, *, kind="phase_summary", action="append"):
+    return {"command": "write", "action": action, "note_name": name,
+            "kind": kind, "body": "the pass output"}
+
+
+def test_a_phase_summary_note_maps_to_its_phase_signal():
+    assert S.detect_phase_signal("notes", _note("phase:slice")) == (
+        {"kind": "phase_note", "phase": "slice"})
+    # a re-iteration rewrites the SAME note (update) - still the exit signal
+    assert S.detect_phase_signal(
+        "notes", _note("phase:slice", action="update")) == (
+        {"kind": "phase_note", "phase": "slice"})
+
+
+def test_a_note_that_is_not_a_phase_exit_maps_to_no_signal():
+    # another kind, another name shape, a read, a non-phase name, a delete
+    assert S.detect_phase_signal("notes", _note("decision", kind="freeform")) is None
+    assert S.detect_phase_signal("notes", _note("slice")) is None
+    assert S.detect_phase_signal(
+        "notes", {**_note("phase:slice"), "command": "read"}) is None
+    assert S.detect_phase_signal("notes", _note("phase:nope")) is None
+    assert S.detect_phase_signal(
+        "notes", _note("phase:slice", action="delete")) is None
+
+
+def test_only_the_five_note_exits_are_phase_signals():
+    """S4 14.6: exactly five passes exit on a note; GENERATE and VERIFY-CLAIMS
+    exit on the `hunts_store` writes and COMPLETE is terminal, so a note named
+    for them is not a signal (a note may never substitute the store write)."""
+    for phase in ("generate", "verify_claims", "complete"):
+        assert S.detect_phase_signal("notes", _note(f"phase:{phase}")) is None
+        assert S.exit_signal_pass({"kind": "phase_note", "phase": phase}) is None
+    for phase in ("grounding", "slice", "collect", "discriminate",
+                  "well_formedness"):
+        assert S.detect_phase_signal("notes", _note(f"phase:{phase}")) == (
+            {"kind": "phase_note", "phase": phase})
+
+
+def test_a_spec_set_write_maps_to_its_exit_signal():
+    """The GENERATE exit is the all-`hypothesised` set write; the VERIFY-CLAIMS
+    exit is the terminal promote/declass write (S4 14.4)."""
+    hypothesised = {"command": "write", "specs": [
+        {"status": "hypothesised"}, {"status": "hypothesised"}]}
+    assert S.detect_phase_signal("hunts_store", hypothesised) == (
+        {"kind": "spec_set_write", "statuses": ["hypothesised"]})
+    terminal = {"command": "write", "specs": [
+        {"status": "ratified"}, {"status": "dropped"}]}
+    assert S.detect_phase_signal("hunts_store", terminal) == (
+        {"kind": "spec_set_write", "statuses": ["ratified", "dropped"]})
+
+
+def test_a_partial_or_unshaped_spec_write_maps_to_no_signal():
+    """A set the detector cannot classify (mixed, statusless, empty, or a
+    read) is no signal: the machine records only what the model signalled."""
+    assert S.detect_phase_signal("hunts_store", {"command": "write", "specs": [
+        {"status": "hypothesised"}, {"status": "ratified"}]}) is None
+    assert S.detect_phase_signal("hunts_store", {"command": "write", "specs": [
+        {"status": "ratified"}, {}]}) is None
+    assert S.detect_phase_signal("hunts_store", {"command": "write", "specs": []}) is None
+    assert S.detect_phase_signal("hunts_store", {"command": "read"}) is None
+
+
+def test_a_kb_query_maps_to_the_rider_signal_and_anything_else_to_none():
+    """The `kb_query` signal never advances the state (S4 14.9): it rides the
+    grounding retrieval-gap rider."""
+    assert S.detect_phase_signal("kb_query", {"scenario_id": "s"}) == {"kind": "kb_query"}
+    assert S.detect_phase_signal("exec", {"command": "curl"}) is None
+    assert S.detect_phase_signal("notes", None) is None
+    assert S.detect_phase_signal("notes", "not-a-mapping") is None
+
+
+# --- the signal-acceptance rule (S4 14.5, Q50a) -------------------------------
+
+
+def _note_signal(phase):
+    return {"kind": "phase_note", "phase": phase}
+
+
+def _set_signal(*statuses):
+    return {"kind": "spec_set_write", "statuses": list(statuses)}
+
+
+def test_the_expected_exit_advances_to_the_next_pass():
+    assert S.detect_signal({"state": "grounding"}, _note_signal("grounding")) == (
+        {"kind": "advance", "target": "slice"})
+    assert S.detect_signal({"state": "collect"}, _note_signal("collect")) == (
+        {"kind": "advance", "target": "discriminate"})
+    # the GENERATE exit is the all-hypothesised set write; the VERIFY-CLAIMS
+    # exit is the terminal promote/declass write
+    assert S.detect_signal({"state": "generate"}, _set_signal("hypothesised")) == (
+        {"kind": "advance", "target": "well_formedness"})
+    assert S.detect_signal({"state": "verify_claims"},
+                           _set_signal("ratified", "dropped")) == (
+        {"kind": "advance", "target": "complete"})
+
+
+def test_a_later_signals_forward_jump_records_the_skipped_passes():
+    """A skipped note must never wedge the tracker (S3 8.4): a later pass's
+    signal advances as a reality-restoring forward jump and the skipped passes
+    ride the trail."""
+    assert S.detect_signal({"state": "grounding"}, _set_signal("hypothesised")) == (
+        {"kind": "forward_jump", "target": "well_formedness",
+         "skipped": ["slice", "collect", "discriminate", "generate"]})
+    assert S.detect_signal({"state": "slice"},
+                           _note_signal("discriminate")) == (
+        {"kind": "forward_jump", "target": "generate",
+         "skipped": ["collect", "discriminate"]})
+    assert S.detect_signal({"state": "collect"},
+                           _set_signal("ratified")) == (
+        {"kind": "forward_jump", "target": "complete",
+         "skipped": ["discriminate", "generate", "well_formedness",
+                     "verify_claims"]})
+
+
+def test_an_earlier_signal_stays_trail_only():
+    """An inner-loop re-entry appends to the trail as `reentry` and never moves
+    the state back (S4 14.5)."""
+    assert S.detect_signal({"state": "verify_claims"},
+                           _note_signal("grounding")) == (
+        {"kind": "trail_only", "reason": "reentry"})
+    assert S.detect_signal({"state": "complete"},
+                           _set_signal("ratified")) == (
+        {"kind": "trail_only", "reason": "reentry"})
+
+
+def test_no_signal_stays():
+    """A kb_query never advances (S4 14.9); an absent signal and a missing
+    state channel both stay."""
+    assert S.detect_signal({"state": "grounding"}, {"kind": "kb_query"}) == (
+        {"kind": "none"})
+    assert S.detect_signal({"state": "grounding"}, None) == {"kind": "none"}
+    # the chain opens ungrounded: an absent state channel is `grounding`
+    assert S.detect_signal({}, _note_signal("grounding")) == (
+        {"kind": "advance", "target": "slice"})
+
+
+# --- the passive advance (S4 14.5) --------------------------------------------
+
+
+def test_advance_moves_the_state_injects_the_exited_hint_and_records_the_trail():
+    state = {"state": "grounding", "specs": [], "trail": []}
+    signal = _note_signal("grounding")
+    new_state, hint, entry = S.advance_state(
+        state, S.detect_signal(state, signal), signal)
+    # the state moves, nothing else does (the specs channel is last-write and
+    # the input is never mutated)
+    assert new_state["state"] == "slice"
+    assert new_state["specs"] == []
+    assert state["state"] == "grounding"
+    # the hint is the exited pass's constant
+    assert hint == S.GROUNDING_HINT
+    # the trail entry records the signal, the outcome, and the state move
+    assert entry == {
+        "signal": {"kind": "phase_note", "phase": "grounding"},
+        "outcome": "advance",
+        "from": "grounding",
+        "to": "slice",
     }
-    body.update(extra)
-    return body
 
 
-def test_specify_derives_the_semantic_identity_from_the_typed_payload():
-    """#313 - the typed specified payload carries no `spec_id`; the state machine
-    derives the canonical `<fault>_<strategy>` identity from the file-name
-    identity keywords instead of yielding an empty id."""
-    state = push_transition({}, "specify", _typed_specified())
-    specs = state.get("ratified_specs") or []
-    assert len(specs) == 1
-    assert specs[0]["spec_id"] == "csrf_probe"
-    assert specs[0]["strategy"] == "probe"
-    assert specs[0]["status"] == "specified"
+def test_advance_on_a_forward_jump_hints_the_signalling_pass_and_records_skips():
+    state = {"state": "grounding", "specs": [{"spec_id": "s1"}], "trail": []}
+    signal = _set_signal("hypothesised")
+    new_state, hint, entry = S.advance_state(
+        state, S.detect_signal(state, signal), signal)
+    # the jump lands on the signalling pass's successor, the specs channel rides
+    # through untouched, and the hint is the SIGNALLING (exited) pass's constant
+    assert new_state["state"] == "well_formedness"
+    assert new_state["specs"] == [{"spec_id": "s1"}]
+    assert hint == S.GENERATE_HINT
+    assert entry["outcome"] == "forward_jump"
+    assert entry["skipped"] == ["slice", "collect", "discriminate", "generate"]
 
 
-def test_distinct_typed_specs_keep_distinct_identities():
-    """#313 - the empty-identity regression collided every specified payload
-    under `spec_id == ""` (the upsert key), so a second spec overwrote the
-    first. Distinct keywords must yield distinct entries."""
-    state = push_transition({}, "specify", _typed_specified())
-    state = push_transition(
-        state, "specify",
-        _typed_specified(fault_keyword="idor", strategy_keyword="enum"),
+def test_an_earlier_signal_advances_nothing_and_only_trails():
+    state = {"state": "collect", "specs": [], "trail": []}
+    signal = _note_signal("grounding")
+    new_state, hint, entry = S.advance_state(
+        state, S.detect_signal(state, signal), signal)
+    assert new_state["state"] == "collect"      # never moves the state back
+    assert hint is None
+    assert entry == {
+        "signal": {"kind": "phase_note", "phase": "grounding"},
+        "outcome": "trail_only",
+        "from": "collect",
+        "to": "collect",
+    }
+
+
+def test_no_signal_advances_nothing_and_appends_nothing():
+    state = {"state": "slice", "specs": [], "trail": []}
+    new_state, hint, entry = S.advance_state(
+        state, S.detect_signal(state, {"kind": "kb_query"}), {"kind": "kb_query"})
+    assert new_state["state"] == "slice"
+    assert hint is None
+    assert entry is None
+
+
+def test_the_state_move_is_monotonic_over_any_signal_sequence():
+    """S4 14.12: no outcome ever names an earlier pass as its target, whatever
+    the order the signals arrive in - the state axis only moves forward."""
+    state: dict = {"state": "grounding", "specs": [], "trail": []}
+    signals = [
+        _note_signal("grounding"), _note_signal("slice"), _note_signal("collect"),
+        _note_signal("grounding"), _note_signal("slice"), _note_signal("collect"),
+        _note_signal("discriminate"), _set_signal("hypothesised"),
+        _note_signal("discriminate"), _note_signal("well_formedness"),
+        _set_signal("ratified", "dropped"),
+    ]
+    seen = [state["state"]]
+    for signal in signals:
+        outcome = S.detect_signal(state, signal)
+        state, _, _ = S.advance_state(state, outcome, signal)
+        seen.append(state["state"])
+    assert seen == [
+        "grounding", "slice", "collect", "discriminate", "discriminate",
+        "discriminate", "discriminate", "generate", "well_formedness",
+        "well_formedness", "verify_claims", "complete",
+    ]
+
+
+# --- the seven hints and the grounding rider (S4 14.7) -------------------------
+
+
+def test_the_seven_transition_hints_are_the_ratified_literals():
+    """S4 14.7 (Q46a plus the grounding exit): one hint per transition gate,
+    keyed by the EXITED pass - the literals come from the spec table, so the
+    test can disagree with the code."""
+    assert S.TRANSITION_HINTS == {
+        "grounding": (
+            "The grounding summary is persisted. Define the failure-mode slice "
+            "the loop opens."
+        ),
+        "slice": (
+            "Write the slice note, then collect the discrimination-axis instances."
+        ),
+        "collect": (
+            "Close the collection with the instances note, then discriminate."
+        ),
+        "discriminate": (
+            "Persist the discrimination outcome, then generate the spec set."
+        ),
+        "generate": (
+            "The specs are written as `hypothesised`. Run the well-formedness "
+            "check over the slice; the check absorbs the class-exhaustiveness "
+            "question in its new form."
+        ),
+        "well_formedness": (
+            "Well-formedness is confirmed. Record the drops and merges, then "
+            "verify the claims."
+        ),
+        "verify_claims": (
+            "Promote the surviving specs, declass the unfeasible ones."
+        ),
+    }
+    # `complete` is terminal: it has no exit and no hint
+    assert "complete" not in S.TRANSITION_HINTS
+
+
+def test_the_grounding_kb_rider_is_re_worded_for_the_new_chain():
+    """S4 14.7/Q53: the grounding retrieval-gap rider is separate from the
+    transition table and points at SLICE, never the retired DECOMPOSE."""
+    assert S.GROUNDING_KB_HINT == (
+        "The kb_query retrieval is folded in. Did it close the gap that "
+        "triggered it? Yes -> proceed to SLICE; no -> record the residual "
+        "uncertainty and proceed on weaker grounding."
     )
-    ids = [s["spec_id"] for s in state["ratified_specs"]]
-    assert ids == ["csrf_probe", "idor_enum"]
+    assert S.GROUNDING_KB_HINT not in S.TRANSITION_HINTS.values()
 
 
-def test_explicit_spec_id_still_wins_over_the_derived_identity():
-    """Backward compatibility: a payload carrying an explicit `spec_id` keeps it
-    (the derived identity is only a fallback)."""
-    state = push_transition({}, "specify", _typed_specified(spec_id="S1"))
-    assert state["ratified_specs"][0]["spec_id"] == "S1"
+# --- the retired surface (S4 14.11) -------------------------------------------
 
 
-def test_derived_identity_sanitises_like_the_file_stem():
-    """#313 - the derived `spec_id` sanitises each keyword the same way the
-    store's file-name stem does (banned separator chars -> `-`), so the
-    in-memory identity equals the persisted stem for any keyword."""
-    state = push_transition(
-        {}, "specify",
-        _typed_specified(fault_keyword="a_b", strategy_keyword="c"),
-    )
-    assert state["ratified_specs"][0]["spec_id"] == "a-b_c"
-
-
-def test_banned_chars_do_not_collide_two_distinct_pairs():
-    """#313 - without sanitisation, `('a_b','c')` and `('a','b_c')` both derived
-    `a_b_c` and collided under one upsert key; the sanitised derivation keeps
-    them distinct, matching the two distinct file stems."""
-    state = push_transition(
-        {}, "specify",
-        _typed_specified(fault_keyword="a_b", strategy_keyword="c"),
-    )
-    state = push_transition(
-        state, "specify",
-        _typed_specified(fault_keyword="a", strategy_keyword="b_c"),
-    )
-    ids = [s["spec_id"] for s in state["ratified_specs"]]
-    assert ids == ["a-b_c", "a_b-c"]
+def test_the_retired_fault_lifecycle_is_gone_from_the_state_module():
+    """S4 14.11: the fault lifecycle, its lists, its detector/push, its phase
+    flag, and the old hint constants are removed - no dead surface remains."""
+    for gone in (
+        "FaultStatus", "FAULT_STATUSES", "FaultItem", "HuntPhase",
+        "TransitionName", "detect_transition", "push_transition",
+        "hypothesised_faults", "verified_faults", "dropped_faults",
+        "ratified_specs", "current_fault", "phase",
+        "D2_HINT", "D3_HINT", "COMMIT_SPECIFICATION_HINT", "NEXT_FAULT_HINT",
+        "NEXT_ITERATION_HINT",
+    ):
+        assert not hasattr(S, gone), f"{gone} is retired (S4 14.11)"

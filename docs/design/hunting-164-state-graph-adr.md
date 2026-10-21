@@ -2,6 +2,9 @@
 
 *Status: LIVING - grilling in progress (2026-08-23). Records the operator's dispositions as the #164 grilling closes each grey point; the workbench for the to-spec synthesis (`~/.claude/skills/to-spec/`). Prior decision context: #83 (implementation doc), #110 (orchestrator graph engine, DP-5), #84-D84 (pod regrounding), the statefulness-pattern-matrix, and the module-runtime-architecture doc.*
 
+**SUPERSEDED 2026-10-18 for the harness FSM.** The status vocabulary, the fault lists, the gate signals, and the hints are superseded by `docs/design/hunting-164-state-graph-spec.md` section 14.
+The ADR remains the record of the 2026-08-23 dispositions.
+
 ## The regrounded architecture (operator ruling, 2026-08-23)
 
 The graph does NOT navigate the decision tree.

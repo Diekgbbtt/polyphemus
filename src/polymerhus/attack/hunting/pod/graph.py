@@ -66,6 +66,10 @@ from polymerhus.attack.hunting.pod.agents import (
     default_runner_step_fn,
     default_triager_fn,
 )
+from polymerhus.attack.hunting.pod.prompts import (
+    load_pod_runner_skill,
+    load_pod_triager_skill,
+)
 from polymerhus.attack.hunting.pod.config import (
     EXEC_TIMEOUT_S,
     HUNT_POD_MAX_ITERS,
@@ -87,12 +91,13 @@ from polymerhus.attack.hunting.pod.llm import (
     bind_pod_session,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
-from polymerhus.attack.hunting.pod.prompts import (
-    load_pod_runner_skill,
-    load_pod_triager_skill,
-)
 from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
-from polymerhus.attack.hunting.pod.tools import command_signature, parse_curl, run_with_retry
+from polymerhus.attack.hunting.pod.tools import (
+    command_signature,
+    parse_curl,
+    replay_signature,
+    run_with_retry,
+)
 from polymerhus.attack.hunting.pod.types import (
     BUDGET_TIMEOUT,
     INFEASIBILITY_SIGNAL_CLASS,
@@ -107,6 +112,13 @@ from polymerhus.attack.hunting.pod.types import (
     SYMPTOM_CONFIRMED_CLASS,
     TECHNICAL_INFEASIBILITY,
     VariantSpec,
+    skill_procedure_from_spec,
+)
+from polymerhus.attack.hunting.pod.variant_basis import (
+    PROCEDURE_GAP_BASES,
+    VARIANT_BASES,
+    is_duplicate_variant,
+    mint_variant_basis,
 )
 from polymerhus.attack.hunting.pod.verification import validate_decision, validate_spec
 
@@ -164,6 +176,76 @@ def _clean_from_trail(log: ExperimentLog) -> bool:
     return bool(log.raw_observations)
 
 
+def _variant_coverage(decision: dict) -> list[str] | None:
+    """The triager's coverage assessment, or None when it stated none.
+
+    A malformed value is no assessment (the graph keeps the triager's claimed
+    basis rather than inventing a gap from garbage). Every token must be one of
+    the seven procedure-gap literals (T10 H4): an unknown token means the
+    assessment is not a valid subset of the table, so the whole assessment is
+    ignored instead of the unknown entries reading as "uncovered"."""
+    raw = decision.get("covered_gap_classes")
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return None
+    tokens = [str(item) for item in raw]
+    if any(token not in PROCEDURE_GAP_BASES for token in tokens):
+        return None
+    return tokens
+
+
+def _resolve_variant_decision(decision: dict, spec: dict,
+                              log: ExperimentLog) -> dict:
+    """Reconcile a variant decision with the S5 8.6 minting algorithm.
+
+    The typed `SkillProcedure` comes from the CURRENT spec's provenance (never
+    the store envelope). The deterministic diff fixes the basis: a failed or
+    diverged runner yields the recovery basis, else the first uncovered gap
+    class wins in table order, else a plausible failure mode carries the
+    fallback. A claimed basis the triager supplied stands only when it stated
+    no coverage assessment. A duplicate `(basis, detail)` is never re-minted:
+    the decision degrades to an honest `no-symptom-evidence` terminal."""
+    procedure = skill_procedure_from_spec(spec)
+    covered = _variant_coverage(decision)
+    computed = mint_variant_basis(
+        procedure=procedure,
+        covered=covered,
+        runner_failed=bool(decision.get("runner_failed")),
+        runner_diverged=bool(decision.get("runner_diverged")),
+        failure_mode_plausible=bool(decision.get("failure_mode_plausible")))
+    claimed = str(decision.get("declined_attribute") or "")
+    # A stated coverage assessment makes the deterministic diff authoritative;
+    # without one, the triager's claimed basis stands (never invented from a
+    # missing assessment).
+    basis = computed or (claimed if covered is None and claimed in VARIANT_BASES else "")
+    note = str(decision.get("note") or "")
+    if procedure is None:
+        # S5 8.6 step 1: an absent excerpt is a recorded gap, not a diff.
+        note = (note + " [skill-procedure excerpt absent: recorded gap]").strip()
+
+    classification = decision.get("classification") or "noise"
+    if not basis:
+        return {"classification": classification, "action": "terminate",
+                "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
+                "clean": False,
+                "note": (note + " [no variant basis derivable; degraded]").strip()}
+    derived = decision.get("variant_spec") or dict(spec)
+    # S5 8.6 step 7: the derived spec keeps the base provenance, including the
+    # typed skill procedure. Enforced here (T10 H6) so a direct-pod spec that
+    # omits it cannot strip the next stretch's diff material.
+    if isinstance(spec.get("provenance"), dict):
+        derived = {**derived, "provenance": spec["provenance"]}
+    if is_duplicate_variant(log.variant_specs, basis, derived):
+        return {"classification": classification, "action": "terminate",
+                "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
+                "clean": False,
+                "note": (note + f" [duplicate variant basis '{basis}'; not "
+                        "re-minted]").strip()}
+    return {**decision, "declined_attribute": basis, "variant_spec": derived,
+            "note": note}
+
+
 def _guard_degraded_kb(decision: dict, log: ExperimentLog) -> dict:
     """#304: a degraded KB observation is unavailable evidence and can never
     license a clean absence. A `space-exhausted` claim over degraded KB coverage
@@ -189,7 +271,7 @@ def _guard_degraded_kb(decision: dict, log: ExperimentLog) -> dict:
 
 async def _await_seam(fn, *args):
     """Await an async seam, else offload a sync one to a worker thread - the
-    `_await_seam` pattern mirrored from `hunt_orchestrator.py` /
+    `_await_seam` pattern mirrored from `read_only_graph.py` /
     `hunting_agent.py`. `asyncio.to_thread` copies the caller's context, so the
     graph's pod-session ContextVar binding (D84-7) reaches sync seams too."""
     if inspect.iscoroutinefunction(fn):
@@ -277,6 +359,36 @@ def _variant_order(state: PodState) -> int:
     return 0
 
 
+def _spec_task_skills(state: PodState) -> tuple:
+    """The artifact-declared skill configuration of the CURRENT spec (#236): the
+    `skills` list the hunter authored on the D4 `TestImplementationSpec`, as a
+    stable tuple (the artifact is LLM-authored, so a malformed value - a bare
+    string, a non-list, non-string entries - degrades to `()` with a warning;
+    the spec's INIT gate is the loud rejection, and the skill binding must never
+    raise on the way to the session). Resolved from `state["spec"]`, the spec
+    the current stretch actually runs: `mint_variant` carries the declaration
+    onto a triager-minted variant (the variant's own non-empty declaration
+    wins, otherwise it inherits the parent's), so the set changes only at the
+    variant boundary, never between the turns of one stretch."""
+    spec = state.get("spec")
+    raw = spec.get("skills") if isinstance(spec, dict) else None
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        logger.warning(
+            "pod: the spec's declared skills %r are not a list; ignored", raw)
+        return ()
+    out = []
+    for name in raw:
+        if not isinstance(name, str) or not name.strip():
+            logger.warning(
+                "pod: the spec declared a non-name %r in its skills; skipped",
+                name)
+            continue
+        out.append(name.strip())
+    return tuple(out)
+
+
 def _harness_ctx(state: PodState, *, exec_fn, memory_store,
                  model_factory, spec_id, graph_view_fn=None,
                  project_id=None, replay_fn=None) -> PodHarnessContext:
@@ -287,7 +399,10 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
     store is bound (a real persist path) - the contract tier with no store
     never persists, so no spec_id is demanded and the note tool degrades
     fail-open (O10). `graph_view_fn` is the read-only L0/L1 view seam (#197) the
-    shared `graph_view` tool rides (absent -> the tool's own fail-open error)."""
+    shared `graph_view` tool rides (absent -> the tool's own fail-open error).
+    `task_skills` is the CURRENT spec's artifact-declared skill configuration
+    (#236), rebuilt per node call (never a shared mutable context): the pod
+    roles' binding resolves it at the seam."""
     mem_key = _mem_key(state, spec_id, memory_store)
     try:
         from polymerhus.recon.domain.types import CaptureContext  # noqa: PLC0415
@@ -306,7 +421,7 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS,
         graph_view_fn=graph_view_fn, capture_context=capture_context,
-        replay_fn=replay_fn)
+        replay_fn=replay_fn, task_skills=_spec_task_skills(state))
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
@@ -356,7 +471,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     if memory_store is None and (production_runner or production_triager) and project_id:
         memory_store = PodMemoryStore(project_id=project_id)
     if graph_view_fn is None and project_id:
-        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        from polymerhus.attack.hunting.read_only_graph import (  # noqa: PLC0415
             ReadOnlyGraphView,
         )
 
@@ -489,6 +604,43 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         tc = state.get("tool_calls", 0) + 1  # count every call (dedup included) for G1
         variant_ref = state.get("current_variant_ref", "v0")
 
+        if step.request_ref:
+            # S5 8.5: a baseline probe is a REPLAY, not a command. The seam is
+            # the same one the production runner's replay tool rides; a missing
+            # or failing seam is an unobservable response, never a clean absence.
+            sig = replay_signature(variant_ref, step.request_ref, step.overrides)
+            if log.has_executed(sig):  # O7/C10: one execution per identical probe
+                return {"tool_calls": tc,
+                        "runner_messages": _dicts_to_lc(
+                            [{"role": "tool",
+                              "content": "TOOL RESULT: (already executed; deduped)"}])}
+            result = None
+            if replay_fn is not None:
+                try:
+                    result = await _await_seam(
+                        replay_fn, project_id or "", step.request_ref,
+                        dict(step.overrides))
+                except Exception:  # noqa: BLE001 - fail-open into an unobservable result
+                    result = None
+            status = result.get("status") if isinstance(result, dict) else None
+            artifact = result.get("artifact_id") if isinstance(result, dict) else None
+            observation = RawObservation(
+                probe_ref=sig, variant_ref=variant_ref,
+                request={"artifact_id": step.request_ref,
+                         "overrides": dict(step.overrides)},
+                status=status if isinstance(status, int) else None,
+                returncode=0 if status is not None else 1,
+                http_artifact_refs=[artifact] if isinstance(artifact, str) and artifact else [])
+            log.mark_executed(sig)
+            log.record_observation(observation)
+            result_text = (f"TOOL RESULT: status={observation.status} "
+                           f"(replayed {step.request_ref})")
+            return {"tool_calls": tc,
+                    "stretch_obs": state.get("stretch_obs", 0) + 1,
+                    "last_observation": observation.model_dump(),
+                    "runner_messages": _dicts_to_lc(
+                        [{"role": "tool", "content": result_text}])}
+
         command = step.command.strip()
         if not command:  # G2: reject a malformed tool call, do not execute
             return {"tool_calls": tc,
@@ -589,6 +741,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                             "action": "terminate", "verdict": "unsuccessful",
                             "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
                             "note": "triager action missing; degraded"}
+            else:
+                decision = _resolve_variant_decision(decision, spec, log)
 
         decision = _guard_degraded_kb(decision, log)
         log.record_interpretation(Interpretation(
@@ -614,7 +768,20 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         decision = state["decision"]
         parent_ref = state.get("current_variant_ref", "v0")
         ref = f"v{len(log.variant_specs)}"
-        variant_spec = decision.get("variant_spec") or dict(state["spec"])
+        parent_spec = state["spec"] if isinstance(state.get("spec"), dict) else {}
+        variant_spec = decision.get("variant_spec") or dict(parent_spec)
+        if isinstance(variant_spec, dict) and not variant_spec.get("skills"):
+            # #236: the artifact-declared skills travel with the SPEC, never
+            # with the minting model's goodwill. A variant that declares its own
+            # non-empty `skills` wins; a variant that declares none (or an empty
+            # list) INHERITS the parent spec's declaration - so minting a
+            # variant can never silently drop the skill set the run was
+            # configured with. The binding's resolution, union, cap, and
+            # warn-and-skip policy then apply to the inherited list unchanged.
+            variant_spec = {
+                **variant_spec,
+                "skills": list(parent_spec.get("skills") or []),
+            }
         log.record_variant(VariantSpec(ref=ref, parent_ref=parent_ref,
                                        declined_attribute=decision.get("declined_attribute", ""),
                                        spec=variant_spec))
@@ -653,7 +820,17 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                        clean=False, init_validation=unverified)
 
     def exhausted_terminal(state: PodState) -> dict:
-        clean = _clean_from_trail(state["log"])
+        log: ExperimentLog = state["log"]
+        if not state.get("stretch_obs", 0):
+            # S5 8.5: THIS stretch authored no probe (the old empty-vector
+            # space-exhausted is retired). An authoring gap is impaired
+            # coverage, not target absence - `no-symptom-evidence`, clean false.
+            # The scope is the current stretch, not the whole run: a prior
+            # stretch's clean observation cannot launder a later no-probe
+            # variant into `space-exhausted`.
+            return _export(state, verdict="unsuccessful",
+                           reason=NO_SYMPTOM_EVIDENCE, clean=False)
+        clean = _clean_from_trail(log)
         return _export(state, verdict="unsuccessful",
                        reason=SPACE_EXHAUSTED if clean else NO_SYMPTOM_EVIDENCE, clean=clean)
 

@@ -18,7 +18,8 @@ from lightrag.query_spec import QuerySpecV1
 from lightrag.tool import QUERY_LIGHTRAG_DESCRIPTION
 
 _SKILL_PATH = (
-    Path(__file__).resolve().parents[2] / "skills" / "lightrag-query" / "SKILL.md"
+    Path(__file__).resolve().parents[2]
+    / "skills" / "internal" / "tools" / "lightrag-query" / "SKILL.md"
 )
 
 

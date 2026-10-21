@@ -1,71 +1,71 @@
-"""The hunter-owned per-project memory store (#164, W3).
+"""The hunter-owned per-project spec-set store (S3 8.6-8.8, T6 #379).
 
-The hunter's durable memory, replicating the hunt-config memory store pattern
-(`docs/design/hunting-memory-system-spec.md`, the pattern document) and
-adapted to the hunter domain by the ratified dispositions G1-G9
-(`docs/design/hunting-164-state-graph-adr.md` GP6, `hunting-164-state-graph-spec.md`
-section 6). The store is per-project (a folder keyed by `project_id`, created
-lazily at the first write), one YAML file per spec, produced/consumed
-directories, the file carrying the status lifecycle, and a duplicate-write
-novelty gate.
+The hunter's durable memory, replicating the hunt-config memory store patterns
+(`docs/design/hunting-memory-system-spec.md`, the pattern document) and adapted
+to the loop-driven hunter by the ratified redesign (S3 8.6-8.8). The store is
+per-project (a folder keyed by `project_id`, created lazily at the first
+write), one YAML file per spec, produced/consumed directories, and a
+per-project notes file.
 
 Topology under the app-owned `DATA_ROOT` (no env var; the explicit-root
 constructor is kept for tests). The store shares the ONE per-project sibling
 scheme, resolved through the single `data_root.project_dir` layout owner, with
-the hunt store (`<project_id>/hunting/orchestration/`) and the pod memory
-(`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
+the threat-model store (`<project_id>/hunting/threat_modeller/`) and the pod
+memory (`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
 `hunting/hunter/` bucket under the SAME `<project_id>/` tree:
 
-    <project_id>/hunting/hunter/test-specs/<fault_key>/produced/<fault>_<strategy>.yaml
-    <project_id>/hunting/hunter/test-specs/<fault_key>/consumed/<fault>_<strategy>.yaml
+    <project_id>/hunting/hunter/test-specs/<hunt_key>/produced/<spec_id>.yaml
+    <project_id>/hunting/hunter/test-specs/<hunt_key>/consumed/<spec_id>.yaml
     <project_id>/hunting/hunter/notes.yaml
 
-- `<fault_key>` is the 3-part config key (memory-system G4, ADR #169 Q13's
-  `config_id`): the `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>`
-  form, the config file-name stem, used VERBATIM as the folder name (unit
-  ids contain `:` and `-`, so `_` is the one safe separator; `:`, `-`, and
-  `::` remain legal path chars - the `::`-joined semantic key
-  `hunt_store.semantic_key(...)` round-trips the same 3 parts and is
-  accepted too). The 2-part revival key (`<unit_id>::<fault_class>`) is
-  NOT the config key and is REJECTED. The `<fault>_<strategy>.yaml` file
-  name encodes the concrete fault semantic + testing strategy keywords
-  joined by `_`, the one safe separator (the pattern's ruling: `-`/`:` are
-  poisoned as separators). Keywords are sanitised (`_`/`:`/path separators
-  and control chars replaced with `-`).
-- The produced/ spec file carries the `status` attribute
-  (`hypothesised | verified | dropped | specified` from
-  `hunter_state.FaultStatus`): the `hypothesised` write creates the fault
-  draft, `verified`/`dropped` update it, `specified` completes it into the
-  full spec - "the persisted environment state IS the fault-processing
-  tracker" (G4/G10).
-- A duplicate `create` write (a `<fault>_<strategy>.yaml` that already
-  exists) FAILS with a `DuplicateSpecError` - the enforced novelty gate, a
-  very rare path (G4). Re-authoring UPDATES the existing file in place
-  (`mode="update"`, the G5 re-authoring pass). Every write is a file
-  create/overwrite, never an append-record (GP2-c). The caller selects the
-  mode from the lifecycle (a `hypothesised` write creates, `verified` /
-  `dropped` / `specified` update).
-- The produced->consumed movement is the inbox surfer mover's ownership
-  (ADR #169 Q3, tracker #172): the store fixes the topology AND exposes the
+- `<hunt_key>` is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9): the
+  loop file IS the dispatch grain, so the spec folder is the loop's own
+  identity - never a config key or a `fault_key`. The key is bound at tool
+  construction and is never a request field.
+- `<spec_id>` is the DERIVED file-name stem `<fault_keyword>_<strategy_keyword>`
+  (S3 8.6): the payload carries no `spec_id`, and the store derives it from the
+  sanitised keywords. `_` is the one safe separator, so `_`, `:`, path
+  separators and control chars are replaced with `-` in a keyword (a keyword
+  that sanitises to an unsafe/empty component is rejected, never mangled).
+- The spec body is the reduced D4 at EVERY status (S3 8.6/8.9); there is no
+  `FaultItem` draft body and no `specified` body distinction. The file carries
+  the spec's `status` verbatim: `hypothesised` is the GENERATE draft set,
+  `ratified` the surviving spec at the terminal write, `dropped` the declassed
+  unfeasible spec (`hunter_state.SPEC_STATUSES` is the one live vocabulary).
+- A `specs` list write carries the WHOLE set in one call (S3 8.7): the
+  GENERATE write is all-`hypothesised`, the terminal write promotes the
+  survivors to `ratified` and declasses the unfeasible to `dropped`. A
+  duplicate identity inside one write is the denoted deduplication signal
+  (`DuplicateSpecError`); a re-author of an existing identity updates it in
+  place (the hypothesised write creates, a later status upserts).
+- MOVE-AWARE (the #205 rule, carried onto the set): when an identity ALREADY
+  lives in consumed/ (the mover's at-least-once marker landed), a
+  produced-target write for it is a NO-OP success returning the durable
+  consumed path - it never re-creates a produced/ copy, so produced/ and
+  consumed/ stay mutually exclusive per name and the surfer's spec inbox keeps
+  draining.
+- The produced->consumed movement is the inbox surfer mover's ownership (ADR
+  #169 Q3, tracker #172): the store fixes the topology AND exposes the
   single-owner move primitive `consume_spec` (only the mover renames, #172
   AC); both sides are addressable (`side` on write, `sides` on read),
-  `list_fault_keys` / `produced_spec_files` enumerate the produced inbox the
+  `list_hunt_keys` / `produced_spec_files` enumerate the produced inbox the
   mover reads per tick.
 - The notes file follows the SAME data contract as the spec body (G6):
   read/write, write options append/update/delete, grep-match read,
-  read-latest. Notes keep their natural append order - no `_seq`/`_ref`
-  bookkeeping (the pattern's G11: the file name is the key, the notes file's
-  list order is the ordering).
+  read-latest. The hunter-only `phase_summary` kind is the interposed pass
+  exit (S4 14.8): the note name is `phase:<state>` and a loop re-iteration
+  updates the same note. Notes keep their natural append order - no
+  `_seq`/`_ref` bookkeeping.
 
-Degradation (unchanged canon, spec 9): a read failure raises (O4, the
-caller degrades to an empty set and keeps serving), a write failure raises
-(O3, the caller warns and keeps serving), and a corrupt/unparseable file
-raises rather than silently returning [] - the rewrite-on-write paths would
-otherwise destroy history. Never a silent corruption. Every file write is
-atomic (#340): the body is rendered in memory and landed through the shared
-`app.atomic_write` primitive (same-directory temp + fsync + `os.replace`), so
-a kill or abort mid-write never leaves a malformed `notes.yaml` and a reader
-always sees either the previous or the new complete file.
+Degradation (unchanged canon, spec 9): a read failure raises (O4, the caller
+degrades to an empty set and keeps serving), a write failure raises (O3, the
+caller warns and keeps serving), and a corrupt/unparseable file raises rather
+than silently returning [] - the rewrite-on-write paths would otherwise
+destroy history. Never a silent corruption. Every file write is atomic (#340):
+the body is rendered in memory and landed through the shared `app.atomic_write`
+primitive (same-directory temp + fsync + `os.replace`), so a kill or abort
+mid-write never leaves a malformed `notes.yaml` and a reader always sees either
+the previous or the new complete file.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6).
@@ -76,7 +76,7 @@ import logging
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 
@@ -84,13 +84,12 @@ from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import DATA_ROOT, project_dir
 from polymerhus.app.memory.store import BoundedRecordStore
 
-from .hunt_store import (
-    ProjectMemoryStore,
-    parse_config_file_name,
-    semantic_key,
-    split_semantic_key,
+from .hunt_store import ProjectMemoryStore
+from .hunter_state import PHASE_SUMMARY_KIND, SPEC_STATUSES
+from .spec_contract import (
+    SKILL_PROCEDURE_MAX_CHARS,
+    SkillProcedure,
 )
-from .hunter_state import FAULT_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +99,14 @@ logger = logging.getLogger(__name__)
 
 # The produced/consumed sides and the write/note operation enums (G7, G6).
 _SPEC_SIDES = ("produced", "consumed")
-_SPEC_MODES = ("create", "update")
 _NOTE_ACTIONS = ("append", "update", "delete")
 
 # The closed enum of note kinds (the pattern's #137 Q3), reused verbatim on
-# the hunter's notes so the data contract is the SAME as the pattern's store.
-NOTE_KINDS = ProjectMemoryStore.NOTE_KINDS
+# the hunter's notes so the data contract is the SAME as the pattern's store -
+# plus the hunter-only `phase_summary` kind (S4 14.8/Q51a): the interposed
+# phase-exit note whose name is `phase:<state>`. The hunt-store and pod enums
+# do NOT gain it and the modeller's `notes` tool refuses it.
+NOTE_KINDS = tuple(ProjectMemoryStore.NOTE_KINDS) + (PHASE_SUMMARY_KIND,)
 
 HUNTER_NOTES_MAX_RECORDS = 1000
 HUNTER_NOTES_MAX_BYTES = 4 * 1024 * 1024
@@ -120,42 +121,46 @@ _UNSAFE_KEYWORD_CHARS = frozenset("_:/\\")
 
 def _is_durable_prior_insight(record: dict) -> bool:
     """The durable prior-insight marker (G3/#202): a Q16 pod-export stub
-    (`provenance.verdict_stub`) is the record `HuntStore.read_hunter_notes`
-    consumes into a config's `prior_hunt_insights`, so it is protected from the
-    ordinary-notes eviction of the `notes.yaml` bound (#341)."""
+    (`provenance.verdict_stub`) is the durable pod-completion record the surfer
+    writes for a parent hunt key, so it is protected from the ordinary-notes
+    eviction of the `notes.yaml` bound (#341). The old
+    `HuntStore` consumer retired with the config family; the
+    record stays the durable trail a later verdict/insight reader can use."""
     provenance = record.get("provenance")
     return bool(isinstance(provenance, dict) and provenance.get("verdict_stub"))
 
 
-def config_key_from_fault_key(fault_key: str) -> str:
-    """The ONE canonical cross-family join key for a `fault_key` (ADR #169
-    Q13/G4, identity-based refactor 2026-08-25): return the `::`-joined
-    semantic config_key (`hunt_store.semantic_key`) that a `fault_key` folder
-    physically carries.
+def spec_identifier(fault_keyword: str, strategy_keyword: str) -> str:
+    """The DERIVED spec identity (S3 8.6): `<fault_keyword>_<strategy_keyword>`.
 
-    A `fault_key` may be stored in EITHER form - the `_`-joined
-    `<unit_id>_<CWE_ID>_<vulnerability_class>` folder name (the config
-    file-name stem), or its round-tripping `::`-joined semantic key
-    (`write_spec` accepts both, G4). The inbox surfer's two sides of one
-    cross-family join MUST agree on the SAME canonical key - `hunter_inboxes`
-    is keyed by the `::` config_key on BOTH the register (hunter dispatch)
-    and the lookup (pod dispatch) side - so this is the single source of the
-    conversion, home of the physical-folder -> logical-config_key
-    normalisation (`_validate_fault_key`'s folder rule, reused here). The
-    2-part revival key is NOT a config_key and is refused."""
-    parsed = parse_config_file_name(f"{fault_key}.yaml")
-    if parsed is not None:
-        return semantic_key(*parsed)
-    # The `::` semantic-key form: must be the full 3-part key (the 2-part
-    # revival key is a PREFIX of it, not a config_key - refused). Anchored on
-    # the CWE token, so a System unit id containing `::` round-trips.
-    if "::" in fault_key and split_semantic_key(fault_key) is not None:
-        return fault_key
-    raise ValueError(
-        f"hunter store: fault_key {fault_key!r} is not the 3-part config "
-        f"key <unit_id>::<CWE_ID>::<vulnerability_class> (or its `_`-joined "
-        f"form); the 2-part revival key is NOT accepted"
+    The file-name stem IS the identity; the payload carries no `spec_id`. The
+    keywords are sanitised (G3) so the stem is one safe filename component."""
+    return (
+        f"{_sanitise_keyword(fault_keyword)}"
+        f"_{_sanitise_keyword(strategy_keyword)}"
     )
+
+
+def _sanitise_keyword(keyword: str) -> str:
+    """Sanitise a `<fault>`/`<strategy>` filename keyword (G3).
+
+    Each char in the banned set (`_` the separator, `:` poisoned, path
+    separators) and every control char is replaced with `-` (a safe,
+    non-separator keyword char; `-` itself is never banned). A keyword that
+    sanitises to an empty/dot component is a pathological authoring input and
+    is rejected, never silently mangled."""
+    if not isinstance(keyword, str):
+        raise ValueError(f"hunter store: keyword {keyword!r} is not a string")
+    out = "".join(
+        "-" if ch in _UNSAFE_KEYWORD_CHARS or ord(ch) < 32 else ch
+        for ch in keyword
+    )
+    if not out or out in (".", ".."):
+        raise ValueError(
+            f"hunter store: keyword {keyword!r} sanitises to the unsafe "
+            f"file component {out!r}"
+        )
+    return out
 
 
 def _validate_spec_file(spec_file: str) -> None:
@@ -175,29 +180,89 @@ def _validate_spec_file(spec_file: str) -> None:
         )
 
 
-class DuplicateSpecError(Exception):
-    """The denoted deduplication signal (G4).
+def _require_spec_identity(spec: Any) -> tuple[str, str]:
+    """The `(fault_keyword, strategy_keyword)` the spec identity is DERIVED
+    from, validated as non-empty strings. A missing or empty input is a
+    `ValueError` the tool turns into a coded teaching rejection naming the
+    field; the store never composes a degenerate file name."""
+    if not isinstance(spec, dict):
+        raise ValueError("hunter store: each spec must be a mapping")
+    keywords = []
+    missing = []
+    for field in ("fault_keyword", "strategy_keyword"):
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            missing.append(field)
+        else:
+            keywords.append(value)
+    if missing:
+        raise ValueError(
+            "hunter store: the spec payload must carry the file-name identity "
+            f"attribute(s) {', '.join(missing)}; the spec identity "
+            "<fault_keyword>_<strategy_keyword> is DERIVED from them"
+        )
+    return keywords[0], keywords[1]
 
-    A `create`-mode write of a `<fault>_<strategy>.yaml` that already exists
-    raises this - the enforced novelty gate, a very rare path the model
+
+def _validate_skill_procedure(provenance: Any) -> None:
+    """Validate the spec's typed `provenance.skill_procedure` (S3 8.6).
+
+    The excerpt is the seven-field `SkillProcedure`; when present it must parse
+    and its total length must stay under `SKILL_PROCEDURE_MAX_CHARS`. A
+    malformed or over-long excerpt is a coded teaching rejection (never a
+    silent truncation of authored content). An absent provenance/excerpt is
+    legal: the model may author a spec before a class skill is loaded, and the
+    triager then records the gap and uses its fallback."""
+    if provenance is None:
+        return
+    if not isinstance(provenance, dict):
+        raise ValueError("hunter store: spec provenance must be a mapping")
+    raw = provenance.get("skill_procedure")
+    if raw is None:
+        return
+    try:
+        procedure = (
+            raw if isinstance(raw, SkillProcedure)
+            else SkillProcedure.model_validate(raw)
+        )
+    except Exception as exc:  # noqa: BLE001 - a coded rejection, not a crash
+        raise ValueError(
+            "hunter store: provenance.skill_procedure must be the typed "
+            "seven-field SkillProcedure "
+            "(recon_action, bypass_technique, technology_grounding, pro_tips, "
+            f"advanced_technique, preliminary_chaining, interpretation_pitfalls): {exc}"
+        ) from exc
+    if procedure.excerpt_length() > SKILL_PROCEDURE_MAX_CHARS:
+        raise ValueError(
+            "hunter store: provenance.skill_procedure exceeds the "
+            f"{SKILL_PROCEDURE_MAX_CHARS}-character excerpt bound; shorten the "
+            "excerpt to the skill text the pod needs"
+        )
+
+
+class DuplicateSpecError(Exception):
+    """The denoted deduplication signal (G4, S3 8.7).
+
+    A `specs` write that carries the same derived identity twice raises this -
+    the enforced novelty gate inside the batch, the dedup signal the model
     interprets (it reflects on overlap and merges or refreshes instead of
-    duplicating).
+    duplicating). A re-author of an EXISTING identity is not a duplicate: the
+    hypothesised write creates and a later status upserts in place.
     """
 
 
 class HunterMemoryStore(BoundedRecordStore):
-    """The hunter-owned per-project memory store (#164, GP6).
+    """The hunter-owned per-project spec-set store (S3 8.8/T6).
 
-    Per-project, per-`fault_key` durable memory of the state-graph hunter:
-    the `fault_key` is the 3-part config key (`<unit_id>_<CWE_ID>_<
-    vulnerability_class>`, G4/ADR Q13 - the 2-part revival key is NOT
-    accepted). One YAML file per authored spec (the produced/ file carries
-    the status lifecycle), produced/consumed directories, and a per-project
-    notes file on the same data contract. A project folder is created lazily
-    at the first write; it is never created eagerly.
+    Per-project, per-`hunt_key` durable memory of the loop-driven hunter: the
+    `hunt_key` is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9). One
+    YAML file per authored spec (the produced/ file carries the status
+    lifecycle), produced/consumed directories, and a per-project notes file on
+    the same data contract. A project folder is created lazily at the first
+    write; it is never created eagerly.
 
-    Determinism + fail-open: writes raise on failure (the caller degrades to
-    a warning and keeps serving - O3), reads raise on failure (the harness
+    Determinism + fail-open: writes raise on failure (the caller degrades to a
+    warning and keeps serving - O3), reads raise on failure (the harness
     degrades to an empty set and keeps serving - O4). A corrupt file raises
     rather than returning [] - the rewrite-on-write paths would otherwise
     destroy history. Never a silent corruption.
@@ -214,24 +279,20 @@ class HunterMemoryStore(BoundedRecordStore):
     def _project_dir(self, project_id: str) -> Path:
         return project_dir(project_id, "hunting/hunter", root=self._root)
 
-    def _spec_dir(self, project_id: str, fault_key: str) -> Path:
-        self._validate_fault_key(fault_key)
-        return self._project_dir(project_id) / "test-specs" / fault_key
+    def _spec_dir(self, project_id: str, hunt_key: str) -> Path:
+        self._validate_hunt_key(hunt_key)
+        return self._project_dir(project_id) / "test-specs" / hunt_key
 
     def _spec_file(
         self,
         project_id: str,
-        fault_key: str,
-        fault_keyword: str,
-        strategy_keyword: str,
+        hunt_key: str,
+        spec_id: str,
         side: str,
     ) -> Path:
         self._validate_side(side)
-        return (
-            self._spec_dir(project_id, fault_key)
-            / side
-            / f"{self._sanitise_keyword(fault_keyword)}_{self._sanitise_keyword(strategy_keyword)}.yaml"
-        )
+        _validate_spec_file(spec_id)
+        return self._spec_dir(project_id, hunt_key) / side / f"{spec_id}.yaml"
 
     def _notes_file(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "notes.yaml"
@@ -240,13 +301,12 @@ class HunterMemoryStore(BoundedRecordStore):
 
     @staticmethod
     def _validate_component(value: str, what: str) -> None:
-        """Reject a `project_id`/`fault_key` that is not one safe path component.
+        """Reject a `project_id`/`hunt_key` that is not one safe path component.
 
-        The config key is used verbatim as the folder name, so `:` and `-`
-        are legal (they are the config key's identity chars); a `::`-joined
-        semantic key is also a single safe component (its `::` shares the
-        unit-id `:` char class). Only path separators, control chars, and
-        dot-traversal forms are rejected."""
+        The loop dispatch id is used verbatim as the folder name, so `:` and
+        `-` are legal (they are identity chars of the unit name and loop id);
+        only path separators, control chars, and dot-traversal forms are
+        rejected."""
         if not isinstance(value, str) or not value:
             raise ValueError(f"hunter store: {what} must be a non-empty string")
         if value in (".", ".."):
@@ -259,56 +319,14 @@ class HunterMemoryStore(BoundedRecordStore):
             )
 
     @staticmethod
-    def _validate_fault_key(fault_key: str) -> None:
-        """Reject a `fault_key` that is not the 3-part config key (G4/ADR Q13).
+    def _validate_hunt_key(hunt_key: str) -> None:
+        """Reject a `hunt_key` that is not one safe folder component (S3 8.9).
 
-        The folder name carries the config's identity: the `_`-joined
-        `<unit_id>_<CWE_ID>_<vulnerability_class>` config key (the canonical
-        form, matching the config file-name convention - validated through
-        the hunt store's own `parse_config_file_name`, so a unit id or class
-        containing `_` round-trips) OR the `::`-joined semantic key
-        (`hunt_store.semantic_key`); both are safe single path components
-        and both carry the full 3 parts (the carried-bare empty class
-        round-trips like the hunt store's, G4). The 2-part revival key
-        (`<unit_id>::<fault_class>`) is a PREFIX of a semantic key, not a
-        config key - a fault_key for the wrong (revival) grain is a caller
-        defect and is rejected."""
-        HunterMemoryStore._validate_component(fault_key, "fault_key")
-        # The canonical `_`-joined form first: parse it as the config file-name
-        # convention (the last-two-underscores + `CWE-\\d+` middle), so a
-        # 2-part `_`-joined key (no class segment) is rejected too - and a
-        # unit id containing `::` round-trips through this branch.
-        if parse_config_file_name(f"{fault_key}.yaml") is not None:
-            return
-        # The `::` semantic-key form, anchored on the CWE token (a System unit
-        # id containing `::` has more than three segments and must still pass).
-        if "::" in fault_key and split_semantic_key(fault_key) is not None:
-            return
-        raise ValueError(
-            f"hunter store: fault_key {fault_key!r} is not the 3-part "
-            f"config key <unit_id>::<CWE_ID>::<vulnerability_class> (or "
-            f"its `_`-joined form); the 2-part revival key is NOT accepted"
-        )
-
-    @classmethod
-    def _sanitise_keyword(cls, keyword: str) -> str:
-        """Sanitise a `<fault>`/`<strategy>` filename keyword (G3).
-
-        Each char in the banned set (`_` the separator, `:` poisoned, path
-        separators) and every control char is replaced with `-` (a safe,
-        non-separator keyword char; `-` itself is never banned). A
-        keyword that sanitises to an empty/dot component is a pathological
-        authoring input and is rejected, never silently mangled."""
-        out = "".join(
-            "-" if ch in _UNSAFE_KEYWORD_CHARS or ord(ch) < 32 else ch
-            for ch in keyword
-        )
-        if not out or out in (".", ".."):
-            raise ValueError(
-                f"hunter store: keyword {keyword!r} sanitises to the unsafe "
-                f"file component {out!r}"
-            )
-        return out
+        The key is the loop dispatch id `<unit_name>__<loop_id>`; `__` is the
+        separator between its two store-owned parts. The store validates the
+        PATH component only: the key is bound at tool construction from the
+        dispatched loop, never authored as a request field."""
+        HunterMemoryStore._validate_component(hunt_key, "hunt_key")
 
     @staticmethod
     def _validate_side(side: str) -> None:
@@ -376,108 +394,130 @@ class HunterMemoryStore(BoundedRecordStore):
         """Normalise a key's parent delimiter for comparison: `::` -> `:`."""
         return key.lower().replace("::", ":")
 
-    # -- the spec surface (the `hunts_store`-analogue, G8) -------------------
+    # -- the spec-set surface (the `hunts_store` seam, S3 8.7) ---------------
 
-    def write_spec(
+    def write_specs(
         self,
         project_id: str,
-        fault_key: str,
+        hunt_key: str,
+        specs: Sequence[dict],
         *,
-        fault_keyword: str,
-        strategy_keyword: str,
-        spec: dict,
-        mode: Literal["create", "update"] = "create",
         side: Literal["produced", "consumed"] = "produced",
-    ) -> Path:
-        """Write the fault/spec object to `test-specs/<fault_key>/<side>/<fault>_<strategy>.yaml`.
+    ) -> list[tuple[str, Path]]:
+        """Write the WHOLE spec set under `test-specs/<hunt_key>/<side>/`.
 
-        `fault_key` is the 3-part config key (the config's identity, G4):
-        the `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>` form (the
-        config file-name stem, ADR Q13's `config_id`) or its round-tripping
-        `::`-joined semantic key - the 2-part revival key is NOT accepted.
-        `spec` is the fault/spec object carrying the `status` attribute
-        (`hypothesised | verified | dropped | specified` from
-        `hunter_state.FaultStatus`); it is persisted verbatim. The
-        `fault_keyword` / `strategy_keyword` are the file-name components
-        (the concrete fault semantic + testing strategy keywords, sanitised
-        under G3) - explicit because the hypothesised/verified/dropped drafts
-        are `FaultItem`s that carry no strategy field, so the file name must
-        be fixed at the first (creating) write and stable across the
-        lifecycle.
+        `specs` is the batched set the tool received: every entry carries a
+        `status` in `hunter_state.SPEC_STATUSES` and the two file-name identity
+        attributes `fault_keyword` / `strategy_keyword`. The store DERIVES each
+        `spec_id` (and therefore the file name) from the keywords and persists
+        the body verbatim - the reduced D4 at every status (S3 8.6).
 
-        `mode="create"` FAILS with a `DuplicateSpecError` when the file
-        already exists (the novelty gate, G4); `mode="update"` overwrites the
-        existing file in place (the G5 re-authoring pass). Returns the
-        written `Path`. Raises on write failure - the caller degrades to a
-        warning and keeps serving (O3).
+        The GENERATE write is all-`hypothesised` and creates the set; the
+        terminal write carries the whole set with the survivors `ratified` and
+        the unfeasible `dropped`, UPSERTING each identity in place (S3 8.7).
+        A duplicate derived identity INSIDE the batch raises
+        `DuplicateSpecError` (the dedup signal); the whole batch is validated
+        before any file is written, so a rejected write never leaves a partial
+        set. An identity a spec payload tries to author explicitly
+        (`spec_id`) is refused: the store owns that derived symbol.
 
-        MOVE-AWARE (G4, #205): when the identity ALREADY lives in consumed/
-        (the mover's produced->consumed move landed for it - its at-least-once
-        marker), a produced-target write is a NO-OP success returning the
-        `consumed` Path (the durable location). The spec is already durable in
-        consumed/, and re-creating a produced/ copy would break the
-        produced/consumed mutual exclusivity - the surfer's inbox would never
-        drain, the mover would re-dispatch the identity every tick, and the run
-        would hang in `running` (the #205 race: the hunter's `specified`
-        harness write can land after the mover consumed the spec). A warning
-        logs the race for observability. The `mode="create"` novelty gate sits
-        AFTER this check: a consumed-side existence short-circuits before the
-        novelty check (a post-move create write is a no-op success, never a
-        `DuplicateSpecError`)."""
-        if mode not in _SPEC_MODES:
-            raise ValueError(f"hunter store: unknown spec write mode {mode!r}; known: {_SPEC_MODES}")
-        if not isinstance(spec, dict):
-            raise ValueError("hunter store: spec must be a dict carrying the status attribute")
-        status = spec.get("status")
-        if status not in FAULT_STATUSES:
+        MOVE-AWARE (the #205 rule): when an identity ALREADY lives in
+        consumed/, a produced-target write is a NO-OP success returning the
+        durable consumed Path. The spec is already ratified and durable there,
+        and re-creating a produced/ copy would break the produced/consumed
+        mutual exclusivity - the surfer's inbox would never drain and the mover
+        would re-dispatch the identity every tick. A warning logs the race.
+
+        Returns `(spec_id, written_path)` per entry, in the input order. Raises
+        on a write failure - the caller degrades to a warning and keeps serving
+        (O3). The whole validate-then-write runs under the project's lock (I2),
+        so the duplicate/novelty checks are not TOCTOU."""
+        if not isinstance(specs, Sequence) or isinstance(specs, (str, bytes)) or not specs:
             raise ValueError(
-                f"hunter store: spec must carry a status in FAULT_STATUSES; got {status!r}"
+                "hunter store: a spec write needs a non-empty `specs` list "
+                "(a single spec is a set of one)"
             )
-        path = self._spec_file(
-            project_id, fault_key, fault_keyword, strategy_keyword, side,
-        )
-        # The whole check-then-write critical section runs under the project's
-        # lock (I2, mirrored from the hunt store): the create-mode novelty gate
-        # is not TOCTOU and a concurrent produced->consumed rename (the mover,
-        # #172) can never race the write.
-        with self._lock_for(project_id):
-            consumed_path = self._spec_file(
-                project_id, fault_key, fault_keyword, strategy_keyword,
-                side="consumed",
+        self._validate_side(side)
+        self._validate_hunt_key(hunt_key)
+        # S3 8.7 defines exactly two set shapes: the GENERATE write (all
+        # `hypothesised`) and the terminal write (survivors `ratified`,
+        # unfeasible `dropped`). A mixed set is neither exit the harness
+        # tracks - it would persist while the hunt stalls - so it is refused.
+        statuses = {
+            spec.get("status") for spec in specs
+            if isinstance(spec, dict)
+        }
+        if "hypothesised" in statuses and statuses & {"ratified", "dropped"}:
+            raise ValueError(
+                "hunter store: a spec set is either the GENERATE write (all "
+                "`hypothesised`) or the terminal write (survivors `ratified`, "
+                "unfeasible `dropped`); a set mixing `hypothesised` with a "
+                "terminal status is not a lifecycle shape"
             )
-            if side == "produced" and consumed_path.exists():
-                logger.warning(
-                    "hunter store: produced write for %s skipped - the "
-                    "identity already lives in consumed/ (post-move write, "
-                    "#205); no produced/ copy re-created", path.name,
+        # Validate the WHOLE batch first: a rejected write never leaves a
+        # partial set on disk.
+        prepared: list[tuple[str, dict]] = []
+        seen: set[str] = set()
+        for spec in specs:
+            if not isinstance(spec, dict):
+                raise ValueError("hunter store: each spec must be a mapping")
+            if spec.get("spec_id"):
+                raise ValueError(
+                    "hunter store: `spec_id` is a DERIVED symbol (the "
+                    "<fault_keyword>_<strategy_keyword> stem); the payload must "
+                    "not author it"
                 )
-                return consumed_path
-            if mode == "create" and path.exists():
+            status = spec.get("status")
+            if status not in SPEC_STATUSES:
+                raise ValueError(
+                    f"hunter store: each spec must carry a status in "
+                    f"{SPEC_STATUSES}; got {status!r}"
+                )
+            fault_keyword, strategy_keyword = _require_spec_identity(spec)
+            _validate_skill_procedure(spec.get("provenance"))
+            spec_id = spec_identifier(fault_keyword, strategy_keyword)
+            if spec_id in seen:
                 raise DuplicateSpecError(
-                    f"hunter store: spec file already exists (novelty gate): {path}")
-            write_text_atomic(path, yaml.safe_dump(spec, sort_keys=False))
-            return path
+                    f"hunter store: the identity {spec_id!r} appears twice in "
+                    "the spec set; the write is the deduplication signal - "
+                    "merge or refresh the spec instead of duplicating it"
+                )
+            seen.add(spec_id)
+            prepared.append((spec_id, spec))
+        written: list[tuple[str, Path]] = []
+        with self._lock_for(project_id):
+            for spec_id, spec in prepared:
+                path = self._spec_file(project_id, hunt_key, spec_id, side)
+                consumed_path = self._spec_file(
+                    project_id, hunt_key, spec_id, "consumed")
+                if side == "produced" and consumed_path.exists():
+                    logger.warning(
+                        "hunter store: produced write for %s skipped - the "
+                        "identity already lives in consumed/ (post-move write, "
+                        "#205); no produced/ copy re-created", path.name,
+                    )
+                    written.append((spec_id, consumed_path))
+                    continue
+                write_text_atomic(path, yaml.safe_dump(spec, sort_keys=False))
+                written.append((spec_id, path))
+        return written
 
     def read_spec(
         self,
         project_id: str,
-        fault_key: str,
-        fault_keyword: str,
-        strategy_keyword: str,
+        hunt_key: str,
+        spec_id: str,
         *,
         side: Literal["produced", "consumed"] = "produced",
         attributes: Sequence[str] | None = None,
     ) -> dict | None:
-        """The one spec file for `(fault_key, fault_keyword, strategy_keyword)`.
+        """The one spec file for `(hunt_key, spec_id)`.
 
-        `fault_key` is the 3-part config key (the config's identity, G4) -
-        the 2-part revival key is NOT accepted. `None` for a missing file
+        `hunt_key` is the loop dispatch id (S3 8.9). `None` for a missing file
         (a valid empty result, never a failure); a corrupt file raises (O4,
-        the caller degrades to an empty set). With `attributes` given, each
+        the caller degrades to an empty set). With `attributes` given, the
         returned dict is projected onto them."""
-        path = self._spec_file(
-            project_id, fault_key, fault_keyword, strategy_keyword, side,
-        )
+        path = self._spec_file(project_id, hunt_key, spec_id, side)
         if not path.exists():
             return None
         return self._project(self._read_spec_file(path), attributes)
@@ -485,26 +525,24 @@ class HunterMemoryStore(BoundedRecordStore):
     def read_specs(
         self,
         project_id: str,
-        fault_key: str,
+        hunt_key: str,
         *,
         sides: Sequence[Literal["produced", "consumed"]] = ("produced", "consumed"),
         statuses: Sequence[str] | None = None,
         attributes: Sequence[str] | None = None,
     ) -> list[dict]:
-        """All spec files under `test-specs/<fault_key>/`, in file-name order.
+        """All spec files under `test-specs/<hunt_key>/`, in file-name order.
 
-        Read by the config identifier (`fault_key`): the 3-part config key
-        (`<unit_id>_<CWE_ID>_<vulnerability_class>`, G4 - the 2-part revival
-        key is NOT accepted); the whole surface context is never returned
-        through this store (G3). `sides` selects produced/consumed (default
-        both); `statuses` filters on the persisted `status`; `attributes`
-        projects each spec onto the given fields. A missing project/fault_key
-        yields [] - a valid empty result, never a failure. A corrupt file
-        raises (O4)."""
+        `hunt_key` is the loop dispatch id (S3 8.9); the whole surface context
+        is never returned through this store. `sides` selects produced/consumed
+        (default both); `statuses` filters on the persisted `status`;
+        `attributes` projects each spec onto the given fields. A missing
+        project/hunt_key yields [] - a valid empty result, never a failure. A
+        corrupt file raises (O4)."""
         out: list[dict] = []
         for side in sides:
             self._validate_side(side)
-            side_dir = self._spec_dir(project_id, fault_key) / side
+            side_dir = self._spec_dir(project_id, hunt_key) / side
             if not side_dir.exists():
                 continue
             for path in sorted(side_dir.glob("*.yaml")):
@@ -514,38 +552,34 @@ class HunterMemoryStore(BoundedRecordStore):
                 out.append(self._project(spec, attributes))
         return out
 
-    def list_fault_keys(self, project_id: str) -> list[str]:
-        """The `test-specs/` fault-key folders in deterministic (sorted)
-        order - the config-key envelope the inbox surfer enumerates to read
-        the produced spec surface (ADR #169 Q3/#172). Each folder is one
-        3-part config key (G4/ADR Q13 `config_id`); the 2-part revival key
-        never names a folder. A missing project contributes nothing (a valid
-        empty result)."""
+    def list_hunt_keys(self, project_id: str) -> list[str]:
+        """The `test-specs/` hunt-key folders in deterministic (sorted) order -
+        the loop dispatch ids the inbox surfer enumerates to read the produced
+        spec surface (ADR #169 Q3/#172). A missing project contributes nothing
+        (a valid empty result)."""
         tests_dir = self._project_dir(project_id) / "test-specs"
         if not tests_dir.exists():
             return []
         return sorted(child.name for child in tests_dir.iterdir() if child.is_dir())
 
-    def produced_spec_files(self, project_id: str, fault_key: str) -> list[str]:
-        """The PRODUCED-side spec file stems under one fault_key - the
+    def produced_spec_files(self, project_id: str, hunt_key: str) -> list[str]:
+        """The PRODUCED-side spec file stems under one hunt key - the
         `<fault>_<strategy>` file names the inbox surfer operates on (ADR
-        #169 Q3/#172), in file-name order. `fault_key` is the 3-part config
-        key (G4; the 2-part revival key is NOT accepted). `consumed/`
-        contributes nothing. A missing side contributes nothing (a valid
-        empty result)."""
-        side_dir = self._spec_dir(project_id, fault_key) / "produced"
+        #169 Q3/#172), in file-name order. `hunt_key` is the loop dispatch id
+        (S3 8.9). `consumed/` contributes nothing. A missing side contributes
+        nothing (a valid empty result)."""
+        side_dir = self._spec_dir(project_id, hunt_key) / "produced"
         if not side_dir.exists():
             return []
         return sorted(child.stem for child in side_dir.glob("*.yaml"))
 
-    def consume_spec(self, project_id: str, fault_key: str, spec_file: str) -> bool:
+    def consume_spec(self, project_id: str, hunt_key: str, spec_file: str) -> bool:
         """Move one produced spec file to consumed/ - the single-owner
         produced->consumed transition of the inbox-surfer protocol
         (ADR #169 Q3/164 spec 6, tracker #172): ONLY the mover calls this
         (the single-owner rename, #172 AC). `spec_file` is the produced spec's
         file-name identity (the `<fault>_<strategy>` stem, G3) under
-        `test-specs/<fault_key>/`; `fault_key` is the 3-part config key
-        (G4/ADR Q13 `config_id` - the 2-part revival key is NOT accepted).
+        `test-specs/<hunt_key>/`; `hunt_key` is the loop dispatch id (S3 8.9).
 
         True when the spec now lives in consumed/ - renamed NOW, or already
         moved by an earlier tick (at-least-once: the repeated invocation of a
@@ -553,8 +587,8 @@ class HunterMemoryStore(BoundedRecordStore):
         record exists in either side (nothing to move). Raises on a genuine
         storage failure (O3 - the caller warns and counts, never aborting the
         tick) and on an unsafe `spec_file` (a path separator or traversal
-        name). Runs under the project's lock (I2, mirroring `write_config`),
-        so the rename is not TOCTOU.
+        name). Runs under the project's lock (I2), so the rename is not
+        TOCTOU.
 
         The G4 novelty gate makes produced/ and consumed/ MUTUALLY EXCLUSIVE
         per name; a store where BOTH hold the same name is corrupted, and the
@@ -562,14 +596,14 @@ class HunterMemoryStore(BoundedRecordStore):
         message is never lost to a re-write)."""
         _validate_spec_file(spec_file)
         with self._lock_for(project_id):
-            spec_dir = self._spec_dir(project_id, fault_key)
+            spec_dir = self._spec_dir(project_id, hunt_key)
             produced = spec_dir / "produced" / f"{spec_file}.yaml"
             consumed = spec_dir / "consumed" / f"{spec_file}.yaml"
             if produced.exists() and consumed.exists():
                 logger.warning(
                     "hunter store: both produced/ and consumed/ hold %s for "
                     "%s/%s; refusing to clobber the consumed record (fail-open)",
-                    spec_file, project_id, fault_key,
+                    spec_file, project_id, hunt_key,
                 )
                 return False
             if not produced.exists():
@@ -588,17 +622,17 @@ class HunterMemoryStore(BoundedRecordStore):
     # -- the notes surface (G6) -----------------------------------------------
 
     @staticmethod
-    def note_key(fault_key: str, note_name: str) -> str:
-        """The hierarchy key of a note: `fault_key:<note_name>` (G6), where
-        `fault_key` is the 3-part config key (G4)."""
-        return f"{fault_key}:{note_name}"
+    def note_key(hunt_key: str, note_name: str) -> str:
+        """The hierarchy key of a note: `hunt_key:<note_name>` (G6), where
+        `hunt_key` is the loop dispatch id (S3 8.9)."""
+        return f"{hunt_key}:{note_name}"
 
     def write_note(
         self,
         project_id: str,
         *,
         action: Literal["append", "update", "delete"] = "append",
-        fault_key: str,
+        hunt_key: str,
         note_name: str,
         kind: str,
         body: str,
@@ -607,30 +641,29 @@ class HunterMemoryStore(BoundedRecordStore):
     ) -> str | None:
         """The `notes` body write over the per-project `notes.yaml` (G6).
 
-        `append` adds a new note for the `(fault_key, note_name)` key,
-        where `fault_key` is the 3-part config key (G4, the config's
-        identity - the 2-part revival key is NOT accepted);
-        `update` amends an existing note (replacing its kind/body/evidence/
-        provenance); `delete` removes it. Returns the note `key`
-        (`fault_key:<note_name>`); an update/delete on a missing key returns
-        `None` (a denoted miss, never a failure). Notes keep their natural
-        append order - no `_seq`/`_ref` (G11). Raises on write failure (O3)
-        and on an unknown `kind` or `action`."""
+        `append` adds a new note for the `(hunt_key, note_name)` key, where
+        `hunt_key` is the loop dispatch id (S3 8.9); `update` amends an
+        existing note (replacing its kind/body/evidence/provenance); `delete`
+        removes it. Returns the note `key` (`hunt_key:<note_name>`); an
+        update/delete on a missing key returns `None` (a denoted miss, never a
+        failure). Notes keep their natural append order - no `_seq`/`_ref`
+        (G11). Raises on write failure (O3) and on an unknown `kind` or
+        `action`."""
         if action not in _NOTE_ACTIONS:
             raise ValueError(f"hunter store: unknown note action {action!r}; known: {_NOTE_ACTIONS}")
         if kind not in NOTE_KINDS:
             raise ValueError(
                 f"hunter store: unknown note kind {kind!r}; known: {NOTE_KINDS}"
             )
-        self._validate_fault_key(fault_key)
+        self._validate_hunt_key(hunt_key)
         path = self._notes_file(project_id)
         records = self._read_records(path)
-        key = self.note_key(fault_key, note_name)
+        key = self.note_key(hunt_key, note_name)
         if action == "append":
             records.append(
                 {
                     "key": key,
-                    "fault_key": fault_key,
+                    "hunt_key": hunt_key,
                     "note_name": note_name,
                     "kind": kind,
                     "body": body,
@@ -670,8 +703,8 @@ class HunterMemoryStore(BoundedRecordStore):
         """Grep-match read over the project's notes (G6), read-latest.
 
         Filters (combinable or singular):
-          parent_key  - the fault_key (the config identifier, G4); yields that
-                        fault's notes (the note keys embed it).
+          parent_key  - the hunt key (S3 8.9); yields that hunt's notes (the
+                        note keys embed it).
           key_keyword - case-insensitive substring over the note KEYS.
           body_keyword- case-insensitive substring over the note BODY.
         Returns matching notes latest-first (read-latest - the natural list
@@ -698,5 +731,5 @@ __all__ = [
     "DuplicateSpecError",
     "HunterMemoryStore",
     "NOTE_KINDS",
-    "config_key_from_fault_key",
+    "spec_identifier",
 ]

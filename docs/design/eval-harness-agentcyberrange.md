@@ -1,5 +1,9 @@
 # Eval Harness Adaptation Study: AgentCyberRange to polymerhus Vulnerability-Discovery Evaluation
 
+*Historical study (superseded on the fault-KB point).*
+The fault-KB and the `fault_class` match triple were DELETED/translated by T10-T10b; the assessment now matches
+the unit threat model's web-vulnerability class and fault.
+
 > **Status (2026-10-02, D49): the WebExploitBench evaluator is dropped.**
 > This study concluded the native oracle cannot be invoked verbatim (it checks exploit effects and WebExploitBench-shaped reports; polymerhus is discovery-only and produces neither).
 > The platform carries that finding to its end: the `evaluator` service is cut from every target stack, and polymerhus scores through its own background assessment subagent instead.

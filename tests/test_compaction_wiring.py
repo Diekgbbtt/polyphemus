@@ -2,8 +2,8 @@
 
 D9 named two consumers (the hunter + the mechanism-typist); H generalises the
 consumer principle: every `checkpointer (create_agent)` agent across the modules -
-the three analysis proposers, the two recon-pod roles, and the two orchestrator
-actors - runs compacted. This module pins each wiring seam with a faked
+the three analysis proposers, the two recon-pod roles, the recon orchestrator,
+and the threat modeller - runs compacted. This module pins each wiring seam with a faked
 `stateful_turn` / `run_session_agent`, asserting the compaction middleware reaches
 the session construction. The compaction behaviour itself is covered by
 `test_llm_compaction.py`; here we pin the consumer wiring.
@@ -18,7 +18,6 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
-import pytest
 
 from polymerhus.app.llm import compaction as C
 from polymerhus.app.llm import session as S
@@ -113,13 +112,13 @@ def test_cached_role_middleware_is_shared_per_role():
     _assert_compaction_middleware(mw1)
 
 
-# --- the two orchestrator actors wire compaction -------------------------------
+# --- the run-scoped actors wire compaction -------------------------------------
 
-def test_hunt_orchestrator_actor_wires_compaction():
-    from polymerhus.attack.hunting.actors import HuntOrchestratorActor
+def test_threat_modeller_actor_wires_compaction():
+    from polymerhus.attack.hunting.actors import ThreatModellerActor
 
     async def drive():
-        actor = HuntOrchestratorActor(
+        actor = ThreatModellerActor(
             "run-h", checkpointer=InMemorySaver(),
             model_factory=lambda r: _TextFake(body=""), observe=False)
         await actor._ensure_started()

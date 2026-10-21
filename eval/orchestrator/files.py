@@ -1,10 +1,10 @@
 """The filesystem seam over the #234 app-owned data root (ticket #270).
 
 The trial reads the persisted-state predicates (the authn skill bundle, the
-pre-mined hunt configs) and writes its own bootstrap state through one
+pre-mined threat-model loops) and writes its own bootstrap state through one
 `FileStore`. It is the injectable filesystem seam: tests pass a temp-rooted
-instance or a subclass that scripts the consumed-count sequence to model the
-cap race (R7). The layout helpers mirror the app's own `<data_root>` layout
+instance or a subclass that scripts the produced/consumed reads. The layout
+helpers mirror the app's own `<data_root>` layout
 (`src/polymerhus/app/data_root.py`), so the harness and the pipeline address
 the SAME produced/consumed inbox - never a bespoke copy.
 
@@ -16,9 +16,9 @@ import os
 import tempfile
 from pathlib import Path
 
-# The two hunt-config sides. `consumed` is the cap metric (D8): every file the
-# pipeline's lazy read moved there counts, mounted/pre-mined files included.
-HUNT_CONFIG_SIDES = ("produced", "consumed")
+# The two threat-model sides. `consumed` is the dispatched-loop marker: the
+# store moves a loop file there when the mover admitted its dispatch.
+THREAT_MODEL_SIDES = ("produced", "consumed")
 # The two hunter test-spec sides; mirrors the hunter store's produced/consumed
 # inbox (the mover owns the produced -> consumed rename).
 HUNTER_TEST_SPEC_SIDES = ("produced", "consumed")
@@ -43,10 +43,36 @@ def authn_skill_path(data_root: str | Path, project_id: str) -> Path:
     return skills_dir(data_root, project_id) / "authn" / "SKILL.md"
 
 
-def hunt_configs_dir(data_root: str | Path, project_id: str, side: str) -> Path:
-    """`<data_root>/<project_id>/hunting/orchestration/hunt_configs/<side>`."""
-    if side not in HUNT_CONFIG_SIDES:
-        raise ValueError(f"hunt config side must be one of {HUNT_CONFIG_SIDES}, got {side!r}")
+def threat_model_dir(data_root: str | Path, project_id: str, side: str) -> Path:
+    """`<data_root>/<project_id>/hunting/threat_modeller/<side>`.
+
+    The threat-model store owns this layout (`attack/hunting/
+    threat_model_store.py`): one `<unit_name>/` directory per unit carrying the
+    model document and its `loop-<rank>.yaml` files. The eval mirrors the same
+    two sides the mover reads, never a bespoke path.
+    """
+    if side not in THREAT_MODEL_SIDES:
+        raise ValueError(f"threat model side must be one of {THREAT_MODEL_SIDES}, got {side!r}")
+    return project_dir(data_root, project_id) / "hunting" / "threat_modeller" / side
+
+
+def threat_model_unit_dir(
+    data_root: str | Path, project_id: str, unit_name: str, side: str
+) -> Path:
+    """`<threat_model_dir>/<unit_name>`: one unit's model and loop files."""
+    return threat_model_dir(data_root, project_id, side) / unit_name
+
+
+def retired_hunt_configs_dir(
+    data_root: str | Path, project_id: str, side: str
+) -> Path:
+    """The RETIRED hunt-config family, read ONLY by the pre-mined guard.
+
+    T4b (#387) removed the config family from the dispatch path. This helper
+    exists so the hunting-entry gate can name a stale pre-mined config
+    explicitly instead of letting it read as an absent artifact; nothing may
+    write here.
+    """
     return (
         project_dir(data_root, project_id)
         / "hunting"
@@ -59,16 +85,17 @@ def hunt_configs_dir(data_root: str | Path, project_id: str, side: str) -> Path:
 def hunter_test_specs_dir(data_root: str | Path, project_id: str) -> Path:
     """`<data_root>/<project_id>/hunting/hunter/test-specs`: the spec families.
 
-    Each child is a `<fault_key>/` folder holding the produced/consumed
+    Each child is a `<dispatch_id>/` folder (the loop dispatch id
+    `<unit_name>__<loop_id>`) holding the produced/consumed
     `TestImplementationSpec` files (mirrors `hunter_memory.py`, #234).
     """
     return project_dir(data_root, project_id) / "hunting" / "hunter" / "test-specs"
 
 
-def hunter_test_specs_fault_dir(
-    data_root: str | Path, project_id: str, fault_key: str, side: str
+def hunter_test_specs_family_dir(
+    data_root: str | Path, project_id: str, dispatch_id: str, side: str
 ) -> Path:
-    """`<hunter_test_specs_dir>/<fault_key>/<side>`: one spec family's one inbox.
+    """`<hunter_test_specs_dir>/<dispatch_id>/<side>`: one spec family's one inbox.
 
     The pipeline's lazy read looks exactly here, so a pre-mined spec lands in
     the same produced/ inbox the mover drains - never a bespoke path.
@@ -77,7 +104,7 @@ def hunter_test_specs_fault_dir(
         raise ValueError(
             f"hunter test-spec side must be one of {HUNTER_TEST_SPEC_SIDES}, got {side!r}"
         )
-    return hunter_test_specs_dir(data_root, project_id) / fault_key / side
+    return hunter_test_specs_dir(data_root, project_id) / dispatch_id / side
 
 
 def pod_dir(data_root: str | Path, project_id: str) -> Path:

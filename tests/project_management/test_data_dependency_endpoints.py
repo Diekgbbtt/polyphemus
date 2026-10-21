@@ -132,7 +132,7 @@ def test_place_authn_skill_unpacks_tar_gz_and_writes_verbatim(monkeypatch, tmp_p
     assert resp.status_code == 200
     assert resp.json() == {"ok": True, "skill": "authn",
                            "files": ["SKILL.md", "references/login.sh"]}
-    bundle = tmp_path / "p1" / "skills" / "authn"
+    bundle = tmp_path / "target-specific-procedure" / "p1" / "authn"
     assert (bundle / "SKILL.md").read_text() == SKILL_MD
     assert (bundle / "references" / "login.sh").read_text() == "#!/bin/sh\necho login\n"
 
@@ -147,7 +147,7 @@ def test_place_authn_skill_unpacks_zip_with_wrapper_prefix(monkeypatch, tmp_path
     }), filename="authn.zip", content_type="application/zip")
 
     assert resp.status_code == 200
-    bundle = tmp_path / "p1" / "skills" / "authn"
+    bundle = tmp_path / "target-specific-procedure" / "p1" / "authn"
     assert (bundle / "SKILL.md").read_text() == SKILL_MD
     assert (bundle / "references" / "verify.sh").is_file()
     # the wrapper prefix must not land as a nested directory
@@ -166,7 +166,7 @@ def test_place_authn_skill_overwrites_and_creates_on_second_post(monkeypatch, tm
     }), filename="authn.tar.gz")
 
     assert resp.status_code == 200
-    bundle = tmp_path / "p1" / "skills" / "authn"
+    bundle = tmp_path / "target-specific-procedure" / "p1" / "authn"
     assert (bundle / "SKILL.md").read_text() == updated
     assert (bundle / "references" / "verify.sh").is_file()
 
@@ -181,7 +181,7 @@ def test_place_authn_skill_rejects_traversal_member(monkeypatch, tmp_path):
     assert resp.status_code == 400
     assert resp.json()["error"] == "data_dependency_invalid"
     assert not (tmp_path / "p1" / "evil.sh").exists()
-    assert not (tmp_path / "p1" / "skills" / "authn" / "SKILL.md").exists()
+    assert not (tmp_path / "target-specific-procedure" / "p1" / "authn" / "SKILL.md").exists()
 
 
 def test_place_authn_skill_rejects_absolute_member(monkeypatch, tmp_path):
@@ -226,7 +226,7 @@ def test_place_authn_skill_bad_frontmatter_writes_nothing(monkeypatch, tmp_path)
 
     assert resp.status_code == 400
     assert resp.json()["error"] == "skill_invalid"
-    assert not (tmp_path / "p1" / "skills" / "authn" / "SKILL.md").exists()
+    assert not (tmp_path / "target-specific-procedure" / "p1" / "authn" / "SKILL.md").exists()
 
 
 def test_place_authn_skill_fileName_is_not_path_authority(monkeypatch, tmp_path):
@@ -238,7 +238,7 @@ def test_place_authn_skill_fileName_is_not_path_authority(monkeypatch, tmp_path)
                  extra={"fileName": "../../etc/evil"})
 
     assert resp.status_code == 200
-    assert (tmp_path / "p1" / "skills" / "authn" / "SKILL.md").read_text() == SKILL_MD
+    assert (tmp_path / "target-specific-procedure" / "p1" / "authn" / "SKILL.md").read_text() == SKILL_MD
     assert not (tmp_path / "p1" / "etc").exists()
 
 

@@ -32,7 +32,7 @@ Both shapes share ONE root cause - relentless argumentation that never converges
 emitting the answer - and one recovery seam applies. The codebase-wide blast radius: every
 no-tool session role with `thinking != off` - recon `triager` / `configurator` /
 `job_orchestrator`, analysis `assigner` / `mechanism_typist` / `data_modeller`, and
-structurally hunting's `hunting_hunter` / `hunting_orchestrator` / `pod_runner` /
+structurally hunting's `hunting_hunter` / `hunting_threat_modeller` (formerly `hunting_orchestrator`) / `pod_runner` /
 `pod_triager`.
 
 ## Solution
@@ -157,7 +157,7 @@ fail-open contract:
    reasoning.
 8. **Scope - every no-tool session role** through the one seam: recon
    `triager`/`configurator`/`job_orchestrator`, analysis `assigner`/`mechanism_typist`/
-   `data_modeller`, hunting `hunting_hunter`/`hunting_orchestrator`/`pod_runner`/
+   `data_modeller`, hunting `hunting_hunter`/`hunting_threat_modeller`/`pod_runner`/
    `pod_triager`. Tool-bound loops (the crawler's vendored ReAct) are out of scope.
 9. **Native langgraph primitives**: the recovery uses `agent.update_state` /
    `agent.stream` and the middleware/state surfaces already on the seam - it does not

@@ -39,10 +39,11 @@ COMPLETE_ENV = {
     "LLM_JOB_ORCHESTRATOR": "opencode:manual/test",
     "LLM_CRAWLER": "opencode:manual/test",
     "LLM_ANALYSER": "opencode:manual/test",
-    "LLM_HUNTING_ORCHESTRATOR": "opencode:manual/test",
+    "LLM_HUNTING_THREAT_MODELLER": "opencode:manual/test",
     "LLM_HUNTING_HUNTER": "opencode:manual/test",
     "LLM_POD_RUNNER": "opencode:manual/test",
     "LLM_POD_TRIAGER": "opencode:manual/test",
+    "LLM_SKILL_EVOLVER": "opencode:manual/test",
     "LLM_CAPABILITY_OVERRIDES": CAPABILITY_OVERRIDE_ENV,
 }
 
@@ -114,7 +115,24 @@ def test_eval_overlay_renders_with_complete_env(tmp_path: Path) -> None:
     assert rendered.returncode == 0, rendered.stderr
     config = yaml.safe_load(rendered.stdout)
     assert BASE_SERVICES <= set(config["services"])
-    assert "--reload" in rendered.stdout  # dev overlay still in the merge
+    # The eval overlay wins over the dev overlay: a frozen trial source must
+    # never restart the API under a live poll (the arm L trial-2 abort).
+    agent_env = environment_map(config["services"]["agent"])
+    assert agent_env["AGENT_UVICORN_ARGS"] == ""
+    assert "--reload" not in rendered.stdout
+
+
+def test_eval_overlay_disables_agent_reload() -> None:
+    """Arm M rec 2 proactive fix: the eval overlay must disable reload.
+
+    A source write during a trial (or a touched mtime) must never restart the
+    API. The dev overlay sets `--reload`; the eval overlay is applied last and
+    overrides it with an empty argument string.
+    """
+    overlay = yaml.safe_load(
+        (REPO_ROOT / "eval" / "docker-compose.eval.yml").read_text(encoding="utf-8")
+    )
+    assert overlay["services"]["agent"]["environment"]["AGENT_UVICORN_ARGS"] == ""
 
 
 @docker

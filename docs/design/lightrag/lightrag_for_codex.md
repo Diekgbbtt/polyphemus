@@ -1,5 +1,9 @@
 # LightRAG Methodology Service — Codex Implementation Brief
 
+*Historical upstream design record.*
+The hunting fault-hypothesis vocabulary it references retired with the threat-modeller rewrite (T2b #386, T10 #383).
+
+
 **Status:** MVP runtime path implemented on branch `lightrag`; WSTG base and
 writeup overlay stores are available as pre-indexed local snapshots as of
 2026-08-04.

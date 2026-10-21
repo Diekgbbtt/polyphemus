@@ -1,5 +1,8 @@
 LIGHT RAG - DESIGN IDEA
 
+*Historical upstream design record.*
+The hunting fault-hypothesis vocabulary it references retired with the threat-modeller rewrite (T2b #386, T10 #383).
+
 2 main artifacts:
 
 2 - Knowledge query contract : formato strutturato con il quale il planner dovrà interrogare lightRAG.

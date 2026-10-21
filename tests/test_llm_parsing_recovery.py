@@ -523,7 +523,7 @@ def test_malformed_call_is_answered_behind_a_structured_output_answer():
     )
     saver = InMemorySaver()
     turn = run_session_turn(
-        "hunting_orchestrator", "mixed-structured", [HumanMessage(content="go")],
+        "hunting_threat_modeller", "mixed-structured", [HumanMessage(content="go")],
         checkpointer=saver, tools=[seed_echo], model_factory=_factory(mixed),
         response_format=ToolStrategy(Decision), observe=False)
     assert _pairing_ok(turn.messages)
@@ -554,7 +554,7 @@ def test_valid_and_malformed_calls_in_one_message_are_both_answered():
     )
     saver = InMemorySaver()
     turn = run_session_turn(
-        "hunting_orchestrator", "mixed-ordinary", [HumanMessage(content="go")],
+        "hunting_threat_modeller", "mixed-ordinary", [HumanMessage(content="go")],
         checkpointer=saver, tools=[_echo],
         model_factory=_factory(mixed, AIMessage(content="final")), observe=False)
     assert turn.content == "final"

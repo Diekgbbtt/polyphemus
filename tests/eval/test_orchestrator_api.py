@@ -46,7 +46,7 @@ def test_call_builders_encode_the_ph_py_semantics() -> None:
         "POST", "/projects/p/analysis", {"run_id": "r1"}
     )
     assert api.launch_hunting("p") == api.ApiCall(
-        "POST", "/projects/p/hunting", {"candidates": []}
+        "POST", "/projects/p/hunting", {}
     )
     assert api.stop_hunting("p", "h1") == api.ApiCall(
         "POST", "/projects/p/hunting/h1/stop"
@@ -381,6 +381,95 @@ def test_http_runner_raises_api_error_on_http_failure(monkeypatch) -> None:
 
     with pytest.raises(api.ApiError, match="404"):
         runner(api.recon_status("p", "r1"))
+
+
+def test_http_runner_retries_a_get_read_timeout_then_succeeds(monkeypatch) -> None:
+    """Arm M rec 2: a read timeout on an idempotent poll is retried.
+
+    The arm L trial-2 abort was a 30 s read timeout during a uvicorn reload
+    window; the next attempt lands on the ready server.
+    """
+    calls: list[str] = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise TimeoutError("the read operation timed out")
+        return _FakeResponse(b'{"status": "complete"}')
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", fake_urlopen)
+    sleeps: list[float] = []
+    runner = api.HttpApiRunner("http://api.test:8080", sleep=sleeps.append)
+
+    result = runner(api.recon_status("p", "r1"))
+
+    assert result == {"status": "complete"}
+    assert len(calls) == 2
+    assert sleeps == [1.0]
+
+
+def test_http_runner_normalizes_an_exhausted_get_read_timeout(monkeypatch) -> None:
+    """An exhausted retry budget is a terminal `ApiError` with status 0."""
+    calls: list[str] = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request.full_url)
+        raise TimeoutError("the read operation timed out")
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", fake_urlopen)
+    sleeps: list[float] = []
+    runner = api.HttpApiRunner(
+        "http://api.test:8080", retries=2, backoff_s=0.5, sleep=sleeps.append
+    )
+
+    with pytest.raises(api.ApiError) as caught:
+        runner(api.recon_status("p", "r1"))
+
+    assert caught.value.status == 0
+    assert "timed out" in caught.value.detail
+    assert len(calls) == 3
+    assert sleeps == [0.5, 1.0]
+
+
+def test_http_runner_does_not_retry_a_post_read_timeout(monkeypatch) -> None:
+    """A non-idempotent call is never retried, but its timeout is normalized."""
+    calls: list[str] = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request.full_url)
+        raise TimeoutError("the read operation timed out")
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", fake_urlopen)
+    sleeps: list[float] = []
+    runner = api.HttpApiRunner("http://api.test:8080", sleep=sleeps.append)
+
+    with pytest.raises(api.ApiError) as caught:
+        runner(api.create_project("eval-t1"))
+
+    assert caught.value.status == 0
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_http_runner_retries_a_transient_url_error_on_get(monkeypatch) -> None:
+    """A connection reset during a server restart is transient on a GET."""
+    import urllib.error
+
+    calls: list[str] = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise urllib.error.URLError(ConnectionResetError("connection reset"))
+        return _FakeResponse(b'{"status": "complete"}')
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", fake_urlopen)
+    runner = api.HttpApiRunner("http://api.test:8080", sleep=lambda _: None)
+
+    result = runner(api.recon_status("p", "r1"))
+
+    assert result == {"status": "complete"}
+    assert len(calls) == 2
 
 
 class _Reader:

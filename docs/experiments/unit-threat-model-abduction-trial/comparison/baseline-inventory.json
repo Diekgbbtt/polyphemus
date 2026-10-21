@@ -1,0 +1,370 @@
+{
+  "unit_id": "Service:model-download",
+  "counts": {
+    "interface_agreements": 12,
+    "trust_agreements": 10,
+    "transitions": 8,
+    "assumptions": 15,
+    "faults": 15,
+    "vulnerabilities": 16,
+    "loops": 13
+  },
+  "assumptions": [
+    {
+      "id": "A1",
+      "statement": "A .safetensors filename proves the item belongs to the trusted model ecosystem, so catalog membership checks are unnecessary for such names.",
+      "fault_id": "F1",
+      "fault_name": "Catalog-membership bypass via filename extension shortcut",
+      "vulnerabilities": [
+        "Business-logic bypass of the model catalog membership control",
+        "Arbitrary content staging into the custom_nodes code directory"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-4",
+          "likelihood": "high"
+        }
+      ]
+    },
+    {
+      "id": "A2",
+      "statement": "Model URLs always point at public content hosts, so no destination filtering of the outbound fetch is needed.",
+      "fault_id": "F2",
+      "fault_name": "No egress allowlist on the outbound fetch",
+      "vulnerabilities": [
+        "Server-side request forgery (SSRF)"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-1",
+          "likelihood": "high"
+        }
+      ]
+    },
+    {
+      "id": "A3",
+      "statement": "Rejecting the file:// shape as typed covers local-file schemes; case variants and authority forms do not need separate handling.",
+      "fault_id": "F3",
+      "fault_name": "Scheme filter matches narrow textual forms only",
+      "vulnerabilities": [
+        "Local file inclusion / arbitrary local file read"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-2",
+          "likelihood": "high"
+        },
+        {
+          "loop_id": "loop-5",
+          "likelihood": "medium"
+        }
+      ]
+    },
+    {
+      "id": "A4",
+      "statement": "Any URL that appears in the catalog is safe to fetch, so url-by-url set membership is as strong as binding the URL to its catalog entry.",
+      "fault_id": "F4",
+      "fault_name": "URL checked by catalog set membership, not bound to the admitting entry",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A5",
+      "statement": "save_path values originate from the catalog dropdown, so they are benign and need no path validation.",
+      "fault_id": "F5",
+      "fault_name": "save_path accepted as an unvalidated relative path",
+      "vulnerabilities": [
+        "Unrestricted remote-content write into the model store (write-what-where under models)",
+        "Path traversal via save_path (write outside the intended model subdirectory)"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-3",
+          "likelihood": "high"
+        },
+        {
+          "loop_id": "loop-6",
+          "likelihood": "medium"
+        }
+      ]
+    },
+    {
+      "id": "A6",
+      "statement": "Clients send well-formed JSON request bodies, so parse failures cannot occur in practice.",
+      "fault_id": "F6",
+      "fault_name": "Unhandled request-body errors return 500",
+      "vulnerabilities": [
+        "Improper error handling on request parsing (unhandled exceptions)"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-12",
+          "likelihood": "low"
+        }
+      ]
+    },
+    {
+      "id": "A7",
+      "statement": "ui_id is always a string produced by the manager shell, so the queue does not validate its type.",
+      "fault_id": "F7",
+      "fault_name": "ui_id consumed without type validation",
+      "vulnerabilities": [
+        "Denial of service via worker crash (serial worker starvation)"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-9",
+          "likelihood": "medium"
+        }
+      ]
+    },
+    {
+      "id": "A8",
+      "statement": "Queue counters mirror queue contents, so status readers can trust total_count and done_count as the execution truth.",
+      "fault_id": "F8",
+      "fault_name": "Queue counters diverge from accepted and executed items",
+      "vulnerabilities": [
+        "Queue accounting corruption (completion-state lying)"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-10",
+          "likelihood": "medium"
+        }
+      ]
+    },
+    {
+      "id": "A9",
+      "statement": "Only the manager shell calls start and reset, so GET semantics for state-changing operations carry no risk.",
+      "fault_id": "F9",
+      "fault_name": "State-changing operations exposed as GET",
+      "vulnerabilities": [
+        "Unauthenticated state-changing GET (CSRF-able queue control)"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-8",
+          "likelihood": "medium"
+        }
+      ]
+    },
+    {
+      "id": "A10",
+      "statement": "The GitHub channel is trusted to serve authentic catalog content, so catalog entries need no local integrity verification.",
+      "fault_id": "F10",
+      "fault_name": "Catalog content trusted from the fixed remote channel without local integrity anchoring",
+      "vulnerabilities": [
+        "Catalog poisoning leading to stored XSS in the manager shell"
+      ],
+      "loops": []
+    },
+    {
+      "id": "A11",
+      "statement": "save_path and filename are simple names without separators, so string concatenation under the models root is safe.",
+      "fault_id": "F11",
+      "fault_name": "Write path built by string concatenation without canonicalization",
+      "vulnerabilities": [
+        "Archive extraction path traversal (zip-slip) on downloaded artifacts"
+      ],
+      "loops": []
+    },
+    {
+      "id": "A12",
+      "statement": "The attributes that passed the gate are the same attributes the worker later uses.",
+      "fault_id": "F12",
+      "fault_name": "Check-to-use gap between gate validation and queued attributes",
+      "vulnerabilities": [
+        "Cross-entry artifact substitution (validated entry not bound to the used URL)",
+        "Supply-chain substitution via repository (HuggingFace-style repo) downloads"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-7",
+          "likelihood": "medium"
+        }
+      ]
+    },
+    {
+      "id": "A13",
+      "statement": "Each request carries a unique ui_id, so duplicate keys cannot disturb queue bookkeeping.",
+      "fault_id": "F13",
+      "fault_name": "Duplicate ui_id accepted without reconciliation with bookkeeping",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A14",
+      "statement": "Requests arrive one at a time, so queue mutation needs no locking against concurrent start and install calls.",
+      "fault_id": "F14",
+      "fault_name": "Queue mutation lacks concurrency guards",
+      "vulnerabilities": [
+        "Race condition in queue mutation (concurrent start and install)"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-13",
+          "likelihood": "low"
+        }
+      ]
+    },
+    {
+      "id": "A15",
+      "statement": "The deployment is a single-user local application, so authentication is unnecessary and absence of principals is acceptable.",
+      "fault_id": "F15",
+      "fault_name": "No authentication surface anywhere on the manager routes",
+      "vulnerabilities": [
+        "Information exposure of model inventory and fetched content"
+      ],
+      "loops": [
+        {
+          "loop_id": "loop-11",
+          "likelihood": "medium"
+        }
+      ]
+    }
+  ],
+  "boundaries": {
+    "interface_agreements": [
+      {
+        "id": "IA1",
+        "statement": "The client submits a model download as a JSON body to POST /manager/queue/install_model with keys name, url, filename, save_path and an optional ui_id; the /api prefix serves the same handler."
+      },
+      {
+        "id": "IA2",
+        "statement": "For a filename without a .safetensors suffix the handler requires the (name, save_path, filename) triple to exist in the default-channel model catalog and the url to equal a member of the catalog URL set exactly; a missing triple gives 400, a URL outside the set gives 403."
+      },
+      {
+        "id": "IA3",
+        "statement": "A filename ending in lowercase .safetensors bypasses catalog membership; any host-bearing URL is accepted with 200, while an uppercase .SAFETENSORS suffix is rejected with 400."
+      },
+      {
+        "id": "IA4",
+        "statement": "Status codes form the contract: 200 queued, 400 invalid request, 403 security denial, 500 unhandled exception; GET on install_model returns 404 and POST on status returns 405."
+      },
+      {
+        "id": "IA5",
+        "statement": "Accepted items do not process spontaneously; only GET /manager/queue/start drains the queue; the status counters are total_count, done_count, in_progress_count and is_processing."
+      },
+      {
+        "id": "IA6",
+        "statement": "The worker, not the request handler, performs the outbound fetch; the fetch happens after the enqueue response and follows the supplied URL scheme and authority."
+      },
+      {
+        "id": "IA7",
+        "statement": "The worker writes the fetched body to models/<save_path>/<filename>, creates missing directories, and concatenates the path components without canonicalization (a .. save_path is accepted)."
+      },
+      {
+        "id": "IA8",
+        "statement": "A manager middleware enforces the model-install security policy ahead of the handler and answers 403 with the fixed message A security error has occurred."
+      },
+      {
+        "id": "IA9",
+        "statement": "The queue accepts a caller-supplied ui_id verbatim as arbitrary JSON; a dict value is accepted with 200 and processing then halts before the fetch."
+      },
+      {
+        "id": "IA10",
+        "statement": "GET /externalmodel/getlist?mode=default returns the catalog JSON with entries carrying name, type, base, save_path, description, reference, filename and url; the same catalog feeds the install gate."
+      },
+      {
+        "id": "IA11",
+        "statement": "Model inventory is exposed as JSON: /models lists directories, /experiment/models/<dir> lists files with size, created and modified; direct file GET paths return 404."
+      },
+      {
+        "id": "IA12",
+        "statement": "The worker processes queued items serially; one start drains every item unless processing halts; several items can be enqueued between starts."
+      }
+    ],
+    "trust_agreements": [
+      {
+        "id": "TA1",
+        "statement": "The handler trusts the JSON body to encode a legitimate install request; no principal, session or token is read, and any anonymous client reaches the trust decision."
+      },
+      {
+        "id": "TA2",
+        "statement": "The gate trusts the validated catalog tuple and the queued tuple to be the same data; actually the catalogue lookup binds name, save_path and filename while the url is only checked for set membership across catalog URLs."
+      },
+      {
+        "id": "TA3",
+        "statement": "The gate trusts the filename suffix as the discriminator of scrutiny: lowercase .safetensors marks the item safe and skips catalog membership; the payload behind the name is never inspected."
+      },
+      {
+        "id": "TA4",
+        "statement": "The worker trusts the queued url to be a fetchable HTTP resource; the client is trusted not to aim the fetch at the internal network, the loopback interface or local files."
+      },
+      {
+        "id": "TA5",
+        "statement": "The worker trusts save_path and filename to be harmless path components under the models root; no canonicalization check runs before the write."
+      },
+      {
+        "id": "TA6",
+        "statement": "The write path trusts the fetched bytes to be a model payload; content is stored under the client-chosen name and every consumer of the model tree then trusts that name."
+      },
+      {
+        "id": "TA7",
+        "statement": "The queue trusts ui_id to be a hashable string; it is consumed in the progress and bookkeeping path without type validation."
+      },
+      {
+        "id": "TA8",
+        "statement": "The UI and operators trust the queue counters as authoritative execution truth; the reset path trusts done_count to mean completed work."
+      },
+      {
+        "id": "TA9",
+        "statement": "The manager trusts the fixed channel list (GitHub raw URLs, selected default) as the only catalog source; no runtime custom URL channel was observed."
+      },
+      {
+        "id": "TA10",
+        "statement": "The queue trusts state-changing operations (start, reset) to be deliberate; both are GET endpoints with no auth and no CSRF token, so any HTTP participant can cross the idle-to-drained and drained-to-stale transitions."
+      }
+    ],
+    "transitions": [
+      {
+        "id": "ET1",
+        "state_from": "ES1",
+        "state_to": "ES2",
+        "trigger": "POST /manager/queue/install_model with a gate-passing triple."
+      },
+      {
+        "id": "ET2",
+        "state_from": "ES2",
+        "state_to": "ES2",
+        "trigger": "Further accepted installs before a start."
+      },
+      {
+        "id": "ET3",
+        "state_from": "ES2",
+        "state_to": "ES4",
+        "trigger": "GET /manager/queue/start."
+      },
+      {
+        "id": "ET4",
+        "state_from": "ES4",
+        "state_to": "ES5",
+        "trigger": "GET /manager/queue/reset."
+      },
+      {
+        "id": "ET5",
+        "state_from": "ES5",
+        "state_to": "ES2",
+        "trigger": "Install accepted on top of stale counters."
+      },
+      {
+        "id": "ET6",
+        "state_from": "ES2",
+        "state_to": "ES6",
+        "trigger": "GET /manager/queue/start while the head item carries a non-string ui_id."
+      },
+      {
+        "id": "ET7",
+        "state_from": "ES6",
+        "state_to": "ES7",
+        "trigger": "A further GET /manager/queue/start after the poison head is disposed."
+      },
+      {
+        "id": "ET8",
+        "state_from": "ES4",
+        "state_to": "ES4",
+        "trigger": "GET start on an empty queue."
+      }
+    ]
+  }
+}

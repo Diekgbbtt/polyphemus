@@ -26,10 +26,10 @@ from polymerhus.attack.hunting.pod.types import RawObservation, VariantSpec
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability",
+    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 _NOTE_BODY = "Symptom absent across the whole vector space; terminal KB query returned the identical primitive set - genuinely exhausted."
@@ -110,6 +110,24 @@ def test_triager_delta_is_fail_open_without_a_store(log, spec_id):
     assert "no consolidation note" in delta.lower()
     assert "variant" in delta.lower()
     assert "indexable keys" in delta.lower()
+
+
+def test_triager_delta_carries_the_typed_skill_procedure(log, store, spec_id):
+    """T9 (S5 8.6): the triager's delta carries the bounded skill-procedure
+    excerpt read from the spec provenance - the material its procedure diff
+    tests - and an absent excerpt is rendered as a recorded gap."""
+    spec = {**SPEC, "provenance": {
+        **SPEC["provenance"],
+        "skill_procedure": {"bypass_technique": "swap the id in a signed URL",
+                            "pro_tips": "compare the owner id"}}}
+    delta = compose_triager_delta(log, spec, None, store=store, spec_id=spec_id, order=0)
+    assert "swap the id in a signed URL" in delta
+    assert "compare the owner id" in delta
+    assert "skipped class" in delta.lower()   # the five empty sections
+
+    absent = compose_triager_delta(log, SPEC, None, store=store, spec_id=spec_id, order=0)
+    assert "recorded gap" in absent.lower()
+    assert "failure-mode" in absent.lower()
 
 
 # --- the shared memory-guidance surface ----------------------------------------

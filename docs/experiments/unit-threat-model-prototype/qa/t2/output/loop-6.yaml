@@ -1,0 +1,111 @@
+loop_id: loop-6
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: business-logic
+class_skill: business-logic
+slice:
+  source: trust_agreement
+  statement: "TA-6: catalogue identity is trusted without binding - the getlist request carries only a db mode, never the channel identity, and the server resolves the channel from persisted config at request time while the shell captured its displayed channel once at init. A config change between capture and resolution makes the rendered rows belong to a source the UI still labels with the previous channel (A-6 -> F-6 -> V-6; invariant DTV-3: rows must correspond to the identity presented)."
+discrimination:
+  axes_used: [chaining-advanced]
+  boundary: "which component of the unbound identity the spec exercises: the request-shape binding failure (no channel in the request), the display-freshness failure (identity captured once, never re-synced), and the single-operator premise (concurrent sessions sharing one config). No payload-string variants."
+  narrow_broad_tradeoff: "Narrow on the mutation vector (preconditioned from any preference-write route) and deep on the identity claims, because the slice is the confusion itself; widening into delivery shapes would duplicate the preference-write loop."
+specs:
+  - spec_id: loop-6-s1
+    label: "config flip between init and open mislabels the rendered catalogue"
+    sub_slice: "The binding failure at request time: the shell displays the channel captured at S1, the getlist request carries no channel identity, and the server resolves the source from config at S3 - so a flip landing in the init-to-open window yields rows from the flipped source under the previous label."
+    class_skill_parametrisation:
+      skill: business-logic
+      inputs:
+        state_machine: "S1 prefs read (channel captured) -> S2 catalog requested (mode only) -> S3 server resolves channel from config"
+        request_shape: "getlist carries mode, never the channel identity (JS call shape)"
+        trust_clause: "T2/T3 trusted conditions: the UI combo value is the operator's intent; the config channel URL is unchanged since S1"
+        patterns_used: ["async-boundary-abuse between-call mutation probe", "state-machine enumeration around the constrained transition", "validated-figure comparison (response channel vs displayed channel)"]
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoints: ["GET /manager/channel_url_list?value=<name> (the flip)", "GET /customnode/getlist?mode=cache (the resolution)"]
+      technology: "V3.37 shell captures the combo once; server derives the channel from manager config"
+      interaction: "operator opens the node list after the flip"
+      observation: "response channel field versus the combo label versus the row provenance (e.g. recent-channel rows: 1021 packs)"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-6-s2: both observe a mislabelled render, but this spec owns the request-time binding clause (no identity in the request; server-side resolution) with the flip before the first open, while s2 owns display freshness across successive opens. Different failing clauses, different windows."
+    chaining_advanced_note: "Structural: the class skill's async-boundary-abuse variant supplies the between-call mutation primitive, but the suite has no entity for a displayed identity that is not bound to the payload it labels. The variant is carried structurally: mutate the binding input between the capture and the resolution, then compare the authoritative figure (response channel, row provenance) against the displayed one."
+    proxy_technique: "Any preference-write route flips the channel while a shell session waits (foreign page, another principal, or the operator's second tab); the operator then opens the catalogue, and the unbound request resolves the flipped source while the captured label persists."
+    verification_symptoms:
+      - "the getlist request in flight carries no channel identity (mode only)"
+      - "the response channel field names the flipped channel while the displayed combo still shows the captured one"
+      - "row provenance matches the response channel (pack counts/ids of the flipped source) and the shell offers no correction"
+    payload_vector_space: {method: GET, path: "/manager/channel_url_list?value=<name> then /customnode/getlist?mode=cache", parameter: "value=<name>; mode=cache", body: null, headers: "none"}
+    assumptions: ["the flip lands in the init-to-open window (any preference-write delivery, preconditioned from the sibling loop)", "the response channel field is present as IA-2 states"]
+    rationale: "The request has no field to carry the displayed identity, so the server cannot honour the label; the flip needs only to precede resolution, and the client never compares the authoritative channel field it receives against the label it renders - the mismatch is structural, not accidental."
+    interpretation_guidance: "symptom-present = with a flip in the window, the response channel and row provenance differ from the displayed label and no client mechanism corrects it. symptom-absent = the request carries the displayed identity, the server rejects a mismatched config, or the client re-syncs the label to the response - all true negatives. Go through a reload in the plan: a fresh load that repairs the label confirms per-session capture, not absence."
+  - spec_id: loop-6-s2
+    label: "displayed identity never re-syncs across successive opens"
+    sub_slice: "The display-freshness failure: the channel is read once at S1 and no re-read or reconciliation precedes later opens (T7: S5 -> S2), so a flip between two opens changes the source behind a label that stays constant for the session."
+    class_skill_parametrisation:
+      skill: business-logic
+      inputs:
+        state_machine: "S5 prefs mutated -> T7 next catalog open resolves the mutated preference"
+        client_behaviour: "channel list and selected value read once at init (JS evidence: combo value captured; getlist carries no channel)"
+        trust_clause: "T7 trusted condition: the UI still displays the state the operator believes is active"
+        patterns_used: ["workflow mapping across sessions of the same view", "state-timeline comparison (before/after two opens)", "idempotency-free read observation (no re-read)"]
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoints: ["GET /manager/channel_url_list?value=<name> (the flip between opens)", "GET /customnode/getlist?mode=cache (two opens)"]
+      technology: "V3.37 shell; prefs read at init only"
+      interaction: "operator keeps one shell session open and re-opens the catalogue after the flip"
+      observation: "request/response pair per open; count of /manager/channel_url_list reads between opens"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-6-s1: same observable class, but this spec owns the staleness clause over time - two opens in one session, no re-sync path, label constant while sources differ; s1 owns the single request-shape binding. The window and the failing clause differ."
+    chaining_advanced_note: "Structural: the class skill has no identity-freshness entity; the nearest procedure is the state-timeline comparison of a repeated read. Carried structurally: hold the view open, mutate the shared config between two reads of the same view, and compare the figures across the timeline."
+    proxy_technique: "Flip the channel (any preference-write delivery or a second operator tab) between two catalogue opens in one shell; the second open resolves the new source while no client read of the channel list occurs and the label remains the captured one."
+    verification_symptoms:
+      - "no /manager/channel_url_list read occurs between the two opens"
+      - "the two opens' response channels differ while the displayed label is identical across both"
+      - "the label only changes after a session reload (per-session capture confirmed)"
+    payload_vector_space: {method: GET, path: "/customnode/getlist?mode=cache (twice) around /manager/channel_url_list?value=<name>", parameter: "value=<name>", body: null, headers: "none"}
+    assumptions: ["the shell performs no background prefs refresh (no evidence of one; combo read once at init)", "the flip is accepted by the route as the sibling loop establishes"]
+    rationale: "T7 resolves the mutated preference at the next open, while the only prefs read happened at init; nothing in the session re-fetches the identity, so the label becomes a stated belief the data no longer satisfies, and repeated opens deepen the divergence without ever surfacing it."
+    interpretation_guidance: "symptom-present = two opens with different response channels under one unchanged label and no intervening identity read. symptom-absent = the shell re-reads or reconciles prefs before each open, or the label updates on its own - true negatives. If the flip is refused, the spec is inconclusive on this claim; do not infer freshness from a refused mutation."
+  - spec_id: loop-6-s3
+    label: "concurrent legitimate sessions falsify the single-operator premise"
+    sub_slice: "The premise failure: A-6 holds because 'a single operator drives both' the visible shell state and the persisted config; two concurrent sessions with different selected channels share one server config, so at least one session renders rows whose source is the other session's selection - with no attacker and no preference-writing fault exploited."
+    class_skill_parametrisation:
+      skill: business-logic
+      inputs:
+        assumption: "A-6: visible state and persisted config stay consistent because a single operator drives both"
+        shared_state: "one manager config channel per server; each shell captures its own combo at init"
+        concurrency: "two sessions, legitimate selections only"
+        patterns_used: ["multi-actor matrix (actor x action x resource) from the parent methodology", "concurrent-duplication primitives for synchronised interleaving", "durable-state comparison across sessions"]
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoints: ["GET /manager/channel_url_list?value=<nameA> in session A", "GET /manager/channel_url_list?value=<nameB> in session B", "GET /customnode/getlist?mode=cache in both"]
+      technology: "V3.37; the channel config is server-wide, the UI selection is per session captured at init"
+      interaction: "two browser contexts; ordinary UI selections and catalogue opens"
+      observation: "each session's response channel versus its own displayed label, before and after the other session's selection"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-6-s1/s2: the same mislabel observable, but this spec owns the premise clause - no malicious input, no CSRF-style flip, only two legitimate sessions; it falsifies A-6 itself rather than the binding mechanics, which are the siblings' region."
+    chaining_advanced_note: "Structural: the class skill's multi-actor matrix provides the actor x action x resource procedure, but no entity covers a shared configuration that silently overrides a second principal's displayed identity. Carried structurally: two sessions, legitimate selections only, then compare each session's rendered source against its own label."
+    proxy_technique: "Open two shell sessions; select different channels in each through the ordinary UI; open the catalogue in both. The server-wide config serves the last selection to both, so the earlier session's rows come from the other selection while its label persists."
+    verification_symptoms:
+      - "session A's open renders the channel last selected in session B, under A's captured label"
+      - "the conflict is reachable with no preference-write exploit, only UI selection in the second session"
+      - "no session-identity or per-principal channel state exists on the server (single shared config)"
+    payload_vector_space: {method: GET, path: "/manager/channel_url_list (two sessions) and /customnode/getlist (both)", parameter: "value=<nameA>, value=<nameB>", body: null, headers: "no session credential distinguishes callers"}
+    assumptions: ["no per-session channel binding exists (the config is a single persisted value; TA-4/DTV-1 probes show one global write)", "two sessions are reachable to the same unit (no auth isolates them)"]
+    rationale: "A-6's consistency argument rests on a serial single user; two legitimate sessions break the serialisation but not the sharing, so each session's label and the shared source diverge as soon as the second selection lands - a state-confusion defect that needs no adversary to trigger."
+    interpretation_guidance: "symptom-present = two sessions, two labels, one shared config; at least one session's rows contradict its own label and nothing reconciles them. symptom-absent = the server scopes the channel per session/principal or the client re-reads and updates the label - true negatives. A test that only closes one session before the other's selection isolates nothing and is inconclusive."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the request-shape binding clause, s2 the display-freshness clause across opens, s3 the single-operator premise. The failing clause and the observation protocol differ per spec; no spec differs from a sibling by a payload string."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Union covers the three clauses TA-6/A-6 rest on: the request carries no identity, the display is captured once, the operator is assumed singular. Decision-attribute misattribution (TA-8: install/update decisions taken from the mislabelled rows) rides as the observed consequence inside each spec, not as a separate identity claim. The mutation vector itself belongs to the preference-write loop and is preconditioned here."
+  well_formedness_statement: "Three specs over disjoint sub-slices of the unbound-identity failure: request-shape binding, display freshness, and the single-operator premise. Overlap is absent - each spec names the distinct clause it falsifies and preconditions the shared mutation vector. Coverage is exhaustive over TA-6's binding claims as instantiated by the states S1/S2/S5 and T2/T3/T7."
+degradations:
+  - "The window boundaries (init-to-open, between opens) are inferred from the state machine; exact timings are not observed, so specs state the window in state terms rather than milliseconds."
+  - "The client's reconciliation behaviour is inferred from assets (combo captured at init; getlist carries no channel); a hidden refresh path would turn each spec's symptom-absent condition on and is named as the falsifier."

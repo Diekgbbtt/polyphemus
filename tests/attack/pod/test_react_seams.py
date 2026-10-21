@@ -43,10 +43,10 @@ from polymerhus.recon.domain.types import ExecResult
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability",
+    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 SPEC_ID = spec_identifier("sqli", "blind")
@@ -391,8 +391,29 @@ def test_triager_turn_binds_its_react_tools_and_never_exec(tmp_path, monkeypatch
 
     _run(_drive_triager(SPEC, hc, log))
 
-    assert {"note", "query_lightrag", "load_skill"} <= set(seen)
+    # #236: the full skill surface rides the critic's turn (load_skill plus the
+    # lesson sub-phase's record_skill_lesson); exec stays off it.
+    assert {"note", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "exec" not in seen  # the critic never touches the target
+    assert "write_skill" not in seen
+
+
+def test_runner_turn_binds_the_full_skill_surface(tmp_path):
+    """#236: the pod runner binds the full `load_skill` plus
+    `record_skill_lesson` (the lesson sub-phase's tool) alongside its react
+    tools - the settled target-agent decision - and never `write_skill`."""
+    log = ExperimentLog()
+    store = PodMemoryStore(tmp_path)
+    seen: list = []
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
+                           log=log, variant_ref="v0",
+                           model_factory=_tool_recording_factory(
+                               [AIMessage(content="stretch concluded")], seen))
+
+    _run(_drive_runner(SPEC, hc))
+
+    assert {"exec", "note", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert "write_skill" not in seen
 
 
 # --- the graph's production lane (D84-29) --------------------------------------
@@ -426,6 +447,41 @@ def test_full_production_pod_lands_symptom_confirmed_with_fake_models(tmp_path):
     assert env["evidence"]["iterations"] == 1
 
 
+BASELINE = "http_01J0000000000000000000000A"
+REACT_REPLAY_AND_CONCLUDE = [
+    AIMessage(content="", tool_calls=[
+        {"name": "replay", "args": {"artifact_id": BASELINE}, "id": "c1"}]),
+    AIMessage(content="baseline replayed; hand the observation to the critic"),
+]
+
+
+def test_production_runner_replays_the_spec_baseline(tmp_path):
+    """S5 8.5: `provenance.baseline_ref` enables replay when present - the
+    production runner's `replay` tool resolves the named artifact, records the
+    observed status in the D6 log, and the symbolic fast path can confirm the
+    symptom from it."""
+    spec = {**SPEC,
+            "verification_symptoms": ["HTTP 403 on GET /admin"],
+            "provenance": {**SPEC["provenance"], "baseline_ref": BASELINE}}
+    seen = []
+
+    def replay_fn(project_id, artifact_id, overrides):
+        seen.append((project_id, artifact_id, overrides))
+        return {"status": 403, "artifact_id": "http_NEW"}
+
+    env = _run(arun_pod(
+        spec, exec_fn=_exec(_ABSENT), trace_fn=_no_trace,
+        memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        project_id="proj-1", replay_fn=replay_fn,
+        model_factory=_factory(REACT_REPLAY_AND_CONCLUDE)))
+    assert seen == [("proj-1", BASELINE, {})]
+    assert env["verdict"] == "successful"
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+    obs = env["evidence"]["raw_observations"][0]
+    assert obs["status"] == 403
+    assert obs["http_artifact_refs"] == ["http_NEW"]
+
+
 def test_production_pod_degrades_to_a_safe_terminal_without_model_env(tmp_path,
                                                                       monkeypatch):
     """D84-14: a direct pod run with NO model env configured hard-fails at the
@@ -445,9 +501,7 @@ def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path)
     the variant_ref the current stretch."""
     seen = []
     root_spec = {"target_identity": {"url": "http://svc/", "unit_id": "svc"},
-                 "verification_symptoms": ["reflects the marker"],
-                 "testing_pattern": "blind-boolean",
-                 "payload_vector_space": {"method": "GET"}}
+                 "verification_symptoms": ["reflects the marker"]}
 
     async def spy(spec, messages, tool_calls):
         seen.append(pod_harness())

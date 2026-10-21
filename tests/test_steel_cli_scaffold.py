@@ -2,7 +2,7 @@
 
 The scaffold stands in for the pinned binary in the host unit and mocked-e2e
 tiers. These assertions pin its fidelity to the envelopes
-`skills/steel-browser/SKILL.md` documents, and to the clap variadic fold the
+`skills/internal/tools/steel-browser/SKILL.md` documents, and to the clap variadic fold the
 D19 boundary guards against.
 """
 from __future__ import annotations

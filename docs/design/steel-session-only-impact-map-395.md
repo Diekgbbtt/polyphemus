@@ -53,7 +53,7 @@ Every row has a positive drift test or an explicit no-change reason.
 
 | Component | Surface it reaches | Old contract | Final contract | Status | Drift test |
 |---|---|---|---|---|---|
-| `skills/steel-browser/SKILL.md` | Every browser role, including hunting and exploit roles | Cloud and self-hosted sections, profile mount, `--profile`, local API wording | One runtime-blind body; teaches the `steel_exec` gateway and a bare shell `exec`; four-field state; live-session reuse; auth gate signals | Implemented | `tests/test_steel_skill_rule.py`, `tests/recon/test_steel_session_only_surfaces.py` |
+| `skills/internal/tools/steel-browser/SKILL.md` | Every browser role, including hunting and exploit roles | Cloud and self-hosted sections, profile mount, `--profile`, local API wording | One runtime-blind body; teaches the `steel_exec` gateway and a bare shell `exec`; four-field state; live-session reuse; auth gate signals | Implemented | `tests/test_steel_skill_rule.py`, `tests/recon/test_steel_session_only_surfaces.py` |
 | `skills/meta/authn-skill-writing/SKILL.md` | External authn bootstrapper | Profile discipline, profile store key, profile scripts | State discipline, `steel: {state}`, live-session reuse, no profile vocabulary | Implemented | `tests/recon/test_authn_skill_writing.py`, `tests/recon/test_steel_session_only_surfaces.py` |
 | `skills/meta/authn-skill-writing/references/bootstrap-workflow.md` | External authn bootstrapper | Profile mount, profile key, persisted-session claim | Live-session reuse, no restore claim, `steel.state` only when a state file exists | Implemented | `tests/recon/test_authn_skill_writing.py` |
 | `skills/README.md` | Skill catalogue readers | "no profile mounts" | Session state and one runtime-agnostic skill | Implemented | Content review |
@@ -118,18 +118,18 @@ No `with_context`, `with-context`, or `withcontext` symbol exists in the reposit
 
 | Component | Old role | Final role | Status | Tests |
 |---|---|---|---|---|
-| `skills/steel-browser/references/catalogue.sh` | Listed live sessions and saved profiles | Lists live sessions only | Implemented | `tests/e2e/test_steel_canonical_actions_mocked.py` |
-| `skills/steel-browser/references/profile-mount.sh` | Mounted a profile | Deleted | Implemented | File absent |
-| `skills/steel-browser/references/session-state.sh` | Proposed in the first map | Not created; the provider owns capture and restore, and the CLI cannot restore | No script by design | `tests/test_steel_session_state.py`, `tests/test_steel_skill_rule.py` |
-| `skills/steel-browser/references/session-lifecycle.sh` | Started, navigated, stopped | No state restore; the CLI has no flag; live reuse is the interactive path | No change | `tests/e2e/test_steel_canonical_actions_mocked.py` |
-| `skills/steel-browser/references/extract-reads.sh` | Read cookies and storage | No change; state capture belongs to the provider | No change | Mocked e2e |
-| `skills/steel-browser/references/stop-owner.sh` | Stop ownership only | No change | No change | Existing tests |
-| `skills/steel-browser/references/eval-inline.sh` | Inline JS | No change | No change | Existing tests |
-| `skills/steel-browser/references/eval-interact.sh` | Form interaction | No change | No change | Existing tests |
-| `skills/steel-browser/references/interact-batch.sh` | Batch interaction | No change | No change | Existing tests |
-| `skills/steel-browser/references/navigate-read.sh` | Navigation read | No change | No change | Existing tests |
-| `skills/steel-browser/references/scrape-page.sh` | One-shot scrape | No change; the wrapper hides mode | No change | Existing tests |
-| `skills/steel-browser/references/spider-bounded.sh` | Bounded spider | No change; the wrapper hides mode | No change | Existing tests |
+| `skills/internal/tools/steel-browser/references/catalogue.sh` | Listed live sessions and saved profiles | Lists live sessions only | Implemented | `tests/e2e/test_steel_canonical_actions_mocked.py` |
+| `skills/internal/tools/steel-browser/references/profile-mount.sh` | Mounted a profile | Deleted | Implemented | File absent |
+| `skills/internal/tools/steel-browser/references/session-state.sh` | Proposed in the first map | Not created; the provider owns capture and restore, and the CLI cannot restore | No script by design | `tests/test_steel_session_state.py`, `tests/test_steel_skill_rule.py` |
+| `skills/internal/tools/steel-browser/references/session-lifecycle.sh` | Started, navigated, stopped | No state restore; the CLI has no flag; live reuse is the interactive path | No change | `tests/e2e/test_steel_canonical_actions_mocked.py` |
+| `skills/internal/tools/steel-browser/references/extract-reads.sh` | Read cookies and storage | No change; state capture belongs to the provider | No change | Mocked e2e |
+| `skills/internal/tools/steel-browser/references/stop-owner.sh` | Stop ownership only | No change | No change | Existing tests |
+| `skills/internal/tools/steel-browser/references/eval-inline.sh` | Inline JS | No change | No change | Existing tests |
+| `skills/internal/tools/steel-browser/references/eval-interact.sh` | Form interaction | No change | No change | Existing tests |
+| `skills/internal/tools/steel-browser/references/interact-batch.sh` | Batch interaction | No change | No change | Existing tests |
+| `skills/internal/tools/steel-browser/references/navigate-read.sh` | Navigation read | No change | No change | Existing tests |
+| `skills/internal/tools/steel-browser/references/scrape-page.sh` | One-shot scrape | No change; the wrapper hides mode | No change | Existing tests |
+| `skills/internal/tools/steel-browser/references/spider-bounded.sh` | Bounded spider | No change; the wrapper hides mode | No change | Existing tests |
 
 ## 8. Tests
 
@@ -257,9 +257,13 @@ It is recorded in section 4.
 | `tests/app` | 285 passed, 20 skipped |
 | `tests/analysis` | 389 passed |
 | `tests/eval` | 783 passed |
+| Merged `dev` into the feature branch (`tests/recon`, `tests/app`, `tests/analysis`, `tests/eval`) | 2716 passed, 42 skipped, 1 pre-existing dev failure |
+| Focused Steel and auth tests on the merged tree | 119 passed |
+| `tests/integration/test_arjun_consumption_contracts.py` and `test_llm_sync_key_rotation.py` | 8 passed |
 
-The four broad tiers total 2550 passed and 40 skipped.
-The close-out report carries the final counts.
+The four pre-merge tiers total 2550 passed and 40 skipped.
+The merge resolved the skill-path move to `skills/internal/tools/steel-browser/`, deleted the profile-mount script and its guard, kept `steel-state` in the data-root scaffold, and updated the bootstrap workflow's mechanics path.
+Three mocked e2e tests failed on `dev` because their skill path was stale; the merge fixes them.
 Live local Steel verification is still pending and is listed below.
 
 ### 11.2 Live local verification pending
@@ -272,16 +276,16 @@ Live local Steel verification is still pending and is listed below.
 ### 11.3 Repository-wide blockers
 
 - Full repository verification needs `langfuse` in the local environment.
-- `test_arjun_consumption_contracts.py` and `test_llm_sync_key_rotation.py` fail outside this change.
-- Merging into `dev` is blocked by a local merge conflict in the `dev` worktree.
-- No push or merge happens without operator approval.
+- `tests/recon/test_skill_task_binding.py::test_a_malformed_artifact_field_is_refused_by_the_schema` fails on `dev` at `7b7cdc6b`, outside this change.
+- The feature branch now contains `dev`; the merge into `dev` is ready but remains for operator approval.
+- No push happens without operator approval.
 
 ## 12. Decisions and open items
 
 | Decision | Resolution | Current evidence |
 |---|---|---|
 | Q1 state reference shape | `steel.state` | `auth/records.py`, `auth_feed.py`, pipeline, and tests |
-| Q2 CLI state flag | Open upstream item: `start` has no state field; live reuse is the implemented interactive fallback | `skills/steel-browser/SKILL.md`, `tests/test_steel_skill_rule.py`, Q2 in the decision record |
+| Q2 CLI state flag | Open upstream item: `start` has no state field; live reuse is the implemented interactive fallback | `skills/internal/tools/steel-browser/SKILL.md`, `tests/test_steel_skill_rule.py`, Q2 in the decision record |
 | Q3 local user agent | Chrome 155, matching the image | wrapper, compose, deployment contract test |
 | Q4 fresh-context retry | At most one | `steel-crawl.md`, surface drift test |
 | Q5 old profile records | Silently disregard; no warning, alias, or migration | `auth/records.py`, `tests/app/test_auth_records.py` |
@@ -295,7 +299,7 @@ The sweep is reproducible with:
 
 ```bash
 rg -n -i "profile-mount|steel\.profile|steel_profile|--update-profile|profile_id|persist_profile|profileId|persistProfile" src skills tools kali eval tests
-rg -n -i "cloud|self-hosted|local deployment|local runtime|local API|STEEL_API_KEY|STEEL_BROWSER_API_URL|--local" skills/steel-browser skills/meta/authn-skill-writing
+rg -n -i "cloud|self-hosted|local deployment|local runtime|local API|STEEL_API_KEY|STEEL_BROWSER_API_URL|--local" skills/internal/tools/steel-browser skills/meta/authn-skill-writing
 rg -n "steel_state|browser_auth|auth_replication_failed|steel\.state" src tests docs
 rg -n "with_context|with-context|withcontext|SurfaceContextStore" src tests docs
 ```

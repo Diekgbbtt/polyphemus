@@ -1,0 +1,57 @@
+2026-10-18T13:11:28Z GET /manager/queue/status -> 200 | queue status json
+2026-10-18T13:11:28Z GET /manager/version -> 200 | manager version string
+2026-10-18T13:11:28Z GET /api/manager/queue/status -> 200 | api mirror of queue status
+2026-10-18T13:11:28Z GET / -> 200 | base probe: title/profile
+2026-10-18T13:11:40Z POST /manager/queue/install_model -> 500 | empty body probe: validation shape
+2026-10-18T13:11:40Z GET /externalmodel/getlist -> 500 | root-prefix mirror of model catalog
+2026-10-18T13:11:40Z GET /api/externalmodel/getlist -> 500 | external model catalog list
+2026-10-18T13:11:40Z GET /manager/queue/start -> 200 | queue start endpoint shape
+2026-10-18T13:11:48Z POST /manager/queue/install_model -> 500 | unknown id: does server validate catalog membership
+2026-10-18T13:12:01Z GET /api/extensions -> 200 | extension list recon for manager frontend paths
+2026-10-18T13:12:01Z GET /manager/ -> 404 | manager shell page
+2026-10-18T13:12:09Z GET /extensions/comfyui-manager/cm-api.js -> 200 | manager api client js: request shapes
+2026-10-18T13:12:09Z GET /extensions/comfyui-manager/model-manager.js -> 200 | model manager ui js: install flow
+2026-10-18T13:12:25Z GET /externalmodel/getlist?mode=default -> 200 | catalog list with required mode param
+2026-10-18T13:12:25Z GET /api/externalmodel/getlist?mode=default -> 200 | api mirror of catalog list with mode
+2026-10-18T13:12:41Z GET /extensions/comfyui-manager/comfyui-manager.js -> 200 | manager dialog js: queue control surface
+2026-10-18T13:13:26Z POST /manager/queue/install_model -> 400 | forged catalog entry, url=ssrf-listener marker tm-t1-tbsg-ssrf1
+2026-10-18T13:13:32Z POST /manager/queue/install_model -> 400 | correct md5 ui_id, forged url+filename marker tm-t1-tbsg-ssrf2
+2026-10-18T13:13:40Z POST /manager/queue/install_model -> 200 | verbatim catalog entry models[0] with computed md5 ui_id
+2026-10-18T13:14:17Z POST /manager/queue/install_model -> 400 | forged save_path=vae_approx->checkpoints, url+filename verbatim
+2026-10-18T13:14:27Z POST /manager/queue/install_model -> 400 | forged filename only, url+save_path verbatim
+2026-10-18T13:14:27Z POST /manager/queue/install_model -> 200 | verbatim record with bogus ui_id: membership-key test
+2026-10-18T13:14:32Z GET /manager/queue/status -> 200 | queue state after accepted verbatim installs
+2026-10-18T13:14:39Z GET /manager/queue/reset -> 200 | restore: clear queue after accepted probe installs
+2026-10-18T13:14:39Z GET /manager/queue/status -> 200 | queue state after reset
+2026-10-18T13:14:44Z GET /manager/channel_url_list -> 200 | channel config recon: mode->channel mapping
+2026-10-18T13:14:46Z GET /externalmodel/getlist?mode=__tm_unknown_mode__ -> 200 | unknown mode value: fallback behaviour
+2026-10-18T13:15:10Z GET /externalmodel/getlist?mode=recent -> 200 | channel switch: recent
+2026-10-18T13:15:10Z GET /externalmodel/getlist?mode=http://ssrf-listener:8000/tm-t1-tbsg-mode1 -> 200 | mode as URL: SSRF probe on catalog fetch
+2026-10-18T13:15:16Z POST /api/manager/queue/install_model -> 200 | api mirror shares validation and queue
+2026-10-18T13:15:21Z GET /manager/queue/status -> 200 | queue count after api-mirror post
+2026-10-18T13:15:34Z POST /manager/queue/install_model -> 200 | forged description+reference only: check-subset mapping
+2026-10-18T13:15:34Z POST /manager/queue/install_model -> 403 | url with catalog-url prefix + suffix: containment-vs-equality test
+2026-10-18T13:16:15Z POST /manager/queue/install_model -> 400 | save_path traversal variant vae_approx/..: exactness test
+2026-10-18T13:16:15Z POST /manager/queue/install_model -> 400 | filename with traversal suffix: exactness test
+2026-10-18T13:16:22Z POST /manager/queue/install_model -> 500 | filename as number: type-check state
+2026-10-18T13:16:28Z GET /manager/queue/reset -> 200 | restore: clear queued probe jobs before e2e run
+2026-10-18T13:16:28Z GET /manager/queue/status -> 200 | queue zero after reset
+2026-10-18T13:16:34Z POST /manager/queue/install_model -> 200 | e2e accepted job: smallest catalog entry (1.01KB, groundingdino)
+2026-10-18T13:16:37Z GET /manager/queue/start -> 200 | start processing: e2e transition
+2026-10-18T13:16:41Z GET /manager/queue/status -> 200 | post-start status
+2026-10-18T13:16:46Z GET /externalmodel/getlist?mode=default -> 200 | catalog state after e2e: installed flag flip
+2026-10-18T13:17:33Z GET /manager/channel_url_list?value=tmprobe::http://ssrf-listener:8000/... -> 200 | channel-value injection: catalog-source redirection probe
+2026-10-18T13:17:33Z GET /manager/channel_url_list -> 200 | read back channel list after injection
+2026-10-18T13:17:43Z GET /manager/channel_url_list?value=tutorial -> 200 | valid-name channel select works? selected field
+2026-10-18T13:17:43Z GET /manager/channel_url_list?value=default -> 200 | restore: select default channel
+2026-10-18T13:17:58Z GET /manager/channel_url_list?value=tutorial -> 200 | select mutation re-test
+2026-10-18T13:17:58Z GET /manager/channel_url_list -> 200 | read back selected after tutorial select
+2026-10-18T13:18:04Z GET /manager/channel_url_list?value=default -> 200 | restore: select default channel
+2026-10-18T13:18:04Z GET /manager/channel_url_list -> 200 | verify restore
+2026-10-18T13:18:13Z POST /manager/queue/install_model -> 400 | content-type text/plain w/ forged url: parser laxity (CSRF-relevant)
+2026-10-18T13:18:13Z POST /manager/queue/install_model -> 200 | field mixing (url from A, filename/save_path from B): membership semantics
+2026-10-18T13:18:22Z GET /manager/queue/status -> 200 | queue after mix probe (accepted?)
+2026-10-18T13:18:47Z GET /manager/queue/reset -> 200 | restore: clear mix probe job
+2026-10-18T13:18:47Z GET /manager/queue/status -> 200 | final queue state
+2026-10-18T13:20:13Z GET /manager/queue/install_model -> 404 | method discipline: GET on POST-only route
+2026-10-18T13:20:13Z POST /manager/queue/start -> 405 | method discipline: POST on GET-only route

@@ -216,6 +216,9 @@ def test_budget_windows_are_provisioned_and_converge(monkeypatch):
     # #330: every minted virtual key carries the USD cost-guard windows from
     # the plan, and a no-change re-run converges (no key write) because the
     # diff ignores litellm's server-set `reset_at`.
+    # The guard is opt-in since the 2026-10-12 operator directive; opt in here
+    # to exercise the retained window mechanism.
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_ENABLED", "1")
     for name in ("LLM_GATEWAY_BUDGET_7D_USD",
                  "LLM_GATEWAY_BUDGET_30D_USD",
                  "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",

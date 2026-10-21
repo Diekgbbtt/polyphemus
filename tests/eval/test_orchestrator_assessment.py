@@ -14,10 +14,10 @@ import yaml
 from orchestrator import assessment, evidence, trial, verdicts
 from orchestrator.files import (
     FileStore,
-    hunt_configs_dir,
     hunter_test_specs_dir,
     pod_experiment_logs_dir,
     pod_spec_dir,
+    threat_model_dir,
 )
 
 SHA = "eval-sha-1"
@@ -27,14 +27,18 @@ FINGERPRINT = "fp-1"
 # --- fixtures -----------------------------------------------------------------
 
 
+UNIT = "service:web:viewer"
+UNIT_NAME = "service-web-viewer"
+DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+
+
 def seed_chain(tmp_path, *, project: str = "pid"):
     files = FileStore()
     root = tmp_path / "data"
-    files.write_text(
-        hunt_configs_dir(root, project, "produced") / "unit_CWE-89_sqli.yaml",
-        "id: unit_CWE-89_sqli\n",
-    )
-    spec_dir = hunter_test_specs_dir(root, project) / "unit_CWE-89_sqli"
+    unit_dir = threat_model_dir(root, project, "produced") / UNIT_NAME
+    files.write_text(unit_dir / f"{UNIT_NAME}.yaml", "state: COMPLETED\n")
+    files.write_text(unit_dir / "loop-1.yaml", "loop:\n  id: loop-1\n")
+    spec_dir = hunter_test_specs_dir(root, project) / DISPATCH_ID
     files.write_text(spec_dir / "produced" / "sqli_error.yaml", "id: sqli_error\n")
     files.write_text(pod_experiment_logs_dir(root, project, "sqli_error") / "0.yaml", "o: 0\n")
     files.write_text(pod_spec_dir(root, project, "sqli_error") / "run1.yaml", "v: s\n")
@@ -42,8 +46,9 @@ def seed_chain(tmp_path, *, project: str = "pid"):
         root,
         evidence.EvidenceTarget(
             project_id=project,
-            hunt_config="unit_CWE-89_sqli",
-            fault_key="unit_CWE-89_sqli",
+            unit=UNIT,
+            loop_id="loop-1",
+            dispatch_id=DISPATCH_ID,
             spec_id="sqli_error",
             pod_export="run1",
         ),
@@ -58,7 +63,12 @@ def valid_payload(chain) -> list[dict]:
             "vuln_id": "comfyui-004",
             "identified": "identified",
             "confidence": 0.9,
-            "matched": {"unit": "viewer", "fault_class": "CWE-22", "symptom": "read"},
+            "matched": {
+                "unit": UNIT,
+                "web_vulnerability_class": "path-traversal",
+                "fault": "fault-1",
+                "symptom": "read",
+            },
             "evidence_chain": chain.to_dict(),
             "eval_sha": SHA,
             "stack_fingerprint": FINGERPRINT,

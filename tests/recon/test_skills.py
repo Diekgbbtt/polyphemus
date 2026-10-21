@@ -18,13 +18,13 @@ def _clear_skill_cache():
 # --- AST-SKILLIF-01: loads the SKILL.md body, frontmatter stripped ---
 
 def test_skill_for_loads_and_strips_frontmatter(tmp_path, monkeypatch):
-    d = tmp_path / "some" / "skill"
+    d = tmp_path / "some-skill"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text(
         "---\nname: x\ndescription: y\n---\n\n# Body\nreal content here\n", encoding="utf-8")
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
-    out = skills.skill_for("some/skill")
+    out = skills.skill_for("some-skill")
     assert not out.startswith("---")  # frontmatter stripped
     assert out.startswith("# Body")
     assert "real content here" in out
@@ -93,6 +93,23 @@ def test_triager_loader_reads_module_prompt():
     expected = (Path(pod.__file__).resolve().parent / "prompts" / "writing-observations.md").read_text(encoding="utf-8")
     assert skill == expected
     assert skill is _load_triager_skill()  # memoized on first call
+
+
+def test_triager_prompt_names_the_structured_delivery_tool():
+    """Arm M rec 1: the triager prompt must name the `_ObservationBatch` tool.
+
+    The prompt is the leading prefix of the structured call; without the
+    delivery line the model can return fenced JSON in message text and the
+    session has to recover it. The recovery is fail-open, so the line is the
+    primary channel, not a duplicate of the session instruction.
+    """
+    from polymerhus.recon.domain.pod import _load_triager_skill
+
+    skill = _load_triager_skill()
+
+    assert "_ObservationBatch" in skill
+    assert "tool call" in skill
+    assert "message text" in skill
 
 
 def test_triager_loader_fail_closed_on_missing_prompt(monkeypatch):

@@ -1,0 +1,27 @@
+2026-10-15T21:31:59Z GET / -> 200 65200 text/html | title=<title>ComfyUI</title> script_tags=2 ext_refs=
+2026-10-15T21:32:14Z GET /manager/version -> 200 5 text/plain; charset=utf-8 | body=V3.37
+2026-10-15T21:32:18Z GET /api/extensions -> 200 1594 application/json; charset=utf-8 | mgr_entries=
+2026-10-15T21:32:28Z GET /extensions/comfyui-manager/custom-nodes-manager.js -> 200 53555 application/javascript | innerHTML=11 marked=0 DOMPurify=0 description=6
+2026-10-15T21:32:46Z GET /extensions/comfyui-manager/common.js -> 200 20757 application/javascript | sanitizeHTML_def=1 show_message=9
+2026-10-15T21:32:56Z GET /extensions/comfyui-manager/turbogrid.esm.js -> 200 168783 application/javascript | innerHTML=1 textContent=1
+2026-10-15T21:33:18Z GET /manager/channel_url_list -> 200 554 application/json; charset=utf-8 | body_head={"selected": "default", "list": ["default::https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main", "recent::https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/node_db/new", "legacy::https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/node_db/legacy", "forked::https
+2026-10-15T21:33:24Z GET /customnode/getlist -> 500 55 text/plain; charset=utf-8 | entries= html_in_desc=0
+2026-10-15T21:33:42Z GET /customnode/getlist?mode=cache\&skip_update=true -> 200 5124656 application/json; charset=utf-8 | head={"channel": "default", "node_packs": {"comfyui-simple-float-slider": {"author": "Carasibana", "description": "ComfyUI custom nodes providing styled draggable fl
+2026-10-15T21:34:17Z GET /extensions/comfyui-manager/comfyui-manager.js -> 200 42314 application/javascript | datasrc=10 channel_url_list=2 innerHTML=2
+2026-10-15T21:34:29Z GET /manager/notice -> 200 1078 text/plain; charset=utf-8 | body=<P style="text-align: center; color:red; background-color:white; font-weight:bold">Your ComfyUI isn't git repo.</P>                 <p><b>Keywords: security</b></p> <hr> <p>Issue News:</p> <ul> <li>[s
+2026-10-15T21:34:43Z GET /manager/db_mode -> 200 5 text/plain; charset=utf-8 | body=cache
+2026-10-15T21:34:54Z GET /customnode/getlist?mode=local -> 200 2246600 4.299301 | packs=3421
+2026-10-15T21:35:10Z GET /customnode/getlist?mode=remote\&channel=default -> 000 0 8.011898 | head=
+2026-10-15T21:35:20Z GET /extensions/comfyui-manager/cm-api.js -> 200 2198 application/javascript | channel=0
+2026-10-15T21:35:27Z GET /api/customnode/getlist?mode=cache -> 200 5126402 | packs=8489 channel=default
+2026-10-15T21:35:50Z GET /customnode/getmappings?mode=cache -> 200 1553812 1.249850 | structure=keys: ['https://gist.githubusercontent.com/alkemann/7361b8eb966f29c8238fd323409efb68/raw/f9605be0b38d38d3e3a2988f89248ff557010076/alkemann.py', 'sd-webui-color-enhance', 'https://github.com/0-bill-0/ComfyUI-BILL-Concept_Isolator-Captioner', 'comfyui_metadata_tools', 'comfyui_simple_prompt', 'https://github.com/0velia/ComfyUI-Dynamic-Dropdowns'] | map size: -
+2026-10-15T21:36:10Z OPTIONS /manager/channel_url_list -> 200 | allow=
+2026-10-15T21:38:57Z GET /customnode/getlist?mode=remote (25s budget) -> 200 5126402 10.712454 | head={"channel": "default", "node_packs": {"comfyui-simple-float-slider": {"author": "Carasibana", "title": "ComfyUI-SimpleFloatSlider", "reference": "http
+2026-10-15T21:39:03Z GET /manager/channel_url_list?value=recent -> NORUN | MUTATING PROBE purpose=verify-persisted-state-change; prior value recorded: default; restore follows
+2026-10-15T21:39:12Z GET /manager/channel_url_list?value=recent -> 200 0 | MUTATING probe: unauthenticated GET write of channel selection (prior: default)
+2026-10-15T21:39:17Z GET /manager/channel_url_list -> 200 553 | selected=recent
+2026-10-15T21:39:29Z GET /customnode/getlist?mode=cache (after channel switch) -> 200 635395 3.401445 | channel=recent packs=1021
+2026-10-15T21:39:35Z GET /manager/channel_url_list?value=default -> 200 0 | RESTORE mutation from previous probe (selected back to default)
+2026-10-15T21:39:40Z GET /manager/channel_url_list -> 200 554 | selected=default (restore verified)
+2026-10-15T21:39:54Z GET /customnode/getlist?mode=cache (after restore) -> 200 5126402 7.431288 | channel=default packs=8489
+2026-10-15T21:41:43Z GET /manager/notice (2nd) -> 200 1078 0.502421 | byte-identical-to-first=yes

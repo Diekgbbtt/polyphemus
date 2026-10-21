@@ -4,7 +4,7 @@ The hunting test-executor's OWN memory, projected onto the operator-locked
 per-project deterministic-key pattern. One store per project under the hunting
 module's data seam, the `test-executor-pod/` sibling bucket under the SAME
 `data/<project_id>/` tree as the #164 hunter's `data/<project_id>/hunter/`
-memory and the hunt store's `data/<project_id>/orchestration/`. The store's
+memory and the threat-model store's `data/<project_id>/threat_modeller/`. The store's
 coherent per-spec layout (operator, 2026-08-24 - re-scoped
 from the T1 `experiment-logs/` body so the minted TestImplementationSpec
 variants and the per-order log slice live side by side, easily mappable):
@@ -60,8 +60,8 @@ from polymerhus.app.data_root import project_dir
 
 # The hunting module's data seam (D84-33): the `test-executor-pod/` bucket
 # under `DATA_ROOT/<project_id>/hunting/`, resolved through the ONE
-# `data_root.project_dir` layout owner - the sibling of the hunt store's
-# `hunting/orchestration/` and the #164 hunter's `hunting/hunter/`. No env var;
+# `data_root.project_dir` layout owner - the sibling of the threat-model
+# store's `hunting/threat_modeller/` and the #164 hunter's `hunting/hunter/`. No env var;
 # the explicit-root constructor is kept for the tests' temp stores.
 
 # The closed enum of pod note kinds (D84-28): `experiment_summary` is the ONE

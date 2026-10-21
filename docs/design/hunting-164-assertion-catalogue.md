@@ -1,5 +1,10 @@
 # Assertions - hunting-agent state-graph hunter (#164)
 
+**SUPERSEDED 2026-10-18 for the lifecycle and FSM assertions.**
+The new harness contract is `docs/design/hunting-164-state-graph-spec.md` section 14.
+The new assertions are defined at the to-assertions phase.
+The old catalogue remains as history.
+
 **Source:** `docs/design/hunting-164-state-graph-spec.md` (sections 2-6, 11) and
 `docs/design/hunting-164-state-graph-adr.md` (R4, GP4, GP6, GP8c, G1-G9).
 **Seams under assertion:** the per-project `HunterMemoryStore` store seam
@@ -120,12 +125,13 @@ Per the to-assertions rule a path that substitutes its live edge (the LLM) is a
 simulation, so these pin the harness's DETERMINISTIC wiring in the integration
 tier; the same path run live is the e2e tier's E1.
 
-- **H1 - the full lifecycle through the harness.** A scripted model emitting REAL
-  tool calls drives hypothesise -> verify -> specify (F1) and hypothesise -> drop
-  (F2) through the real harness, real store, real graph -> EXACTLY TWO produced
-  files carrying the lifecycle terminals (`specified` / `dropped`), the
-  no-verdict idle, and the terminal state in the feedback (no stale
-  `hypothesised: F1`).
+- **H1 - the pass chain through the harness (re-pointed by T5 #378).** A scripted
+  model emitting REAL tool calls drives the eight-pass chain through the real
+  harness and the real compiled tracker: the interposed `phase_summary` notes
+  carry GROUNDING/SLICE/COLLECT/DISCRIMINATE/WELL-FORMEDNESS, the batched
+  `hunts_store` `specs` writes carry GENERATE (all `hypothesised`) and the
+  terminal VERIFY-CLAIMS commit -> the tracked state lands `complete` and the
+  terminal state rides the feedback.
 - **H2 - fault and note share the identifier over the real pipeline.** The
   scripted model hypothesises a fault for `fault_key` AND appends a note for
   the same `fault_key` -> the produced file under `test-specs/<fault_key>/` and
@@ -136,12 +142,16 @@ tier; the same path run live is the e2e tier's E1.
   -> the produced side holds exactly the surviving spec file, `notes.yaml`
   holds exactly the surviving notes in append order, and the tool responses the
   model saw carried the JSON contracts.
-- **H4 - the phase hints ride the tool responses verbatim and the graph tracks
-  the loop.** The scripted model does a grounding `kb_query`, then F1
-  hypothesised -> verified -> specified, F2 hypothesised -> dropped -> the
-  D3/D2/COMMIT/NEXT_ITERATION/NEXT_FAULT hints each ride their status-write
-  response verbatim, no hint leaks onto a later response, and the terminal
-  state shows the graph never stale.
+- **H4 - the pass hints ride the tool responses verbatim (re-pointed by T5
+  #378).** The scripted model does a grounding `kb_query`, then walks the chain
+  on the phase notes and the batched spec writes -> each exited pass's constant
+  (and the grounding `GROUNDING_KB_HINT` rider) rides its signal's response
+  verbatim, a rewritten (`update`) exit note still exits its pass, a [D2]
+  re-entry rewrite rides no hint, and no hint leaks onto a later response.
+- **H6 - the tracker never gates a tool call (added by T5 #378).** A tool that
+  RAISES still advances the tracker: the signal is read off the model's own
+  call, never off the tool's response, and the exited pass's hint still rides
+  the failed call's response.
 
 ## Walkthrough predicates (end-to-end)
 
@@ -172,6 +182,13 @@ probe and reads the report), not by a fixed script.
   Observed: the real produced YAML files and the notes file read back, plus the
   dispatch feedback. Yields: `tests/e2e/test_hunter_memory_live_walkthrough.py`
   (E1).
+
+  **SUPERSEDED for the run itself by T5 (#378) + T6 (#379).** The live
+  predicates above are the retired fault lifecycle (`verified`/`specified`) and
+  the retired `phase: ...` render; the live walkthrough re-points onto the pass
+  chain and the `{hypothesised, ratified, dropped}` spec set with T6's store
+  rework, and the prose sweep is T10 (#383). The verified-live record below is
+  kept as history.
 
   **Verified live (2026-08-24)**: agent-orchestrated run inside a one-off
   `polymerhus-agent:latest` container on the runtime stack (real

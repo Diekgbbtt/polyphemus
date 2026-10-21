@@ -1,6 +1,9 @@
 # Hunting tools design (draft)
 
-*Status: DRAFT - not operator-locked.* This document captures the design of the hunting module's agent tool surfaces. It is intentionally incomplete: as of this revision it covers ONLY the `graph_view` tool (the surface changed by #197); the other tools (`hunts_store`, `notes`, `kb_query`/`query_lightrag`, `exec`, `note`) are future sections and are NOT redesigned here.
+*Status: DRAFT - not operator-locked.*
+*T10b (#397) note: the orchestrator/`HuntConfig` references below are historical.*
+The modeller writes the unit threat model; the hunter spec set is keyed by the loop dispatch id.
+This document captures the design of the hunting module's agent tool surfaces. It is intentionally incomplete: as of this revision it covers ONLY the `graph_view` tool (the surface changed by #197); the other tools (`hunts_store`, `notes`, `kb_query`/`query_lightrag`, `exec`, `note`) are future sections and are NOT redesigned here.
 
 The authority for the tool-surface contracts that already exist is the per-agent lineage: `docs/design/hunting-orchestrator-candidates-rewrite-spec.md` §3.4 (the orchestrator's `hunts_store` / `notes` / `graph_view` surface), `docs/design/hunting-164-state-graph-spec.md` (the hunter's five-tool surface), and `docs/design/hunting-67-test-executor-pod-spec.md` (the pod's `exec` / `note` / `query_lightrag` surface). Where this draft and a ratified spec overlap, the ratified spec is the authority until this draft is locked.
 
@@ -97,10 +100,33 @@ all three tools:
   #209). A residual dict-valued `evidence` call returns the coded rejection
   teaching that structured refs go in `provenance` and `evidence` is prose.
 
-### HuntsStoreArgs (hunter `hunts_store` tool)
+### HuntsStoreArgs (hunter `hunts_store` tool) - F-015 correction (2026-10-21)
+
+**No store-writing tool exposes an open JSON object.** Every persisted object is
+a pydantic model with `extra="forbid"`, every field carries a description, and
+required versus optional is explicit in the schema. Nested objects reuse the
+canonical read-side model, so the write schema and the stored record cannot
+drift. The JSON schema sent in the request's `tools` body is the contract the
+model evaluates; it is never prose the model must translate into an ad-hoc
+object.
 
 - `command` stays REQUIRED with the SAME coded teaching rejection on omission.
-- `spec: dict` stays UNTYPED (design intent: the author adds arbitrary fields).
+- `SpecWrite` is the typed write payload: `status`, `fault_keyword`,
+  `strategy_keyword` and `target_identity` are REQUIRED; the remaining fields
+  are optional and described. `target_identity` is the shared
+  `spec_contract.TargetIdentity`; `provenance` is the typed
+  `spec_contract.SpecProvenance` (including the typed `SkillProcedure`). The
+  earlier `extra="allow"` tail is retired: `spec_id` and any invented field are
+  rejected, because the pod's canonical `TestImplementationSpec` is
+  `extra="forbid"` and never persisted them.
+- Missing required fields and unknown fields are CODED teaching rejections
+  naming the offending path and the accepted required/optional set, so a model
+  self-corrects instead of decoding a bare pydantic error.
+
+The same rule applies to the modeller's `hunts_store`: its `sections` payload
+is the typed `threat_model.ModelSections`, not an open mapping. `notes` and the
+pod `note` already carry typed sub-models; they inherit the shared missing/
+unknown-field rejection through `StoreToolBase`.
 
 ### NoteToolSpec (pod `note` tool)
 

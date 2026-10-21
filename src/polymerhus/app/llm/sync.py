@@ -282,24 +282,28 @@ def _env_optional_positive_int(name: str) -> int | None:
 def gateway_budget_plan() -> BudgetPlan:
     """The cost-guard plan from env. EMPTY unless explicitly opted in.
 
-    The guard is DISABLED by default (`LLM_GATEWAY_BUDGET_ENABLED` absent or
-    empty): the plan carries no `budget_limits` and no `rpm_limit`, so the sync
-    never throttles a virtual key. The already-minted key's windows are CLEARED
-    by the empty desired surface (`ensure_virtual_key`). With
-    `LLM_GATEWAY_BUDGET_ENABLED=true|1` the retained windows are built: every
-    provider cap is scaled by the conservatism factor; a malformed override is
-    a config lie and raises `SyncConfigError` (hard), never a silently-degraded
-    guard."""
+    The USD guard is DISABLED by default (`LLM_GATEWAY_BUDGET_ENABLED` absent or
+    empty): the plan carries no `budget_limits`, so the sync clears any USD
+    window already on the key. The per-minute request limiter is INDEPENDENT
+    (`LLM_GATEWAY_KEY_RPM_LIMIT`): it is read even while the USD guard is off,
+    so the eval can smooth bursts against the provider without re-enabling the
+    mistracked spend accounting. With `LLM_GATEWAY_BUDGET_ENABLED=true|1` the
+    retained USD windows are also built; every provider cap is scaled by the
+    conservatism factor. A malformed override is a config lie and raises
+    `SyncConfigError` (hard), never a silently-degraded guard."""
+    rpm_limit = _env_optional_positive_int(_RPM_LIMIT_ENV)
     if not _env_budget_enabled():
-        return BudgetPlan(budget_limits=(), rpm_limit=None)
+        # F-016: the per-minute request limiter is INDEPENDENT of the USD guard.
+        # The eval harness needs request smoothing against opencode-go's
+        # rate limit even while the mistracked USD guard stays disabled.
+        return BudgetPlan(budget_limits=(), rpm_limit=rpm_limit)
     factor = _env_conservatism_factor()
     limits = tuple(
         {"budget_duration": duration,
          "max_budget": round(_env_positive_float(env, default) * factor, 6)}
         for duration, env, default in _BUDGET_WINDOWS
     )
-    return BudgetPlan(budget_limits=limits,
-                      rpm_limit=_env_optional_positive_int(_RPM_LIMIT_ENV))
+    return BudgetPlan(budget_limits=limits, rpm_limit=rpm_limit)
 
 
 def _canonical_budget_limits(limits: Any) -> tuple[tuple[str, float], ...]:

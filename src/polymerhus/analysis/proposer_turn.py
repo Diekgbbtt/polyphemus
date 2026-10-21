@@ -113,6 +113,22 @@ def _role_prompt(role_id: str) -> str:
                    f"proposers are assigner, mechanism_typist")
 
 
+def serve_prompt(prompt: str) -> str:
+    """Append the shared cortex to one served system prompt (the ONE composition
+    helper every hunting and analysis role uses)."""
+    from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+
+    return with_cortex(prompt)
+
+
+def _served_prompt(role_id: str, system_prompt: str | None) -> str:
+    """The role's served system prompt: the caller's prompt (or the role's own
+    stable prompt) with the shared cortex appended by the ONE composition
+    helper, exactly like every hunting agent's prompt. Composed lazily so
+    importing this module performs no I/O."""
+    return serve_prompt(system_prompt or _role_prompt(role_id))
+
+
 def _role_default_schema(role_id: str) -> Any:
     """The role's default structured-output schema, or None for a role that takes
     prose turns. Part of the role's output contract, not a per-call decision."""
@@ -135,33 +151,40 @@ def _role_structured_schema(role_id: str) -> Any:
     return None
 
 
-def _auth_store_view(role_id: str, project_id: str, auth_store) -> tuple:
-    """The READ-ONLY auth-store view bound beside the surface tools (#364).
+def _auth_binding(role_id: str, project_id: str, auth_store) -> Any:
+    """The analysis-domain auth surface (#364): the project `authn` skill plus
+    the READ-ONLY auth-store data view.
 
     The recorded session material (the login-mechanism overview plus the account
     records: account names, cookie and header names, token locations and
     statuses) so a proposer can type a request SHAPE against what was actually
-    recorded instead of inferring it from responses. Bound through the ONE
+    recorded instead of inferring it from responses. The skill half binds
+    `load_skill` + `record_skill_lesson` and renders the L1 index header of the
+    project's `authn` procedure - its body loads on demand with the meta-usage
+    protocol appended, so a reused procedure can be improved with lessons - and
+    NO other skill is bound. The auth store rides through its OWN read-only
+    data-context tool, never through the skill loader. Bound through the ONE
     auth-capability seam (`auth_capable_binding`, the `with_readonly_auth_store`
     arming), never a per-site auth binding: the mode guarantees the view
-    carries no write command, no skill surface, and no authenticate capability
-    (D223-5). `auth_store` is the injectable handle (None resolves the
-    production store lazily inside the tool factory, exactly like the recon
-    binding). Fail-open: an unbuildable auth seam binds nothing, and the turn
-    always starts."""
+    carries no write command and no authenticate capability (D223-5).
+    `auth_store` is the injectable handle (None resolves the production store
+    lazily inside the tool factory, exactly like the recon binding). Fail-open:
+    an unbuildable auth seam binds nothing, and the turn always starts."""
+    if role_id not in ("assigner", "mechanism_typist") or not project_id:
+        return None
     try:
         from polymerhus.app.auth.seams import auth_capable_binding
 
-        return tuple(auth_capable_binding(
+        return auth_capable_binding(
             role_id, store=auth_store, project_id=project_id,
-            with_readonly_auth_store=True).tools)
+            with_readonly_auth_store=True)
     except Exception:  # noqa: BLE001 - fail-open: no auth view bound
         logger.warning("proposer_turn: auth-store view unbuildable; binding none",
                        exc_info=True)
-        return ()
+        return None
 
 
-def _surface_tools(role_id: str, project_id: str | None, auth_store=None) -> tuple:
+def _surface_tools(role_id: str, project_id: str | None) -> tuple:
     """The adjacent-surface read/probe tools bound on a proposer turn.
 
     The mechanism-typist's turn binds the read-only `graph_view`, the
@@ -171,37 +194,33 @@ def _surface_tools(role_id: str, project_id: str | None, auth_store=None) -> tup
     (`search_http_history` / `get_http_artifact`) - the `graph_view`
     binding is rolled back (the concentration failure it licensed), and
     the recorded-transaction read is the assigner's whole widening seam,
-    kept central. BOTH turns additionally bind the read-only auth-store view
-    (#364, `_auth_store_view`): the recorded session material a request shape
-    is typed against. A role outside that set binds no surface tools.
-    Fail-open: an unbuildable surface, an unbuildable auth seam, or no project
-    scope binds nothing (the session always starts)."""
+    kept central. The analysis-domain auth surface (#364) rides beside these
+    through `_auth_binding` (the project `authn` skill and the read-only
+    auth-store data view), never inside this set. A role outside the two
+    proposers binds no surface tools. Fail-open: an unbuildable surface or no
+    project scope binds nothing (the session always starts)."""
     if role_id not in ("assigner", "mechanism_typist") or not project_id:
         return ()
-    # The auth view is built OUTSIDE the surface try/except and APPENDED (the
-    # `auth_capable_binding` convention): a surface failure must not take the
-    # auth view down with it (and vice versa) - each seam fails open on its own.
-    auth_view = _auth_store_view(role_id, project_id, auth_store)
     if role_id == "assigner":
         try:
             from polymerhus.analysis.graph_tools import build_http_history_tools
 
-            return (*build_http_history_tools(project_id), *auth_view)
+            return tuple(build_http_history_tools(project_id))
         except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
             logger.warning("proposer_turn: assigner http-history unbuildable; binding none",
                            exc_info=True)
-            return auth_view
+            return ()
     try:
         from polymerhus.analysis.graph_tools import build_surface_tools
 
-        return (*build_surface_tools(
+        return tuple(build_surface_tools(
             role_id, project_id=project_id, with_http=True,
             with_exec=(role_id == "mechanism_typist"),
-        ), *auth_view)
+        ))
     except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
         logger.warning("proposer_turn: surface tools unbuildable; binding none",
                        exc_info=True)
-        return auth_view
+        return ()
 
 
 def _prose_tools(role_id: str, *, tools_bound: bool = False) -> tuple:
@@ -307,9 +326,12 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         # read, so the prose turn carries exactly the structured tool that turn's
         # `response_format` will produce. Only a non-empty set is forwarded, so a
         # role with no surface tools stays byte-identical to the pre-change requests.
-        surface = _surface_tools(role_id, project_id, auth_store)
-        tools = (surface if resolved_schema is not None
-                 else surface + _prose_tools(role_id, tools_bound=bool(surface)))
+        auth = _auth_binding(role_id, project_id, auth_store)
+        auth_tools = tuple(auth.tools) if auth is not None else ()
+        surface = _surface_tools(role_id, project_id)
+        tools = (surface + auth_tools if resolved_schema is not None
+                 else surface + auth_tools
+                 + _prose_tools(role_id, tools_bound=bool(surface or auth_tools)))
         address = AnalysisSession(run_id, role_id)
         batch = current_batch()
         if batch is not None and batch != last_batch[0]:
@@ -335,11 +357,15 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         kwargs: dict[str, Any] = {}
         if tools:
             kwargs["tools"] = tools
+        turn_middleware = middleware + (
+            list(auth.middleware) if auth is not None else [])
         return stateful_turn(role_id, address, messages,
                              checkpointer=checkpointer,
                              schema=resolved_schema,
-                             system_prompt=system_prompt or _role_prompt(role_id),
-                             middleware=middleware, extra_tags=[run_id],
+                             system_prompt=_served_prompt(role_id, system_prompt),
+                             middleware=turn_middleware,
+                             context=auth.context if auth is not None else None,
+                             extra_tags=[run_id],
                              usage_scope=project_id, **kwargs)
 
     return invoke

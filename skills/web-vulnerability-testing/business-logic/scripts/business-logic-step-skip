@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Replay a workflow in alternate orders and read which transition was accepted.
+
+A multi-step workflow assumes each transition runs in order after its own
+precondition check. The helper replays one step list in the alternate orders a
+caller can reach directly: skip one step, repeat one step, and jump straight to
+the final step. Each attempt records the status, the size, and a state digest, so
+an accepted out-of-order transition is attributable to the missing guard rather
+than to the payload. It is the transition step of the `business-logic` parent in
+executable form.
+
+Usage:
+  business-logic-step-skip --base https://target.test --plan plan.json
+  business-logic-step-skip --base https://target.test --plan plan.json --execute
+  business-logic-step-skip --base https://target.test --plan plan.json --execute \\
+      --orders skip,repeat,direct --json-out orders.json
+
+  plan.json:
+
+  {
+    "steps": [
+      {"name": "start", "method": "POST", "path": "/api/checkout/start",
+       "headers": {"Cookie": "session=<user>"}, "body": {"cart": "<id>"}},
+      {"name": "select role", "method": "POST", "path": "/api/checkout/role",
+       "headers": {"Cookie": "session=<user>"}, "body": {"role": "user"}},
+      {"name": "confirm", "method": "POST", "path": "/api/checkout/confirm",
+       "headers": {"Cookie": "session=<user>"}, "body": {}}
+    ],
+    "state": {"method": "GET", "path": "/api/account",
+              "headers": {"Cookie": "session=<user>"}}
+  }
+
+Discipline:
+  - Dry run by default: the step list and the planned orders print, and nothing is
+    sent until `--execute` is given.
+  - State-changing by design, so `--execute` is required; run one order per fresh
+    workflow instance where the steps carry one-time state.
+  - Each order replays from the first step, so an accepted out-of-order attempt
+    cannot be confused with state left by the previous order.
+  - An accepted skip is a guard gap, never an echo: read the state digest beside
+    the response.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+
+ORDERS = ("baseline", "skip", "repeat", "direct")
+
+
+def digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def send(
+    base: str,
+    spec: dict[str, object],
+    timeout: float,
+    context: ssl.SSLContext | None,
+) -> dict[str, object]:
+    method = str(spec.get("method", "GET")).upper()
+    body = spec.get("body")
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(base.rstrip("/") + str(spec["path"]), data=payload, method=method)
+    for key, value in dict(spec.get("headers", {})).items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            raw = response.read()
+            return {"status": response.status, "size": len(raw), "digest": digest(raw), "error": ""}
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        return {"status": error.code, "size": len(raw), "digest": digest(raw), "error": ""}
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"status": 0, "size": 0, "digest": "", "error": str(error)}
+
+
+def plan_orders(steps: list[dict[str, object]], wanted: tuple[str, ...]) -> list[tuple[str, list[dict[str, object]]]]:
+    """Build the order list: the baseline, each skipped step, each repeated step,
+    and the direct jump to the final step."""
+    plans: list[tuple[str, list[dict[str, object]]]] = []
+    if "baseline" in wanted:
+        plans.append(("baseline", list(steps)))
+    for index in range(1, len(steps)):
+        if "skip" in wanted:
+            plans.append((f"skip:{steps[index]['name']}", steps[:index] + steps[index + 1 :]))
+        if "repeat" in wanted:
+            plans.append((f"repeat:{steps[index]['name']}", steps[: index + 1] + [steps[index]] + steps[index + 1 :]))
+    if "direct" in wanted and len(steps) > 1:
+        plans.append((f"direct:{steps[-1]['name']}", [steps[0], steps[-1]]))
+    return plans
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="target base URL")
+    parser.add_argument("--plan", required=True, help="JSON plan with the step list and an optional state read")
+    parser.add_argument("--orders", default="baseline,skip,repeat,direct", help="comma-separated orders to replay")
+    parser.add_argument("--execute", action="store_true", help="send the replays; the default is a dry run")
+    parser.add_argument("--timeout", type=float, default=15.0, help="per-request timeout in seconds")
+    parser.add_argument("--delay", type=float, default=0.0, help="pause between requests in seconds")
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    parser.add_argument("--json-out", help="write the per-order records to this path")
+    args = parser.parse_args(argv)
+
+    with open(args.plan, encoding="utf-8") as handle:
+        plan = json.load(handle)
+    steps = plan.get("steps", [])
+    state = plan.get("state")
+    if len(steps) < 2:
+        print("the plan needs at least two steps", file=sys.stderr)
+        return 2
+    wanted = tuple(order.strip() for order in args.orders.split(",") if order.strip() in ORDERS)
+    orders = plan_orders(steps, wanted)
+    print(f"steps: {len(steps)}; orders to replay: {len(orders)}")
+    for name, sequence in orders:
+        print(f"  {name:24} -> {' > '.join(str(step['name']) for step in sequence)}")
+    if not args.execute:
+        print("dry run: pass --execute to send")
+        return 0
+
+    context = ssl._create_unverified_context() if args.insecure else None
+    records: list[dict[str, object]] = []
+    for name, sequence in orders:
+        responses = []
+        for step in sequence:
+            responses.append(send(args.base, step, args.timeout, context))
+            if args.delay:
+                time.sleep(args.delay)
+        final = responses[-1]
+        state_cell = send(args.base, state, args.timeout, context) if state else None
+        accepted = bool(final["status"]) and final["status"] < 400
+        records.append(
+            {
+                "order": name,
+                "sequence": [str(step["name"]) for step in sequence],
+                "statuses": [cell["status"] for cell in responses],
+                "accepted": accepted,
+                "state_digest": state_cell["digest"] if state_cell else "",
+            }
+        )
+
+    print(f"\n{'order':28} {'final':6} {'accepted':9} state")
+    for row in records:
+        print(f"{row['order'][:28]:28} {row['statuses'][-1]:6} {str(row['accepted']):9} {row['state_digest']}")
+    baseline = next((row for row in records if row["order"] == "baseline"), None)
+    for row in records:
+        if row["order"] == "baseline" or not row["accepted"]:
+            continue
+        moved = baseline is not None and row["state_digest"] != baseline["state_digest"]
+        print(f"accepted alternate order {row['order']}: state {'moved' if moved else 'unchanged'}; confirm the privileged effect before filing")
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as handle:
+            json.dump({"base": args.base, "orders": records}, handle, indent=2)
+        print(f"wrote {args.json_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""Replay one action inventory across a role ladder and print the verdict matrix.
+
+The harness answers one question per cell: which is the lowest role that reaches
+this action, and does the cell beside the expected minimum role show a grant the
+expected minimum denies. It is the `broken-function-level-authorization` parent's
+actor-by-action matrix step in executable form; the two-principal pair and its
+control discipline stay owned by `two-principal-authz`, and the timing primitive
+for a burst stays owned by `race-conditions`.
+
+Usage:
+  bfla-role-matrix --base https://target.test --plan plan.json
+  bfla-role-matrix --base https://target.test --plan plan.json --execute
+  bfla-role-matrix --base https://target.test --sweep-paths routes.txt --role-json roles.json --execute
+  bfla-role-matrix --base https://target.test --plan plan.json --execute --json-out matrix.json
+
+The plan file carries the roles and the actions:
+
+  {
+    "roles": [
+      {"name": "anonymous", "headers": {}},
+      {"name": "basic", "headers": {"Cookie": "session=<basic>"}},
+      {"name": "staff", "headers": {"Cookie": "session=<staff>"}}
+    ],
+    "actions": [
+      {"name": "list users", "method": "GET", "path": "/api/users",
+       "expect_min_role": "staff"},
+      {"name": "update role", "method": "PUT", "path": "/api/users/1/role",
+       "body": "{\\"role\\":\\"admin\\"}", "expect_min_role": "staff",
+       "mutating": true}
+    ]
+  }
+
+Discipline:
+  - Dry run by default: the plan, the cell count, and the mutating cells print,
+    and nothing is sent until `--execute` is given.
+  - Read-only by default: a mutating method is refused unless the action carries
+    `"mutating": true` and the run passes `--allow-mutating`.
+  - Bounded: `--max-requests` caps the run, `--delay` paces it, and every request
+    carries a timeout, so a ladder never becomes a flood.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+
+MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def load_json(path: str) -> object:
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def read_lines(path: str) -> list[str]:
+    with open(path, encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip() and not line.startswith("#")]
+
+
+def request(
+    url: str,
+    method: str,
+    headers: dict[str, str],
+    body: bytes | None,
+    timeout: float,
+    context: ssl.SSLContext | None,
+) -> dict[str, object]:
+    """Send one request and normalise the read-out, never raising on a response."""
+    req = urllib.request.Request(url, data=body, method=method.upper())
+    for key, value in headers.items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            payload = response.read()
+            return {
+                "status": response.status,
+                "size": len(payload),
+                "content_type": response.headers.get("Content-Type", ""),
+                "digest": digest(payload),
+                "error": "",
+            }
+    except urllib.error.HTTPError as error:
+        payload = error.read()
+        return {
+            "status": error.code,
+            "size": len(payload),
+            "content_type": error.headers.get("Content-Type", "") if error.headers else "",
+            "digest": digest(payload),
+            "error": "",
+        }
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"status": 0, "size": 0, "content_type": "", "digest": "", "error": str(error)}
+
+
+def digest(payload: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def verdict(cell: dict[str, object], expected_min: str, role: str, order: list[str]) -> str:
+    """Classify one cell against the expected minimum role.
+
+    `unexpected-allow` is the finding: a role below the expected minimum reached
+    the action, or a role at or above it was refused where a lower role passed.
+    """
+    status = int(cell["status"])
+    if status == 0:
+        return "unreachable"
+    allow = status < 400
+    role_index = order.index(role) if role in order else -1
+    min_index = order.index(expected_min) if expected_min in order else -1
+    if not expected_min or role_index < 0 or min_index < 0:
+        return "allowed" if allow else "refused"
+    if role_index < min_index and allow:
+        return "unexpected-allow"
+    if role_index >= min_index and not allow:
+        return "unexpected-refuse"
+    return "expected"
+
+
+def run_matrix(args: argparse.Namespace) -> int:
+    plan = load_json(args.plan)
+    roles = plan.get("roles", [])
+    actions = plan.get("actions", [])
+    if not roles or not actions:
+        print("plan needs a non-empty roles list and actions list", file=sys.stderr)
+        return 2
+    order = [role["name"] for role in roles]
+    cells = len(roles) * len(actions)
+    mutating = [action for action in actions if action.get("mutating") or action.get("method", "GET").upper() in MUTATING_METHODS]
+    print(f"plan: {len(roles)} roles x {len(actions)} actions = {cells} cells")
+    print(f"mutating actions: {len(mutating)}")
+    if mutating and not args.allow_mutating:
+        print("refusing: a mutating action needs --allow-mutating as well as --execute", file=sys.stderr)
+        return 2
+    if not args.execute:
+        for action in actions:
+            print(f"  {action.get('method', 'GET').upper():6} {action['path']:40} expect-min={action.get('expect_min_role', '-')}")
+        print("dry run: pass --execute to send")
+        return 0
+
+    context = ssl._create_unverified_context() if args.insecure else None
+    rows: list[dict[str, object]] = []
+    sent = 0
+    for action in actions:
+        method = action.get("method", "GET").upper()
+        url = args.base.rstrip("/") + action["path"]
+        body = action.get("body")
+        payload = body.encode("utf-8") if isinstance(body, str) else None
+        expected = action.get("expect_min_role", "")
+        for role in roles:
+            if sent >= args.max_requests:
+                print(f"stopping at --max-requests {args.max_requests}", file=sys.stderr)
+                break
+            headers = dict(role.get("headers", {}))
+            if payload is not None:
+                headers.setdefault("Content-Type", "application/json")
+            cell = request(url, method, headers, payload, args.timeout, context)
+            sent += 1
+            cell["role"] = role["name"]
+            cell["action"] = action["name"]
+            cell["verdict"] = verdict(cell, expected, role["name"], order)
+            rows.append(cell)
+            if args.delay:
+                time.sleep(args.delay)
+    print(f"\n{'action':28} {'role':14} {'status':6} {'size':8} {'digest':14} verdict")
+    for row in rows:
+        print(
+            f"{row['action'][:28]:28} {row['role'][:14]:14} {row['status']:6} "
+            f"{row['size']:8} {row['digest']:14} {row['verdict']}"
+        )
+    findings = [row for row in rows if row["verdict"] == "unexpected-allow"]
+    print(f"\nunexpected grants: {len(findings)} of {len(rows)} cells")
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as handle:
+            json.dump({"base": args.base, "cells": rows}, handle, indent=2)
+        print(f"wrote {args.json_out}")
+    return 0
+
+
+def run_sweep(args: argparse.Namespace) -> int:
+    """Sweep candidate route spellings and report the tier that answers each one."""
+    paths = read_lines(args.sweep_paths)
+    roles = load_json(args.role_json).get("roles", [])
+    if not paths or not roles:
+        print("sweep needs a non-empty path list and a roles file", file=sys.stderr)
+        return 2
+    print(f"sweep: {len(paths)} candidate paths x {len(roles)} roles = {len(paths) * len(roles)} probes")
+    if not args.execute:
+        print("dry run: pass --execute to send")
+        return 0
+    context = ssl._create_unverified_context() if args.insecure else None
+    sent = 0
+    for path in paths:
+        tier = "absent"
+        for role in roles:
+            if sent >= args.max_requests:
+                break
+            cell = request(
+                args.base.rstrip("/") + path,
+                "GET",
+                dict(role.get("headers", {})),
+                None,
+                args.timeout,
+                context,
+            )
+            sent += 1
+            if 200 <= int(cell["status"]) < 400:
+                tier = role["name"]
+                break
+            if int(cell["status"]) in (401, 403):
+                tier = tier if tier != "absent" else f"gated({role['name']})"
+        print(f"  {path:48} lowest-tier={tier}")
+    print(f"sent {sent} probes")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="target base URL")
+    parser.add_argument("--plan", help="JSON plan with roles and actions")
+    parser.add_argument("--sweep-paths", help="file of candidate route spellings, one per line")
+    parser.add_argument("--role-json", help="JSON file with the roles list for a sweep")
+    parser.add_argument("--execute", action="store_true", help="send the probes; the default is a dry run")
+    parser.add_argument("--allow-mutating", action="store_true", help="permit state-changing methods")
+    parser.add_argument("--max-requests", type=int, default=500, help="hard cap on requests sent")
+    parser.add_argument("--timeout", type=float, default=10.0, help="per-request timeout in seconds")
+    parser.add_argument("--delay", type=float, default=0.0, help="pause between requests in seconds")
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    parser.add_argument("--json-out", help="write the cell records to this path")
+    args = parser.parse_args(argv)
+    if args.sweep_paths:
+        if not args.role_json:
+            print("a sweep needs --role-json", file=sys.stderr)
+            return 2
+        return run_sweep(args)
+    if not args.plan:
+        print("pass --plan, or --sweep-paths with --role-json", file=sys.stderr)
+        return 2
+    return run_matrix(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

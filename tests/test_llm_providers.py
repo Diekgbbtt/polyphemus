@@ -68,7 +68,7 @@ def test_role_record_carries_agent_mode():
     assert P.agent_mode("configurator") == "session"
     assert P.agent_mode("curation") == "one_shot"
     assert P.agent_mode("hunting_hunter") == "session"
-    assert P.agent_mode("hunting_orchestrator") == "session"
+    assert P.agent_mode("hunting_threat_modeller") == "session"
     assert P.agent_mode("job_orchestrator") == "session"
     assert P.agent_mode("unregistered_role") == "one_shot"  # safe default
 
@@ -88,8 +88,8 @@ def test_hunting_roles_are_not_validated_at_app_boot(monkeypatch):
     bootstrap, never app boot. So validate_llm_config() (app boot) must not demand
     the hunting model keys, while validate_llm_config(HUNTING_ROLES) does."""
     hunting_ids = {r.role_id for r in P.HUNTING_ROLES}
-    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter",
-                           "pod_runner", "pod_triager"}
+    assert hunting_ids == {"hunting_threat_modeller",
+                           "hunting_hunter", "pod_runner", "pod_triager"}
     assert not (hunting_ids & {r.role_id for r in P.ROLES})  # absent from app-boot ROLES
     for r in P.ROLES:
         monkeypatch.setenv(r.model_key, "swissai:x")
@@ -360,7 +360,7 @@ def test_thinking_baselines_are_set_on_the_reasoning_agents():
     proposers and the recon-orchestrator (the `job_orchestrator` role)
     reason `medium`, the recon triager `low`; every other role stays `off`."""
     assert P.thinking_for("hunting_hunter") == "high"
-    assert P.thinking_for("hunting_orchestrator") == "medium"   # Q8 gate + D2 re-match
+    assert P.thinking_for("hunting_threat_modeller") == "medium"
     assert P.thinking_for("assigner") == "medium"
     assert P.thinking_for("mechanism_typist") == "medium"
     assert P.thinking_for("triager") == "low"  # downscaled f7ad043 (dev)

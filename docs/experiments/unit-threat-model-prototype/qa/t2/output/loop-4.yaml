@@ -1,0 +1,111 @@
+loop_id: loop-4
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: xss
+class_skill: xss
+slice:
+  source: trust_agreement
+  statement: "TA-8/A-3: the pack record's reference/repository fields are assumed to hold benign https navigation targets, but no validation is applied from JSON to anchor href - populate_markdown transforms only description/name/title, the fields are returned raw, and the shell binds them to links (title formatter link.href = rowItem.originalData.repository). Record control turns a display field into a scheme-bearing navigation primitive (F-3 -> V-3)."
+discrimination:
+  axes_used: [payload-vector, tech-misconfiguration, chaining-advanced]
+  boundary: "consumption context of the navigation field (DOM-property href binding vs string-built markup attribute) crossed with the record provenance route (remote channel vs local/installed metadata). No payload-string variants."
+  narrow_broad_tradeoff: "Narrow on fields (reference/repository, the unvalidated pair) and deep on consumption contexts, because the fault is total absence of validation; a wide field sweep would only re-test the same no-validation failure."
+specs:
+  - spec_id: loop-4-s1
+    label: "property-bound title link carries an attacker scheme"
+    sub_slice: "The pack title anchor whose href is assigned by DOM property from rowItem.originalData.repository; owns the property-bound consumption context, where the only reachable primitive is a scheme-bearing URL executed on the operator's click in the shell origin."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        field: "repository (raw from the server transform; IA-8 leaves it untransformed)"
+        sink: "title formatter: link.href = rowItem.originalData.repository (property assignment)"
+        context: "URL context, activation by click; property assignment excludes HTML parsing"
+        patterns_used: ["URL scheme allowlist reasoning from the parent context rules", "context classification: URL vs attribute", "impact-driven PoC (origin-context execution) rather than an alert"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getlist?mode=cache&skip_update=true"
+      technology: "V3.37 custom-nodes-manager.js title formatter; anchor lives in the TurboGrid title column"
+      parameter: "record field repository"
+      method: GET
+      sink: "title anchor href property; click navigates by the attacker scheme"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-4-s2: both bind the same field, but this spec owns the property-assignment context (no HTML parse, scheme-only primitive, click needed) while s2 owns the string-markup context; the reachable primitives differ, not the wording."
+    chaining_advanced_note: null
+    proxy_technique: "Set the repository value in a consumed record to a scheme-bearing URL; the title formatter assigns it to the anchor's href and the element renders in the grid; the operator's click on the pack title activates the scheme in the manager shell origin."
+    verification_symptoms:
+      - "the title anchor's href resolves to the attacker scheme (property read-back after render)"
+      - "a click executes in the shell origin (script effect visible in the manager page context)"
+      - "no scheme validation rejects the value between JSON and the href property"
+    payload_vector_space: {method: GET, path: "/customnode/getlist (record field repository)", parameter: "mode=cache|remote", body: null, headers: "content arrives through the channel JSON"}
+    assumptions: ["the title formatter binds repository to the anchor as the payload's F-3 evidence states", "the operator clicks a pack title in normal use (likelihood note)"]
+    rationale: "A-3 trusts the field as a navigation target and nothing on the path validates it; a property-bound href still activates any scheme, so record control plus a click yields script execution in the privileged manager origin - the exact gap A-3 assumed away."
+    interpretation_guidance: "symptom-present = the anchor's href reads back as the attacker scheme and the click produces execution in the shell origin. symptom-absent = the href is normalised to a safe scheme, the anchor is not rendered, or the field is dropped (true negatives). Because the binding is a DOM property, HTML quote tricks cannot apply here - a negative for attribute abuse in this spec is expected and is not a negative for loop-4-s2."
+  - spec_id: loop-4-s2
+    label: "string-composed markup lets the field break its attribute"
+    sub_slice: "String-built compositions that interpolate repository/reference inside a quoted href - the flyover bodyHtml template and any action/preview markup built as HTML text (V-3's quote/attribute-abuse region); owns the attribute-value context, where a quote in the field escapes the attribute and appends attacker attributes."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        fields: "repository, reference (both untransformed)"
+        sinks: "string-composed markup: flyover bodyHtml -> $flyoverBody.innerHTML; preview description template; action-column composition"
+        context: "attribute value inside a quoted href within an HTML string"
+        patterns_used: ["attribute-value encoding rule from the parent skill", "attr-quoted polyglot family", "sink instrumentation to identify the composing template"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getlist and /customnode/getmappings (flyover data flow DF-3)"
+      technology: "V3.37 flyover builder composes bodyHtml as a string; preview builds <div class=\"cn-preview-description\">${...}</div> strings"
+      parameter: "record fields repository, reference"
+      method: GET
+      sink: "parsed attribute space of any anchor composed inside bodyHtml/preview markup"
+    discrimination_axis: tech-misconfiguration
+    discrimination_note: "Nearest sibling loop-4-s1: same fields, but this spec owns compositions where the field enters an HTML string, so the concrete failure mode is template quoting (attribute breakout) rather than scheme handling; it exercises a different technology artefact (the bodyHtml template)."
+    chaining_advanced_note: null
+    proxy_technique: "Place a quote-bearing repository/reference value in the record; the composing template substitutes it inside a quoted href, the string is assigned to innerHTML, and the parsed element carries the appended attributes/handler."
+    verification_symptoms:
+      - "the composed anchor's parsed attributes include text that was part of the field value, beyond the template's own attributes"
+      - "an appended handler or autofocus attribute is live on the flyover or preview element"
+      - "the field is visibly concatenated into bodyHtml before assignment (instrumented template)"
+    payload_vector_space: {method: GET, path: "/customnode/getlist, /customnode/getmappings", parameter: "record fields repository/reference carrying quote + attribute text", body: null, headers: "content through channel or mapping source"}
+    assumptions: ["at least one consumption composes the field as an HTML string rather than a property assignment; if every consumption is property-bound this sub-slice is empty and the spec is a recorded true negative", "the composing templates do not quote-encode the field"]
+    rationale: "The class names quote/attribute abuse for these fields, and the unit composes at least one markup surface as an HTML string (bodyHtml, preview template); inside a string, a quote in an unvalidated navigation field escapes the attribute context and lets attacker attributes ride the parsed element."
+    interpretation_guidance: "symptom-present = parsed attributes beyond the template's own appear on the composed element and the appended handler fires on its event. symptom-absent = quote characters are encoded, or every consumption is property-bound so no string parse occurs (true negative - record it as such). A field that reaches a property assignment only proves s1's context, never this one."
+  - spec_id: loop-4-s3
+    label: "local/installed metadata route reproduces the binding"
+    sub_slice: "The same sinks fed from the local DB/installed pack metadata route (DF-2, mode=local): the local state is trusted as operator-approved, but its record fields are inherited from previously consumed content and bind to anchors unchanged."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        data_flow: "DF-2: local DB/installed pack metadata -> same getlist JSON merge path -> same render path"
+        trust_shift: "local state assumed benign vs remote channel assumed community-controlled"
+        sink: "same title link / markup compositions; field values originate from installed metadata"
+        patterns_used: ["stored delivery write-then-retrieve mapping (install as the write, later renders as retrieval)", "source-to-sink trace with provenance label", "render-path repetition across datasources"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getlist?mode=local (3421 packs observed) and the same rows under other modes"
+      technology: "V3.37 state merge: installed/not-installed state from the local DB merged into rows (DF-2)"
+      parameter: "record fields repository/reference as stored in local metadata"
+      method: GET
+      sink: "title link href and markup compositions, identical to the remote route"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest siblings loop-4-s1/s2: same sinks, but this spec owns the provenance route - fields inherited through the install/local-DB boundary - which changes the trust clause (local state assumed benign) and adds a write step outside the immediate fetch; not a payload variant."
+    chaining_advanced_note: "Structural: the class skill's stored variant organises write-then-retrieve pairs but has no entity for provenance inherited across an install boundary. The chain is carried structurally: a record crosses the install/local-DB boundary once (write), then the local render path binds its fields at every later retrieval."
+    proxy_technique: "Bring a record with the attacker field into local/installed metadata (installation or the operator's own channel handling), then let any later render of the local DB bind the stored repository/reference to the anchors; no fresh channel fetch is required."
+    verification_symptoms:
+      - "rows served under mode=local carry the attacker field into the anchor while the remote source no longer offers it"
+      - "the binding reproduces after a restart or a channel change, proving the stored provenance"
+      - "the local route produces the same live element as the remote route for an identical field value"
+    payload_vector_space: {method: GET, path: "/customnode/getlist?mode=local", parameter: "state stored in the local DB", body: null, headers: "none"}
+    assumptions: ["the local DB carries repository/reference for installed records (DF-2 names metadata; field presence inferred)", "a record with attacker-controlled fields can become locally installed (installation is out-of-unit per CF-6, so only the pre-state is assumed)"]
+    rationale: "The render path is datasource-agnostic (DF-2), so the missing validation applies to local metadata too; once a record crosses the install boundary its fields persist and bind at every later local render, widening the reach of the same fault beyond the live channel window."
+    interpretation_guidance: "symptom-present = a local-mode row binds the attacker field to a live anchor while the field's origin is stored metadata (no fresh fetch in the path). symptom-absent = local records drop or neutralise the fields, or the anchor is not built (true negative). Local-route rendering identical to the remote route is the positive signal; the out-of-unit installation step is a precondition, not part of this test."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the property-bound context, s2 the string-markup attribute context, s3 the local-metadata provenance route. Consumption contexts and provenance routes are disjoint; no spec differs from a sibling by a payload string."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Union covers both consumption contexts of the unvalidated fields plus the local-provenance route. Non-DOM consumption (fields feeding out-of-unit queue endpoints, CF-6) sits outside this unit and is not a sub-slice here. s2's region is conditionally empty if every consumption is property-bound; that outcome is a defined negative, not a gap."
+  well_formedness_statement: "Three specs over disjoint sub-slices: property-bound href, string-markup attribute context, and the local/installed provenance route. Overlap is absent - the contexts admit different primitives (scheme vs attribute) and the provenance spec changes the trust clause rather than the payload. Coverage is exhaustive over V-3's navigation-binding surface as instantiated in this unit, with out-of-unit queue consumption named as an exclusion."
+degradations:
+  - "No string-built sink for repository/reference is directly evidenced (the known property binding is link.href = repository); s2 is therefore assumption-named with an explicit empty-region outcome."
+  - "The local DB's carriage of repository/reference fields is inferred from DF-2's metadata wording; recorded as an assumption in s3 rather than a fact."

@@ -2,7 +2,7 @@
 
 Budget and timeout are the pod's OWN caps, set by the pod, env-overridable, and
 NEVER carried in the `TestImplementationSpec` nor inherited from the
-`HuntConfig`. Two families:
+hunter's loop payload. Two families:
 
   * The per-exec caps reused from the recon pod (spec section 3 "reuses"):
     `MAX_POD_ITERS` retries on a non-zero exit and `EXEC_TIMEOUT_S` per exec.

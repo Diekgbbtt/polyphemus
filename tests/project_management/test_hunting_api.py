@@ -6,11 +6,13 @@ real surface while `polymerhus.app.runtime` has not landed."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
 from polymerhus.app.clients import pg
 from polymerhus.app.main import app
+from polymerhus.attack.hunting.resume import PAUSE_STATS_KEYS
 
 client = TestClient(app)
 
@@ -118,8 +120,42 @@ def test_launch_returns_the_surrogate_id_and_schedules(monkeypatch):
 
     recorded: list[tuple] = []
 
-    def fake_start(project_id, *, run_id=None, candidates=None, **kw):
-        recorded.append((project_id, run_id, candidates))
+    def fake_start(project_id, *, run_id=None, **kw):
+        recorded.append((project_id, run_id, dict(kw)))
+
+        async def _finish():
+            return run_id
+
+        return _finish()
+
+    monkeypatch.setattr(hunting_runtime, "start_hunting", fake_start)
+
+    resp = client.post("/projects/p1/hunting", json={})
+
+    assert resp.status_code == 201
+    assert resp.json() == {"hunting_run_id": RUN_ID}
+    assert fake_runtime.scheduled == [f"hunting:{RUN_ID}"]
+    # the row opens SYNCHRONOUSLY before scheduling; the launch carries NO
+    # candidate batch any more (T3 #376: the run's intake is the L1 inventory)
+    (pid, rid, kwargs) = recorded[0]
+    assert pid == "p1" and rid == RUN_ID
+    assert "candidates" not in kwargs
+    assert "intake_units" not in kwargs
+
+
+def test_a_caller_supplied_candidate_body_is_ignored_not_a_launch_input(
+        monkeypatch):
+    """T3 #376: the candidate wire batch is retired - a client that still sends
+    one gets a normal launch (the pass reads the L1 inventory itself), never a
+    caller-controlled unit set."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "create_hunting_run", lambda pid: RUN_ID)
+    fake_runtime = _FakeRuntime()
+    hunting_runtime = _patch_control_plane(monkeypatch, fake_runtime)
+    scheduled: list[tuple] = []
+
+    def fake_start(project_id, *, run_id=None, **kw):
+        scheduled.append((run_id, dict(kw)))
 
         async def _finish():
             return run_id
@@ -133,37 +169,7 @@ def test_launch_returns_the_surrogate_id_and_schedules(monkeypatch):
     ]})
 
     assert resp.status_code == 201
-    assert resp.json() == {"hunting_run_id": RUN_ID}
-    assert fake_runtime.scheduled == [f"hunting:{RUN_ID}"]
-    # the row opens SYNCHRONOUSLY before scheduling, and the launch carries the
-    # candidate batch into the scheduled entry point
-    (pid, rid, candidates) = recorded[0]
-    assert pid == "p1" and rid == RUN_ID
-    assert [c.unit_id for c in candidates] == ["Service:slug:a"]
-    assert [c.fault_class for c in candidates] == ["fault-x"]
-
-
-def test_launch_empty_batch_is_an_empty_pass_scheduled(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    monkeypatch.setattr(pg, "create_hunting_run", lambda pid: RUN_ID)
-    fake_runtime = _FakeRuntime()
-    hunting_runtime = _patch_control_plane(monkeypatch, fake_runtime)
-    recorded: list[tuple] = []
-
-    def fake_start(project_id, *, run_id=None, candidates=None, **kw):
-        recorded.append((candidates,))
-
-        async def _finish():
-            return run_id
-
-        return _finish()
-
-    monkeypatch.setattr(hunting_runtime, "start_hunting", fake_start)
-
-    resp = client.post("/projects/p1/hunting", json={})
-
-    assert resp.status_code == 201
-    assert recorded[0] == ([],)  # an empty batch launches an O1 empty pass
+    assert scheduled == [(RUN_ID, {})]
 
 
 def test_launch_unknown_project_404(monkeypatch):
@@ -354,71 +360,33 @@ def test_hunting_launch_during_shutdown_window_is_a_503_not_a_500(monkeypatch):
         rm.shutdown()
 
 
-# --- T5: singular component launches (enqueue, never a dependency error) ------
+# --- T5 singular launches: the hunt enqueue is RETIRED (T4b, #387) ------------
 
-def test_hunt_launch_enqueues_via_the_launcher_seam(monkeypatch):
-    """Hunter-only launch routes through the launcher seam (the recording
-    stub): the endpoint enqueues the wire config into the project's HuntStore
-    via `enqueue_hunt_config` and acks asynchronously - it never boots a
-    hunter itself, never opens a run row."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    recorded: list[tuple] = []
+def test_hunt_launch_is_a_loud_410_and_the_enqueue_seam_is_gone():
+    """T4b (#387): the hunter-only enqueue retires with the config family.
 
-    def record(project_id, config):
-        recorded.append((project_id, config))
-        return f"{config.unit_id}::{config.fault_class}::{config.vulnerability_class}"
-
+    A produced hunt config is no longer dispatch input (S2 8.2/8.4: the loop
+    file is the dispatch record, and a live run's surfer dispatches it), so the
+    wire path must NEVER silently accept a config into a family nothing reads.
+    The endpoint stays a LOUD 410 naming the replacement, and the launcher
+    seam is gone. The eval caller check (T4b): `eval/orchestrator/api.py` and
+    `eval/ph.py` never call this path; the eval translation of the recorded
+    config artifacts is T10b (#397)."""
     from polymerhus.attack.hunting import runtime as hunting_runtime
-    monkeypatch.setattr(hunting_runtime, "enqueue_hunt_config", record)
 
-    resp = client.post("/projects/p1/hunting/hunt", json={
-        "unit_id": "Service:slug:a", "fault_class": "fault-x",
-        "vulnerability_class": "CSRF", "research_direction": "rd",
-    })
+    assert not hasattr(hunting_runtime, "enqueue_hunt_config"), (
+        "the config enqueue seam retired with the config family")
 
-    assert resp.status_code == 202
-    body = resp.json()
-    assert body["component"] == "hunt" and body["enqueued"] is True
-    assert body["dispatched_asynchronously"] is True
-    assert body["enqueued_key"] == "Service:slug:a::fault-x::CSRF"
-    (pid, config) = recorded[0]
-    assert pid == "p1"
-    assert config.unit_id == "Service:slug:a"
-    assert config.fault_class == "fault-x"
-    assert config.vulnerability_class == "CSRF"
-    assert config.research_direction == "rd"
-
-
-def test_hunt_launch_derives_hunt_id_ignoring_caller_fields(monkeypatch):
-    """#300: `hunt_id` is DERIVED from the identity (never a caller field), so a
-    caller-supplied `hunt_id` cannot diverge from the store-derived id; the
-    #202-removed slots (`adversarial_capabilities` / `assumptions` /
-    `technique_primitives`) are gone from the wire model."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunt_orchestrator import hunt_id_for
-    from polymerhus.project_management.api import HuntingHuntLaunch
-
-    recorded: list = []
-    monkeypatch.setattr(
-        hunting_runtime, "enqueue_hunt_config",
-        lambda pid, config: recorded.append(config) or "k",
-    )
-
-    # a stale caller body: a fabricated `hunt_id` plus the removed #202 slots
     resp = client.post("/projects/p1/hunting/hunt", json={
         "unit_id": "Service:slug:a", "fault_class": "CWE-352",
-        "vulnerability_class": "CSRF", "hunt_id": "caller-supplied",
-        "adversarial_capabilities": ["x"], "assumptions": ["y"],
-        "technique_primitives": ["z"],
+        "vulnerability_class": "CSRF",
     })
 
-    assert resp.status_code == 202, resp.text
-    config = recorded[0]
-    assert config.hunt_id == hunt_id_for("Service:slug:a", "CWE-352", "CSRF")
-    for gone in ("hunt_id", "adversarial_capabilities", "assumptions",
-                 "technique_primitives"):
-        assert gone not in HuntingHuntLaunch.model_fields
+    assert resp.status_code == 410, resp.text
+    detail = resp.json()["detail"]
+    assert "retired" in detail.lower()
+    assert "loop file" in detail.lower()
+    assert "T10b" in detail and "#397" in detail
 
 
 def test_pod_launch_resumes_via_the_launcher_seam(monkeypatch):
@@ -491,11 +459,12 @@ def test_pod_launch_unknown_project_404(monkeypatch):
     assert called == []
 
 
-def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatch):
-    """Orchestrator-only launch schedules ONE orchestration pass through the
-    launcher seam under the ADR Q13 orchestrator session id (no surfer, no run
-    row) and acks asynchronously - the pass consumes its candidate inbox on
-    the loop."""
+def test_modeller_launch_schedules_the_pass_via_the_launcher_seam(monkeypatch):
+    """The modeller-only launch schedules ONE modelling pass through the
+    launcher seam under the ADR Q13 modeller session id (no surfer, no run row)
+    and acks asynchronously - the pass models its selected units on the loop.
+    T10 renamed the path and the component label to the modeller vocabulary;
+    the planner-era names are removed with no alias."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
     fake_runtime = _FakeRuntime()
     from polymerhus.attack.hunting import runtime as hunting_runtime
@@ -507,91 +476,27 @@ def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatc
     def record_pass(*_a, **_kw):
         return _pass_ran()
 
-    monkeypatch.setattr(hunting_runtime, "launch_orchestrator", record_pass)
+    monkeypatch.setattr(hunting_runtime, "launch_modeller", record_pass)
 
-    resp = client.post("/projects/p1/hunting/orchestrator", json={
-        "candidates": [{"unit_id": "Service:slug:a", "fault_class": "fault-x"}],
-    })
+    resp = client.post("/projects/p1/hunting/modeller", json={})
 
     assert resp.status_code == 202
     body = resp.json()
-    assert body["component"] == "orchestrator"
+    assert body["component"] == "threat_modeller"
     assert body["dispatched_asynchronously"] is True
     assert body["run_id"]
-    assert fake_runtime.scheduled == [f"hunting:{body['run_id']}:orchestrator"]
+    assert fake_runtime.scheduled == [
+        f"hunting:{body['run_id']}:threat-modeller"]
 
 
-def test_hunt_launch_never_fabricates_a_dependency_error_without_a_run(monkeypatch):
-    """The hunter-only enqueue succeeds with NO live run and NO control plane
-    (the control plane is not gated for an enqueue - only the whole launch
-    and the orchestrator pass schedule): the config waits in produced,
-    at-least-once, until a run's surfer admits it. No chained-dependency
-    error is ever fabricated."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    _patch_control_plane(monkeypatch, None)  # no control plane at all
-    recorded = []
-    monkeypatch.setattr(
-        hunting_runtime, "enqueue_hunt_config",
-        lambda pid, config: recorded.append(pid) or "k",
-    )
-
-    resp = client.post("/projects/p1/hunting/hunt", json={
-        "unit_id": "Service:slug:a", "fault_class": "fault-x",
-        "vulnerability_class": "CSRF",
-    })
-
-    assert resp.status_code == 202
-    assert recorded == ["p1"]
-
-
-def test_hunt_launch_unknown_project_404(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    called = []
-    monkeypatch.setattr(
-        hunting_runtime, "enqueue_hunt_config",
-        lambda pid, config: called.append(pid) or "k",
-    )
-
-    resp = client.post("/projects/nope/hunting/hunt", json={
-        "unit_id": "u", "fault_class": "f",
-    })
-
-    assert resp.status_code == 404
-    assert called == []
-
-
-def test_hunt_launch_replayed_enqueue_is_refused_409(monkeypatch):
-    """At-most-once on the enqueue (T5 AC4): the storage novelty gate
-    (`DuplicateConfigError` - a config identity already produced or consumed)
-    maps to 409 for a replayed enqueue - duplicate requests cannot
-    double-dispatch agents."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunt_store import DuplicateConfigError
-
-    def already_enqueued(pid, config):
-        raise DuplicateConfigError("already exists in produced/")
-
-    monkeypatch.setattr(hunting_runtime, "enqueue_hunt_config", already_enqueued)
-
-    resp = client.post("/projects/p1/hunting/hunt", json={
-        "unit_id": "u", "fault_class": "f", "vulnerability_class": "CSRF",
-    })
-
-    assert resp.status_code == 409
-    assert "already enqueued" in resp.json()["detail"]
-
-
-def test_orchestrator_launch_fails_closed_503_without_control_plane(monkeypatch):
-    """The orchestrator pass is a real LLM stretch: fail-closed 503 while the
+def test_modeller_launch_fails_closed_503_without_control_plane(monkeypatch):
+    """The modeller pass is a real LLM stretch: fail-closed 503 while the
     control plane has not landed, never booted on the request loop."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
     from polymerhus.attack.hunting import runtime as hunting_runtime
     monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: None)
 
-    resp = client.post("/projects/p1/hunting/orchestrator", json={})
+    resp = client.post("/projects/p1/hunting/modeller", json={})
 
     assert resp.status_code == 503
 
@@ -819,3 +724,337 @@ def test_status_unknown_run_404(monkeypatch):
     resp = client.get(f"/projects/p1/hunting/{RUN_ID}")
 
     assert resp.status_code == 404
+
+
+# --- POST /projects/{pid}/hunting/{rid}/resume (T11 #398) ---------------------
+
+class _ResumeRows:
+    """The `hunting_runs` surface the resume verb reads and claims. Rows carry
+    the status, `finished_at` and `stats` the decision table reads; the claim
+    mirrors the conditional UPDATE (only the expected prior status wins, so a
+    second claimant reads None)."""
+
+    def __init__(self, *, status="stopped", stats=None,
+                 finished_at=None, project_id="p1"):
+        self.rows: dict[str, dict] = {
+            RUN_ID: {
+                "hunting_run_id": RUN_ID,
+                "project_id": project_id,
+                "status": status,
+                "started_at": None,
+                "finished_at": finished_at,
+                "stats": dict(stats or {}),
+            },
+        }
+        self.claims: list[tuple[str, str, str]] = []
+        self.status_writes: list[tuple[str, str]] = []
+
+    def get_hunting_run(self, hunting_run_id: str) -> dict | None:
+        row = self.rows.get(hunting_run_id)
+        return dict(row) if row is not None else None
+
+    def list_hunting_runs(self, project_id: str) -> list[dict]:
+        return [dict(r) for r in self.rows.values()
+                if r["project_id"] == project_id]
+
+    def claim_hunting_run_for_resume(self, hunting_run_id: str, *,
+                                     project_id: str,
+                                     expected_status: str) -> dict | None:
+        self.claims.append((hunting_run_id, project_id, expected_status))
+        row = self.rows.get(hunting_run_id)
+        if (row is None or row["project_id"] != project_id
+                or row["status"] != expected_status):
+            return None
+        row["status"] = "running"
+        row["finished_at"] = None
+        # the production claim clears the provider-pause keys in the same UPDATE
+        for key in PAUSE_STATS_KEYS:
+            row["stats"].pop(key, None)
+        return dict(row)
+
+    def set_hunting_run_status(self, hunting_run_id: str, status: str, *,
+                               stats: dict | None = None) -> None:
+        self.status_writes.append((hunting_run_id, status))
+        row = self.rows.get(hunting_run_id)
+        if row is not None:
+            row["status"] = status
+            if stats:
+                row["stats"].update(stats)
+
+
+def _patch_resume(monkeypatch, rows: _ResumeRows, runtime=None):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "get_hunting_run", rows.get_hunting_run)
+    monkeypatch.setattr(pg, "list_hunting_runs", rows.list_hunting_runs)
+    monkeypatch.setattr(
+        pg, "claim_hunting_run_for_resume", rows.claim_hunting_run_for_resume)
+    monkeypatch.setattr(pg, "set_hunting_run_status", rows.set_hunting_run_status)
+    return _patch_control_plane(monkeypatch, runtime or _FakeRuntime())
+
+
+def _recording_start(monkeypatch, hunting_runtime, scheduled: list):
+    def fake_start(project_id, *, run_id=None, **kw):
+        scheduled.append((project_id, run_id))
+
+        async def _finish():
+            return run_id
+
+        return _finish()
+
+    monkeypatch.setattr(hunting_runtime, "start_hunting", fake_start)
+
+
+def test_resume_a_stopped_run_admits_and_reenters_with_the_same_run_id(
+        monkeypatch):
+    """T11 AC: a `stopped` run resumes immediately. The verb claims the row
+    atomically and re-enters `start_hunting` with the EXISTING run id - it
+    never mints a new run."""
+    rows = _ResumeRows(status="stopped")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 202
+    assert resp.json() == {"hunting_run_id": RUN_ID, "resumed": True}
+    assert rows.claims == [(RUN_ID, "p1", "stopped")]
+    assert rows.rows[RUN_ID]["status"] == "running"
+    assert scheduled == [("p1", RUN_ID)]
+
+
+def test_resume_unknown_project_404(monkeypatch):
+    rows = _ResumeRows(status="stopped")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/nope/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 404
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_unknown_run_404(monkeypatch):
+    rows = _ResumeRows(status="stopped")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post("/projects/p1/hunting/unknown-run/resume")
+
+    assert resp.status_code == 404
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_a_run_of_another_project_404(monkeypatch):
+    """The run namespace is project-scoped: a resumable run belonging to
+    another project is never claimable through this project's path."""
+    rows = _ResumeRows(status="stopped", project_id="other")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 404
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_consumed_quota_is_409(monkeypatch):
+    """The decision table's terminal row: consumed credits are not a pause."""
+    rows = _ResumeRows(status="interrupted",
+                       finished_at=datetime.now(timezone.utc),
+                       stats={"interrupted": True, "quota_exhausted": True})
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "quota" in resp.json()["detail"]
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_an_interrupted_run_without_a_cause_is_409(monkeypatch):
+    """The fail-closed row: an `interrupted` run with no provider stats (the
+    process-restart orphan shape) is do-not-resume - the verb never guesses."""
+    rows = _ResumeRows(
+        status="interrupted",
+        finished_at=datetime.now(timezone.utc),
+        stats={"interrupted": True, "interrupt_reason": "process ended mid-run"},
+    )
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "do-not-resume" in resp.json()["detail"]
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_a_running_run_is_409(monkeypatch):
+    rows = _ResumeRows(status="running")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "already running" in resp.json()["detail"]
+    assert rows.claims == []
+    assert scheduled == []
+
+
+def test_resume_complete_and_failed_runs_are_409(monkeypatch):
+    for terminal in ("complete", "failed"):
+        rows = _ResumeRows(status=terminal)
+        hunting_runtime = _patch_resume(monkeypatch, rows)
+        scheduled: list[tuple] = []
+        _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+        resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+        assert resp.status_code == 409, terminal
+        assert terminal in resp.json()["detail"], terminal
+        assert rows.claims == [], terminal
+        assert scheduled == [], terminal
+
+
+def test_resume_inside_the_backoff_window_is_409_with_a_retry_hint(monkeypatch):
+    """The wait window: a resumable throttle before `finished_at +
+    retry_after_s` is refused with a machine-readable `Retry-After` and a
+    human-readable wait, and nothing is claimed."""
+    rows = _ResumeRows(
+        status="interrupted",
+        finished_at=datetime.now(timezone.utc),
+        stats={"interrupted": True, "quota_exhausted": False,
+               "retry_after_s": 45.0},
+    )
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "retry in" in resp.json()["detail"]
+    retry_after = int(resp.headers["Retry-After"])
+    assert 1 <= retry_after <= 45
+    assert rows.claims == []
+    assert scheduled == []
+
+
+class _RacingResumeRows(_ResumeRows):
+    """Two concurrent resumes both read the SAME pre-claim row (the race the
+    conditional UPDATE arbitrates): `get_hunting_run` always reports the row as
+    it was, while the claim still sees the live transition."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self._read_status = self.rows[RUN_ID]["status"]
+
+    def get_hunting_run(self, hunting_run_id: str) -> dict | None:
+        row = super().get_hunting_run(hunting_run_id)
+        if row is not None:
+            row["status"] = self._read_status
+        return row
+
+
+def test_a_second_resume_loses_the_claim_and_409s(monkeypatch):
+    """T11 AC: the claim is atomic. Two resumes read the same resumable row;
+    only the first conditional UPDATE wins - the second returns 409 and never
+    schedules a second run."""
+    rows = _RacingResumeRows(status="stopped")
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    first = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+    second = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert "claim was lost" in second.json()["detail"]
+    assert len(rows.claims) == 2
+    assert scheduled == [("p1", RUN_ID)]  # exactly ONE admission
+
+
+def test_resume_admission_refusal_restores_the_prior_status(monkeypatch):
+    """T11 AC: a post-claim admission refusal restores the exact prior status
+    and leaves the stats intact, so the operator can retry - no orphan
+    `running` row is left behind."""
+    from polymerhus.app.runtime import ModuleAdmissionRefused
+
+    stats = {"interrupted": True, "quota_exhausted": False,
+             "retry_after_s": 0.0}
+    rows = _ResumeRows(status="interrupted",
+                       finished_at=datetime.now(timezone.utc), stats=stats)
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+
+    def refusing_schedule(coro, *, name):
+        raise ModuleAdmissionRefused("hunting is paused")
+
+    monkeypatch.setattr(hunting_runtime, "schedule_hunting", refusing_schedule)
+    monkeypatch.setattr(
+        hunting_runtime, "start_hunting", lambda *a, **k: object())
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 503
+    assert rows.status_writes == [(RUN_ID, "interrupted")]
+    assert rows.rows[RUN_ID]["status"] == "interrupted"
+    # the claim cleared the pause keys; the restore re-stamps them, so the cause
+    # record the operator retries with is intact
+    assert rows.rows[RUN_ID]["stats"] == stats
+
+
+def test_resume_conflicts_with_another_live_run_and_restores(monkeypatch):
+    """T11 review: the live-run guard runs AFTER the claim, so the resume's own
+    `running` row is excluded and the parameter is load-bearing. Another live
+    run conflicts; the claim is undone (prior status + pause keys) so the run is
+    never left `running`."""
+    stats = {"interrupted": True, "quota_exhausted": False,
+             "retry_after_s": 0.0}
+    rows = _ResumeRows(status="interrupted",
+                       finished_at=datetime.now(timezone.utc), stats=stats)
+    rows.rows["other-run"] = {
+        "hunting_run_id": "other-run", "project_id": "p1",
+        "status": "running", "started_at": None, "finished_at": None,
+        "stats": {},
+    }
+    hunting_runtime = _patch_resume(monkeypatch, rows)
+    scheduled: list[tuple] = []
+    _recording_start(monkeypatch, hunting_runtime, scheduled)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 409
+    assert "already live" in resp.json()["detail"]
+    assert rows.claims == [(RUN_ID, "p1", "interrupted")]  # after the claim
+    assert rows.rows[RUN_ID]["status"] == "interrupted"    # the claim undone
+    assert rows.rows[RUN_ID]["stats"] == stats             # pause keys restored
+    assert scheduled == []
+
+
+def test_resume_fails_closed_503_without_the_control_plane(monkeypatch):
+    rows = _ResumeRows(status="stopped")
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(
+        pg, "claim_hunting_run_for_resume", rows.claim_hunting_run_for_resume)
+    _patch_control_plane(monkeypatch, None)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/resume")
+
+    assert resp.status_code == 503
+    assert rows.claims == []

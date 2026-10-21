@@ -14,7 +14,7 @@ Usage:
                 [--recon-run RUN_ID] [--target-url URL] [--challenge ID]
 
 Bundle sources resolve under the #234 app-owned data root
-(<repo>/data/<project_id>/hunting/...): the orchestration, hunter, and
+(<repo>/data/<project_id>/hunting/...): the threat-model, hunter, and
 test-executor-pod buckets are copied once each, so no file lands twice in
 the bundle. The slot mapping is provisional pending the automation rewrite.
 """
@@ -81,7 +81,7 @@ def collect(project_id: str, hunting_run_id: str, out: Path, *,
         json.dumps(analysis_status, indent=2) if analysis_status else "null")
 
     hunting = resolve() / str(project_id) / "hunting"
-    hunt_store = _copy_tree(hunting / "orchestration", out / "hunt_store")
+    threat_model_store = _copy_tree(hunting / "threat_modeller", out / "threat_model_store")
     project_memory = _copy_tree(hunting / "hunter", out / "project_memory")
     pod_memory = _copy_tree(hunting / "test-executor-pod", out / "pod_memory")
 
@@ -101,7 +101,7 @@ def collect(project_id: str, hunting_run_id: str, out: Path, *,
         "recon_status": (recon_status or {}).get("status"),
         "analysis_status": (analysis_status or {}).get("status"),
         "stores": {
-            "hunt_store": hunt_store,
+            "threat_model_store": threat_model_store,
             "project_memory": project_memory,
             "pod_memory": pod_memory,
         },

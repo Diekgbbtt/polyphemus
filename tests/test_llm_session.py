@@ -1266,9 +1266,9 @@ def test_the_override_model_factory_builds_the_override(monkeypatch):
         return object()
 
     monkeypatch.setattr(roles, "chat_model_for", fake_chat_model_for)
-    S._override_model_factory("hunting_orchestrator", ("opencode-go", "glm-5.2"),
+    S._override_model_factory("hunting_threat_modeller", ("opencode-go", "glm-5.2"),
                               read_timeout_s=42.0)
-    assert seen["role"] == "hunting_orchestrator"
+    assert seen["role"] == "hunting_threat_modeller"
     assert seen["model_override"] == ("opencode-go", "glm-5.2")
     assert seen["read_timeout"] == 42.0
     assert seen["max_retries"] == 0

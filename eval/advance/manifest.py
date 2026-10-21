@@ -92,6 +92,7 @@ IGNORED_PREFIXES: tuple[str, ...] = (
     "frontend",
     "loop-budget.md",
     "loop-constraints.md",
+    "skills-unspurious",
     "tests",
     "tools",
 )

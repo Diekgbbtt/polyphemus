@@ -2,6 +2,11 @@
 
 *Status: spec (contract). Resolved by the 2026-08-23/24 grilling (`hunting-pipeline-wiring-adr.md`), published as spec #169 with wiring tickets #170-#175. Operates on the ratified memory topology (`hunting-memory-system-spec.md`, tickets #165-#168) and the 164 state-graph hunter (#164). Sequencing per Q18-A / ADR: implementation is held off until the produced/consumed topology lands. AMENDED 2026-08-25 by the identity-based surfer refactor: config_key canonical identity, own-status dispatch gate, durable parent-keyed export record, and the pod-only launch resume-by-coroutine-id ruling.*
 
+**AMENDED 2026-10-18.** The dispatch grain is the loop file.
+The per-config dispatch and the `specified` gate are replaced by the per-loop dispatch and the `ratified` gate.
+The surfer and mover mechanics are unchanged.
+See `docs/design/hunting-67-threat-model-artifact-spec.md` section 8 and `docs/design/hunting-164-state-graph-spec.md` section 14.
+
 ## Problem Statement
 
 The hunting pipeline is fragmented across refactor branches and un-wired. The hunt-orchestrator produces `HuntConfig`s, hunting agents consume them and produce `TestImplementationSpec`s, and test-executor pods consume those. Each component is an actor with a mailbox, but there is no end-to-end message-passing engine connecting them, no coherent way to launch the pipeline as a whole, and no way to launch a single component on its own. The runtime and session machinery exists (`RuntimeManager`, `AgentInbox`, the typed session addresses); the glue does not.

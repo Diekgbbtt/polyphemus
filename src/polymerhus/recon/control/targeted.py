@@ -40,8 +40,8 @@ class ReconScope(BaseModel):
     identity string `"<kind>:<key>"` (`"Service:orders"`, or a System's
     `"System:<kind>/<discriminator>"`); an unprefixed value is read as a Service
     slug for back-compat. It carries the testable-unit identity only, never a
-    fault-class (hunt back-edges join the fault in the hunt store via
-    `correlation_id`, keeping this seam fault-agnostic). `auth_context` (optional)
+    fault-class (the historical holder joined the fault in the retired hunt
+    store via `correlation_id`, keeping this seam fault-agnostic). `auth_context` (optional)
     carries the per-role credentials a skill probe needs (interface-B
     `auth_context?`); `note` (optional) records WHY the probe was raised (e.g. an
     anatomy skill's fingerprint-only rationale + the spine slot(s) it must settle,

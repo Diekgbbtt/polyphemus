@@ -13,7 +13,7 @@
 - S6 `eval/deploy/steel/allowlist.sh` - the `DOCKER-USER` rules for TCP 3000.
 - S7 the live Steel API container on `dj-viscon-workshop-1` - the deployed runtime.
 - S8 the live internal `comfyui` target on the eval server, reached through the eval front.
-- S9 `skills/steel-browser/SKILL.md` - the stated rule for script mode and the bare CLI.
+- S9 `skills/internal/tools/steel-browser/SKILL.md` - the stated rule for script mode and the bare CLI.
 - S10 the pinned CLI binary in `kali` - the interactive daemon path fixed by the `0.5.0-preview.6` pin (#395).
 
 ## Contract predicates (host-side unit tier)
@@ -32,7 +32,7 @@ The live wiring is covered by C7 and the walkthrough tier.
 | C7 | S4 | unit | the rendered configuration of the base file and the dev file, plus the parsed eval overlay | `kali` and `agent` receive `STEEL_BROWSER_API_URL` as an optional passthrough; the unset render is an empty value (both readers treat empty as unset), no non-empty default is invented; the variable is absent from services that do not consume it; the eval overlay passes it through optionally without leaking other keys into `kali` | `tests/test_compose_config.py` |
 | C8 | S5 | unit | the parsed `eval/deploy/steel/docker-compose.steel.yml` | the image is a digest pin; `latest` appears nowhere; only port 3000 is published; the volume mounts at `/app/.cache`; `DOMAIN` is required; the target alias defaults to an inert pair; the restart policy is set | `tests/eval/test_steel_deployment_contract.py` |
 | C9 | S6 | unit | the allowlist script run twice with a stub `iptables` on `PATH`; two allowed sources | both allow rules and the drop rule are applied once; the second run changes nothing | same module |
-| C10 | S9 | unit | the rendered `skills/steel-browser/SKILL.md` | the skill is runtime-agnostic and carries no `--local`, profile, endpoint, or cloud/local branch | `tests/test_steel_skill_rule.py` |
+| C10 | S9 | unit | the rendered `skills/internal/tools/steel-browser/SKILL.md` | the skill is runtime-agnostic and carries no `--local`, profile, endpoint, or cloud/local branch | `tests/test_steel_skill_rule.py` |
 | C11 | S5 | unit | the rendered `eval/OPERATOR.md` | the deploy, allowlist, teardown, and move sections exist; the portability boundary lists the five excluded cloud capabilities, concurrency 1, and build-time extensions | `tests/eval/test_steel_deployment_contract.py` |
 
 ## Walkthrough predicates (end-to-end tier)

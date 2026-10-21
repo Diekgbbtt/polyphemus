@@ -23,7 +23,8 @@ See `docs/agents/domain.md`.
 **Keep the model current as you build.** The ontology, the context map, and the glossaries are living documents.
 When you introduce, rename, or sharpen a domain term while implementing, update the owning `CONTEXT.md` in the same change - do not defer it.
 When a change alters the reasoned model (a new primitive, a corrected relationship, a resolved open question), update `docs/design/domain-model.md` too.
-Provisional terms not yet ratified by the operator (currently the phase-3 `fault-hypothesis` / `testing technique` / `probe` / `vulnerability` vocabulary and the "escalating epistemic ladder" framing) stay marked as such until ratified. The fault-hypothesis is a phase-3 testing primitive, not a graph node or edge.
+Provisional terms not yet ratified by the operator (currently the analysis-side phase-3 `testing technique` / `probe` / `vulnerability` vocabulary and the "escalating epistemic ladder" framing) stay marked as such until ratified.
+The hunting pipeline no longer uses the fault-hypothesis vocabulary: the fault is a unit-threat-model entity, never a graph node or edge.
 
 ### Decision records (the commit gate)
 

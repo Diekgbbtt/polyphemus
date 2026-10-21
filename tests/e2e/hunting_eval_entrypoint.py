@@ -3,7 +3,7 @@
 The eval container co-locates its OWN litellm gateway and then runs the eval
 driver (pytest) once the proxy is healthy. ``LLM_GATEWAY_URL`` points at the
 co-located proxy, so the real orchestrator actor resolves
-``LLM_HUNTING_ORCHESTRATOR`` through the same gateway path the
+``LLM_HUNTING_THREAT_MODELLER`` through the same gateway path the
 production agent uses.
 
 The proxy is launched DIRECTLY (``litellm --config``), not through the image's

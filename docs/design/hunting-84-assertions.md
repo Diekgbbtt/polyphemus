@@ -1,5 +1,8 @@
 # Assertions - hunting test-executor pod regrounding (#84)
 
+**AMENDED (T9 #382; carried by T10 #383).** The D4 and variant assertions use the REDUCED D4 (S5 8.4) and the ten variant bases (S5 8.6): `declined_attribute` carries a basis literal, and the retired `testing_pattern` / `payload_vector_space` / `interpretation_guidance` fields never appear in a live assertion. Historical assertions that name them are marked superseded inline.
+
+
 **Source:** spec `docs/design/hunting-67-test-executor-pod-spec.md` section 6; ADR `docs/design/hunting-84-regrounding-decisions.md` (D84-1..D84-32); parent `docs/design/hunting-67-per-agent-specs-spec.md` section 6.
 **Seams under assertion:** the `arun_pod` async entry (IA-3 in / IA-4 out, D84-15); the HIGH-LEVEL workflow map (INIT -> RUNNER STRETCH -> TRIAGER -> decide -> TERMINAL, D84-16/29); the six-way termination + `terminal_reason`/`clean`/`init_validation` vocabulary (D5, Q3-amended); the fixed caps (`HUNT_POD_MAX_TOOL_CALLS`=200, `HUNT_POD_MAX_ITERS`=8, `MAX_POD_ITERS`=3, `EXEC_TIMEOUT_S`=300); variants + experiment log (D67-08, D6); the per-project deterministic-key pod experiment-memory store + `note` tool (D84-33 through D84-38 - the store's public read/write contract, the notes `notes.yaml` keyed `<fault>_<strategy>:<order>:<note_name>`, the minted variants `variants/<ref>.yaml`, the experiment-log slice `<fault>_<strategy>/experiment-log/<order>.yaml` with the `experiment_summary` terminal record, the typed attribute filters order/kind/classification/symptom_status, no `_seq`/`_ref`, per-project scoping, idempotent overwrite); the pod's OWN terminal `PodExport` persistence (T7/#183, `<spec_id>/<run_id>.yaml`, GP1-GP5); the KB tool binding (D84-16/26); the production ReAct lane vs the injected contract lane (D84-22/29); the E1-E4 bulletproof chain walkthroughs (merged spec section 10).
 
@@ -49,7 +52,7 @@ yields: `test_exec_timeout_enforced`.
 
 **C9 - Variant provenance.** seam: `arun_pod` -> mint_variant -> D6. semantic: success.
 input: a critic declining `payload_vector_space` into `/api`, then terminating.
-observable: log holds the derived variant with `parent_ref="v0"` and `declined_attribute="payload_vector_space"`, plus raw observation + interpretation.
+observable: log holds the derived variant with `parent_ref="v0"` and `declined_attribute="technology-grounding"`, plus raw observation + interpretation.
 yields: `test_variant_derivation_with_provenance`.
 
 **C10 - Duplicate probe dedup.** seam: `arun_pod` -> harness O7/C10. semantic: duplicate-idempotent.

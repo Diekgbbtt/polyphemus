@@ -1,7 +1,7 @@
 """Mocked e2e: the skill's canonical action scripts against the CLI scaffold.
 
 The real `steel_exec` script path runs the unmodified reference scripts from
-`skills/steel-browser/references/` with the scaffold on PATH, so the scripts'
+`skills/internal/tools/steel-browser/references/` with the scaffold on PATH, so the scripts'
 command encodings, catalogue guards, batch envelopes, read-backs, and
 trap-owned stop are exercised end to end with no docker, no browser, and no
 cloud key. The scaffold models the skill's documented envelopes and the clap
@@ -18,7 +18,7 @@ import kali.mcp_server as m
 from tests.support import steel_cli_scaffold as scaffold
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-REFERENCES = REPO_ROOT / "skills" / "steel-browser" / "references"
+REFERENCES = REPO_ROOT / "skills" / "internal" / "tools" / "steel-browser" / "references"
 
 STEEL_EXEC = m.steel_exec.fn
 

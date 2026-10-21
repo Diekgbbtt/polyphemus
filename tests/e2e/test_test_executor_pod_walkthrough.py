@@ -15,10 +15,11 @@ returning a fixed synthetic curl trailer (`__POD_HTTP_STATUS__` /
 no neo4j.
 
 The spec's E1 live edge (`soupmarket.shop` in `eval-targets.yaml`, live HTTP
-mode) is mechanised by the fixed synthetic observation: the runner still issues
-the symbolic default probe (O12/C11) through the ReAct lane, and the E1 symptom
-("HTTP 200 with a non-empty body on GET /") is SYMBOLICALLY decidable, so the
-symbolic symptom recogniser terminates the trivial run with no LLM (spec 2:
+mode) is mechanised by the fixed synthetic observation: the production runner
+authors the probe from the reduced spec (S5 8.5) through the ReAct lane, and
+the E1 symptom ("HTTP 200 with a non-empty body on GET /") is SYMBOLICALLY
+decidable, so the symbolic symptom recogniser terminates the trivial run with
+no LLM (spec 2:
 "the E1 walkthrough symptom is symbolically decidable, so the trivial real run
 needs no live LLM"). The drop-to-fake-model is exactly the ticket's mandate
 (#158): "inject the production lane but with a FAKE model, a fake `exec_fn`,
@@ -64,17 +65,16 @@ from polymerhus.recon.domain.types import ExecResult
 
 # The E1 spec fixture (spec 6.2 E1 input, mirroring the contract tier's
 # VALID_SPEC): target identity "service:web:soupmarket", verification symptom
-# "HTTP 200 with a non-empty body on GET /", testing pattern "blind-boolean",
-# assumptions ["network egress allowed"], payload vector space {method: GET,
-# path: "/"}.
+# "HTTP 200 with a non-empty body on GET /", assumptions ["network egress
+# allowed"], rationale "reachability probe from H1", and the reduced D4
+# provenance (T8: the payload vector space and the testing pattern are retired).
 VALID_SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability probe from H1",
-    "interpretation_guidance": "a 200 with a non-empty body confirms the symptom",
+    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 # The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).

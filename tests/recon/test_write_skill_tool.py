@@ -57,7 +57,7 @@ def test_write_procedure_first_use_creates_bundle_and_returns_ok(
     assert out["ok"] is True
     assert out["skill"] == "auth_workflow"
     assert out["target"] == "procedure"
-    sk = tmp_path / "data" / "proj-1" / "skills" / "auth_workflow" / "SKILL.md"
+    sk = tmp_path / "data" / "target-specific-procedure" / "proj-1" / "auth_workflow" / "SKILL.md"
     assert sk.read_text(encoding="utf-8").startswith("---\n")
 
 
@@ -77,7 +77,7 @@ def test_write_reference_lands_in_the_bundle(tmp_path: Path, monkeypatch) -> Non
 
     assert out["ok"] is True
     ref = (
-        tmp_path / "data" / "proj-1" / "skills" / "auth_workflow"
+        tmp_path / "data" / "target-specific-procedure" / "proj-1" / "auth_workflow"
         / "references" / "roles.md"
     )
     assert ref.read_text(encoding="utf-8") == "# Roles\nadmin\n"
@@ -92,7 +92,7 @@ def test_any_project_skill_is_writable(tmp_path: Path, monkeypatch) -> None:
 
     assert out["ok"] is True
     assert (
-        tmp_path / "data" / "proj-1" / "skills" / "another-skill" / "SKILL.md"
+        tmp_path / "data" / "target-specific-procedure" / "proj-1" / "another-skill" / "SKILL.md"
     ).is_file()
 
 
@@ -108,7 +108,7 @@ def test_write_without_bootstrapped_metadata_refuses_in_band(
     assert out["ok"] is False
     assert out["error"] == "skill_invalid"
     assert not (
-        tmp_path / "data" / "proj-1" / "skills" / "unbootstrapped" / "SKILL.md"
+        tmp_path / "data" / "target-specific-procedure" / "proj-1" / "unbootstrapped" / "SKILL.md"
     ).exists()
 
 

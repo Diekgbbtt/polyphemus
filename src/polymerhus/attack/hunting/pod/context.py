@@ -24,10 +24,68 @@ from polymerhus.attack.hunting.pod.types import (
     KbObservation,
     RawObservation,
     VariantSpec,
+    skill_procedure_from_spec,
 )
+from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_FIELD
 
 # Max chars of a raw tool body surfaced into a session turn (per-turn filtering).
 _BODY_SLICE = 1200
+
+# Max executed-probe lines and chars per line surfaced into the triager delta.
+_PROBE_LINES = 12
+_PROBE_SLICE = 200
+
+
+def _skill_procedure_context(spec: dict) -> str:
+    """The bounded typed `SkillProcedure` excerpt the triager diffs (S5 8.6).
+
+    Read from the spec provenance through the ONE typed read, never the store
+    envelope. An absent excerpt is a RECORDED GAP: the diff has no material and
+    the failure-mode fallback applies. An empty section is a SKIPPED class, not
+    a coverage gap (T10 H1): there is no authored procedure to execute or cover,
+    so the diff passes over it and never loops on it."""
+    procedure = skill_procedure_from_spec(spec)
+    header = "## Skill procedure (typed excerpt from the spec provenance)"
+    if procedure is None:
+        return (f"{header}\n(no skill procedure excerpt recorded - a recorded gap; "
+                "the procedure diff has no material, so the failure-mode fallback applies)")
+    lines = []
+    for basis, field in PROCEDURE_GAP_FIELD.items():
+        text = str(getattr(procedure, field) or "").strip()
+        lines.append(f"- {basis} ({field}): "
+                     + (text if text else "(empty - skipped class, not a gap)"))
+    return "\n".join([header, *lines])
+
+
+def _variant_detail_line(spec: dict) -> str:
+    """A one-line detail digest of a derived variant spec: what the duplicate
+    guard compares the basis against, readable by the critic."""
+    if not isinstance(spec, dict):
+        return ""
+    parts = []
+    rationale = str(spec.get("rationale") or "").strip()
+    if rationale:
+        parts.append(f"rationale={rationale[:160]}")
+    raw_symptoms = spec.get("verification_symptoms")
+    symptoms = ([str(s) for s in raw_symptoms][:2]
+                if isinstance(raw_symptoms, (list, tuple)) else [])
+    if symptoms:
+        parts.append("symptoms=" + "; ".join(symptoms)[:200])
+    return " | ".join(parts)
+
+
+def _executed_probe_lines(observations: list[RawObservation]) -> list[str]:
+    """The executed probe commands from the D6 trail, bounded: the triager's
+    coverage judgement needs what was actually run, not a plan restatement."""
+    lines = []
+    for obs in observations[-_PROBE_LINES:]:
+        request = obs.request if isinstance(obs.request, dict) else {}
+        what = str(request.get("command") or request.get("artifact_id") or "")
+        what = what.strip()
+        if not what:
+            continue
+        lines.append(f"- {obs.variant_ref or 'v?'} status={obs.status}: {what[:_PROBE_SLICE]}")
+    return lines
 
 
 def _message_id(role: str, content: str) -> str:
@@ -221,16 +279,28 @@ class ExperimentLog:
     def triager_context(self, spec: dict,
                         observation: RawObservation | None) -> str:
         """The filtered slice the Triager's session sees each lap: the current
-        variant, the latest raw observation (body-capped), and every prior
-        variant (so it does not re-mine one)."""
-        parts = [f"## Current spec variant\n{json.dumps(spec, indent=2)}"]
+        variant, the bounded typed skill-procedure excerpt, the executed
+        procedure (prior variant bases + probe commands), the latest raw
+        observation (body-capped), and every prior variant (so it does not
+        re-mine one)."""
+        parts = [f"## Current spec variant\n{json.dumps(spec, indent=2)}",
+                 _skill_procedure_context(spec)]
         if observation is not None:
             obs = observation.model_dump()
             obs["body"] = (obs.get("body") or "")[:_BODY_SLICE]
             parts.append(f"## Latest observation\n{json.dumps(obs, indent=2)}")
-        if self.variant_refs():
+        if self.variant_specs:
+            lines = []
+            for v in self.variant_specs:
+                label = v.ref if not v.declined_attribute \
+                    else f"{v.ref} (basis: {v.declined_attribute}, parent {v.parent_ref})"
+                detail = _variant_detail_line(v.spec)
+                lines.append(f"- {label}" + (f": {detail}" if detail else ""))
             parts.append("## Variants already tried (never mine a duplicate)\n"
-                         + "\n".join(f"- {r}" for r in self.variant_refs()))
+                         + "\n".join(lines))
+        probes = _executed_probe_lines(self.raw_observations)
+        if probes:
+            parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
         if self.interpretations:
             recent = self.interpretations[-5:]
             parts.append("## Recent interpretations\n"

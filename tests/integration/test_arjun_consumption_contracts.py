@@ -19,11 +19,29 @@ gate's copy of the contract, at the compiled seam).
 """
 import asyncio
 import logging
+from urllib.parse import urlsplit
 
 from polymerhus.recon.control import batching as batching_module
 from polymerhus.recon.control import job_agent as ja
 from polymerhus.recon.control.jobs import JOBS
 from polymerhus.recon.domain.types import PodExport
+
+
+def _asset_paths(pod_inputs):
+    """The endpoint paths a pod input carries, in order.
+
+    Arjun packs its route clusters into batch assets (`{"batch": [urls]}`),
+    so a pod input is not a single endpoint asset. Flatten the batch form and
+    keep the endpoint form for the fallback/other jobs.
+    """
+    for pi in pod_inputs:
+        asset = pi["input_asset"]
+        batch = asset.get("batch")
+        if batch is not None:
+            for url in batch:
+                yield urlsplit(url).path
+        else:
+            yield asset["path"]
 
 
 def _make_recording_pod_invoke():
@@ -63,7 +81,7 @@ def test_C1_arjun_pods_equal_route_clusters_not_endpoints(monkeypatch):
         _ep("/users/1"), _ep("/users/2"), _ep("/users/3"),
         _ep("/api/orders", profile="restapi"),
     ])
-    assert sorted(pi["input_asset"]["path"] for pi in pod_invoke.calls) == [
+    assert sorted(_asset_paths(pod_invoke.calls)) == [
         "/api/orders", "/users/1"]
 
 
@@ -74,7 +92,7 @@ def test_C2_concat_fragment_junk_never_reaches_a_pod(monkeypatch):
     monkeypatch.setattr(ja, "MAX_JOB_ASSETS", 500)
     pod_invoke = _make_recording_pod_invoke()
     _run_arjun(pod_invoke, [_ep("/api/users"), _ep("/'+_(i[8])+'")])
-    assert [pi["input_asset"]["path"] for pi in pod_invoke.calls] == ["/api/users"]
+    assert list(_asset_paths(pod_invoke.calls)) == ["/api/users"]
 
 
 # --- C3: empty population -> zero pods -----------------------------------------
@@ -100,13 +118,13 @@ def test_C4_restapi_orders_first_without_excluding(monkeypatch):
     # The Send fan-out completes pods concurrently, so arrival order is not
     # dispatch order: assert the ordering property on the preprocess seam
     # (unit tier pins the exact sequence) plus full-set survival here.
-    assert sorted(pi["input_asset"]["path"] for pi in pod_invoke.calls) == [
+    assert sorted(_asset_paths(pod_invoke.calls)) == [
         "/api/a", "/page", "/plain"]
     ordered = ja.default_preprocess_fn(
         [_ep("/page", profile="webapp"),
          _ep("/api/a", profile="restapi"),
          _ep("/plain")], JOBS["arjun"], {}, "")
-    assert [pi["input_asset"]["path"] for pi in ordered] == [
+    assert list(_asset_paths(ordered)) == [
         "/api/a", "/page", "/plain"]
 
 
@@ -118,7 +136,7 @@ def test_C5_every_pod_carries_the_auth_context(monkeypatch):
     pod_invoke = _make_recording_pod_invoke()
     auth = {"cookies": "session=abc", "headers": {"X-T": "1"}}
     _run_arjun(pod_invoke, [_ep("/a"), _ep("/b")], extra={"auth_context": auth})
-    assert len(pod_invoke.calls) == 2
+    assert pod_invoke.calls
     assert all(pi["extra"]["auth_context"] == auth for pi in pod_invoke.calls)
 
 
@@ -135,6 +153,6 @@ def test_C6_derivation_error_degrades_to_capped_raw_pods(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING,
                          logger="polymerhus.recon.control.job_agent"):
         _run_arjun(pod_invoke, [_ep("/a"), _ep("/b"), _ep("/c")])
-    assert sorted(pi["input_asset"]["path"] for pi in pod_invoke.calls) == [
+    assert sorted(_asset_paths(pod_invoke.calls)) == [
         "/a", "/b"]
     assert "derive_consumption_set failed" in caplog.text

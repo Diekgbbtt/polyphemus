@@ -2,6 +2,10 @@
 
 *Status: working map (2026-10-08). The failure register for the eval harness and its evidence chain, cleaned of closed-ticket noise, deduplicated by root cause, and stripped of the infra/dependency and scaffolded-data-layer families. Each live entry carries a diagnosis and a confidence. Low-confidence entries are marked POTENTIAL and route through the `diagnosing-bugs` flow. Section 12 regroups the register by hunting sub-unit.*
 
+*Historical register (T10b #397).*
+An entry's module/config names describe the pre-redesign pipeline at the time of the failure.
+The hunt-orchestrator and the config family are RETIRED; the entries are retained as the failure record, not as live code claims.
+
 Provenance: operator session 2026-10-05; live trial records under `/opt/eval-platform-model/eval/runs/`, the instance data root `/opt/polymerhus-dev/eval/instances/eval-server-1/data/`, the agent log (`docker logs ph-dd131acc-agent-1`), the polymerhus API (`/app-state`, `/projects/{id}/{graph,usage}`), and the comfyui ground-truth kill chains under `/root/WebExploitBench/comfyui/vulnerability/comfyui-00N/report/report.md`.
 
 This document authorises no code change by itself.

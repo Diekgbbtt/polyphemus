@@ -142,6 +142,34 @@ def test_protocol_read_is_catalogue_pinned_no_project_shadowing(
     assert out == BODY + SEPARATOR + PROTOCOL  # protocol always catalogue-pinned
 
 
+def test_the_usage_protocol_scopes_lessons_to_the_rdf_notion() -> None:
+    """D-W3-8: the RDF notion scoping surfaces in the usage protocol (which
+    `load_skill` appends to every non-meta skill), and nowhere else: the lesson
+    record shape and the `record_skill_lesson` description stay unchanged."""
+    body = skills.skill_for("meta/meta-usage-skill")
+
+    assert "RDF notion" in body
+    for notion in (
+        "Attack Surface",
+        "Reconnaissance",
+        "Detection Channels",
+        "Adversarial Capabilities",
+        "Trust Assumptions",
+        "Key Vulnerabilities",
+        "Advanced Techniques",
+        "Bypass Techniques",
+        "Chaining Attacks",
+        "Testing Methodology",
+        "False Positives",
+        "Pro Tips",
+        "Tooling",
+        "Summary",
+        "references/",
+    ):
+        assert notion in body, notion
+    assert "notion" not in skills.RECORD_LESSON_CONTRACT.lower()
+
+
 def test_is_meta_skill_keys_on_the_meta_directory() -> None:
     assert skills.is_meta_skill("meta/meta-usage-skill")
     assert skills.is_meta_skill("meta/meta-write-skill")

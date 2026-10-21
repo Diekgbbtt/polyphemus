@@ -1,58 +1,49 @@
-"""The state-graph hunter's StateGraph topology (#164, W5): the state tracker.
+"""The state-graph hunter's StateGraph topology (#164, S4 14.10): the pass tracker.
 
-The graph does NOT navigate the decision tree (spec 2.1): the ReAct engine does.
-This graph is the state-tracking and trajectory-boundary layer over it - a PASSIVE
-detection-and-push machine (ADR R4, GP8c): it observes the status verbatim the
-harness extracts from a tool call, detects the transition, and pushes the
-corresponding list move plus the injected phase-transition constant. It NEVER
-gates a tool call on the current state and never rejects an illegal transition -
-the no-block invariant. The harness is the sole writer: it drives one compiled
-graph per hunt (OUTLIER-1, no graph-level checkpointer) with each observation
-and reads back the moved state.
+The graph does NOT navigate the decision tree (S4 2.1): the ReAct engine does.
+This graph is the state-tracking and trajectory-boundary layer over it - a
+PASSIVE detection-and-push machine (the no-block invariant): it observes the
+signal the harness reads off the model's tool call, applies the pure
+acceptance rule, and pushes the state move plus the injected transition
+constant. It NEVER gates a tool call on the current state and never rejects a
+signal - the graph records what the model signalled. The harness is the sole
+writer: it drives one compiled graph per hunt (no graph-level checkpointer)
+with each observation and reads the moved state back.
 
-Topology:
-  START -> supervise                      (the state tracker: the sole entry)
-  supervise --Command(goto="detect")--> detect      (an observation is pending)
-  supervise --Command(goto=END)----> END            (idle: hypothesis list exhausted)
-  detect   --Command(goto="push_*")--> push_*       (dispatch by the observed status verbatim)
-  detect   --Command(goto="supervise")-> supervise  (no transition: appends/reads/other calls)
-  push_*   --edge----------------------> supervise  (static: the next push is ready)
+Topology (S4 14.10):
 
-DP-5 style: routing via `Command(goto=...)` ONLY where a node must choose - the
-`supervise` state tracker (observation pending vs idle) and the deterministic
-`detect` dispatcher (which push node, or none). Every other edge is static and
-returns to `supervise`, so the loop restarts naturally per observation. There is
-NO model-gated router: `detect` is a pure function of the observed status
-verbatim (`hunter_state.detect_transition`), never of the state or of a model.
+```
+  START -> supervise
+  supervise --signal pending--> detect
+  supervise --state complete--> END
+  detect    --advance/forward_jump--> advance
+  detect    --trail_only/none--> supervise
+  advance   -> supervise                       (static: the next drive is ready)
+  supervise --no signal--> supervise (stay; the turn carries no signal)
+```
 
-The channels are `hunter_state.HuntState` (every field last-write EXCEPT `trail`,
-the `operator.add` trajectory record, replay only, never authoritative) plus the
-read-only `config` / `tools` driver assemblies and the TRANSIENT per-drive
-observation inputs (`observed_status` / `observed_fault`) the harness hands to
-each `ainvoke`. There is NO `messages` channel: the ReAct turns own their message
-history in the per-hunt session checkpointer.
+The graph holds no model. Routing originates ONLY from `supervise` (the sole
+entry: a pending signal vs the terminal `complete` vs the stay) and `detect`
+(the deterministic dispatcher over the pure acceptance rule); `advance` returns
+to `supervise` on a static edge, so the loop restarts naturally per drive.
 
-Ratifications honoured here:
-- R4 (turn-by-turn driver): the graph holds state + transition logic; the
-  harness drives it once per observed tool-call status. Detection + push only.
-- GP8c (passive lifecycle): no illegal-transition rejection, no steering back.
-- GP1 (router discipline): no query_gate / coverage_gate pass routers; the D1/D2/D3
-  boundaries are tracked as the `phase` flag, driven by tool-call responses.
-- Outer-container correction (ADR, 2026-08-23): the supervisor has NO dispatch
-  node - the hunter is fed `HuntConfig`s from its inbox by the surfer, never by
-  a graph dispatch node. The verdict-consumption workflow graph is OUT OF SCOPE:
-  there is no `waiting-for-verdict` node; END is the idle state the harness
-  returns from, and the verdict graph is a separate workstream.
+The stay carries no destination at all: the drive returns with the channels
+untouched (`Command(goto=[])`) instead of claiming END, because END means the
+chain is over - and the chain is over only on `complete`. Reaching END
+mid-chain would let the ReAct host stop driving the tracker, which is exactly
+the wedged state the forward-jump rule exists to prevent.
 
-The `phase` flag advances on a push (spec 2.3): a `hypothesised` write advances
-`grounding -> hypothesised`, a `verified` / `dropped` write moves to `evaluating`,
-and a `specified` write starts the next loop iteration (`hypothesised`). The
-terminal `concluded` phase is the harness's idle landing, not a graph node.
+The channels are `hunter_state.HuntState` (every field last-write EXCEPT
+`trail`, the `operator.add` trajectory record, replay only, never
+authoritative) plus the TRANSIENT per-drive inputs (`observed_signal` /
+`observed_outcome`) the harness hands each `ainvoke`. There is NO `messages`
+channel: the ReAct turns own their message history in the per-hunt session
+checkpointer.
 
 This module builds (never compiles) the graph; `build_hunter_graph` takes
-injectable node closures (mirroring `orchestrator_graph.build_hunting_graph`) so
-a pass compiles IN-MEMORY and the harness supplies the default passive nodes.
-No driver and no I/O at import (CODING_STANDARD section 6).
+injectable node closures so a pass compiles IN-MEMORY and the harness supplies
+the default passive nodes. No driver and no I/O at import (CODING_STANDARD
+section 6).
 """
 from __future__ import annotations
 
@@ -63,141 +54,115 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 from .hunter_state import (
-    FaultItem,
+    COMPLETE,
     HuntState,
-    TransitionName,
-    TRANSITION_HINTS,
-    detect_transition,
-    push_transition,
+    PhaseSignal,
+    SignalOutcome,
+    advance_state,
+    detect_signal,
 )
 
 logger = logging.getLogger(__name__)
 
-# Stable node names (routed by the state tracker / the deterministic dispatcher).
+# Stable node names (routed by the sole-entry tracker / the deterministic
+# dispatcher).
 _SUPERVISE = "supervise"
 _DETECT = "detect"
-_PUSH_HYPOTHESISED = "push_hypothesised"
-_PUSH_VERIFIED = "push_verified"
-_PUSH_DROPPED = "push_dropped"
-_PUSH_SPECIFIED = "push_specified"
-
-# The phase advance per transition (spec 2.3): the outer loop flag, last-write on
-# `HuntState.phase`. `hypothesise` advances `grounding -> hypothesised` (and stays
-# `hypothesised` on further appends); `verify` / `drop` move to `evaluating`;
-# `specify` starts the next loop iteration back at `hypothesised`. The terminal
-# `concluded` phase is the harness's idle landing, never a graph write.
-_TRANSITION_PHASE: dict[TransitionName, str] = {
-    "hypothesise": "hypothesised",
-    "verify": "evaluating",
-    "drop": "evaluating",
-    "specify": "hypothesised",
-}
-
-# The four push nodes by transition (the `detect` dispatcher's destinations).
-_PUSH_BY_TRANSITION: dict[TransitionName, str] = {
-    "hypothesise": _PUSH_HYPOTHESISED,
-    "verify": _PUSH_VERIFIED,
-    "drop": _PUSH_DROPPED,
-    "specify": _PUSH_SPECIFIED,
-}
+_ADVANCE = "advance"
 
 
 class HunterGraphState(HuntState, total=False):
-    """The compiled graph's channels: `HuntState` plus the per-drive observation
-    and the read-only driver assemblies.
+    """The compiled graph's channels: `HuntState` plus the per-drive inputs.
 
     Every `HuntState` field is last-write EXCEPT `trail` (the `operator.add`
-    trajectory record). `observed_status` / `observed_fault` are TRANSIENT inputs
-    the harness hands each `ainvoke` (one observation per drive); `config` /
-    `tools` are the read-only HuntConfig + tool surface assemblies the driver
-    rides (spec 3). None of these extra channels belong to the pure `HuntState`
-    vocabulary (`hunter_state.py`): they exist only on the compiled graph."""
+    trajectory record). `observed_signal` is the TRANSIENT observation the
+    harness hands each `ainvoke` (one signal per drive) and `observed_outcome`
+    the pure acceptance rule's answer riding `detect -> advance`; both are
+    consumed by the drive. Neither belongs to the pure `HuntState` vocabulary
+    (`hunter_state.py`): they exist only on the compiled graph."""
 
-    observed_status: str | None
-    observed_fault: FaultItem | None
-    config: Any
-    tools: Any
+    observed_signal: PhaseSignal | None
+    observed_outcome: SignalOutcome
+
+
+def route_supervise(state: HunterGraphState) -> str | None:
+    """The sole-entry state tracker's route (S4 14.10), as a pure function.
+
+    - `complete` -> END: the chain is over (the terminal spec-set write landed).
+    - a signal is pending -> `detect`.
+    - otherwise -> None: the turn carries no signal. Nothing moves and the
+      drive returns; END is deliberately NOT claimed mid-chain."""
+    if (state.get("state") or "grounding") == COMPLETE:
+        return END
+    if state.get("observed_signal") is not None:
+        return _DETECT
+    return None
 
 
 def _supervise(state: HunterGraphState) -> Command:
-    """The sole-entry state tracker. An observation is pending -> `detect`;
-    otherwise the harness has stopped driving (the hypothesis list is exhausted)
-    and the graph lands END - the idle state (verdict consumption is the
-    OUT-OF-SCOPE separate graph). Routing ONLY (a single `Command`, DP-5)."""
-    if state.get("observed_status") is not None:
-        return Command(goto=_DETECT)
-    return Command(goto=END)
+    """The state tracker: routing ONLY (DP-5, a single `Command`). The stay
+    carries no destination, so the drive returns with the channels untouched."""
+    return Command(goto=route_supervise(state) or [])
 
 
 def _detect(state: HunterGraphState) -> Command:
-    """The deterministic dispatcher: map the observed status verbatim to its
-    push node (DP-5 Command only - never both paths). "none" (an append, a read,
-    another tool call, an absent status) consumes the observation and returns to
-    the state tracker with NO state move - the passive machine records only what
-    the model signalled on a lifecycle write."""
-    transition = detect_transition(state, state.get("observed_status"))
-    if transition == "none":
-        return Command(goto=_SUPERVISE, update={"observed_status": None})
-    return Command(goto=_PUSH_BY_TRANSITION[transition])
+    """The deterministic dispatcher over the pure acceptance rule (S4 14.5).
 
-
-def _make_push(transition: TransitionName) -> Callable[[HunterGraphState], dict]:
-    """Build a push node: `hunter_state.push_transition` moves the observed fault
-    between the semantic lists (the no-block invariant - a transition is NEVER
-    gated on the current state), the node injects the phase-transition constant
-    (`TRANSITION_HINTS[transition]`, G9 - a constant, never the system prompt),
-    advances the `phase` flag, records the fault as `current_fault`, consumes the
-    observation, and appends one trail entry. The trail is `operator.add`: only
-    the fresh entry returns, so the accumulated trajectory is never re-appended."""
-
-    def push(state: HunterGraphState) -> dict:
-        fault: FaultItem = state.get("observed_fault") or {}
-        new_state = push_transition(state, transition, fault)
-        new_state["injected_constant"] = TRANSITION_HINTS.get(transition)
-        new_state["phase"] = _TRANSITION_PHASE.get(
-            transition, state.get("phase", "grounding"),
+    An advance or forward jump hands the outcome to `advance`; a trail-only
+    signal (an earlier pass's signal) appends its entry here and returns to the
+    tracker, because it never moves the state; a no-signal outcome consumes the
+    observation and returns with nothing appended. The machine never rejects a
+    signal and never raises."""
+    signal = state.get("observed_signal")
+    outcome = detect_signal(state, signal)
+    if outcome["kind"] in ("advance", "forward_jump"):
+        return Command(goto=_ADVANCE, update={"observed_outcome": outcome})
+    if outcome["kind"] == "trail_only":
+        _, _, entry = advance_state(state, outcome, signal)
+        return Command(
+            goto=_SUPERVISE,
+            update={"observed_signal": None, "trail": [entry]},
         )
-        if fault.get("fault_id"):
-            new_state["current_fault"] = fault
-        new_state["observed_status"] = None
-        new_state["trail"] = [{
-            "kind": "transition",
-            "transition": transition,
-            "fault_id": fault.get("fault_id"),
-            "phase": new_state["phase"],
-        }]
-        return new_state
+    return Command(goto=_SUPERVISE, update={"observed_signal": None})
 
-    return push
+
+def _advance(state: HunterGraphState) -> dict:
+    """The push: `hunter_state.advance_state` moves the state, the node injects
+    the exited pass's constant (a constant, never the system prompt) and
+    records the trail entry, then consumes the observation. The trail is
+    `operator.add`: only the fresh entry returns, so the accumulated trajectory
+    is never re-appended. The `specs` channel is last-write and untouched -
+    the spec-store write remains authoritative for the set."""
+    signal = state.get("observed_signal")
+    outcome = state.get("observed_outcome") or {"kind": "none"}
+    new_state, hint, entry = advance_state(state, outcome, signal)
+    return {
+        "state": new_state["state"],
+        "injected_constant": hint,
+        "trail": [entry] if entry is not None else [],
+        "observed_signal": None,
+        "observed_outcome": None,
+    }
 
 
 def build_hunter_graph(
     *,
     supervise_node: Callable[[HunterGraphState], Any] | None = None,
     detect_node: Callable[[HunterGraphState], Any] | None = None,
-    push_nodes: dict[TransitionName, Callable[[HunterGraphState], Any]] | None = None,
+    advance_node: Callable[[HunterGraphState], Any] | None = None,
 ) -> StateGraph:
     """Build (do NOT compile) the state-graph hunter's graph. Injectable node
     closures mirror `build_hunting_graph`; each default node is the PASSIVE
-    detect/push machine above (a raising injected body degrades the drive, never
+    pass tracker above (a raising injected body degrades the drive, never
     aborts the hunt - the harness's fail-open canon). Routing originates ONLY
-    from `supervise` (observation pending vs END) and `detect` (which push, or
-    none) via `Command(goto=...)`; every push returns to `supervise` on a static
-    edge, so the loop restarts naturally per observation."""
-    push_nodes = push_nodes or {}
+    from `supervise` and `detect` via `Command(goto=...)`; `advance` returns to
+    `supervise` on a static edge, so the loop restarts naturally per drive."""
     g = StateGraph(HunterGraphState)
     g.add_node(_SUPERVISE, supervise_node or _supervise)
     g.add_node(_DETECT, detect_node or _detect)
-    g.add_node(_PUSH_HYPOTHESISED,
-               push_nodes.get("hypothesise") or _make_push("hypothesise"))
-    g.add_node(_PUSH_VERIFIED, push_nodes.get("verify") or _make_push("verify"))
-    g.add_node(_PUSH_DROPPED, push_nodes.get("drop") or _make_push("drop"))
-    g.add_node(_PUSH_SPECIFIED, push_nodes.get("specify") or _make_push("specify"))
+    g.add_node(_ADVANCE, advance_node or _advance)
     g.add_edge(START, _SUPERVISE)
-    g.add_edge(_PUSH_HYPOTHESISED, _SUPERVISE)  # static: the next push is ready
-    g.add_edge(_PUSH_VERIFIED, _SUPERVISE)
-    g.add_edge(_PUSH_DROPPED, _SUPERVISE)
-    g.add_edge(_PUSH_SPECIFIED, _SUPERVISE)
+    g.add_edge(_ADVANCE, _SUPERVISE)  # static: the next drive is ready
     return g
 
 
@@ -205,12 +170,10 @@ __all__ = [
     "HunterGraphState",
     "_SUPERVISE",
     "_DETECT",
-    "_PUSH_HYPOTHESISED",
-    "_PUSH_VERIFIED",
-    "_PUSH_DROPPED",
-    "_PUSH_SPECIFIED",
+    "_ADVANCE",
+    "route_supervise",
     "build_hunter_graph",
     "_supervise",
     "_detect",
-    "_make_push",
+    "_advance",
 ]

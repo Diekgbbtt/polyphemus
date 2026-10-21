@@ -18,7 +18,7 @@ It is the prompt form of the mandatory workflow in `../SKILL.md`; the skill is t
 - `<data_root>` - the system's app-owned data root (`<codebase_root>/data/`), visible to you.
 - `<skill_name>` - the fixed project-skill name `authn`.
 - `<meta_skill_path>` - the path to `SKILL.md` beside this file.
-- `<mechanics_skill_path>` - the path to the `steel-browser` operation-mechanics skill (`skills/steel-browser/SKILL.md`), with its `references/` scripts beside it.
+- `<mechanics_skill_path>` - the path to the `steel-browser` operation-mechanics skill (`skills/internal/tools/steel-browser/SKILL.md`), with its `references/` scripts beside it.
 - `<session_name>` - the agent-chosen session name for a browser step.
 - `<session_timeout_ms>` - the session hard timeout in milliseconds.
 - `<authenticated_landing_substr>` - a substring of the authenticated landing URL.

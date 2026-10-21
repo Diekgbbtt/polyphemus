@@ -1,6 +1,9 @@
 # Compaction caching investigation (investigate/compaction-caching)
 
-Investigation-only. No production code was changed. Base: `dev` at 70b7b5e.
+Investigation-only, historical measurement record.
+No production code was changed.
+The `hunting_orchestrator` role measured below was renamed `hunting_threat_modeller` in T10 and its actor pass was deleted in T2b #386.
+Base: `dev` at 70b7b5e.
 Question: is the compaction design as cache-friendly as it could be, and are there
 cheap, safe context-restructuring wins that do NOT introduce other qualitative
 defects?

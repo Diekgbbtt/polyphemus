@@ -5,12 +5,6 @@ tests/integration/test_hunting_agent_contracts.py and are never repeated in
 this tier's red/green loop (testing-strategy.md section 2, the #82 precedent).
 This tier pins the pure functions the harness relies on:
 
-  derive_verdict(terminal_reason, *, clean, init_validation=None)
-      - the D7 vierdict derivation (D67-02, Q3-amended; implementation doc
-        section 2.3/5.2): reads ONLY the terminal reason plus the single
-        `clean` flag (plus `init_validation` for the INIT-rejection case),
-        never per-variant machinery.
-
   derive_technological_axis(card)
       - the deterministic technological axis for the `(fault-class, axis)`
         KB join key (IA-8, D10): derived from the unit's index card, never
@@ -18,69 +12,14 @@ This tier pins the pure functions the harness relies on:
 
   ROLES - the `hunting` role joins the LLM role registry keyed by
       `LLM_HUNTING` (Q1).
+
+The retired D7 verdict derivation (`derive_verdict`) left with T5 (#378): the
+verdict-consumption graph is out of scope and nothing live derived a verdict.
 """
 import pytest
 
-from polymerhus.attack.hunting.hunting_agent import (
-    HypothesisVerdict,
-    derive_technological_axis,
-    derive_verdict,
-)
+from polymerhus.attack.hunting.hunting_agent import derive_technological_axis
 from polymerhus.app.llm.providers import HUNTING_ROLES, ROLES
-
-
-# --- derive_verdict: the ratified Q3 map (implementation doc 2.3) ------------
-
-def test_symptom_confirmed_derives_successful():
-    assert derive_verdict("symptom-confirmed", clean=False) == "successful"
-
-
-def test_space_exhausted_derives_unsuccessful():
-    assert derive_verdict("space-exhausted", clean=True) == "unsuccessful"
-
-
-def test_technical_infeasibility_derives_unsuccessful():
-    # A structural blocker is a refutation, never insufficient-evidence (Q3).
-    assert derive_verdict("technical-infeasibility", clean=False) == "unsuccessful"
-
-
-def test_specific_defence_prevention_derives_unsuccessful():
-    assert derive_verdict("specific-defence-prevention", clean=False) == "unsuccessful"
-
-
-def test_no_symptom_evidence_blocked_derives_insufficient_evidence():
-    # Blocked/unreachable observations: the absence is not established (Q3).
-    assert derive_verdict("no-symptom-evidence", clean=False) == "insufficient-evidence"
-
-
-def test_no_symptom_evidence_clean_derives_unsuccessful():
-    # Clean completed observations: a symptom-absent is established (Q3).
-    assert derive_verdict("no-symptom-evidence", clean=True) == "unsuccessful"
-
-
-def test_budget_timeout_mid_flight_derives_insufficient_evidence():
-    # The loop was cut mid-flight: the absence is not established (Q3).
-    assert derive_verdict("budget-timeout", clean=False) == "insufficient-evidence"
-
-
-def test_budget_timeout_clean_derives_unsuccessful():
-    assert derive_verdict("budget-timeout", clean=True) == "unsuccessful"
-
-
-def test_init_rejection_derives_underspecified_spec():
-    # A pod INIT rejection (tech-infeasibility carrying init_validation)
-    # derives underspecified-spec (Q3/Q5).
-    assert derive_verdict(
-        "technical-infeasibility",
-        clean=False,
-        init_validation=["symptom references an unobservable surface"],
-    ) == "underspecified-spec"
-
-
-def test_unknown_terminal_reason_derives_insufficient_evidence():
-    # Fail-open: an out-of-enum terminal reason cannot be interpreted, so the
-    # derivation is conservative - never a success or a clean absence claim.
-    assert derive_verdict("something-else", clean=True) == "insufficient-evidence"
 
 
 # --- derive_technological_axis: the deterministic joint-key axis (IA-8) ------
@@ -109,67 +48,40 @@ def test_axis_empty_card_defaults():
 
 # --- the hunting roles join the LLM role registry (Q1, #93/#94) --------------
 
-def test_compose_grounding_renders_aggregated_endpoints_in_both_shapes():
-    """#201: the hunter's grounding render spells the aggregated L0 endpoints
-    coherently in BOTH the canonical {"cards": [...]} wrapper and the legacy
-    direct flat shape; an absent slot degrades, never a raise."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        HuntConfig,
-    )
-    from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
-        _compose_grounding,
-    )
+def test_compose_grounding_renders_the_loop_payload():
+    """The first-step grounding renders the loop payload's context (S2 8.2):
+    the unit and loop, the two classes, the trust agreement, the programming
+    fault, the technical sharpening, the evidence and the target context - and
+    never a retired config field or a failure mode."""
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+    from tests.hunting_fixtures import _hunter_payload
 
-    eps = [
-        {"method": "GET", "path": "/cart", "baseurl": "https://a"},
-        {"method": "POST", "path": "/pay", "baseurl": "https://a",
-         "service_slug": "sign-in"},
-    ]
-    wrapper = HuntConfig(
-        hunt_id="h-1", unit_id="Service:slug:a", fault_class="fault-x",
-        rationale="r", research_direction="d",
-        surface_context={"cards": [{"kind": "Service", "aggregated_endpoints": eps}]},
-    )
-    text = _compose_grounding(wrapper)
-    assert "aggregated endpoints:" in text
-    assert "GET /cart (baseurl: https://a)" in text
-    assert "POST /pay (baseurl: https://a) [service: sign-in]" in text
-    flat = HuntConfig(
-        hunt_id="h-2", unit_id="Service:slug:a", fault_class="fault-x",
-        rationale="r", research_direction="d",
-        surface_context={"kind": "Service", "aggregated_endpoints": eps},
-    )
-    text = _compose_grounding(flat)
-    assert "aggregated endpoints:" in text
-    assert "GET /cart (baseurl: https://a)" in text
-    bare = HuntConfig(
-        hunt_id="h-3", unit_id="Service:slug:a", fault_class="fault-x",
-        rationale="r", research_direction="d", surface_context={},
-    )
-    assert "no adapted index cards" in _compose_grounding(bare)
+    payload = _hunter_payload()
+    text = _compose_grounding(payload)
+    assert "You are dispatched to hunt Service:slug:a" in text
+    assert "Loop: loop-1" in text and "Service-slug-a__loop-1" in text
+    assert "Canonical class: IDOR" in text
+    assert "web-vulnerability suite class: idor" in text
+    assert "An anonymous caller reads another user's item." in text
+    assert "improper authorisation on the item lookup" in text
+    assert "ta-1" in text and "ia-1" in text
+    assert "GET /api/a" in text
+    for gone in ("HuntConfig", "failure_modes", "payload_vector_space",
+                 "technique_primitives", "prior_hunt_insights"):
+        assert gone not in text
 
 
-def test_config_gaps_does_not_flag_the_direct_flat_shape():
-    """#201: the O3 gap flag accepts the direct flat shape (no 'cards' key) -
-    it only flags a genuinely absent surface context."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        HuntConfig,
-    )
-    from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
-        _config_gaps,
-    )
+def test_payload_gaps_flags_the_missing_grounding():
+    """The O3 gap flags name each missing payload part; a complete payload
+    flags nothing."""
+    from polymerhus.attack.hunting.hunting_agent import _payload_gaps  # noqa: PLC0415
+    from tests.hunting_fixtures import _hunter_payload
 
-    flat = HuntConfig(
-        hunt_id="h-1", unit_id="Service:slug:a", fault_class="fault-x",
-        rationale="r", research_direction="d",
-        surface_context={"kind": "Service", "aggregated_endpoints": []},
-    )
-    assert all("surface context" not in g for g in _config_gaps(flat))
-    bare = HuntConfig(
-        hunt_id="h-2", unit_id="Service:slug:a", fault_class="fault-x",
-        rationale="r", research_direction="d", surface_context={},
-    )
-    assert any("surface context missing" in g for g in _config_gaps(bare))
+    assert _payload_gaps(_hunter_payload()) == []
+    gaps = _payload_gaps({})
+    assert any("unit identity" in g for g in gaps)
+    assert any("programming fault" in g for g in gaps)
+    assert any("trust agreement" in g for g in gaps)
 
 
 def test_hunting_roles_are_registered_off_app_boot():
@@ -177,76 +89,11 @@ def test_hunting_roles_are_registered_off_app_boot():
     hunting module bootstrap), never in the app-boot ROLES (operator ruling
     2026-08-06). Both are `session` agents."""
     hunting_ids = {r.role_id for r in HUNTING_ROLES}
-    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter",
-                           "pod_runner", "pod_triager"}
+    assert hunting_ids == {"hunting_threat_modeller",
+                           "hunting_hunter", "pod_runner", "pod_triager"}
     assert not (hunting_ids & {r.role_id for r in ROLES})  # off app boot
     assert all(r.agent_mode == "session" for r in HUNTING_ROLES)
 
-
-def test_hypothesis_verdict_vocabulary_is_four_valued():
-    assert set(HypothesisVerdict.__args__) == {
-        "successful", "unsuccessful", "insufficient-evidence", "underspecified-spec",
-    }
-
-
-# --- #202: the lean hunter render (surviving fields only, three-goal order) ---
-
-def test_compose_grounding_renders_only_surviving_fields_goal_ordered():
-    """#202 - the hunter render (`_compose_grounding`) shows ONLY the surviving
-    fields, ordered by the three goals (feasibility -> the initial
-    concretisation -> further directions); the redundant slots' lines are gone."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        HuntConfig,
-    )
-    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
-
-    config = HuntConfig(
-        hunt_id="hunt-1", unit_id="Service:slug:a", fault_class="fault-x",
-        status="ratified",
-        rationale="r",
-        research_direction="CSRF feasibility reasoning",
-        vulnerability_class="CSRF",
-        surface_context={"kind": "Service", "fault_evidence": ["llm: witness"]},
-        observed_defences=["WAF blocks XSS payloads"],
-        preconditions=["authenticated session obtainable"],
-        prior_hunt_insights=[{"kind": "prior_verdict", "verdict": "unsuccessful"}],
-    )
-    text = _compose_grounding(config)
-    # the surviving fields render
-    assert "Orchestrator's fault-matching rationale: r" in text
-    assert "Vulnerability class (the initial concretisation): CSRF" in text
-    assert "research direction (feasibility): CSRF feasibility reasoning" in text
-    assert "L0 fault-applicability evidence: llm: witness" in text
-    assert "Observed target defences" in text and "WAF blocks XSS payloads" in text
-    assert "Test preconditions" in text and "authenticated session obtainable" in text
-    assert "Prior-hunt insights" in text
-    # the #298 removals never render
-    for gone in ("technique_primitives", "adversarial_capabilities",
-                 "tool_registry", "assumptions", "target caveats",
-                 "sub-fault reflection"):
-        assert gone not in text.lower()
-    # the three-goal order: the feasibility fields precede the further-directions ones
-    assert text.index("research direction") < text.index("Prior-hunt insights")
-
-
-def test_config_gaps_matches_the_new_shape():
-    """#202 - `_config_gaps` flags the renamed `observed_defences` and the
-    merged `preconditions` on their new names, never the old vocabulary."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        HuntConfig,
-    )
-    from polymerhus.attack.hunting.hunting_agent import _config_gaps  # noqa: PLC0415
-
-    config = HuntConfig(
-        hunt_id="hunt-1", unit_id="Service:slug:a", fault_class="fault-x",
-        rationale="", research_direction="",
-        surface_context={}, observed_defences=[], preconditions=[],
-    )
-    gaps = _config_gaps(config)
-    assert any("observed" in g for g in gaps)
-    assert any("preconditions" in g for g in gaps)
-    # the renamed slot's gap fires on the new field, never the old name
-    assert not any("caveats" in g for g in gaps)
 
 
 # --- the skill rides the system channel (spec-vs-code divergence fix) --------
@@ -255,19 +102,6 @@ def test_config_gaps_matches_the_new_shape():
 # [SystemMessage(skill), HumanMessage(prompt)] composed-turn precedent,
 # `llm.build_gate_reason_fn`); the harness serves it as `system_prompt=` on
 # every `arun_session_turn`, never inside the first HumanMessage.
-
-
-def _skill_hunt_config():
-    """A minimal HuntConfig for the system-channel pins."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        HuntConfig,
-    )
-
-    return HuntConfig(
-        hunt_id="hunt-sys", unit_id="Service:slug:a", fault_class="fault-x",
-        rationale="r", research_direction="d",
-        surface_context={"kind": "Service"},
-    )
 
 
 def _run_stubbed_dispatch(monkeypatch, turns, *, overview=None):
@@ -302,7 +136,9 @@ def _run_stubbed_dispatch(monkeypatch, turns, *, overview=None):
         run_id="run-sys", project_id="proj-a",
         checkpointer=InMemorySaver(), middleware=[], observe=False,
         overview_fn=lambda project_id: overview)
-    return dispatch(_skill_hunt_config()), calls
+    from tests.hunting_fixtures import _hunter_payload  # noqa: PLC0415
+
+    return dispatch(_hunter_payload()), calls
 
 
 def test_skill_body_rides_system_prompt_not_first_human_message(monkeypatch):
@@ -357,7 +193,7 @@ def test_first_step_carries_the_dedicated_overview_message(monkeypatch):
     grounded = first_turn[1].content
     assert "Grounded in the application overview above" in grounded
     assert "APPLICATION OVERVIEW" not in grounded
-    assert "fault-x" in grounded  # the grounding body still rides the message
+    assert "fault-1" in grounded  # the loop grounding still rides the message
 
 
 def test_first_step_stays_single_message_without_an_overview(monkeypatch):
@@ -380,7 +216,7 @@ def test_skill_includes_the_off_path_examples_companion():
 
     skill = _load_hunting_agent_skill()
     assert "Hunting-agent worked examples" in skill
-    assert "Example 2 - coverage re-entry" in skill
+    assert "Example 2 - well-formedness re-entry" in skill
     assert "Example 4 - worst case" in skill
     assert "read `examples.md`" not in skill
 
@@ -401,7 +237,7 @@ def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
     assert _load_hunting_agent_skill() not in first_human
     grounding = first_human.index("You are dispatched to hunt")
     surface = first_human.index("Tool surface")
-    state = first_human.index("phase:")
+    state = first_human.index("state: grounding")
     protocol = first_human.index("Each turn you either call")
     assert grounding < surface < state < protocol
 
@@ -409,7 +245,7 @@ def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
 def test_two_step_scripted_dispatch_terminates_with_terminal_assembly(
         monkeypatch):
     """(c) a two-step scripted-model dispatch still terminates with the same
-    terminal assembly (no derived verdict, concluded phase in the feedback)."""
+    terminal assembly (no derived verdict, the tracked pass in the feedback)."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
 
     result, _ = _run_stubbed_dispatch(monkeypatch, [
@@ -420,9 +256,9 @@ def test_two_step_scripted_dispatch_terminates_with_terminal_assembly(
         {"answer": "candidate set exhausted",
          "message": AIMessage(content="candidate set exhausted")},
     ])
-    assert result.hypothesis_verdict is None
-    assert "phase: concluded" in result.feedback
-    assert "candidate set exhausted" in result.feedback
+    assert result["state"] == "grounding"
+    assert "state: grounding" in result["feedback"]
+    assert "candidate set exhausted" in result["feedback"]
 
 
 def test_resumed_thread_second_turn_still_carries_the_skill(monkeypatch):
@@ -454,7 +290,7 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
     the grounding without it - on BOTH turns of a resumed thread."""
     from tests.hunting_fixtures import (  # noqa: PLC0415
         _answer,
-        _hunt_config,
+        _hunter_payload,
         _tool_call,
         build_hunter_agent,
         build_memory_store,
@@ -486,9 +322,9 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
                                            "concern": "c"}),
                    _answer("done")],
             seen=seen)
-        result = agent(_hunt_config())
-    assert result.hypothesis_verdict is None
-    assert "phase: concluded" in result.feedback
+        result = agent(_hunter_payload())
+    assert result["state"] is not None
+    assert "state: grounding" in result["feedback"]
     assert len(seen) == 2
     for turn_messages in seen:
         assert turn_messages[0] == f"{skill}\n\n{index}"  # the leading SystemMessage
@@ -512,7 +348,7 @@ def _raw_error_hunt(tmp_path, exc):
 
     from tests.hunting_fixtures import (  # noqa: PLC0415
         _RaisingModel,
-        _hunt_config,
+        _hunter_payload,
         _openai_rate_limit_error,
         build_memory_store,
     )
@@ -527,7 +363,7 @@ def _raw_error_hunt(tmp_path, exc):
         checkpointer=InMemorySaver(), middleware=[], observe=False,
         overview_fn=lambda project_id: None,
     )
-    return dispatch(_hunt_config())
+    return dispatch(_hunter_payload())
 
 
 def test_raw_rate_limit_error_at_the_turn_seam_pauses_the_run(tmp_path):
@@ -555,9 +391,9 @@ def test_raw_timeout_error_at_the_turn_seam_pauses_the_run(tmp_path):
 
 def test_non_provider_raw_error_still_degrades_fail_open(tmp_path):
     """#312: no over-triggering - a genuine non-provider internal error keeps
-    the O3/C2/C3 fail-open degrade (a spec-less DispatchResult), never an
+    the O3/C2/C3 fail-open degrade (a spec-less outcome), never an
     untyped raise misclassified as a provider failure."""
     result = _raw_error_hunt(tmp_path, RuntimeError("hypothesis store exploded"))
-    assert result.hypothesis_verdict is None
-    assert "hunter turn unavailable" in result.feedback
-    assert "hypothesis store exploded" in result.feedback
+    assert result["state"] == "grounding"
+    assert "hunter turn unavailable" in result["feedback"]
+    assert "hypothesis store exploded" in result["feedback"]

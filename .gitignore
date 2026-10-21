@@ -104,3 +104,10 @@ eval/kbs/*/auth/
 # snapshot, and the per-turn prompt/transcript logs. Per-run runtime, never
 # source; a run's state is what `resume` and `status` read.
 .bootstrap-runs/
+
+# Per-project skill procedures (the target-specific-procedure branch): the
+# bootstrapper's authn/sign-in/sign-up procedures, the evolved skill versions,
+# the lesson shards, the revisions, and the evolution pass records. Per-project
+# runtime data, never source; the branch layout is documented by its README.
+/skills/target-specific-procedure/*
+!/skills/target-specific-procedure/README.md

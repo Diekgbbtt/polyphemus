@@ -3,9 +3,9 @@
 Source of truth: ticket #237's acceptance shape, read through the operator's
 own eyes: an external bootstrapper (the subagent this harness dispatches)
 follows `skills/meta/authn-skill-writing/SKILL.md` against a live target and
-leaves two artifacts on the app-owned data root - the auth store bucket
-(`data/<project_id>/auth/`) and the per-project authn skill
-(`data/<project_id>/skills/authn/SKILL.md`).
+leaves two artifacts: the auth store bucket on the app-owned data root
+(`data/<project_id>/auth/`) and the per-project authn skill in the live
+skills root (`skills/target-specific-procedure/<project_id>/authn/SKILL.md`).
 
 These are WALKTHROUGH predicates, not unit tests: they read the terminal
 quantities back out of the real datastore the run wrote (the YAML bucket and
@@ -42,7 +42,9 @@ from polymerhus.app.steel_session_state import state_path
 REPO = Path(__file__).resolve().parents[2]
 PROJECT_ID = os.environ.get("AUTHN_E2E_PROJECT_ID", "authn-e2e")
 DATA = REPO / "data" / PROJECT_ID
-SKILL_PATH = DATA / "skills" / "authn" / "SKILL.md"
+SKILL_PATH = (
+    REPO / "skills" / "target-specific-procedure" / PROJECT_ID / "authn" / "SKILL.md"
+)
 OVERVIEW_PATH = DATA / "auth" / "overview.yaml"
 CREDENTIALS_PATH = DATA / "auth" / "credentials.yaml"
 META_SKILL = REPO / "skills" / "meta" / "authn-skill-writing" / "SKILL.md"

@@ -1,0 +1,113 @@
+loop_id: loop-2
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: xss
+class_skill: xss
+slice:
+  source: trust_agreement
+  statement: "TA-2: the shell treats catalogue record fields (title, author, version, id) as safe to place into shell HTML - TurboGrid assigns formatter output to innerHTML and the shell formatters interpolate fields into markup strings - while the data definition (remote catalogue display text) does not match the privilege of its use (executable markup context). Boundary crossing: remote/local record -> shell origin DOM (A-1 -> F-1 -> V-2)."
+discrimination:
+  axes_used: [tech-misconfiguration, chaining-advanced, payload-vector]
+  boundary: "record field x escaping regime x sink element (raw untransformed fields through the formatter contract; the transformed title through the title-link element; the getmappings node records through the flyover body). No spec differs from a sibling by a payload string."
+  narrow_broad_tradeoff: "Narrow on field set (the three regimes the payload evidences) and deep per regime, rather than a wide payload catalogue across every column; one uncovered field (id) is named rather than speculatively covered."
+specs:
+  - spec_id: loop-2-s1
+    label: "raw author and version fields through the TurboGrid formatter contract"
+    sub_slice: "Author and version strings - returned untransformed by the server transform (IA-8) - interpolated by the row formatters into markup strings that TurboGrid assigns to innerHTML; owns the raw-field regime in the list rows."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        field_regime: "server returns author/version untransformed (IA-8: only description/name/title pass sanitize_tag + markdown)"
+        sink: "turbogrid.esm.js renderNodeContent t.innerHTML = e; author/version formatter HTML strings"
+        column_contract: "description column declares no formatter (identity); shell formatters build HTML strings"
+        patterns_used: ["context classification (HTML node vs string interpolation)", "identify sinks innerHTML/outerHTML (parent attack surface)", "render-path checks across client render"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getlist?mode=cache&skip_update=true (default channel)"
+      technology: "ComfyUI-Manager V3.37 client modules served same-origin (/extensions/comfyui-manager/custom-nodes-manager.js, turbogrid.esm.js)"
+      parameter: "record fields author, version inside node_packs[pack_id]"
+      method: GET
+      sink: "grid row cell: formatter result -> node.innerHTML"
+    discrimination_axis: tech-misconfiguration
+    discrimination_note: "Nearest sibling loop-2-s2: both reach an innerHTML sink, but this spec owns the untransformed-field regime (angles survive verbatim) and the formatter/column contract of TurboGrid; s2 owns the transformed-title regime whose payloads are converter-generated."
+    chaining_advanced_note: null
+    proxy_technique: "Control the consumed catalogue record (community node_db contribution, compromised channel repo, or a channel the operator adds), place markup in author/version, and open the manager catalogue; the row formatter interpolates the string and the grid assigns it to innerHTML with no escaping."
+    verification_symptoms:
+      - "an author or version value containing an element renders as a parsed node in the row (element present in the DOM where text was supplied)"
+      - "an event-handler attribute on that node is attached and fires on the matching event"
+      - "the sink receives the formatter string unescaped (instrumented innerHTML argument shows live markup)"
+    payload_vector_space: {method: GET, path: /customnode/getlist, parameter: "mode=cache|remote|local; record fields author, version", body: null, headers: "record supplied through the channel JSON; no request-side injection needed"}
+    assumptions: ["the author/version columns carry formatter interpolation into markup strings as F-1's evidence states", "the attacker controls or contributes to at least one consumed record (community listing, compromised channel, or operator-added channel)"]
+    rationale: "IA-8 leaves author/version untransformed and the grid's innerHTML contract trusts formatter output; the record is community-contributed by design, so a string with markup crosses into the shell origin's DOM unescaper on the next catalogue open."
+    interpretation_guidance: "symptom-present = the supplied markup parses into nodes in the row and an attached handler fires on its event. symptom-absent = the value renders as literal text or is stripped before insertion (true negative: encoding held). A CSP that blocks handler execution while parsing still occurs is inconclusive for the parsing claim, and an injected element without a handler proves parsing only; record both separately."
+  - spec_id: loop-2-s2
+    label: "transformed title through the title-link element and the failure dialog"
+    sub_slice: "The pack title - escaped by sanitize_tag then re-marked-up by the markdown converter (IA-8) - assigned to link.innerHTML inside the `<b>` wrapper of the row title and interpolated into the import-failure dialog message; owns the transformed-title regime and the title element as sink."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        field_regime: "title passes sanitize_tag (</> to entities) then convert_markdown_to_html, which re-introduces anchors with unvalidated href"
+        sink: "title formatter link.innerHTML = `<b>${title}</b>`; handleImportFail dialog interpolation of rowItem.title"
+        residual_vectors: "converter-generated anchor markup (href value, target attribute) inside the escaped text"
+        patterns_used: ["mutation/sanitizer re-parse reasoning (parent filter-bypass section)", "context classification: element content and attribute contexts of the generated anchor", "sink-locus confirmation"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getlist?mode=cache&skip_update=true"
+      technology: "V3.37 populate_markdown + convert_markdown_to_html (regex anchor pattern [a/(text)](url) -> <a href='url' target='blank'>)"
+      parameter: "record field title"
+      method: GET
+      sink: "row title link innerHTML; import-failure dialog message string"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-2-s1: same F-1 sink but a different escaping regime (angle brackets escaped, converter re-introduces markup) and a different sink element (the title link, the dialog string). Payloads are converter-shaped, not raw tags, so the two specs exercise distinct failure modes."
+    chaining_advanced_note: "Structural: the class skill's stored variant splits sub-slices by persistence boundary and sink locus, not by field or escaping regime. The regime difference (raw field vs escaped-then-re-marked-up field) changes which failure mode is exercisable, so the split is carried structurally: raw-tag injection is impossible here and converter-anchor injection is impossible in s1."
+    proxy_technique: "Control the consumed record's title, embed the markdown anchor pattern with an attacker URL, and let the server transform hand the shell a live anchor inside the title; the shell wraps it in `<b>` and parses it as markup."
+    verification_symptoms:
+      - "the title cell contains an anchor element built by the converter (not present as text in the raw record)"
+      - "the anchor's href carries the attacker-chosen URL and the click navigates to it"
+      - "the same title string appears parsed in the import-failure dialog message"
+    payload_vector_space: {method: GET, path: /customnode/getlist, parameter: "mode=cache|remote; record field title carrying the [a/(text)](url) pattern", body: null, headers: "record supplied through the channel JSON"}
+    assumptions: ["convert_markdown_to_html applies to the title field as IA-8 states and inserts the URL into href unvalidated", "the dialog message is composed through an HTML-string sink; if it is text-only, that sub-sink simply yields a negative"]
+    rationale: "The title travels through a transform that escapes angle brackets and then re-introduces markup from its own pattern; the shell then parses the result as HTML in the title element, so the transform's output - not the raw record - carries the injection primitive into the sink."
+    interpretation_guidance: "symptom-present = an anchor (or other converter-generated markup) appears parsed in the title element with the attacker URL bound. symptom-absent = the title renders as plain text with no generated element and the URL is inert. A stripped anchor with visible text is the sanitizer holding (true negative). Href-scheme execution is a separate claim and belongs to the URL-scheme loop; here record only that the element and its attributes are live."
+  - spec_id: loop-2-s3
+    label: "getmappings node records through the flyover body template"
+    sub_slice: "extension-node-map.json node records (title, description, hash, conflicts) delivered by GET /customnode/getmappings and composed into the flyover bodyHtml string before $flyoverBody.innerHTML; owns the second data flow (DF-3) and the flyover body as sink."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        data_flow: "DF-3: extension-node-map.json -> getmappings -> node list per pack -> flyover bodyHtml -> $flyoverBody.innerHTML"
+        fields: "node title, description, hash, conflicts"
+        sink: "flyover body template string (evidence: $flyoverBody.innerHTML = bodyHtml; node preview builds <div class=\"cn-preview-description\">${nodeItem.description}</div>)"
+        patterns_used: ["two-phase write-then-retrieve mapping (stored variant)", "sink instrumentation", "retrieval-confirmation by sink locus"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getmappings?mode=cache&skip_update=true"
+      technology: "V3.37 flyover builder in custom-nodes-manager.js; 1.55MB mapping object observed"
+      parameter: "node records inside the per-pack mapping value"
+      method: GET
+      sink: "flyover body innerHTML (template-composed bodyHtml), reached by opening a pack flyover"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-2-s2: s2 owns the getlist pack title in its row element; this spec owns the getmappings node record flow delivered through a second endpoint and an interaction-gated flyover, so reachability and carrier both differ."
+    chaining_advanced_note: null
+    proxy_technique: "Control the node records served for a pack (mapping source built from extension-node-map.json), then induce the retrieval view - open the pack flyover or the missing-node resolution flow - so the composed bodyHtml is assigned to innerHTML with the node strings parsed."
+    verification_symptoms:
+      - "opening the flyover parses the record's markup inside the body (element present in the flyover DOM)"
+      - "the record string is concatenated into bodyHtml before assignment (instrumented template shows the record inside the HTML string)"
+      - "the grid row itself may render inert while the flyover parses the same value, proving the second sink"
+    payload_vector_space: {method: GET, path: /customnode/getmappings, parameter: "mode=cache|local|remote; node record fields inside the mapping object", body: null, headers: "record supplied through the mapping source"}
+    assumptions: ["the flyover composes node records into an HTML string (bodyHtml) as F-1's evidence states", "a consumer can influence the mapping content for a pack (channel/mapping source control)"]
+    rationale: "DF-3 carries the same class of untrusted strings through a second flow that never shares the getlist transform; the flyover builds an HTML string and assigns it to innerHTML, so any node field crosses into the shell origin DOM at retrieval time."
+    interpretation_guidance: "symptom-present = the flyover shows the record's markup parsed (element and attached handler live). symptom-absent = the flyover renders the record as text or omits it (true negative). Absence of execution with an element present proves parsing without execution; a CSP violation report with parsed markup is a positive for parsing and inconclusive for execution."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the raw author/version regime in the rows; s2 owns the transformed title in the title element and dialog; s3 owns the getmappings flyover flow. Fields, regimes and sinks are disjoint; no spec differs from a sibling by a payload string."
+  coverage:
+    status: partial
+    uncovered:
+      - "the record field 'id': named in V-2's field list but no sink locus for id is evidenced in the payload, so no spec is minted for it."
+      - "DF-6 merge fields (stars/last_update, extras/favorite flags): DF-6 consumes them as numeric grid-formatter inputs with no evidenced HTML sink."
+    notes: "Covered: the three evidenced field/regime/sink combinations (raw author/version, transformed title, getmappings flyover records). The named gaps are payload-evidence gaps, not set defects; they are listed rather than closed with speculative specs."
+  well_formedness_statement: "Three specs over disjoint sub-slices: field regime x sink (raw fields in the row, transformed title in the title element, getmappings node records in the flyover). Overlap is absent - the regimes route different injection primitives to different sinks and no spec is a payload-string variant. Coverage is partial only where the payload itself lacks a sink locus (the id field and the DF-6 merge fields); every evidenced region of TA-2's record-field markup surface is owned."
+degradations:
+  - "V-2's class names the field 'id' but the payload evidences no sink for it; recorded as an uncovered region instead of a speculative spec."
+  - "The flyover dialog and preview sink wiring is evidenced at template level (bodyHtml string, preview description div); exact element paths beyond that are assumed and named per spec."

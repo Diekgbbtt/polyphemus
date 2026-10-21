@@ -56,4 +56,14 @@ def current_conversation_id() -> str:
     return _CONVERSATION_ID.get() or _PROCESS_CONVERSATION_ID
 
 
-__all__ = ["conversation_scope", "current_conversation_id"]
+def bound_conversation_id() -> str | None:
+    """The BOUND conversation id, or None when no session scope is active.
+
+    Unlike `current_conversation_id` this never falls back to the
+    process-stable id: provenance callers (the skill-lesson tool, #232 D232-2/11)
+    must distinguish "a real session thread is bound" from "outside any
+    session", so a fallback uuid is never stamped as an agent session."""
+    return _CONVERSATION_ID.get()
+
+
+__all__ = ["bound_conversation_id", "conversation_scope", "current_conversation_id"]

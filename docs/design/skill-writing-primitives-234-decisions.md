@@ -1,5 +1,9 @@
 # Skill-writing primitives - implementation decisions (#234)
 
+*Historical decisions (partly superseded).*
+The fixed hunting skeleton S3 named (`hunt_configs/`) retired in T4b #387, and the fault-KB was DELETED in T10 #383.
+The skill primitives remain live; the retired paths are a record.
+
 The grilled decisions behind the #234 build, recorded per the workflow (Step 2a/3).
 Base description: the body of issue #234; prior draft `progressive-skill-lifecycle-system.md` (the decision ledger the spec refines).
 Companion specs: `skills-typed-surface-spec.md` and `skill-runtime-loading-222-decisions.md` (the #222 loader/frontmatter rules, which govern).
@@ -126,5 +130,5 @@ Built and run: the three root constants (`HUNT_STORE_ROOT`, `HUNTER_MEMORY_ROOT`
 The #221 stream introduced the meta family as a first-class taxonomy class: the two protocol/authoring skills moved from flat catalogue entries to `skills/meta/meta-write-skill/` and `skills/meta/meta-usage-skill/`, and the usage-protocol exemption became a PATH rule, `is_meta_skill(name)` (`app/llm/skills.py`: any loader path under `meta/`), replacing the name allowlist.
 This SUPERSEDES the flat-entry statements in D234-9 and D234-11: any skill placed under `skills/meta/` is exempt by construction, which is how the task-specific meta skill `meta/authn-skill-writing` lands exempt.
 The L1 skill index also became project-scoped: `render_skill_index(names, project_id=..., store=...)` resolves through the same store seam the loader uses (`SkillStore.meta`, project bundle first), and `skill_index_middleware` reads `project_id` from the native invocation context.
-A project-authored skill with no catalogue copy (e.g. the per-project `authn` procedure) is therefore collected, and renders its frontmatter description, only when its bundle exists at `<data_root>/<project_id>/skills/<name>/SKILL.md`; a missing or misplaced bundle is not collected (fail-open).
+A project-authored skill with no catalogue copy (e.g. the per-project `authn` procedure) is therefore collected, and renders its frontmatter description, only when its bundle exists at `skills/target-specific-procedure/<project_id>/<name>/SKILL.md`; a missing or misplaced bundle is not collected (fail-open).
 Project scope is tool-owned (`config.PROJECT_ID`, resolved lazily in the factories), so no agent harness threads identity; the auth capability binds through the same seam (`app/auth/seams.py::auth_capable_binding`). Full records: 221-D18 and `auth-store-220-decisions.md` D220-9.

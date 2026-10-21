@@ -355,7 +355,7 @@ def _parser() -> argparse.ArgumentParser:
     # --- the surfer loop (#275) -----------------------------------------------
     surfer_parser = sub.add_parser(
         "surfer",
-        help="assert instance state and recover a cap-reached or failed run",
+        help="assert instance state and recover a budget-stopped or failed run",
     )
     _common_args(surfer_parser)
     surfer_parser.add_argument(
@@ -662,6 +662,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         operator_kb=kb,
         data_dir=data_dir,
         auth_surface=auth_surface,
+        recon_jobs=run.target_config.recon_jobs,
         preloaded_hunting_artifacts=run.preloaded_hunting_artifacts,
         token_budget=run.token_budget,
         target_run_id=target_run_id,

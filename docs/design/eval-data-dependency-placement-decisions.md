@@ -24,7 +24,7 @@ All four are `POST`, project path-scoped (the codebase convention; `project_id` 
 
 | Method | Path | `file` part | Landing |
 |---|---|---|---|
-| POST | `/projects/{project_id}/data-dependencies/authn-skill` | a `.tar.gz`/`.zip` bundle | `<data_root>/<project_id>/skills/authn/` (`SKILL.md` + `references/`) |
+| POST | `/projects/{project_id}/data-dependencies/authn-skill` | a `.tar.gz`/`.zip` bundle | `skills/target-specific-procedure/<project_id>/authn/` (`SKILL.md` + `references/`) |
 | POST | `/projects/{project_id}/data-dependencies/auth-overview` | `overview.yaml` bytes | `<data_root>/<project_id>/auth/overview.yaml` |
 | POST | `/projects/{project_id}/data-dependencies/auth-credentials` | `credentials.yaml` bytes | `<data_root>/<project_id>/auth/credentials.yaml` |
 | POST | `/projects/{project_id}/data-dependencies/l1` | `operator_kb.md` bytes | the L1 graph (no file) |

@@ -51,6 +51,22 @@ services:
       # Live source: edits apply without a rebuild (the tier tests the edited
       # tree, never the baked image layer). The proxy never reloads (ADR D1).
       AGENT_UVICORN_ARGS: "--reload --reload-dir /srv/src --reload-dir /srv/lightrag"
+      # T10 closed the old LLM_HUNTING_ORCHESTRATOR alias. The sibling e2e stack
+      # supplies the new role explicitly; the main .env still carries the old
+      # key, and the test stack must not invent a resume path.
+      # The gateway is the production path. The main .env carries the old
+      # pre-T10 role name and the old v4-flash ids; the overlay supplies the
+      # current role and the catalog id the gateway key is scoped to.
+      # The current OpenCode Go key is operator-supplied for this test stack
+      # only; the main .env stays untouched.
+      API_KEY_OPENCODE_GO: ${POLYPHEMUS_E2E_OPENCODE_GO_KEY:-}
+      LLM_HUNTING_THREAT_MODELLER: ${LLM_HUNTING_THREAT_MODELLER:-opencode-go:deepseek-v4.1-flash}
+      LLM_HUNTING_HUNTER: ${LLM_HUNTING_HUNTER:-opencode-go:deepseek-v4.1-flash}
+      LLM_POD_RUNNER: ${LLM_POD_RUNNER:-opencode-go:deepseek-v4.1-flash}
+      LLM_POD_TRIAGER: ${LLM_POD_TRIAGER:-opencode-go:deepseek-v4.1-flash}
+      # The app-owned skill-evolution role is validated at app boot; the e2e
+      # stack must supply it even when the main .env predates the skills merge.
+      LLM_SKILL_EVOLVER: ${LLM_SKILL_EVOLVER:-opencode-go:deepseek-v4.1-flash}
     env_file:
       - path: ${POLYPHEMUS_MAIN_ENV:-../../.env}
         required: false

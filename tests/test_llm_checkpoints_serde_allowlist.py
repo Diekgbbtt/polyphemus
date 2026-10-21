@@ -23,9 +23,6 @@ ENVELOPES = (
     ("polymerhus.recon.control.authn_loop", "GatewayVerdict"),
     ("polymerhus.recon.domain.pod", "_ObservationBatch"),
     ("polymerhus.attack.hunting.pod.agents", "TriagerDecision"),
-    ("polymerhus.attack.hunting.hunt_orchestrator", "GateDecision"),
-    ("polymerhus.attack.hunting.hunt_orchestrator", "NoteDecision"),
-    ("polymerhus.attack.hunting.hunt_orchestrator", "RatifyDecision"),
 )
 
 

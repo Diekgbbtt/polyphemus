@@ -1,5 +1,9 @@
 # Executor Prompt - Build the CWE/OWASP Web-App Fault Knowledge Base (phase-1 fault vocabulary, #66)
 
+*Historical prompt (superseded).*
+The fault-KB workstream it specifies was DELETED in T10 (#383), with `fault_kb.py` and `data/hunting/fault-kb.yaml`.
+It is retained as the record of that authoring task, not as a live brief.
+
 *This file is the operating prompt for the executor agent that implements the fault-class knowledge base described in [issue #66](https://github.com/Diekgbbtt/polyphemus/issues/66). It is written to be pasted as the agent's mission brief. It is grounded in the running code, the ticket, the domain/architecture/coding-standard docs, and the loop discipline; read §1 and §2 before doing anything.*
 
 ---

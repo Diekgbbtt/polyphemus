@@ -4,8 +4,9 @@ catalogue (`docs/design/hunting-wiring-assertions.md`).
 The catalogue drives the hunting-wiring runtime plane under REAL production
 conditions against a live agent container (the "target"), with the live
 `hunting_runs` Postgres row (the target postgres is already up) and fixtures
-seeded through the REAL store APIs (`HuntStore`, `HunterMemoryStore`,
-`PodMemoryStore`).
+seeded through the REAL store APIs (`HunterMemoryStore`, `PodMemoryStore`;
+the retired hunt-config family has no read-back: the threat-model produced
+loop files are read physically to prove what the run actually dispatched).
 
 Two targets selectable via `WIRING_TARGET`:
 - `sibling` (default): a distinct agent container (`agent-hw`, built FROM THIS
@@ -211,79 +212,39 @@ def create_project(client, name: str) -> str:
 # the caller's side of the mount.
 
 
-def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
-                     vulnerability_class: str, status: str = "ratified",
-                     **overrides) -> str:
-    """Write ONE hunt config through `HuntStore.write_config` (the real store
-    API) into the produced family; returns its semantic `config_key`.
-
-    The seeded body MUST satisfy the real `HuntConfig.model_validate` surface
-    (the surfer refuses an unratifiable ratified config and the run wedges on
-    the retained produced item - the at-least-once contract), so the required
-    `hunt_id` and the top-level `rationale` / `research_direction` slots ship by
-    default, mirroring the orchestrator mint. It also carries a real adapted
-    surface card + caveats
-    + a tool-registry entry so a dispatched HUNTER runs genuine multi-turn
-    research (a bare 4-key config makes the graph short-circuit in ~1-2s and
-    no live hunter session is ever observable - the same INIT defect the pod
-    seeds were fixed for)."""
-    from polymerhus.attack.hunting.hunt_store import HuntStore
-    data = {
-        "hunt_id": f"{unit_id}::{fault_class}",
-        "unit_id": unit_id, "fault_class": fault_class,
-        "vulnerability_class": vulnerability_class, "status": status,
-        "rationale": "seeded", "research_direction": "",
-        "surface_context": {
-            "cards": [
-                f"{unit_id}: spine service for {vulnerability_class} probing; "
-                "exposes the parameterised endpoint under test",
-            ],
-        },
-        "observed_defences": ["the kali sandbox is the target; the probe surface is the "
-                           "seeded service"],
-        "preconditions": ["network egress from the pod to the target is allowed"],
-    }
-    data.update(overrides)
-    store = HuntStore()
-    return store.write_config(project_id, data, directory="produced")
-
-
-def seed_test_spec(project_id: str, *, fault_key: str, fault_keyword: str,
-                   strategy_keyword: str, status: str = "specified",
+def seed_test_spec(project_id: str, *, hunt_key: str, fault_keyword: str,
+                   strategy_keyword: str, status: str = "ratified",
                    **overrides) -> str:
     """Write ONE test-implementation spec through
-    `HunterMemoryStore.write_spec` (the real store API) into the produced
-    family; returns the spec file stem. `fault_key` is the 3-part config key.
+    `HunterMemoryStore.write_specs` (the real store API) into the produced
+    family; returns the spec file stem. `hunt_key` is the loop dispatch id.
 
     The seeded body MUST pass the pod's REAL INIT gate
-    (`verification.validate_spec`): a `specified` spec with an empty typed base
-    is rejected by the pod at INIT with ZERO tool calls and settles within
-    seconds - no live pod session is ever observable. The default carries a
-    minimal VALID testable surface (a target identity, one verification symptom,
-    a testing pattern), so a dispatched pod passes INIT and runs genuine ReAct
-    turns, keeping a REAL registered session live across the pause/resume/stop
-    observation windows (the per-session verbs act on a real in-flight session,
-    never a fabricated one)."""
+    (`verification.validate_spec`): a draft spec with an empty reduced D4 (no
+    target URL or no symptom) is rejected by the pod at INIT with ZERO tool
+    calls and settles within seconds - no live pod session is ever observable.
+    The default carries a minimal VALID reduced D4 (a target identity, one
+    verification symptom, assumptions, rationale), so a dispatched pod passes
+    INIT and runs genuine ReAct turns, keeping a REAL registered session live
+    across the pause/resume/stop observation windows (the per-session verbs act
+    on a real in-flight session, never a fabricated one). The store metadata the
+    body also carries (`status`, `fault_keyword`, `strategy_keyword`) is
+    projected away at the dispatch boundary (`mover.d4_spec_body`), so the pod
+    gate sees the pure D4 (S5 8.4)."""
     from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
     spec = {
-        "spec_id": f"{fault_keyword}_{strategy_keyword}",
-        "fault_key": fault_key, "status": status,
-        "fault": {"fault_id": "f1", "mechanism": "m", "supports": [],
-                  "conflicts": [], "test": "t"},
-        "strategy": strategy_keyword, "spec_ref": "sr", "experiment_ref": "",
+        "status": status, "fault_keyword": fault_keyword,
+        "strategy_keyword": strategy_keyword,
         "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "Service:slug:a"},
         "verification_symptoms": ["the target answers the crafted probe"],
-        "testing_pattern": "baseline-refinement",
-        "assumptions": [], "payload_vector_space": {},
-        "rationale": "seeded", "interpretation_guidance": "seeded",
+        "assumptions": ["the baseline request is replayable"],
+        "rationale": "seeded",
     }
     spec.update(overrides)
     store = HunterMemoryStore()
-    return store.write_spec(
-        project_id, fault_key, fault_keyword=fault_keyword,
-        strategy_keyword=strategy_keyword, spec=spec, mode="create",
-        side="produced",
-    ).stem
+    written = store.write_specs(
+        project_id, hunt_key, [spec], side="produced")
+    return written[0][0]
 
 
 def seed_experiment_log(project_id: str, *, spec_id: str, order: int = 1,
@@ -327,7 +288,7 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
     store = HunterMemoryStore()
     spec_id = str(source).rsplit(":", 1)[-1]
     store.write_note(
-        project_id, action="update", fault_key=config_key,
+        project_id, action="update", hunt_key=config_key,
         note_name=f"pod-export:{spec_id}", kind="freeform",
         body=str(verdict or {}), evidence="verdict-stub",
         provenance={"run_id": run_id, "source": source},
@@ -337,17 +298,79 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
 # --- terminal-quantity read-backs (real store reads, never the code's return) ---
 
 
-def produced_config_keys(project_id: str) -> list[str]:
-    from polymerhus.attack.hunting.hunt_store import HuntStore
-    return [k for k, _ in HuntStore().read_produced_configs(project_id)]
+def seed_threat_model_unit(project_id: str, *, unit_id: str,
+                           run_id: str) -> str:
+    """Drive a REAL `ThreatModelStore` to COMPLETED for `unit_id`, producing
+    the unit's model document and its loop files (T10b #397). The E1/E2
+    premise: a produced loop file IS the dispatch record (S2 8.4), so a
+    walkthrough that claims to seed one must actually write it.
+
+    `run_id` is REQUIRED and must be the run that will dispatch the loop: the
+    mover's produced read is run-scoped (S2 8.3), so a seed under any other id
+    stays inert. E1 passes the launched run id; E2 passes the earlier run id it
+    is modelling."""
+    from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+    from tests.hunting_fixtures import loop_row, produce_model
+
+    produce_model(
+        ThreatModelStore(),
+        project_id=project_id,
+        unit_id=unit_id,
+        run_id=run_id,
+        loops=[loop_row()],
+    )
+    return unit_id
 
 
-def produced_config_body(project_id: str, semantic_key: str) -> dict:
-    """The persisted config BODY for a semantic key (produced/ then consumed/),
-    a real store read - never the code's return."""
-    from polymerhus.attack.hunting.hunt_store import HuntStore
-    configs = HuntStore().read_configs_by_key(project_id, semantic_key)
-    return configs[0] if configs else {}
+def consume_seeded_loop(project_id: str, *, unit_id: str,
+                        loop_id: str = "loop-1") -> bool:
+    """Move the seeded unit's loop to consumed/ through the store primitive -
+    the earlier-run parent E2 needs (no live parent session)."""
+    from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+
+    return ThreatModelStore().consume_loop(project_id, unit_id, loop_id)
+
+
+def produced_loop_files(project_id: str) -> list[str]:
+    """The threat-model store's produced loop files, read straight from the
+    physical layout (T10b #397: the loop file is the dispatch record, S2 8.4).
+
+    The identity is `<unit_name>/<loop_id>`, so the same `loop-1` under two
+    units stays distinguishable. A live assertion reads this to prove what the
+    run actually produced; nothing about the retired config family is read."""
+    from polymerhus.app.data_root import DATA_ROOT, project_dir
+
+    base = (
+        project_dir(project_id, "hunting/threat_modeller", root=DATA_ROOT)
+        / "produced"
+    )
+    if not base.exists():
+        return []
+    return sorted(
+        f"{unit_dir.name}/{path.stem}"
+        for unit_dir in base.iterdir()
+        if unit_dir.is_dir()
+        for path in unit_dir.glob("loop-*.yaml")
+    )
+
+
+def consumed_loop_files(project_id: str) -> list[str]:
+    """The threat-model store's consumed loop files, read straight from the
+    physical layout (the mover's at-least-once marker, S2 8.4)."""
+    from polymerhus.app.data_root import DATA_ROOT, project_dir
+
+    base = (
+        project_dir(project_id, "hunting/threat_modeller", root=DATA_ROOT)
+        / "consumed"
+    )
+    if not base.exists():
+        return []
+    return sorted(
+        f"{unit_dir.name}/{path.stem}"
+        for unit_dir in base.iterdir()
+        if unit_dir.is_dir()
+        for path in unit_dir.glob("loop-*.yaml")
+    )
 
 
 def produced_spec_files(project_id: str, fault_key: str) -> list[str]:

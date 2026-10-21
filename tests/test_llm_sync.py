@@ -1037,6 +1037,19 @@ def test_budget_plan_default_is_disabled(monkeypatch):
     assert plan.rpm_limit is None
 
 
+def test_budget_plan_rpm_is_independent_of_the_usd_guard(monkeypatch):
+    """F-016: the request limiter smooths provider bursts even while the USD
+    guard stays disabled (the mistracked spend accounting must not gate it)."""
+    _clear_budget_env(monkeypatch)
+    monkeypatch.setenv("LLM_GATEWAY_KEY_RPM_LIMIT", "20")
+    plan = S.gateway_budget_plan()
+    assert plan.budget_limits == ()
+    assert plan.rpm_limit == 20
+    monkeypatch.setenv("LLM_GATEWAY_KEY_RPM_LIMIT", "0")
+    with pytest.raises(S.SyncConfigError):
+        S.gateway_budget_plan()
+
+
 def test_budget_plan_enabled_restores_the_real_provider_caps(monkeypatch):
     _clear_budget_env(monkeypatch)
     _enable_budget(monkeypatch)

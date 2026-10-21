@@ -1,12 +1,15 @@
 """The steel-browser skill is one runtime-agnostic surface (#395, D20).
 
-Seam under test: `skills/steel-browser/SKILL.md`. Drift guard only - the
-behaviour is pinned by the provider, wrapper, and gateway tests.
+Seam under test: `skills/internal/tools/steel-browser/SKILL.md`. Drift guard
+only - the behaviour is pinned by the provider, wrapper, and gateway tests.
 """
 import re
 from pathlib import Path
 
-SKILL = Path(__file__).resolve().parents[1] / "skills" / "steel-browser" / "SKILL.md"
+SKILL = (
+    Path(__file__).resolve().parents[1]
+    / "skills" / "internal" / "tools" / "steel-browser" / "SKILL.md"
+)
 
 # Runtime and identity words the one skill must never teach. `\b` keeps the
 # durable-state field names (`localStorage`, `sessionStorage`) legal.

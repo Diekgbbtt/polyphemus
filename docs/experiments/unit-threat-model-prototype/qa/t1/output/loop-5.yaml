@@ -1,0 +1,78 @@
+loop_id: loop-5
+unit_id: Service:model-download
+class: Local file inclusion / arbitrary local file read
+class_skill: path-traversal-lfi-rfi
+slice:
+  source: trust_agreement
+  statement: "TA4's local-file clause through the same F3 matcher: the file://localhost mechanism is established (P36-P38) and the loop turns to the read-target space - which local artifacts become readable and, above all, usable. The likelihood note fixes the question: environ was read (790 B) but usability depends on environment contents."
+discrimination:
+  axes_used: [payload-vector]
+  boundary: "the class of local artifact the fetch reads: process-state secret material (s1) versus identity and system files (s2); the read mechanism (file://localhost, .safetensors bypass, model-tree writeback) and fault F3 stay fixed."
+  narrow_broad_tradeoff: "narrow on artifact classes (two evidenced classes, one owning spec each) and broad on file paths inside each class; the bypass mechanics are loop-2's question, so this set spends its breadth on the artifacts that decide impact and usability."
+specs:
+- spec_id: loop-5-s1
+  label: "process-state secret reads"
+  sub_slice: "Reads of the worker process's own state: /proc/self/environ (anchor 790 B, P37/P38), /proc/self/cmdline, and sibling process-state files; region = artifacts whose content is secret material (tokens, keys, paths) whose usability decides the loop's impact."
+  class_skill_parametrisation:
+    skill: path-traversal-lfi-rfi
+    inputs: {sink: "file://localhost read via worker fetch", technique: "proc and caches enumeration from the class skill (LFI wrappers and techniques: /proc/self/environ); read-oracle discipline with paired controls", anchor: "environ read 790 B written into the model tree"}
+  concretisation:
+    protocol: "file scheme read by the worker; readback via model-tree listings"
+    technology: "ComfyUI-Manager V3.37 worker process on Python 3.11; environment carries deployment- and manager-level secrets if any"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start; readback GET /experiment/models/<dir>"
+    parameter: url
+    method: "POST then GET"
+    body: '{"name": "x", "url": "file://localhost/proc/self/environ", "filename": "t1-env.safetensors", "save_path": "checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Nearest sibling is loop-5-s2: s1 owns process-state secret artifacts whose validation signature is KEY=VALUE environment bytes and whose impact is credential material; s2 owns identity/system files whose signature is colon-separated records. Disjoint artifact classes, different content signatures and impact branches."
+  chaining_advanced_note: null
+  proxy_technique: "The .safetensors bypass admits the file://localhost URL; the worker reads the proc file and writes it verbatim into the model tree; the listing then exposes the entry, whose bytes are compared against the expected shape of the source artifact (NUL/newline-separated KEY=VALUE pairs)."
+  verification_symptoms: ["the written entry parses as environment records (KEY=VALUE separators) with size in the anchor range (790 B on this unit)", "at least one secret-named key pattern (token, key, secret, password, credential) is legible in the entry content"]
+  payload_vector_space:
+    method: "POST install_model -> GET start; readback via listings"
+    path: "url path component: /proc/self/environ, /proc/self/cmdline, sibling /proc/self entries"
+    parameter: url
+    body: "JSON install item, lowercase .safetensors filename"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the worker runs with the deployment environment visible to /proc/self (standard POSIX)", "the 790 B anchor is deployment-specific; content shape validates beyond size", "secrets present in the environment is exactly the usability question the loop leaves open; the spec reads and records what is there without assuming secret values exist"]
+  rationale: "F3 admitted the file read; this sub-slice converts it into credential disclosure when the process environment carries secret material. Because the loop's likelihood is medium precisely on this usability hinge, the environ family is the load-bearing region and carries its own validation signatures."
+  interpretation_guidance: "Symptom-present = the entry's content yields legible environment records, and any secret-named keys therein are the disclosed material. Symptom-absent = no entry for the environ read (fetch refusal or empty) while the same mechanism reads a known control file: process state is not readable or not useful; record both. A read that copies only benign variables is still a read - the usability outcome is recorded per key, not assumed."
+- spec_id: loop-5-s2
+  label: "identity and system file reads"
+  sub_slice: "Reads of system identity and reconnaissance files: /etc/passwd (anchor 839 B, P37), sibling small text files under /etc, and process-version files; region = artifacts that map accounts, services, and the host rather than carrying secret material."
+  class_skill_parametrisation:
+    skill: path-traversal-lfi-rfi
+    inputs: {sink: "file://localhost read", technique: "quiet canonical small files for reads (Pro Tips: read small canonical files to avoid noise)", anchor: "/etc/passwd read 839 B written into the model tree"}
+  concretisation:
+    protocol: "file scheme read; readback via model-tree listings"
+    technology: "worker process; POSIX /etc on the deployment host"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start; readback GET /experiment/models/<dir>"
+    parameter: url
+    method: "POST then GET"
+    body: '{"name": "x", "url": "file://localhost/etc/passwd", "filename": "t1-ident.safetensors", "save_path": "checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns identity/reconnaissance artifacts: colon-separated account records and host descriptors whose use is mapping (accounts, host, versions), not credential extraction. Disjoint target class from s1; validation compares against the source file shape and the size anchor."
+  chaining_advanced_note: null
+  proxy_technique: "Same bypass and read path; each candidate file is paired with a control read to isolate content: identity files render quietly and compare cleanly, so exact byte equality with the source is the oracle."
+  verification_symptoms: ["the written entry equals /etc/passwd content (colon-separated records; size anchor 839 B) or the named system file byte-for-byte", "the entry is listable after the drain without racing (durable readback)"]
+  payload_vector_space:
+    method: "POST install_model -> GET start; readback via listings"
+    path: "url path component: /etc/passwd, other small world-readable /etc files, process version files"
+    parameter: url
+    body: "JSON install item, lowercase .safetensors filename"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the named files exist and are world-readable on the target (passwd/permission defaults)", "the same .safetensors bypass and drain semantics hold"]
+  rationale: "With the read mechanism established, identity files close the reconnaissance side of the slice: they need no secret material to be useful and validate the read oracle on stable canonical content. Their impact branch (account mapping) is disjoint from s1's credential branch, so the two do not collapse into one test."
+  interpretation_guidance: "Symptom-present = exact content match with the named system file on at least one identity target, control-paired. Symptom-absent = refusal or no entry across the identity class while the read mechanism works elsewhere: the reader is path-restricted beyond the class statement; record which paths are refused. One missing file (permissions, absent path) is not an absence answer for the class."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns process-state secret artifacts (environ/cmdline signatures); s2 owns identity/system artifacts (account/host records). Disjoint artifact classes with distinct validation signatures and impact branches; the shared mechanism is the fixed fault, not a shared sub-slice."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "The evidenced read artifacts fall into exactly these two classes (P37/P38 supply the anchors); arbitrary other world-readable files ride as vector-space extensions of s2's identity/reconnaissance class rather than as an uncovered region."
+  well_formedness_statement: "Two specs partition the read-target space of F3's local-file hole by artifact class: process secrets and identity/system files, each with a distinct content signature, oracle reading, and impact branch. The bypass mechanics stay loop-2's slice; here every accepted sub-slice is owned and nothing in the evidenced read space is left uncovered."
+degradations: ["The class skill lacks a scheme-dispatch read entity (it owns path joins); the file://localhost mechanism is anchored on P36-P38 and the ssrf wrapper-read entity, carried as structural grounding.", "Secret-material usability is deployment-specific; s1 validates content shape and records per-key outcomes instead of assuming secrets exist.", "Loop-5 shares fault F3 and class with loop-2; this set discriminates read-target classes while loop-2 discriminates bypass mechanics. Within-loop overlap is clean."]

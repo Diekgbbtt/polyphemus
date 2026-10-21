@@ -1,0 +1,106 @@
+loop_id: loop-13
+unit_id: Service:model-download
+class: Race condition in queue mutation (concurrent start and install)
+class_skill: race-conditions
+slice:
+  source: dynamic_state_trust
+  statement: "A14/F14 (ASSUMED): requests are assumed to arrive one at a time, so queue mutation carries no concurrency guards; the serial worker and immediate-return start make interleaving plausible between start, install, and reset, but no concurrency probe was run. The loop opens the queue-interleaving space over the dynamic-state trust."
+discrimination:
+  axes_used: [tech-misconfiguration, chaining-advanced]
+  boundary: "which pair of transitions interleaves: start x start (s1), install x start (s2), install x install (s3); fault fixed at F14 (unproven, rung ASSUMED)."
+  narrow_broad_tradeoff: "narrow on the transition pairs the payload's state machine names around queue mutation; broad on burst parameters (sizes, synchronization) inside each. Because the fault is unprobed, each spec is a hypothesis with an explicit held-serialization refutation."
+specs:
+- spec_id: loop-13-s1
+  label: "parallel starts double-drain"
+  sub_slice: "Overlapping start calls: two or more GET starts issued simultaneously against one queue; if the drain lacks a lock on the aiohttp event loop, overlapping drain sequences can pop the same item twice or interleave pop/write steps; region = start x start interleaving over one shared queue."
+  class_skill_parametrisation:
+    skill: race-conditions
+    inputs: {sink: "queue mutation in the worker drain (ET3)", technique: "request synchronization: HTTP/2 or warmed connections, last-byte sync, burst sizing (N=2 upward) per the class's request-synchronization section", invariant: "one queued item is fetched once"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 on aiohttp 3.14.3 (single event loop; fetch awaits are schedulable points)"
+    endpoint: "POST /manager/queue/install_model (seed items), then GET /manager/queue/start x2+ concurrently, then GET /manager/queue/status"
+    parameter: "burst size and synchronization of starts"
+    method: "POST then parallel GETs"
+    body: "seed install items with unique listener tokens"
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: tech-misconfiguration
+  discrimination_note: "Owns the start x start pair: the drain routine's own reentrancy. s2 owns append racing the drain; s3 owns keyed duplicate installs. Nearest sibling is s2: both involve a running drain, but s1 re-enters the drain while s2 mutates its input queue from the append path - different read/write pairs on the shared state."
+  chaining_advanced_note: null
+  proxy_technique: "Warm connections, seed a small batch of tokenised items, release two starts together (last-byte style); tally listener hits per token. One token fetched twice while status shows a single completion is the double-drain signature; sequential controls (two starts apart) establish the single-fetch baseline."
+  verification_symptoms: ["a token fetched two or more times under concurrent starts, or two writes under one queue item", "counter anomalies consistent with double consumption (done_count or is_processing diverging from the token tally) recorded with the burst sizes that produced them"]
+  payload_vector_space:
+    method: "POST install_model -> parallel GET start -> GET status"
+    path: "/manager/queue/install_model, /manager/queue/start, /manager/queue/status"
+    parameter: "burst size (2, 4, 8...), connection reuse and release timing"
+    body: "seed items with per-item tokens"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the drain runs on one event loop and awaits the outbound fetch (IA6), creating schedulable interleaving points", "counters and listener hits are the execution evidence (IA11/DF3)"]
+  rationale: "If F14's assumed absence of guards holds, concurrent starts re-enter queue mutation while a drain is awaiting IO; the read-modify-write on the queue list has no atomicity, so double-pop or interleaved consumption materialises. The sub-slice isolates the drain routine's reentrancy from external mutation (s2)."
+  interpretation_guidance: "Symptom-present = any token fetched more than once, or writes appearing under one item across concurrent starts, reproducible with sequential controls clean. Symptom-absent = every token fetched exactly once for all burst sizes and timings: the drain serializes (a lock, a guard flag, or single-flight semantics); record the highest burst tested. A no-op second start on an empty queue (ET8) is the contract, not the refutation; the test needs seeded work."
+- spec_id: loop-13-s2
+  label: "install-during-drain lost or stranded update"
+  sub_slice: "An install racing the drain's queue read: the append (ET1/ET2) interleaves with the pop/iterate sequence of ET3, so the new item may be skipped, fetched without being counted, or double-counted; region = install x start interleaving over the queue list read-modify-write."
+  class_skill_parametrisation:
+    skill: race-conditions
+    inputs: {sink: "queue append racing drain iteration", technique: "concurrent requests with aligned timing against the fetch await window; atomicity-gap framing (lost update on read-modify-write) from the class", invariant: "every accepted item is processed once and counted once (V6, ET3 guard_assumed)"}
+  concretisation:
+    protocol: http
+    technology: "same queue; the interleave point is the drain's await of the outbound fetch"
+    endpoint: "POST /manager/queue/install_model concurrent with GET /manager/queue/start, then GET status"
+    parameter: "timing of the append relative to the drain (during head fetch versus between pops)"
+    method: "parallel POST and GET"
+    body: "seed item(s) tokenised; the racing install also tokenised"
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the cross-path pair: append mutating the drain's input while the drain reads it. s1 re-enters the same path (start x start); s3 stays within the append path (install x install). The tested relationship is between two different code paths over the shared queue object, not within one."
+  chaining_advanced_note: "Structural from the dynamic-state trust: ET3's guard_assumed ('drains serially and cleanly to an empty state') and ET1's side effect ('queue append; total_count may advance') interact with no stated lock; the failure is a lost or stranded update across two transitions, which the race-conditions skill frames as an atomicity gap on a read-modify-write. The skill provides the framing but no queue entity, so the pair selection is carried structurally."
+  proxy_technique: "Seed one slow-fetch item to hold the drain in its await (listener delays the response), fire the racing install inside that window, then read status and count listener hits per token. A stranded token (accepted, never fetched, not counted) or an uncounted fetch attributes the interleave; repeat across timing offsets to map the window."
+  verification_symptoms: ["an install accepted with 200 during a drain whose token is never fetched while the tail completes (stranded append)", "or the racing item fetched but absent from counters, or counted without processing (lost/phantom update) - each attributed by token and timing offset"]
+  payload_vector_space:
+    method: "parallel POST install_model + GET start"
+    path: "/manager/queue/install_model, /manager/queue/start, /manager/queue/status"
+    parameter: "append timing offsets; slow-fetch window widening (listener delay)"
+    body: "seed item plus racing item with unique tokens"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the drain pops/iterates a shared queue structure and awaits per item (CF4/IA6)", "status counters are intended to reconcile the racing item (IA5/V6)"]
+  rationale: "If F14's assumed absence of guards holds, the append path mutates the structure the drain is traversing without mutual exclusion; whichever iterates/pops concurrently can skip or double-handle the racing item. The failure mode is an inter-transition lost update, distinct from s1's same-path reentrancy."
+  interpretation_guidance: "Symptom-present = the racing item's fate diverges from accepted-and-processed-once (stranded, uncounted, or doubled), attributed by token and reproducible at some timing offset. Symptom-absent = every racing item lands processed once and counted once across all offsets where the window was actually hit (evidenced by the slow-fetch hold): the append is serialized with the drain; record the offsets tried and whether the hold was confirmed."
+- spec_id: loop-13-s3
+  label: "shared-ui_id duplicate burst"
+  sub_slice: "Concurrent installs sharing one ui_id value (sequential duplicates already accepted, P32/P34): the uniqueness assumption of the bookkeeping key ('Each ui_id is unique', ET2) is exercised under parallel submission; region = install x install interleaving over the key identity the queue assumes."
+  class_skill_parametrisation:
+    skill: race-conditions
+    inputs: {sink: "queue append with a shared key value", technique: "idempotency and dedup bypass: shared-key firing; response-versus-effect forensics (confirm in the effect tally, not the response)", invariant: "one ui_id maps to one queued intent (ET2 guard_assumed)"}
+  concretisation:
+    protocol: http
+    technology: "same queue; ui_id accepted verbatim (IA9)"
+    endpoint: "POST /manager/queue/install_model xN concurrently with one shared ui_id, then GET start, GET status"
+    parameter: "shared ui_id value; burst size N"
+    method: "parallel POSTs then GETs"
+    body: 'N items with the same ui_id and distinct listener tokens'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the install x install pair over key identity: s1 and s2 both involve the drain; s3 never needs it for the acceptance-side question (all items accepted under one key) and adds the execution tally. Nearest sibling outside is loop-10's sequential duplicate undercount, which this spec extends into the concurrent window."
+  chaining_advanced_note: "Structural: ET2's guard_assumed names the broken assumption directly ('Each ui_id is unique'), so the trust is a dynamic-state expectation rather than an enforced check; the race-conditions idempotency-dedup-bypass subtopic supplies shared-key firing and the effect-tally discipline. The queue may intend ui_id only as progress bookkeeping, so the spec tests the assumption the payload states and records the design-intent question in its interpretation."
+  proxy_technique: "Fire N installs with one shared ui_id simultaneously (N distinct listener tokens), then drain and tally: N effects under one key show the uniqueness assumption unenforced; acceptances (all 200) versus effects per key are recorded separately so response echoing never substitutes for the tally."
+  verification_symptoms: ["all N submissions accepted (200) under one ui_id - sequential duplicates already anchor acceptance (P32/P34) - and after drain, N distinct fetches/writes attributable to that key", "status/progress fields resolving the key show single-item or divergent bookkeeping versus the N effects (the key's accounting does not match the effect multiplicity)"]
+  payload_vector_space:
+    method: "parallel POST install_model xN -> GET start -> GET status"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start, /manager/queue/status"
+    parameter: "shared ui_id value; burst size N"
+    body: "distinct items, one shared key"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["ui_id is accepted verbatim without dedup (IA9/P50, sequential duplicates P32/P34)", "the uniqueness assumption lives in bookkeeping intent (ET2 guard_assumed), so effect multiplicity under one key is the artifact the spec counts"]
+  rationale: "If F14's assumed absence of guards holds, parallel appends with one key commit before any bookkeeping observes a sibling; the ET2 assumption (unique ids) fails silently. The failure mode - key multiplicity versus effect multiplicity - is independent of the drain's internals, so it stands alone from s1/s2."
+  interpretation_guidance: "Symptom-present = N accepted submissions and N effects under one ui_id, with bookkeeping traces that do not reconcile the multiplicity. Symptom-absent = the queue dedups or reconciles the shared key under parallel firing (one effect, or acceptance-side refusal): the uniqueness assumption is enforced; record which side enforced it. Acceptance alone (all 200) is not the finding; the effect tally under the shared key is."
+checks:
+  overlap:
+    status: none
+    notes: "s1 re-enters the drain path (start x start), s2 races two different paths (install x start), s3 stays on the append path over key identity (install x install). Each targets a different pair of transitions; no token, timing window, or conclusion is shared between specs."
+  coverage:
+    status: partial
+    uncovered: ["reset racing the drain (reset x start) is a fourth transition pair; the payload provides no reset-concurrency anchor and the loop's fault names concurrent start and install explicitly, so it stays uncovered"]
+    notes: "The three pairs the fault statement anchors (start, install, and their three combinations) carry owning specs; the reset pair is declared uncovered rather than invented."
+  well_formedness_statement: "Three specs partition F14's hypothesized space by transition pair (start x start, install x start, install x install), each with its own interleave point, oracle, and held-serialization refutation. The union covers the pairs the fault and state machine anchor; the unprobed reset pair is declared uncovered, and the ASSUMED rung keeps every claim falsifiable downward."
+degradations: ["Fault F14 and vulnerability VUL12 are ASSUMED (no concurrency probe was run); every spec is a hypothesis whose symptom-absent reading includes 'serialization holds' as its refutation.", "Race windows on one aiohttp event loop may be narrow (fetch awaits are the schedulable points); negative results are weaker than positives and are recorded with burst sizes and timing offsets.", "The class skill's distributed/cross-service entities do not apply (single process, single queue); the applied entities are request synchronization, atomicity gaps, and shared-key firing."]

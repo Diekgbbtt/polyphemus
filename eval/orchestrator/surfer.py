@@ -1,10 +1,12 @@
 """The surfer loop: background state assertion and lifecycle recovery (#275, D5/D31/N17).
 
-The symbolic layer owns lifecycle (D5). The trial engine enforces the hunting cap
-and stops a run at a failed terminal; the surfer is the background supervisor
-that asserts the environment state, detects a cap-reached or failed state (a
-failed/interrupted run, or a credit-exhaustion-like failure signal), and prompts
-the orchestrator. The orchestrator decides exactly one of:
+The symbolic layer owns lifecycle (D5). The trial engine enforces the token
+budget and stops a run at a failed terminal; the surfer is the background
+supervisor that asserts the environment state, detects a budget stop, a
+failed/interrupted run, or a credit-exhaustion-like failure signal, and prompts
+the orchestrator. The `cap_reached` trigger remains only for legacy trial
+records (the hunting cap was REMOVED on 2026-10-05; no new record writes `cap`).
+The orchestrator decides exactly one of:
 
 - `terminate`: stop the in-flight run(s) cleanly through the REST seam;
 - `destroy`: tear the instance down through `instances.down`;
@@ -96,8 +98,8 @@ CREDIT_MARKERS = (
 
 # A phase terminal that names a failure stops the trial (mirrors trial.py).
 FAILED_TERMINALS = frozenset({"failed", "interrupted"})
-# A phase is cleanly finished only on its healthy terminal; anything else (a cap
-# `stopped`, a failure) is where a resume re-enters.
+# A phase is cleanly finished only on its healthy terminal; anything else (a
+# budget `stopped`, a failure) is where a resume re-enters.
 HEALTHY_PHASE_TERMINALS = {
     "recon": frozenset({"complete"}),
     "analysis": frozenset({"drained"}),
@@ -363,7 +365,7 @@ class SurferStateSource:
     """The default asserter: app-state plus trial records plus failure signals.
 
     `app_state` is the injected idle proxy (`IdleProxy.fetch`); `trial_log` is the
-    persisted cap/phase evidence; `evidence` supplies run-error payloads the
+    persisted budget/phase evidence; `evidence` supplies run-error payloads the
     app-state surface does not carry. The `signals` reader classifies all the
     evidence into failed-state signals.
     """
@@ -461,7 +463,7 @@ def phase_mappings(record: Mapping) -> tuple[Mapping, ...]:
 
 
 def cap_triggers(record: Mapping) -> list[Trigger]:
-    """Cap-reached triggers from the trial engine's own cap accounting.
+    """Cap-reached triggers from a LEGACY trial record's cap accounting.
 
     The trigger names the hunting run (`run_kind`/`run_id`) so `terminate` can
     actually stop it and so two distinct cap events in the same instance/target/
@@ -476,7 +478,7 @@ def cap_triggers(record: Mapping) -> list[Trigger]:
             CAP_REACHED,
             record,
             detail=(
-                f"hunting cap {cap} reached (stopped at {stop}, "
+                f"legacy hunting cap {cap} reached (stopped at {stop}, "
                 f"final {record.get('final_count')})"
             ),
             run_kind="hunting",
@@ -585,7 +587,7 @@ def failed_run_trigger(record: Mapping) -> Trigger | None:
 def resume_phase(record: Mapping) -> str:
     """The phase a resumed trial re-enters: the first not cleanly completed one.
 
-    A `stopped` hunting run (the cap) is not a clean `complete`, so a cap stop
+    A budget-stopped hunting run is not a clean `complete`, so a budget stop
     resumes hunting; a failed recon resumes recon; an all-clean record resumes at
     its last phase.
     """
@@ -867,7 +869,7 @@ class ResumePlan:
     start_phase: str
     intervention: str
     recon_run_id: str | None = None
-    # The resumed trial's carried-over cap baseline (D8/D16): both the trial
+    # The resumed trial's carried-over LEGACY cap baseline (D8/D16): both the trial
     # engine and the CLI thread it into the new `TrialConfig`.
     cap_baseline: tuple[str, ...] | None = None
     # The resumed trial's carried-over spend baseline: the CLI threads it into

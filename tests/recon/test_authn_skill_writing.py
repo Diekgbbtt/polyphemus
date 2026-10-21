@@ -20,7 +20,7 @@ from polymerhus.app.llm import skills
 REPO = Path(__file__).resolve().parents[2]
 SKILL = "meta/authn-skill-writing"
 SKILL_DIR = REPO / "skills" / SKILL
-STEEL_REFERENCES = REPO / "skills" / "steel-browser" / "references"
+STEEL_REFERENCES = REPO / "skills" / "internal" / "tools" / "steel-browser" / "references"
 
 # The operator's target-agnostic block (ticket #237), held here as an
 # independent literal so the skill text and the operator's block cannot drift.
@@ -89,11 +89,11 @@ def test_every_cited_reference_file_exists():
 
 def test_names_the_parametrizable_project_skill_write_location():
     """The external agent knows the skill's content AND where to persist it:
-    the parametrized bundle path, never a hardcoded absolute one."""
+    the parametrized bundle path under the target-specific-procedure branch,
+    never a hardcoded absolute one."""
     body = _body()
-    assert "skills/authn/SKILL.md" in body
-    assert "skills/authn/references/" in body
-    assert "<data_root>" in body
+    assert "skills/target-specific-procedure/<project_id>/authn/SKILL.md" in body
+    assert "skills/target-specific-procedure/<project_id>/authn/references/" in body
     assert "<project_id>" in body
 
 

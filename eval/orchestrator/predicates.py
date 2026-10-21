@@ -18,8 +18,9 @@ from orchestrator import api
 from orchestrator.files import (
     FileStore,
     authn_skill_path,
-    hunt_configs_dir,
     hunter_test_specs_dir,
+    retired_hunt_configs_dir,
+    threat_model_dir,
 )
 
 
@@ -210,18 +211,40 @@ def hunting_entry(
         if state.data_root is None:
             blocks.append("pre-mined hunting artifacts configured but no data root is set")
         else:
-            # Presence counts both artifact families: pre-mined hunt configs and
-            # each fault key's hunter test specs (a setup may pre-mine either).
-            present = sum(
-                files.count_files(hunt_configs_dir(state.data_root, state.project_id, side))
-                for side in ("produced", "consumed")
-            )
+            # Presence counts both live artifact families: the threat-model
+            # loop files and each dispatch id's hunter test specs (a setup may
+            # pre-mine either). A loop file is the dispatch record (S2 8.4), so
+            # a model document alone is not dispatchable work and does not
+            # count. The rule is the store-owned `loop-<rank>.yaml` name.
+            present = 0
+            for side in ("produced", "consumed"):
+                for unit_dir in files.list_dirs(
+                    threat_model_dir(state.data_root, state.project_id, side)
+                ):
+                    present += len(files.glob(unit_dir, "loop-*.yaml"))
             specs_root = hunter_test_specs_dir(state.data_root, state.project_id)
-            for fault_dir in files.list_dirs(specs_root):
+            for dispatch_dir in files.list_dirs(specs_root):
                 for side in ("produced", "consumed"):
-                    present += files.count_files(fault_dir / side)
+                    present += files.count_files(dispatch_dir / side)
             if present == 0:
-                blocks.append("pre-mined hunting artifacts configured but not present")
+                retired = sum(
+                    files.count_files(
+                        retired_hunt_configs_dir(state.data_root, state.project_id, side)
+                    )
+                    for side in ("produced", "consumed")
+                )
+                if retired:
+                    # The interim loud guard (T10b #397): a stale pre-mined
+                    # hunt config is a retired family nothing reads. Name it,
+                    # never let it read as a merely absent artifact.
+                    blocks.append(
+                        "pre-mined hunt configs are RETIRED (T4b #387, T10b "
+                        "#397) and cannot satisfy the hunting prerequisite; "
+                        "seed a threat-model unit directory under "
+                        "hunting/threat_modeller/produced/"
+                    )
+                else:
+                    blocks.append("pre-mined hunting artifacts configured but not present")
 
     if blocks:
         return GateResult(False, tuple(blocks))

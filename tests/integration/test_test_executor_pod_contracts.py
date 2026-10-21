@@ -49,11 +49,10 @@ from polymerhus.recon.domain.types import ExecResult
 VALID_SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability probe from H1",
-    "interpretation_guidance": "a 200 with a non-empty body confirms the symptom",
+    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 # The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
@@ -106,13 +105,14 @@ def test_arun_pod_is_the_async_entry_and_run_pod_is_gone():
 
 def test_init_rejects_invalid_spec():
     calls = []
-    env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": [],
-                         "testing_pattern": "", "payload_vector_space": {}},
+    env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": []},
                         exec_fn=_exec(_OK, calls=calls),
                         runner_step_fn=symbolic_runner_step_fn, triager_fn=None,
                         trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
-    assert env["evidence"]["init_validation"]
+    # Both mandatory violations land in ONE rejection (S5 8.4).
+    assert any("target_identity" in v for v in env["evidence"]["init_validation"])
+    assert any("verification_symptoms" in v for v in env["evidence"]["init_validation"])
     assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
     assert calls == []                               # executes no tool call
 
@@ -177,10 +177,16 @@ def test_infeasibility_asserted_with_evidence():
 
 def test_budget_timeout_lands_unsuccessful(monkeypatch):
     monkeypatch.setattr("polymerhus.attack.hunting.pod.graph.HUNT_POD_MAX_ITERS", 3)
+    lap = {"n": 0}
 
     def triager(spec, obs, messages, log):
+        # A DISTINCT derived detail each lap: the S5 8.6 duplicate guard refuses
+        # a repeated (basis, detail), so a degenerate re-mint would terminate
+        # before the budget instead of exercising the cap.
+        lap["n"] += 1
         return {"classification": "symptom-absent", "action": "variant",
-                "declined_attribute": "testing_pattern", "variant_spec": dict(spec),
+                "declined_attribute": "bypass-technique",
+                "variant_spec": {**spec, "rationale": f"bypass attempt {lap['n']}"},
                 "feedback": "keep searching"}
 
     env = _run(arun_pod(SEMANTIC_SPEC, exec_fn=_exec(_ABSENT),
@@ -228,8 +234,8 @@ def test_exec_timeout_enforced():
 def test_variant_derivation_with_provenance():
     decisions = iter([
         {"classification": "symptom-absent", "action": "variant",
-         "declined_attribute": "payload_vector_space",
-         "variant_spec": {**SEMANTIC_SPEC, "payload_vector_space": {"method": "GET", "path": "/api"}},
+         "declined_attribute": "recon-action",
+         "variant_spec": {**SEMANTIC_SPEC, "rationale": "reachability of /api"},
          "feedback": "decline the path into /api"},
         {"classification": "symptom-absent", "action": "terminate",
          "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence", "clean": False},
@@ -244,7 +250,7 @@ def test_variant_derivation_with_provenance():
     variants = env["evidence"]["variant_specs"]
     assert len(variants) == 2
     assert variants[1]["parent_ref"] == "v0"
-    assert variants[1]["declined_attribute"] == "payload_vector_space"
+    assert variants[1]["declined_attribute"] == "recon-action"
     assert env["evidence"]["raw_observations"] and env["evidence"]["interpretations"]
 
 
@@ -270,13 +276,16 @@ def test_duplicate_probe_recorded_once():
 
 # --- C11 ----------------------------------------------------------------------
 
-def test_empty_payload_vector_still_probes():
+def test_the_runner_authors_a_probe_from_the_reduced_spec():
+    """C11 re-pointed (S5 8.5): with the payload vector space retired, the
+    runner still authors at least one probe from the spec's target identity."""
     calls = []
-    env = _run(arun_pod({**VALID_SPEC, "payload_vector_space": {}},
+    env = _run(arun_pod(VALID_SPEC,
                         exec_fn=_exec(_OK, calls=calls),
                         runner_step_fn=symbolic_runner_step_fn,
                         triager_fn=None, trace_fn=_no_trace))
-    assert len(calls) == 1                           # the default probe still ran
+    assert len(calls) == 1
+    assert VALID_SPEC["target_identity"]["url"] in calls[0]
     assert env["evidence"]["raw_observations"]
 
 
@@ -482,9 +491,11 @@ def test_minted_variant_persists_to_its_variants_file(tmp_path):
     variant ref, overwritten idempotently (D84-37)."""
     decisions = iter([
         {"classification": "symptom-absent", "action": "variant",
-         "declined_attribute": "testing_pattern",
-         "variant_spec": {**SEMANTIC_SPEC, "testing_pattern": "blind-differential"},
-         "feedback": "try the differential pattern"},
+         "declined_attribute": "bypass-technique",
+         "variant_spec": {**SEMANTIC_SPEC,
+                           "provenance": {**SEMANTIC_SPEC["provenance"],
+                                          "skill_procedure": {"bypass_technique": "swap the id"}}},
+         "feedback": "try the id-swap bypass"},
         {"classification": "symptom-absent", "action": "terminate",
          "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
          "clean": False},
@@ -502,7 +513,7 @@ def test_minted_variant_persists_to_its_variants_file(tmp_path):
     v1 = store.read_variant(SPEC_ID, "v1")
     assert v0["ref"] == "v0" and v1["ref"] == "v1"
     assert v1["parent_ref"] == "v0"
-    assert v1["declined_attribute"] == "testing_pattern"
+    assert v1["declined_attribute"] == "bypass-technique"
     assert store.list_variant_refs(SPEC_ID) == ["v0", "v1"]
     # Both orders' log slices exist: order 1's slice holds v1's interpretation.
     slice1 = store.read_experiment_log(SPEC_ID, 1)
