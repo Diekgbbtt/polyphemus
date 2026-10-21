@@ -280,3 +280,18 @@ def test_the_hunts_store_description_names_the_reference_fields():
     assert "interface_agreement_refs" in _HUNTS_STORE_DESCRIPTION
     assert "maps_to_fault" in _HUNTS_STORE_DESCRIPTION
     assert "ID" in _HUNTS_STORE_DESCRIPTION
+
+
+def test_the_completed_gate_teaches_class_copying_and_the_validation_rewrite():
+    """The final gate must copy the loop classes from the vulnerability and
+    treat an invalid COMPLETED write as feedback, not a terminal outcome. The
+    white-jotter model renamed the loop classes and left V-4 unclosed; the pass
+    archived the unit before the model could fix it."""
+    prompt = _modeller_skill()
+    assert "Class identity is copied, never re-derived" in prompt
+    assert "validation.valid" in prompt
+    assert "write COMPLETED again" in prompt
+
+    instruction = STATE_INSTRUCTIONS[ModelState.COMPLETED]
+    assert "verbatim" in instruction
+    assert "write COMPLETED again" in instruction

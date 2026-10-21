@@ -204,6 +204,10 @@ Rank the loops by likelihood descending and write them in that order; the store 
 
 An unclosed assumption is recorded as a validation finding - close it before the write, or accept the finding.
 
+**Class identity is copied, never re-derived.** The loop's `canonical_class` and `web_vulnerability_class` are copied VERBATIM from the vulnerability named by `vulnerability_ref`. They are not renamed, shortened, paraphrased, or re-mapped at loop time. A mismatch is a referential finding.
+
+**The COMPLETED response is actionable.** The store returns a `validation` object with `missing`, `unclosed`, and `referential_errors`. If `validation.valid` is false, fix every listed finding and write COMPLETED again before you end the pass. The unit is archived only when the pass ends with a still-invalid model. A first invalid COMPLETED write is feedback, not a terminal outcome.
+
 ## Tools
 
 - `hunts_store` - the threat model read/write. One write per gate, `{state, sections}`. Read your own model with `cmd='read'` (no other argument), another unit's model with `cmd='read'` and its `unit_id` for prior insight, and project one section with `section`. The store merges the sections, keeps the state monotonic, computes the risk profile at COMPLETED, and runs the completion check.

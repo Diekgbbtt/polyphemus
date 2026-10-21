@@ -163,8 +163,11 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "one or more runtime execution failure modes grounded in the technical "
         "sharpening. Apply the retention-first drop rule, score each feasible "
         "loop's likelihood from the four risk factors, and write ONLY the "
-        "failure_modes and loops sections. The store computes the risk profile "
-        "and runs the completion checker after your write."
+        "failure_modes and loops sections. Copy each loop's canonical_class and "
+        "web_vulnerability_class verbatim from its vulnerability. The store "
+        "computes the risk profile and runs the completion checker after your "
+        "write; if validation.valid is false, fix every finding and write "
+        "COMPLETED again before ending the pass."
     ),
 }
 
