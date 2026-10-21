@@ -178,7 +178,14 @@ class TrustAgreement(_Record):
 
     id: str
     boundary: str
-    interface_agreement_refs: list[str] = Field(default_factory=list)
+    interface_agreement_refs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The ids of the technical_sharpening.interface_agreements this "
+            "trust agreement rests on (IA-*), never control/data-flow ids and "
+            "never prose."
+        ),
+    )
     statement: str
     confidence: Confidence
     evidences: list[Evidence]
@@ -204,7 +211,12 @@ class Violation(_Record):
     id: str
     kind: ViolationKind
     statement: str
-    maps_to_fault: str
+    maps_to_fault: str = Field(
+        description=(
+            "The id of the assumptions[].fault this violation maps to (F-*), "
+            "never a description or prose."
+        ),
+    )
     # The transition the violation bounds (S2 5.1/S3 8.2): the payload's
     # dynamic-state selection reads this link. Optional because a
     # state-consistency violation need not bound a transition; when the model

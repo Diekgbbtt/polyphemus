@@ -30,6 +30,26 @@ The gate write is generic: `{state, sections}`.
 The unit identity is bound to your tools - never send a unit id, a file name, a model id, or a path.
 The response carries the next state's hint; read it, it is the cadence.
 
+## Reference fields
+
+Every field named `*_ref`, `*_refs`, `maps_to_fault`, `boundary_ref`, or `transition_ref` carries an **ID**, never prose and never a name you did not write.
+The completion check resolves every reference; an unresolved reference is a validation finding, and the store archives the unit instead of publishing it.
+
+| field | must name |
+|---|---|
+| `vulnerabilities[].fault_ref` | the `id` of an `assumptions[].fault` (`F-*`) |
+| `assumptions[].boundary_ref` | the `id` of a `trust_model.trust_agreements[]` (`TA-*`) |
+| `trust_model.trust_agreements[].interface_agreement_refs[]` | the `id` of a `technical_sharpening.interface_agreements[]` (`IA-*`) - never control flows (`CF-*`) or data flows (`DF-*`) |
+| `trust_model.dynamic_state_trust.transitions[].source` and `.target` | the `id` of a `...states[]` (`S*`) |
+| `trust_model.dynamic_state_trust.violations[].maps_to_fault` | the `id` of an `assumptions[].fault` (`F-*`), never prose |
+| `trust_model.dynamic_state_trust.violations[].transition_ref` | the `id` of a `transitions[]` (`TR-*`), or omit it |
+| `failure_modes[].vulnerability_ref` | the `id` of a `vulnerabilities[]` (`V-*`) |
+| `loops[].fault_ref` | the `id` of an `assumptions[].fault` (`F-*`) |
+| `loops[].vulnerability_ref` | the `id` of a `vulnerabilities[]` (`V-*`) |
+| `loops[].failure_mode_refs[]` | the `id` of a `failure_modes[]` (`FM-*`) |
+
+The `statement` field carries the description. A reference field carries only the ID.
+
 ## Grounding: reverse-engineer the unit (UNIT_TECHNICAL_SHARP)
 
 Only the unit matters: its observable interface, its components, and the agreements between them.

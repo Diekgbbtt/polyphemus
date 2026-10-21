@@ -110,7 +110,13 @@ _HUNTS_STORE_DESCRIPTION = (
     "state's set is rejected; the model state is monotonic, so a later write for "
     "an earlier gate updates that section without regressing the state.\n"
     "cmd='read': pass an optional `unit_id` (default: the unit you are modelling) "
-    "and an optional `section` to project one section. Reads are read-only."
+    "and an optional `section` to project one section. Reads are read-only.\n"
+    "Every reference field carries an ID, never prose. "
+    "`trust_model.trust_agreements[].interface_agreement_refs` names "
+    "`technical_sharpening.interface_agreements[].id` (`IA-*`), and "
+    "`trust_model.dynamic_state_trust.violations[].maps_to_fault` names an "
+    "`assumptions[].fault.id` (`F-*`). The store resolves every reference and "
+    "archives a model with an unresolved one."
 )
 
 
