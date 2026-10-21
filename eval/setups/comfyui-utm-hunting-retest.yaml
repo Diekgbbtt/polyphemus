@@ -1,0 +1,36 @@
+# UTM retest - comfyui, hunting-only on the frozen canary L0/L1.
+#
+# The canary's recon/analysis surface is reused as-is; only the hunting tree is
+# archived, so this trial isolates the hunting repairs (F-017 consumed-spec
+# reconciliation, complete terminal spec sets, no progressive risk halt).
+# The 3M cap is the native trial-wide capped-token budget.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: auth-bootstrap
+    status: incomplete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-1
+    env_file: eval-server-1/.env
+    targets:
+      - target_key: webexploitbench/comfyui
+        target_id: comfyui-1
+        target_run_id: utm-retest-comfyui-hunting
+        start_phase: hunting
+        existing_project_id: 65f63a5a-1406-4635-9bba-92e23aa86d3d
+        token_budget: 3000000
+        target_config:
+          operator_kb: /root/eval-dd/data/comfyui/operator_kb.md
+          data_dir: /root/eval-dd/data/comfyui

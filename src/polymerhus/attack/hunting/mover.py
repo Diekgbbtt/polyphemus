@@ -242,6 +242,10 @@ class TestSpecItem(ProducedItem):
     hunt_key: str
     spec_file: str
     spec: Mapping[str, Any] | None = None
+    # F-017: True when the item was recovered from consumed/ after an admitted
+    # pod left no terminal export (a provider pause). The identity and dispatch
+    # are identical; the move is already satisfied.
+    recovered: bool = False
 
 
 class DispatchFeedback(Enum):
@@ -711,6 +715,7 @@ def run_delivery_tick(
     *,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
+    pod_store: Any = None,
     control: DispatchControlPlane,
     coro_for: Callable[[ProducedItem], Any],
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
@@ -743,7 +748,7 @@ def run_delivery_tick(
     the loop (Q11); the mover never awaits, the control plane schedules."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
-        hunter_store=hunter_store,
+        hunter_store=hunter_store, pod_store=pod_store,
     )
     produced = inbox.items
     live = control.live_session_ids()
@@ -903,6 +908,7 @@ def read_produced_inbox(
     *,
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
+    pod_store: Any = None,
 ) -> ProducedInbox:
     """The produced inbox set for one tick.
 
@@ -917,6 +923,11 @@ def read_produced_inbox(
       the no-dispatch model (R1: the modeller's "nothing to hunt here" outcome,
       S2 8.4).
     - The hunter memory's produced test specs (the pod family, S3 8.7).
+    - F-017 reconciliation: a CONSUMED ratified spec of THIS run that has no
+      terminal pod export is recovered as dispatchable work. Admission moves a
+      spec to consumed/ before its pod finishes, so a provider pause can leave
+      it consumed with no export; without this read the resume path would
+      quiesce with the test never executed.
 
     The config family retired in T4b (#387): there is no hunt-store read and no
     `HuntConfigItem` - a produced hunt config is not dispatch input at all.
@@ -924,6 +935,9 @@ def read_produced_inbox(
     Each item carries its Q13 session id derived on the fly from the
     memory-item keys (Q13; ADR #169)."""
     items: list[ProducedItem] = list(_spec_items(hunter_store, project_id, run_id))
+    if pod_store is not None:
+        items.extend(_recoverable_spec_items(
+            hunter_store, project_id, run_id, pod_store=pod_store))
     models_to_consume: dict[str, tuple[str, ...]] = {}
     if threat_store is not None:
         for entry in threat_store.read_produced_loops(project_id):
@@ -1010,6 +1024,72 @@ def _spec_items(
                 spec=body,
             ))
     return tuple(items)
+
+
+def _recoverable_spec_items(
+    hunter_store: HunterMemoryStore,
+    project_id: str,
+    run_id: str,
+    *,
+    pod_store: Any,
+) -> tuple[TestSpecItem, ...]:
+    """Consumed ratified specs of THIS run that have no terminal PodExport.
+
+    The at-least-once marker is admission, not completion: the mover renames a
+    spec into consumed/ before the pod can fail. A provider pause can therefore
+    leave a consumed spec with no pod directory and no export (F-017). The
+    resume read recovers every such spec:
+
+    - it must be a consumed, `ratified` spec (the pod dispatch gate);
+    - its typed provenance must name THIS run (`run_id`), so another run's
+      consumed spec is never stolen; a legacy spec without a run id is skipped
+      rather than guessed;
+    - `pod_store.read_pod_export(spec_id, run_id)` must be empty. A terminal
+      export - successful or unsuccessful - is the completion marker and ends
+      the recovery.
+
+    A read failure on one spec skips that spec (fail-open), never aborts the
+    tick or poisons another run's work."""
+    recovered: list[TestSpecItem] = []
+    for hunt_key in hunter_store.list_hunt_keys(project_id):
+        for spec_file in hunter_store.consumed_spec_files(project_id, hunt_key):
+            try:
+                body = hunter_store.read_spec(
+                    project_id, hunt_key, spec_file, side="consumed")
+            except Exception as exc:  # noqa: BLE001 - fail-open per record
+                logger.warning(
+                    "mover: consumed spec %s/%s unreadable (%s); not recovered",
+                    hunt_key, spec_file, exc,
+                )
+                continue
+            if not body or body.get("status") != SPEC_DISPATCH_STATUS:
+                continue
+            provenance = body.get("provenance")
+            provenance_run = (
+                provenance.get("run_id")
+                if isinstance(provenance, Mapping) else ""
+            )
+            if str(provenance_run or "") != run_id:
+                continue
+            try:
+                export = pod_store.read_pod_export(spec_file, run_id)
+            except Exception as exc:  # noqa: BLE001 - fail-open per record
+                logger.warning(
+                    "mover: pod-export read for %s/%s failed (%s); "
+                    "not recovered", hunt_key, spec_file, exc,
+                )
+                continue
+            if export:
+                continue
+            recovered.append(TestSpecItem(
+                message_id=f"{hunt_key}/{spec_file}",
+                session_id=pod_session_id(run_id, hunt_key, spec_file),
+                hunt_key=hunt_key,
+                spec_file=spec_file,
+                spec=body,
+                recovered=True,
+            ))
+    return tuple(recovered)
 
 
 def _entry_loop_ids(entry: Mapping[str, Any]) -> tuple[str, ...]:

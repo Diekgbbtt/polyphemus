@@ -1,0 +1,33 @@
+# UTM retest - white-jotter from scratch, full recon -> analysis -> hunting.
+#
+# One target, one fresh project, 7M capped tokens. The recon subset is the
+# documented single-host contract (no steel_crawl / subdomain / whois jobs).
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: auth-bootstrap
+    status: incomplete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-1
+    env_file: eval-server-1/.env
+    targets:
+      - target_key: webexploitbench/white-jotter
+        target_id: white-jotter-1
+        target_run_id: utm-retest-white-jotter
+        token_budget: 7000000
+        target_config:
+          operator_kb: /root/eval-dd/data/white-jotter/operator_kb.md
+          data_dir: /root/eval-dd/data/white-jotter
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun]

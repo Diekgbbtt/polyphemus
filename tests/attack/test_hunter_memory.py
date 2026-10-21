@@ -19,6 +19,7 @@ from polymerhus.attack.hunting import hunter_memory
 from polymerhus.attack.hunting.hunter_memory import (
     DuplicateSpecError,
     HunterMemoryStore,
+    IncompleteSpecSetError,
     spec_identifier,
 )
 
@@ -95,6 +96,50 @@ def test_the_terminal_write_promotes_and_declasses_in_place(tmp_path):
     # the body is the reduced D4 at every status: no FaultItem/spec_id residue
     assert dropped["verification_symptoms"] == []
     assert "spec_id" not in dropped and "experiment_ref" not in dropped
+
+
+def test_a_terminal_write_that_omits_a_hypothesised_spec_is_refused(tmp_path):
+    """F-017 quality repair: the terminal VERIFY-CLAIMS write carries the
+    WHOLE set. A terminal write that silently omits a previously authored
+    hypothesised spec is an incomplete set, not a promotion - the store
+    refuses it and names the missing identities so the hunter can ratify or
+    explicitly drop them (comfyui-003's `/view` SVG draft was lost this way)."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="registration", strategy_keyword="probe"),
+        _spec(fault_keyword="reset", strategy_keyword="replay"),
+    ])
+    with pytest.raises(IncompleteSpecSetError) as caught:
+        store.write_specs(PROJECT, HUNT_KEY, [
+            _spec(status="ratified", fault_keyword="registration",
+                  strategy_keyword="probe"),
+        ])
+    assert "reset_replay" in str(caught.value)
+    # the refused write is atomic: the old produced set is untouched
+    assert store.read_spec(PROJECT, HUNT_KEY, "registration_probe")["status"] \
+        == "hypothesised"
+    assert store.read_spec(PROJECT, HUNT_KEY, "reset_replay")["status"] \
+        == "hypothesised"
+
+
+def test_a_terminal_write_that_explicitly_drops_a_draft_is_allowed(tmp_path):
+    """The completeness gate is satisfied by an explicit `dropped` entry: the
+    hunter must decide every draft, not silently forget it."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="registration", strategy_keyword="probe"),
+        _spec(fault_keyword="reset", strategy_keyword="replay"),
+    ])
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(status="ratified", fault_keyword="registration",
+              strategy_keyword="probe"),
+        _spec(status="dropped", fault_keyword="reset",
+              strategy_keyword="replay"),
+    ])
+    assert store.read_spec(PROJECT, HUNT_KEY, "registration_probe")["status"] \
+        == "ratified"
+    assert store.read_spec(PROJECT, HUNT_KEY, "reset_replay")["status"] \
+        == "dropped"
 
 
 def test_a_duplicate_identity_in_one_set_is_the_dedup_signal(tmp_path):
@@ -244,14 +289,26 @@ def test_read_specs_sides_and_status_filters(tmp_path):
         _spec(fault_keyword="f2", strategy_keyword="probe"),
     ])
     store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="f1", strategy_keyword="probe", status="ratified"),
         _spec(fault_keyword="f2", strategy_keyword="probe", status="dropped")])
     assert len(store.read_specs(PROJECT, HUNT_KEY)) == 2
-    ratified = store.read_specs(PROJECT, HUNT_KEY, statuses=["ratified"])
-    assert ratified == []
+    ratified = store.read_specs(PROJECT, HUNT_KEY, statuses=["ratified"],
+                                attributes=["status"])
+    assert ratified == [{"status": "ratified"}]
     dropped = store.read_specs(PROJECT, HUNT_KEY, statuses=["dropped"],
                               attributes=["status"])
     assert dropped == [{"status": "dropped"}]
     assert store.read_spec(PROJECT, HUNT_KEY, "missing") is None
+
+
+def test_consumed_spec_files_lists_only_the_consumed_side(tmp_path):
+    """F-017: the mover needs the consumed-side inventory to reconcile a spec
+    admitted before a pause against its terminal PodExport."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    assert store.consumed_spec_files(PROJECT, HUNT_KEY) == []
+    store.consume_spec(PROJECT, HUNT_KEY, SPEC_ID)
+    assert store.consumed_spec_files(PROJECT, HUNT_KEY) == [SPEC_ID]
 
 
 def test_a_corrupt_spec_file_raises(tmp_path):

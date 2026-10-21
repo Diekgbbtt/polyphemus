@@ -70,6 +70,7 @@ from .conciseness import append_conciseness_directive
 from .hunter_memory import (
     DuplicateSpecError,
     HunterMemoryStore,
+    IncompleteSpecSetError,
 )
 from .hunter_state import SPEC_STATUSES
 from .http_history_contract import (
@@ -444,11 +445,13 @@ class HuntsStoreTool(StoreToolBase):
     _as_json: bool = True
 
     def __init__(self, *, store: HunterMemoryStore | None = None,
-                 project_id: str = "", hunt_key: str = "", **kwargs):
+                 project_id: str = "", hunt_key: str = "",
+                 run_id: str = "", **kwargs):
         super().__init__(**kwargs)
         self._store = store
         self._project_id = project_id
         self._hunt_key = hunt_key
+        self._run_id = run_id
         self.description = append_conciseness_directive(self.description)
 
     def _unavailable(self, args: HuntsStoreArgs) -> str:
@@ -552,6 +555,16 @@ class HuntsStoreTool(StoreToolBase):
                 "or the terminal write (survivors `ratified`, unfeasible "
                 "`dropped`); do not mix `hypothesised` with a terminal status "
                 "in one write")
+        # F-017: bind the current hunting run id into each spec's typed
+        # provenance, so a consumed spec with no terminal PodExport can be
+        # attributed to THIS run on resume. The model never authors it.
+        if self._run_id:
+            for spec in specs:
+                provenance = spec.get("provenance")
+                if not isinstance(provenance, dict):
+                    provenance = {}
+                provenance.setdefault("run_id", self._run_id)
+                spec["provenance"] = provenance
         try:
             # The store derives the spec ids and applies the set lifecycle;
             # statuses are persisted verbatim (hypothesised creates, a later
@@ -563,6 +576,18 @@ class HuntsStoreTool(StoreToolBase):
             # refreshes instead of duplicating - never a raise into the turn.
             return json.dumps({"ok": False, "error": "duplicate_spec",
                                "hunt_key": self._hunt_key, "detail": str(exc)})
+        except IncompleteSpecSetError as exc:
+            # F-017 quality repair: the terminal set must decide every draft.
+            # The coded response names the omitted identities so the hunter can
+            # ratify or explicitly drop them in the retry.
+            return json.dumps({
+                "ok": False,
+                "error": "incomplete_spec_set",
+                "fields": ["specs"],
+                "missing": list(exc.missing),
+                "detail": str(exc),
+                "rejected": True,
+            })
         except ValueError as exc:
             return json.dumps({"ok": False, "error": "invalid_args",
                                "detail": str(exc)})
@@ -1005,6 +1030,7 @@ def build_hunter_tools(
     store: HunterMemoryStore | None = None,
     project_id: str = "",
     hunt_key: str = "",
+    run_id: str = "",
     graph_view_fn: GraphViewFn | None = None,
     kb_fn: KbQueryFn | None = None,
     exec_fn: ExecFn | None = None,
@@ -1048,7 +1074,8 @@ def build_hunter_tools(
             classes=suite_classes, read_fn=suite_read_fn, suite=suite)
 
     return [
-        HuntsStoreTool(store=store, project_id=project_id, hunt_key=hunt_key),
+        HuntsStoreTool(store=store, project_id=project_id, hunt_key=hunt_key,
+                       run_id=run_id),
         notes_tool_for(store=store, project_id=project_id, hunt_key=hunt_key),
         build_graph_view_tool(graph_view_fn),
         KbQueryTool(kb_fn=kb_fn),

@@ -243,7 +243,7 @@ def _drive_running_tick(threat, hunter, *, state=None, pod_store=None):
     async def _drive(plane, coro_for):
         report = run_delivery_tick(
             PROJECT, RUN, threat_store=threat, hunter_store=hunter,
-            control=plane, coro_for=coro_for,
+            pod_store=pod_store, control=plane, coro_for=coro_for,
         )
         await plane.settle()
         return report
@@ -511,6 +511,64 @@ def test_C36_pod_completion_persists_the_export_envelope_durably(tmp_path):
     # a second identical run_id overwrites the SAME file: count stays one
     asyncio.run(_pod_session())
     assert pod_store.list_pod_exports(SPEC_FILE) == [run_id]
+
+
+# --- C40/C41: consumed-spec reconciliation on resume (F-017) ------------------
+
+def test_C40_consumed_ratified_spec_without_export_is_redispatched(tmp_path):
+    """F-017 regression: a spec consumed at admission but with no terminal
+    PodExport (the provider pause) is recovered as dispatchable work on resume.
+    The recovered item is the same loop/spec identity and the REAL dispatch
+    carries it to a pod."""
+    pod_store = PodMemoryStore(root_dir=tmp_path / "pod", project_id=PROJECT)
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    hunter.write_specs(
+        PROJECT, DISPATCH_ID,
+        [_spec(provenance={"run_id": RUN})], side="consumed")
+
+    inbox = read_produced_inbox(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod_store)
+    items = [item for item in inbox.items if isinstance(item, TestSpecItem)]
+    assert len(items) == 1
+    assert items[0].recovered is True
+    assert items[0].message_id == f"{DISPATCH_ID}/{SPEC_FILE}"
+    assert run_work_remaining(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod_store) is True
+
+    report, plane = _drive_running_tick(
+        None, hunter, pod_store=pod_store)
+    assert plane.calls == [pod_session_id(RUN, DISPATCH_ID, SPEC_FILE)]
+    assert report.admitted == 1 and report.moved == 1
+    # the pod wrote the terminal export: the recovered item is now settled
+    assert run_work_remaining(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod_store) is False
+
+
+def test_C41_consumed_spec_with_an_export_or_a_foreign_run_is_not_redispatched(
+    tmp_path,
+):
+    """F-017 at-least-once boundary: a consumed spec with a terminal export is
+    settled, and a spec attributed to another run is never stolen by this run."""
+    pod_store = PodMemoryStore(root_dir=tmp_path / "pod", project_id=PROJECT)
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    hunter.write_specs(
+        PROJECT, DISPATCH_ID,
+        [_spec(provenance={"run_id": RUN})], side="consumed")
+    pod_store.write_pod_export(SPEC_FILE, RUN, {
+        "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence"})
+    assert read_produced_inbox(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod_store).items == ()
+    assert run_work_remaining(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod_store) is False
+
+    other = "run-other"
+    hunter.write_specs(
+        PROJECT, DISPATCH_ID,
+        [_spec(fault_keyword="other", strategy_keyword="probe",
+               provenance={"run_id": other})], side="consumed")
+    inbox = read_produced_inbox(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod_store)
+    assert inbox.items == ()
 
 
 # --- C37 -----------------------------------------------------------------------
