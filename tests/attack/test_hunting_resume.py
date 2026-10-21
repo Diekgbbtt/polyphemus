@@ -388,7 +388,7 @@ async def _noop_pod_builder(spec, **kw):
 
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
-    """Conclude the fake hunt AND write its zero-spec terminal set (F-026)."""
+    """Conclude the fake hunt AND write its zero-spec terminal set (F-022)."""
     async def dispatch(payload):
         hunt_key = payload.get("dispatch_id")
         if hunt_key:
@@ -563,7 +563,7 @@ def test_a_resumed_run_never_redispatches_a_live_loop(tmp_path, monkeypatch):
     def _live_while_adopting():
         # The pre-registered session is live until the move lands; after the
         # admission, it completes like a real hunter and writes its zero-spec
-        # terminal set (F-026). It reports live for the tick that writes the
+        # terminal set (F-022). It reports live for the tick that writes the
         # marker, then settles: the consumed loop was already read as recovered
         # in that tick, so it must never be re-dispatched.
         if threat.read_produced_loops(PROJECT):

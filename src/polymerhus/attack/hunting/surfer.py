@@ -199,7 +199,7 @@ def is_pod_session_id(session_id: str) -> bool:
     return ":pod:" in session_id
 
 
-# F-027 (B): a single transient child provider failure is NOT a run failure.
+# F-026 (B): a single transient child provider failure is NOT a run failure.
 # The failed item is requeued after a backoff while every sibling stays live.
 # Three consecutive transient failures of the SAME child are fatal, as is any
 # quota exhaustion; the #331 stop/flush/stamp handler then pauses the run.
@@ -240,7 +240,7 @@ class RunDispatchState:
     loop; an idle one authors nothing more and settles with the run terminal, so
     counting it would deadlock the quiesce).
 
-    F-027 (B): `child_failures` is the per-child retry ledger. A transient
+    F-026 (B): `child_failures` is the per-child retry ledger. A transient
     provider failure defers only that child's item until `retry_after`; its
     siblings keep running. `provider_failure` is the run-local FATAL cause
     (#312/#329) - set on quota exhaustion or the third consecutive transient
@@ -659,7 +659,7 @@ async def run_hunter_session(
     except asyncio.CancelledError:
         raise
     except ProviderUnavailableError as exc:
-        # #312/#329 + F-027: a child provider failure is infrastructure, not a
+        # #312/#329 + F-026: a child provider failure is infrastructure, not a
         # hunt degrade. A transient failure defers THIS item (the surfer's
         # ledger) while its siblings keep running; only quota exhaustion or the
         # third consecutive failure of this child becomes the run-local fatal
@@ -851,7 +851,7 @@ async def run_pod_session(
     spec contract and never the store's bookkeeping; a retired field still
     reaches the gate and rejects (S5 8.4/8.8).
 
-    F-027: a transient provider failure returns None WITHOUT a durable export,
+    F-026: a transient provider failure returns None WITHOUT a durable export,
     so the spec stays consumed with no export and F-017 recovers it after the
     per-child backoff. A fatal failure (quota or the third consecutive failure)
     lands on `state.provider_failure`; the surfer raises it after the tick and
@@ -865,7 +865,7 @@ async def run_pod_session(
                 memory_store=pod_store, spec_id=spec_id,
             )
         except ProviderUnavailableError as exc:
-            # #329/#312 + F-027: a provider failure is infrastructure, not a pod
+            # #329/#312 + F-026: a provider failure is infrastructure, not a pod
             # verdict. Do not fabricate a domain export and do not persist one.
             # A transient failure defers THIS pod; its siblings stay live.
             if state is None:
@@ -945,7 +945,7 @@ async def run_surfer_loop(
     works on it, Q12); cancellation (stop) propagates out of the sleep, and the
     session's registry entry drains with the task.
 
-    F-027 (B): a transient child provider failure does NOT raise. Its item is
+    F-026 (B): a transient child provider failure does NOT raise. Its item is
     deferred by `state.child_failures` and the loop keeps ticking while the
     healthy siblings finish. Only a fatal failure (quota exhaustion or the third
     consecutive failure of one child) sets `state.provider_failure` and raises
@@ -953,7 +953,7 @@ async def run_surfer_loop(
     ticks = 0
     last_tick = None
     while True:
-        # F-027: a fatal child failure recorded during the previous tick's
+        # F-026: a fatal child failure recorded during the previous tick's
         # child sessions must stop the NEXT dispatch before it happens.
         if state.provider_failure is not None:
             raise state.provider_failure

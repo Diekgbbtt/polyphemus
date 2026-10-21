@@ -146,7 +146,7 @@ def _patch_pg(monkeypatch, fake):
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     """Conclude the fake hunt immediately AND write its zero-spec terminal set:
-    the move is admission, the terminal set is completion (F-026)."""
+    the move is admission, the terminal set is completion (F-022)."""
     async def dispatch(config):
         hunt_key = config.get("dispatch_id")
         if hunt_key:

@@ -308,7 +308,7 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores):
         control=control, coro_for=_real_coro_for(threat, hunter),
     )
     assert report.admitted == 2 and report.moved == 2
-    # F-026: the move is admission, not completion. The tick's admitted hunter
+    # F-022: the move is admission, not completion. The tick's admitted hunter
     # did not run in this fake plane, so the consumed loop has no terminal spec
     # set yet and IS still work. The hunter's finalize settles it.
     assert run_work_remaining(
@@ -324,7 +324,7 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores):
     )) is True
 
 
-# --- F-026: the consumed-loop recovery family -----------------------------------
+# --- F-022: the consumed-loop recovery family -----------------------------------
 
 def _consumed_loop(stores):
     """One loop consumed at admission: the loop file and model live in
@@ -337,7 +337,7 @@ def _consumed_loop(stores):
 
 
 def test_a_consumed_loop_without_a_terminal_set_is_recovered(stores):
-    """F-026: the produced->consumed move is admission, not completion. The
+    """F-022: the produced->consumed move is admission, not completion. The
     recovery item carries the consumed model document (never a re-model) and
     the same loop identity/session; the hunter's zero-spec finalize settles it."""
     threat, hunter = _consumed_loop(stores)
@@ -365,7 +365,7 @@ def test_a_consumed_loop_without_a_terminal_set_is_recovered(stores):
 
 
 def test_a_consumed_loop_is_recovered_while_its_sibling_stays_produced(stores):
-    """F-026 model dependency: a multi-loop unit consumes its model only with
+    """F-022 model dependency: a multi-loop unit consumes its model only with
     the LAST loop. The consumed loop is recovered from the still-produced
     model, while the sibling produced loop stays a normal dispatch candidate."""
     threat, hunter = stores

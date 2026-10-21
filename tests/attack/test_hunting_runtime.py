@@ -147,7 +147,7 @@ class _FakeControl:
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     """The fake hunt-session graph: concludes immediately (no specs authored)
-    and writes the zero-spec terminal set, so the F-026 loop recovery sees a
+    and writes the zero-spec terminal set, so the F-022 loop recovery sees a
     completed hunt and the run quiesces without producing pods."""
     async def dispatch(config):
         hunt_key = config.get("dispatch_id")
@@ -432,12 +432,12 @@ def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     assert stats["quota_exhausted"] is True
 
 
-# --- F-027 (B): transient child failures do not stop the fleet -----------------
+# --- F-026 (B): transient child failures do not stop the fleet -----------------
 
 def test_a_transient_hunter_failure_requeues_only_that_loop_and_keeps_the_sibling_live(
         tmp_path, monkeypatch):
     """One child's 429 is not the run's failure: the failed loop is requeued
-    after its backoff (the consumed loop has no terminal set, so F-026 recovers
+    after its backoff (the consumed loop has no terminal set, so F-022 recovers
     it) while the unaffected sibling finishes and finalizes. The run completes."""
     from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 

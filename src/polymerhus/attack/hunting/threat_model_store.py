@@ -594,7 +594,7 @@ class ThreatModelStore(BoundedRecordStore):
     def _read_family_loops(self, project_id: str, family: str) -> list[dict]:
         """One family's consumable units and their loop files.
 
-        The mover reads BOTH families (F-026): produced/ is the dispatch
+        The mover reads BOTH families (F-022): produced/ is the dispatch
         inbox, and consumed/ is the recovery inbox. A consumed loop whose
         hunter wrote no terminal spec set is work again after a provider pause
         - the produced->consumed move is the admission marker, never the
@@ -671,7 +671,7 @@ class ThreatModelStore(BoundedRecordStore):
         return self._read_family_loops(project_id, "produced")
 
     def read_consumed_loops(self, project_id: str) -> list[dict]:
-        """The mover's recovery inbox read (F-026): one entry per CONSUMED,
+        """The mover's recovery inbox read (F-022): one entry per CONSUMED,
         consumable unit, in the same shape as `read_produced_loops`.
 
         The consumed family is not "decided and never re-dispatched": the

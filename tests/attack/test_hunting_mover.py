@@ -308,7 +308,7 @@ def test_unknown_feedback_value_is_rejected():
 
 
 def test_a_recovered_loop_dispatches_but_its_move_is_already_satisfied():
-    """F-026: a consumed loop recovered from consumed/ has already landed its
+    """F-022: a consumed loop recovered from consumed/ has already landed its
     produced->consumed move. It is dispatched when idle (at-least-once), but an
     admitted or live recovered loop NEVER lands in `to_move` again."""
     loop = ThreatLoopItem(

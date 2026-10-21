@@ -847,7 +847,7 @@ def test_read_produced_loops_is_empty_for_a_consumed_or_unconsumable_model(tmp_p
 
 
 def test_read_consumed_loops_reports_the_consumed_unit_and_its_model(tmp_path):
-    """F-026: the recovery read is the SAME entry shape as the produced read,
+    """F-022: the recovery read is the SAME entry shape as the produced read,
     over the consumed family. The model document is the consumed one - the
     model moved with its last loop file - so a recovery dispatch never needs a
     re-model."""
@@ -868,7 +868,7 @@ def test_read_consumed_loops_reports_the_consumed_unit_and_its_model(tmp_path):
 
 def test_read_consumed_loops_falls_back_to_the_produced_model_for_a_multi_loop_unit(
         tmp_path):
-    """F-026 model dependency: the model moves with the unit's LAST loop file.
+    """F-022 model dependency: the model moves with the unit's LAST loop file.
     A consumed loop from a multi-loop unit therefore finds its original model
     still in produced/; the recovery read falls back to it and never re-models.
     Consuming the last loop moves the model, and both reads still agree."""

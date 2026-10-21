@@ -219,7 +219,7 @@ class ThreatLoopItem(ProducedItem):
     no second read. It defaults to None for a directly constructed item, which
     then reads the store itself.
 
-    F-026: `recovered` is True when the item came from consumed/ because the
+    F-022: `recovered` is True when the item came from consumed/ because the
     loop's hunter left no terminal spec set. The identity and dispatch are
     identical; the produced->consumed move is already satisfied, so the
     deduction never asks for it again."""
@@ -299,7 +299,7 @@ def threat_loop_item(
     can never disagree: whatever is not an item is neither dispatched nor
     counted as pending work.
 
-    `recovered` marks an item read from consumed/ (F-026): the same validity
+    `recovered` marks an item read from consumed/ (F-022): the same validity
     checks apply, and the produced->consumed move is already satisfied.
 
     Refused (None), each named by the file it contradicts:
@@ -457,12 +457,12 @@ def deduce_delivery(
     - feedback ADMITTED -> `to_move` (the at-least-once marker).
     - feedback REFUSED -> `to_retry`: REMAINS in produced for the next tick -
       never dropped, never moved.
-    - session id in `deferred_session_ids` (F-027) -> NO plan entry: the child
+    - session id in `deferred_session_ids` (F-026) -> NO plan entry: the child
       failed transiently and its retry deadline has not arrived. The item stays
       pending (so quiesce cannot pass) while its siblings keep dispatching.
     - otherwise -> `to_dispatch`.
 
-    F-026: a recovered consumed loop never lands in `to_move` - its
+    F-022: a recovered consumed loop never lands in `to_move` - its
     produced->consumed move is already satisfied. It dispatches, retries, or
     (when its session is live) waits, exactly like a produced item.
 
@@ -489,7 +489,7 @@ def deduce_delivery(
                 to_move.append(item)
             continue
         if item.session_id in deferred_session_ids:
-            # F-027: the child is backing off; leave the item pending.
+            # F-026: the child is backing off; leave the item pending.
             continue
         outcome = by_item.get(item.message_id)
         if outcome is DispatchFeedback.ADMITTED:
@@ -520,7 +520,7 @@ class TickReport:
     zero-loop consume and the last-loop-file move, S2 8.4); `move_failed` =
     records the move could not complete (missing record or a storage failure -
     warned and counted, never aborting the tick); `deferred` = items held back
-    by a child's transient-failure backoff (F-027), left pending and never
+    by a child's transient-failure backoff (F-026), left pending and never
     counted as dispatched."""
 
     produced: int
@@ -763,7 +763,7 @@ def run_delivery_tick(
     2. Apply the sequencing filter: a `low` loop file waits while a higher-tier
        loop file is produced or a higher-tier hunter session is live (S2 8.3).
     3. Deduce with empty feedback -> the items `to_dispatch` this lap. An item
-       whose child is backing off (F-027) is held pending and never dispatched;
+       whose child is backing off (F-026) is held pending and never dispatched;
        the run cannot quiesce while it remains.
     4. Dispatch each: build its coroutine via `coro_for` (the T4 seam; a failing
        builder degrades to refused, never a raise into the tick) and hand it to
@@ -969,7 +969,7 @@ def read_produced_inbox(
       spec to consumed/ before its pod finishes, so a provider pause can leave
       it consumed with no export; without this read the resume path would
       quiesce with the test never executed.
-    - F-026 loop recovery: a CONSUMED loop file of THIS run whose hunter left
+    - F-022 loop recovery: a CONSUMED loop file of THIS run whose hunter left
       no terminal spec set is recovered as dispatchable work. The move is the
       admission marker, never the completion marker; the terminal spec set is
       completion. The item carries the consumed model document, so the
@@ -1153,7 +1153,7 @@ def _recoverable_loop_items(
     """Consumed loop files of THIS run whose hunter left no terminal spec set.
 
     The produced->consumed move is the admission marker (S2 8.4); the hunter's
-    terminal spec set is the completion marker (F-026). A consumed loop with no
+    terminal spec set is the completion marker (F-022). A consumed loop with no
     CURRENT-RUN terminal set is recovered: after a provider pause the hunter
     may have been interrupted after admission and before finalize. The item
     carries the consumed model document, so the dispatch reuses the original
@@ -1226,7 +1226,7 @@ def _hunter_finalized(
 ) -> bool:
     """True when `hunt_key` has a terminal spec set written by THIS run.
 
-    The terminal set is the durable loop-completion marker (F-025/F-026). A
+    The terminal set is the durable loop-completion marker (F-025/F-022). A
     read failure recovers (fail-open at-least-once: re-hunting is safe and the
     next finalize overwrites the marker); a marker from another run does not
     settle this run's loop."""

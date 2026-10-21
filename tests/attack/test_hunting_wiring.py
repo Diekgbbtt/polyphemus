@@ -519,7 +519,7 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
 
 def test_a_transient_pod_failure_requeues_only_that_spec_and_keeps_the_sibling_live(
         stores, monkeypatch):
-    """F-027: one pod's 429 does not stop the fleet. The failed spec has no
+    """F-026: one pod's 429 does not stop the fleet. The failed spec has no
     terminal export, so F-017 recovers it after the backoff; the sibling spec
     finishes (and stays live while the failure lands). The run completes."""
     from polymerhus.app.llm.provider_failure import ProviderUnavailableError
@@ -946,7 +946,7 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    # Seed the produced draft directly: no loop file exists, so F-026 has no
+    # Seed the produced draft directly: no loop file exists, so F-022 has no
     # consumed loop to recover and the test isolates the mover's own-status gate.
     hunter.write_specs(
         PROJECT, DISPATCH_ID,

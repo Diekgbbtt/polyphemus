@@ -466,7 +466,7 @@ def test_a_low_loop_waits_for_the_higher_loop_and_is_released_after_it(
     assert first.admitted == 1 and first.moved == 1 and first.paused == 1
     assert [e["loop_id"] for e in threat_store.read_produced_loops(PROJECT)[0]["loops"]] \
         == ["loop-2"]
-    # F-026: the higher hunter settled and finalized its (zero-spec) terminal
+    # F-022: the higher hunter settled and finalized its (zero-spec) terminal
     # set; the run-local wire state is gone, exactly as after a restart.
     hunter_store.finalize_specs(
         PROJECT, f"{UNIT_NAME}__loop-1", run_id=RUN)
@@ -527,7 +527,7 @@ def test_a_restart_holds_a_low_loop_while_the_higher_loop_file_is_produced(
     assert second.admitted == 1 and second.moved == 1 and second.paused == 1
     assert [e["loop_id"] for e in
             threat_store.read_produced_loops(PROJECT)[0]["loops"]] == ["loop-2"]
-    # F-026: the higher hunter finalized its zero-spec terminal set, so the
+    # F-022: the higher hunter finalized its zero-spec terminal set, so the
     # consumed loop is complete (the fake session never ran).
     hunter_store.finalize_specs(
         PROJECT, f"{UNIT_NAME}__loop-1", run_id=RUN)
@@ -794,7 +794,7 @@ def test_a_refused_dispatch_leaks_no_run_state_and_quiesces(
     assert admitted.admitted == 1 and admitted.moved == 1
     assert state.hunters_in_graph == set()
     assert state.loop_likelihoods == {}
-    # F-026: the move is admission, not completion. The fake hunter session
+    # F-022: the move is admission, not completion. The fake hunter session
     # never ran, so its terminal spec set is written here (a zero-spec hunt is
     # still a completed hunt); only then is the run's work exhausted.
     hunter_store.finalize_specs(
@@ -896,7 +896,7 @@ def test_a_malformed_loop_file_is_logged_once_across_ticks(
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.mover"):
         first = _tick(threat_store, hunter_store, control=control)
-        # F-026: the admitted hunter's terminal set is what completes loop-1;
+        # F-022: the admitted hunter's terminal set is what completes loop-1;
         # the fake session never ran, so the test writes it before the next tick.
         hunter_store.finalize_specs(
             PROJECT, f"{UNIT_NAME}__loop-1", run_id=RUN)
@@ -951,7 +951,7 @@ def test_the_model_document_moves_with_its_last_loop_file(
     assert threat_store.read_completed_units(PROJECT) == []
     assert [e["loop_id"] for e in
             threat_store.read_produced_loops(PROJECT)[0]["loops"]] == ["loop-2"]
-    # F-026: complete the high hunt so its consumed loop is not recovered while
+    # F-022: complete the high hunt so its consumed loop is not recovered while
     # the low loop is released.
     hunter_store.finalize_specs(
         PROJECT, f"{UNIT_NAME}__loop-1", run_id=RUN)

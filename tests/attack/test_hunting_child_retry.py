@@ -1,4 +1,4 @@
-"""F-027 (B): the per-child transient-failure ledger and the mover's deferral.
+"""F-026 (B): the per-child transient-failure ledger and the mover's deferral.
 
 A single child provider failure is infrastructure, not a run failure: the failed
 item backs off while its siblings stay live. Only quota exhaustion or the third
