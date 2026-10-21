@@ -93,8 +93,9 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** repeated `reasoning gap: profile expects reasoning_content ... but the response message carries no matching value` warnings from `polymerhus.app.llm.reasoning`.
 - **Impact:** the reasoning replay/observability surface cannot read the reasoning text, although the usage ledger still records reasoning tokens.
 - **Evidence:** the app log warnings at 22:12:47 to 22:14:10.
-- **Recurrence:** the 2026-10-21 hunting retest logged the same warning and provider 400 responses on hunter turns. Two hunter steps degraded.
-- **Status:** open; still a quality risk.
+- **Recurrence:** the 2026-10-21 hunting retest logged the same warning and provider 400 responses on hunter turns. Two hunter steps degraded. Both terminal pod exports (`active-type-denylist-omission_userdata-blob-serve`, `type-selects-privileged-area_temp-read`) were `unsuccessful` with `iterations: 0` and the same reasoning 400: they are F-009 false negatives, not domain evidence.
+- **Status:** fixed as `e45d41ea`; 52 targeted tests pass.
+- **Resolution:** `ReasoningPreservingChatOpenAI` replays once on the thinking-mode 400, then carries `reasoning_content: ""` only on assistant tool-call messages that lack it, at all four generation entry points. The fallback never invents reasoning for a plain assistant answer.
 - **Domain:** provider capability and observability.
 - **Root cause:** the models.dev capability profile advertises a `reasoning_content` surface that the relay did not populate on these responses.
 
@@ -121,12 +122,13 @@ The final section regroups the entries by failure domain and common root cause.
 ### F-012 - The L0 technology and observation queries use mismatched schema names
 
 - **Detected:** during the canary analysis.
-- **Signal:** Neo4j `UnknownRelationshipTypeWarning: HAS_TECHNOLOGY` and `UnknownPropertyKey: key`; the live graph uses `USES_TECHNOLOGY` and stores observation identity on `name`/`properties`.
+- **Signal:** Neo4j `UnknownRelationshipTypeWarning: HAS_TECHNOLOGY` and `UnknownPropertyKey: key`. The live graph uses `USES_TECHNOLOGY`; `recon/domain/curator.py` writes `MERGE (o:Observation {id: $obs_id})`, so observation identity is the top-level `id` property, not `name` or `properties`.
 - **Impact:** the technology and observation projections return no rows; the analysis grounding is weaker.
-- **Evidence:** the app log at 22:12:47 and the graph label inventory.
-- **Status:** open; medium severity.
+- **Evidence:** the app log at 22:12:47, the graph label inventory, and `build_observation_cypher` in `recon/domain/curator.py`.
+- **Status:** fixed as `6c3e34fa`; 21 graph tests pass.
+- **Resolution:** the graph schema guide now teaches `USES_TECHNOLOGY`, `Observation {id}`, `labels(n)` for a label, `(a)-[:HAS_OBSERVATION]->(o)`, and `HAS_CERTIFICATE`. It also prohibits the generic `key` identity.
 - **Domain:** graph query and coupling.
-- **Root cause:** the read query and the write schema diverged; the warning is swallowed as a graph query result.
+- **Root cause:** the model-authored Cypher and the graph schema guide diverged from the live write schema; the warning was swallowed as a graph query result.
 
 ### F-013 - The canary analysis did not drain under the global 0.4 threshold
 
@@ -227,10 +229,11 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** the first attempt moved 13 of 15 core-http loop files from `produced/` to `consumed/` at dispatch, then the provider returned 429 and the trial died. Hunter output was zero specs. The resume path did not re-dispatch the 13 consumed loops.
 - **Impact:** 13 of 15 hunter sessions were lost. The operator restored the files manually before the resume, so the retest could proceed.
 - **Evidence:** `threat_modeller/consumed/RESTApi-core-http/loop-1.yaml` through `loop-13.yaml`; no `hunter/test-specs/` output; the 13 files moved back to `produced/` at 13:59:05Z.
-- **Status:** open; manual recovery only.
+- **Status:** fixed as `30a76375`; the attack and hunting integration suites pass.
+- **Resolution:** the hunter's terminal spec set is the durable loop-completion marker. `hunter_memory.finalize_specs` writes `test-specs/<hunt_key>/terminal.yaml` with the run id, and a zero-spec hunt still writes one. `ThreatModelStore.read_consumed_loops` reads the consumed family; `mover.read_produced_inbox` recovers a consumed loop of THIS run whose terminal set is absent or belongs to another run. The recovery item carries the original model document (from `consumed/`, or still in `produced/` when a sibling loop has not moved it), so the unit is never re-modelled. A recovered loop never lands a second produced->consumed move.
 - **Domain:** hunting dispatch, resume, and at-least-once semantics.
-- **Root cause:** loop files are consumed at dispatch with no durable completion marker. The F-017 reconciliation covers pod specs, not threat-model loops. A provider pause after loop consumption leaves no state that identifies the unfinished loops.
-- **Follow-up:** add a loop lease or completion marker and recover consumed loops with no terminal hunter output on resume.
+- **Root cause:** loop files were consumed at dispatch with no durable completion marker. The F-017 reconciliation covered pod specs, not threat-model loops. A provider pause after loop consumption left no state that identified the unfinished loops.
+- **Residual risk:** a hunter that ends without finalizing is recovered again on the next tick. The prompt now requires `finalize`; the F-026 child-failure policy bounds provider failures, not a model that ignores the finalize contract.
 
 ### F-023 - A quota-exhausted run is terminal after a provider key rotation
 
@@ -259,10 +262,23 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** `LiteLLM:WARNING ... Failed to parse tool call arguments for tool 'hunts_store' ... Error: Expecting ',' delimiter: line 1 column 3686 (char 3685).` The model was writing five specs in one call.
 - **Impact:** five hypothesised specs were not written in that turn. The typed contract from F-015 did not prevent transport-level truncation.
 - **Evidence:** app log at 14:04; loop-9 spec set; `hunts_store` argument size.
-- **Status:** open.
+- **Status:** fixed as `d3bfa6c7`; the hunter prompt, tool, store, and integration suites pass.
+- **Resolution:** `hunts_store` writes exactly ONE spec per call. The tool contract is `command: read | write | finalize`; `write` carries one `spec` with the typed fields and explicit required/optional semantics. `finalize` is the whole-set gate: every produced spec must be `ratified` or `dropped`, and it writes the durable terminal set (a zero-spec hunt included). The hunter prompt and examples teach the one-spec cadence; a write after finalize is rejected.
 - **Domain:** hunter tool transport and spec batching.
-- **Root cause:** the per-call argument payload is large and the relay parser rejects the truncated JSON before the typed contract can validate it.
-- **Follow-up:** bound the spec batch per call, or write each spec as its own resumable call.
+- **Root cause:** the per-call argument payload was large and the relay parser rejected the truncated JSON before the typed contract could validate it.
+- **Follow-up:** none for the truncation. The terminal set is also the F-022 loop-completion marker.
+
+### F-026 - One child provider failure stops the whole hunting run
+
+- **Detected:** during the 2026-10-21 comfyui hunting retest, first attempt.
+- **Signal:** the provider returned 429 for one dispatched hunter. The `#331` stop-only handler cancelled every component session of the run, including the healthy hunters and pods.
+- **Impact:** 13 consumed loops and their hunter sessions were lost; the operator restored the loop files manually. One child's transient throttle became a run-wide teardown.
+- **Evidence:** the retest first-attempt interruption, the run-wide session cancellation in `runtime.stop_hunting_for_provider_failure`, and the 13 restored loop files.
+- **Status:** fixed as `7491b5e7`; the attack and hunting integration suites pass.
+- **Resolution:** a dispatched hunter or pod records its provider failure on a per-item ledger. A transient failure defers only that item after `retry_after_s` (or a 30s default) while every sibling stays live; the mover never dispatches a deferred item and the run cannot quiesce while it is pending. A success resets the item's count. Quota exhaustion is fatal immediately; otherwise the third consecutive transient failure of the same child is fatal. Only then does the surfer raise the typed cause to the existing stop/flush/stamp handler.
+- **Domain:** hunting dispatch, provider resilience, and teardown policy.
+- **Root cause:** the `#331` handler was the only child-failure path and it was run-global. There was no per-item retry state, so a single transient failure had to stop the run.
+- **Residual risk:** several different children may each fail twice without pausing the run; a broad outage converges only when one item reaches its third failure. This is intentional: the threshold detects a persistently failing item, not a broad provider outage.
 
 ## Runtime trials
 
@@ -339,8 +355,8 @@ The final section regroups the entries by failure domain and common root cause.
 ## Final clustering
 
 - The canary 4 discovery result is 0/6. The dominant diagnosed cause is F-017: a ratified spec was consumed and lost when the provider pause interrupted the pod session. This is a delivery bug, not a model-quality miss.
-- The 2026-10-21 hunting retest reached 39 specs and 19 pod directories, but it remained 0/6 at the unit level and 0 confirmed at the pod level. The run stopped at the cap before pod completion.
-- The retest added four open defects: F-022 loop loss on resume, F-023 quota-terminal resume, F-024 cap overshoot, and F-025 tool-call truncation. F-009 recurred.
+- The 2026-10-21 hunting retest reached 39 specs, 13 hunter sessions, and 19 pod directories, but it remained 0/6 at the unit level and 0 confirmed at the pod level. Two pods reached terminal exports, both F-009 false negatives; the run stopped at the cap before the rest completed.
+- The retest added four defects: F-022 loop loss on resume (fixed), F-023 quota-terminal resume (deferred), F-024 cap overshoot (deferred), and F-025 tool-call truncation (fixed). F-009 recurred and is fixed; F-026 (one child failure stopped the whole run) was found by the teardown diagnosis and is fixed.
 - F-013's upstream cause was family construction, not the compaction threshold; the endpoint micro-family plus 300-asset packing is the structural fix.
 - F-015's upstream cause was the open JSON contract; the typed `SpecWrite`/`SpecProvenance`/`ModelSections` and coded field rejection are the structural fix.
 - F-016 has two causes: the compose file hardcoded the budget guard off, and the 7M cap is trial-client-scoped. The guard is now enabled and the live key carries the `$30/7d` and `$60/30d` windows; the `deepseek-v4.1-flash` cost override is forced. The durable 7M binding remains open.

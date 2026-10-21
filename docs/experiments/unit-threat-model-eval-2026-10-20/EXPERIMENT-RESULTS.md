@@ -270,10 +270,11 @@ The reconstructed trial record is `/opt/polymerhus-dev/eval/runs-utm-20261020/co
 | Calls | 1,204 | Project cumulative at the stop was 7,806,215 capped tokens. |
 | Loops | 15 | One `RESTApi:core-http` model. |
 | Hunter specs | 39 | 22 `ratified`, 16 `hypothesised`, 1 `dropped`; 9 loops produced specs. |
-| Pod directories | 19 | 5 pod runs measured; no terminal pod export. |
+| Hunter sessions | 13 | 13 of 15 loops dispatched a hunter; 2 loops were not dispatched. |
+| Pod directories | 19 | 5 pod runs measured; 2 terminal exports, both `unsuccessful`. |
 | Unit-level candidates | 0 of 6 | Strict benchmark axis. |
 | Class-level candidates | 5 of 6 | The specs bind `RESTApi:core-http`, not the corpus service units. |
-| Pod confirmations | 0 | The cap stopped the pod phase before evidence was terminal. |
+| Pod confirmations | 0 | Both terminal exports were F-009 false negatives (`iterations: 0`, same reasoning 400); no domain evidence. |
 | Identification | 0 of 6 | 0 partial. |
 
 ### Retest Findings
@@ -284,17 +285,18 @@ The reconstructed trial record is `/opt/polymerhus-dev/eval/runs-utm-20261020/co
 - The F-021 prompt fix worked at class level. The hunter wrote `/view` subfolder-decode, metadata-path-join, and viewvideo path-join specs.
 - The `/userdata` owner checks and the manager catalogue also produced specs.
 - The strict unit axis remained zero. Every spec bound `RESTApi:core-http`, not a corpus service unit.
-- No pod produced a terminal export before the cap. The F-017 recovery and the F-020 terminal-set guard were not exercised to completion.
+- Two pods produced terminal exports before the cap, both `unsuccessful` with `iterations: 0` and the same reasoning 400: `active-type-denylist-omission_userdata-blob-serve` and `type-selects-privileged-area_temp-read`. They are F-009 false negatives, not domain evidence. The F-017 recovery and the F-020 terminal-set guard were not exercised to completion.
 - The reason-replay 400 recurred. Two hunter turns degraded.
 - A five-spec `hunts_store` call was truncated at 3,686 characters. Five candidate specs were lost.
 
 ### New Defects
 
-- F-022: a consumed hunting loop is lost when the run pauses on a provider failure.
-- F-023: a quota-exhausted run is terminal after a provider key rotation.
-- F-024: the capped-token watchdog overshoots because the stop is asynchronous.
-- F-025: a multi-spec `hunts_store` call is truncated before the typed contract can validate it.
-- F-009 recurred and remains open.
+- F-022: a consumed hunting loop is lost when the run pauses on a provider failure. Fixed as `30a76375`.
+- F-023: a quota-exhausted run is terminal after a provider key rotation. Deferred.
+- F-024: the capped-token watchdog overshoots because the stop is asynchronous. Deferred.
+- F-025: a multi-spec `hunts_store` call is truncated before the typed contract can validate it. Fixed as `d3bfa6c7`.
+- F-026: one child provider failure stops the whole run. Fixed as `7491b5e7`.
+- F-009 recurred; fixed as `e45d41ea`.
 
 ### Retest Gate
 
@@ -302,11 +304,11 @@ The white-jotter trial is held.
 The retest did not pass the planned gate:
 
 - the run terminal is `stopped`, not `complete`;
-- no ground-truth spec reached a terminal pod export;
+- the two terminal pod exports were F-009 false negatives; no ground-truth spec reached a confirmed export;
 - the strict unit axis is 0 of 6;
-- F-022, F-023, F-024, F-025, and F-009 remain open.
+- F-023 and F-024 remain deferred; F-022, F-025, F-026, and F-009 are fixed locally but not yet deployed.
 
-The next step is to fix F-022, F-023, F-024, F-025, and F-009, then run a focused ComfyUI hunting validation before the 7M white-jotter trial.
+The next step is to deploy and validate the local fixes, then run the 7M white-jotter trial.
 
 ---
 

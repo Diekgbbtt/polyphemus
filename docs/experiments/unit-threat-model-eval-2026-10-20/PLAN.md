@@ -459,22 +459,19 @@ The reconstructed trial record is `/opt/polymerhus-dev/eval/runs-utm-20261020/co
 Result:
 - the first attempt spent 990,160 capped tokens and stopped on a provider 429 with `quota_exhausted=true`;
 - the new provider key was applied to the instance `.env` and the agent was recreated;
-- 13 consumed loops were restored manually because the resume path does not recover them;
-- the run refused to resume until `stats.quota_exhausted` was cleared in PostgreSQL;
-- the resume produced 15 loops, 39 specs, and 19 pod directories;
-- the watchdog stopped the project at 3,355,148 capped tokens, an overshoot of 355,148 against the 3,000,000 budget;
+- 13 consumed loops were restored manually because the resume path did not recover them; F-022 adds the durable recovery;
+- the run refused to resume until `stats.quota_exhausted` was cleared in PostgreSQL; F-023 is deferred;
+- the resume produced 13 hunter sessions, 39 specs, and 19 pod directories;
+- two pods reached terminal exports, both `unsuccessful` with `iterations: 0` and the same reasoning 400: F-009 false negatives, not domain evidence;
+- the watchdog stopped the project at 3,355,148 capped tokens, an overshoot of 355,148 against the 3,000,000 budget; F-024 is deferred;
 - the run status is `stopped`, not `complete`;
-- the deterministic result is 0 of 6 unit-level candidates, 5 of 6 class-level candidates, and 0 pod confirmations.
+- the deterministic result is 0 of 6 unit-level candidates, 5 of 6 class-level candidates, and 0 confirmed pod symptoms.
 
 Gate result: fail.
-The white-jotter trial is held.
-The retest exposed F-022, F-023, F-024, and F-025, and F-009 recurred.
+The white-jotter trial is held until the fixed code is deployed and validated.
+The retest exposed F-022, F-023, F-024, and F-025, plus F-026 (one child failure stopped the whole run); F-009 recurred. F-022, F-025, F-026, and F-009 are fixed locally.
 
 Next:
-- fix F-022 consumed-loop recovery;
-- fix F-023 forced resume after a key rotation;
-- fix F-024 pre-emptive cap enforcement;
-- fix F-025 per-call spec batching;
-- fix F-009 reasoning replay;
-- run a focused ComfyUI hunting validation;
+- deploy and validate F-022 consumed-loop recovery, F-025 one-spec writes, F-026 per-child retry, and F-009 reasoning replay;
+- keep F-023 forced resume and F-024 pre-emptive cap enforcement deferred;
 - only then start the 7M white-jotter trial.
