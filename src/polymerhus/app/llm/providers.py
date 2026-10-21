@@ -698,6 +698,7 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
     _relax_forced_tool_choice: bool = PrivateAttr(default=False)
     _relax_logged: bool = PrivateAttr(default=False)
     _runtime_relaxed_tool_choice: bool = PrivateAttr(default=False)
+    _replay_reasoning_fallback: bool = PrivateAttr(default=False)
 
     def __init__(self, *args, relax_forced_tool_choice: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -741,11 +742,47 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
             "'auto' and replaying the request once (A6 runtime)", exc)
         return True
 
+    def _replay_after_reasoning_rejection(self, exc: BaseException) -> bool:
+        """F-009: recover the thinking-mode 400 that rejects a replayed
+        assistant tool-call turn without `reasoning_content`.
+
+        The DeepSeek relay requires the field on the next request even when the
+        response did not carry one. The provider accepts an empty string (live
+        probe, 2026-10-21). This flips a per-client, one-shot fallback that
+        makes `_get_request_payload` add `reasoning_content: ""` to assistant
+        tool-call messages that lack it. Ordinary payloads stay byte-identical,
+        so no other provider sees the field unless it asked for it. A second
+        rejection is not replayed again; the caller re-raises."""
+        if self._replay_reasoning_fallback:
+            return False
+        text = str(exc).lower()
+        if "reasoning_content" not in text:
+            return False
+        if "must be passed back" not in text and "thinking mode" not in text:
+            return False
+        status = getattr(exc, "status_code", None)
+        if status is not None and status != 400:
+            return False
+        self._replay_reasoning_fallback = True
+        logger.warning(
+            "upstream required reasoning_content on a replayed tool-call turn "
+            "(%s); adding the empty fallback field and replaying the request "
+            "once (F-009)", exc)
+        return True
+
+    def _replay_after_provider_rejection(self, exc: BaseException) -> bool:
+        """The bounded replay selector: the A6 tool-choice relaxation or the
+        F-009 reasoning fallback. At most one flip and one replay per call."""
+        return (
+            self._replay_after_tool_choice_rejection(exc)
+            or self._replay_after_reasoning_rejection(exc)
+        )
+
     def _generate(self, *args, **kwargs):
         try:
             return super()._generate(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - re-raised unless the A6 runtime case
-            if not self._replay_after_tool_choice_rejection(exc):
+        except Exception as exc:  # noqa: BLE001 - re-raised unless a replay case
+            if not self._replay_after_provider_rejection(exc):
                 raise
             return super()._generate(*args, **kwargs)
 
@@ -758,15 +795,15 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
                 started = True
                 yield chunk
         except Exception as exc:  # noqa: BLE001
-            if started or not self._replay_after_tool_choice_rejection(exc):
+            if started or not self._replay_after_provider_rejection(exc):
                 raise
             yield from super()._stream(*args, **kwargs)
 
     async def _agenerate(self, *args, **kwargs):
         try:
             return await super()._agenerate(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - re-raised unless the A6 runtime case
-            if not self._replay_after_tool_choice_rejection(exc):
+        except Exception as exc:  # noqa: BLE001 - re-raised unless a replay case
+            if not self._replay_after_provider_rejection(exc):
                 raise
             return await super()._agenerate(*args, **kwargs)
 
@@ -778,7 +815,7 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
                 started = True
                 yield chunk
         except Exception as exc:  # noqa: BLE001
-            if started or not self._replay_after_tool_choice_rejection(exc):
+            if started or not self._replay_after_provider_rejection(exc):
                 raise
             async for chunk in super()._astream(*args, **kwargs):
                 yield chunk
@@ -880,6 +917,16 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
                 for surface, value in replayed_request_fields(message).items():
                     if value is not None and surface not in message_dict:
                         message_dict[surface] = value
+                # F-009: only after the relay asked for it, and only on an
+                # assistant tool-call turn, replay the empty field the provider
+                # accepts. The ordinary payload never gains it.
+                if (
+                    self._replay_reasoning_fallback
+                    and isinstance(message, AIMessage)
+                    and getattr(message, "tool_calls", None)
+                    and "reasoning_content" not in message_dict
+                ):
+                    message_dict["reasoning_content"] = ""
                 serialized.append(message_dict)
             payload["messages"] = serialized
         except Exception as exc:  # noqa: BLE001 - fail-open: request unchanged
