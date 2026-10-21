@@ -92,8 +92,9 @@ The final section regroups the entries by failure domain and common root cause.
 - **Detected:** during the canary analysis.
 - **Signal:** repeated `reasoning gap: profile expects reasoning_content ... but the response message carries no matching value` warnings from `polymerhus.app.llm.reasoning`.
 - **Impact:** the reasoning replay/observability surface cannot read the reasoning text, although the usage ledger still records reasoning tokens.
-- **Evidence:** the app log warnings at 22:12:47 to 22:14:10.
-- **Status:** open; recorded for the quality measurement.
+- **Evidence:** the app log warnings at 22:12:47 to 22:14:10; a direct provider probe accepted `reasoning_content: ""`.
+- **Status:** fixed as `e45d41ea`; 52 targeted tests pass.
+- **Resolution:** `ReasoningPreservingChatOpenAI` replays once on the thinking-mode 400, then carries `reasoning_content: ""` only on assistant tool-call messages that lack it, at all four generation entry points. The fallback never invents reasoning for a plain assistant answer.
 - **Domain:** provider capability and observability.
 - **Root cause:** the models.dev capability profile advertises a `reasoning_content` surface that the relay did not populate on these responses.
 
@@ -103,9 +104,10 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** Neo4j `UnknownPropertyKeyWarning` for `label` in the L1 system witness query.
 - **Impact:** the witness-label projection is degraded; the query still returns rows.
 - **Evidence:** the Neo4j warning at 22:12:47 and the graph node properties.
-- **Status:** open; recorded for the quality measurement.
+- **Status:** fixed as `6c3e34fa`; 21 graph tests pass.
+- **Resolution:** the graph schema guide replaced the non-existent top-level `label` property with `labels(n)`. The L0 identity is `name` (or `address` for IP); there is no generic `key` identity.
 - **Domain:** graph query and coupling.
-- **Root cause:** the query reads `l0.label`, while the L0 node records expose their identity on `name`/`properties`, not a top-level `label` property.
+- **Root cause:** the model-authored Cypher read a property the live schema does not write.
 
 ### F-011 - A model-client cleanup task raised after its event loop closed
 
@@ -113,19 +115,22 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** `Task exception was never retrieved` with `httpx.AsyncClient.aclose` raising `RuntimeError: Event loop is closed`.
 - **Impact:** a background cleanup error; the model calls still completed.
 - **Evidence:** the app log at 22:26:28 and later.
-- **Status:** open; low severity.
+- **Status:** deferred; low severity. Not a functional failure: the model calls completed and no degraded run state resulted.
 - **Domain:** async lifecycle and observability.
-- **Root cause:** a LangChain/OpenAI async client cleanup is scheduled after its worker loop closes; the request path is not failed.
+- **Root cause:** `langchain_openai.ChatOpenAI` lazily creates an internal `httpx.AsyncClient` (`http_async_client`) and has no `close`/`aclose` method. The pinned client is finalized by the garbage collector, whose `aclose` coroutine is scheduled after the worker loop closed. The request path is not failed.
+- **Why deferred:** a correct fix must OWN the async client: construct one shared `httpx.AsyncClient` per provider, pass it as `http_async_client`, and close it at the app runtime's shutdown. That is a cross-cutting lifecycle change across every role construction (`build_chat_model`, the escalating wrapper, the session harness), not a local repair. There is no narrow seam to patch.
+- **Evidence of the diagnosis:** `ChatOpenAI.model_fields["http_async_client"]` exists; `dir(ChatOpenAI)` has no close method.
 
 ### F-012 - The L0 technology and observation queries use mismatched schema names
 
 - **Detected:** during the canary analysis.
-- **Signal:** Neo4j `UnknownRelationshipTypeWarning: HAS_TECHNOLOGY` and `UnknownPropertyKey: key`; the live graph uses `USES_TECHNOLOGY` and stores observation identity on `name`/`properties`.
+- **Signal:** Neo4j `UnknownRelationshipTypeWarning: HAS_TECHNOLOGY` and `UnknownPropertyKey: key`. The live graph uses `USES_TECHNOLOGY`; `recon/domain/curator.py` writes `MERGE (o:Observation {id: $obs_id})`, so observation identity is the top-level `id` property, not `name` or `properties`.
 - **Impact:** the technology and observation projections return no rows; the analysis grounding is weaker.
-- **Evidence:** the app log at 22:12:47 and the graph label inventory.
-- **Status:** open; medium severity.
+- **Evidence:** the app log at 22:12:47, the graph label inventory, and `build_observation_cypher` in `recon/domain/curator.py`.
+- **Status:** fixed as `6c3e34fa`; 21 graph tests pass.
+- **Resolution:** the graph schema guide now teaches `USES_TECHNOLOGY`, `Observation {id}`, `labels(n)` for a label, `(a)-[:HAS_OBSERVATION]->(o)`, and `HAS_CERTIFICATE`. It also prohibits the generic `key` identity.
 - **Domain:** graph query and coupling.
-- **Root cause:** the read query and the write schema diverged; the warning is swallowed as a graph query result.
+- **Root cause:** the model-authored Cypher and the graph schema guide diverged from the live write schema; the warning was swallowed as a graph query result.
 
 ### F-013 - The canary analysis did not drain under the global 0.4 threshold
 
