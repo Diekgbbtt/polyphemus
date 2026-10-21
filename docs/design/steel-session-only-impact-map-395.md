@@ -277,7 +277,7 @@ Live local Steel verification is still pending and is listed below.
 
 - Full repository verification needs `langfuse` in the local environment.
 - `tests/recon/test_skill_task_binding.py::test_a_malformed_artifact_field_is_refused_by_the_schema` fails on `dev` at `7b7cdc6b`, outside this change.
-- The feature branch now contains `dev`; the merge into `dev` is ready but remains for operator approval.
+- `dev` is fast-forwarded locally to the merge commit; nothing is pushed.
 - No push happens without operator approval.
 
 ## 12. Decisions and open items
