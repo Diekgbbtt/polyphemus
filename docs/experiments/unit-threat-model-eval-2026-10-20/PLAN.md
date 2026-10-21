@@ -395,12 +395,13 @@ Canary history:
 - attempt 4 reached recon complete, analysis drained, hunting complete, and pod execution;
 - attempt 4's trial record is `failed` on a provider 429 at 00:27:30; the T11 operator resume returned 202 and the hunting run completed at 01:05:04;
 - attempt 4's official assessor marked all 6 comfyui vulnerabilities `missed`; `diagnoses.yaml` names F-017 (a consumed pod spec was lost on the provider pause) as the leading cause;
+- the per-vulnerability layer attribution is in `QUALITY-ATTRIBUTION.md`: pod delivery 2/6, run intake/risk halt 2/6, modeller fault binding 1/6, hunter terminal set 1/6; analysis/recon is the largest contributing layer (4/6) but primary for none;
 - attempt 4 spent 4,420,861 capped tokens of 7,000,000.
 
 Pending:
 - measure canary attempt 4 with `eval/measure_trial.sh`;
 - deploy and retest the F-013 endpoint micro-family fix and the F-015 typed contracts;
-- apply the F-016 gateway request-limit fix and decide the durable budget binding;
+- verify the live F-016 budget guard (`$30/7d`, `$60/30d`) and decide the durable 7M budget binding;
 - the remaining seven trials.
 
 Pre-run corrections:
@@ -410,7 +411,7 @@ Pre-run corrections:
 - attempt 3: added the hard `CHUNK_MAX_ASSETS=300` chunk cap, which splits only an oversized family into ordered sub-chunks;
 - attempt 4: measured with the five-job subset, the 0.2 analysis thresholds, the 0.4 hunting thresholds, and the 300-asset split;
 - post-attempt 4: replaced the split workaround with the endpoint micro-family packing fix (F-013) and typed the store contracts (F-015);
-- post-attempt 4: decoupled the gateway RPM limit from the disabled USD guard (F-016);
+- post-attempt 4: found that `docker-compose.yml` hardcoded `LLM_GATEWAY_BUDGET_ENABLED=false` and overrode the instance `.env`; parameterised it, enabled the guard, and verified the key carries the `$30/7d` and `$60/30d` windows; the `deepseek-v4.1-flash` cost override is forced; no RPM is used;
 - the failed attempts are smoke failures, not measured trials;
 - attempt 4 is a measurement case, not a clean baseline.
 
@@ -421,7 +422,7 @@ The measurement must report the following structural limitations separately from
 - The recon used the documented five-job subset (`httpx`, `httpx_reprofile`, `katana`, `jsluice`, `arjun`), not the platform's full plan. The full plan cannot reach the synthetic host through the remote Steel runtime.
 - The analysis used the 300-asset hard-cap split, not the endpoint micro-family packing fix. The canary's mechanism-typist chunks were 200K-235K and close to the 200K analysis budget; the micro-family fix is post-canary.
 - The analysis roles used 0.2 compaction; the hunting roles used 0.4.
-- The gateway had no request limiter: `LLM_GATEWAY_BUDGET_ENABLED=false` and no `LLM_GATEWAY_KEY_RPM_LIMIT`. The provider returned repeated 429s.
+- The gateway budget guard was disabled at canary time because the compose file hardcoded `LLM_GATEWAY_BUDGET_ENABLED=false`; the instance `.env` was overridden. The provider returned repeated 429s. Post-canary the guard is enabled and the key carries the `$30/7d` and `$60/30d` windows.
 - The trial record is `failed` on the provider failure while the hunting run was resumed by the T11 operator verb and completed. The assessor and diagnoser were dispatched manually on a failed record; the normal monitor would defer a failed trial.
 - The 7M cap is trial-client-scoped. The trial froze at 3,892,171 spent; the app continued after the client failure to 4,420,861. The cap was not reached, but the execution was not budget-supervised after the failure.
 - F-015 dropped one four-spec `hunts_store` batch during the hunter phase. The typed-contract fix is post-canary.

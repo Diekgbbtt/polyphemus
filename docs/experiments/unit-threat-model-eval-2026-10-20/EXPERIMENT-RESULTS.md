@@ -153,8 +153,9 @@ The benchmark scores the unit, so the strict result remains zero.
 
 5. **The provider failure is a harness defect, not a budget breach.**
    The trial spent 4,420,861 of 7,000,000 capped tokens.
-   The failure was a 429 without a gateway request limiter.
-   The trial client failed, the run continued, and the 7M cap had no app-side owner.
+   The gateway budget guard was disabled at canary time because the compose file hardcoded `LLM_GATEWAY_BUDGET_ENABLED=false` and overrode the instance `.env`; the provider returned 429s without a cost-guard throttle.
+   Post-canary the guard is enabled: the key carries the `$30/7d` and `$60/30d` windows, and the `deepseek-v4.1-flash` cost override is forced.
+   The trial client still failed, the run continued, and the 7M cap has no app-side owner.
 
 6. **The measurement base initially inverted the quality axis.**
    The first `metrics.yaml` reported zero loops, specs, and pods because it counted only unit-matched rows.
@@ -189,7 +190,7 @@ The fixes are critical, simple, and structural; they should be validated on a fr
 - Bind the threat model to the corpus service units, or add a unit-selection check that refuses a system-level model when a service-level unit owns the interface.
 - Add `/userdata` and `/manager` route discovery, or seed the target's own route inventory into L0.
 - Apply the F-013 endpoint micro-family fix and the F-015 typed store contracts to the instance.
-- Apply the F-016 gateway RPM limit and decide the durable budget owner before the next run.
+- Verify the live F-016 budget guard (`$30/7d`, `$60/30d`) and decide the durable 7M budget owner before the next run.
 - Keep the corrected measurement axes: report artifact totals, class-level candidates, and unit-level candidates separately.
 
 ### Next Experiment
@@ -212,7 +213,7 @@ The fixes are critical, simple, and structural; they should be validated on a fr
 | Add unit-binding selection check | Implementation | Next change |
 | Add `/userdata` and `/manager` L0 discovery | Recon | Next change |
 | Deploy F-013 and F-015 fixes to the instance | Eval operator | Next change |
-| Set `LLM_GATEWAY_KEY_RPM_LIMIT` and choose the budget owner | Eval operator | Next change |
+| Verify the budget guard and choose the 7M budget owner | Eval operator | Next change |
 | Rerun the ComfyUI canary | Eval operator | After the fixes |
 | Start the remaining seven targets | Eval operator | After the canary gate |
 
@@ -226,6 +227,7 @@ The fixes are critical, simple, and structural; they should be validated on a fr
 - Deterministic metrics: `metrics.yaml` in the same directory.
 - Measurement: `measurements.yaml` and `measurements.md` in the same directory.
 - Failure register: [FAILURES.md](FAILURES.md).
+- Layer attribution: [QUALITY-ATTRIBUTION.md](QUALITY-ATTRIBUTION.md).
 
 ### Methodology
 
@@ -242,7 +244,7 @@ The fixes are critical, simple, and structural; they should be validated on a fr
 - The trial record is `failed` while the hunting run completed after the T11 resume; the measurement treats the execution as interrupted and resumed, not as a clean completion.
 - The canary used the 300-asset split, not the endpoint micro-family fix.
 - The canary used the five-job recon subset, not the full plan.
-- The gateway had no request limiter; the provider returned 429s.
+- The gateway budget guard was disabled at canary time by a compose override; post-canary it is enabled with `$30/7d` and `$60/30d` windows and the forced `deepseek-v4.1-flash` cost override.
 - F-015 dropped one four-spec batch; the typed-contract fix is post-canary.
 - F-017 lost eight admitted pod specs; the 0 of 6 result is not a clean model-quality baseline.
 - The deterministic matcher was corrected during measurement; the strict unit axis remains 0 of 6, while the class axis is 5 of 6 and the manual binding is 2 of 6.
