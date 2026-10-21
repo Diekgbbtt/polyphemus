@@ -839,8 +839,7 @@ def test_gateway_client_upsert_snapshot_updates_existing_else_adds():
 def test_gateway_client_ensure_virtual_key_generates_when_absent():
     # Absent -> POST /key/generate with the app-minted virtual key VALUE and
     # the provider-scoped registered model names (D3 client identity).
-    http = StubHTTP(get_result=_response({}, status=404),
-                    post_results=[_response({})])
+    http = StubHTTP(post_results=[_response({"info": []}), _response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.ensure_virtual_key("sk-provider-key", ["opencode/a", "opencode/b"])
     method, url, headers, body = http.requests[1]
@@ -864,14 +863,13 @@ def test_gateway_client_refuses_a_non_sk_virtual_key():
 def test_gateway_client_ensure_virtual_key_updates_only_on_scope_change():
     # Present with the SAME scope -> no-op (C9 convergence); different scope
     # -> POST /key/update with the full desired scope.
-    http = StubHTTP(get_result=_response({"info": {"models": ["opencode/a"]}}),
-                    post_results=[_response({})])
+    http = StubHTTP(post_results=[_response({"info": [{"models": ["opencode/a"]}]})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.ensure_virtual_key("sk-provider-key", ["opencode/a"])
     assert len(http.requests) == 1  # info only - converged
 
-    http = StubHTTP(get_result=_response({"info": {"models": ["opencode/a"]}}),
-                    post_results=[_response({})])
+    http = StubHTTP(post_results=[_response({"info": [{"models": ["opencode/a"]}]}),
+                                 _response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.ensure_virtual_key("sk-provider-key", ["opencode/a", "opencode/b"])
     method, url, headers, body = http.requests[1]
@@ -1109,9 +1107,30 @@ def test_budget_plan_rejects_a_non_numeric_cap(monkeypatch):
         S.gateway_budget_plan()
 
 
+def test_gateway_client_key_info_keeps_the_key_out_of_the_url():
+    """F-014: the virtual key is a bearer-equivalent credential. The v2
+    management endpoint carries it in the JSON body, never the query string,
+    so an httpx/proxy access log cannot capture it."""
+    http = StubHTTP(post_results=[_response({"info": [{"models": ["opencode/a"]}]})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    info = gw.key_info("sk-ph-secret")
+    method, url, headers, body = http.requests[0]
+    assert method == "POST"
+    assert url == "http://127.0.0.1:4000/v2/key/info"
+    assert "sk-ph-secret" not in url
+    assert body == {"keys": ["sk-ph-secret"]}
+    assert headers == {"Authorization": "Bearer sk-master"}
+    assert info == {"models": ["opencode/a"]}
+
+
+def test_gateway_client_key_info_returns_none_for_an_absent_key():
+    http = StubHTTP(post_results=[_response({"info": []})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    assert gw.key_info("sk-ph-absent") is None
+
+
 def test_gateway_client_ensure_virtual_key_provisions_budget_windows():
-    http = StubHTTP(get_result=_response({}, status=404),
-                    post_results=[_response({})])
+    http = StubHTTP(post_results=[_response({"info": []}), _response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.ensure_virtual_key(
         "sk-ph-key", ["opencode/a"],
@@ -1132,8 +1151,7 @@ def test_gateway_client_ensure_virtual_key_converges_when_budget_matches():
             "budget_limits": [{"budget_duration": "5h", "max_budget": 6.0,
                                "reset_at": "2026-10-06T20:00:00+00:00"}],
             "rpm_limit": 30}
-    http = StubHTTP(get_result=_response({"info": info}),
-                    post_results=[_response({})])
+    http = StubHTTP(post_results=[_response({"info": [info]})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.ensure_virtual_key(
         "sk-ph-key", ["opencode/a"],
@@ -1146,8 +1164,7 @@ def test_gateway_client_ensure_virtual_key_updates_only_on_budget_change():
     info = {"models": ["opencode/a"],
             "budget_limits": [{"budget_duration": "5h", "max_budget": 6.0}],
             "rpm_limit": 30}
-    http = StubHTTP(get_result=_response({"info": info}),
-                    post_results=[_response({})])
+    http = StubHTTP(post_results=[_response({"info": [info]}), _response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.ensure_virtual_key(
         "sk-ph-key", ["opencode/a"],
@@ -1163,8 +1180,8 @@ def test_gateway_client_ensure_virtual_key_updates_only_on_budget_change():
 def test_gateway_client_ensure_virtual_key_adds_budget_to_an_unbudgeted_key():
     # A key minted before #330 carries no budget; the first post-deploy run
     # adds the windows once, then converges.
-    http = StubHTTP(get_result=_response({"info": {"models": ["opencode/a"]}}),
-                    post_results=[_response({})])
+    http = StubHTTP(post_results=[
+        _response({"info": [{"models": ["opencode/a"]}]}), _response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.ensure_virtual_key(
         "sk-ph-key", ["opencode/a"],
@@ -1187,8 +1204,7 @@ def test_gateway_client_ensure_virtual_key_clears_a_preexisting_budget():
             "budget_limits": [{"budget_duration": "7d", "max_budget": 30.0,
                                "reset_at": "2026-10-11T00:00:00+00:00"}],
             "rpm_limit": None}
-    http = StubHTTP(get_result=_response({"info": info}),
-                    post_results=[_response({})])
+    http = StubHTTP(post_results=[_response({"info": [info]}), _response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.ensure_virtual_key("sk-ph-key", ["opencode/a"], budget_limits=[], rpm_limit=None)
     method, url, headers, body = http.requests[1]

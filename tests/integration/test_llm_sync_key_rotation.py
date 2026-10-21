@@ -137,17 +137,19 @@ class RecordingGatewayAPI:
                 "rpm_limit": json.get("rpm_limit"),
             }
             return self._response({})
+        if method == "POST" and path == "/v2/key/info":
+            keys = list(json.get("keys") or [])
+            info = [
+                {"models": list(self.virtual_keys[key]["models"]),
+                 "budget_limits": list(self.virtual_keys[key]["budget_limits"]),
+                 "rpm_limit": self.virtual_keys[key]["rpm_limit"]}
+                for key in keys if key in self.virtual_keys
+            ]
+            return self._response({"key": keys, "info": info})
         raise AssertionError(f"unexpected management call: {method} {path} {json}")
 
     def get(self, url, *, headers=None, timeout=None):
-        path = urlparse(url).path
-        self.calls.append(("GET", path, None))
-        if path == "/key/info":
-            key = urlparse(url).query.removeprefix("key=")
-            if key in self.virtual_keys:
-                return self._response({"info": dict(self.virtual_keys[key])})
-            return self._response({}, status=404)
-        raise AssertionError(f"unexpected management GET: {path}")
+        raise AssertionError(f"unexpected management GET: {url}")
 
 
 def _run(recorder, key_for):
@@ -209,7 +211,10 @@ def test_provider_key_rotation_updates_that_providers_models_with_new_key():
     writes = len(recorder.calls)
     assert _run(recorder, rotated_keys) == S.SYNC_OK
     assert len(recorder.calls) == writes + 3
-    assert all(call[0] == "GET" for call in recorder.calls[writes:])
+    assert all(
+        call[0] == "GET"
+        or (call[0] == "POST" and call[1] == "/v2/key/info")
+        for call in recorder.calls[writes:])
 
 
 def test_budget_windows_are_provisioned_and_converge(monkeypatch):
@@ -238,4 +243,7 @@ def test_budget_windows_are_provisioned_and_converge(monkeypatch):
     writes = len(recorder.calls)
     assert _run(recorder, keys) == S.SYNC_OK
     assert len(recorder.calls) == writes + 3, "a converged re-run must not write"
-    assert all(call[0] == "GET" for call in recorder.calls[writes:])
+    assert all(
+        call[0] == "GET"
+        or (call[0] == "POST" and call[1] == "/v2/key/info")
+        for call in recorder.calls[writes:])

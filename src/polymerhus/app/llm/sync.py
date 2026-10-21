@@ -748,29 +748,26 @@ class GatewayClient:
         The proxy's inbound auth (user_api_key_auth) accepts only master_key
         and virtual keys from `LiteLLM_VerificationTokenTable`; the per-provider
         client keys (operator decision, ADR D3 note in test_llm_providers.py)
-        must therefore be provisioned there or the client's bearer is a 401."""
-        url = f"{self._base_url}/key/info?key={key}"
-        try:
-            if self._client is None:
-                with httpx.Client(timeout=DEFAULT_FETCH_TIMEOUT_S) as owned:
-                    response = owned.get(url, headers=self._headers())
-            else:
-                response = self._client.get(url, headers=self._headers())
-        except Exception as exc:
-            raise SyncPushError(f"GET /key/info failed: {exc}") from exc
-        if response.status_code == 404:
-            return None
-        if response.status_code != 200:
-            raise SyncPushError(
-                f"GET /key/info failed: HTTP {response.status_code}: "
-                f"{response.text}")
+        must therefore be provisioned there or the client's bearer is a 401.
+
+        F-014: the key is bearer-equivalent, so it travels in the POST body to
+        `/v2/key/info`, never in a query string an access log can capture. The
+        v2 admin endpoint is available in litellm 1.96.0; the sync already
+        authenticates with the master key. It answers 200 with an empty `info`
+        list for an absent key, so absence is not an HTTP error."""
+        response = self._request("POST", "/v2/key/info", json={"keys": [key]})
         try:
             data = response.json()
         except Exception as exc:
-            raise SyncPushError(f"GET /key/info failed: {exc}") from exc
-        info = data.get("info") if isinstance(data, dict) else None
+            raise SyncPushError(f"POST /v2/key/info failed: {exc}") from exc
+        infos = data.get("info") if isinstance(data, dict) else None
+        if not isinstance(infos, list):
+            raise SyncPushError("POST /v2/key/info returned an unparseable body")
+        if not infos:
+            return None
+        info = infos[0]
         if not isinstance(info, dict):
-            raise SyncPushError("GET /key/info returned an unparseable body")
+            raise SyncPushError("POST /v2/key/info returned an unparseable body")
         return info
 
     def ensure_virtual_key(self, key: str, models: list[str], *,
