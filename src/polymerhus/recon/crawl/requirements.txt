@@ -3,9 +3,10 @@
 # Module-owned manifest: it lives with the crawl module it describes, and the
 # Dockerfile layers it on top of the app runtime.
 #
-# steel_provider.py drives a steel.dev CLOUD browser over CDP
-# (wss://connect.steel.dev), so only the Python client libraries are needed -
-# NO local browser binaries, i.e. `playwright install` is NOT required.
+# steel_provider.py connects Playwright to the Steel session's CDP websocket
+# (`websocket_url`, or the SDK connect pattern when that is absent), so only
+# the Python client libraries are needed - NO local browser binaries, i.e.
+# `playwright install` is NOT required.
 #
 # Without these, steel_client._default_client_factory() raises
 # SteelProviderUnavailable and every steel_crawl pod degrades to an empty

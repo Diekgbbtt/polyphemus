@@ -109,7 +109,7 @@ def _account(name="alice"):
                                                 "location": "header"},
                               "vault": {"value": "VAULT-SECRET",
                                         "location": "storage"}},
-                   "steel": {"profile": "p1-alice"},
+                   "steel": {"state": "p1-alice"},
                    "snapshot": {"cookies": [{"name": "sid", "value": "S"}]}}}
 
 

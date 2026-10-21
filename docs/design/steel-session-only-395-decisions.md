@@ -1,6 +1,6 @@
 # Steel browser: session-only decisions (#395)
 
-*Status: operator rulings recorded 2026-10-20.*
+*Status: operator rulings recorded 2026-10-20. Implementation recorded 2026-10-21; the upstream CLI `--session-state` flag remains open, so live reuse is the current interactive fallback.*
 *Supersedes D17 and its #395 amendment in `browser-cli-221-decisions.md`.*
 *Supersedes the cloud-profile retention in `steel-profile-replacement-impact-map-395.md` and the two-primitive-pack proposal in `steel-session-first-395.md`.*
 *Companion evidence: `docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.*
@@ -326,7 +326,7 @@ Q5 and Q6 carry the operator caveats above.
 | # | Decision | Resolution |
 |---|---|---|
 | Q1 | State reference shape | `steel.state` key. |
-| Q2 | CLI state restore | Require upstream `--session-state`. Live reuse is the fallback only if the flag is refused. |
+| Q2 | CLI state restore | Open upstream item: add `--session-state`. The current tool does not restore in the CLI; live reuse is the implemented interactive fallback. |
 | Q3 | Local user-agent value | Match the pinned image major version; currently Chrome 155. |
 | Q4 | Fresh-context retry | At most one, with no fingerprint or region claim. |
 | Q5 | Existing profile records | Silently disregard. No warning, no alias, no migration branch, no compatibility path. |

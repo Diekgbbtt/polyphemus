@@ -44,14 +44,18 @@ branch directive in the turn brief:
 - request: replay the stored request state (snapshot headers/cookies,
   tokens) with the Kali exec capability. A live session is proven, not
   assumed.
-- browser_only: validate EXCLUSIVELY through the Steel path (mount the
-  persisted profile, navigate, verify). Never use request tools here.
-- request_browser_first: mount the account profile, verify the session,
-  compare against the stored tokens and persist what changed, then release
-  request collection.
-- resolve_in_loop: the overview's replayability is unknown. Attempt the
-  fingerprint replay from the browser state per the `authn` skill: replayable
+- browser_only: validate EXCLUSIVELY through the Steel path: start or reuse
+  a live session, replay the account's recorded browser auth material per the
+  `authn` skill, navigate, verify. Never use request tools here.
+- request_browser_first: start or reuse a live session, verify it, compare
+  against the stored tokens and persist what changed, then release request
+  collection.
+- resolve_in_loop: the overview's replayability is unknown. Attempt request
+  replay from the browser-trusted context per the `authn` skill: replayable
   releases the request branch, not replayable prunes to browser-only.
+
+A new CLI session cannot restore saved browser state, so reuse a live session
+whenever the validation needs continuity.
 
 Assert the outcome in the store BEFORE entering sign-in with an `auth_store`
 write of `accounts.<account>.status`: `valid` on a live session, `not_valid`
@@ -64,19 +68,18 @@ it never replaces the write.
 
 On `not_valid`, run the sign-in procedure from the `authn` skill (request
 replay or browser flow per the branch directive). The browser path reuses or
-starts a live session; it does not mount a profile. Do not write a
-`steel.profile` reference. A new CLI session cannot restore state, so a later
-CLI flow must reuse the live session. A missing or unauthenticated session
-fails open into sign-in with the account asserted `not_valid`, never a silent
-anonymous turn. The crawl provider captures the session state on its own
-release.
+starts a live session; it never writes a browser state reference. A new CLI
+session cannot restore saved state, so a later CLI flow must reuse the live
+session. Only the crawl provider captures session state, on its own release.
+A missing or unauthenticated session fails open into sign-in with the account
+asserted `not_valid`, never a silent anonymous turn.
 
 There is NO attempt cap and no duplicate-command rejection: adjust one
 variable per attempt and keep debugging while progress is real. The span ends
 in exactly two ways: success (one `auth_store` write of `accounts.<account>`
-carrying the extracted `tokens` and `status: valid`; never a profile key), or
-your declaration that the tweaking space is exhausted - the terminal failed
-verdict. A failed authentication is explicit and loud, never
+carrying the extracted `tokens` and `status: valid`; never a browser state
+reference), or your declaration that the tweaking space is exhausted - the
+terminal failed verdict. A failed authentication is explicit and loud, never
 silent-anonymous.
 
 ### 5. Outer loop, then the verdict

@@ -156,18 +156,19 @@ _BRANCH_MANNER = {
         "Kali exec capability. Request phases stay released."),
     "browser_only": (
         "Browser-only target (the defence is not HTTP-replayable). Validate "
-        "EXCLUSIVELY through the Steel path: mount the persisted profile (or "
-        "mint under the project-scoped key with --update-profile), navigate, "
-        "verify the session. Never validate with request tools. Request "
-        "phases will be pruned; only the Steel crawl runs."),
+        "EXCLUSIVELY through the Steel path: start or reuse a live session, "
+        "replay the account's recorded browser auth material per the authn "
+        "skill, navigate, verify. Never validate with request tools. You never "
+        "write a browser state reference; only the crawl provider captures "
+        "state. Request phases will be pruned; only the Steel crawl runs."),
     "request_browser_first": (
-        "Replayable defence. Validate browser-first: mount the account "
-        "profile, verify the session, compare against the stored tokens and "
-        "persist what changed, then release request collection."),
+        "Replayable defence. Validate browser-first: start or reuse a live "
+        "session, verify it, compare against the stored tokens and persist "
+        "what changed, then release request collection."),
     "resolve_in_loop": (
-        "Replayability UNKNOWN. Attempt the fingerprint replay from the "
-        "browser state per the authn skill: replayable releases the request "
-        "branch (record replayability true), not replayable prunes to "
+        "Replayability UNKNOWN. Attempt request replay from the "
+        "browser-trusted context per the authn skill: replayable releases the "
+        "request branch (record replayability true), not replayable prunes to "
         "browser-only (record false). Persist the resolved fact to the "
         "overview with an auth_store write (your write merges; the operator "
         "stamp stays), and record the resolution loudly in the rationale "

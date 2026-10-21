@@ -1,23 +1,21 @@
 """Steel agentic-crawl tool provider.
 
-Correct architecture (operator correction, SP4). The six `steel_*` MCP tools
+Correct architecture (operator correction, SP4). The six `steel_*` tools
 (`steel_crawl_start`/`navigate`/`frontier`/`eval`/`click`/`crawl_finish`)
-are provided by a Steel MCP tool provider instantiated **in-process** - they are
-NOT reached over a remote MCP HTTP host. The browser runtime is the steel.dev
-CLOUD BROWSER by default, or a self-hosted runtime when the deployment sets
-`STEEL_BROWSER_API_URL` (#390). The provider opens a session and drives it with
-Playwright connected over CDP at the session's own `websocket_url`:
+are provided by a Steel tool provider instantiated **in-process** - they are
+NOT reached over a remote MCP HTTP host. The provider opens a Steel browser
+session and drives it with Playwright connected over CDP at the session's own
+`websocket_url`:
 
     ws://<runtime host>:<port>/
 
 When the SDK session omits `websocket_url`, the provider falls back to the
-cloud pattern:
+SDK's connect pattern, addressed by `STEEL_API_KEY`:
 
     wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<session id>
 
-A cloud deployment is configured by the steel.dev API key (`STEEL_API_KEY`);
-a local deployment is keyless and configured by `STEEL_BROWSER_API_URL`. There
-is no `STEEL_MCP_URL`.
+Configuration is either `STEEL_API_KEY` or `STEEL_BROWSER_API_URL`; runtime
+selection belongs below this provider. There is no `STEEL_MCP_URL`.
 
 PROVIDER SEAM
 ------------
@@ -49,28 +47,26 @@ CRAWL_TOOL_NAMES = frozenset({
 
 
 class SteelNotConfigured(RuntimeError):
-    """Raised when the steel crawl tools are requested but the steel.dev
-    credential (`STEEL_API_KEY`) is not configured."""
+    """Raised when the steel crawl tools are requested but neither
+    `STEEL_API_KEY` nor `STEEL_BROWSER_API_URL` is configured."""
 
 
 class SteelProviderUnavailable(RuntimeError):
-    """Raised when `STEEL_API_KEY` is set but the in-process Steel crawl-tool
-    provider cannot be built in this environment - specifically, when its
-    runtime dependencies (`playwright` and `steel-sdk`) are not importable.
+    """Raised when the in-process Steel crawl-tool provider cannot be built in
+    this environment - specifically, when its runtime dependencies
+    (`playwright` and `steel-sdk`) are not importable.
 
-    The provider drives a steel.dev cloud browser over CDP and needs both
-    packages; the `redamon-agent` base image provides them. Callers (the crawl
-    pod) treat this as reduced coverage, not a crash.
+    The provider drives a Steel browser over CDP and needs both packages; the
+    `redamon-agent` base image provides them. Callers (the crawl pod) treat
+    this as reduced coverage, not a crash.
     """
 
 
 def steel_configured() -> bool:
-    """True when the Steel runtime is configured.
+    """True when `STEEL_API_KEY` or `STEEL_BROWSER_API_URL` is configured.
 
-    A cloud deployment is configured by `STEEL_API_KEY`; a local deployment
-    is configured by `STEEL_BROWSER_API_URL` alone and needs no key (#395,
-    D359-12). The provider resolves the address through the same shared
-    resolver.
+    Runtime selection belongs below this seam. The provider resolves the
+    address through the same shared resolver (#395, D359-12).
     """
     return bool(config.STEEL_API_KEY or steel_browser_api_url())
 
@@ -79,8 +75,8 @@ def _default_client_factory(steel_state=None, browser_auth=None):
     """Build the in-process Steel crawl-tool provider.
 
     Returns a `steel_provider.SteelCrawlProvider`, which opens a browser
-    session on the runtime named by `STEEL_BROWSER_API_URL` (the steel.dev
-    cloud when unset) and connects Playwright over CDP at the session's
+    session on the runtime named by `STEEL_BROWSER_API_URL` (the SDK default
+    when unset) and connects Playwright over CDP at the session's
     `websocket_url`, lazily, only when `steel_crawl_start` is invoked - so
     constructing the provider performs no network I/O.
 
@@ -102,8 +98,8 @@ def _default_client_factory(steel_state=None, browser_auth=None):
     if missing:
         raise SteelProviderUnavailable(
             "Steel crawl-tool provider dependencies are not importable: "
-            f"{', '.join(missing)}. The provider drives a steel.dev cloud "
-            "browser over CDP and needs both `playwright` and `steel-sdk` "
+            f"{', '.join(missing)}. The provider drives a Steel browser over "
+            "CDP and needs both `playwright` and `steel-sdk` "
             "(the redamon-agent base image provides them)."
         )
 

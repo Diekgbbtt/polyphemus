@@ -138,18 +138,20 @@ def test_load_skill_reads_file_next_to_module():
     assert "steel_crawl_finish" in text
 
 
-def test_skill_has_fresh_session_rotation_hard_rule():
+def test_skill_has_one_fresh_context_retry_hard_rule():
     text = crawl_agent._load_skill()
     lower = text.lower()
-    # The rotation guidance must be promoted to a top-level hard rule.
+    # The retry guidance must be promoted to a top-level hard rule.
     hard_rules_idx = lower.index("## hard rules")
     hard_rules = lower[hard_rules_idx:]
-    assert "fresh session" in hard_rules
+    assert "fresh context" in hard_rules
     assert "steel_crawl_start" in hard_rules
-    assert "rotat" in hard_rules
-    # It must explicitly cover the login page and the 3-session cap.
+    assert "at most one" in hard_rules
+    # It must explicitly cover the login page and forbid the old 3-session cap.
     assert "login" in hard_rules
-    assert "3" in hard_rules
+    assert "3 fresh" not in hard_rules
+    assert "new fingerprint" not in hard_rules
+    assert "new region" not in hard_rules
 
 
 def test_run_crawl_forwards_state_and_browser_auth_to_get_crawl_tools(monkeypatch):

@@ -97,12 +97,13 @@ def test_names_the_parametrizable_project_skill_write_location():
     assert "<project_id>" in body
 
 
-def test_session_discipline_has_no_profile_and_names_the_state_reference():
+def test_session_discipline_names_the_state_reference_and_has_no_profile():
     body = _body()
     assert "steel: {state}" in body
+    assert "profile" not in body.lower()
     assert "--profile" not in body
     assert "profile-mount.sh" not in body
-    assert "Do not write a profile reference" in body
+    assert "CLI login path does not write state" in body
 
 
 def test_account_identity_is_the_credential_not_the_procedure():
@@ -199,7 +200,7 @@ def test_browser_discipline_reuses_a_live_session_and_logs_in_only_on_failure():
     assert "reuse the live session" in body
     assert "Log in when the live session does not yield the authenticated landing" in body
     assert "programmatic crawl provider restores state" in body
-    assert "--profile" not in body
+    assert "profile" not in body.lower()
 
 
 def test_bootstrap_prompt_reuses_a_live_session_and_cannot_restore_state():
@@ -208,7 +209,8 @@ def test_bootstrap_prompt_reuses_a_live_session_and_cannot_restore_state():
     )
     assert "Start or reuse a named live session" in prompt
     assert "pinned CLI has no state field" in prompt
-    assert "Do not mount or mint a profile" in prompt
+    assert "Do not claim that a new CLI session restored state" in prompt
+    assert "profile" not in prompt.lower()
     assert "--profile" not in prompt
 
 

@@ -1082,8 +1082,8 @@ docker compose -f eval/deploy/steel/docker-compose.steel.yml down
 ```
 
 `down` keeps the `steel-cache` volume and its browser state.
-Use `down -v` only when you intend to destroy profiles, snapshots, and session
-state.
+Use `down -v` only when you intend to destroy the local Steel cache,
+snapshots, and session state.
 
 #### Process lifecycle (zombie reaping)
 

@@ -19,7 +19,7 @@ ReAct loop (`crawl_agent.run_crawl`) and is gated on an OpenRouter key too.
 The retired interactive `steel_await_auth` login flow is gone. Authenticated
 live coverage now runs under a persisted account: the feed supplies the state
 path and browser auth material, and the provider gates the replication. There
-is no profile and no human at the viewer.
+is no stored identity bundle and no human at the viewer.
 
 Run (from the repo root, live stack up):
 

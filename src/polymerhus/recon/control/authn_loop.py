@@ -107,9 +107,10 @@ GROUNDED_HINT = (
 
 RETRIEVED_HINT = (
     "Account selected. Validate it first: replay its stored request state "
-    "(snapshot, tokens) with the exec capability, or mount its Steel profile "
-    "and verify the session per the branch directive. Conclude by asserting "
-    "the account status valid or not_valid in the store before any sign-in."
+    "(snapshot, tokens) with the exec capability, or start or reuse a live "
+    "session and verify it per the branch directive. Conclude by "
+    "asserting the account status valid or not_valid in the store before any "
+    "sign-in."
 )
 """Injected on RETRIEVED: validate the selected account."""
 
@@ -133,9 +134,10 @@ GENERATION_SIGNIN_HINT = (
     "No usable account on record. Run the sign-in procedure from the authn "
     "skill to mint one (request replay or browser flow per the branch "
     "directive), then persist the extracted tokens and assert the account "
-    "status valid. Never write a profile key. There is no mechanical attempt cap; "
-    "declare the space exhausted through the terminal failed verdict when "
-    "no sign-in path remains."
+    "status valid. Never write a browser state reference; only the "
+    "programmatic crawl provider captures session state. There is no "
+    "mechanical attempt cap; declare the space exhausted through the terminal "
+    "failed verdict when no sign-in path remains."
 )
 """Injected when the accounts read holds no usable account: sign in to mint."""
 

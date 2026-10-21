@@ -144,6 +144,8 @@ Open: the browser-path profile discipline (the profile key when an account carri
 
 ### D223-14 - Browser-path profile discipline: project-scoped account key, fail-open to sign-in (A3)
 
+*Superseded 2026-10-20 on the browser path: a live session replaces the profile, and `steel.state` replaces the profile key. See the amendment at the end of this document; the fail-open and status rules remain in force.*
+
 The profile key convention is project-scoped and account-derived: `<project_id>-<account>`, combining the account-derived key with a project scope so profiles never collide across projects on the shared Steel account.
 When the loop needs the browser and the account carries no `steel.profile`, or a mounted profile does not yield an authenticated session, the loop fails open: it still enters the browser branch, asserts the account `not_valid` in the store, and proceeds with the sign-in flow.
 The sign-in flow mints under the project-scoped key (`start --profile <project_id>-<account> --update-profile`), verifies, and persists the profile key plus the extracted tokens back under the account.
@@ -201,6 +203,8 @@ Settled (#241): the recency key is `updated_at` (an ISO-8601 UTC string from the
 Selection is `records.select_recent_usable_account`: most-recent `updated_at` first (a missing stamp sorts oldest), ties fall back to the account's position in the store list, newest last, `not_valid` records skipped as unusable, no usable account yielding None for the gateway's missing-data path.
 
 ### D223-19 - Account feeding: the account identifier rides the pipeline state, consumers resolve lazily (H1)
+
+*Superseded 2026-10-20 on the browser bullet: the feed resolves `extra["steel_state"]` and `extra["browser_auth"]`, not a profile key. See the amendment at the end of this document; the identifier-transport and lazy-resolution rules remain in force.*
 
 The gateway verdict produces the selected account's **identifier in the auth-context store** as a runtime recon state parameter, bound into the pipeline state - never the material itself.
 Each phase's symbolic layer (the tool-configuration logic) resolves that account lazily from the store at the point of use, then projects only the subset of data the respective phase's tools need:
@@ -355,6 +359,8 @@ feed reference, no `select_auth_context`, no settings-blob auth path.
 Correction (2026-09-25): the live templates/pod/feed are clean, but non-live references survive - a stale comment at `control/jobs.py:255` names `{auth_header}`, and `tests/e2e/test_recon_crawl_katana_depth.py:524,547` still does `.replace("{auth_header}", "")` - so "no reference anywhere" is too strong.
 
 ### IR-11 - The crawl mounts the persisted profile through the SDK
+
+*Superseded 2026-10-20: the crawl restores and captures session state; there is no profile mount. See the amendment at the end of this document.*
 
 The crawl node threads the bound profile key the whole way down - pod
 extra to `run_crawl_fn` to `run_crawl` to `get_crawl_tools` to the

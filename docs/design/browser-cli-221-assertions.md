@@ -109,15 +109,16 @@ The next live tier (E1) must re-verify or delete them rather than leave them ass
   The pinned CLI documents `Control+a` as a key example, so the negative half of this claim either needs a fresh live capture or should be dropped.
 - A `navigate` can fail transiently with `ERR_HTTP_RESPONSE_CODE_FAILURE`, so one retry is a sound default.
 
-### Session-only assertions (pending, #395 D20)
+### Session-only assertions (#395 D20 - implemented)
 
-- The `steel-browser` skill body contains no cloud, local, endpoint, API key, `--local`, profile, or `sessionContext` text.
-- The local wrapper injects `--local` for `browser` and `scrape`, passes through `--version`, and does not touch cloud mode.
-- After a local `browser start`, the wrapper sets one fixed user agent; two consecutive sessions report the same value.
-- A local deployment with `STEEL_BROWSER_API_URL` set and no `STEEL_API_KEY` runs the crawl path.
-- Session state round-trips cookies, localStorage, sessionStorage, and indexedDB and drops every other field.
-- The state file is owner-only and the account stores only `steel.state`.
-- Crawl auth replicates cookies, required headers, header-located tokens, and storage-located tokens, then passes the application-state or authenticated-surface gate.
-- A failed gate is `auth_replication_failed` with reduced coverage, not a silent authenticated crawl.
-- Existing `steel.profile` values are silently disregarded; no warning, alias, or migration branch.
+- The `steel-browser` skill body contains no cloud, local, endpoint, API key, `--local`, profile, or `sessionContext` text (`tests/test_steel_skill_rule.py`, `tests/recon/test_steel_session_only_surfaces.py`).
+- The local wrapper injects `--local` for `browser` and `scrape`, passes through `--version`, and does not touch cloud mode (`tests/test_steel_wrapper.py`, `tests/test_steel_exec.py`, `tests/test_steel_exec_scaffold.py`).
+- After a local `browser start`, the wrapper sets one fixed user agent; two consecutive sessions report the same value (`tests/test_steel_wrapper.py`, `tests/eval/test_steel_deployment_contract.py`).
+- A local deployment with `STEEL_BROWSER_API_URL` set and no `STEEL_API_KEY` runs the crawl path (`tests/recon/crawl/test_steel_client.py`, `tests/test_steel_endpoint.py`, `tests/test_steel_exec_live.py`).
+- Session state round-trips cookies, localStorage, sessionStorage, and indexedDB and drops every other field (`tests/test_steel_session_state.py`, `tests/integration/test_steel_session_state_http.py`, `tests/e2e/test_steel_session_state_live.py`).
+- The state file is owner-only and the account stores only `steel.state` (`tests/test_steel_session_state.py`, `tests/app/test_auth_records.py`).
+- Crawl auth replicates cookies, required headers, header-located tokens, and storage-located tokens, then passes the application-state or authenticated-surface gate (`tests/recon/crawl/test_auth_replication_gate.py`, `tests/recon/crawl/test_steel_provider_cookies.py`).
+- A failed gate is `auth_replication_failed` with reduced coverage, not a silent authenticated crawl (`tests/recon/crawl/test_auth_replication_gate.py`, `tests/recon/crawl/test_crawl_pod.py`).
+- Existing `steel.profile` values are silently disregarded; no warning, alias, or migration branch (`tests/app/test_auth_records.py`, `tests/recon/test_auth_feed.py`).
+- The CLI `start` has no state field, so the interactive surface reuses a live session; only the crawl provider restores and captures state (`tests/test_steel_skill_rule.py`, `tests/recon/test_authn_skill_writing.py`).
 

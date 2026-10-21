@@ -48,7 +48,7 @@ def _full_account() -> dict:
             "api": {"value": "Bearer xyz", "location": "header", "expiry": "2026-10-01"},
             "vault": {"value": "v1", "location": "storage"},
         },
-        "steel": {"state": "ops-profile-1"},
+        "steel": {"state": "ops-state-1"},
         "snapshot": {
             "headers": {"Authorization": "Bearer xyz"},
             "cookies": [{"name": "sessionid", "value": "abc123"}],

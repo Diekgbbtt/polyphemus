@@ -1,32 +1,31 @@
-"""In-process Steel cloud-browser crawl-tool provider (async port).
+"""In-process Steel browser crawl-tool provider (async port).
 
 This is the concrete provider `steel_client._default_client_factory()` returns.
 It is an IN-PROCESS provider driven from the crawl ReAct loop's asyncio event
 loop (ASYNC Playwright API - the sync API cannot run inside a running event
 loop).
 
-Architecture (operator correction, SP4; session-only #395 D20): the browser
-runtime is the Steel cloud by default, or the self-hosted runtime when the
-deployment names one. The provider opens a session with the Steel SDK and drives
-it with Playwright connected over CDP at the session's own `websocket_url`:
+Architecture (operator correction, SP4; session-only #395 D20): the provider
+opens a Steel browser session through the SDK and drives it with Playwright
+connected over CDP at the session's own `websocket_url`:
 
     ws://<runtime host>:<port>/
 
-When the SDK session carries no `websocket_url`, it falls back to the steel.dev
-cloud pattern:
+When the SDK session carries no `websocket_url`, it falls back to the SDK's
+connect pattern, addressed by `STEEL_API_KEY`:
 
     wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<session id>
 
-A cloud deployment is configured by `config.STEEL_API_KEY`; a local deployment
-is keyless and configured by `STEEL_BROWSER_API_URL`. There is no MCP host URL.
-The address comes from the shared `STEEL_BROWSER_API_URL` resolver (#390,
-D359-4): unset keeps the SDK default (the cloud), set passes the resolver's
-SDK-native origin as `base_url` on session create and release (D359-5).
+Configuration is either `config.STEEL_API_KEY` or `STEEL_BROWSER_API_URL`;
+runtime selection belongs below this provider. There is no MCP host URL. The
+address comes from the shared `STEEL_BROWSER_API_URL` resolver (#390, D359-4):
+unset keeps the SDK default, set passes the resolver's SDK-native origin as
+`base_url` on session create and release (D359-5).
 
 The create options are deterministic: no random user agent, viewport, region,
-stealth bundle, or profile. The four durable state fields are restored from the
-account state file. Auth material (cookies, scoped headers, storage tokens) is
-merged into that state, and the first navigation runs the replication gate.
+or stealth bundle. The four durable state fields are restored from the account
+state file. Auth material (cookies, scoped headers, storage tokens) is merged
+into that state, and the first navigation runs the replication gate.
 The provider captures the live state before release.
 
 Contract: `SteelCrawlProvider.get_tools()` returns a list of LangChain
@@ -125,9 +124,9 @@ def _is_html_content_type(ct: str | None) -> bool:
 def _session_opts(use_proxy: bool, session_context: dict | None = None) -> dict:
     """Return deterministic `sessions.create` kwargs.
 
-    The tool never randomises the user agent, viewport, region, stealth, or
-    profile. The only variables are the caller's proxy choice and the restored
-    application context. Cloud-native fingerprint jitter remains a platform
+    The tool never randomises the user agent, viewport, region, or stealth.
+    The only variables are the caller's proxy choice and the restored
+    application context. Runtime-native fingerprint jitter remains a platform
     behaviour."""
     opts: dict = {"use_proxy": use_proxy, "headless": False}
     if session_context:
@@ -733,8 +732,8 @@ class SteelCrawlProvider:
             (
                 "steel_crawl_start",
                 self._steel_crawl_start,
-                "Start a Steel cloud-browser crawl session. Creates a remote Steel "
-                "browser, seeds the frontier with `target`, and returns "
+                "Start a Steel browser crawl session. Creates a browser, seeds "
+                "the frontier with `target`, and returns "
                 "{crawl_id, frontier, viewer_url}. `scope` is a list of hostnames; "
                 "only URLs whose host equals or is a subdomain of a scope entry are "
                 "enqueued. Call steel_navigate/steel_frontier/steel_crawl_finish next.",

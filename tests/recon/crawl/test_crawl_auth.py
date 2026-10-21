@@ -68,7 +68,7 @@ def base_pod_state(job, extra=None):
 
 
 # ---------------------------------------------------------------------------
-# crawl_pod: profile-mount only - feed cookies in, plain crawl out
+# crawl_pod: state plus auth material in, plain crawl out
 # ---------------------------------------------------------------------------
 
 
@@ -171,7 +171,7 @@ def test_pod_export_stats_defaults_to_none_and_accepts_dict():
 
 
 # ---------------------------------------------------------------------------
-# pipeline: steel profile binding, and no viewer_url in job stats
+# pipeline: steel state binding, and no viewer_url in job stats
 # ---------------------------------------------------------------------------
 
 

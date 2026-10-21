@@ -38,6 +38,8 @@ The `anti-bot` field is a different axis - the vendor/product/challenge NAME, no
 
 ## D237-4 - The meta skill is location-agnostic and self-contained
 
+*Superseded 2026-10-20 on the profile discipline: profiles are retired (#395 D20), and `profile-mount.sh` no longer exists. See the amendment at the end of this document. The self-contained skill rule and the reference-citation rule remain in force.*
+
 The external agent holds the target, generic request tooling, the authenticated steel CLI, and the two auth faces - no repository.
 The dangling references are fixed: the published steel references are the scripts beside the steel-browser skill under `skills/steel-browser/references/` (`catalogue.sh`, `session-lifecycle.sh`, `stop-owner.sh`, `profile-mount.sh`, `extract-reads.sh`, `eval-inline.sh`, `eval-interact.sh`), so the skill cites those names and drops the non-existent `steel-browser-commands.md` and `steel-browser-lifecycle.md`.
 The steel profile write discipline (the #221 stream's D16/D17) is INLINED rather than cited from an in-repo decision record: mint the profile in flow on first login (`start --profile <name> --update-profile`); mount by name (`start --profile <name>`), read-only by default, `--update-profile` present accumulates; settle-then-verify on every mount because the API's poll-READY has no CLI equivalent (`profile list` returns name plus id only); release is the persistence call, so any abnormal end forces re-verify; one live session per profile holds the last writer; hard timeout at create plus the platform inactivity backstop; explicit stop on every path.

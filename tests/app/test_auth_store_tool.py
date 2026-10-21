@@ -111,6 +111,14 @@ def test_contract_carries_the_overall_schema():
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
+def test_contract_has_no_profile_compatibility_vocabulary():
+    """#395 Q5: a retired `steel.profile` is silently disregarded. The
+    agent-facing contract teaches only `steel: {state}` - it must not mention
+    the retired key at all, so no agent learns a compatibility path."""
+    assert "profile" not in AUTH_STORE_CONTRACT.lower()
+    assert "steel: {state}" in AUTH_STORE_CONTRACT
+
+
 def test_contract_carries_the_read_write_rules():
     for marker in ("read", "write", "valid empty", "single-field",
                    "duplicate_auth", "duplicate_identity",

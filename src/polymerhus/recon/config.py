@@ -50,9 +50,11 @@ POD_HTTP_CAPTURE = os.environ.get("POD_HTTP_CAPTURE", "1").strip().lower() not i
     "0", "false", "no", "off",
 )
 
-# steel.dev cloud-browser credential. The steel_* crawl tools drive a
-# steel.dev session via Playwright-over-CDP (see src/polymerhus/recon/crawl/steel_client.py);
-# there is NO remote MCP host URL - the tool provider is instantiated in-process.
+# Steel runtime credential. The steel_* crawl tools drive a Steel session via
+# Playwright-over-CDP (see src/polymerhus/recon/crawl/steel_client.py); a keyless
+# deployment supplies `STEEL_BROWSER_API_URL` instead, and runtime selection
+# belongs below the tool. There is NO remote MCP host URL - the tool provider is
+# instantiated in-process.
 STEEL_API_KEY = os.environ.get("STEEL_API_KEY", "")
 CRAWL_MAX_PAGES = int(os.environ.get("CRAWL_MAX_PAGES", "50"))
 CRAWL_MAX_DEPTH = int(os.environ.get("CRAWL_MAX_DEPTH", "3"))

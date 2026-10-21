@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Cold-login reCAPTCHA challenge probe (#237/#220 diagnosis).
 
+Historical diagnostic, retained for reproducing the 2026-09-21 finding only.
+It drives the retired profile path (`--profile`/`--update-profile`), so it is
+NOT a current Steel client and it is NOT part of the #395 verification tier.
+Do not copy its session handling as the current contract; see
+`docs/design/steel-session-only-395-decisions.md` for the session-only model.
+
 The reported failure: a cold, non-stealth login on magnific.com is held by a
 visible reCAPTCHA Enterprise challenge (a low score), where a warm browser
 identity is not. This probe reproduces that symptom as a tight pass/fail

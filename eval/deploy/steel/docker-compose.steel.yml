@@ -31,7 +31,7 @@ services:
     # artifacts a caller stores under /app/.cache. The browser's default
     # user-data-dir is /tmp/steel-chrome, so a session's cookies and storage are
     # carried explicitly through `sessionContext` (see OPERATOR.md), not by an
-    # implicit shared profile. A named volume survives `down` and container
+    # implicit shared user-data-dir. A named volume survives `down` and container
     # recreation; only an explicit `down -v` removes it.
     volumes:
       - steel-cache:/app/.cache

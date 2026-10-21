@@ -1,6 +1,6 @@
 """State-preserving Steel session teardown (#395, D359-10 follow-up).
 
-The local Steel runtime has no profile store, so a session's identity leaves
+The tool keeps no server-side identity store, so a session's identity leaves
 with the session unless the caller captures it first. This module is the ONE
 construction point for that sequence:
 

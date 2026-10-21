@@ -1,7 +1,7 @@
 ---
 name: steel-browser
 description: >-
-  Operate a real Steel browser through the `steel_exec` gateway: named
+  Operate a real Steel browser through the exec surface bound to you: named
   sessions, navigation, ref-based interaction, waiting, inline JS, cookie and
   storage reads, one-shot scraping, and bounded spidering.
   Use when a target needs JavaScript rendering, element-level interaction, a form
@@ -13,25 +13,26 @@ metadata:
 
 # Steel browser operation
 
-Drive a real Steel browser through `steel_exec` - one `steel ...` command, or a whole `.sh`/`.py` script chaining several.
+Drive a real Steel browser through the exec surface bound to you - the `steel_exec` gateway where it is bound, or a shell `exec` running the same `steel ...` commands.
+One `steel ...` command, or a whole `.sh`/`.py` script chaining several.
 This skill carries operation mechanics, not a goal: no login procedure, no scraping recipe, only the framework any browser task composes.
 Reach for it when a target needs JavaScript to render, an element driven, or client-side browser state read.
 
 The runtime is selected below this skill.
-A cloud deployment and a self-hosted deployment present the same commands.
-Do not add a runtime flag, a profile, or a cloud/local branch to a command.
+Every `steel` command works the same wherever the browser runs.
+Do not add a runtime flag or a hosting branch to a command.
 
 ## The tool surface
 
-`steel_exec` takes exactly one of `command` (a string carrying a `steel` token) or `script` with `script_lang` in `sh`/`py`.
+The `steel_exec` gateway takes exactly one of `command` (a string carrying a `steel` token) or `script` with `script_lang` in `sh`/`py`.
 Script text is not scanned, so a script owns its own timeout ordering, session-name uniqueness, and variadic boundary.
 A refusal is typed and nothing runs (`returncode` 2): `refused:ambiguous-input`, `refused:not-steel-command`, `refused:steel-version-mismatch`, `refused:timeout-ordering`, `refused:unsupported-script-lang`, `refused:session-taken`, `refused:variadic-boundary`.
 Fix the input and reissue; a refusal is not a transient to retry.
-On a bare CLI you hold the same guards yourself.
+On a bare shell `exec` that runs the CLI directly, you hold the same guards yourself.
 
-The pinned CLI is 0.5.0-preview.6, the first release whose daemon maps the local API's `timeout: 0` to "no expiry" (#395).
-`--session-timeout` is therefore enforced by the daemon, and a local runtime releases the session when the daemon exits.
-The local API itself still ignores a create-time timeout (upstream issue #350), so the server does not expire a session on its own.
+The pinned CLI is 0.5.0-preview.6.
+`--session-timeout` is enforced by the daemon, and `timeout: 0` means no expiry.
+The server may still ignore a create-time timeout (upstream issue #350), so it does not expire a session on its own.
 
 ## The path: survey, open, operate, close
 
@@ -50,7 +51,7 @@ survey -> open or reuse -> OPERATE ... -> close
 `remainingMs` on receipt sits below what you asked for - provisioning spends the session clock.
 
 **State.** The browser keeps cookies, localStorage, sessionStorage, and indexedDB for the life of the session.
-These four fields are the only durable browser state; there is no profile, no saved fingerprint, and no server-side identity bundle.
+These four fields are the only durable browser state; the tool keeps no server-side identity bundle.
 A fresh session is a fresh browser context. It is not a new fingerprint claim and not a new egress identity.
 For a crawl, the programmatic provider restores the account state and captures it again on release.
 The CLI `start` has no state field, so an interactive flow must reuse a live session when it needs continuity; do not claim that a new CLI session restored state.

@@ -2,7 +2,7 @@
 
 You are the **authentication bootstrapper** for ONE WebExploitBench target: `<target>`.
 Your run deploys the real target; you establish its authentication state live, and author the AuthContext and the project authn skill.
-This phase runs FIRST: the L1 crawl that follows will consume the authn skill and the persisted session to reach the target's authenticated surface.
+This phase runs FIRST: the L1 crawl that follows will consume the authn skill and the recorded auth material to reach the target's authenticated surface.
 
 You are the external operator, by hand.
 Read and follow the meta-skill `skills/meta/authn-skill-writing/SKILL.md` through phases P0-P6, and use its parametrised prompt `skills/meta/authn-skill-writing/references/bootstrap-workflow.md` filled with this target's data.
@@ -37,7 +37,7 @@ Write to (`<staging>` is the staging root from the Substitutions block, `<projec
 `{login_endpoint?, required_headers? (list of "Name: value"), mechanism?, defences?, fingerprinting?, technical_conditions? (list of {name, check}), anti-bot? (a vendor/challenge name or null), http-client-replayability? (true|false; unset = UNKNOWN), notes?}`.
 
 `credentials.yaml` - accounts keyed by name:
-`{accounts: {<username>-<minting_context>: {origin, procedure?, credentials? (username, password, login_url, domain?, selectors?), tokens? ({<name>: {value, location: cookie|header|storage, target?, expiry?}}), steel? ({profile}), snapshot? ({headers, cookies, params, captured_at}), roles?, default_role?, notes?}}}`.
+`{accounts: {<username>-<minting_context>: {origin, procedure?, credentials? (username, password, login_url, domain?, selectors?), tokens? ({<name>: {value, location: cookie|header|storage, target?, expiry?}}), steel? ({state}), snapshot? ({headers, cookies, params, captured_at}), roles?, default_role?, notes?}}}`.
 Name every account `<username>-<minting_context>` with the credential username (email suffix stripped), a hyphen, then `first_authn_bootstrap`.
 Never put `origin` in the store payload normally, but the file MAY carry `origin: operator` for the operator-seeded record; leave it out if unsure.
 Secret values live in `credentials.yaml` and NEVER in the skill.
@@ -46,7 +46,7 @@ Secret values live in `credentials.yaml` and NEVER in the skill.
 
 The skill is CONSUMED by the L1 crawl, which runs immediately after you and reuses the running target.
 So the skill must be self-describing enough for a fresh agent to reproduce the login without your session: name every required secret, the exact request shape, the endpoint, and how to verify the authenticated landing.
-Record the **persisted session snapshot** (`snapshot.headers`, `snapshot.cookies`, and any token) in `credentials.yaml` with `captured_at`, so the L1 crawl can replay the session without re-running sign-in; the crawl falls back to the skill's sign-in procedure when the snapshot is stale or not portable.
+Record the **session snapshot** (`snapshot.headers`, `snapshot.cookies`, and any token) in `credentials.yaml` with `captured_at`, so the L1 crawl can replay the session without re-running sign-in; the crawl falls back to the skill's sign-in procedure when the snapshot is stale or not portable.
 
 ## Execution
 

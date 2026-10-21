@@ -55,11 +55,11 @@ The interaction mode defaults to request-based; the browser is taken only when t
 
 Start or reuse a named live session: `steel browser start --session <session_name> --session-timeout <session_timeout_ms> --json`.
 Log in only when the session does not yield the authenticated landing.
-The pinned CLI has no state field, so a later CLI flow must reuse this live session. Do not mount or mint a profile.
+The pinned CLI has no state field, so a later CLI flow must reuse this live session. Do not claim that a new CLI session restored state.
 Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `steel browser wait --url <authenticated_landing_substr>` or `steel browser wait --text <marker>`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
 Wait on the challenge's own marker with a bounded `--timeout`, then escalate to the operator: the post-gate state cannot appear until the human acts, so a wait on it burns its whole timeout.
 Stop every session with `steel browser stop --session <session_name> --json` and prove it gone against `steel browser sessions --json`.
-Do not record a profile key. Record `steel.state` only when a state file exists.
+Record `steel.state` only when a state file exists.
 
 ## Report back
 

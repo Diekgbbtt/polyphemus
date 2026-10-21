@@ -159,6 +159,22 @@ def test_webpage_profile_fail_open_and_steel_gate():
     assert len(res2.probes) == 1  # probe still emitted despite no Steel
 
 
+def test_steel_available_accepts_a_key_or_a_keyless_endpoint(monkeypatch):
+    """#395 D359-12: a keyless deployment configured by
+    `STEEL_BROWSER_API_URL` alone must still report the deep probe as live."""
+    monkeypatch.delenv("STEEL_API_KEY", raising=False)
+    monkeypatch.delenv("STEEL_BROWSER_API_URL", raising=False)
+    assert anatomy._steel_available(None) is False
+
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://steel:3000/v1")
+    assert anatomy._steel_available(None) is True
+
+    monkeypatch.delenv("STEEL_BROWSER_API_URL")
+    monkeypatch.setenv("STEEL_API_KEY", "key")
+    assert anatomy._steel_available(None) is True
+    assert anatomy._steel_available(False) is False  # explicit override wins
+
+
 def test_commit_anatomy_fail_open_on_write_error():
     res = webpage_profile({"base_url": "https://a"}, profile_fn=lambda s: _proposal(), steel_available=True)
 

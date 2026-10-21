@@ -49,6 +49,8 @@ Record identity is the account/token name; file names never encode identity.
 
 ## D220-4 - Steel refs only; concrete snapshots, never stored queries
 
+*Superseded 2026-10-20 on the Steel reference: `steel.profile` is retired and replaced by `steel.state`; see the amendment at the end of this document. The snapshot and no-stored-query rules remain in force.*
+
 The durable reference form is reserved for Steel browser-state (`steel: {profile}` - the minimal cloud profile key, `records._check_steel` requiring only a non-empty `profile` string), whose keys are cloud-persisted and long-lived.
 SUPERSEDED (as-built 2026-09-11): there is no injected Steel resolver in the store seam and no `steel_unresolved` coded miss - the store holds the profile key as an opaque validated blob and the agent rebinds it at use time through its browser tool.
 Graph entities are never stored as placeholder-substitution queries: static programmed queries against a changing surface fail silently open, which is the failure this decision exists to prevent.

@@ -14,7 +14,7 @@ Record nothing until its gate passes.
 ## Prerequisites
 
 You need generic request tooling for probe and replay work.
-You need the steel CLI, authenticated (`steel login`, `steel doctor --preflight`, smoke test `steel scrape https://example.com`).
+You need a working steel CLI: run `steel scrape https://example.com` as a smoke test. Authenticate the CLI only when your runtime requires it (`steel login`, then `steel doctor --preflight`).
 You need reachability of the seed face `PUT /projects/{project_id}/auth` and the state-read face `GET /projects/{project_id}/auth`.
 You need write access to the target project's skill bundle at `<data_root>/<project_id>/skills/authn/` (the location P5 pins).
 You need no polymerhus internals beyond the seed-face contract and that parametrized bundle location.
@@ -42,7 +42,7 @@ An unknown project returns 404.
 The in-process agent store tool is the in-system agent path, not yours: do not use it and do not document it.
 Name every account `<username>-<minting_context>`: the credential username with its email location suffix stripped (`diegogobbetti69@gmail.com` -> `diegogobbetti69`), a hyphen, then the run or flow that minted it (`first_authn_bootstrap`, `hunting_misauthr`, ...), which you assess at write time.
 The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share ONE account name; a second name for the same credential identity is a fork, not a second account.
-Per account record: `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `steel` (`{state}` key only, never browser state; an old `profile` key is ignored), `snapshot` (`{cookies, params, captured_at}`; the required header fact single-sources on the overview's `required_headers`, never duplicated here), `roles` with `default_role` where multiple roles exist, `notes`.
+Per account record: `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `steel` (`{state}` key only, never browser state), `snapshot` (`{cookies, params, captured_at}`; the required header fact single-sources on the overview's `required_headers`, never duplicated here), `roles` with `default_role` where multiple roles exist, `notes`.
 Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` (a list of `{name, check}`), `anti-bot`, `http-client-replayability`, `notes`.
 `anti-bot` is the defence type (a vendor, product, or challenge name such as `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, or `waf:<name>`) or null when none; `http-client-replayability` is `true` or `false`, and leaving it unset means UNKNOWN, never false.
 Procedural prose never lands in the store.
@@ -93,13 +93,13 @@ A static element that proves to be a stable target property graduates into the o
 
 ### Browser fallback: the steel session discipline
 
-Durable browser state is the four-field session context: cookies, localStorage, sessionStorage, and indexedDB. There is no Steel profile.
+Durable browser state is the four-field session context: cookies, localStorage, sessionStorage, and indexedDB. The tool keeps no server-side identity bundle.
 The store holds only a `steel: {state}` reference when a state file exists; secrets never touch the store.
 A fresh CLI session is a fresh context. The pinned CLI has no state field, so a later CLI flow must reuse the live session; never claim that a new session restored state.
 Start by name: `steel browser start --session <name> --session-timeout <ms> --json`.
 Log in when the live session does not yield the authenticated landing.
 Settle then verify: navigate to the authenticated landing URL and read it back before trusting the session; an unverified session never passes a verdict.
-The programmatic crawl provider restores state, replicates auth material, and captures state on release. The CLI login path does not mint a profile and does not write one.
+The programmatic crawl provider restores state, replicates auth material, and captures state on release. The CLI login path does not write state; only the programmatic crawl provider captures it.
 Stop on every path with `steel browser stop --session <name> --json`, then prove it gone against `steel browser sessions --json`.
 The scripts beside the steel-browser skill are optional helpers for these acts: `references/session-lifecycle.sh`, `references/catalogue.sh`, `references/extract-reads.sh`.
 
@@ -134,7 +134,7 @@ Gate: each flow states its endpoint or form plus its required headers and anti-f
 
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
 Browser path: reuse or start a live session and verify it per the fallback discipline above; log in only when it does not yield the authenticated landing, and pace that login per the mechanics skill's cadence and escalation rules.
-Do not write a profile reference. Record `steel.state` only when a state file exists.
+Record `steel.state` only when a state file exists.
 Verify with concrete commands: `navigate` to the target URL, then settle with `wait --url <authenticated-landing-substr>` or `wait --text <marker>` (a condition, not a fixed pause), then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
 Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead.
 Gate: a verification predicate fired for the flow, where request success means a new session cookie plus a non-login URL and browser success means navigation to the authenticated landing state.
@@ -183,7 +183,7 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 | Account NAME | Procedure account citation | Known name means duplicate, never fork |
 | `credentials` | Sign-in or sign-up step | Secrets stay in store, skill cites account |
 | `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels |
-| `steel: {state}` | Browser session step | Store holds key when a state file exists; no profile |
+| `steel: {state}` | Browser session step | Store holds the reference when a state file exists |
 | `snapshot` | Request replay step | Replay the account snapshot exactly |
 | `overview.anti-bot` | Defence-naming step (P1) | Store holds the vendor name, skill names it for the mode decision |
 | `overview.http-client-replayability` | Replay verdict and continuation facts (P1/P5) | true means the skill carries replay steps; false means browser steps; unset means unknown |
@@ -196,9 +196,9 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 
 ## Stale state
 
-Treat expired or missing sessions and profiles as loud failures, never as silent anonymous state.
+Treat expired or missing sessions as loud failures, never as silent anonymous state.
 Re-run the P3 verification predicate after any expiry before recording or replaying.
-Say in the skill which step fails loudly when its session or profile is stale.
+Say in the skill which step fails loudly when its session is stale.
 
 ## Red flags - stop and repair
 
@@ -216,7 +216,7 @@ Say in the skill which step fails loudly when its session or profile is stale.
 | Account without `procedure` label | Set label in P6 |
 | Procedure without account citation | Cite account and token names |
 | Step without tool plus reason | Add both before calling the flow replayable |
-| Steel step without profile or commands | Name profile, commands, reference files |
+| Steel step without a session or commands | Name the live session, commands, and reference files |
 | Write attempted outside seed face | Route through `PUT /projects/{project_id}/auth` |
 | `origin` placed in seed payload | Remove it, server stamps operator |
 | Failure branch without `technical_conditions` | Cite the checks as the diagnostic ladder |

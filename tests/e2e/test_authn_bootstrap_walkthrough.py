@@ -10,33 +10,34 @@ leaves two artifacts on the app-owned data root - the auth store bucket
 These are WALKTHROUGH predicates, not unit tests: they read the terminal
 quantities back out of the real datastore the run wrote (the YAML bucket and
 the skill bundle on disk, plus the live read face `GET /projects/{id}/auth`),
-and the one live edge is the target itself (moodique.com) and its Steel
-profile. They are gated: with no run artifacts they skip, so the tier is inert
-until the operator green-lights the live run.
+and the one live edge is the target itself (moodique.com). They are gated:
+with no run artifacts they skip, so the tier is inert until the operator
+green-lights the live run.
 
 The catalogue (see the ticket report for the full predicate list):
   E1  the project authn skill exists at the designed path with valid frontmatter
   E2  the skill embeds the mandatory anti-bot/replayability block verbatim and
       leaks no secret value (it cites names only)
   E3  the read face returns the two typed facts with the right types
-  E4  the store account carries the verified facts (credentials, steel profile,
-      located tokens, procedure label)
-  E5  the persisted Steel profile is mountable in a NEW session and reaches an
-      authenticated (non-login) state
+  E4  the store account carries the verified facts (credentials, an optional
+      `steel.state` reference, located tokens, procedure label)
+  E5  when a `steel.state` reference is present, its file exists, is
+      owner-only, and carries only the four durable state fields; the CLI has
+      no restore flag, so this checks the stored artifact, not a mount
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import shutil
-import subprocess
-import uuid
+import stat
 from pathlib import Path
 
 import httpx
 import pytest
 import yaml
+
+from polymerhus.app.steel_session_state import state_path
 
 REPO = Path(__file__).resolve().parents[2]
 PROJECT_ID = os.environ.get("AUTHN_E2E_PROJECT_ID", "authn-e2e")
@@ -47,11 +48,9 @@ CREDENTIALS_PATH = DATA / "auth" / "credentials.yaml"
 META_SKILL = REPO / "skills" / "meta" / "authn-skill-writing" / "SKILL.md"
 
 AGENT_URL = os.environ.get("AUTHN_E2E_AGENT_URL", "http://localhost:8083")
-LANDING_URL = os.environ.get(
-    "AUTHN_E2E_LANDING_URL", "https://moodique.com/it/area-cliente"
-)
 
 _VALID_TOKEN_LOCATIONS = {"cookie", "header", "storage"}
+_STATE_FIELDS = {"cookies", "localStorage", "sessionStorage", "indexedDB"}
 
 
 def _require_run() -> None:
@@ -185,13 +184,18 @@ def test_e4_account_carries_credentials_steel_tokens_and_procedure():
         )
         assert credentials.get("login_url"), f"account {name} needs a login_url"
         # The steel reference is conditional on the browser path: a request-only
-        # run persists no profile, and the assertion must not invent one.
+        # run persists no state reference, and the assertion must not invent one.
         steel = record.get("steel")
         if steel is not None:
-            assert isinstance(steel, dict) and isinstance(
-                steel.get("profile"), str
-            ) and steel["profile"], (
-                f"account {name}: a persisted steel reference must carry a profile key"
+            assert isinstance(steel, dict), (
+                f"account {name}: the steel reference must be a mapping"
+            )
+            assert "profile" not in steel, (
+                f"account {name}: profiles are retired; use steel.state"
+            )
+            assert isinstance(steel.get("state"), str) and steel["state"], (
+                f"account {name}: a persisted steel reference must carry a "
+                "state key"
             )
         assert isinstance(record.get("procedure"), str) and record["procedure"], (
             f"account {name} must carry the procedure label (the store<->skill join)"
@@ -238,102 +242,34 @@ def test_e6_signup_is_a_separate_verified_flow_when_expected():
     )
 
 
-# --- E5: the persisted profile mounts in a NEW session ------------------------
+# --- E5: a persisted state reference backs an owner-only field file ----------
 
-def test_e5_profile_is_mountable_in_a_new_session():
+def test_e5_state_reference_backs_an_owner_only_state_file():
     accounts = _accounts()
-    profile = None
-    for record in accounts.values():
-        candidate = (record.get("steel") or {}).get("profile")
+    found = None
+    for name, record in accounts.items():
+        candidate = (record.get("steel") or {}).get("state")
         if candidate:
-            profile = candidate
+            found = (name, candidate)
             break
-    if not profile:
-        pytest.skip("no steel profile was persisted (request-only run)")
-    steel = shutil.which("steel")
-    if not steel:
-        pytest.skip("the steel CLI is not on PATH")
+    if not found:
+        pytest.skip("no steel state reference was persisted (request-only run)")
+    name, ref = found
 
-    # A WAF target answers an anonymous session with its own landing (the root
-    # or a block page), so "not the login page" alone is too weak: the mounted
-    # profile must land somewhere an anonymous session does not.
-    url_anon = _steel_landing(steel, LANDING_URL)
-    url_profile = _steel_landing(steel, LANDING_URL, profile=profile)
-    assert "/login" not in url_profile.lower(), (
-        f"the mounted profile reached the login page, not an authenticated "
-        f"state: {url_profile}"
+    path = state_path(PROJECT_ID, ref, root=REPO / "data")
+    assert path.is_file(), (
+        f"account {name}: steel.state {ref!r} must resolve to a state file "
+        f"at {path}"
     )
-    assert url_profile != url_anon, (
-        f"the mounted profile reached the same page as an anonymous session "
-        f"({url_profile}); the profile carries no authenticated state"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600, (
+        f"account {name}: the state file must be owner-only (0600)"
     )
-
-
-def _steel_landing(steel: str, url: str, profile: str | None = None) -> str:
-    """Mount an optional profile in a fresh session, navigate to `url`, and
-    return the settled URL. Always `--wait-until load`, never `networkidle`: a
-    target with continuous network activity never reaches network idle and the
-    navigate errors (observed live on magnific)."""
-    session = f"polymerhus-authn-e2e-{uuid.uuid4().hex[:8]}"
-    started = False
-    try:
-        start_cmd = [steel, "browser", "start", "--session", session]
-        if profile:
-            start_cmd += ["--profile", profile]
-        start_cmd += ["--json"]
-        start = subprocess.run(
-            start_cmd, capture_output=True, text=True, timeout=180,
-        )
-        assert start.returncode == 0, f"session start failed: {start.stderr}"
-        started = True
-        nav = subprocess.run(
-            [steel, "browser", "navigate", url, "--session", session,
-             "--wait-until", "load", "--json"],
-            capture_output=True, text=True, timeout=180,
-        )
-        assert nav.returncode == 0, f"navigate failed: {nav.stderr}"
-        out = subprocess.run(
-            [steel, "browser", "get", "url", "--session", session, "--json"],
-            capture_output=True, text=True, timeout=60,
-        )
-        assert out.returncode == 0, f"url read failed: {out.stderr}"
-        return _settled_url(out.stdout)
-    finally:
-        if started:
-            subprocess.run(
-                [steel, "browser", "stop", "--session", session, "--json"],
-                capture_output=True, text=True, timeout=60,
-            )
-
-
-def _settled_url(raw: str) -> str:
-    """The URL out of a `steel browser get url --json` line: `{"data": "<url>"}`
-    (or a `{"data": {"url": ...}}` shape), falling back to the raw text."""
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            body = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        data = body.get("data") if isinstance(body, dict) else None
-        if isinstance(data, str):
-            return data
-        if isinstance(data, dict) and isinstance(data.get("url"), str):
-            return data["url"]
-    return raw.strip()
-
-
-def _json_field(raw: str, field: str):
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            body = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(body, dict) and field in body:
-            return body[field]
-    return None
+    body = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(body, dict) and body, "the state file must hold a JSON object"
+    assert set(body) <= _STATE_FIELDS, (
+        f"account {name}: the state file carries non-durable fields "
+        f"{sorted(set(body) - _STATE_FIELDS)}"
+    )
+    # The pinned CLI has no `--session-state` flag, so a CLI mount cannot
+    # restore this file; only the programmatic crawl provider restores it.
+    # This predicate therefore checks the stored artifact, not a live mount.

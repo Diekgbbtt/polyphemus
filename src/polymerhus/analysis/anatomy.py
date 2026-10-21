@@ -50,9 +50,11 @@ WEB_PRESENTATION_KIND = "WebPresentation"
 _WEBPRESENTATION_SLOTS = frozenset({"navigation_model", "rendering_model"})
 
 # The deeper webpage-profile probe needs live CDP interaction (Document-vs-Fetch,
-# Page.frameNavigated), which rides the Steel/CDP crawl - hence the STEEL_API_KEY
-# config gate. The probe REQUEST is emitted regardless; its live execution is the
-# unbuilt dep (non-goal), so it degrades gracefully.
+# Page.frameNavigated), which rides the Steel/CDP crawl - hence the Steel
+# configuration check. Either `STEEL_API_KEY` or a keyless
+# `STEEL_BROWSER_API_URL` endpoint configures the runtime (#395, D359-12). The
+# probe REQUEST is emitted regardless; its live execution is the unbuilt dep
+# (non-goal), so it degrades gracefully.
 _DEEP_PROBE_JOB = "steel_crawl"
 _SKILL_ID = "webpage_profile"
 
@@ -107,7 +109,10 @@ class WebpageProfileProposal(BaseModel):
 def _steel_available(override: bool | None) -> bool:
     if override is not None:
         return override
-    return bool(os.environ.get("STEEL_API_KEY"))
+    return bool(
+        os.environ.get("STEEL_API_KEY", "").strip()
+        or os.environ.get("STEEL_BROWSER_API_URL", "").strip()
+    )
 
 
 def _enforce_fingerprint_insufficiency(cls: SpineClassification) -> tuple[SpineClassification, bool]:
@@ -230,7 +235,8 @@ def webpage_profile(
         probe = _webpage_probe(service_id, base_url, requester_id, reason)
         probes.append(probe)
         if not _steel_available(steel_available):
-            logger.info("webpage_profile: deeper probe emitted but STEEL_API_KEY absent; "
+            logger.info("webpage_profile: deeper probe emitted but no Steel runtime "
+                        "is configured (STEEL_API_KEY or STEEL_BROWSER_API_URL); "
                         "it will degrade until the CDP tap is available")
 
     return AnatomyResult(classifications=classifications, observations=observations, probes=probes)

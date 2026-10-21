@@ -306,14 +306,14 @@ def test_agent_refresh_of_an_operator_account_lands_keeping_origin(tmp_path):
     store.write(PROJECT, "accounts.bob.snapshot",
                 {"headers": {"Accept": "text/html"}, "cookies": [],
                  "captured_at": "2026-09-20T00:00:00Z"})
-    store.write(PROJECT, "accounts.bob.steel", {"profile": "proj-bob"})
+    store.write(PROJECT, "accounts.bob.steel", {"state": "proj-bob"})
     record = store.read(PROJECT, "accounts.bob")
     assert isinstance(record.pop("updated_at"), str)
     assert record["origin"] == "operator"
     assert record["credentials"] == _credentials("bob")
     assert record["tokens"]["session"]["value"] == "tok-1"
     assert record["status"] == "valid"
-    assert record["steel"] == {"profile": "proj-bob"}
+    assert record["steel"] == {"state": "proj-bob"}
     assert record["snapshot"]["captured_at"] == "2026-09-20T00:00:00Z"
 
 
