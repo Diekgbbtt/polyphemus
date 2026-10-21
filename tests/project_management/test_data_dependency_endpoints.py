@@ -86,6 +86,9 @@ def _live_pg(monkeypatch):
 def _tmp_stores(monkeypatch, tmp_path):
     monkeypatch.setattr(repository, "_default_auth_store", lambda: AuthStore(root_dir=tmp_path))
     monkeypatch.setattr(repository, "_default_skill_store", lambda: SkillStore(root_dir=tmp_path))
+    # The data-dependency mirror is rooted at the app data root; keep the test
+    # off the live `data/` tree.
+    monkeypatch.setattr("polymerhus.app.data_root.DATA_ROOT", tmp_path / "data")
     return tmp_path
 
 
@@ -135,6 +138,11 @@ def test_place_authn_skill_unpacks_tar_gz_and_writes_verbatim(monkeypatch, tmp_p
     bundle = tmp_path / "target-specific-procedure" / "p1" / "authn"
     assert (bundle / "SKILL.md").read_text() == SKILL_MD
     assert (bundle / "references" / "login.sh").read_text() == "#!/bin/sh\necho login\n"
+    # the eval's documented read surface: the same validated bytes mirrored to
+    # the data root (`eval/orchestrator/files.py::authn_skill_path`).
+    mirror = tmp_path / "data" / "p1" / "skills" / "authn"
+    assert (mirror / "SKILL.md").read_text() == SKILL_MD
+    assert (mirror / "references" / "login.sh").read_text() == "#!/bin/sh\necho login\n"
 
 
 def test_place_authn_skill_unpacks_zip_with_wrapper_prefix(monkeypatch, tmp_path):
