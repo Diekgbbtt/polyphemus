@@ -117,93 +117,90 @@ def test_note_provenance_is_extra_forbid(tmp_path):
 
 def test_hunts_store_missing_command_with_write_intent_is_a_teaching_rejection(tmp_path):
     """The same required-`command` pattern on `hunts_store` (uniform contract):
-    the write payload without `command` -> coded teaching rejection."""
+    the one-spec write payload without `command` -> coded teaching rejection."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, specs=[{"status": "hypothesised",
+    out = json.loads(_hunts(store, spec={"status": "hypothesised",
          "target_identity": {"url": "https://a"},
-                                           "fault_keyword": "f1",
-                                           "strategy_keyword": "probe"}]))
+         "fault_keyword": "f1",
+         "strategy_keyword": "probe"}))
     assert out["ok"] is False
     assert out["error"] == "hunts_store_args_rejected"
     assert "command" in out["detail"] and "write" in out["detail"]
     assert store.read_specs(PROJECT, HUNT_KEY) == []
 
 
-# --- the batched spec-set write (S3 8.6-8.7, T6) -----------------------------
+# --- the one-spec write and the finalize gate (F-025, S3 8.6-8.7) ------------
 
-def test_hunts_store_write_payload_is_the_specs_list(tmp_path):
-    """S3 8.7: the write payload is the WHOLE `specs` list; the file-name
-    identity rides inside each entry. The schema exposes no separate top-level
-    write symbols and no single `spec` payload."""
+def test_hunts_store_write_payload_is_one_spec_object(tmp_path):
+    """F-025: the write payload is exactly one `spec`; there is no top-level
+    `specs` batch, and the file-name identity rides inside the spec."""
     fields = HuntsStoreTool(store=None, project_id=PROJECT).args_schema.model_fields
-    assert "specs" in fields
-    for gone in ("spec", "fault_keyword", "strategy_keyword", "mode"):
+    assert "spec" in fields
+    assert "specs" not in fields
+    for gone in ("spec_id", "fault_keyword", "strategy_keyword", "mode"):
         assert gone not in fields, gone
 
 
-def test_hunts_store_write_derives_the_file_names_from_the_set(tmp_path):
-    """The store derives each `<fault_keyword>_<strategy_keyword>.yaml` in the
-    symbolic layer; a batched write lands the whole set under the bound hunt
-    key and a duplicate identity is the coded dedup signal."""
+def test_hunts_store_write_derives_the_file_name_from_one_spec(tmp_path):
+    """The store derives `<fault_keyword>_<strategy_keyword>.yaml` in the
+    symbolic layer; repeated one-spec writes build the set."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, command="write", specs=[
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"},
-         "fault_keyword": "cwe1220-owner-binding",
-         "strategy_keyword": "probe",
-         "provenance": {"canonical_class": "CWE-1220"}},
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"},
-         "fault_keyword": "reset-replay",
-         "strategy_keyword": "probe"},
-    ]))
+    out = json.loads(_hunts(store, command="write", spec={
+        "status": "hypothesised",
+        "target_identity": {"url": "https://a"},
+        "fault_keyword": "cwe1220-owner-binding",
+        "strategy_keyword": "probe",
+        "provenance": {"canonical_class": "CWE-1220"},
+    }))
     assert out["ok"] is True
-    assert [entry["spec_id"] for entry in out["specs"]] == [
-        "cwe1220-owner-binding_probe", "reset-replay_probe"]
+    assert out["specs"][0]["spec_id"] == "cwe1220-owner-binding_probe"
+    second = json.loads(_hunts(store, command="write", spec={
+        "status": "hypothesised",
+        "target_identity": {"url": "https://a"},
+        "fault_keyword": "reset-replay",
+        "strategy_keyword": "probe",
+    }))
+    assert second["ok"] is True
     specs = store.read_specs(PROJECT, HUNT_KEY)
-    assert len(specs) == 2
+    assert [spec["fault_keyword"] for spec in specs] == [
+        "cwe1220-owner-binding", "reset-replay"]
     assert specs[0]["provenance"]["canonical_class"] == "CWE-1220"
 
-    duplicate = json.loads(_hunts(store, command="write", specs=[
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"},
-    ]))
-    assert duplicate["ok"] is False
-    assert duplicate["error"] == "duplicate_spec"
 
-
-def test_hunts_store_terminal_write_promotes_and_declasses(tmp_path):
-    """S3 8.7: the terminal write carries the whole set with the survivors
-    `ratified` and the unfeasible `dropped`, upserting in place."""
+def test_hunts_store_one_spec_terminal_writes_upsert_then_finalize(tmp_path):
+    """F-025: promote and declass one identity per call, then finalize. The
+    terminal record is the durable whole-set closure."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    _hunts(store, command="write", specs=[
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f2", "strategy_keyword": "probe"},
-    ])
-    out = json.loads(_hunts(store, command="write", specs=[
-        {"status": "ratified",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "dropped",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f2", "strategy_keyword": "probe"},
-    ]))
-    assert out["ok"] is True
-    assert [entry["status"] for entry in out["specs"]] == ["ratified", "dropped"]
+    for fault in ("f1", "f2"):
+        assert json.loads(_hunts(store, command="write", spec={
+            "status": "hypothesised",
+            "target_identity": {"url": "https://a"},
+            "fault_keyword": fault, "strategy_keyword": "probe"}))["ok"] is True
+    assert json.loads(_hunts(store, command="write", spec={
+        "status": "ratified",
+        "target_identity": {"url": "https://a"},
+        "fault_keyword": "f1", "strategy_keyword": "probe"}))["ok"] is True
+    assert json.loads(_hunts(store, command="write", spec={
+        "status": "dropped",
+        "target_identity": {"url": "https://a"},
+        "fault_keyword": "f2", "strategy_keyword": "probe"}))["ok"] is True
+    out = json.loads(_hunts(store, command="finalize"))
+    assert out["ok"] is True and out["finalized"] is True
+    assert out["terminal"]["spec_ids"] == ["f1_probe", "f2_probe"]
+    assert out["terminal"]["spec_statuses"] == {
+        "f1_probe": "ratified", "f2_probe": "dropped"}
     assert store.read_spec(PROJECT, HUNT_KEY, "f1_probe")["status"] == "ratified"
     assert store.read_spec(PROJECT, HUNT_KEY, "f2_probe")["status"] == "dropped"
 
 
 def test_hunts_store_write_missing_identity_is_a_coded_rejection(tmp_path):
-    """A set entry missing the second file-name keyword FAILS with a coded,
-    field-naming `hunts_store_write_rejected` (never a silent degenerate-name
-    write, never a bare pydantic error), so the model corrects on the retry."""
+    """A spec missing the second file-name keyword FAILS with a coded,
+    field-naming rejection, so the model corrects on the retry."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, command="write", specs=[
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "cwe1220-owner-binding"}]))
+    out = json.loads(_hunts(store, command="write", spec={
+        "status": "hypothesised",
+        "target_identity": {"url": "https://a"},
+        "fault_keyword": "cwe1220-owner-binding"}))
     assert out["ok"] is False
     assert out["error"] == "hunts_store_args_rejected"
     assert "strategy_keyword" in " ".join(out["fields"])
@@ -214,54 +211,73 @@ def test_hunts_store_read_is_bound_to_the_loop_key(tmp_path):
     """S3 8.9: the hunt key is BOUND at construction; the read never accepts a
     key from the request, so the hunter can only address its own loop."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    _hunts(store, command="write", specs=[
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"}])
-    assert json.loads(_hunts(store, command="read"))["specs"][0]["status"] == \
-        "hypothesised"
+    _hunts(store, command="write", spec={
+        "status": "hypothesised",
+        "target_identity": {"url": "https://a"},
+        "fault_keyword": "f1", "strategy_keyword": "probe"})
+    assert json.loads(_hunts(store, command="read"))["specs"][0]["status"] ==         "hypothesised"
     assert json.loads(_hunts(store, command="read",
                              statuses=["ratified"]))["specs"] == []
 
 
-def test_hunts_store_terminal_write_omitting_a_draft_is_a_coded_rejection(tmp_path):
-    """The F-017 quality repair at the tool seam: a terminal set that omits a
-    previously hypothesised draft is rejected with a coded list of the missing
-    identities, so the hunter must ratify or drop each draft explicitly."""
+def test_hunts_store_finalize_omitting_a_draft_is_a_coded_rejection(tmp_path):
+    """The F-017 quality repair moves to finalize: closing while a draft is
+    still hypothesised returns the missing identity, so the hunter must ratify
+    or drop each draft explicitly."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    assert json.loads(_hunts(store, command="write", specs=[
-        {"status": "hypothesised", "target_identity": {"url": "https://a"},
-         "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "hypothesised", "target_identity": {"url": "https://a"},
-         "fault_keyword": "f2", "strategy_keyword": "probe"},
-    ]))["ok"] is True
-    out = json.loads(_hunts(store, command="write", specs=[
-        {"status": "ratified", "target_identity": {"url": "https://a"},
-         "fault_keyword": "f1", "strategy_keyword": "probe"},
-    ]))
+    for fault in ("f1", "f2"):
+        assert json.loads(_hunts(store, command="write", spec={
+            "status": "hypothesised",
+            "target_identity": {"url": "https://a"},
+            "fault_keyword": fault, "strategy_keyword": "probe"}))["ok"] is True
+    assert json.loads(_hunts(store, command="write", spec={
+        "status": "ratified",
+        "target_identity": {"url": "https://a"},
+        "fault_keyword": "f1", "strategy_keyword": "probe"}))["ok"] is True
+    out = json.loads(_hunts(store, command="finalize"))
     assert out["ok"] is False
     assert out["error"] == "incomplete_spec_set"
     assert out["missing"] == ["f2_probe"]
     assert "drop" in out["detail"]
+    assert store.read_terminal_set(PROJECT, HUNT_KEY) is None
 
 
-def test_hunts_store_refuses_a_mixed_status_set(tmp_path):
-    """S3 8.7: only the GENERATE (all hypothesised) and terminal
-    (ratified/dropped) shapes exist. A mixed set is a coded rejection naming
-    `specs`, never a persisted set the tracker cannot close on."""
+def test_hunts_store_one_spec_write_allows_a_mixed_lifecycle_then_finalize_gates(tmp_path):
+    """A one-spec promotion while a sibling is still hypothesised is legal;
+    only finalize enforces the whole-set decision."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, command="write", specs=[
-        {"status": "hypothesised",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f1",
-         "strategy_keyword": "probe"},
-        {"status": "ratified",
-         "target_identity": {"url": "https://a"}, "fault_keyword": "f2",
-         "strategy_keyword": "probe"},
-    ]))
+    _hunts(store, command="write", spec={
+        "status": "hypothesised", "target_identity": {"url": "https://a"},
+        "fault_keyword": "f1", "strategy_keyword": "probe"})
+    _hunts(store, command="write", spec={
+        "status": "hypothesised", "target_identity": {"url": "https://a"},
+        "fault_keyword": "f2", "strategy_keyword": "probe"})
+    out = json.loads(_hunts(store, command="write", spec={
+        "status": "ratified", "target_identity": {"url": "https://a"},
+        "fault_keyword": "f1", "strategy_keyword": "probe"}))
+    assert out["ok"] is True
+    assert json.loads(_hunts(store, command="finalize"))["error"] ==         "incomplete_spec_set"
+
+
+def test_hunts_store_refuses_a_write_after_finalize(tmp_path):
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _hunts(store, command="write", spec={
+        "status": "ratified", "target_identity": {"url": "https://a"},
+        "fault_keyword": "f1", "strategy_keyword": "probe"})
+    assert json.loads(_hunts(store, command="finalize"))["finalized"] is True
+    out = json.loads(_hunts(store, command="write", spec={
+        "status": "dropped", "target_identity": {"url": "https://a"},
+        "fault_keyword": "f2", "strategy_keyword": "probe"}))
     assert out["ok"] is False
-    assert out["error"] == "hunts_store_write_rejected"
-    assert out["fields"] == ["specs"]
-    assert "GENERATE write" in out["detail"]
-    assert store.read_specs(PROJECT, HUNT_KEY) == []
+    assert out["error"] == "spec_set_finalized"
+    assert store.read_spec(PROJECT, HUNT_KEY, "f2_probe") is None
+
+
+def test_hunts_store_zero_spec_finalize_is_the_loop_completion_marker(tmp_path):
+    store = HunterMemoryStore(root_dir=tmp_path)
+    out = json.loads(_hunts(store, command="finalize"))
+    assert out["ok"] is True and out["specs"] == []
+    assert store.read_terminal_set(PROJECT, HUNT_KEY) is not None
 
 
 # --- #209: the D84-22 rejected-call canon survives ----------------------------
@@ -281,10 +297,10 @@ def test_unknown_parameter_is_a_coded_teaching_rejection(tmp_path):
     assert "bogus" in " ".join(parsed["fields"])
     hunts = HuntsStoreTool(store=store, project_id=PROJECT)
     out = hunts.invoke({"command": "write",
-                        "specs": [{"status": "hypothesised",
-                                   "fault_keyword": "f1",
-                                   "strategy_keyword": "probe",
-                                   "target_identity": {"url": "https://a"}}],
+                        "spec": {"status": "hypothesised",
+                                 "fault_keyword": "f1",
+                                 "strategy_keyword": "probe",
+                                 "target_identity": {"url": "https://a"}},
                         "bogus": 1})
     parsed = json.loads(out) if isinstance(out, str) else out
     assert parsed["ok"] is False
@@ -301,9 +317,9 @@ def test_hunts_store_injects_the_bound_run_id_into_spec_provenance(tmp_path):
                           hunt_key=HUNT_KEY, run_id="run-42")
     out = json.loads(tool.invoke({
         "command": "write",
-        "specs": [{"status": "ratified",
-                   "target_identity": {"url": "https://a"},
-                   "fault_keyword": "f1", "strategy_keyword": "probe"}],
+        "spec": {"status": "ratified",
+                 "target_identity": {"url": "https://a"},
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     }))
     assert out["ok"] is True
     stored = store.read_spec(PROJECT, HUNT_KEY, "f1_probe")

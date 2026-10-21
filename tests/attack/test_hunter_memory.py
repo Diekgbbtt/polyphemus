@@ -54,6 +54,72 @@ def _spec_file(tmp_path, side: str, spec_id: str = SPEC_ID) -> Path:
     )
 
 
+# --- the terminal-set record (F-025 / F-022) ----------------------------------
+
+def test_a_one_spec_promotion_does_not_require_the_whole_set(tmp_path):
+    """F-025: the hunter writes one spec per call. Promoting one draft while a
+    sibling is still hypothesised is legal at the store; the finalize command
+    is the one whole-set gate."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="registration"),
+        _spec(fault_keyword="reset"),
+    ])
+    written = store.write_specs(
+        PROJECT, HUNT_KEY, [_spec(status="ratified", fault_keyword="registration")],
+        enforce_complete=False)
+    assert [spec_id for spec_id, _ in written] == ["registration_probe"]
+    assert store.read_spec(PROJECT, HUNT_KEY, "registration_probe")["status"] == "ratified"
+    assert store.read_spec(PROJECT, HUNT_KEY, "reset_probe")["status"] == "hypothesised"
+
+
+def test_finalize_requires_every_draft_to_be_decided(tmp_path):
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="registration"),
+        _spec(fault_keyword="reset"),
+    ])
+    store.write_specs(
+        PROJECT, HUNT_KEY, [_spec(status="ratified", fault_keyword="registration")],
+        enforce_complete=False)
+    with pytest.raises(IncompleteSpecSetError) as raised:
+        store.finalize_specs(PROJECT, HUNT_KEY, run_id="run-1")
+    assert raised.value.missing == ["reset_probe"]
+    assert store.read_terminal_set(PROJECT, HUNT_KEY) is None
+
+
+def test_finalize_records_the_terminal_set_and_is_idempotent(tmp_path):
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [
+        _spec(fault_keyword="registration"),
+        _spec(fault_keyword="reset"),
+    ])
+    store.write_specs(
+        PROJECT, HUNT_KEY, [_spec(status="ratified", fault_keyword="registration")],
+        enforce_complete=False)
+    store.write_specs(
+        PROJECT, HUNT_KEY, [_spec(status="dropped", fault_keyword="reset")],
+        enforce_complete=False)
+    marker = store.finalize_specs(PROJECT, HUNT_KEY, run_id="run-1")
+    assert marker["run_id"] == "run-1"
+    assert marker["spec_ids"] == ["registration_probe", "reset_probe"]
+    assert marker["spec_statuses"] == {
+        "registration_probe": "ratified", "reset_probe": "dropped"}
+    again = store.finalize_specs(PROJECT, HUNT_KEY, run_id="run-1")
+    assert again["finalized_at"] == marker["finalized_at"]
+    assert store.read_terminal_set(PROJECT, HUNT_KEY)["run_id"] == "run-1"
+
+
+def test_finalize_accepts_a_zero_spec_hunt(tmp_path):
+    """A hunter that authors no spec still needs a durable completion marker,
+    or its consumed loop would be recovered forever."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    marker = store.finalize_specs(PROJECT, HUNT_KEY, run_id="run-empty")
+    assert marker["spec_ids"] == []
+    assert marker["spec_statuses"] == {}
+    assert store.read_terminal_set(PROJECT, HUNT_KEY)["run_id"] == "run-empty"
+
+
 # --- the set write and the status lifecycle (S3 8.6-8.7) ----------------------
 
 def test_a_batched_specs_write_creates_the_whole_set(tmp_path):

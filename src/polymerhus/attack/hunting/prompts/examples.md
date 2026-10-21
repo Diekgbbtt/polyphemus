@@ -21,18 +21,18 @@ advanced technique. phase:collect.
 DISCRIMINATE: authorisation source x delivery route; narrow on the report id,
 broad on the routes. phase:discriminate.
 GENERATE: three specs - direct download, signed-URL redirect, share-route
-mint. One hunts_store write, all hypothesised.
+mint. One hunts_store write per spec, all hypothesised.
 WELL-FORMEDNESS: the export route is a new instance the collection missed;
 [D2] re-enters the reasoning at COLLECT.
 Update phase:collect with action=update (the export route and its own
-authorisation branch). Re-generate: a second hunts_store write, all
-hypothesised, upserting the three identities in place and adding the export
-spec. The tracked state stays WELL-FORMEDNESS throughout.
+authorisation branch). Re-generate: one hunts_store write per spec, all
+hypothesised; the three identities upsert in place and the export spec is
+added. The tracked state stays WELL-FORMEDNESS throughout.
 Then merge: the direct-download spec and the export spec differ only by route
 while the authorisation variable is the same, so the direct-download identity
 widens to name both routes and the export identity is absorbed. Record the
-merge and its reason in phase:well_formedness; the terminal write carries the
-absorbed identity as dropped.
+merge and its reason in phase:well_formedness; the VERIFY-CLAIMS status
+write carries the absorbed identity as dropped.
 Coverage basis: both routes are named in the merged spec, the signed-URL
 region keeps its own spec, and the share-route mint keeps its own spec. No
 proof of exhaustiveness is claimed. Exit note.
@@ -41,9 +41,9 @@ share route" - exec the share route; 403. The share-route spec is unfeasible.
 Probe the object-store configuration evidence: an unsigned request for the
 prefix returns 403, so the download route's signed URL is the only delivery.
 The widened direct-route and signed-URL specs survive.
-Terminal write: the whole set in one hunts_store call; the widened direct-route
+Terminal statuses: one hunts_store write per spec; the widened direct-route
 and signed-URL specs ratified, the share-route spec and the absorbed export
-identity dropped.
+identity dropped. Then finalize.
 COMPLETE.
 ```
 
@@ -51,7 +51,7 @@ COMPLETE.
 
 ```
 GROUNDING/SLICE/COLLECT/DISCRIMINATE/GENERATE: the four specs stand
-hypothesised after one set write; the advanced technique depends on an
+hypothesised after one write per spec; the advanced technique depends on an
 administrative overlay route that the target surfaces do not list.
 WELL-FORMEDNESS: the four sub-slices are disjoint and the slice's regions are
 each owned; the overlay spec is flagged as conditional on the probe. Exit note.
@@ -63,10 +63,10 @@ meaningful-insight guard ends the evaluation. Do not retry with a different
 path. The probe iterations move no tracked state.
 This was an assumption probe, not a payload probe: it tested the feasibility
 of the technique, never whether a payload fires.
-Terminal write: the whole set in one hunts_store call; all four specs
-ratified, with the unresolved overlay assumption recorded as visible
-uncertainty in phase:well_formedness. Nothing is dropped, because no
-technical infeasibility was shown.
+Terminal statuses: one hunts_store write per spec; all four specs ratified,
+with the unresolved overlay assumption recorded as visible uncertainty in
+phase:well_formedness. Nothing is dropped, because no technical infeasibility
+was shown. Then finalize.
 COMPLETE.
 ```
 
@@ -95,7 +95,8 @@ stays hypothesised. phase:well_formedness.
 VERIFY-CLAIMS: the probes cannot run while the target is unavailable, so the
 assumptions stay visibly unchecked. Fail-open and loose: no falsification is
 invented, and no retry is made against a 5xx.
-Terminal write: the whole set in one hunts_store call; both specs ratified
-with their uncertainty, none dropped - no technical infeasibility was proved.
+Terminal statuses: one hunts_store write per spec; both specs ratified with
+their uncertainty, none dropped - no technical infeasibility was proved. Then
+finalize.
 COMPLETE: the hunt lands with a usable, honestly degraded set.
 ```

@@ -100,11 +100,10 @@ def test_the_drive_appends_the_trail_across_drives():
 
 
 def test_the_drive_ends_on_complete_and_a_later_signal_moves_nothing():
-    """S4 14.10: the terminal write lands `complete`; the graph then ends - a
+    """S4 14.10: the finalize call lands `complete`; the graph then ends - a
     later signal is not even observed (no state move, no trail entry)."""
     state = {"state": "verify_claims", "specs": [], "trail": []}
-    state = _drive(state, {"kind": "spec_set_write",
-                           "statuses": ["ratified", "dropped"]})
+    state = _drive(state, {"kind": "spec_set_finalize"})
     assert state["state"] == "complete"
     assert state["injected_constant"] == S.VERIFY_CLAIMS_HINT
     ended = _drive(state, _signal("grounding"))

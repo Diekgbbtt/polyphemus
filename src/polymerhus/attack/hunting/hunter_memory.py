@@ -75,6 +75,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -317,6 +318,9 @@ class HunterMemoryStore(BoundedRecordStore):
         _validate_spec_file(spec_id)
         return self._spec_dir(project_id, hunt_key) / side / f"{spec_id}.yaml"
 
+    def _terminal_file(self, project_id: str, hunt_key: str) -> Path:
+        return self._spec_dir(project_id, hunt_key) / "terminal.yaml"
+
     def _notes_file(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "notes.yaml"
 
@@ -426,11 +430,12 @@ class HunterMemoryStore(BoundedRecordStore):
         specs: Sequence[dict],
         *,
         side: Literal["produced", "consumed"] = "produced",
+        enforce_complete: bool = True,
     ) -> list[tuple[str, Path]]:
-        """Write the WHOLE spec set under `test-specs/<hunt_key>/<side>/`.
+        """Write the spec set under `test-specs/<hunt_key>/<side>/`.
 
-        `specs` is the batched set the tool received: every entry carries a
-        `status` in `hunter_state.SPEC_STATUSES` and the two file-name identity
+        `specs` is the batch the caller holds: every entry carries a `status`
+        in `hunter_state.SPEC_STATUSES` and the two file-name identity
         attributes `fault_keyword` / `strategy_keyword`. The store DERIVES each
         `spec_id` (and therefore the file name) from the keywords and persists
         the body verbatim - the reduced D4 at every status (S3 8.6).
@@ -438,6 +443,10 @@ class HunterMemoryStore(BoundedRecordStore):
         The GENERATE write is all-`hypothesised` and creates the set; the
         terminal write carries the whole set with the survivors `ratified` and
         the unfeasible `dropped`, UPSERTING each identity in place (S3 8.7).
+        F-025: the hunter tool writes ONE spec per call, so its store calls
+        pass `enforce_complete=False`; the whole-set omission check moves to
+        `finalize_specs`, the one durable terminal gate. Internal whole-set
+        writers keep the default and the original F-017 guarantee.
         A duplicate derived identity INSIDE the batch raises
         `DuplicateSpecError` (the dedup signal); the whole batch is validated
         before any file is written, so a rejected write never leaves a partial
@@ -517,7 +526,7 @@ class HunterMemoryStore(BoundedRecordStore):
             # race it.
             terminal = bool(statuses) and all(
                 status in ("ratified", "dropped") for status in statuses)
-            if side == "produced" and terminal:
+            if side == "produced" and terminal and enforce_complete:
                 batch_runs = {
                     str((spec.get("provenance") or {}).get("run_id") or "")
                     for spec in specs
@@ -565,6 +574,85 @@ class HunterMemoryStore(BoundedRecordStore):
                 write_text_atomic(path, yaml.safe_dump(spec, sort_keys=False))
                 written.append((spec_id, path))
         return written
+
+    def finalize_specs(
+        self,
+        project_id: str,
+        hunt_key: str,
+        *,
+        run_id: str = "",
+    ) -> dict:
+        """Close the hunt's spec set with a durable terminal record.
+
+        F-025/F-022: the hunter writes one spec per call, so the whole-set
+        omission check cannot live on a terminal batch write. This is the one
+        gate: every produced spec must already be `ratified` or `dropped`
+        (consumed specs are terminal by dispatch), then the store writes
+        `test-specs/<hunt_key>/terminal.yaml` carrying the run id, the sorted
+        terminal identities, and their statuses. A zero-spec hunt is a valid
+        terminal set: it still needs the record, or its consumed loop would be
+        recovered forever.
+
+        Idempotent for the same run. A different run may finalize the same
+        hunt key (the loop dispatch id is not globally unique across runs);
+        its record replaces the stale one, and recovery compares the run id.
+        """
+        self._validate_hunt_key(hunt_key)
+        missing: list[str] = []
+        statuses: dict[str, str] = {}
+        with self._lock_for(project_id):
+            existing = self.read_terminal_set(project_id, hunt_key)
+            if existing is not None and str(existing.get("run_id") or "") == str(
+                    run_id or ""):
+                return existing
+            for side in _SPEC_SIDES:
+                side_dir = self._spec_dir(project_id, hunt_key) / side
+                if not side_dir.exists():
+                    continue
+                for path in sorted(side_dir.glob("*.yaml")):
+                    body = self._read_spec_file(path)
+                    status = str(body.get("status") or "")
+                    statuses[path.stem] = status
+                    if side == "produced" and status == "hypothesised":
+                        missing.append(path.stem)
+            if missing:
+                raise IncompleteSpecSetError(missing, hunt_key)
+            marker = {
+                "schema_version": 1,
+                "hunt_key": hunt_key,
+                "run_id": str(run_id or ""),
+                "status": "terminal",
+                "spec_ids": sorted(statuses),
+                "spec_statuses": dict(sorted(statuses.items())),
+                "finalized_at": datetime.now(timezone.utc).isoformat(),
+            }
+            write_text_atomic(
+                self._terminal_file(project_id, hunt_key),
+                yaml.safe_dump(marker, sort_keys=False),
+            )
+            return marker
+
+    def read_terminal_set(self, project_id: str, hunt_key: str) -> dict | None:
+        """The durable terminal-set record for the hunt key, or None.
+
+        A corrupt record raises (O4) rather than reading as absent: a false
+        absence would recover a completed loop."""
+        path = self._terminal_file(project_id, hunt_key)
+        if not path.exists():
+            return None
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise OSError(
+                f"hunter store: unreadable terminal-set file {path}: {exc}"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise OSError(
+                f"hunter store: terminal-set file {path} is not a YAML mapping")
+        return loaded
+
+    def has_terminal_set(self, project_id: str, hunt_key: str) -> bool:
+        return self.read_terminal_set(project_id, hunt_key) is not None
 
     def read_spec(
         self,

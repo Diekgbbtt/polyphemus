@@ -230,19 +230,21 @@ def test_the_prompt_carries_the_discipline_clauses():
 # --- the store protocol and the reduced surface -------------------------------
 
 
-def test_the_prompt_carries_the_batched_specs_write_and_the_three_statuses():
-    """S3 8.7 + T6: the whole set in one `specs` write; the derived identity;
-    the three statuses; the mixed set is not a lifecycle shape."""
+def test_the_prompt_carries_the_one_spec_write_and_the_three_statuses():
+    """F-025: one `spec` object per write; the derived identity; the three
+    statuses; the finalize call that closes the set."""
     prompt = _prompt()
-    assert "the whole set in one `hunts_store` call" in prompt
-    assert prompt.count("the whole set in one `hunts_store` call") >= 2
-    assert "command" in prompt and "`specs`" in prompt
+    assert "Write the set one spec per `hunts_store` call" in prompt
+    assert "exactly one `spec` object" in prompt
+    assert "command" in prompt and "`spec`" in prompt
+    assert "`specs`" not in prompt
     assert "`fault_keyword`" in prompt and "`strategy_keyword`" in prompt
     assert "Never author `spec_id`" in prompt
     assert "<fault_keyword>_<strategy_keyword>.yaml" in prompt
     for status in ("hypothesised", "ratified", "dropped"):
         assert status in prompt
-    assert "Do not mix a terminal status with `hypothesised`" in prompt
+    assert 'command: "finalize"' in prompt
+    assert "A finalize while any draft is still `hypothesised` is rejected" in prompt
 
 
 def test_the_prompt_carries_the_reduced_d4_spec_body():
@@ -297,7 +299,7 @@ def test_well_formedness_records_drops_and_never_writes_dropped_statuses():
     assert "the absorbed identity as `dropped`" in well
     assert "Write the exit note once, when the check is final" in well
     assert "Do not write a `dropped` status here" in well
-    assert "terminal write at VERIFY-CLAIMS applies the drops" in well
+    assert "one-spec status writes at VERIFY-CLAIMS apply the drops" in well
     assert "no mechanical check" in well
     assert "never claim a proof of exhaustiveness" in well
 

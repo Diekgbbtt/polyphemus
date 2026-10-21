@@ -100,10 +100,11 @@ NOTE_EXIT_PASSES: tuple[HunterPass, ...] = (
 )
 """The five passes whose declared exit signal is a phase-summary note (S4 14.4).
 
-GENERATE and VERIFY-CLAIMS exit on the `hunts_store` writes and COMPLETE is
-terminal, so those three carry no note exit: a `phase_summary` note named for
-them is not a signal, and a note can never substitute the authoritative store
-write (S4 14.8: "the spec store writes remain authoritative for the spec set")."""
+GENERATE exits on the first one-spec `hypothesised` write, VERIFY-CLAIMS exits
+on `hunts_store` `finalize`, and COMPLETE is terminal, so those three carry no
+note exit: a `phase_summary` note named for them is not a signal, and a note
+can never substitute the authoritative store write (S4 14.8: "the spec store
+writes remain authoritative for the spec set")."""
 
 
 def phase_note_name(state: HunterPass) -> str:
@@ -161,10 +162,16 @@ class PhaseNoteSignal(TypedDict):
 
 
 class SpecSetWriteSignal(TypedDict):
-    """A `hunts_store` write carrying the whole `specs` list."""
+    """A one-spec `hunts_store` write carrying a hypothesised draft."""
 
     kind: Literal["spec_set_write"]
     statuses: list[SpecStatus]
+
+
+class SpecSetFinalizeSignal(TypedDict):
+    """A `hunts_store` finalize call closing the whole spec set."""
+
+    kind: Literal["spec_set_finalize"]
 
 
 class KbQuerySignal(TypedDict):
@@ -173,7 +180,9 @@ class KbQuerySignal(TypedDict):
     kind: Literal["kb_query"]
 
 
-PhaseSignal = PhaseNoteSignal | SpecSetWriteSignal | KbQuerySignal
+PhaseSignal = (
+    PhaseNoteSignal | SpecSetWriteSignal | SpecSetFinalizeSignal | KbQuerySignal
+)
 """The transient drive inputs the harness observes off one tool call.
 
 The signal carries only the observed statuses, never a spec body: the machine
@@ -204,31 +213,29 @@ def _phase_note_signal(args: Mapping[str, Any]) -> PhaseSignal | None:
 
 
 def _spec_set_signal(args: Mapping[str, Any]) -> PhaseSignal | None:
-    """The exit signal of a `hunts_store` write carrying the whole `specs` list.
+    """The exit signal of one `hunts_store` call (F-025).
 
-    The GENERATE draft write is all-`hypothesised`; the terminal VERIFY-CLAIMS
-    write promotes the survivors to `ratified` and declasses the unfeasible to
-    `dropped` (S4 14.4). A mixed, statusless, empty, or non-list `specs` key is
-    no signal - the machine records only what the model signalled, and it never
-    reads the spec bodies to guess."""
-    if args.get("command") != "write":
+    A one-spec `write` carrying a `hypothesised` draft is the GENERATE exit:
+    it is the first persisted draft, and the hunter continues writing the
+    remaining drafts in the next pass. A terminal one-spec write
+    (`ratified`/`dropped`) is NOT the VERIFY-CLAIMS exit - the set is not
+    closed until `finalize`, whose call is the one whole-set exit (S4 14.4).
+    A statusless or malformed `spec` is no signal - the machine records only
+    what the model signalled and never reads the spec bodies to guess."""
+    command = args.get("command")
+    if command == "finalize":
+        return {"kind": "spec_set_finalize"}
+    if command != "write":
         return None
-    specs = args.get("specs")
-    if not isinstance(specs, list) or not specs:
+    spec = args.get("spec")
+    if not isinstance(spec, Mapping):
         return None
-    statuses = [
-        spec.get("status") for spec in specs if isinstance(spec, Mapping)
-    ]
-    if len(statuses) != len(specs) or any(st not in SPEC_STATUSES for st in statuses):
+    status = spec.get("status")
+    if status not in SPEC_STATUSES:
         return None
-    if all(status == "hypothesised" for status in statuses):
+    if status == "hypothesised":
         return {"kind": "spec_set_write", "statuses": ["hypothesised"]}
-    if not all(status in ("ratified", "dropped") for status in statuses):
-        return None
-    return {
-        "kind": "spec_set_write",
-        "statuses": list(dict.fromkeys(cast(list[SpecStatus], statuses))),
-    }
+    return None
 
 
 def detect_phase_signal(tool_name: str, args: Any) -> PhaseSignal | None:
@@ -299,24 +306,25 @@ def next_pass(state: HunterPass) -> HunterPass:
 def exit_signal_pass(signal: PhaseSignal | None) -> HunterPass | None:
     """The pass whose declared exit signal this is, or None (S4 14.4).
 
-    A phase note is the named pass's exit; an all-`hypothesised` set write is
-    the GENERATE exit and a terminal promote/declass write the VERIFY-CLAIMS
-    one; a `kb_query` is never an exit (it carries the grounding rider only).
-    A malformed signal is no signal (the tracker never raises)."""
+    A phase note is the named pass's exit; a one-spec `hypothesised` write is
+    the GENERATE exit and a `finalize` call is the VERIFY-CLAIMS one (the set
+    is closed there, not on any single terminal status write); a `kb_query` is
+    never an exit (it carries the grounding rider only). A malformed signal is
+    no signal (the tracker never raises)."""
     if not isinstance(signal, Mapping):
         return None
     kind = signal.get("kind")
     if kind == "phase_note":
         phase = signal.get("phase")
         return phase if phase in NOTE_EXIT_PASSES else None
+    if kind == "spec_set_finalize":
+        return "verify_claims"
     if kind == "spec_set_write":
         statuses = signal.get("statuses") or []
         if not statuses or any(st not in SPEC_STATUSES for st in statuses):
             return None
         if all(status == "hypothesised" for status in statuses):
             return "generate"
-        if all(status in ("ratified", "dropped") for status in statuses):
-            return "verify_claims"
     return None
 
 
@@ -370,11 +378,12 @@ DISCRIMINATE_HINT = "Persist the discrimination outcome, then generate the spec 
 """Injected when the discrimination exit fires: generate the set."""
 
 GENERATE_HINT = (
-    "The specs are written as `hypothesised`. Run the well-formedness check "
-    "over the slice; the check absorbs the class-exhaustiveness question in "
-    "its new form."
+    "The first spec is persisted as `hypothesised`. This is one spec, not the "
+    "closed set: continue writing every remaining spec, one `spec` per call, "
+    "then run the well-formedness check over the slice; the check absorbs the "
+    "class-exhaustiveness question in its new form."
 )
-"""Injected when the spec-set write fires: run the well-formedness check."""
+"""Injected when the first hypothesised one-spec write fires: keep drafting."""
 
 WELL_FORMEDNESS_HINT = (
     "Well-formedness is confirmed. Record the drops and merges, then verify "
@@ -382,8 +391,11 @@ WELL_FORMEDNESS_HINT = (
 )
 """Injected when the well-formedness note fires: verify the claims."""
 
-VERIFY_CLAIMS_HINT = "Promote the surviving specs, declass the unfeasible ones."
-"""Injected when the terminal write fires: close the spec set."""
+VERIFY_CLAIMS_HINT = (
+    "The spec set is finalized. The hunt is complete; the pod dispatch and "
+    "its verdict belong to the harness."
+)
+"""Injected when the finalize call fires: the set is closed."""
 
 TRANSITION_HINTS: dict[HunterPass, str] = {
     "grounding": GROUNDING_HINT,
@@ -486,6 +498,7 @@ __all__ = [
     "PhaseSignal",
     "PhaseNoteSignal",
     "SpecSetWriteSignal",
+    "SpecSetFinalizeSignal",
     "KbQuerySignal",
     "detect_phase_signal",
     "SignalOutcome",

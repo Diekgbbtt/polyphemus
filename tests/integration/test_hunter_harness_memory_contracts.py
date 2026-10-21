@@ -45,13 +45,24 @@ def _produced(tmp_path):
 
 
 def _write(status, *, fault_keyword="f1", strategy_keyword="probe", **extra):
-    """A batched `hunts_store` write tool call: the whole `specs` set carrying
-    the statuses and the file-name identity per entry (S3 8.7)."""
+    """A one-spec `hunts_store` write tool call (F-025): the status and the
+    file-name identity for exactly one spec."""
     return _tool_call("hunts_store", {
         "command": "write",
-        "specs": [{"status": status, "fault_keyword": fault_keyword,
-                   "strategy_keyword": strategy_keyword, **extra}],
+        "spec": {
+            "status": status,
+            "fault_keyword": fault_keyword,
+            "strategy_keyword": strategy_keyword,
+            "target_identity": {"url": "http://target.test/",
+                                "unit_id": "Service:slug:a"},
+            **extra,
+        },
     })
+
+
+def _finalize():
+    """The one whole-set gate: close the hunt's spec set."""
+    return _tool_call("hunts_store", {"command": "finalize"})
 
 
 def _phase_note(phase, *, action="append", body=None):
@@ -64,40 +75,35 @@ def _phase_note(phase, *, action="append", body=None):
 
 
 def _spec_set(*statuses, keywords=("f1", "f2")):
-    """The batched `specs` list write (S4 14.4): the whole set in one write.
-    The GENERATE draft is all-`hypothesised`; the terminal VERIFY-CLAIMS write
-    promotes the survivors and declasses the unfeasible. Each entry gets its
-    own derived identity (`f1_probe`, `f2_probe`) - a duplicate identity in one
-    set is the store's dedup signal and is never a valid set. The tracker reads
-    the signal off the model's call; T6 gates the authoritative spec-set exit
-    on the persisted write."""
-    return _tool_call("hunts_store", {
-        "command": "write",
-        "specs": [
-            {"status": status, "fault_keyword": keywords[index],
-             "strategy_keyword": "probe"}
-            for index, status in enumerate(statuses)
-        ],
-    })
+    """One `hunts_store` write per status (F-025). The GENERATE draft is
+    all-`hypothesised`; the terminal VERIFY-CLAIMS writes promote the survivors
+    and declass the unfeasible, then `finalize` closes the set. Each spec gets
+    its own derived identity (`f1_probe`, `f2_probe`)."""
+    return [
+        _write(status, fault_keyword=keywords[index], strategy_keyword="probe")
+        for index, status in enumerate(statuses)
+    ]
 
 
 # --- H1: the pass chain over the real turn seam --------------------------------
 
 
-def test_H1_the_pass_chain_reaches_complete_on_the_terminal_write(tmp_path):
+def test_H1_the_pass_chain_reaches_complete_on_finalize(tmp_path):
     """The tracked state walks the eight-pass chain to `complete` (S4 14.2):
-    the interposed phase notes carry the prose passes, the `hunts_store` writes
-    carry GENERATE and the terminal VERIFY-CLAIMS commit, and the harness lands
-    the terminal state in the feedback."""
+    the interposed phase notes carry the prose passes, the one-spec
+    `hunts_store` write carries GENERATE, the status writes and `finalize`
+    carry VERIFY-CLAIMS, and the harness lands the terminal state in the
+    feedback."""
     store = build_memory_store(tmp_path)
     steps = [
         _phase_note("grounding"),
         _phase_note("slice"),
         _phase_note("collect"),
         _phase_note("discriminate"),
-        _spec_set("hypothesised"),                  # GENERATE exit
+        *_spec_set("hypothesised"),                 # GENERATE exit
         _phase_note("well_formedness"),             # WELL-FORMEDNESS exit
-        _spec_set("ratified", "dropped"),           # VERIFY-CLAIMS exit
+        *_spec_set("ratified", "dropped"),
+        _finalize(),                                # VERIFY-CLAIMS exit
     ]
     agent = build_hunter_agent(store, steps=steps)
     result = agent(_hunter_payload())
@@ -152,15 +158,9 @@ def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
     store = build_memory_store(tmp_path)
     seen: list = []
     steps = [
-        # the GENERATE set write (the whole set, hypothesised)
-        _tool_call("hunts_store", {
-            "command": "write",
-            "specs": [
-                {"status": "hypothesised", "fault_keyword": "f1",
-                 "strategy_keyword": "probe"},
-                {"status": "hypothesised", "fault_keyword": "f2",
-                 "strategy_keyword": "probe"},
-            ]}),
+        # the GENERATE writes (one spec per call, hypothesised)
+        _write("hypothesised", fault_keyword="f1"),
+        _write("hypothesised", fault_keyword="f2"),
         # hunts_store read with statuses + attributes
         _tool_call("hunts_store", {
             "command": "read",
@@ -180,15 +180,10 @@ def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
         _tool_call("notes", {
             "command": "write", "action": "delete",
             "note_name": "n1"}),
-        # the terminal promote/declass write closes the chain
-        _tool_call("hunts_store", {
-            "command": "write",
-            "specs": [
-                {"status": "ratified", "fault_keyword": "f1",
-                 "strategy_keyword": "probe"},
-                {"status": "dropped", "fault_keyword": "f2",
-                 "strategy_keyword": "probe"},
-            ]}),
+        # the terminal status writes and finalize close the chain
+        _write("ratified", fault_keyword="f1"),
+        _write("dropped", fault_keyword="f2"),
+        _finalize(),
     ]
     agent = build_hunter_agent(store, steps=steps, seen=seen)
     result = agent(_hunter_payload())
@@ -205,12 +200,12 @@ def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
     assert notes[0]["body"] == "second note"
     # the tool responses the model saw carried the memory JSON contracts (the
     # response to step N arrives as step N+1's input, so read seen[N+1])
-    read_resp = json.loads(seen[2][-1].split("\n\n<phase-transition-hint>")[0])
+    read_resp = json.loads(seen[3][-1].split("\n\n<phase-transition-hint>")[0])
     assert read_resp["specs"] == [{"status": "hypothesised"},
                                   {"status": "hypothesised"}]
-    notes_read = json.loads(seen[5][-1].split("\n\n<phase-transition-hint>")[0])
+    notes_read = json.loads(seen[6][-1].split("\n\n<phase-transition-hint>")[0])
     assert [n["key"] for n in notes_read["notes"]] == [f"{HUNT_KEY}:n2", f"{HUNT_KEY}:n1"]
-    delete_resp = json.loads(seen[7][-1].split("\n\n<phase-transition-hint>")[0])
+    delete_resp = json.loads(seen[8][-1].split("\n\n<phase-transition-hint>")[0])
     assert delete_resp == {"ok": True, "key": f"{HUNT_KEY}:n1"}
 
 
@@ -233,7 +228,7 @@ def test_H4_exit_hints_and_the_grounding_rider_ride_the_tool_responses(tmp_path)
         _phase_note("slice"),
         _phase_note("collect"),
         _phase_note("discriminate"),
-        _spec_set("hypothesised"),
+        *_spec_set("hypothesised"),
         _phase_note("collect", action="update",        # the [D2] re-entry
                     body="the collect pass output (re-iterated)"),
         _phase_note("well_formedness"),
@@ -358,50 +353,43 @@ def test_H6_the_tracker_advances_even_when_the_tool_call_fails():
 
 # --- H7: the terminal state follows a PERSISTED set (T6 #379) -----------------
 
-def test_H7_the_terminal_state_follows_a_persisted_set(tmp_path):
-    """T6: the `specs` set write is the authoritative exit (S4 14.8). A coded
-    rejection persists no set, so it is NO exit - the tracker stays in
-    VERIFY-CLAIMS; the persisted set then folds into the `specs` channel and the
-    terminal `state: complete` follows it."""
+def test_H7_the_terminal_state_follows_a_persisted_terminal_set(tmp_path):
+    """T6 + F-025: `finalize` is the authoritative VERIFY-CLAIMS exit (S4
+    14.8). A finalize with an undecided draft persists no terminal record, so
+    it is NO exit - the tracker stays in VERIFY-CLAIMS. Once every produced
+    spec is terminal, finalize closes the chain and folds the set."""
     store = build_memory_store(tmp_path)
     steps = [
         _phase_note("grounding"),
         _phase_note("slice"),
         _phase_note("collect"),
         _phase_note("discriminate"),
-        _spec_set("hypothesised"),                  # GENERATE exit
+        *_spec_set("hypothesised", "hypothesised"),  # GENERATE exit
         _phase_note("well_formedness"),             # WELL-FORMEDNESS exit
-        # a duplicate identity inside one set: the store rejects the batch, so
-        # the tracker must NOT close the chain
-        _tool_call("hunts_store", {
-            "command": "write",
-            "specs": [
-                {"status": "ratified", "fault_keyword": "f1",
-                 "strategy_keyword": "probe"},
-                {"status": "dropped", "fault_keyword": "f1",
-                 "strategy_keyword": "probe"},
-            ]}),
+        # f2 is still hypothesised: the finalize must be rejected
+        _write("ratified", fault_keyword="f1"),
+        _finalize(),
         _answer("still verifying"),                 # ... the hunt concludes open
     ]
     result = build_hunter_agent(store, steps=steps)(_hunter_payload())
     assert result["state"] == "verify_claims"
     assert "state: complete" not in result["feedback"]
-    # the rejected write persisted nothing: the generated draft set survives
+    # the rejected finalize persisted no marker: the draft set survives
     assert [s["status"] for s in store.read_specs(PROJECT, HUNT_KEY)] == [
-        "hypothesised"]
+        "ratified", "hypothesised"]
+    assert store.read_terminal_set(PROJECT, HUNT_KEY) is None
 
-    # the persisted terminal write then closes the chain and folds the set
+    # deciding the last draft then finalizing closes the chain and folds the set
     steps = [
         _phase_note("grounding"),
         _phase_note("slice"),
         _phase_note("collect"),
         _phase_note("discriminate"),
-        _spec_set("hypothesised"),
+        *_spec_set("hypothesised", "hypothesised"),
         _phase_note("well_formedness"),
-        _tool_call("hunts_store", {
-            "command": "write",
-            "specs": [{"status": "ratified", "fault_keyword": "f1",
-                       "strategy_keyword": "probe"}]}),
+        _write("ratified", fault_keyword="f1"),
+        _write("dropped", fault_keyword="f2"),
+        _finalize(),
     ]
     result = build_hunter_agent(
         build_memory_store(tmp_path / "second"), steps=steps)(_hunter_payload())

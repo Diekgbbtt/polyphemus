@@ -64,7 +64,7 @@ from typing import Any, Literal
 from langchain_core.tools import BaseTool
 from lightrag.query_spec import QuerySpecV1
 from lightrag.tool import QUERY_LIGHTRAG_DESCRIPTION
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .conciseness import append_conciseness_directive
 from .hunter_memory import (
@@ -162,7 +162,7 @@ ExecFn = Callable[[str, int], ExecResult]
 # clause, a wrong-typed `evidence`, a stray `provenance` key) are passed to it
 # as the `extra_rejection=` callback.
 
-_HUNTER_WRITE_INTENT_FIELDS = ("specs",)
+_HUNTER_WRITE_INTENT_FIELDS = ("spec",)
 _NOTES_WRITE_INTENT_FIELDS = ("action", "note_name", "kind", "body")
 
 
@@ -209,7 +209,7 @@ def _notes_extra_rejection(tool_input: dict, errors: list) -> dict | None:
 
 
 class SpecWrite(BaseModel):
-    """The `TestImplementationSpec` WRITE payload (#236, F-015 correction).
+    """The `TestImplementationSpec` write payload (#236, F-015, F-025).
 
     The persisted shape is the pod's canonical `TestImplementationSpec`: the
     nested `target_identity` and `provenance` are the SAME typed models the pod
@@ -217,9 +217,11 @@ class SpecWrite(BaseModel):
     coded rejection instead of a silently dropped value, so the tool schema and
     the stored record cannot drift.
 
-    `status`, the two file-name keywords and `target_identity` are REQUIRED.
-    The remaining fields are optional in the contract and documented as such;
-    the store still owns the coded identity/status semantics.
+    F-025: ONE spec per `hunts_store` write. `status`, the two file-name
+    keywords and `target_identity` are REQUIRED; `target_identity.url` must be
+    non-empty because the pod INIT-rejects it otherwise. The remaining fields
+    are optional and documented as such; the store still owns the coded
+    identity/status semantics.
     """
 
     status: str = Field(
@@ -231,8 +233,8 @@ class SpecWrite(BaseModel):
         description="The strategy half of the derived spec file name. Required.")
     target_identity: TargetIdentity = Field(
         description="The target identity object {'url': <base url>, 'unit_id': "
-                    "<L1 service/system identity>}; a spec without a url is "
-                    "INIT-rejected by the pod. Required.")
+                    "<L1 service/system identity>}; `url` must be non-empty or "
+                    "the pod INIT-rejects the spec. Required.")
     verification_symptoms: list[str] = Field(
         default_factory=list,
         description="Optional: the observable symptoms that verify the fault.")
@@ -256,24 +258,33 @@ class SpecWrite(BaseModel):
                     "should carry for this test spec. Never a path or a meta "
                     "skill.")
 
+    @model_validator(mode="after")
+    def _require_a_probe_url(self):
+        if not self.target_identity.url.strip():
+            raise ValueError(
+                "target_identity.url is required and must be non-empty: the "
+                "pod probes that base URL and INIT-rejects an empty one")
+        return self
+
     model_config = ConfigDict(extra="forbid")
 
 
 class HuntsStoreArgs(BaseModel):
-    """The `hunts_store` tool's ARGS contract: `read` / `write` cmds.
+    """The `hunts_store` tool's ARGS contract: `read` / `write` / `finalize`.
 
-    The WRITE payload is the WHOLE `specs` list (S3 8.6-8.7): each entry
-    carries its `status` (`hypothesised | ratified | dropped`) and the
-    file-name identity attributes `fault_keyword` / `strategy_keyword`. The
+    F-025: the WRITE payload is exactly ONE `spec` object, never a batch. The
+    spec carries its `status` (`hypothesised | ratified | dropped`) and the
+    file-name identity attributes `fault_keyword` / `strategy_keyword`; the
     symbolic layer DERIVES `<fault_keyword>_<strategy_keyword>.yaml` from them,
     so they are never separate request fields whose requiredness the surface
-    could omit. The GENERATE write is the whole set all-`hypothesised`; the
-    terminal write carries the whole set with the survivors `ratified` and the
-    unfeasible `dropped`; the hypothesised write creates and a later status
-    upserts in place. A duplicate identity inside one set is a coded
-    `duplicate_spec` dedup signal. A payload missing a derivation input is a
-    coded `hunts_store_write_rejected` naming the field. `spec_id` is DERIVED
-    (the file-name stem) and must not be authored.
+    could omit. A payload missing a derivation input, a `spec_id`, or an empty
+    `target_identity.url` is a coded `hunts_store_write_rejected` naming the
+    field. The write upserts the identity in place; a re-author is not a
+    duplicate.
+
+    FINALIZE closes the set: it requires every produced spec to be `ratified`
+    or `dropped`, then writes the durable terminal-set record. A zero-spec
+    hunt finalizes with no spec. A write after finalize is rejected.
 
     `read` filters by optional `statuses`/`attributes`, never the whole surface
     (spec 5). The hunt's OWN loop dispatch id (`hunt_key`,
@@ -287,8 +298,8 @@ class HuntsStoreArgs(BaseModel):
     kind-qualified L1 service/system identity that surfaces alongside it.
     A spec whose `target_identity.url` is absent is INIT-rejected by the pod."""
 
-    command: Literal["read", "write"] = Field(
-        description="The operation: 'read' or 'write' (required).")
+    command: Literal["read", "write", "finalize"] = Field(
+        description="The operation: 'read', 'write', or 'finalize' (required).")
     # -- read path -----------------------------------------------------------
     statuses: list[str] = Field(
         default_factory=list,
@@ -296,20 +307,16 @@ class HuntsStoreArgs(BaseModel):
     attributes: list[str] = Field(
         default_factory=list,
         description="Read projection: return only these attributes per spec.")
-    # -- write path (the whole set) ------------------------------------------
-    specs: list[SpecWrite] = Field(
-        default_factory=list,
-        description="Write payload: the WHOLE spec set in one call. Each entry "
-                    "MUST carry `status` (hypothesised | ratified | dropped) "
-                    "and the file-name identity attributes `fault_keyword` and "
-                    "`strategy_keyword`; the spec file name "
-                    "`<fault_keyword>_<strategy_keyword>.yaml` is DERIVED from "
-                    "them (do not author `spec_id`). A duplicate identity in "
-                    "the set is rejected with `duplicate_spec` (merge or "
-                    "refresh instead). A payload missing a required attribute "
-                    "is rejected with a coded `hunts_store_write_rejected` "
-                    "error naming the field. `skills` declares the flat skill "
-                    "names the downstream pod runner should carry (#236).")
+    # -- write path (exactly one spec) ---------------------------------------
+    spec: SpecWrite | None = Field(
+        default=None,
+        description="Write payload: exactly ONE spec object. Required on "
+                    "`write`; omit on `read` and `finalize`. The spec's "
+                    "`status`, `fault_keyword`, `strategy_keyword` and "
+                    "`target_identity.url` are required; all other SpecWrite "
+                    "fields are optional. The file name "
+                    "`<fault_keyword>_<strategy_keyword>.yaml` is DERIVED (do "
+                    "not author `spec_id`).")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -399,46 +406,43 @@ class ExecArgs(BaseModel):
 
 
 class HuntsStoreTool(StoreToolBase):
-    """The spec-set write/read seam over `HunterMemoryStore` (S3 8.6-8.7): the
-    lifecycle verbatim lives here (`status` on each spec of the set). A
-    duplicate identity inside one set is the denoted `duplicate_spec` dedup
-    signal the model reflects on; a re-author of an existing identity upserts
-    in place. Reads degrade to an empty set (O4); genuine write failures raise
-    to the harness (O3); an absent store degrades fail-open. #209: a call
-    omitting the required `command` with write-intent fields is a CODED
-    teaching rejection (never a bare validation error) - the binding and
-    translation are the shared `tool_contract.StoreToolBase`."""
+    """The one-spec write/read/finalize seam over `HunterMemoryStore`.
+
+    F-025: each `write` carries exactly ONE `spec`; the tool upserts it by its
+    derived identity. `finalize` is the one whole-set gate: it checks every
+    produced spec is `ratified` or `dropped` and writes the durable terminal
+    record, even for a zero-spec hunt. Reads degrade to an empty set (O4);
+    genuine write failures raise to the harness (O3); an absent store degrades
+    fail-open. #209: a call omitting the required `command` with write-intent
+    fields is a CODED teaching rejection (never a bare validation error) - the
+    binding and translation are the shared `tool_contract.StoreToolBase`."""
 
     name: str = "hunts_store"
     description: str = (
         "The hunt's spec-set memory seam, bound to THIS hunt's own loop "
-        "(you never supply the hunt key). Commands: read / write.\n"
-        "write takes the WHOLE spec set in one call, `specs` - a list whose "
-        "entries each carry the status verbatim (hypothesised | ratified | "
-        "dropped) and the file-name identity attributes `fault_keyword` / "
-        "`strategy_keyword`; each spec file name is DERIVED from its "
-        "keywords, never authored (do not send `spec_id`). The GENERATE write "
-        "carries the whole set all-hypothesised; the terminal write carries "
-        "the whole set with the survivors ratified and the unfeasible or "
-        "absorbed specs dropped; a later status upserts each identity in "
-        "place. A duplicate "
-        "identity in the set FAILS with a duplicate_spec dedup signal "
-        "(reflect on overlap and merge or refresh - do not duplicate). A "
-        "payload missing a required attribute is rejected with a coded "
-        "hunts_store_write_rejected error naming the field. "
-        "The authored spec's target_identity is "
-        "the target identity object: {'url': <base url>, 'unit_id': <L1 "
-        "service/system identity>} - author the url from the projected L0 "
-        "attack surface (read via graph_view); the pod probes that url and "
-        "INIT-rejects a spec without it. The spec may carry `skills` (#236): "
-        "the flat skill names the downstream pod runner should carry; the "
-        "dispatch resolves and renders them, and a minted variant inherits "
-        "them unless it states its own. read takes optional "
-        "statuses / attributes filters and returns the loop's produced specs - "
-        "never the whole surface."
+        "(you never supply the hunt key). Commands: read / write / finalize.\n"
+        "write takes exactly ONE spec object in `spec` - never a list. Its "
+        "REQUIRED fields are status (hypothesised | ratified | dropped), "
+        "fault_keyword, strategy_keyword, and target_identity.url. Every other "
+        "SpecWrite field is optional. Each spec file name is DERIVED from the "
+        "two keywords, never authored (do not send `spec_id`). A re-author of "
+        "the same identity upserts it in place. A payload missing a required "
+        "field is rejected with a coded hunts_store_write_rejected error "
+        "naming it. The spec's target_identity is {'url': <base url>, "
+        "'unit_id': <L1 service/system identity>}; author the url from the "
+        "projected L0 attack surface (read via graph_view), because the pod "
+        "probes it and INIT-rejects an empty one. `skills` optionally names "
+        "the flat skills the pod runner should carry.\n"
+        "finalize closes the set: every produced spec must already be "
+        "ratified or dropped, then the durable terminal record is written. "
+        "A zero-spec hunt is a valid terminal set. Call finalize once, after "
+        "the last spec write. A write after finalize is rejected.\n"
+        "read takes optional statuses / attributes filters and returns the "
+        "loop's produced specs - never the whole surface."
     )
     args_schema: type[BaseModel] = HuntsStoreArgs
     _discriminator: str = "command"
+    _known_commands: tuple[str, ...] = ("read", "write", "finalize")
     _rejection_name: str = "hunts_store"
     _write_intent_fields: tuple[str, ...] = _HUNTER_WRITE_INTENT_FIELDS
     _require_write_intent: bool = True
@@ -467,6 +471,20 @@ class HuntsStoreTool(StoreToolBase):
             "error": "invalid_args",
             "detail": "no hunt key is bound to this hunt tool (S3 8.9)",
         })
+
+    def _run(self, **kwargs: Any):
+        """Dispatch the third command (`finalize`) alongside read/write.
+
+        The shared base knows only read/write; this seam adds the one durable
+        whole-set gate. The typed schema still validates every call first."""
+        schema = self.args_schema
+        args = schema(**kwargs)
+        command = getattr(args, self._discriminator)
+        if command == "read":
+            return self._read(args)
+        if command == "finalize":
+            return self._finalize(args)
+        return self._write(args)
 
     def _read(self, args: HuntsStoreArgs) -> str:
         if self._store is None:
@@ -503,91 +521,60 @@ class HuntsStoreTool(StoreToolBase):
             return self._unavailable(args)
         if not self._hunt_key:
             return self._unbound()
-        specs = [
-            spec.model_dump(exclude_unset=True)
-            if hasattr(spec, "model_dump")
-            else spec
-            for spec in (args.specs or [])
-        ]
-        if not isinstance(specs, list) or not specs:
+        if args.spec is None:
             return self._write_rejected(
-                ["specs"],
-                "write needs the whole `specs` list; a single spec is a set "
-                "of one, each entry carrying status + fault_keyword + "
-                "strategy_keyword")
-        # The file-name identity is derived from each entry's own keywords (the
-        # symbolic layer owns the symbol): a missing derivation input is a coded
-        # contract rejection, never a degenerate-name write.
-        missing: list[str] = []
-        for index, spec in enumerate(specs):
-            if not isinstance(spec, dict):
-                return self._write_rejected(
-                    ["specs"], f"specs[{index}] is not an object")
-            if spec.get("spec_id"):
-                return self._write_rejected(
-                    ["spec_id"],
-                    f"specs[{index}] carries `spec_id`; it is a DERIVED symbol "
-                    "(the <fault_keyword>_<strategy_keyword> stem) - remove it")
-            for field in ("fault_keyword", "strategy_keyword", "status"):
-                if not spec.get(field):
-                    missing.append(f"specs[{index}].{field}")
-            if spec.get("status") and spec["status"] not in SPEC_STATUSES:
-                return self._write_rejected(
-                    [f"specs[{index}].status"],
-                    f"status must be one of {SPEC_STATUSES}; got "
-                    f"{spec.get('status')!r}")
-        if missing:
+                ["spec"],
+                "write takes exactly ONE spec object in `spec` (never a "
+                "batch). A set is built by repeated one-spec writes, then "
+                "closed by command=finalize. Each spec requires status, "
+                "fault_keyword, strategy_keyword, and target_identity.url.")
+        try:
+            if self._store.has_terminal_set(self._project_id, self._hunt_key):
+                return json.dumps({
+                    "ok": False,
+                    "error": "spec_set_finalized",
+                    "detail": "this hunt's spec set is already finalized; a "
+                              "late write is not admitted. Read the set to "
+                              "inspect it.",
+                    "rejected": True,
+                })
+        except OSError as exc:  # O4: a corrupt terminal record must not be ignored
+            return json.dumps({"ok": False, "error": "read_failed",
+                               "detail": str(exc)})
+        spec = args.spec.model_dump(exclude_unset=True)
+        if spec.get("spec_id"):
             return self._write_rejected(
-                missing,
-                "the spec payload must carry the file-name identity "
-                "attribute(s) and the status; the spec identity "
-                "<fault_keyword>_<strategy_keyword> is DERIVED from them")
-        # S3 8.7: exactly two set shapes exist - the GENERATE set (all
-        # `hypothesised`) and the terminal set (survivors `ratified`, unfeasible
-        # `dropped`). A mixed set persists a set the tracker never accepts as
-        # an exit, so it is a coded rejection, never a silent stall.
-        statuses = [spec["status"] for spec in specs]
-        if "hypothesised" in statuses and any(
-                status in ("ratified", "dropped") for status in statuses):
+                ["spec_id"],
+                "`spec_id` is a DERIVED symbol (the "
+                "<fault_keyword>_<strategy_keyword> stem); remove it")
+        for field in ("fault_keyword", "strategy_keyword", "status"):
+            if not spec.get(field):
+                return self._write_rejected(
+                    [f"spec.{field}"],
+                    "the spec must carry status + fault_keyword + "
+                    "strategy_keyword; the identity "
+                    "<fault_keyword>_<strategy_keyword> is DERIVED from them")
+        if spec["status"] not in SPEC_STATUSES:
             return self._write_rejected(
-                ["specs"],
-                "a spec set is either the GENERATE write (all `hypothesised`) "
-                "or the terminal write (survivors `ratified`, unfeasible "
-                "`dropped`); do not mix `hypothesised` with a terminal status "
-                "in one write")
-        # F-017: bind the current hunting run id into each spec's typed
+                ["spec.status"],
+                f"status must be one of {SPEC_STATUSES}; got "
+                f"{spec['status']!r}")
+        # F-017: bind the current hunting run id into the spec's typed
         # provenance, so a consumed spec with no terminal PodExport can be
         # attributed to THIS run on resume. The model never authors it.
+        provenance = spec.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
         if self._run_id:
-            for spec in specs:
-                provenance = spec.get("provenance")
-                if not isinstance(provenance, dict):
-                    provenance = {}
-                provenance.setdefault("run_id", self._run_id)
-                spec["provenance"] = provenance
+            provenance.setdefault("run_id", self._run_id)
+        spec["provenance"] = provenance
         try:
-            # The store derives the spec ids and applies the set lifecycle;
-            # statuses are persisted verbatim (hypothesised creates, a later
-            # status upserts in place).
             written = self._store.write_specs(
-                self._project_id, self._hunt_key, specs)
+                self._project_id, self._hunt_key, [spec],
+                enforce_complete=False)
         except DuplicateSpecError as exc:
-            # The denoted dedup signal: the model reflects and merges or
-            # refreshes instead of duplicating - never a raise into the turn.
             return json.dumps({"ok": False, "error": "duplicate_spec",
                                "hunt_key": self._hunt_key, "detail": str(exc)})
-        except IncompleteSpecSetError as exc:
-            # F-017 quality repair: the terminal set must decide every draft.
-            # The coded response names the omitted identities so the hunter can
-            # ratify or explicitly drop them in the retry.
-            return json.dumps({
-                "ok": False,
-                "error": "incomplete_spec_set",
-                "fields": ["specs"],
-                "missing": list(exc.missing),
-                "detail": str(exc),
-                "rejected": True,
-            })
         except ValueError as exc:
             return json.dumps({"ok": False, "error": "invalid_args",
                                "detail": str(exc)})
@@ -597,7 +584,41 @@ class HuntsStoreTool(StoreToolBase):
             "ok": True,
             "specs": [
                 {"spec_id": spec_id, "status": spec["status"], "path": str(path)}
-                for (spec_id, path), spec in zip(written, specs)
+                for (spec_id, path) in written
+            ],
+        })
+
+    def _finalize(self, args: HuntsStoreArgs) -> str:
+        """Close the set, or return the coded missing-identity list."""
+        if self._store is None:
+            return self._unavailable(args)
+        if not self._hunt_key:
+            return self._unbound()
+        if args.spec is not None:
+            return self._write_rejected(
+                ["spec"], "finalize takes no spec; it closes the whole set")
+        try:
+            marker = self._store.finalize_specs(
+                self._project_id, self._hunt_key, run_id=self._run_id)
+        except IncompleteSpecSetError as exc:
+            return json.dumps({
+                "ok": False,
+                "error": "incomplete_spec_set",
+                "fields": ["spec"],
+                "missing": list(exc.missing),
+                "detail": str(exc),
+                "rejected": True,
+            })
+        except ValueError as exc:
+            return json.dumps({"ok": False, "error": "invalid_args",
+                               "detail": str(exc)})
+        return json.dumps({
+            "ok": True,
+            "finalized": True,
+            "terminal": marker,
+            "specs": [
+                {"spec_id": spec_id, "status": status}
+                for spec_id, status in marker["spec_statuses"].items()
             ],
         })
 

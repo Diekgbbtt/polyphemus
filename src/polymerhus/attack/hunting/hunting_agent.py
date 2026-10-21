@@ -305,9 +305,10 @@ def _state_summary(state: dict) -> str:
 
 
 def _store_write_ok(result: str) -> bool:
-    """True when a `hunts_store` tool response is the persisted-write success
-    (`{"ok": true, "specs": [...]}`); anything else - a coded rejection, a
-    duplicate signal, an unreadable result - is not a persisted set."""
+    """True when a `hunts_store` tool response is a persisted success
+    (`{"ok": true, ...}`), including a successful `finalize`; anything else - a
+    coded rejection, a duplicate signal, an unreadable result - is not a
+    persisted set."""
     try:
         payload = json.loads(result)
     except (TypeError, ValueError):
@@ -349,10 +350,8 @@ def _fold_persisted_specs(
                 "hunt %s spec-set read-back degraded (%s); folding the write "
                 "payload instead", hunt_key, exc)
     if not bodies:
-        bodies = [
-            entry for entry in (tool_args.get("specs") or [])
-            if isinstance(entry, Mapping)
-        ]
+        one = tool_args.get("spec")
+        bodies = [one] if isinstance(one, Mapping) else []
     folded: list[dict] = []
     for body in bodies:
         try:
@@ -641,15 +640,17 @@ def build_hunting_agent(
                 result = await _invoke_tool(tools_by_name, tool_name, tool_args)
                 # DETECTION + PUSH (S4 14): the signal is read off the model's
                 # REAL call, so the passive machine is never gated by the
-                # tool's own acceptance. The `specs` set write is the one
-                # AUTHORITATIVE exit (S4 14.8: the store writes remain
-                # authoritative for the spec set): a coded rejection (a
-                # duplicate identity, a missing derivation input) persists no
-                # set, so it is no exit and the tracker stays put. A persisted
-                # set folds into the `specs` channel, so the terminal
-                # `state: complete` follows the set the store holds.
+                # tool's own acceptance. The one-spec write (GENERATE) and the
+                # `finalize` call (VERIFY-CLAIMS) are the AUTHORITATIVE exits
+                # (S4 14.8: the store writes remain authoritative for the spec
+                # set): a coded rejection (a duplicate identity, a missing
+                # derivation input, an undecided draft) persists no exit, so it
+                # is no signal and the tracker stays put. A persisted set folds
+                # into the `specs` channel, so the terminal `state: complete`
+                # follows the set the store holds.
                 signal = detect_phase_signal(tool_name, tool_args)
-                if signal is not None and signal.get("kind") == "spec_set_write":
+                if signal is not None and signal.get("kind") in (
+                        "spec_set_write", "spec_set_finalize"):
                     if _store_write_ok(result):
                         _fold_persisted_specs(
                             state, memory_store, project_id, hunt_key,

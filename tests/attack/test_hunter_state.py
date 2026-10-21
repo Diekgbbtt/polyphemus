@@ -81,26 +81,27 @@ def test_only_the_five_note_exits_are_phase_signals():
 
 
 def test_a_spec_set_write_maps_to_its_exit_signal():
-    """The GENERATE exit is the all-`hypothesised` set write; the VERIFY-CLAIMS
-    exit is the terminal promote/declass write (S4 14.4)."""
-    hypothesised = {"command": "write", "specs": [
-        {"status": "hypothesised"}, {"status": "hypothesised"}]}
+    """F-025: the GENERATE exit is the first one-spec `hypothesised` write; the
+    VERIFY-CLAIMS exit is the `finalize` call (S4 14.4). A single terminal
+    status write does not close the set, so it carries no signal."""
+    hypothesised = {"command": "write", "spec": {"status": "hypothesised"}}
     assert S.detect_phase_signal("hunts_store", hypothesised) == (
         {"kind": "spec_set_write", "statuses": ["hypothesised"]})
-    terminal = {"command": "write", "specs": [
-        {"status": "ratified"}, {"status": "dropped"}]}
-    assert S.detect_phase_signal("hunts_store", terminal) == (
-        {"kind": "spec_set_write", "statuses": ["ratified", "dropped"]})
+    assert S.detect_phase_signal(
+        "hunts_store", {"command": "write", "spec": {"status": "ratified"}}) is None
+    assert S.detect_phase_signal(
+        "hunts_store", {"command": "write", "spec": {"status": "dropped"}}) is None
+    assert S.detect_phase_signal("hunts_store", {"command": "finalize"}) == (
+        {"kind": "spec_set_finalize"})
 
 
 def test_a_partial_or_unshaped_spec_write_maps_to_no_signal():
-    """A set the detector cannot classify (mixed, statusless, empty, or a
-    read) is no signal: the machine records only what the model signalled."""
-    assert S.detect_phase_signal("hunts_store", {"command": "write", "specs": [
-        {"status": "hypothesised"}, {"status": "ratified"}]}) is None
-    assert S.detect_phase_signal("hunts_store", {"command": "write", "specs": [
-        {"status": "ratified"}, {}]}) is None
-    assert S.detect_phase_signal("hunts_store", {"command": "write", "specs": []}) is None
+    """A call the detector cannot classify (statusless, empty, or a read) is no
+    signal: the machine records only what the model signalled."""
+    assert S.detect_phase_signal("hunts_store", {"command": "write", "spec": []}) is None
+    assert S.detect_phase_signal("hunts_store", {"command": "write", "spec": {}}) is None
+    assert S.detect_phase_signal(
+        "hunts_store", {"command": "write", "spec": {"status": "bogus"}}) is None
     assert S.detect_phase_signal("hunts_store", {"command": "read"}) is None
 
 
@@ -124,18 +125,25 @@ def _set_signal(*statuses):
     return {"kind": "spec_set_write", "statuses": list(statuses)}
 
 
+def _finalize_signal():
+    return {"kind": "spec_set_finalize"}
+
+
 def test_the_expected_exit_advances_to_the_next_pass():
     assert S.detect_signal({"state": "grounding"}, _note_signal("grounding")) == (
         {"kind": "advance", "target": "slice"})
     assert S.detect_signal({"state": "collect"}, _note_signal("collect")) == (
         {"kind": "advance", "target": "discriminate"})
-    # the GENERATE exit is the all-hypothesised set write; the VERIFY-CLAIMS
-    # exit is the terminal promote/declass write
+    # the GENERATE exit is the first one-spec hypothesised write; the
+    # VERIFY-CLAIMS exit is the finalize call
     assert S.detect_signal({"state": "generate"}, _set_signal("hypothesised")) == (
         {"kind": "advance", "target": "well_formedness"})
     assert S.detect_signal({"state": "verify_claims"},
-                           _set_signal("ratified", "dropped")) == (
+                           _finalize_signal()) == (
         {"kind": "advance", "target": "complete"})
+    # a single terminal status write does not close the set
+    assert S.detect_signal({"state": "verify_claims"},
+                           _set_signal("ratified")) == {"kind": "none"}
 
 
 def test_a_later_signals_forward_jump_records_the_skipped_passes():
@@ -150,7 +158,7 @@ def test_a_later_signals_forward_jump_records_the_skipped_passes():
         {"kind": "forward_jump", "target": "generate",
          "skipped": ["collect", "discriminate"]})
     assert S.detect_signal({"state": "collect"},
-                           _set_signal("ratified")) == (
+                           _finalize_signal()) == (
         {"kind": "forward_jump", "target": "complete",
          "skipped": ["discriminate", "generate", "well_formedness",
                      "verify_claims"]})
@@ -163,7 +171,7 @@ def test_an_earlier_signal_stays_trail_only():
                            _note_signal("grounding")) == (
         {"kind": "trail_only", "reason": "reentry"})
     assert S.detect_signal({"state": "complete"},
-                           _set_signal("ratified")) == (
+                           _finalize_signal()) == (
         {"kind": "trail_only", "reason": "reentry"})
 
 
@@ -249,7 +257,7 @@ def test_the_state_move_is_monotonic_over_any_signal_sequence():
         _note_signal("grounding"), _note_signal("slice"), _note_signal("collect"),
         _note_signal("discriminate"), _set_signal("hypothesised"),
         _note_signal("discriminate"), _note_signal("well_formedness"),
-        _set_signal("ratified", "dropped"),
+        _finalize_signal(),
     ]
     seen = [state["state"]]
     for signal in signals:
@@ -285,16 +293,19 @@ def test_the_seven_transition_hints_are_the_ratified_literals():
             "Persist the discrimination outcome, then generate the spec set."
         ),
         "generate": (
-            "The specs are written as `hypothesised`. Run the well-formedness "
-            "check over the slice; the check absorbs the class-exhaustiveness "
-            "question in its new form."
+            "The first spec is persisted as `hypothesised`. This is one spec, "
+            "not the closed set: continue writing every remaining spec, one "
+            "`spec` per call, then run the well-formedness check over the "
+            "slice; the check absorbs the class-exhaustiveness question in "
+            "its new form."
         ),
         "well_formedness": (
             "Well-formedness is confirmed. Record the drops and merges, then "
             "verify the claims."
         ),
         "verify_claims": (
-            "Promote the surviving specs, declass the unfeasible ones."
+            "The spec set is finalized. The hunt is complete; the pod dispatch "
+            "and its verdict belong to the harness."
         ),
     }
     # `complete` is terminal: it has no exit and no hint

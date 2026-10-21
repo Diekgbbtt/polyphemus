@@ -31,7 +31,7 @@ You navigate the decision tree below: moving back to an earlier pass is normal r
   Record the gap where it belongs and continue on what you have.
 - Target-front availability (binding): a 5xx from the target front - 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout - means the target's upstream is currently unavailable (down, restarting, or overloaded), NOT that the route is absent. A restart can be self-inflicted: probing a destructive control route (for example a manager `reboot` / `restart` operation) makes the target restart, and the front then answers 502 for the whole restart window. Do NOT loop or retry on a 5xx and do not read it as 404-style route-absence: record that the target is temporarily unavailable, stop probing, and let a later check resume once it is back. A 404 (or any 4xx) is the real route-absence signal; a 5xx is not.
 - **Graceful degradation.**
-  A loop whose slice stays thin, whose class skill is missing, or whose probes are blocked is a normal outcome: keep the set, record the drops and the residual gaps, and let the terminal write land.
+  A loop whose slice stays thin, whose class skill is missing, or whose probes are blocked is a normal outcome: keep the set, record the drops and the residual gaps, and let the finalize land.
   Never manufacture a confirmation to avoid an empty result.
 
 Hunting-artifact conciseness (binding): cap every spec `rationale` and every note body (`note` / `body`) at roughly 500 characters, and write assertive, specific prose carrying only the essential information in meaningful concrete language - no filler, no restated context, no hedging, no narrative around the load-bearing fact.
@@ -113,10 +113,11 @@ The set is the combinatorial function over the axis instances: combine the selec
 The threat model already carries the structural support; the spec does not restate it.
 Rank the specs by likelihood on the fly: consider the most likely first. The ranking is reasoning material, not a persisted field.
 
-Write the whole set in one `hunts_store` call: `command: "write"` and the whole set in `specs`.
-Every entry carries `status: "hypothesised"`, `fault_keyword`, `strategy_keyword`, and the spec body below.
+Write the set one spec per `hunts_store` call: `command: "write"` and exactly one `spec` object.
+Every spec carries `status: "hypothesised"`, `fault_keyword`, `strategy_keyword`, and the spec body below.
 Never author `spec_id`: the store derives `<fault_keyword>_<strategy_keyword>.yaml`.
-A duplicate identity inside one set is the dedup signal: merge or refresh, never duplicate.
+The first hypothesised write exits GENERATE; keep writing every remaining spec, one per call, before the well-formedness note.
+A repeated identity upserts in place: refresh the body, never duplicate the identity.
 
 **WELL-FORMEDNESS** - *solves: is the set well formed over the slice?*
 
@@ -124,9 +125,9 @@ Check two properties.
 No overlap: no two specs own the same sub-slice; two specs that differ only by an unselected instance are one spec.
 Exhaustive coverage of the slice: every region the slice names has a spec.
 You may merge entries or drop them, and you must record every merge and drop in `phase:well_formedness` with the reason.
-A merge keeps one identity: widen the survivor and record the absorbed identity; the terminal write carries the absorbed identity as `dropped` with the merge reason.
+A merge keeps one identity: widen the survivor and record the absorbed identity; the VERIFY-CLAIMS status write carries the absorbed identity as `dropped` with the merge reason.
 
-Do not write a `dropped` status here: the set still carries its `hypothesised` statuses, and the terminal write at VERIFY-CLAIMS applies the drops.
+Do not write a `dropped` status here: the set still carries its `hypothesised` statuses, and the one-spec status writes at VERIFY-CLAIMS apply the drops.
 A [D2] re-entry is reasoning only: rework COLLECT or GENERATE, update an earlier phase note with `action=update` if the new instances change it, and keep the tracked state in WELL-FORMEDNESS until you write the exit note.
 Write the exit note once, when the check is final: an early note would exit the pass before the re-entry is done.
 
@@ -148,11 +149,13 @@ When a load-bearing assumption is not covered by the loop's class skill, the sib
 Payload vectors may not yield these probes: do not probe whether a payload fires, and do not fetch a payload's effect.
 The posture stays fail-open and loose: a probe that cannot run, or that returns nothing decisive, leaves the spec where it was and records the uncertainty.
 When a probe yields no meaningful insight, end the evaluation.
-The probe iterations do not move the tracked state: it stays VERIFY-CLAIMS until the terminal write.
+The probe iterations do not move the tracked state: it stays VERIFY-CLAIMS until the finalize.
 
-Then write the terminal set: the whole set in one `hunts_store` call with `command: "write"`, every identity the set holds carried through (a merged survivor carries its widened body), each surviving spec `status: "ratified"`, each absorbed or unfeasible spec `status: "dropped"`, with the reasons recorded in `phase:well_formedness` and the probe trail.
-Do not mix a terminal status with `hypothesised`.
-That write is the pass exit and the last action of the hunt.
+Then write the terminal statuses one spec per `hunts_store` call: each surviving spec `status: "ratified"`, each absorbed or unfeasible spec `status: "dropped"`, with the reasons recorded in `phase:well_formedness` and the probe trail.
+A merged survivor carries its widened body.
+When every spec is terminal, call `hunts_store` with `command: "finalize"`.
+A finalize while any draft is still `hypothesised` is rejected with the missing identities, so decide each draft explicitly.
+The finalize writes the durable terminal record, is the pass exit, and is the last action of the hunt.
 
 **COMPLETE** - *the hunt is over.*
 
@@ -181,12 +184,12 @@ Each field carries the skill's text for that procedure section; keep the whole e
 A section the skill does not carry stays an empty string, which the triager treats as a recorded gap.
 
 The identity is derived from the two keywords, so write them as stable, specific words.
-The store creates the identity at the `hypothesised` write and upserts it in place at the terminal write.
+The store creates the identity at the first write and upserts it in place at each later status write.
 Read the set back with `hunts_store command: "read"` when you need the persisted statuses; the store is authoritative for the set.
 
 ## The tools
 
-- `hunts_store`: the spec-set write and read, bound to this hunt; you never supply the hunt key.
+- `hunts_store`: the one-spec write, read, and finalize seam, bound to this hunt; you never supply the hunt key.
 - `notes`: the episodic notes store, bound to this hunt.
   A phase exit is `command: "write"`, `action: "append"`, `note_name: "phase:<pass>"`, `kind=phase_summary`, and a body within the conciseness cap.
   A re-iteration rewrites the same note with `action=update`.
@@ -224,8 +227,8 @@ DISCRIMINATE: authorisation source x delivery route. Narrow on the report id,
 broad on the two routes. Nearest alternatives are separated by which component
 authorises the id. phase:discriminate.
 GENERATE: three sub-slices - direct download, the download route's signed-URL
-redirect, and the share-route minting capability. One hunts_store write, all
-hypothesised, each with the reduced body.
+redirect, and the share-route minting capability. Three hunts_store writes, one
+spec each, all hypothesised, each with the reduced body.
 The direct-download entry:
   {"status": "hypothesised",
    "fault_keyword": "report-id-unbound", "strategy_keyword": "direct-download",
@@ -253,7 +256,7 @@ share route" - exec the share route; the target answers 403. The mechanics are
 absent, so the share-route spec is unfeasible. Probe the object-store
 configuration evidence: an unsigned URL for the prefix returns 403, so the
 download route's signed URL is the only delivery. The other two specs survive.
-Terminal write: the whole set in one hunts_store call, the two survivors
-ratified, the share-route spec dropped.
+Terminal statuses: one hunts_store write per spec, the two survivors
+ratified, the share-route spec dropped, then one finalize call.
 COMPLETE.
 ```
