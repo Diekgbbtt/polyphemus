@@ -37,9 +37,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 SCHEMA_VERSION = 1
 
-# The progressive risk budget's default halt (S2 7.4). A documented starting
-# constant, not a calibrated value; the run records the effective threshold.
-DEFAULT_RISK_THRESHOLD = 12
+# The progressive risk budget's default halt (S2 7.4). The canary's first unit
+# reached risk_total=44, so the operator raised the documented default to 250;
+# the run records the effective threshold either way.
+DEFAULT_RISK_THRESHOLD = 250
 
 
 class Confidence(StrEnum):

@@ -246,13 +246,13 @@ def test_a_halted_run_resumes_dispatch_only():
 
 
 def test_the_threshold_records_whether_it_is_the_default_or_an_override():
-    """S2 7.4: the threshold default is 12; `HUNT_RISK_THRESHOLD` overrides it,
+    """S2 7.4: the threshold default is 250; `HUNT_RISK_THRESHOLD` overrides it,
     and the run records the basis (`default` / `override`) so the halt is
     reproducible. A malformed override falls back to the default."""
-    assert threshold_config({}) == (12, "default")
+    assert threshold_config({}) == (250, "default")
     assert threshold_config({"HUNT_RISK_THRESHOLD": "20"}) == (20, "override")
     assert threshold_config({"HUNT_RISK_THRESHOLD": "not-a-number"}) == (
-        12, "default")
+        250, "default")
 
 
 def test_a_degraded_unit_is_recorded_and_consumes_no_budget():

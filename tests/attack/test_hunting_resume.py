@@ -287,7 +287,7 @@ def _record(**overrides) -> dict:
         "intake_order": [UNIT_A, UNIT_B],
         "intake_position": 1,
         "intake_excluded": [],
-        "risk_threshold": 12,
+        "risk_threshold": 250,
         "threshold_basis": "default",
         "risk_weights": {"none": 0, "low": 1, "medium": 2, "high": 3,
                          "critical": 4},

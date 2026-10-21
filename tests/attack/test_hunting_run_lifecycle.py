@@ -59,7 +59,7 @@ def _seed_record(**overrides) -> dict:
         "intake_order": [],
         "intake_position": 0,
         "intake_excluded": [],
-        "risk_threshold": 12,
+        "risk_threshold": 250,
         "threshold_basis": "default",
         "risk_weights": {"none": 0, "low": 1, "medium": 2, "high": 3,
                          "critical": 4},
@@ -144,7 +144,7 @@ def test_the_run_record_carries_every_fixed_key_and_the_accumulated_sum(
     assert record["intake_order"] == [UNIT_A, UNIT_B]
     assert record["intake_position"] == 2
     assert record["intake_excluded"] == []
-    assert record["risk_threshold"] == 12
+    assert record["risk_threshold"] == 250
     assert record["threshold_basis"] == "default"
     assert record["risk_weights"] == {"none": 0, "low": 1, "medium": 2,
                                       "high": 3, "critical": 4}

@@ -1150,7 +1150,7 @@ def test_the_risk_weights_and_default_threshold_are_exported(tmp_path):
     assert RISK_WEIGHTS == {
         "none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4,
     }
-    assert DEFAULT_RISK_THRESHOLD == 12
+    assert DEFAULT_RISK_THRESHOLD == 250
     weights = [RISK_WEIGHTS[level] for level in ("none", "low", "medium", "high", "critical")]
     assert weights == sorted(weights)
     assert len(set(weights)) == len(weights)
