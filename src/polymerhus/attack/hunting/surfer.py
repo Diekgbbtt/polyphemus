@@ -68,6 +68,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
@@ -84,6 +85,7 @@ from polymerhus.attack.hunting.mover import (
     TestSpecItem,
     ThreatLoopItem,
     TickReport,
+    hunter_session_id,
     pod_session_id,
     log_refusal_once,
     read_produced_inbox,
@@ -197,6 +199,32 @@ def is_pod_session_id(session_id: str) -> bool:
     return ":pod:" in session_id
 
 
+# F-027 (B): a single transient child provider failure is NOT a run failure.
+# The failed item is requeued after a backoff while every sibling stays live.
+# Three consecutive transient failures of the SAME child are fatal, as is any
+# quota exhaustion; the #331 stop/flush/stamp handler then pauses the run.
+MAX_CONSECUTIVE_CHILD_FAILURES = 3
+DEFAULT_CHILD_RETRY_BACKOFF_S = 30.0
+
+
+@dataclass
+class ChildFailure:
+    """One child session's consecutive transient provider failures.
+
+    `attempts` counts failures since the last success of THIS session id;
+    `retry_after` is a monotonic deadline; `error` is the last typed cause
+    (kept for operators and diagnostics). A different child failing never
+    advances this counter - the threshold is per item, so one bad loop cannot
+    stop a fleet of healthy siblings on its first failure."""
+
+    attempts: int
+    retry_after: float
+    error: ProviderUnavailableError
+
+    def deferred(self, now: float) -> bool:
+        return now < self.retry_after
+
+
 @dataclass
 class RunDispatchState:
     """The run-local wire state the surfer and the bootstrap share (single
@@ -210,16 +238,64 @@ class RunDispatchState:
     that came from a LOOP file: the dispatch id -> likelihood map the low-loop
     sequencing reads (S2 8.3 - only an ACTIVE higher-tier hunter holds a low
     loop; an idle one authors nothing more and settles with the run terminal, so
-    counting it would deadlock the quiesce). `provider_failure` is the run-local
-    typed provider error a dispatched HUNTER or POD session recorded
-    (#312/#329): a provider failure is infrastructure, so the surfer surfaces it
-    and the run pauses (`interrupted`) instead of quiescing `complete` with zero
-    specs and no typed reason."""
+    counting it would deadlock the quiesce).
+
+    F-027 (B): `child_failures` is the per-child retry ledger. A transient
+    provider failure defers only that child's item until `retry_after`; its
+    siblings keep running. `provider_failure` is the run-local FATAL cause
+    (#312/#329) - set on quota exhaustion or the third consecutive transient
+    failure of one child, so the surfer surfaces it and the run pauses
+    (`interrupted`) instead of quiescing with lost work. The #331 handler then
+    stops every component session; a single transient failure never does."""
 
     hunter_inboxes: dict[str, AgentInbox] = field(default_factory=dict)
     hunters_in_graph: set[str] = field(default_factory=set)
     loop_likelihoods: dict[str, str] = field(default_factory=dict)
+    child_failures: dict[str, ChildFailure] = field(default_factory=dict)
     provider_failure: ProviderUnavailableError | None = None
+
+    def record_child_failure(
+        self,
+        session_id: str,
+        error: ProviderUnavailableError,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        """Record one child session's transient provider failure.
+
+        Returns True when the failure is FATAL: quota exhaustion is immediate;
+        otherwise the third consecutive failure of THIS session id. A fatal
+        failure also lands on `provider_failure` for the surfer to surface. A
+        non-fatal failure schedules the item's retry after the provider's
+        `retry_after_s` when it supplied one, else the default backoff."""
+        current = time.monotonic() if now is None else now
+        previous = self.child_failures.get(session_id)
+        attempts = (previous.attempts if previous is not None else 0) + 1
+        delay = error.retry_after_s
+        if not isinstance(delay, (int, float)) or delay <= 0:
+            delay = DEFAULT_CHILD_RETRY_BACKOFF_S
+        fatal = bool(error.quota_exhausted) or (
+            attempts >= MAX_CONSECUTIVE_CHILD_FAILURES)
+        self.child_failures[session_id] = ChildFailure(
+            attempts=attempts,
+            retry_after=current + float(delay),
+            error=error,
+        )
+        if fatal:
+            self.provider_failure = self.provider_failure or error
+        return fatal
+
+    def record_child_success(self, session_id: str) -> None:
+        """A completed child attempt resets its consecutive-failure count."""
+        self.child_failures.pop(session_id, None)
+
+    def deferred_session_ids(self, *, now: float | None = None) -> frozenset[str]:
+        """The child session ids whose retry deadline has not arrived yet."""
+        current = time.monotonic() if now is None else now
+        return frozenset(
+            session_id for session_id, failure in self.child_failures.items()
+            if failure.deferred(current)
+        )
 
 
 @dataclass(frozen=True)
@@ -551,6 +627,7 @@ async def run_hunter_session(
     hunter role gate around the active stretch, so a stopped hunter role holds
     its in-flight threads at the next unit boundary (the module gate dominates
     via the role gate's parent)."""
+    session_id = hunter_session_id(run_id, hunt_key)
     state.hunter_inboxes[hunt_key] = AgentInbox()
     state.hunters_in_graph.add(hunt_key)
     # every hunter session now comes from a loop file, so it always carries the
@@ -573,21 +650,26 @@ async def run_hunter_session(
         state.loop_likelihoods.pop(hunt_key, None)
         return
     paused_on_provider_failure = False
+    graph_completed = False
     try:
         async with _gate_or_null(gate):
             async with _gate_or_null(role_gate):
                 await dispatch_fn(payload)
+        graph_completed = True
     except asyncio.CancelledError:
         raise
     except ProviderUnavailableError as exc:
-        # #312/#329: a provider failure in the hunt graph is infrastructure, not
-        # a hunt degrade - record it on the run-local state so the surfer
-        # surfaces it and the run pauses (`interrupted`), rather than idling
-        # into a silent `complete` with zero specs and no typed reason (the
-        # trial-2 outcome). The registry is still reaped below.
+        # #312/#329 + F-027: a child provider failure is infrastructure, not a
+        # hunt degrade. A transient failure defers THIS item (the surfer's
+        # ledger) while its siblings keep running; only quota exhaustion or the
+        # third consecutive failure of this child becomes the run-local fatal
+        # cause the surfer surfaces. The registry is still reaped below.
+        fatal = state.record_child_failure(session_id, exc)
         logger.warning(
-            "surfer: hunt %s paused on a provider failure (%s)", hunt_key, exc)
-        state.provider_failure = state.provider_failure or exc
+            "surfer: hunt %s hit a provider failure (%s); %s", hunt_key, exc,
+            "FATAL - the run pauses" if fatal
+            else "requeued after backoff, siblings stay live",
+        )
         paused_on_provider_failure = True
     except Exception as exc:  # noqa: BLE001 - the harness is fail-open; degrade and idle anyway
         logger.warning("surfer: hunt graph degraded for %s (%s)", hunt_key, exc)
@@ -598,6 +680,8 @@ async def run_hunter_session(
         state.hunters_in_graph.discard(hunt_key)
         state.loop_likelihoods.pop(hunt_key, None)
 
+    if graph_completed:
+        state.record_child_success(session_id)
     if not paused_on_provider_failure:
         await _run_hunter_idle(
             project_id=project_id, run_id=run_id, hunt_key=hunt_key,
@@ -743,7 +827,7 @@ async def run_pod_session(
     pod_store: Any,
     state: RunDispatchState | None = None,
     role_gate: Any = None,
-) -> dict:
+) -> dict | None:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
     injected builder; `arun_pod` in production), then record the completed
     export DURABLY at pod completion keyed by the parent's loop dispatch id
@@ -765,21 +849,37 @@ async def run_pod_session(
     two identity keywords; S3 8.6) beside the D4. The dispatch boundary projects
     it onto the reduced D4 (`d4_spec_body`), so the pod's INIT gate sees the
     spec contract and never the store's bookkeeping; a retired field still
-    reaches the gate and rejects (S5 8.4/8.8)."""
-    async def _run() -> dict:
+    reaches the gate and rejects (S5 8.4/8.8).
+
+    F-027: a transient provider failure returns None WITHOUT a durable export,
+    so the spec stays consumed with no export and F-017 recovers it after the
+    per-child backoff. A fatal failure (quota or the third consecutive failure)
+    lands on `state.provider_failure`; the surfer raises it after the tick and
+    the #331 handler pauses the run. A direct call without a state re-raises."""
+    source = pod_session_id(run_id, hunt_key, spec_id)
+
+    async def _run() -> dict | None:
         try:
             return await pod_builder(
                 d4_spec_body(spec), run_id=run_id, project_id=project_id,
                 memory_store=pod_store, spec_id=spec_id,
             )
         except ProviderUnavailableError as exc:
-            # #329/#312: a provider failure is infrastructure, not a pod verdict.
-            # Do not fabricate a domain export and do not persist one - record it
-            # on the run-local state so the surfer surfaces it and the run pauses
-            # (`interrupted`) rather than quiescing `complete`.
-            if state is not None:
-                state.provider_failure = state.provider_failure or exc
-            raise
+            # #329/#312 + F-027: a provider failure is infrastructure, not a pod
+            # verdict. Do not fabricate a domain export and do not persist one.
+            # A transient failure defers THIS pod; its siblings stay live.
+            if state is None:
+                raise
+            fatal = state.record_child_failure(source, exc)
+            logger.warning(
+                "surfer: pod %s hit a provider failure (%s); %s", spec_id, exc,
+                "FATAL - the run pauses" if fatal
+                else "requeued after backoff, siblings stay live",
+            )
+            # A fatal cause is already on `state.provider_failure`; the surfer
+            # raises it after this tick and the #331 handler pauses the run. The
+            # task itself ends cleanly, so no exception is left unretrieved.
+            return None
         except Exception as exc:  # noqa: BLE001 - fail-open: the pod never raises into the run
             logger.warning("surfer: pod %s degraded (%s)", spec_id, exc)
             return {
@@ -792,7 +892,10 @@ async def run_pod_session(
         async with _gate_or_null(role_gate):
             export = await _run()
 
-    source = pod_session_id(run_id, hunt_key, spec_id)
+    if export is None:
+        return None
+    if state is not None:
+        state.record_child_success(source)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the
     # parent's loop dispatch id + the pod-export:<spec_id> marker (#199) - the
     # single crash-safe record, independent of any live parent inbox.
@@ -840,10 +943,20 @@ async def run_surfer_loop(
 
     The loop is a session on the shared runtime manager (per-session cancel
     works on it, Q12); cancellation (stop) propagates out of the sleep, and the
-    session's registry entry drains with the task."""
+    session's registry entry drains with the task.
+
+    F-027 (B): a transient child provider failure does NOT raise. Its item is
+    deferred by `state.child_failures` and the loop keeps ticking while the
+    healthy siblings finish. Only a fatal failure (quota exhaustion or the third
+    consecutive failure of one child) sets `state.provider_failure` and raises
+    to the #331 stop/flush/stamp handler."""
     ticks = 0
     last_tick = None
     while True:
+        # F-027: a fatal child failure recorded during the previous tick's
+        # child sessions must stop the NEXT dispatch before it happens.
+        if state.provider_failure is not None:
+            raise state.provider_failure
         last_tick = run_delivery_tick(
             project_id, run_id,
             threat_store=threat_store,
@@ -851,6 +964,7 @@ async def run_surfer_loop(
             pod_store=pod_store,
             control=control, coro_for=coro_for,
             live_loop_likelihoods=state.loop_likelihoods,
+            deferred_session_ids=state.deferred_session_ids(),
         )
         ticks += 1
         if state.provider_failure is not None:

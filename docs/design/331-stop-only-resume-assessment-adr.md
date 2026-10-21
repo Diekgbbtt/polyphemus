@@ -17,8 +17,9 @@ This ticket therefore implements the stop path and DEFERS the resume.
 
 ### 1. One app-layer stop/flush/stamp handler
 
-`attack/hunting/runtime.py::stop_hunting_for_provider_failure` is the ONE handler a provider failure reaches.
-It performs, in order:
+`attack/hunting/runtime.py::stop_hunting_for_provider_failure` is the ONE handler a FATAL provider failure reaches.
+A transient child-session failure is retried in place and never routed here (F-027 amendment below).
+The handler performs, in order:
 
 1. **STOP** - cancel every live component session of the run through the shared runtime's per-session `cancel_run` primitive (reached via the control plane's `cancel_session`).
    Per agent type (ADR Q13 session id): the orchestrator pass, every hunter, and every pod are running LLM agents and are hard-cancelled; the surfer mover has no LLM but would keep dispatching hunters and pods, so it is cancelled with them.
@@ -160,3 +161,54 @@ The follow-up consumes `resume_decision` and `DEFAULT_RESUME_BACKOFF_S`; the ope
 - `eval/orchestrator/monitor.py` - `INTERRUPTED_TERMINAL`; `decide` defers an interrupted execution explicitly.
 - Tests - `tests/attack/test_hunting_runtime.py::test_provider_abort_stops_the_runs_sessions_before_the_terminal`; `tests/attack/test_hunting_resume.py` (the decision table and the runtime resume path); `tests/project_management/test_hunting_api.py` (the resume endpoint); `tests/app/test_hunting_runs.py` (the claim, live PG); `tests/eval/test_orchestrator_monitor.py::test_interrupted_execution_is_deferred_never_escalated`.
 - Docs - this record; the stop-only re-scope noted in `docs/design/hunting-331-provider-resume-adr.md` and `docs/design/eval-provider-resilience.md`.
+
+## Amendment (F-027, 2026-10-21): a transient child failure retries in place
+
+### Context
+
+The stop-only handler above is run-global: it cancels every component session of the run.
+On the 2026-10-20 white-jotter retest, ONE child hit a provider 429 and the handler stopped the whole run.
+13 consumed loops were lost with it, and their model dependencies had to be restored by hand.
+The stop policy was too broad: a single child's transient throttle is not evidence that the run cannot continue.
+
+### Decision
+
+The handler is now the FATAL path only.
+A dispatched hunter or pod classifies its own provider failure through the per-child ledger on `surfer.RunDispatchState`.
+
+- **Per-child ledger.** `child_failures[session_id]` records `attempts`, a monotonic `retry_after`, and the last typed error.
+  The threshold is per item: a different child's first failure never advances it.
+- **Transient failure.** `record_child_failure` schedules a retry after the provider's `retry_after_s`, or `DEFAULT_CHILD_RETRY_BACKOFF_S` (30s) when the provider supplied none.
+  The failed item is deferred; every unaffected hunter and pod stays live.
+- **Fatal failure.** Quota exhaustion (`quota_exhausted=true`) is fatal on the first failure.
+  Otherwise the third consecutive transient failure of the SAME child is fatal (`MAX_CONSECUTIVE_CHILD_FAILURES = 3`).
+  Only then does `record_child_failure` set `RunDispatchState.provider_failure`; the surfer raises it, and the stop/flush/stamp handler above pauses the run.
+- **Success resets.** A completed child attempt calls `record_child_success` and clears its count.
+- **Dispatch deferral.** `mover.deduce_delivery` takes `deferred_session_ids` and gives a deferred item NO plan entry.
+  The item stays pending, so `run_work_remaining` remains true and the run cannot quiesce while the retry window is open.
+  `mover.TickReport.deferred` counts the held items.
+  The surfer reads the deferral set fresh on every tick.
+- **Fatal-before-dispatch.** `run_surfer_loop` checks `provider_failure` before AND after each tick, so a fatal failure recorded during a child's stretch can never allow one more dispatch.
+- **Recovery closes the loop.** A transient hunter failure leaves the loop consumed with no terminal spec set; F-026 recovers it after the backoff.
+  A transient pod failure returns without a durable export; F-017 recovers the consumed spec after the backoff.
+  A fatal pod failure also returns cleanly (the cause is already on run state), so no child task exception is left unretrieved.
+
+The #331 stop/flush/stamp handler keeps its existing contract for the fatal cases and the modeller-pass abort.
+It no longer runs for a single child failure.
+
+### Consequences
+
+- One child's 429 no longer stops the fleet.
+  The affected item backs off and retries; its siblings finish.
+- A persistent outage is still bounded: three consecutive transient failures of one child, or any quota exhaustion, pauses the run as `interrupted` with the typed provider cause.
+- The run may wait up to the provider's retry hint (or 30s by default) with one item pending; the quiesce predicate deliberately does not treat that wait as completion.
+- The fence is per item, not global: several children may each fail twice without pausing the run.
+  This is intentional - the threshold detects a persistently failing item, not a broad provider outage.
+  A broad outage still converges because each failing item reaches its own third failure, and the first fatal one pauses the run.
+
+### Impact map (F-027)
+
+- `src/polymerhus/attack/hunting/surfer.py` - `ChildFailure`, the `RunDispatchState` ledger methods, the hunter/pod transient branches, the fatal-before-dispatch check, and the per-tick deferral read.
+- `src/polymerhus/attack/hunting/mover.py` - `deduce_delivery(deferred_session_ids=...)`, the `run_delivery_tick` parameter, and `TickReport.deferred`.
+- Tests - `tests/attack/test_hunting_child_retry.py` (the pure ledger and mover deferral); `tests/attack/test_hunting_runtime.py::test_a_transient_hunter_failure_requeues_only_that_loop_and_keeps_the_sibling_live` and `::test_three_consecutive_transient_hunter_failures_pause_the_run`; `tests/attack/test_hunting_wiring.py::test_a_transient_pod_failure_requeues_only_that_spec_and_keeps_the_sibling_live`.
+- Docs - this amendment.

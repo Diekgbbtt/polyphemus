@@ -517,6 +517,73 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
     assert stats["quota_exhausted"] is True
 
 
+def test_a_transient_pod_failure_requeues_only_that_spec_and_keeps_the_sibling_live(
+        stores, monkeypatch):
+    """F-027: one pod's 429 does not stop the fleet. The failed spec has no
+    terminal export, so F-017 recovers it after the backoff; the sibling spec
+    finishes (and stays live while the failure lands). The run completes."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    models, hunter, pod = stores
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    _preproduce(models)
+    attempts: dict[str, int] = {}
+
+    def two_spec_hunts(*, run_id, project_id, hunter_store, **kw):
+        async def dispatch(payload):
+            hunter_store.write_specs(
+                project_id, payload["dispatch_id"],
+                [
+                    {"status": "ratified", "fault_keyword": "sqli",
+                     "strategy_keyword": "blind",
+                     "provenance": {"run_id": run_id}},
+                    {"status": "ratified", "fault_keyword": "xss",
+                     "strategy_keyword": "reflected",
+                     "provenance": {"run_id": run_id}},
+                ])
+            hunter_store.finalize_specs(
+                project_id, payload["dispatch_id"], run_id=run_id)
+            return None
+        return dispatch, None
+
+    async def flaky_pods(spec, *, run_id, project_id, memory_store, spec_id):
+        attempts[spec_id] = attempts.get(spec_id, 0) + 1
+        if spec_id == "sqli_blind" and attempts[spec_id] == 1:
+            raise ProviderUnavailableError(
+                "throttled", status_code=429, retry_after_s=0.01,
+                quota_exhausted=False)
+        if spec_id == "xss_reflected":
+            await asyncio.sleep(0.05)
+        export = {"verdict": "successful", "terminal_reason": "symptom-confirmed",
+                  "evidence": {"trail": []}, "clean": True, "iterations": 1}
+        memory_store.write_pod_export(spec_id, run_id, export)
+        return export
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT,
+        intake_units=[intake_unit(UNIT)],
+        modeller_pass_fn=_noop_pass,
+        control=_FakeControl(),
+        tick_interval=0.001,
+        threat_store=models,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=two_spec_hunts,
+        pod_builder=flaky_pods,
+    ))
+
+    _, status, _stats = fake.stats_writes[-1]
+    assert status == "complete"
+    assert attempts == {"sqli_blind": 2, "xss_reflected": 1}
+    assert pod.read_pod_export("sqli_blind", RUN)
+    assert pod.read_pod_export("xss_reflected", RUN)
+
+
 def test_a_loop_file_from_another_run_never_dispatches_or_blocks_quiesce(
         stores, monkeypatch):
     """S2 8.3/8.4: the dispatch read is RUN-scoped. A produced loop file of

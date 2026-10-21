@@ -442,6 +442,7 @@ def deduce_delivery(
     produced: Sequence[ProducedItem],
     live_session_ids: AbstractSet[str] = frozenset(),
     feedback: Mapping[str, DispatchFeedback] | None = None,
+    deferred_session_ids: AbstractSet[str] = frozenset(),
 ) -> DeliveryPlan:
     """The pure mover deduction (tracker #172): given the produced set, the
     session registry state, and the dispatch feedback for this tick, return
@@ -456,6 +457,9 @@ def deduce_delivery(
     - feedback ADMITTED -> `to_move` (the at-least-once marker).
     - feedback REFUSED -> `to_retry`: REMAINS in produced for the next tick -
       never dropped, never moved.
+    - session id in `deferred_session_ids` (F-027) -> NO plan entry: the child
+      failed transiently and its retry deadline has not arrived. The item stays
+      pending (so quiesce cannot pass) while its siblings keep dispatching.
     - otherwise -> `to_dispatch`.
 
     F-026: a recovered consumed loop never lands in `to_move` - its
@@ -483,6 +487,9 @@ def deduce_delivery(
         if item.session_id in live_session_ids:
             if not already_moved:
                 to_move.append(item)
+            continue
+        if item.session_id in deferred_session_ids:
+            # F-027: the child is backing off; leave the item pending.
             continue
         outcome = by_item.get(item.message_id)
         if outcome is DispatchFeedback.ADMITTED:
@@ -512,7 +519,9 @@ class TickReport:
     `models_consumed` = produced model documents renamed to consumed/ (the
     zero-loop consume and the last-loop-file move, S2 8.4); `move_failed` =
     records the move could not complete (missing record or a storage failure -
-    warned and counted, never aborting the tick)."""
+    warned and counted, never aborting the tick); `deferred` = items held back
+    by a child's transient-failure backoff (F-027), left pending and never
+    counted as dispatched."""
 
     produced: int
     dispatched: int
@@ -522,6 +531,7 @@ class TickReport:
     move_failed: int
     paused: int = 0
     models_consumed: int = 0
+    deferred: int = 0
 
 
 class DispatchControlPlane(Protocol):
@@ -740,6 +750,7 @@ def run_delivery_tick(
     control: DispatchControlPlane,
     coro_for: Callable[[ProducedItem], Any],
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
+    deferred_session_ids: AbstractSet[str] = frozenset(),
 ) -> TickReport:
     """One impure mover tick: reads the produced inboxes, calls the pure
     deduction, drives the delivery against the control plane, and applies the
@@ -751,7 +762,9 @@ def run_delivery_tick(
        hunter memory's test specs) plus the live registry session ids.
     2. Apply the sequencing filter: a `low` loop file waits while a higher-tier
        loop file is produced or a higher-tier hunter session is live (S2 8.3).
-    3. Deduce with empty feedback -> the items `to_dispatch` this lap.
+    3. Deduce with empty feedback -> the items `to_dispatch` this lap. An item
+       whose child is backing off (F-027) is held pending and never dispatched;
+       the run cannot quiesce while it remains.
     4. Dispatch each: build its coroutine via `coro_for` (the T4 seam; a failing
        builder degrades to refused, never a raise into the tick) and hand it to
        the control plane under the item's Q13 session id. Record the
@@ -774,8 +787,13 @@ def run_delivery_tick(
     produced = inbox.items
     live = control.live_session_ids()
     dispatchable = sequence_dispatch(produced, live_loop_likelihoods)
+    deferred_now = {
+        item.session_id for item in dispatchable
+        if item.session_id in deferred_session_ids
+        and item.session_id not in live
+    }
 
-    plan = deduce_delivery(dispatchable, live)
+    plan = deduce_delivery(dispatchable, live, deferred_session_ids=deferred_now)
     feedback: dict[str, DispatchFeedback] = {}
     admitted = 0
     refused = 0
@@ -808,7 +826,8 @@ def run_delivery_tick(
             feedback[item.message_id] = DispatchFeedback.REFUSED
             refused += 1
 
-    plan = deduce_delivery(dispatchable, live, feedback)
+    plan = deduce_delivery(
+        dispatchable, live, feedback, deferred_session_ids=deferred_now)
     moved = 0
     move_failed = 0
     for item in plan.to_move:
@@ -840,6 +859,7 @@ def run_delivery_tick(
         moved=moved,
         move_failed=move_failed,
         models_consumed=models_consumed,
+        deferred=len(deferred_now),
     )
 
 

@@ -432,6 +432,102 @@ def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     assert stats["quota_exhausted"] is True
 
 
+# --- F-027 (B): transient child failures do not stop the fleet -----------------
+
+def test_a_transient_hunter_failure_requeues_only_that_loop_and_keeps_the_sibling_live(
+        tmp_path, monkeypatch):
+    """One child's 429 is not the run's failure: the failed loop is requeued
+    after its backoff (the consumed loop has no terminal set, so F-026 recovers
+    it) while the unaffected sibling finishes and finalizes. The run completes."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    run_id = "rt-hunt-0001"
+    produce_model(models, project_id="rt-project", unit_id=SERVICE_A,
+                  run_id=run_id)
+    produce_model(models, project_id="rt-project", unit_id=OTHER_UNIT,
+                  run_id=run_id)
+    attempts: dict[str, int] = {}
+    finalized: list[str] = []
+
+    def builder(*, run_id, project_id, hunter_store, **kw):
+        async def dispatch(payload):
+            did = payload["dispatch_id"]
+            attempts[did] = attempts.get(did, 0) + 1
+            if did.startswith("Service-slug-a") and attempts[did] == 1:
+                raise ProviderUnavailableError(
+                    "throttled", status_code=429, retry_after_s=0.01,
+                    quota_exhausted=False)
+            if did.startswith("GraphQLApi"):
+                # stay live long enough that the other child fails while this
+                # one is mid-graph - the sibling the old #331 handler killed
+                await asyncio.sleep(0.05)
+            hunter_store.finalize_specs(project_id, did, run_id=run_id)
+            finalized.append(did)
+        return dispatch, None
+
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", intake_units=[intake_unit(SERVICE_A),
+                                     intake_unit(OTHER_UNIT)],
+        modeller_pass_fn=_recording_pass(),
+        hunter_store=hunter, threat_store=models,
+        control=_FakeControl(),
+        hunter_builder=builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert fake.statuses[-1] == (hid, "complete")
+    assert attempts["Service-slug-a__loop-1"] == 2
+    assert attempts["GraphQLApi__loop-1"] == 1
+    assert sorted(finalized) == [
+        "GraphQLApi__loop-1", "Service-slug-a__loop-1"]
+    for did in finalized:
+        assert hunter.read_terminal_set("rt-project", did)["run_id"] == run_id
+
+
+def test_three_consecutive_transient_hunter_failures_pause_the_run(
+        tmp_path, monkeypatch):
+    """The backoff is bounded: the third consecutive transient failure of one
+    child is fatal, and the #331 handler pauses the run as `interrupted` with
+    the provider cause (quota_exhausted=false - a throttle, not consumed
+    credits)."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    run_id = "rt-hunt-0001"
+    produce_model(models, project_id="rt-project", unit_id=SERVICE_A,
+                  run_id=run_id)
+    attempts = {"n": 0}
+
+    def builder(*, run_id, project_id, hunter_store, **kw):
+        async def dispatch(payload):
+            attempts["n"] += 1
+            raise ProviderUnavailableError(
+                "throttled", status_code=429, retry_after_s=0.001,
+                quota_exhausted=False)
+        return dispatch, None
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
+        modeller_pass_fn=_recording_pass(),
+        hunter_store=hunter, threat_store=models,
+        control=_FakeControl(),
+        hunter_builder=builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert attempts["n"] == 3
+    _, status, stats = fake.stats_writes[-1]
+    assert status == "interrupted"
+    assert stats["interrupted"] is True
+    assert stats["provider_status"] == 429
+    assert stats["quota_exhausted"] is False
+
+
 # T6 (#379): the production harness consumes the loop payload end to end. The
 # raw-raise classification AT that seam and the end-to-end run pause are
 # asserted below (`test_the_production_hunter_seam_...`) and in
