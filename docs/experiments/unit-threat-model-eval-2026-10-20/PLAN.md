@@ -3,7 +3,9 @@
 ## Status
 
 Plan written before the first trial.
-Deployment and preflight are in progress.
+Canary 4 is measured.
+The ComfyUI hunting retest reached the 3M cap and is measured.
+The white-jotter trial is held because the retest gate did not pass.
 The eight-target run has not started.
 
 ## Objective
@@ -445,3 +447,34 @@ Then verify:
 - every quality claim cites an artifact or a Langfuse observation;
 - the report separates structural limitations from model quality;
 - the report names the 0/6 verdict result and the F-017 cause.
+
+## ComfyUI hunting retest - 2026-10-21
+
+The retest is a seeded hunting-only run on the same ComfyUI project.
+The setup is `eval/setups/comfyui-utm-hunting-retest.yaml`.
+The measured code is `dev` at `d17560e0`.
+The run ID is `cdf0918c-6ff1-4abd-893c-18d018113523`.
+The reconstructed trial record is `/opt/polymerhus-dev/eval/runs-utm-20261020/comfyui-1/comfyui-1-20261021T140000-1fc05262-retest/trial.yaml`.
+
+Result:
+- the first attempt spent 990,160 capped tokens and stopped on a provider 429 with `quota_exhausted=true`;
+- the new provider key was applied to the instance `.env` and the agent was recreated;
+- 13 consumed loops were restored manually because the resume path does not recover them;
+- the run refused to resume until `stats.quota_exhausted` was cleared in PostgreSQL;
+- the resume produced 15 loops, 39 specs, and 19 pod directories;
+- the watchdog stopped the project at 3,355,148 capped tokens, an overshoot of 355,148 against the 3,000,000 budget;
+- the run status is `stopped`, not `complete`;
+- the deterministic result is 0 of 6 unit-level candidates, 5 of 6 class-level candidates, and 0 pod confirmations.
+
+Gate result: fail.
+The white-jotter trial is held.
+The retest exposed F-022, F-023, F-024, and F-025, and F-009 recurred.
+
+Next:
+- fix F-022 consumed-loop recovery;
+- fix F-023 forced resume after a key rotation;
+- fix F-024 pre-emptive cap enforcement;
+- fix F-025 per-call spec batching;
+- fix F-009 reasoning replay;
+- run a focused ComfyUI hunting validation;
+- only then start the 7M white-jotter trial.

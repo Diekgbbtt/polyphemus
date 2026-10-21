@@ -93,7 +93,8 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** repeated `reasoning gap: profile expects reasoning_content ... but the response message carries no matching value` warnings from `polymerhus.app.llm.reasoning`.
 - **Impact:** the reasoning replay/observability surface cannot read the reasoning text, although the usage ledger still records reasoning tokens.
 - **Evidence:** the app log warnings at 22:12:47 to 22:14:10.
-- **Status:** open; recorded for the quality measurement.
+- **Recurrence:** the 2026-10-21 hunting retest logged the same warning and provider 400 responses on hunter turns. Two hunter steps degraded.
+- **Status:** open; still a quality risk.
 - **Domain:** provider capability and observability.
 - **Root cause:** the models.dev capability profile advertises a `reasoning_content` surface that the relay did not populate on these responses.
 
@@ -155,7 +156,7 @@ The final section regroups the entries by failure domain and common root cause.
 - **Signal:** `LiteLLM:WARNING ... Failed to parse tool call arguments for tool 'hunts_store' (chat completions). Error: Expecting ',' delimiter: line 1 column 15956 (char 15955).` The model was writing four specs in one call; the arguments were about 16KB.
 - **Impact:** the spec set in that call was not written; the hunter continued, but the failed write removes four candidate specs from the pod path. The hunter tree held 18 YAML files at the observation; the pod tree still had zero.
 - **Evidence:** the agent log at 2026-10-21T00:04:22; the `hunts_store` argument payload; the hunter tree count.
-- **Status:** upstream contract fixed; 900 attack tests pass; retest pending.
+- **Status:** typed contract fixed and deployed; the transport-level truncation recurred in the 2026-10-21 retest and is tracked as F-025.
 - **Resolution:** the `hunts_store` write contract is now the typed canonical shape. `SpecWrite` requires `status`, `fault_keyword`, `strategy_keyword` and `target_identity`; `target_identity` reuses the shared `spec_contract.TargetIdentity`; `provenance` is the typed `spec_contract.SpecProvenance` (including the typed `SkillProcedure`); `extra="forbid"` replaces the former open `dict`/`extra="allow"` surface. The modeller's `sections` is the typed `threat_model.ModelSections`, not an open mapping. The shared `StoreToolBase` now returns a coded teaching rejection naming the missing or unknown field path and the accepted required/optional set, and returns a `ToolMessage` when called from LangGraph. The generic rule is documented in `docs/design/hunting-tools-design.md`, `app/memory/tool_contract.py`, and `attack/hunting/CONTEXT.md`.
 - **Domain:** hunter/modeller tool contract, structured output, and tool-call size.
 - **Upstream root cause:** the tool exposed `target_identity: dict`, `provenance: dict`, and `extra="allow"` while the pod's canonical `TestImplementationSpec` is `extra="forbid"` with typed nested models. The schema therefore invited a large, loosely-checked JSON object; the model had to invent the nested shape and the field names, which is exactly where a 16KB call with a delimiter error becomes possible. The symbolic layer's later validation cannot recover a call the relay parser rejected. The contract now teaches the shape before the turn.
@@ -199,7 +200,8 @@ The final section regroups the entries by failure domain and common root cause.
 - **Detected:** by the comfyui canary layer attribution.
 - **Signal:** `workflow-library`, `extension-manager-configuration`, and `model-installation` exist in L1 with zero links; `RESTApi:manager-http` is a bare data-dependency node; L0 has zero `/userdata` and zero `/manager` endpoints.
 - **Impact:** the analysis layer contributed to four misses, and the manager units ranked below the halt.
-- **Status:** open; the comfyui retest reuses the frozen surface, so this is held constant. The white-jotter fresh trial exercises the same analysis path.
+- **Status:** open; the comfyui hunting retest still had 0 of 6 strict unit-level candidates, although class-level coverage reached 5 of 6. The white-jotter fresh trial exercises the same analysis path.
+- **Retest evidence:** 39 specs across 9 loops, including manager catalogue and extension-inventory candidates, all bound to `RESTApi:core-http`, not the corpus service units.
 - **Structural follow-up:** ingest or link the service-to-API edges, and seed the target's route inventory into L0.
 
 ### F-020 - The hunter terminal set silently omitted a drafted spec
@@ -215,8 +217,52 @@ The final section regroups the entries by failure domain and common root cause.
 - **Detected:** by the comfyui canary layer attribution (comfyui-004).
 - **Signal:** IA-3 probed literal and single-encoded `/view` traversal only, then declined the class; the path-traversal suite skill was not loaded.
 - **Impact:** no loop or spec for the double-decoding bypass.
-- **Status:** prompt hardened; retest pending.
+- **Status:** prompt fix validated at class level; pod confirmation pending.
+- **Retest evidence:** the hunter wrote `/view` subfolder-decode, metadata-path-join, and viewvideo path-join specs. The run stopped before a terminal pod export.
 - **Fix:** the threat-modeller prompt now states the encoding floor for arbitrary-file-read/path-traversal/LFI/RFI: a literal or single-encoded probe is not a fundamental technical-infeasibility finding; the class skill's normalization and double-encoding bypass must run before a drop.
+
+### F-022 - A consumed hunting loop is lost when the run pauses on a provider failure
+
+- **Detected:** during the 2026-10-21 comfyui hunting retest.
+- **Signal:** the first attempt moved 13 of 15 core-http loop files from `produced/` to `consumed/` at dispatch, then the provider returned 429 and the trial died. Hunter output was zero specs. The resume path did not re-dispatch the 13 consumed loops.
+- **Impact:** 13 of 15 hunter sessions were lost. The operator restored the files manually before the resume, so the retest could proceed.
+- **Evidence:** `threat_modeller/consumed/RESTApi-core-http/loop-1.yaml` through `loop-13.yaml`; no `hunter/test-specs/` output; the 13 files moved back to `produced/` at 13:59:05Z.
+- **Status:** open; manual recovery only.
+- **Domain:** hunting dispatch, resume, and at-least-once semantics.
+- **Root cause:** loop files are consumed at dispatch with no durable completion marker. The F-017 reconciliation covers pod specs, not threat-model loops. A provider pause after loop consumption leaves no state that identifies the unfinished loops.
+- **Follow-up:** add a loop lease or completion marker and recover consumed loops with no terminal hunter output on resume.
+
+### F-023 - A quota-exhausted run is terminal after a provider key rotation
+
+- **Detected:** during the 2026-10-21 comfyui hunting retest.
+- **Signal:** `POST /hunting/{run_id}/resume` returned `the provider period quota is exhausted; the run is terminal and is not resumed`, even after the new key reported weekly `0%`, monthly `0%`, and rolling `0%`.
+- **Impact:** the operator had to patch `hunting_runs.stats.quota_exhausted` to `false` in PostgreSQL before the run would resume. The old stats are preserved at `_backup/utm-comfyui-provider429-20261021T135905Z/run-stats-before-resume.json`.
+- **Evidence:** resume refusal at 13:59:05Z; `UPDATE 1`; resume returned `{"resumed":true}`.
+- **Status:** open; operator workaround only.
+- **Domain:** run resume policy and provider identity.
+- **Root cause:** `resume_decision` treats `quota_exhausted=true` as terminal because the old provider period will not recover. It has no operator override for a rotated key that restores quota immediately.
+- **Follow-up:** add an explicit operator `force` or `top_up` resume path that re-checks the live provider key before refusing.
+
+### F-024 - The capped-token watchdog overshoots because the stop is asynchronous
+
+- **Detected:** during the 2026-10-21 comfyui hunting retest.
+- **Signal:** the watchdog stopped the project at `resume_spent=2,028,454`, but the live usage continued to `7,806,215`. The retest delta is `3,355,148` capped tokens against the `3,000,000` budget, an overshoot of `355,148`.
+- **Impact:** the trial exceeded the native cap by 11.8 percent. The overshoot is from calls already in flight when `execution/stop` was issued.
+- **Evidence:** `/tmp/comfyui-resume-watch.log`; `/usage` at 7,806,215; `trial.yaml` `spent_tokens: 3355148`.
+- **Status:** open; the F-016 app-side cap remains the structural fix.
+- **Domain:** budget enforcement and run control.
+- **Root cause:** the cap owner is a polling shell watchdog. `execution/stop` is not a pre-emptive reservation and does not cancel in-flight provider calls.
+
+### F-025 - A multi-spec `hunts_store` call is truncated at 3,686 characters
+
+- **Detected:** during the 2026-10-21 comfyui hunting retest.
+- **Signal:** `LiteLLM:WARNING ... Failed to parse tool call arguments for tool 'hunts_store' ... Error: Expecting ',' delimiter: line 1 column 3686 (char 3685).` The model was writing five specs in one call.
+- **Impact:** five hypothesised specs were not written in that turn. The typed contract from F-015 did not prevent transport-level truncation.
+- **Evidence:** app log at 14:04; loop-9 spec set; `hunts_store` argument size.
+- **Status:** open.
+- **Domain:** hunter tool transport and spec batching.
+- **Root cause:** the per-call argument payload is large and the relay parser rejects the truncated JSON before the typed contract can validate it.
+- **Follow-up:** bound the spec batch per call, or write each spec as its own resumable call.
 
 ## Runtime trials
 
@@ -275,9 +321,26 @@ The final section regroups the entries by failure domain and common root cause.
 - **Structural limitations:** the run used the five-job recon subset; the analysis used the 300-asset split (the endpoint micro-family fix is post-canary); the global 0.4 hunting compaction and 0.2 analysis override; the gateway budget guard was disabled by a compose override; the trial record is failed while the run was resumed manually; the T11 resume has no budget owner. Layer attribution is in [QUALITY-ATTRIBUTION.md](QUALITY-ATTRIBUTION.md).
 - **Disposition:** the pipeline reached analysis-drain, threat-model, hunter, and pod phases, but the discovery quality was 0/6 and the execution was interrupted. It is a measurement case, not a clean baseline.
 
+
+### Hunting retest - comfyui-1 - project 65f63a5a-1406-4635-9bba-92e23aa86d3d
+
+- **Run:** `cdf0918c-6ff1-4abd-893c-18d018113523`.
+- **First attempt:** started 2026-10-21T12:28:06Z; interrupted at 12:45:58Z by provider 429 with `quota_exhausted=true` on the primary key.
+- **First-attempt spend:** 990,160 capped tokens.
+- **First-attempt artifacts:** one core-http model, 15 loops, 13 consumed and 2 produced, zero hunter specs, zero pod directories.
+- **Recovery:** new opencode-go key applied to the instance `.env`; agent recreated; 13 consumed loop files restored to `produced/`; `stats.quota_exhausted` cleared; resumed at 13:59:05Z.
+- **Stop:** watchdog reached the 3M retest bound at 14:18:47Z and stopped the project.
+- **Final spend:** 3,355,148 capped tokens, 1,204 calls. The budget was 3,000,000; the overshoot was 355,148.
+- **Artifacts:** 15 loops, 39 specs, 19 pod directories. The 39 specs split into 22 `ratified`, 16 `hypothesised`, and 1 `dropped`. Nine loops produced specs.
+- **Quality:** 0 of 6 unit-level candidates, 0 of 6 confirmed pods, 5 of 6 class-level candidates. The run stopped before any terminal pod export.
+- **New defects:** F-022, F-023, F-024, F-025; F-009 recurred.
+- **Disposition:** capped measurement, not a complete trial. The white-jotter trial is held.
+
 ## Final clustering
 
 - The canary 4 discovery result is 0/6. The dominant diagnosed cause is F-017: a ratified spec was consumed and lost when the provider pause interrupted the pod session. This is a delivery bug, not a model-quality miss.
+- The 2026-10-21 hunting retest reached 39 specs and 19 pod directories, but it remained 0/6 at the unit level and 0 confirmed at the pod level. The run stopped at the cap before pod completion.
+- The retest added four open defects: F-022 loop loss on resume, F-023 quota-terminal resume, F-024 cap overshoot, and F-025 tool-call truncation. F-009 recurred.
 - F-013's upstream cause was family construction, not the compaction threshold; the endpoint micro-family plus 300-asset packing is the structural fix.
 - F-015's upstream cause was the open JSON contract; the typed `SpecWrite`/`SpecProvenance`/`ModelSections` and coded field rejection are the structural fix.
 - F-016 has two causes: the compose file hardcoded the budget guard off, and the 7M cap is trial-client-scoped. The guard is now enabled and the live key carries the `$30/7d` and `$60/30d` windows; the `deepseek-v4.1-flash` cost override is forced. The durable 7M binding remains open.

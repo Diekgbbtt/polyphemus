@@ -2,7 +2,7 @@
 artifact: experiment-results
 version: "1.0"
 created: 2026-10-21
-status: canary-results
+status: canary-and-retest-results
 ---
 
 # Experiment Results: Unit Threat Model Eval, ComfyUI Canary
@@ -25,6 +25,10 @@ This document reports the ComfyUI canary only.
 It is a single-case measurement, not a statistical experiment.
 No p-value or confidence interval is meaningful at this sample size.
 The full execution and evidence record is in `/opt/polymerhus-dev/eval/runs-utm-20261020/comfyui-1/comfyui-1-20261021T002730-1fc05262/measurements.md` on the eval server.
+
+A separate ComfyUI hunting-only retest ran on 2026-10-21 with a 3M capped-token budget.
+The retest result is at the end of this document.
+It measured discovery only, because the run stopped at the cap before pod completion.
 
 ## Hypothesis Recap
 
@@ -248,6 +252,61 @@ The fixes are critical, simple, and structural; they should be validated on a fr
 - F-015 dropped one four-spec batch; the typed-contract fix is post-canary.
 - F-017 lost eight admitted pod specs; the 0 of 6 result is not a clean model-quality baseline.
 - The deterministic matcher was corrected during measurement; the strict unit axis remains 0 of 6, while the class axis is 5 of 6 and the manual binding is 2 of 6.
+
+## ComfyUI Hunting Retest (2026-10-21)
+
+The retest used the seeded ComfyUI project and the repaired hunting pipeline.
+The setup is `eval/setups/comfyui-utm-hunting-retest.yaml`.
+The measured code is `dev` at `d17560e0`.
+The run ID is `cdf0918c-6ff1-4abd-893c-18d018113523`.
+The reconstructed trial record is `/opt/polymerhus-dev/eval/runs-utm-20261020/comfyui-1/comfyui-1-20261021T140000-1fc05262-retest/trial.yaml`.
+
+### Retest Result
+
+| Metric | Retest value | Note |
+|--------|--------------|------|
+| Terminal | `stopped` | The 3M watchdog stopped the project. The run did not reach a `complete` terminal. |
+| Capped tokens | 3,355,148 | Budget 3,000,000; overshoot 355,148 because in-flight calls finished after the stop. |
+| Calls | 1,204 | Project cumulative at the stop was 7,806,215 capped tokens. |
+| Loops | 15 | One `RESTApi:core-http` model. |
+| Hunter specs | 39 | 22 `ratified`, 16 `hypothesised`, 1 `dropped`; 9 loops produced specs. |
+| Pod directories | 19 | 5 pod runs measured; no terminal pod export. |
+| Unit-level candidates | 0 of 6 | Strict benchmark axis. |
+| Class-level candidates | 5 of 6 | The specs bind `RESTApi:core-http`, not the corpus service units. |
+| Pod confirmations | 0 | The cap stopped the pod phase before evidence was terminal. |
+| Identification | 0 of 6 | 0 partial. |
+
+### Retest Findings
+
+- The first attempt spent 990,160 capped tokens and lost 13 consumed loops when the provider returned 429. The operator restored them manually.
+- The new provider key restored weekly and monthly quota. The run still refused to resume because `quota_exhausted=true` is terminal. The operator cleared that flag in PostgreSQL.
+- The resumed run produced 39 specs and 19 pod directories. This is real discovery progress over the zero-spec first attempt.
+- The F-021 prompt fix worked at class level. The hunter wrote `/view` subfolder-decode, metadata-path-join, and viewvideo path-join specs.
+- The `/userdata` owner checks and the manager catalogue also produced specs.
+- The strict unit axis remained zero. Every spec bound `RESTApi:core-http`, not a corpus service unit.
+- No pod produced a terminal export before the cap. The F-017 recovery and the F-020 terminal-set guard were not exercised to completion.
+- The reason-replay 400 recurred. Two hunter turns degraded.
+- A five-spec `hunts_store` call was truncated at 3,686 characters. Five candidate specs were lost.
+
+### New Defects
+
+- F-022: a consumed hunting loop is lost when the run pauses on a provider failure.
+- F-023: a quota-exhausted run is terminal after a provider key rotation.
+- F-024: the capped-token watchdog overshoots because the stop is asynchronous.
+- F-025: a multi-spec `hunts_store` call is truncated before the typed contract can validate it.
+- F-009 recurred and remains open.
+
+### Retest Gate
+
+The white-jotter trial is held.
+The retest did not pass the planned gate:
+
+- the run terminal is `stopped`, not `complete`;
+- no ground-truth spec reached a terminal pod export;
+- the strict unit axis is 0 of 6;
+- F-022, F-023, F-024, F-025, and F-009 remain open.
+
+The next step is to fix F-022, F-023, F-024, F-025, and F-009, then run a focused ComfyUI hunting validation before the 7M white-jotter trial.
 
 ---
 
