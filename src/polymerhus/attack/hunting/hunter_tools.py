@@ -76,6 +76,7 @@ from .http_history_contract import (
     GET_HTTP_ARTIFACT_DESCRIPTION,
     SEARCH_HTTP_HISTORY_DESCRIPTION,
 )
+from .spec_contract import SpecProvenance, TargetIdentity
 from .hunting_status import TARGET_UNAVAILABLE_DIRECTIVE
 from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
@@ -207,59 +208,54 @@ def _notes_extra_rejection(tool_input: dict, errors: list) -> dict | None:
 
 
 class SpecWrite(BaseModel):
-    """The `TestImplementationSpec` WRITE payload (#236): the top-level fields
-    the hunter authors, typed so the tool schema itself teaches the contract.
-    `extra="allow"` keeps the spec's long tail open, while the named fields
-    carry their descriptions into the model-facing schema. The fields stay
-    loose (`str` defaults, not required) because the symbolic layer owns the
-    CODED identity and status rejections; pydantic must never pre-empt them with
-    a bare validation error.
+    """The `TestImplementationSpec` WRITE payload (#236, F-015 correction).
+
+    The persisted shape is the pod's canonical `TestImplementationSpec`: the
+    nested `target_identity` and `provenance` are the SAME typed models the pod
+    reads, not open dictionaries. `extra="forbid"` makes an invented field a
+    coded rejection instead of a silently dropped value, so the tool schema and
+    the stored record cannot drift.
+
+    `status`, the two file-name keywords and `target_identity` are REQUIRED.
+    The remaining fields are optional in the contract and documented as such;
+    the store still owns the coded identity/status semantics.
     """
 
     status: str = Field(
-        default="",
         description="The lifecycle verbatim: 'hypothesised' | 'ratified' | "
-                    "'dropped'.")
+                    "'dropped'. Required.")
     fault_keyword: str = Field(
-        default="", description="The fault half of the derived spec file name.")
+        description="The fault half of the derived spec file name. Required.")
     strategy_keyword: str = Field(
-        default="", description="The strategy half of the derived spec file name.")
-    target_identity: dict = Field(
-        default_factory=dict,
+        description="The strategy half of the derived spec file name. Required.")
+    target_identity: TargetIdentity = Field(
         description="The target identity object {'url': <base url>, 'unit_id': "
                     "<L1 service/system identity>}; a spec without a url is "
-                    "INIT-rejected by the pod.")
+                    "INIT-rejected by the pod. Required.")
     verification_symptoms: list[str] = Field(
         default_factory=list,
-        description="The observable symptoms that verify the fault.")
+        description="Optional: the observable symptoms that verify the fault.")
     assumptions: list[str] = Field(
         default_factory=list,
-        description="The technical assumptions the pod may falsify (S3 8.6).")
+        description="Optional: the technical assumptions the pod may falsify.")
     rationale: str = Field(
-        default="", description="The vulnerability-level rationale (S3 8.6).")
+        default="", description="Optional: the vulnerability-level rationale.")
     parent_spec_ref: str | None = Field(
         default=None,
-        description="The parent spec id when this entry is a triager-minted "
-                    "variant; null for an original spec.")
-    provenance: dict = Field(
-        default_factory=dict,
-        description="The dispatch provenance: loop_id, unit_id, the two classes, "
-                    "baseline_ref, source_recon_refs, assumption_ref, playbook, "
-                    "and the typed skill_procedure (S3 8.6).")
+        description="Optional: the parent spec id when this entry is a "
+                    "triager-minted variant; null for an original spec.")
+    provenance: SpecProvenance = Field(
+        default_factory=SpecProvenance,
+        description="Optional: the typed dispatch provenance (loop_id, unit_id, "
+                    "the two classes, baseline_ref, source_recon_refs, "
+                    "assumption_ref, playbook, skill_procedure).")
     skills: list[str] = Field(
         default_factory=list,
-        description="The artifact-declared skill configuration (#236): flat "
-                    "skill names the downstream POD RUNNER should carry for "
-                    "this test spec. The dispatch resolves each name "
-                    "project-first through the shared catalogue, unions it with "
-                    "the runner's role baseline, refuses the meta family, caps "
-                    "the added set after resolution, and warns and skips an "
-                    "unresolvable name. A triager-minted variant inherits the "
-                    "parent spec's declaration unless it states its own. Omit it "
-                    "or leave it empty for no added skills; never write a path "
-                    "or a meta skill.")
+        description="Optional: flat skill names the downstream POD RUNNER "
+                    "should carry for this test spec. Never a path or a meta "
+                    "skill.")
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class HuntsStoreArgs(BaseModel):

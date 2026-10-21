@@ -29,7 +29,7 @@ from polymerhus.app.memory.tool_contract import (
     build_notes_tool,
 )
 
-from .threat_model import GATE_SECTIONS, ModelState
+from .threat_model import GATE_SECTIONS, ModelSections, ModelState
 from .threat_model_store import NOTE_KINDS, ThreatModelIdentityError
 from .threat_modeller import (
     GATE_HINTS,
@@ -82,10 +82,11 @@ class ModellerHuntsStoreArgs(BaseModel):
         description="Write payload: the gate state, one of UNIT_TECHNICAL_SHARP, "
                     "TRUST_MODELLED, TRUST_ASSUMPTIONS_WRITTEN, "
                     "VULNERABILITIES_WRITTEN, COMPLETED.")
-    sections: dict | None = Field(
+    sections: ModelSections | None = Field(
         default=None,
-        description="Write payload: the section content for that gate, a mapping "
-                    "from section name to section body.")
+        description="Write payload: the typed section content for that gate. "
+                    "Only the section(s) the gate accepts may be set; the store "
+                    "rejects a section from another gate.")
     unit_id: str | None = Field(
         default=None,
         description="Read filter: read this unit's model instead of the bound one.")
@@ -206,11 +207,14 @@ class ModellerHuntsStoreTool(StoreToolBase):
                 ["state"],
                 f"unknown state {args.state!r}; known: "
                 f"{', '.join(state.value for state in ModelState)}")
-        sections = args.sections
-        if not isinstance(sections, dict) or not sections:
+        sections = (
+            args.sections.model_dump(exclude_none=True, mode="json")
+            if args.sections is not None else {}
+        )
+        if not sections:
             return self._rejected(
                 ["sections"],
-                f"a write needs `sections` (a mapping for the "
+                f"a write needs `sections` (the typed section for the "
                 f"{gate.value} gate: {', '.join(GATE_SECTIONS[gate])})")
         allowed = GATE_SECTIONS[gate]
         unexpected = [key for key in sections if key not in allowed]

@@ -30,6 +30,7 @@ from polymerhus.attack.hunting.pod.note_tool import (
     PodNoteTool,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, note_key
+import json
 
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
@@ -185,10 +186,15 @@ def test_tool_read_experiment_log_needs_the_order(store, spec_id):
 # --- extra="forbid": a wrong parameter is rejected before _run -----------------
 
 def test_unknown_parameter_is_rejected_by_the_args_schema(store, spec_id):
+    """F-015: the extra field is a coded teaching rejection, never a bare raise,
+    and it names the unknown field and the accepted contract."""
     tool = _tool(store=store, spec_id=spec_id)
-    with pytest.raises(ValueError):
-        tool.invoke({"operation": "write", "order": 0, "note_name": "n",
-                     "kind": "freeform", "body": "x", "bogus_param": 1})
+    out = json.loads(tool.invoke({"operation": "write", "order": 0,
+                                  "note_name": "n", "kind": "freeform",
+                                  "body": "x", "bogus_param": 1}))
+    assert out["ok"] is False
+    assert out["error"] == "note_args_rejected"
+    assert "bogus_param" in " ".join(out["fields"])
 
 
 def test_unknown_parameter_never_reaches_run(store, spec_id):
@@ -202,8 +208,11 @@ def test_unknown_parameter_never_reaches_run(store, spec_id):
             return super()._run(**kwargs)
 
     tool = SpyTool(store=store, spec_id=spec_id)
-    with pytest.raises(ValueError):
-        tool.invoke({"operation": "read", "order": 0, "nonsense": 2})
+    out = json.loads(tool.invoke({"operation": "read", "order": 0,
+                                  "nonsense": 2}))
+    assert out["ok"] is False
+    assert out["error"] == "note_args_rejected"
+    assert "nonsense" in " ".join(out["fields"])
     assert calls == []
 
 

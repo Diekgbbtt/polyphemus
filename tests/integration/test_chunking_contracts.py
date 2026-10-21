@@ -46,7 +46,7 @@ def test_C1_single_stream_no_concern_partition():
         _param("q"), _asset("Header", name="X-Api"), _asset("Secret", key="tok"),
         _asset("Subdomain", host="s.a"), _asset("Certificate", cn="a"),
     ]
-    chunks = chunks_for_job(JOB, assets, target_assets=100)
+    chunks = chunks_for_job(JOB, assets)
     assert len(chunks) == 1
     (chunk,) = chunks
     assert chunk.chunk_id == "katana:0"          # no concern segment
@@ -109,12 +109,17 @@ def test_C5b_only_connectivity_assets_queue_no_chunk():
 
 def test_C6_overflow_ordered_tail_kept():
     assets = [_asset("Technology", name=f"t{i}") for i in range(250)]
-    chunks = chunks_for_job(JOB, assets, target_assets=100)
-    assert len(chunks) == 3
-    assert [c.batch_index for c in chunks] == [0, 1, 2]
-    assert all(c.batch_total == 3 for c in chunks)
-    assert [len(c.assets) for c in chunks] == [100, 100, 50]
-    assert len([a for c in chunks for a in c.assets]) == 250  # tail never dropped
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert len(chunk.assets) == 250                       # one 250-asset chunk, cap 300
+    assert chunk.batch_index == 0 and chunk.batch_total == 1
+    # A surface above the cap splits only at the cap, and the tail is kept.
+    assets = [_asset("Technology", name=f"t{i}") for i in range(400)]
+    chunks = chunks_for_job(JOB, assets)
+    assert len(chunks) == 2
+    assert [c.batch_index for c in chunks] == [0, 1]
+    assert all(c.batch_total == 2 for c in chunks)
+    assert [len(c.assets) for c in chunks] == [300, 100]
+    assert len([a for c in chunks for a in c.assets]) == 400
 
 
 # --- C7: malformed asset excluded, never crashes ------------------------------
@@ -392,55 +397,69 @@ def test_D1_identity_dedup_first_occurrence_wins():
     assert sum(1 for a in chunk.assets if a.type == "Header") == 1
 
 
-def test_D2_a_family_never_splits_and_the_chunk_closes_after_it():
-    """Families are atomic: the chunk closes once the families added so far cross
-    the soft target, never mid-family (the positional slice split at exactly 100)."""
-    host_a_meta = [_asset("BaseURL", url=BU)] + [_hdr(f"h{i}") for i in range(59)]
-    host_a_endpoints = [_ep(f"/p{i}") for i in range(60)]
-    host_b_meta = [_asset("BaseURL", url=BU2)] + [_hdr(f"b{i}", BU2) for i in range(59)]
-    chunks = chunks_for_job(JOB, host_a_meta + host_a_endpoints + host_b_meta,
-                            target_assets=100)
-    assert [len(c.assets) for c in chunks] == [120, 60]   # 60+60 crosses 100; the tail closes
-    assert {a.identity["path"] for a in chunks[0].assets if a.type == "Endpoint"} \
-        == {f"/p{i}" for i in range(60)}
-    assert all(a.type != "Endpoint" for a in chunks[1].assets)
+def test_D2_endpoint_micro_family_keeps_its_headers_and_parameters_together():
+    """F-013 correction: the coherent unit is ONE endpoint plus the headers and
+    parameters that target it. The 1,128-endpoint bucket is never a family."""
+    assets = []
+    for i in range(20):
+        path = f"/p{i}"
+        assets.append(_ep(path))
+        assets.append(_hdr(f"h{i}", endpoint=path))
+        assets.append(_param_on(f"q{i}", path))
+    chunks = chunks_for_job(JOB, assets)
+    (chunk,) = chunks
+    assert len(chunk.assets) == 60
+    # Every header and parameter shares a path with an Endpoint in the same chunk.
+    paths = {a.identity["path"] for a in chunk.assets if a.type == "Endpoint"}
+    for asset in chunk.assets:
+        if asset.type in ("Header", "Parameter"):
+            assert asset.identity.get("endpoint", asset.identity.get("endpoint_path")) in paths
+    # A cap-crossing surface closes before the next micro-family, never mid-family.
+    many = []
+    for i in range(120):
+        path = f"/q{i}"
+        many += [_ep(path), _hdr(f"h{i}", endpoint=path), _param_on(f"q{i}", path)]
+    chunks = chunks_for_job(JOB, many)
+    assert [len(c.assets) for c in chunks] == [300, 60]
+    assert [len({a.identity["path"] for a in c.assets if a.type == "Endpoint"})
+            for c in chunks] == [100, 20]
 
 
-def test_D3_a_family_larger_than_the_target_goes_whole():
-    """No static cap: one bucket family of 150 Endpoints is ONE cohesive chunk,
-    not a 100+50 slice (cohesion wins over the target)."""
-    chunks = chunks_for_job(JOB, [_ep(f"/pg{i}") for i in range(150)], target_assets=100)
+def test_D3_a_small_endpoint_surface_is_one_chunk():
+    """A surface below the 300-asset cap is ONE chunk, not a 100+50 slice."""
+    chunks = chunks_for_job(JOB, [_ep(f"/pg{i}") for i in range(150)])
     assert [len(c.assets) for c in chunks] == [150]
 
 
-def test_D4_endpoints_split_into_sub_buckets_by_content_class():
-    """Endpoints of one host split by what they SERVE (html / client-side code /
-    UI visuals / data / other), so a chunk is homogeneous in surface class."""
+def test_D4_endpoint_micro_families_are_endpoint_scoped_not_bucket_scoped():
+    """The F-013 correction removes the content-class bucket family. Endpoints of
+    different media types are independent micro-families and stack into one
+    chunk; a header or parameter only joins the endpoint whose path it names."""
     assets = [
         _ep_ct("/", "text/html; charset=utf-8"),
+        _hdr("content-type", endpoint="/"),
         _ep_ct("/app-widget", "application/javascript"),
+        _hdr("content-type", endpoint="/app-widget"),
         _ep_ct("/logo.png", "image/png"),
-        _ep_ct("/config", "application/json"),
-        _ep_ct("/mystery", "application/octet-stream"),
+        _param_on("size", "/logo.png"),
     ]
-    got = {a.identity["path"]: i
-           for i, c in enumerate(chunks_for_job(JOB, assets, target_assets=1))
-           for a in c.assets}
-    assert got == {"/": 0, "/app-widget": 1, "/logo.png": 2, "/config": 3, "/mystery": 4}
-    # a small surface still lands in ONE chunk: families never split for size
-    assert len(chunks_for_job(JOB, assets)) == 1
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert len(chunk.assets) == 6
+    by_path = {a.identity.get("endpoint") or a.identity.get("endpoint_path"):
+               a.identity.get("name") for a in chunk.assets if a.type in ("Header", "Parameter")}
+    assert by_path == {"/": "content-type", "/app-widget": "content-type", "/logo.png": "size"}
 
 
 def test_D5_parameters_ride_their_endpoints_bucket_parent_first():
     chunks = chunks_for_job(JOB, [
         _ep_ct("/page", "text/html"), _param_on("q", "/page"),
         _ep_ct("/chunk", "application/javascript"), _param_on("v", "/chunk"),
-    ], target_assets=1)
-    assert len(chunks) == 2
-    assert [a.type for a in chunks[0].assets] == ["Endpoint", "Parameter"]   # parent first
-    assert chunks[0].assets[1].identity["name"] == "q"
-    assert [a.type for a in chunks[1].assets] == ["Endpoint", "Parameter"]
-    assert chunks[1].assets[1].identity["name"] == "v"
+    ])
+    (chunk,) = chunks
+    assert len(chunk.assets) == 4
+    assert [a.type for a in chunk.assets] == ["Endpoint", "Parameter", "Endpoint", "Parameter"]
+    assert chunk.assets[1].identity["name"] == "q"
+    assert chunk.assets[3].identity["name"] == "v"
 
 
 def test_D6_katana_shaped_stream_collapses_to_one_cohesive_chunk():
@@ -494,8 +513,7 @@ def test_D3b_a_family_above_the_hard_cap_splits():
     sub-chunks; normal families stay atomic.
     """
     chunks = chunks_for_job(
-        JOB, [_ep(f"/hard{i}") for i in range(400)],
-        target_assets=100, max_assets=300,
+        JOB, [_ep(f"/hard{i}") for i in range(400)], max_assets=300,
     )
     assert [len(c.assets) for c in chunks] == [300, 100]
     assert {a.identity["path"] for c in chunks for a in c.assets} == {

@@ -120,6 +120,7 @@ def test_hunts_store_missing_command_with_write_intent_is_a_teaching_rejection(t
     the write payload without `command` -> coded teaching rejection."""
     store = HunterMemoryStore(root_dir=tmp_path)
     out = json.loads(_hunts(store, specs=[{"status": "hypothesised",
+         "target_identity": {"url": "https://a"},
                                            "fault_keyword": "f1",
                                            "strategy_keyword": "probe"}]))
     assert out["ok"] is False
@@ -147,10 +148,12 @@ def test_hunts_store_write_derives_the_file_names_from_the_set(tmp_path):
     store = HunterMemoryStore(root_dir=tmp_path)
     out = json.loads(_hunts(store, command="write", specs=[
         {"status": "hypothesised",
+         "target_identity": {"url": "https://a"},
          "fault_keyword": "cwe1220-owner-binding",
          "strategy_keyword": "probe",
-         "fault_class": "CWE-1220"},
+         "provenance": {"canonical_class": "CWE-1220"}},
         {"status": "hypothesised",
+         "target_identity": {"url": "https://a"},
          "fault_keyword": "reset-replay",
          "strategy_keyword": "probe"},
     ]))
@@ -159,11 +162,13 @@ def test_hunts_store_write_derives_the_file_names_from_the_set(tmp_path):
         "cwe1220-owner-binding_probe", "reset-replay_probe"]
     specs = store.read_specs(PROJECT, HUNT_KEY)
     assert len(specs) == 2
-    assert specs[0]["fault_class"] == "CWE-1220"
+    assert specs[0]["provenance"]["canonical_class"] == "CWE-1220"
 
     duplicate = json.loads(_hunts(store, command="write", specs=[
-        {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "hypothesised",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "hypothesised",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"},
     ]))
     assert duplicate["ok"] is False
     assert duplicate["error"] == "duplicate_spec"
@@ -174,12 +179,16 @@ def test_hunts_store_terminal_write_promotes_and_declasses(tmp_path):
     `ratified` and the unfeasible `dropped`, upserting in place."""
     store = HunterMemoryStore(root_dir=tmp_path)
     _hunts(store, command="write", specs=[
-        {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "hypothesised", "fault_keyword": "f2", "strategy_keyword": "probe"},
+        {"status": "hypothesised",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "hypothesised",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f2", "strategy_keyword": "probe"},
     ])
     out = json.loads(_hunts(store, command="write", specs=[
-        {"status": "ratified", "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "dropped", "fault_keyword": "f2", "strategy_keyword": "probe"},
+        {"status": "ratified",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"},
+        {"status": "dropped",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f2", "strategy_keyword": "probe"},
     ]))
     assert out["ok"] is True
     assert [entry["status"] for entry in out["specs"]] == ["ratified", "dropped"]
@@ -193,9 +202,10 @@ def test_hunts_store_write_missing_identity_is_a_coded_rejection(tmp_path):
     write, never a bare pydantic error), so the model corrects on the retry."""
     store = HunterMemoryStore(root_dir=tmp_path)
     out = json.loads(_hunts(store, command="write", specs=[
-        {"status": "hypothesised", "fault_keyword": "cwe1220-owner-binding"}]))
+        {"status": "hypothesised",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "cwe1220-owner-binding"}]))
     assert out["ok"] is False
-    assert out["error"] == "hunts_store_write_rejected"
+    assert out["error"] == "hunts_store_args_rejected"
     assert "strategy_keyword" in " ".join(out["fields"])
     assert store.read_specs(PROJECT, HUNT_KEY) == []
 
@@ -205,7 +215,8 @@ def test_hunts_store_read_is_bound_to_the_loop_key(tmp_path):
     key from the request, so the hunter can only address its own loop."""
     store = HunterMemoryStore(root_dir=tmp_path)
     _hunts(store, command="write", specs=[
-        {"status": "hypothesised", "fault_keyword": "f1", "strategy_keyword": "probe"}])
+        {"status": "hypothesised",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f1", "strategy_keyword": "probe"}])
     assert json.loads(_hunts(store, command="read"))["specs"][0]["status"] == \
         "hypothesised"
     assert json.loads(_hunts(store, command="read",
@@ -218,9 +229,11 @@ def test_hunts_store_refuses_a_mixed_status_set(tmp_path):
     `specs`, never a persisted set the tracker cannot close on."""
     store = HunterMemoryStore(root_dir=tmp_path)
     out = json.loads(_hunts(store, command="write", specs=[
-        {"status": "hypothesised", "fault_keyword": "f1",
+        {"status": "hypothesised",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f1",
          "strategy_keyword": "probe"},
-        {"status": "ratified", "fault_keyword": "f2",
+        {"status": "ratified",
+         "target_identity": {"url": "https://a"}, "fault_keyword": "f2",
          "strategy_keyword": "probe"},
     ]))
     assert out["ok"] is False
@@ -232,22 +245,30 @@ def test_hunts_store_refuses_a_mixed_status_set(tmp_path):
 
 # --- #209: the D84-22 rejected-call canon survives ----------------------------
 
-def test_unknown_parameter_still_raises_the_rejected_call(tmp_path):
-    """#209: only the KNOWN drift shapes are translated to a teaching
-    rejection. An unknown parameter keeps the D84-22 canon - it FAILS as a
-    rejected call (raises ValidationError), never a silent accept."""
+def test_unknown_parameter_is_a_coded_teaching_rejection(tmp_path):
+    """F-015: a field outside the typed contract is a coded rejection naming
+    the unknown field and the accepted field set. The model evaluates the
+    contract instead of decoding a bare pydantic error."""
     store = HunterMemoryStore(root_dir=tmp_path)
     notes = NotesTool(store=store, project_id=PROJECT)
-    with pytest.raises(ValidationError):
-        notes.invoke({"command": "write", "action": "append",
-                      "note_name": "n",
-                      "kind": "freeform", "body": "b", "bogus": 1})
+    out = notes.invoke({"command": "write", "action": "append",
+                        "note_name": "n",
+                        "kind": "freeform", "body": "b", "bogus": 1})
+    parsed = out if isinstance(out, dict) else json.loads(out)
+    assert parsed["ok"] is False
+    assert parsed["error"] == "notes_args_rejected"
+    assert "bogus" in " ".join(parsed["fields"])
     hunts = HuntsStoreTool(store=store, project_id=PROJECT)
-    with pytest.raises(ValidationError):
-        hunts.invoke({"command": "write",
-                      "specs": [{"status": "hypothesised",
-                                 "fault_keyword": "f1",
-                                 "strategy_keyword": "probe"}], "bogus": 1})
+    out = hunts.invoke({"command": "write",
+                        "specs": [{"status": "hypothesised",
+                                   "fault_keyword": "f1",
+                                   "strategy_keyword": "probe",
+                                   "target_identity": {"url": "https://a"}}],
+                        "bogus": 1})
+    parsed = json.loads(out) if isinstance(out, str) else out
+    assert parsed["ok"] is False
+    assert parsed["error"] == "hunts_store_args_rejected"
+    assert "bogus" in " ".join(parsed["fields"])
 
 
 # --- S3 8.7: the skill pair is bound ------------------------------------------

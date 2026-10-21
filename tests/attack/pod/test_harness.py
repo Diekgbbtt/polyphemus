@@ -223,6 +223,8 @@ def test_harness_is_a_pass_through_for_non_exec_tools():
     ], tools, [harness])
     texts = " ".join(str(getattr(m, "content", "")) for m in result["messages"])
     assert harness.calls == 1
+    assert "note_args_rejected" in texts
+    assert "variant_ref" in texts
 
 def test_harness_dedupes_a_repeated_baseline_replay():
     """O7/C10 on the replay verb: an identical (artifact, overrides) replay is

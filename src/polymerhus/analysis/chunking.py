@@ -45,32 +45,13 @@ from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
 
 logger = logging.getLogger(__name__)
 
-# The per-chunk SOFT target (#13's asset budget, reshaped 2026-10-15 by T3). It is
-# a target, NOT a cap: the builder adds whole topology FAMILIES and closes a chunk
-# once the added families cross this count, so a chunk can exceed it. Families are
-# atomic UP TO the hard cap below (see `chunks_for_job`; rationale in
-# `docs/experiments/typist-feed-quality-diagnosis.md`).
-CHUNK_TARGET_ASSETS = 100
-
-# The hard per-chunk cap. A topology family normally stays atomic, but one family
-# can be enormous: the 2026-10-21 canary produced a single 1,128-Endpoint katana
-# family, which drove the mechanism-typist thread to 592K tokens and defeated
-# compaction at both 0.4 and 0.2. A family above this cap is split into ordered
-# hard-cap sub-chunks. The sub-chunks keep the family's deterministic member order;
-# only the oversized family is split, so normal topology cohesion is unchanged.
+# The per-chunk packing threshold (#13's asset budget, reshaped 2026-10-21 by the
+# F-013 correction). The builder stacks COHERENT endpoint MICRO-FAMILIES (one
+# endpoint plus the headers and parameters that target it) until adding the next
+# micro-family would exceed this count. The default is 300 because a 300-asset
+# prompt stayed inside the analysis role's 200K compaction budget in the canary;
+# the 1,128-endpoint katana bucket that defeated compaction cannot form here.
 CHUNK_MAX_ASSETS = 300
-
-# Endpoint sub-buckets, in match order, keyed on what the recorded response
-# SERVES (the Endpoint's `content_type` prop) - never guessed from the path. A
-# chunk stays homogeneous in surface class, the operator's "break the attack
-# surface down by type". `other` catches anything unrecorded.
-_BUCKET_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("code", ("javascript", "ecmascript", "typescript", "text/css", "wasm")),
-    ("visual", ("image/", "video/", "audio/", "font/")),
-    ("html", ("html",)),
-    ("data", ("json", "xml", "yaml", "csv", "protobuf", "graphql")),
-)
-DEFAULT_BUCKET = "other"
 
 # The family-internal order: the ANCHOR first, then what it owns (the operator's
 # "parent endpoint -> its headers, parameters, secrets, technologies"). A type
@@ -253,49 +234,46 @@ def _baseurl_of(asset: AssetDelta) -> str:
 
 
 def _endpoint_path_of(asset: AssetDelta) -> str:
-    """The path of the Endpoint an asset hangs off (`endpoint_path` identity key, or
-    the path of its inbound Endpoint edge) - '' when the asset is host-anchored."""
+    """The path of the Endpoint an asset hangs off.
+
+    Every endpoint-anchored type carries its path under a type-specific identity
+    key: an Endpoint has `path`; a Parameter and a Secret have `endpoint_path`;
+    a Header has `endpoint` (operator ruling 2026-10-16). The inbound Endpoint
+    edge remains the fallback for an older or parser-shaped delta. Empty means
+    host-anchored.
+    """
     identity = getattr(asset, "identity", None) or {}
-    path = identity.get("endpoint_path")
-    if isinstance(path, str) and path:
-        return path
+    for key in ("endpoint_path", "endpoint", "path"):
+        path = identity.get(key)
+        if isinstance(path, str) and path:
+            return path
     path = _inbound_identity(asset, "Endpoint").get("path")
     return path if isinstance(path, str) else ""
 
 
-def endpoint_bucket(asset: AssetDelta) -> str:
-    """The content-class bucket of an Endpoint: `code` / `visual` / `html` / `data` /
-    `other`, read from the recorded `content_type` prop (never from the path)."""
-    content_type = str((getattr(asset, "props", None) or {}).get("content_type") or "").lower()
-    for bucket, markers in _BUCKET_MARKERS:
-        if any(marker in content_type for marker in markers):
-            return bucket
-    return DEFAULT_BUCKET
+def _family_key(asset: AssetDelta) -> tuple:
+    """Where the asset belongs in the graph (F-013 correction, 2026-10-21).
 
-
-def _family_key(asset: AssetDelta, bucket_by_path: dict[tuple[str, str], str]) -> tuple:
-    """Where the asset belongs in the graph (T3):
-
-    - `("host-meta", baseurl)`: the BaseURL and its host-level findings (Headers,
-      Technologies, Certificates, host-level Secrets).
-    - `("endpoints", baseurl, bucket)`: Endpoints grouped by content class, each
-      with its Parameters and endpoint-anchored Secrets.
-    - `("asset", type, identity)`: an anchorless asset (e.g. a Subdomain) keeps its
-      own singleton family and still streams (the fork-H guarantee).
+    - `("endpoint", baseurl, path)`: ONE endpoint micro-family - the Endpoint
+      plus the Headers, Parameters and endpoint-anchored Secrets that target
+      that path. This is the coherent unit the operator described; stacking
+      these units is what keeps a chunk coupled to a real graph node instead of
+      to an arbitrary content bucket.
+    - `("host-meta", baseurl)`: the BaseURL and its genuinely host-level
+      findings (Technologies, Certificates, host-level Secrets, and Headers
+      that carry no endpoint path).
+    - `("asset", type, identity)`: an anchorless asset (e.g. a Subdomain) keeps
+      its own singleton family and still streams (the fork-H guarantee).
     """
     baseurl = _baseurl_of(asset)
     atype = getattr(asset, "type", None)
     if not baseurl:
         return ("asset", atype, _identity_key(getattr(asset, "identity", None) or {}))
-    if atype in ("Endpoint", "Parameter", "Secret"):
+    if atype in ("Endpoint", "Parameter", "Secret", "Header"):
         path = _endpoint_path_of(asset)
-        if atype == "Endpoint":
-            bucket = endpoint_bucket(asset)
-        else:
-            bucket = bucket_by_path.get((baseurl, path), DEFAULT_BUCKET)
-        if atype == "Secret" and not path:
-            return ("host-meta", baseurl)  # a host-level Secret rides its host
-        return ("endpoints", baseurl, bucket)
+        if path:
+            return ("endpoint", baseurl, path)
+        return ("host-meta", baseurl)
     return ("host-meta", baseurl)
 
 
@@ -332,7 +310,6 @@ def chunks_for_job(
     assets: list[AssetDelta],
     observations: list[Observation] | None = None,
     *,
-    target_assets: int = CHUNK_TARGET_ASSETS,
     max_assets: int = CHUNK_MAX_ASSETS,
 ) -> list[Chunk]:
     """Stream a job's L0 delta into ordered, topology-cohesive `Chunk`s (#13,
@@ -352,12 +329,12 @@ def chunks_for_job(
     2. COLLAPSE - the first occurrence of each `(type, identity)` wins; recon
        re-emits its BaseURL, response Headers and Technologies once per crawled
        transaction, and this is where that per-transaction flood ends;
-    3. GROUP - the stream becomes topology FAMILIES (`_family_key`): a host's
-       metadata family and one family per `(baseurl, content class)` endpoint
-       bucket. Families are ATOMIC and are added whole; a chunk closes once the
-       added families cross `target_assets`, so it follows the graph and never an
-       array position, a family larger than the target goes whole, and the tail is
-       never dropped."""
+    3. GROUP - the stream becomes coherent endpoint MICRO-FAMILIES
+       (`_family_key`): one family per `(baseurl, endpoint path)` holding the
+       Endpoint plus the Headers/Parameters/Secrets that target it, and one
+       host-meta family per BaseURL. Families are added whole; a chunk closes
+       before adding a family would exceed `CHUNK_MAX_ASSETS`, so it follows the
+       graph and never an array position. The tail is never dropped."""
     observations = observations or []
     source_job = job.tool if job is not None else ""
 
@@ -388,20 +365,16 @@ def chunks_for_job(
         seen.add(key)
         deduped.append(asset)
 
-    # 3. group the deduped stream into topology families, order-stable on first
-    # sight. The bucket index first, so a Parameter can follow its Endpoint's class.
-    bucket_by_path: dict[tuple[str, str], str] = {}
-    for asset in deduped:
-        if asset.type == "Endpoint":
-            bucket_by_path[(_baseurl_of(asset), (asset.identity or {}).get("path"))] = \
-                endpoint_bucket(asset)
+    # 3. group the deduped stream into coherent endpoint micro-families, order-
+    # stable on first sight. A family is one endpoint plus the headers/parameters/
+    # secrets that target that endpoint path; host-level findings ride host-meta.
     families: dict[tuple, list[AssetDelta]] = {}
     for asset in deduped:
-        families.setdefault(_family_key(asset, bucket_by_path), []).append(asset)
+        families.setdefault(_family_key(asset), []).append(asset)
 
-    # 4. add families whole; close a chunk once they cross the SOFT target.
+    # 4. stack whole micro-families until adding the next would exceed the cap.
+    # A single family above the cap is split only as a pathological safety valve.
     order = {id(asset): idx for idx, asset in enumerate(deduped)}
-    target = max(1, target_assets)
     windows: list[list[AssetDelta]] = []
     window: list[AssetDelta] = []
     hard_cap = max(1, max_assets)
@@ -413,7 +386,7 @@ def chunks_for_job(
                 windows.append(window)
                 window = []
             window.extend(group)
-            if len(window) >= target:
+            if len(window) >= hard_cap:
                 windows.append(window)
                 window = []
     if window:

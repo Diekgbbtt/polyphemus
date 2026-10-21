@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.spec_contract import (
     SkillProcedure,
+    TargetIdentity,
     skill_procedure_from,
 )
 
@@ -42,18 +43,6 @@ SYMPTOM_CONFIRMED_CLASS = "symptom-confirmed"
 SYMPTOM_ABSENT_CLASS = "symptom-absent"
 NOISE_CLASS = "noise"
 INFEASIBILITY_SIGNAL_CLASS = "infeasibility-signal"
-
-
-class TargetIdentity(BaseModel):
-    """The D4 target identity (#197): the probe base `url` plus the L1
-    service/system `unit_id`. `url` is the base URL the pod probes (authored by
-    the hunter from the projected L0 surface); `unit_id` is the kind-qualified
-    L1 identity (e.g. `service:web:soupmarket`) that surfaces alongside the url
-    for provenance - carried, never INIT-gated. Fields default lenient so an
-    INIT rejection collects violations gracefully rather than raising."""
-
-    url: str = ""
-    unit_id: str = ""
 
 
 class TestImplementationSpec(BaseModel):

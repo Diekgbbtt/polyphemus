@@ -100,10 +100,33 @@ all three tools:
   #209). A residual dict-valued `evidence` call returns the coded rejection
   teaching that structured refs go in `provenance` and `evidence` is prose.
 
-### HuntsStoreArgs (hunter `hunts_store` tool)
+### HuntsStoreArgs (hunter `hunts_store` tool) - F-015 correction (2026-10-21)
+
+**No store-writing tool exposes an open JSON object.** Every persisted object is
+a pydantic model with `extra="forbid"`, every field carries a description, and
+required versus optional is explicit in the schema. Nested objects reuse the
+canonical read-side model, so the write schema and the stored record cannot
+drift. The JSON schema sent in the request's `tools` body is the contract the
+model evaluates; it is never prose the model must translate into an ad-hoc
+object.
 
 - `command` stays REQUIRED with the SAME coded teaching rejection on omission.
-- `spec: dict` stays UNTYPED (design intent: the author adds arbitrary fields).
+- `SpecWrite` is the typed write payload: `status`, `fault_keyword`,
+  `strategy_keyword` and `target_identity` are REQUIRED; the remaining fields
+  are optional and described. `target_identity` is the shared
+  `spec_contract.TargetIdentity`; `provenance` is the typed
+  `spec_contract.SpecProvenance` (including the typed `SkillProcedure`). The
+  earlier `extra="allow"` tail is retired: `spec_id` and any invented field are
+  rejected, because the pod's canonical `TestImplementationSpec` is
+  `extra="forbid"` and never persisted them.
+- Missing required fields and unknown fields are CODED teaching rejections
+  naming the offending path and the accepted required/optional set, so a model
+  self-corrects instead of decoding a bare pydantic error.
+
+The same rule applies to the modeller's `hunts_store`: its `sections` payload
+is the typed `threat_model.ModelSections`, not an open mapping. `notes` and the
+pod `note` already carry typed sub-models; they inherit the shared missing/
+unknown-field rejection through `StoreToolBase`.
 
 ### NoteToolSpec (pod `note` tool)
 

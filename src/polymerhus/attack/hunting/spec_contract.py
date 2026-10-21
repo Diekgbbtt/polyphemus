@@ -18,7 +18,7 @@ performs no I/O at import (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 SKILL_PROCEDURE_FIELDS: tuple[str, ...] = (
     "recon_action",
@@ -52,6 +52,59 @@ SPEC_PROVENANCE_FIELDS: tuple[str, ...] = (
 dispatch payload; `baseline_ref` is optional; `source_recon_refs`,
 `assumption_ref` and `playbook` record the grounding the hunter used; the
 `skill_procedure` is the typed excerpt above."""
+
+
+class TargetIdentity(BaseModel):
+    """The D4 target identity (#197): the probe base `url` plus the L1
+    service/system `unit_id`.
+
+    This is the ONE home for the shape the hunter writes and the pod reads.
+    Fields default lenient so the pod's INIT rejection can collect every
+    violation instead of raising at parse time.
+    """
+
+    url: str = Field(
+        default="",
+        description="The base URL the pod probes; author it from the projected "
+                    "L0 attack surface. A spec without a url is INIT-rejected.")
+    unit_id: str = Field(
+        default="",
+        description="The kind-qualified L1 service/system identity that surfaces "
+                    "alongside the URL (for provenance).")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SpecProvenance(BaseModel):
+    """The typed provenance mapping every hunter spec carries (S3 8.6/8.9).
+
+    The field set is the `SPEC_PROVENANCE_FIELDS` contract, so the tool schema
+    and the pod/triager read cannot drift. `skill_procedure` is the same typed
+    seven-field excerpt the triager reads; it is never prose.
+    """
+
+    loop_id: str = Field(default="", description="The dispatching loop id.")
+    unit_id: str = Field(default="", description="The L1 unit identity.")
+    canonical_class: str = Field(
+        default="", description="The freely named taxonomy class.")
+    web_vulnerability_class: str = Field(
+        default="",
+        description="The suite directory name; empty for a suite_gap.")
+    baseline_ref: str = Field(
+        default="",
+        description="The optional recorded-baseline artifact id.")
+    source_recon_refs: list[str] = Field(
+        default_factory=list,
+        description="The recon observations/probes this spec is grounded on.")
+    assumption_ref: str = Field(
+        default="", description="The assumption this spec tests, when one applies.")
+    playbook: str = Field(
+        default="", description="The short procedure the pod should follow.")
+    skill_procedure: SkillProcedure | None = Field(
+        default=None,
+        description="The typed seven-field skill excerpt the triager reads.")
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SkillProcedure(BaseModel):
@@ -96,6 +149,8 @@ def skill_procedure_from(provenance: object) -> SkillProcedure | None:
 
 __all__ = [
     "SkillProcedure",
+    "SpecProvenance",
+    "TargetIdentity",
     "SKILL_PROCEDURE_FIELDS",
     "SKILL_PROCEDURE_MAX_CHARS",
     "SPEC_PROVENANCE_FIELDS",

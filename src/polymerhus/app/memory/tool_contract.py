@@ -34,6 +34,15 @@ each seam's
 `_read` / `_write`. Each seam keeps its OWN args schema and field map; this
 module exposes only the generic base and the generic builder.
 
+**Typed-store contract discipline (F-015, 2026-10-21).** Every tool that
+persists data to a store exposes the persisted object as a pydantic model, not
+an open JSON object: `extra="forbid"`, every field described, required versus
+optional explicit, and nested objects reuse the canonical read-side model. The
+shared rejection below turns a missing required field or an unknown field into
+a coded teaching rejection naming the field path and the accepted
+required/optional set. The tool-calling schema itself is therefore the contract
+the model evaluates.
+
 Import performs no I/O (CODING_STANDARD section 6).
 """
 from __future__ import annotations
@@ -44,6 +53,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Union, get_args, get_origin
 
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ValidationError
 
@@ -79,6 +89,25 @@ def _literal_choices(annotation: Any) -> tuple[str, ...] | None:
             if get_origin(arg) is Literal:
                 return tuple(str(a) for a in get_args(arg))
     return None
+
+
+def _field_path(loc: Sequence[Any]) -> str:
+    """A human/model-readable dotted path from a pydantic error location."""
+    out = ""
+    for part in loc:
+        if isinstance(part, int):
+            out += f"[{part}]"
+        else:
+            out += f".{part}" if out else str(part)
+    return out or "<root>"
+
+
+def _schema_field_sets(args_schema: type[BaseModel] | None) -> tuple[list[str], list[str]]:
+    """The root schema's required and optional field names, in declaration order."""
+    fields = getattr(args_schema, "model_fields", None) or {}
+    required = [name for name, field in fields.items() if field.is_required()]
+    optional = [name for name, field in fields.items() if not field.is_required()]
+    return required, optional
 
 
 def _enum_violation(
@@ -150,6 +179,38 @@ def coded_teaching_rejection(
                 f"{discriminator}=\"read\""
             ),
         }
+    missing = [e for e in errors if e.get("type") == "missing"]
+    if missing:
+        fields = [_field_path(list(e.get("loc") or ())) for e in missing]
+        required, optional = _schema_field_sets(args_schema)
+        return {
+            "ok": False,
+            "error": f"{tool_name}_args_rejected",
+            "fields": fields,
+            "detail": (
+                "missing required field(s): " + ", ".join(fields)
+                + ". Required: " + ", ".join(required)
+                + ". Optional: " + ", ".join(optional)
+                + ". Supply the missing field(s) and retry."
+            ),
+        }
+
+    extra = [e for e in errors if e.get("type") == "extra_forbidden"]
+    if extra:
+        fields = [_field_path(list(e.get("loc") or ())) for e in extra]
+        required, optional = _schema_field_sets(args_schema)
+        return {
+            "ok": False,
+            "error": f"{tool_name}_args_rejected",
+            "fields": fields,
+            "detail": (
+                "unknown field(s): " + ", ".join(fields)
+                + ". The contract accepts required fields: " + ", ".join(required)
+                + "; optional fields: " + ", ".join(optional)
+                + ". Remove the unknown field(s) and retry."
+            ),
+        }
+
     enum = _enum_violation(errors, args_schema)
     if enum is not None:
         field, choices = enum
@@ -203,7 +264,13 @@ class StoreToolBase(BaseTool):
             )
             if coded is None:
                 raise
-            return json.dumps(coded) if self._as_json else coded
+            content = json.dumps(coded) if self._as_json else coded
+            # LangGraph's ToolNode calls a tool with a ToolCall dict and expects
+            # a ToolMessage (or Command) back. A direct unit-test invocation has
+            # no id and keeps the plain payload.
+            if isinstance(input, dict) and input.get("id"):
+                return ToolMessage(content=content, tool_call_id=str(input["id"]))
+            return content
 
     def _run(self, **kwargs: Any):
         schema = self.args_schema

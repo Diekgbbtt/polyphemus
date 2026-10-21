@@ -251,22 +251,24 @@ def test_C18_hunts_store_invalid_args(tmp_path):
     assert empty["error"] == "hunts_store_write_rejected"
     missing = json.loads(_hunts(store, command="write", specs=[
         {"status": "hypothesised", "fault_keyword": "f1"}]))
-    assert missing["error"] == "hunts_store_write_rejected"
+    assert missing["error"] == "hunts_store_args_rejected"
+    assert "target_identity" in " ".join(missing["fields"])
     assert "strategy_keyword" in " ".join(missing["fields"])
     bad_status = json.loads(_hunts(store, command="write", specs=[
         _spec(status="specified")]))
     assert bad_status["error"] == "hunts_store_write_rejected"
     authored_id = json.loads(_hunts(store, command="write", specs=[
         _spec(spec_id="S1")]))
-    assert authored_id["error"] == "hunts_store_write_rejected"
+    assert authored_id["error"] == "hunts_store_args_rejected"
+    assert "spec_id" in " ".join(authored_id["fields"])
     assert store.read_specs(PROJECT, HUNT_KEY) == []
 
 
 def test_C19_tool_read_filters_produce_projection(tmp_path):
     store = build_memory_store(tmp_path)
     _hunts(store, command="write", specs=[
-        {"status": "ratified", "fault_keyword": "f1", "strategy_keyword": "probe"},
-        {"status": "dropped", "fault_keyword": "f2", "strategy_keyword": "probe"},
+        _spec(status="ratified", fault_keyword="f1", strategy_keyword="probe"),
+        _spec(status="dropped", fault_keyword="f2", strategy_keyword="probe"),
     ])
     out = json.loads(_hunts(store, command="read", statuses=["ratified"],
                             attributes=["status"]))

@@ -474,6 +474,8 @@ def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
         provenance.get("loop_id"),
         spec.get("rationale"),
         spec.get("assumptions"),
+        spec.get("verification_symptoms"),
+        as_dict(spec.get("target_identity")).get("url"),
     ])
     unit_match = unit_match_text(unit_id, identity)
     class_match = class_matches(class_text, vuln.get("type", ""), identity.get("fault_class", ""))
@@ -501,6 +503,7 @@ def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
         "unit_match": unit_match,
         "class_match": class_match,
         "candidate": bool(unit_match and class_match),
+        "class_candidate": class_match,
         "required_present": present,
         "required_total": len(required),
         "retired_fields": retired,
@@ -649,7 +652,10 @@ def main() -> int:
             candidate_text = loop_text(loop_record, model)
             unit_match = unit_match_text(text_of(loop_record.get("unit_id")), identity)
             class_match = class_matches(candidate_text, vuln.get("type", ""), identity.get("fault_class", ""))
-            if unit_match:
+            # Keep a class-level row even when the model bound a different L1
+            # unit: the artifact exists and the class is the benchmark's, so
+            # zeroing it hides real work behind a unit-identity miss.
+            if unit_match or class_match:
                 loop_rows.append({
                     "path": loop_record.get("_path"),
                     "unit_id": loop_record.get("unit_id"),
@@ -658,13 +664,14 @@ def main() -> int:
                     "unit_match": unit_match,
                     "class_match": class_match,
                     "candidate": bool(unit_match and class_match),
+                    "class_candidate": class_match,
                     "web_vulnerability_class": as_dict(loop_record.get("loop")).get("web_vulnerability_class"),
                     "canonical_class": as_dict(loop_record.get("loop")).get("canonical_class"),
                 })
         spec_rows = []
         for spec in specs:
             row = spec_metrics(spec, vuln, identity)
-            if row["unit_match"]:
+            if row["unit_match"] or row.get("class_match"):
                 spec_rows.append(row)
         pod_rows = []
         for pod in pods:
@@ -673,7 +680,7 @@ def main() -> int:
                 spec_dir == str(row.get("spec_id") or "")
                 or spec_dir == str(row.get("dispatch") or "")
                 for row in spec_rows
-                if row.get("candidate")
+                if row.get("candidate") or row.get("class_candidate")
             ):
                 pod_rows.append(pod)
         verdict = next((v for v in verdicts if str(v.get("vuln_id")) == vuln["vuln_id"]), {})
@@ -690,9 +697,11 @@ def main() -> int:
             "loops": loop_rows,
             "loop_candidate": any(row["candidate"] for row in loop_rows),
             "loop_unit_candidate": any(row["unit_match"] for row in loop_rows),
+            "loop_class_candidate": any(row.get("class_candidate") for row in loop_rows),
             "specs": spec_rows,
             "spec_candidate": any(row["candidate"] for row in spec_rows),
             "spec_unit_candidate": any(row["unit_match"] for row in spec_rows),
+            "spec_class_candidate": any(row.get("class_candidate") for row in spec_rows),
             "pods": pod_rows,
             "pod_run": bool(pod_rows),
             "pod_confirmed": any(int(p.get("confirmed") or 0) > 0 for p in pod_rows),
@@ -748,16 +757,21 @@ def main() -> int:
             "missed": missed,
             "loop_candidates": sum(1 for v in per_vuln if v.get("loop_candidate")),
             "loop_unit_candidates": sum(1 for v in per_vuln if v.get("loop_unit_candidate")),
+            "loop_class_candidates": sum(1 for v in per_vuln if v.get("loop_class_candidate")),
             "spec_candidates": sum(1 for v in per_vuln if v.get("spec_candidate")),
             "spec_unit_candidates": sum(1 for v in per_vuln if v.get("spec_unit_candidate")),
+            "spec_class_candidates": sum(1 for v in per_vuln if v.get("spec_class_candidate")),
             "pod_runs": sum(1 for v in per_vuln if v.get("pod_run")),
             "pod_confirmed": sum(1 for v in per_vuln if v.get("pod_confirmed")),
             "confirmed_non_gt": confirmed_non_gt,
             "core_floor": core_floor,
             "full_core": full_core,
-            "loops_total": len(loops_all),
-            "specs_total": len(specs_all),
-            "pods_total": len(pods_all),
+            "loops_total": len(loops),
+            "specs_total": len(specs),
+            "pods_total": len(pods),
+            "loop_rows_matched": len(loops_all),
+            "spec_rows_matched": len(specs_all),
+            "pod_rows_matched": len(pods_all),
         },
         "rates": {
             "identification_rate": round(identified / gt_total, 4) if gt_total else None,

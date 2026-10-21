@@ -314,6 +314,24 @@ class Validation(_Record):
     referential_errors: list[str] = Field(default_factory=list)
 
 
+class ModelSections(BaseModel):
+    """The typed write payload for one threat-model gate.
+
+    The tool schema exposes exactly the sections the store accepts; it is not
+    an open `dict`. The store still enforces the per-gate allowed set, so a
+    section from the wrong gate is a coded rejection. All fields are optional
+    because a gate writes only its own section(s)."""
+
+    technical_sharpening: TechnicalSharpening | None = None
+    trust_model: TrustModel | None = None
+    assumptions: list[Assumption] | None = None
+    vulnerabilities: list[Vulnerability] | None = None
+    failure_modes: list[FailureMode] | None = None
+    loops: list[Loop] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class UnitThreatModel(_Record):
     """The complete unit threat model (S2 5.1).
 

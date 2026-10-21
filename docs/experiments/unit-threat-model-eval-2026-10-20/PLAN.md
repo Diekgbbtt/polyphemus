@@ -370,8 +370,9 @@ The evaluation is complete when:
 ## Current preflight state
 
 Completed:
-- dev force-pushed at `a4f47939`; deploy-eval succeeded;
-- instance worktree reset to `a4f47939`;
+- dev force-pushed at `9e9e8522`; deploy-eval succeeded for the 300-asset cap;
+- the endpoint micro-family fix and the typed store contracts are local, tested, and not yet deployed;
+- instance worktree reset to `9e9e8522`;
 - `.env` overwritten and preflight-clean;
 - the five-job recon subset is wired through the setup and the trial;
 - agent, LightRAG, and kali recreated;
@@ -390,11 +391,16 @@ Canary history:
 - attempt 2 then stalled in analysis: `mechanism_typist` reached 649,011 tokens against a 400,000 budget at the global `0.4`, the compaction log kept `over_budget=True` with no reduction, and the analysis never drained;
 - attempt 2 produced no hunting run and no trial record;
 - the analysis worker was cleared by an agent restart;
-- the analysis roles now compact at `0.2`; the hunting roles remain at `0.4`.
+- the analysis roles now compact at `0.2`; the hunting roles remain at `0.4`;
+- attempt 4 reached recon complete, analysis drained, hunting complete, and pod execution;
+- attempt 4's trial record is `failed` on a provider 429 at 00:27:30; the T11 operator resume returned 202 and the hunting run completed at 01:05:04;
+- attempt 4's official assessor marked all 6 comfyui vulnerabilities `missed`; `diagnoses.yaml` names F-017 (a consumed pod spec was lost on the provider pause) as the leading cause;
+- attempt 4 spent 4,420,861 capped tokens of 7,000,000.
 
 Pending:
-- canary attempt 4 with the analysis-role compaction override and the 300-asset chunk cap;
-- canary measurement;
+- measure canary attempt 4 with `eval/measure_trial.sh`;
+- deploy and retest the F-013 endpoint micro-family fix and the F-015 typed contracts;
+- apply the F-016 gateway request-limit fix and decide the durable budget binding;
 - the remaining seven trials.
 
 Pre-run corrections:
@@ -402,5 +408,39 @@ Pre-run corrections:
 - attempt 2: added the role-specific analysis compaction override, because the global `0.4` did not drain the 1,128-asset mechanism-typist chunk;
 - attempt 3: proved the `0.2` override alone is insufficient; the family still entered as one 592K recent block;
 - attempt 3: added the hard `CHUNK_MAX_ASSETS=300` chunk cap, which splits only an oversized family into ordered sub-chunks;
+- attempt 4: measured with the five-job subset, the 0.2 analysis thresholds, the 0.4 hunting thresholds, and the 300-asset split;
+- post-attempt 4: replaced the split workaround with the endpoint micro-family packing fix (F-013) and typed the store contracts (F-015);
+- post-attempt 4: decoupled the gateway RPM limit from the disabled USD guard (F-016);
 - the failed attempts are smoke failures, not measured trials;
-- the measured run uses the five-job subset, the role-specific compaction thresholds, and the hard chunk cap.
+- attempt 4 is a measurement case, not a clean baseline.
+
+## Canary 4 measurement caveats
+
+The measurement must report the following structural limitations separately from model quality:
+
+- The recon used the documented five-job subset (`httpx`, `httpx_reprofile`, `katana`, `jsluice`, `arjun`), not the platform's full plan. The full plan cannot reach the synthetic host through the remote Steel runtime.
+- The analysis used the 300-asset hard-cap split, not the endpoint micro-family packing fix. The canary's mechanism-typist chunks were 200K-235K and close to the 200K analysis budget; the micro-family fix is post-canary.
+- The analysis roles used 0.2 compaction; the hunting roles used 0.4.
+- The gateway had no request limiter: `LLM_GATEWAY_BUDGET_ENABLED=false` and no `LLM_GATEWAY_KEY_RPM_LIMIT`. The provider returned repeated 429s.
+- The trial record is `failed` on the provider failure while the hunting run was resumed by the T11 operator verb and completed. The assessor and diagnoser were dispatched manually on a failed record; the normal monitor would defer a failed trial.
+- The 7M cap is trial-client-scoped. The trial froze at 3,892,171 spent; the app continued after the client failure to 4,420,861. The cap was not reached, but the execution was not budget-supervised after the failure.
+- F-015 dropped one four-spec `hunts_store` batch during the hunter phase. The typed-contract fix is post-canary.
+- F-017 lost one admitted pod spec when the run paused; the spec had no PodExport. The 0/6 discovery result is therefore not a clean model-quality baseline.
+- The measurement must distinguish discovery quality (0/6), execution quality (the phases did run), and structural defects (F-013, F-015, F-016, F-017).
+
+## Canary 4 measurement checklist
+
+Run:
+
+```
+bash eval/measure_trial.sh comfyui \
+  /opt/polymerhus-dev/eval/runs-utm-20261020/comfyui-1/comfyui-1-20261021T002730-1fc05262 \
+  /opt/polymerhus-dev/eval/instances/data/eval-server-1
+```
+
+Then verify:
+- `metrics.yaml` exists and its counts match the trial artifacts;
+- `measurements.yaml` and `measurements.md` exist;
+- every quality claim cites an artifact or a Langfuse observation;
+- the report separates structural limitations from model quality;
+- the report names the 0/6 verdict result and the F-017 cause.
