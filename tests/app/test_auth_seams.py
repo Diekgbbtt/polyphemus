@@ -203,4 +203,5 @@ def test_auth_capable_bindings_use_direct_references_not_the_full_index() -> Non
     assert "`lightrag-query`" in line
     assert "Skills available through the `load_skill` tool" not in line
     assert "when to use" not in line.lower()
+    assert len(line) < 1000
     assert len(binding.middleware) == 1

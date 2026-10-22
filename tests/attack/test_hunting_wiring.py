@@ -447,7 +447,7 @@ def test_ratified_spec_dispatches_one_pod_through_the_same_mover(stores, monkeyp
             return None
         return dispatch, None
 
-    async def spec_pods(spec, *, run_id, project_id, memory_store, spec_id):
+    async def spec_pods(spec, *, run_id, project_id, memory_store, spec_id, **_kw):
         pod_calls.append((spec_id, str(spec.get("consume_me", ""))))
         return {"verdict": "successful", "terminal_reason": "symptom-confirmed",
                 "evidence": {"trail": []}, "clean": True, "iterations": 1}
@@ -495,7 +495,7 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
             return None
         return dispatch, None
 
-    async def throttled_pods(spec, *, run_id, project_id, memory_store, spec_id):
+    async def throttled_pods(spec, *, run_id, project_id, memory_store, spec_id, **_kw):
         raise ProviderUnavailableError(
             "Go usage limit exceeded", status_code=429, quota_exhausted=True)
 
@@ -551,7 +551,7 @@ def test_a_transient_pod_failure_requeues_only_that_spec_and_keeps_the_sibling_l
             return None
         return dispatch, None
 
-    async def flaky_pods(spec, *, run_id, project_id, memory_store, spec_id):
+    async def flaky_pods(spec, *, run_id, project_id, memory_store, spec_id, **_kw):
         attempts[spec_id] = attempts.get(spec_id, 0) + 1
         if spec_id == "sqli_blind" and attempts[spec_id] == 1:
             raise ProviderUnavailableError(

@@ -151,13 +151,20 @@ def test_gateway_turn_grounds_retrieves_and_verdicts(tmp_path):
     (overview read + skill load), the tracker observes the documented
     transitions, and the turn closes with the structured verdict."""
     make, _ = _script_model(
-        [{"name": "auth_store", "args": {"command": "read", "path": ""}, "id": "1"},
+        [{"name": "auth_store", "args": {"command": "read", "path": "", "view": "full"}, "id": "1"},
          {"name": "load_skill", "args": {"name": "authn"}, "id": "2"}],
         [_verdict_call()],
     )
     store = _seeded_store(
         tmp_path, overview={"login_endpoint": "https://x/login"},
         accounts=_account())
+    bundle = tmp_path / "target-specific-procedure" / "p1" / "authn"
+    bundle.mkdir(parents=True)
+    (bundle / "SKILL.md").write_text(
+        "---\nname: authn\ndescription: Project authentication procedure\n---\n"
+        "# Project authn\nUse the recorded login envelope.\n",
+        encoding="utf-8",
+    )
     actor = _actor("r1", store=store, model_factory=make, tmp_path=tmp_path)
 
     verdict = asyncio.run(actor.run_gateway())
