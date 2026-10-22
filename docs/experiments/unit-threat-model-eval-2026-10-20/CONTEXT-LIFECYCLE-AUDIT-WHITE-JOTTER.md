@@ -31,9 +31,9 @@ The context is large because several tools return full, sparse payloads and the 
 
 The largest single payloads are:
 
-- the full redacted auth store at 74,649 chars, about 18.7k tokens;
+- the 50-row HTTP-history page at 74,649 chars, about 18.7k tokens;
 - the full KB answer at 89,087 chars, about 22.3k tokens;
-- the 50-row HTTP-history page at 22,302 chars, about 5.6k tokens;
+- the full redacted auth store at 22,302 chars, about 5.6k tokens; the two auth YAML files are 7,476 bytes;
 - the full skill body at 20,898 chars, about 5.2k tokens;
 - a raw terminal result that adds 17,773 tokens in one step.
 
@@ -47,9 +47,12 @@ The compaction is a last-resort turn-end pass, not an inline tool-response offlo
 A tool body over 700 tokens stays in context until a pass fires.
 The hunter and pod contexts never reach the 400,000 trigger, so their large tool bodies stay for the whole session.
 
-The fallback is also cache-breaking.
-The modeller's over-budget and post-compaction calls at 02:26 and 02:34 are the three Langfuse-only generations that the client usage ledger missed.
-The compaction boundary and the cache miss are the context-lifecycle cause of the 477,417 capped-token gap reported in the token reconciliation.
+The fallback is not cache-breaking in the current implementation.
+The running summary is staged after the stable region and before the replay tail; it is not the first message.
+The modeller's over-budget calls at 02:26 and 02:34 are the three Langfuse-only generations that the client usage ledger missed.
+The 02:26 calls follow a five-minute twenty-one-second gap and have zero cache read; the pass applies at 02:34:49.
+The cache miss is a provider-cache timing effect, not a summary-placement defect.
+The three calls remain the 477,417 capped-token gap in the token reconciliation.
 
 ## Configuration
 
@@ -128,9 +131,9 @@ These are the largest generation-to-generation input increases in the session sa
 
 | Session | Time | Delta tokens | Tool call before the jump | Payload |
 |---|---|---:|---|---|
-| modeller | 00:06:20 | 34,489 | `search_http_history`, `auth_store` | auth store 74,649 chars; HTTP page 22,302 chars |
+| modeller | 00:06:20 | 34,489 | `search_http_history`, `auth_store` | HTTP page 74,649 chars; auth store 22,302 chars |
 | pod triager | 00:50:28 | 40,232 | `query_lightrag` | KB answer 89,087 chars |
-| pod runner | 01:56:34 | 29,559 | `auth_store`, `load_skill`, `replay` | auth store 74,649 chars; skill 20,898 chars |
+| pod runner | 01:56:34 | 29,559 | `auth_store`, `load_skill`, `replay` | replay 74,649 chars; auth store 22,302 chars; skill 20,898 chars |
 | hunter `IntegrationSystem-cross-origin-policy__loop-2` | 00:49:06 | 33,420 | `get_http_artifact` x2, `auth_store` | artifact and auth payload |
 | hunter `IntegrationSystem-cross-origin-policy__loop-1` | 01:25:21 | 12,843 | `graph_view`, `skill_load` | graph rows and skill body |
 | hunter `Service-navigation-menu__loop-1` | 01:32:45 | 26,445 | `auth_store`, `kb_query` | auth store plus KB answer |
@@ -138,11 +141,11 @@ These are the largest generation-to-generation input increases in the session sa
 
 The message-level sizes are exact for the sampled sessions:
 
-- the auth-store tool message is 74,649 chars;
+- the auth-store tool message is 22,302 chars;
 - the KB-answer tool message is 89,087 chars;
-- the HTTP-history tool message is 22,302 chars;
+- the HTTP-history tool message is 74,649 chars;
 - the skill tool message is 20,898 chars in the pod runner and 8,567 chars in the modeller;
-- the tool-message list for the pod runner contains 74,649, 20,898, 6,364, 2,948, 2,486, 2,104, 2,045, 1,927, and 1,025 chars.
+- the tool-message list for the pod runner contains 74,649, 20,898, 6,364, 2,948, 2,486, 2,104, 2,045, 1,927, and 1,025 chars; the 74,649-char message is the replay result.
 
 ## What the first call already pays
 
@@ -150,19 +153,24 @@ The first generation of each session carries the system prompt and the tool sche
 
 | Role | First input tokens | System message chars | First user chars |
 |---|---:|---:|---:|
-| hunting_hunter `Service-navigation-menu__loop-1` | 24,840 | not parsed | not parsed |
+| hunting_hunter `Service-navigation-menu__loop-1` | 24,840 | 27,920 | 37,252 |
 | hunting_hunter `IntegrationSystem-cross-origin-policy__loop-2` | 25,745 | not parsed | not parsed |
 | hunting_threat_modeller | 17,076 | 23,297 | 5,015 |
 | pod_runner | 8,810 | 9,446 | 6,574 |
 | pod_triager | 11,712 | 11,724 | 14,318 |
 
+The nav1 hunter first input is 104,119 chars.
+It contains 27,920 system-message chars, 1,761 application-overview chars, 35,491 loop-payload chars, 37,330 preloaded tool-result chars, and the remaining tool-schema and request-framing chars.
+The 25k-token figure is plausible at about four chars per token.
+The 19k-word figure is a rough token-to-word conversion, not a separate fault.
+The earlier component sentence omitted the preloaded tool results; the corrected breakdown is above.
+
 The hunter's fixed first-call context is about 25k tokens.
 At 397 hunter calls, the fixed first-call context alone is about 9.86M tokens.
 Across the four hunting roles, the first-call context is about 19.8M tokens, or 20.9% of the total.
-
 The system prompt is served on every turn.
 The tool schemas and the long tool descriptions ride every request.
-The hunter prompt, the cognitive map, the skill index, and the tool schemas are the fixed tax.
+The system prompt, the application overview, the loop payload, the preloaded tool results, and the tool schemas are the fixed tax.
 
 ## Failure-mode families
 
@@ -170,8 +178,8 @@ The hunter prompt, the cognitive map, the skill index, and the tool schemas are 
 
 The project-context tools return the full state or the full page by default.
 
-- `auth_store` with `path=""` returns the full redacted state, which is 74,649 chars in this trial.
-- `search_http_history` defaults to 50 rows, which produced a 22,302-char message.
+- `auth_store` with `path=""` returns the full redacted state at 22,302 chars; the two auth YAML files are 7,476 bytes.
+- `search_http_history` defaults to 50 rows, which produced a 74,649-char message.
 - `graph_view` has no row cap by operator ruling, which produced a 12,843-token jump.
 - `hunts_store` and `notes` reads return all matching records with no limit or cursor.
 - `get_http_artifact` returns one full record with all headers and capture context.
@@ -213,20 +221,18 @@ The modeller compacts once, at 401,278, after more than an hour near the top of 
 The offload of a tool body over 700 tokens happens only inside a compact pass.
 The tool body stays full until the pass, and the pass only runs at the turn boundary or the next model-call barrier.
 
-### CL-6 - Cache-breaking compaction
+### CL-6 - Cache miss around the over-budget window
 
-The modeller's over-budget window and the pass at 02:34:49 align with three Langfuse-only generations:
-
-- 02:26:17, 234,411 uncached input, cache 0;
-- 02:26:44, 234,411 uncached input, cache 0;
-- 02:34:18, 234,368 cached input, small output.
-
-The app's client usage ledger does not contain those three generations.
-The prior token reconciliation attributes 477,417 capped tokens to them.
-The 02:20:56 call had 398,976 cache-read tokens.
-The 02:26 calls had zero cache read.
+The three Langfuse-only generations are 02:26:17, 02:26:44, and 02:34:18.
+The 02:26 calls have 234,411 uncached input and zero cache read.
+The 02:34:18 call has 234,368 cache read.
+The 02:20:56 call has 398,976 cache read.
 The gap is five minutes and twenty-one seconds.
-The pass and the cache boundary are the context-lifecycle explanation for the capped-token gap.
+The pass applies at 02:34:49.
+The pass stages the running summary after the stable region and before the replay tail.
+The summary is not the first message.
+The cache miss occurs before the pass, and the pass is not the cause.
+The three calls remain the 477,417 capped-token client-ledger gap.
 
 ### CL-7 - Fixed prompt and tool-schema tax
 
@@ -256,8 +262,8 @@ The exact command and the evidence files are in the reproduction section.
 
 **Symptom.** A project-context read adds 12k-34k tokens to the next model call.
 
-**Evidence.** The auth store is 74,649 chars.
-The HTTP-history page is 22,302 chars.
+**Evidence.** The auth store is 22,302 chars; the two auth YAML files are 7,476 bytes.
+The HTTP-history page is 74,649 chars.
 The graph jump is 12,843 tokens.
 The messages are in the modeller `00:06:20` input, the pod runner `01:56:34` input, and the hunter `01:25:21` input.
 
@@ -275,7 +281,7 @@ H4 is confirmed by the ledger.
 H5 is rejected: the task needs the account shape and a few HTTP rows, not the full store and a 50-row page.
 
 **Probe.** Read the same auth store with `path="overview"`, `path="accounts.<name>"`, and `path=""`.
-The full read is 74,649 chars; the narrow reads are the size of one account or the overview.
+The full auth read is 22,302 chars; the full HTTP search is 74,649 chars; the narrow reads are the size of one account or the overview.
 The probe is the recorded message plus the tool contract at `src/polymerhus/app/auth/tool.py:133`.
 
 **Root cause.** The `AUTH_STORE_READ_CONTRACT` defines an empty path as the full state for orientation.
@@ -289,19 +295,16 @@ The `hunts_store` and `notes` reads have no limit.
 
 1. The agent calls the context tool with the default full read.
 2. The tool returns the full state or page.
-3. The tool message enters the context at 12k-34k tokens.
+3. The tool message enters the context at 22k-74k tokens.
 4. The compaction trigger is 400,000 tokens, so the payload stays.
 5. Every later call re-sends the payload.
 6. The total consumption grows by the payload size times the remaining calls.
 7. A cache miss turns the repeated payload into capped cost.
 
-**Fix.** Change the default to a bounded index.
-The auth store default returns the overview plus the account names and statuses.
-A path returns one account or one token projection.
-The HTTP-history default limit is 10, with a required filter or text.
-The graph view gets a server-side default row cap and a field projection.
-The store reads return an index, with a `get` for one body.
-The prompts name the narrow call and the full-read exception.
+**Fix.** The approved follow-up is the auth-store summary view.
+The default returns the overview plus the account index and token metadata; credentials, token values, form selectors, role credential sets, and steel profiles are path-only.
+The auth-store agents also get the project `authn` skill in their skill listing and load path.
+The HTTP-history limit, graph cap, store index, and prompt wording are proposed follow-ups; they are not approved.
 
 **Regression test.** Add a contract test that asserts the default auth read is under 4,000 chars and that a narrow path returns one account.
 Add a history test that asserts the default limit is 10.
@@ -388,13 +391,13 @@ The pod spec also embeds the typed procedure.
 5. The pod has no compaction.
 6. The duplicate stays for the session.
 
-**Fix.** Return the typed procedure and a short usage protocol.
-Put the full skill body behind a `section` or `max_chars` argument and a body ref.
-Do not embed the full procedure in the spec when the typed fields are already there.
-The triager uses the typed fields once.
-The prompt says: load once, extract the typed procedure, do not re-load.
+**Fix.** The approved dedup is context-only.
+Keep the spec schema.
+Omit `provenance.skill_procedure` from the full spec JSON in the pod contexts and render the typed excerpt once.
+The skill-body and tool-protocol bound is a proposal, not approved.
 
-**Regression test.** Assert the default skill result is under 4,000 chars and that the typed procedure is present once in the pod triager context.
+**Regression test.** Assert the typed procedure is present once in the pod triager context and that the full spec JSON has no `skill_procedure` key.
+The default skill-result size test is a proposal.
 
 ### CL-4 diagnosis
 
@@ -479,20 +482,16 @@ The pod path does not inject the middleware.
 5. The pass fires late or not at all.
 6. The context is re-sent on every call.
 
-**Fix.** Offload the tool body at the tool boundary.
-Apply `offload_tool_message` in an `after_model` or `wrap_tool_call` hook to every result over 700 tokens.
-Store the full body and return a header with the outline, status, head, tail, and ref.
-Wire `runner_compaction_middleware` and `triager_compaction_middleware` into the pod path.
-Set a task budget of about 60k-100k rather than 0.4 of the model window.
-Keep the turn-end summary pass as the second line of defence.
+**Fix.** The approved change is the pod compaction wiring through the existing `after_model` middleware.
+The inline tool-response offload and the task budget are not approved; they are analysis proposals.
+The n-turn offload experiment is the approved way to quantify the modified offload.
 
-**Regression test.** Add a test that a tool result over 700 tokens is replaced by a header before the next model call, with no compact pass.
-Add a pod wiring test that asserts both middleware are injected.
-Add a test that the hunter threshold is the task budget.
+**Regression test.** Add a pod wiring test that asserts both middleware are injected.
+The inline-offload and task-budget tests are proposals.
 
 ### CL-6 diagnosis
 
-**Symptom.** The compaction boundary coincides with a 468,865 uncapped input charge.
+**Symptom.** The over-budget window contains a 468,865 uncapped input charge.
 
 **Evidence.** The 02:20:56 call had 398,976 cache-read tokens.
 The 02:26:17 and 02:26:44 calls had 234,411 uncached input and zero cache read.
@@ -503,47 +502,38 @@ The prior reconciliation values them at 477,417 capped.
 
 **Ranked hypotheses.**
 
-1. The compaction changed the request prefix and invalidated the provider cache.
-2. The five-minute gap exceeded the provider cache lifetime.
-3. The two 02:26 calls were retries with a changed prefix.
+1. The five-minute gap exceeded the provider cache lifetime.
+2. The two 02:26 calls were retries with a changed prompt.
+3. The compaction summary changed the stable prefix.
 4. The client usage middleware skipped the calls because they were streamed or retried.
-5. The cache loss is unrelated to the compaction.
+5. The cache loss is unrelated to the timing.
 
-H1 and H2 are both supported.
-The pass and the five-minute gap are the two boundary changes.
-H3 is supported by the two identical 234,411 prompts.
+H1 and H2 are supported.
+H3 is rejected: the pass stages the summary after the stable region, and the 02:26 calls precede the pass.
 H4 is confirmed by the prior token reconciliation.
 H5 is rejected by the timing.
 
-**Probe.** Compare the request prefix before and after the pass.
-The pass stages a new summary and a compacted trail.
-The summary is inserted at the compaction boundary, so the bytes after the stable system prompt change.
-The provider's prefix cache is exact-prefix; the changed boundary loses the suffix cache.
+**Probe.** Compare the 02:20:56 cache read, the 02:26 calls, the 02:34:18 cache read, and the 02:34:49 pass.
+The 02:26 calls have zero cache read; the 02:34:18 call has cache read; the pass is after both.
+The staged order is `region_staged + unfolded + [SystemMessage(summary)] + tail`.
 
-**Root cause.** The compacted trail inserts a volatile summary at the boundary.
-The summary is large and changes on every pass.
-The provider cache cannot reuse the suffix.
-The five-minute idle gap independently allows the cache to expire.
-The client usage ledger does not record the cache-miss generations.
+**Root cause.** The provider cache expired during the five-minute gap, so the 02:26 calls re-billed the prompt uncached.
+The pass is not the cause.
+The client usage ledger did not record the cache-miss generations.
 
 **Failure chain.**
 
 1. The context reaches the 400k boundary.
-2. The turn ends and the pass stages a summary plus a compacted trail.
-3. The next request has a new prefix and a large uncached input.
-4. The provider has no cache for the new prefix.
-5. The client ledger misses the generation.
+2. The session idles for five minutes and twenty-one seconds.
+3. The provider cache expires.
+4. The 02:26 calls send a large uncached input.
+5. The client ledger misses the generations.
 6. The cap is enforced on an undercounted ledger.
 
-**Fix.** Make compaction cache-aware.
-Keep the system prompt and the initial user turn byte-identical.
-Insert the running summary after the stable prefix, not before it.
-Prefer offload-only compaction, which changes a tool message in the middle and preserves the earlier prefix.
-Do not compact at the 400k boundary when the tool payload can be bounded at the source.
-Reconcile the final spend from Langfuse after the project is idle.
-
-**Regression test.** Add a prefix-stability test: the system and the initial user bytes are unchanged across a compact pass.
-Add a usage test: a cache-miss generation is recorded by the client ledger.
+**Fix.** No cache-stable code change is needed.
+The report correction removes the cache-breaking claim.
+The token reconciliation must read the settled Langfuse spend.
+The n-turn offload experiment measures the raw-size gain and the cache-prefix penalty separately.
 
 ### CL-7 diagnosis
 
@@ -580,60 +570,51 @@ The prompt has no context budget.
 3. The fixed tax is paid on every call.
 4. The model has less room for the task and reaches the cap sooner.
 
-**Fix.** Serve a lean system prompt.
-Move the cognitive map and the long tool contracts behind a `tool_help` or `load_skill` lookup.
-Keep the tool schema to the fields, the bounds, and one usage line.
-Add a context budget to the prompt: keep the working set under 60k, read the index first, project fields, and never fetch a full body unless the narrow read is insufficient.
+**Fix.** The approved change is removing the full skill index and keeping direct internal and project-authn references.
+Skill discovery moves to the `load_skill` listing.
+The broader system-prompt compression is a design proposal, not approved.
 
-**Regression test.** Assert the first-call prompt is under a budget and the tool descriptions carry the exact caps and defaults.
+**Regression test.** Assert the full index is absent and the direct references are present.
+The prompt-budget test is a proposal.
 
-## Fix plan
+## Follow-up plan and approval status
 
-### P0 - Inline tool-response offload
+The detailed follow-up plan is `CONTEXT-LIFECYCLE-FOLLOWUP-PLAN.md`.
+The per-family "Fix" sections above are recommendations.
+Only the items in the approved list are in the follow-up implementation plan.
 
-This is the central fix.
-Apply the existing `offload_tool_message` to every tool result over 700 tokens at the tool boundary.
-The model sees the header: the tool name, the outline, the status, the head, the tail, and the body ref.
-The full body stays in the module store.
-Add a `get_body` tool for a deliberate full read.
-The header is under 2,000 chars.
-The context stays bounded even when the compact pass never fires.
+### Approved local fixes
 
-### P0 - Bounded tool contracts
+- the auth-store summary view and field selection, plus project `authn` skill access;
+- removal of the full skill index from the system prompt;
+- direct references to the internal skills and the project `authn` skill;
+- the CL-3 context-only deduplication;
+- pod compaction wiring through the existing `after_model` middleware;
+- verification and correction of the cache-stable compaction claim.
 
-- `auth_store`: default to the overview and the account index; require a path for an account; cap the full read.
-- `query_lightrag`: compact answer with top N explanations, references, and gaps; a `full_ref`.
-- `search_http_history`: default limit 10; require a filter or text; return a cursor.
-- `get_http_artifact`: return a summary and a body ref; no raw body.
-- `graph_view`: default row cap and field projection; keep the `LIMIT` discipline.
-- `exec`: cap the model-facing stdout/stderr; store the body; add `max_output_chars`.
-- `hunts_store` and `notes`: return an index; add a `limit` and a `get` for one body.
-- `load_skill`: return the typed procedure and a short protocol; put the full body behind a section read.
+### Not approved
 
-### P0 - Pod compaction wiring
+- the inline tool-response offload;
+- the broad KB, HTTP-history, graph, exec, and store bounds;
+- the task budget or threshold change;
+- F-024 stop fencing and post-stop artifact handling;
+- trial-record stamping.
 
-Pass `runner_compaction_middleware` and `triager_compaction_middleware` in the production pod builder.
-The `arun_pod` default `()` is the current gap.
-Add a pod ledger test.
+### Analysis and proposals
 
-### P1 - Task budget and cache-stable compaction
+- the component occupancy breakdown;
+- the loop-payload entity map;
+- the preloaded tool-message inventory;
+- the system-prompt compression proposal;
+- the n-turn offload simulation.
 
-Set the hunting and pod budgets to about 60k-100k.
-Keep the system and the initial user turn byte-identical across passes.
-Insert the summary after the stable prefix.
-Prefer offload-only compaction when the tool payload is the growth source.
+The system-prompt, loop-payload, and preloaded-message compressions are design decisions.
+They stop at the proposal for the user's decision.
+The n-turn offload experiment is an analysis; it does not change production code.
 
-### P1 - Prompt and schema budget
-
-Add a per-tool usage line with the exact default, cap, and projection.
-Add a context budget to each hunting prompt.
-Move the long prose contracts to a lookup.
-Keep the fixed first-call context under 10k for the hunter and under 6k for the pods.
-
-### P1 - Measurement
+### Measurement
 
 Reconcile the final spend from Langfuse after the project is idle.
-Add the cache-miss generations to the client ledger or read them from Langfuse.
 Do not use the terminal snapshot as the final bill.
 
 ## Reproduction
@@ -665,7 +646,7 @@ python3 /private/var/folders/.../parse_lf_msgs.py
 ```
 
 It fails when any model-facing tool message exceeds 4,000 chars.
-The recorded trial fails on the 74,649-char auth store and the 89,087-char KB answer.
+The recorded trial fails on the 74,649-char HTTP-history page, the 22,302-char auth store, and the 89,087-char KB answer.
 
 The full trial token reconciliation is in `TOKEN-ACCOUNTING-WHITE-JOTTER.md`.
 The trial record and metrics are in the run directory under `eval/runs-utm-20261021-white-jotter/`.
