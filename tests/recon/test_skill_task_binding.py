@@ -337,10 +337,23 @@ def test_a_malformed_artifact_field_is_refused_by_the_schema() -> None:
     spec = TestImplementationSpec(**{"skills": ["ssrf", "csrf"]})
     assert spec.skills == ["ssrf", "csrf"]
 
-    write = SpecWrite(skills=["ssrf"])
+    write = SpecWrite(
+        status="hypothesised",
+        fault_keyword="ssrf",
+        strategy_keyword="blind",
+        target_identity={"url": "http://svc/", "unit_id": "svc"},
+        skills=["ssrf"],
+    )
     assert write.skills == ["ssrf"]
 
     with pytest.raises(pydantic.ValidationError):
-        SpecWrite(skills="ssrf")  # a bare string is not a list of names
+        # A bare string is not a list of names.
+        SpecWrite(
+            status="hypothesised",
+            fault_keyword="ssrf",
+            strategy_keyword="blind",
+            target_identity={"url": "http://svc/", "unit_id": "svc"},
+            skills="ssrf",
+        )
     with pytest.raises(pydantic.ValidationError):
         TestImplementationSpec(**{"skills": 7})

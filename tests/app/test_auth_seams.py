@@ -14,6 +14,7 @@ from __future__ import annotations
 from polymerhus.app.auth.seams import AUTHN_SKILL, auth_capable_binding
 from polymerhus.app.auth.store import AuthStore
 from polymerhus.app.auth.tool import AUTH_STORE_READ_CONTRACT
+from polymerhus.app.llm.skills import SkillStore
 
 PROJECT = "proj-seam-read-1"
 
@@ -155,3 +156,51 @@ def test_the_gateway_arming_is_unchanged_and_still_write_capable() -> None:
         "load_skill", "record_skill_lesson", "write_skill", "auth_store"]
     assert set(binding.tools[-1].args) == {
         "command", "path", "value", "view", "fields"}
+
+
+def test_auth_store_agents_can_list_and_load_the_project_authn_skill(tmp_path) -> None:
+    """Every auth-store agent can discover and load the project `authn` skill.
+
+    The canonical project bundle is
+    `skills/target-specific-procedure/<project_id>/authn/SKILL.md`. The skill
+    store resolves that branch; the data root is not a skill location."""
+    skills_root = tmp_path / "skills"
+    bundle = skills_root / "target-specific-procedure" / PROJECT / "authn"
+    bundle.mkdir(parents=True)
+    (bundle / "SKILL.md").write_text(
+        "---\nname: authn\ndescription: Project authentication procedure\n---\n"
+        "# Project authn\nUse the recorded login envelope.\n",
+        encoding="utf-8",
+    )
+    skill_store = SkillStore(root_dir=skills_root)
+    cases = (
+        ("hunting_hunter", {}),
+        ("pod_runner", {}),
+        ("assigner", {"with_readonly_auth_store": True}),
+        ("hunting_threat_modeller", {"arm_exempt_surface": True}),
+    )
+    for role, kwargs in cases:
+        binding = auth_capable_binding(
+            role, store=AuthStore(tmp_path / "auth"), skill_store=skill_store,
+            project_id=PROJECT, **kwargs)
+        load = next(t for t in binding.tools if t.name == "load_skill")
+        listing = load.invoke({"pattern": "authn"})
+        assert "authn" in listing, f"{role} listing: {listing}"
+        body = load.invoke({"name": "authn"})
+        assert "Project authn" in body, f"{role} body: {body[:200]}"
+        assert AUTHN_SKILL in binding.context["skills"]
+
+
+def test_auth_capable_bindings_use_direct_references_not_the_full_index() -> None:
+    """The auth-capable system prompt names the bounded skills and points at
+    the `load_skill` listing; it never renders the full description index."""
+    from polymerhus.app.llm.skills import render_skill_references
+
+    binding = auth_capable_binding("hunting_hunter", project_id=PROJECT)
+    line = render_skill_references(binding.context["skills"])
+    assert "SKILLS - direct references" in line
+    assert "`authn`" in line
+    assert "`lightrag-query`" in line
+    assert "Skills available through the `load_skill` tool" not in line
+    assert "when to use" not in line.lower()
+    assert len(binding.middleware) == 1

@@ -15,7 +15,7 @@ The authentication workstreams need exactly that capability. #220 (shared auth s
 
 Deliver the minimal set of skill-writing primitives that unblocks #220/#221/#223/#224 while converging on #232:
 
-- A per-project skill bundle under a shared, app-owned data root, in the canonical skill layout.
+- A per-project skill bundle under the live skills root's `target-specific-procedure/<project_id>/` branch, in the canonical skill layout.
 - One `write_skill` tool that creates and updates bundle artifacts through a typed target surface, bound only where authentication operations execute.
 - A `meta-write-skill` skill carrying the authoring instructions; content-stable so the future `SkillEvolver` reuses it as-is.
 - A `meta-usage-skill` skill carrying the usage protocol, appended by every `load_skill` call; in this transitory phase it instructs the executor to write directly to the skill through `write_skill`, and after the #232 migration only its body changes (emit usage lessons through the note tool instead).

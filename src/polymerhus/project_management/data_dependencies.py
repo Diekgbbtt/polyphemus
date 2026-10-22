@@ -1,14 +1,15 @@
 """The pre-built eval data-dependency placement contract.
 
 The eval harness creates a project deterministically, then places the target's
-pre-built data-dependency artifacts into the app-owned data root through four
-operator-only `multipart/form-data` write endpoints. The agent container finds
-them already present at startup (a MOUNT, never a runtime provision):
+pre-built data-dependency artifacts through four operator-only
+`multipart/form-data` write endpoints. The agent container finds them already
+present at startup (a MOUNT, never a runtime provision):
 
-    <data_root>/<project_id>/
-    ├── skills/authn/SKILL.md (+ references/)   # the replayable authn procedure
-    └── auth/{overview.yaml,credentials.yaml}   # the AuthContext
+    <data_root>/<project_id>/auth/{overview.yaml,credentials.yaml}  # the AuthContext
+    <skills_root>/target-specific-procedure/<project_id>/authn/     # the replayable authn procedure
 
+The authn bundle lands through `SkillStore.replace_bundle` in the canonical
+project-skill branch. The data root never carries a project-specific skill.
 The L1 surface is not a file: its endpoint persists the deterministic skeleton
 directly into the knowledge graph (through `polymerhus.analysis.scaffold`).
 

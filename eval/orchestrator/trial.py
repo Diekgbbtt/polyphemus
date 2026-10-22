@@ -172,6 +172,10 @@ class TrialConfig:
     token_budget: int | None = None
     spend_baseline: int | None = None
     data_root: Path = Path("data")
+    # The live skills root (the `skills/` volume). The project-specific
+    # `target-specific-procedure/<project_id>/` branch is the only project
+    # skill area; the data root is not a skill location.
+    skills_root: Path = Path("skills")
     runs_root: Path = Path("eval/runs")
     trial_id: str | None = None
     # The target-run this trial belongs to (the artifact-store middle level,
@@ -695,6 +699,7 @@ class Trial:
             recon_run_id=cfg.recon_run_id,
             preloaded_configured=cfg.preloaded_hunting_artifacts is not None,
             data_root=cfg.data_root,
+            skills_root=cfg.skills_root,
             seeded=seeded,
         )
 
@@ -724,9 +729,9 @@ class Trial:
         if self._files.is_dir(skill_dir):
             archive = _pack_skill_archive(skill_dir, self._files)
             self._call(api.place_authn_skill(project_id, archive, "authn.tar.gz"))
-            # The recon gate reads the skill from the data root; verify it landed
-            # rather than relying on the placement call's success alone.
-            skill_path = authn_skill_path(cfg.data_root, project_id)
+            # The recon gate reads the skill from the live skills root; verify
+            # it landed rather than relying on the placement call's success.
+            skill_path = authn_skill_path(cfg.skills_root, project_id)
             if not self._files.exists(skill_path):
                 raise TrialError(
                     f"the authn skill did not land at {skill_path} after placement"

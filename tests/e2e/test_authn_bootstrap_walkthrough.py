@@ -5,7 +5,7 @@ own eyes: an external bootstrapper (the subagent this harness dispatches)
 follows `skills/meta/authn-skill-writing/SKILL.md` against a live target and
 leaves two artifacts on the app-owned data root - the auth store bucket
 (`data/<project_id>/auth/`) and the per-project authn skill
-(`data/<project_id>/skills/authn/SKILL.md`).
+(`skills/target-specific-procedure/<project_id>/authn/SKILL.md`).
 
 These are WALKTHROUGH predicates, not unit tests: they read the terminal
 quantities back out of the real datastore the run wrote (the YAML bucket and

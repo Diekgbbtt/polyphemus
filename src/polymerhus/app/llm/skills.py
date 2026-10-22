@@ -51,7 +51,8 @@ context carrying the bounded set), so the frontmatter description of every
 skill a role may load is rendered into that role's system message.
 
 #234 adds the write half of the same domain (ADR B1): the per-project skill
-store (`SkillStore`) under the app-owned data root, the `write_skill` tool bound
+store (`SkillStore`) under the live skills root's `target-specific-procedure`
+branch, the `write_skill` tool bound
 to one project, and the `meta-usage-skill` reading protocol appended by the read
 path to every load except meta-family skills (`skills/meta/`). Loader, store,
 writer, and protocol injection are one domain
@@ -515,8 +516,10 @@ SKILL_LOAD_CONTRACT = (
     "(cached, fail-open to '' on an unknown skill) - plus the meta-usage-skill "
     "reading protocol appended after a `---` separator (body, separator, "
     "protocol).\n\n"
-    "Your system prompt lists the skills available to you (name + when-to-use). "
-    "Call load_skill once per skill whose discipline bears on your turn, then "
+    "Your system prompt carries the direct skill references. Discover the full "
+    "set with the `load_skill` listing (call it with no name to list all, or "
+    "pass `pattern`); the listing returns each skill's description. Call "
+    "load_skill once per skill whose discipline bears on your turn, then "
     "reason from the returned body; loading the same skill twice returns the "
     "cached body unchanged.\n\n"
     "A missing protocol appends nothing, an unknown skill still degrades to "
@@ -980,7 +983,8 @@ def _context_project_id(context):
     `context=` mapping that carries `skills` (`context={"skills": [...],
     "project_id": "..."}`). Absent or unshaped -> None, so the index stays
     catalogue-only. This is what makes a project-authored skill (a bundle that
-    exists only under `<data_root>/<project_id>/skills/`) render its frontmatter
+    exists only under `skills/target-specific-procedure/<project_id>/`) render
+    its frontmatter
     description into the system prompt."""
     if isinstance(context, dict):
         project_id = context.get("project_id")
@@ -996,8 +1000,8 @@ def skill_index_middleware(store=None):
     message passes through byte-identical. When the context also carries a
     `project_id`, the index resolves per-project bundles first, so a
     project-authored skill (e.g. `authn`) is collected only when its bundle is
-    at the designed data-dir location and renders its own frontmatter
-    description.
+    at the canonical `target-specific-procedure/<project_id>/` branch and
+    renders its own frontmatter description.
 
     The names arrive through the native `context=` seam - `skill_agent_binding`
     fills that context from `ROLE_SKILLS`, so the middleware itself stays
@@ -1017,6 +1021,49 @@ def skill_index_middleware(store=None):
         return f"{base}\n\n{index}" if base else index
 
     return _skill_index
+
+
+SKILL_REFERENCE_HEADER = "SKILLS - direct references:"
+
+
+def render_skill_references(names) -> str:
+    """The direct-reference line for the auth-capable bindings.
+
+    The full L1 index is deliberately replaced here: the system prompt names
+    the bounded skills (the internal skills plus the project `authn`) and
+    points at the `load_skill` listing for the rest. The line carries no
+    per-skill description, so it stays small, stable, and cache-friendly.
+    Unknown or empty names render nothing (fail-open)."""
+    refs = sorted({name for name in names if isinstance(name, str) and name})
+    if not refs:
+        return ""
+    return (
+        f"{SKILL_REFERENCE_HEADER} "
+        + ", ".join(f"`{name}`" for name in refs)
+        + ". Discover every available skill with the `load_skill` listing "
+        "(call it with no name to list all, or pass `pattern`); load a skill "
+        "only when its discipline applies and only once."
+    )
+
+
+def skill_reference_middleware():
+    """The auth-capable direct-reference middleware: a `dynamic_prompt` that
+    appends `render_skill_references` for the invocation context's bounded
+    set. No bound skills -> the system message passes through byte-identical.
+    The project scope is irrelevant here: the names already include the
+    project `authn`, and the listing tool resolves the store seam itself."""
+    from langchain.agents.middleware import dynamic_prompt  # noqa: PLC0415
+
+    @dynamic_prompt
+    def _skill_references(request) -> str:
+        context = getattr(getattr(request, "runtime", None), "context", None)
+        base = request.system_prompt or ""
+        refs = render_skill_references(_bound_skills(context))
+        if not refs:
+            return base
+        return f"{base}\n\n{refs}" if base else refs
+
+    return _skill_references
 
 
 # The reading-protocol skill (#234): the first-class usage-protocol skill in
@@ -1188,10 +1235,11 @@ def validate_skill(
 
 # --- The per-project skill store (#234) ---------------------------------------
 #
-# The per-project skill bundle lives under the app-owned data root beside the
-# loader's shared catalogue, in the canonical skill layout:
+# The per-project skill bundle lives under the live skills root's
+# `target-specific-procedure/<project_id>/` branch, beside the loader's shared
+# catalogue, in the canonical skill layout:
 #
-#     <data_root>/<project_id>/skills/<skill_name>/
+#     skills/target-specific-procedure/<project_id>/<skill_name>/
 #     ├── SKILL.md
 #     ├── references/
 #     ├── scripts/
@@ -1355,9 +1403,11 @@ class SkillStore:
     `_SKILLS_ROOT`), whose `target-specific-procedure/<project_id>/` branch is
     the project's own skill area: the bootstrapper's procedures and the evolved
     or newly mined project-specific skills live there, laid out like the
-    catalogue bundles. The explicit-root constructor is kept for the tests'
-    temp stores (the `hunt_store` / #220 auth-store precedent). Import performs
-    no I/O."""
+    catalogue bundles. The data root holds the AuthContext and the runtime
+    module state; it never holds a project-specific skill.
+
+    The explicit-root constructor is kept for the tests' temp stores (the
+    `hunt_store` / #220 auth-store precedent). Import performs no I/O."""
 
     def __init__(self, root_dir: str | Path | None = None):
         """Rooted under `root_dir` (default: the live `skills/` root)."""
@@ -1368,6 +1418,11 @@ class SkillStore:
     def _project_skills_root(self, project_id: str) -> Path:
         validate_path_component(project_id, "project_id")
         return self._root / PROCEDURE_BRANCH / project_id
+
+    def _project_bundle_paths(self, project_id: str, skill: str):
+        """The project SKILL.md candidate: the canonical
+        `skills/target-specific-procedure/<project_id>/<skill>/` bundle."""
+        yield self._bundle_dir(project_id, skill) / "SKILL.md"
 
     def _bundle_dir(self, project_id: str, skill: str) -> Path:
         validate_path_component(skill, "skill")
@@ -1401,12 +1456,12 @@ class SkillStore:
 
     def list_skills(self, project_id: str | None = None) -> list[str]:
         """The project's own skill-bundle names, sorted: every directory under
-        the project `skills/` bucket that carries a `SKILL.md`, minus the
-        scaffold-owned reserved names (`lessons`, `evolution` - directories, not
-        bundles). The listing surface's project half (#236): a project-authored
-        skill such as `authn` is discoverable. A missing bucket is the valid
-        empty; an unreadable one and an unsafe project id degrade to `[]` - a
-        listing never raises."""
+        the canonical `target-specific-procedure/<project_id>/` branch that
+        carries a `SKILL.md`, minus the scaffold-owned reserved names
+        (`lessons`, `evolution` - directories, not bundles). The listing
+        surface's project half (#236): a project-authored skill such as `authn`
+        is discoverable. A missing bucket is the valid empty; an unreadable one
+        and an unsafe project id degrade to `[]` - a listing never raises."""
         if project_id is None:
             return []
         try:
@@ -1433,10 +1488,12 @@ class SkillStore:
         serves the baseline."""
         if project_id is not None:
             try:
-                path = self._bundle_dir(project_id, name) / "SKILL.md"
+                paths = list(self._project_bundle_paths(project_id, name))
             except (OSError, ValueError):
-                path = None
-            if path is not None and path.is_file():
+                paths = []
+            for path in paths:
+                if not path.is_file():
+                    continue
                 try:
                     return _strip_frontmatter(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -1459,10 +1516,12 @@ class SkillStore:
         render depends on this."""
         if project_id is not None:
             try:
-                path = self._bundle_dir(project_id, name) / "SKILL.md"
+                paths = list(self._project_bundle_paths(project_id, name))
             except (OSError, ValueError):
-                path = None
-            if path is not None and path.is_file():
+                paths = []
+            for path in paths:
+                if not path.is_file():
+                    continue
                 try:
                     meta = _parse_frontmatter(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -1832,8 +1891,9 @@ WRITE_SKILL_CONTRACT = (
     "directory holding the procedure your project accumulates, so sibling and "
     "later agents start from known ground instead of rediscovering it.\n\n"
     "DOMAIN MODEL - a skill bundle is the project's "
-    "`data/<project_id>/skills/<skill>/` directory (SKILL.md, references/, "
-    "scripts/, assets/). The `procedure` target carries the SKILL.md body "
+    "`skills/target-specific-procedure/<project_id>/<skill>/` directory "
+    "(SKILL.md, references/, scripts/, assets/). The `procedure` target "
+    "carries the SKILL.md body "
     "alone; `references/<name>` writes one bulky target file (endpoint "
     "snapshots, header dumps, role matrices) so the procedure stays compact "
     "and carries only a context pointer. The bundle is created on first write. "

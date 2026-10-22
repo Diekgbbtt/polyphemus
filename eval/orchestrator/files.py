@@ -3,10 +3,13 @@
 The trial reads the persisted-state predicates (the authn skill bundle, the
 pre-mined threat-model loops) and writes its own bootstrap state through one
 `FileStore`. It is the injectable filesystem seam: tests pass a temp-rooted
-instance or a subclass that scripts the produced/consumed reads. The layout
+instance or a subclass that scripts the produced/consumed reads. The data-root
 helpers mirror the app's own `<data_root>` layout
 (`src/polymerhus/app/data_root.py`), so the harness and the pipeline address
-the SAME produced/consumed inbox - never a bespoke copy.
+the SAME produced/consumed inbox - never a bespoke copy. The project skill
+helpers address the separate live `<skills_root>`:
+`target-specific-procedure/<project_id>/` is the only project-skill area, not
+`<data_root>/<project_id>/skills/`.
 
 Import performs no I/O (CODING_STANDARD section 6).
 """
@@ -29,18 +32,20 @@ def project_dir(data_root: str | Path, project_id: str) -> Path:
     return Path(data_root) / project_id
 
 
-def skills_dir(data_root: str | Path, project_id: str) -> Path:
-    """`<data_root>/<project_id>/skills`: the per-project skill bundles."""
-    return project_dir(data_root, project_id) / "skills"
+def skills_dir(skills_root: str | Path, project_id: str) -> Path:
+    """`<skills_root>/target-specific-procedure/<project_id>`: the project
+    skill area owned by the live skills root."""
+    return Path(skills_root) / "target-specific-procedure" / project_id
 
 
-def authn_skill_path(data_root: str | Path, project_id: str) -> Path:
+def authn_skill_path(skills_root: str | Path, project_id: str) -> Path:
     """The project-authored `authn` bundle's `SKILL.md` (D13).
 
     The `SkillStore` resolves a project skill at exactly this location, so the
-    predicate reads what the loader reads.
+    predicate reads what the loader reads. `skills_root` is the live skills
+    root, never the project data root.
     """
-    return skills_dir(data_root, project_id) / "authn" / "SKILL.md"
+    return skills_dir(skills_root, project_id) / "authn" / "SKILL.md"
 
 
 def threat_model_dir(data_root: str | Path, project_id: str, side: str) -> Path:

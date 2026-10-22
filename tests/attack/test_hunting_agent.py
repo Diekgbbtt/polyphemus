@@ -300,16 +300,14 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
     )
 
     skill = _load_hunting_agent_skill()
-    from polymerhus.app.llm.skills import (  # noqa: PLC0415
-        render_skill_index,
-        skill_meta,
-        skills_for_role,
-    )
+    from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
+    from polymerhus.app.llm.skills import render_skill_references  # noqa: PLC0415
 
     # The role's bounded skill set rides the same system channel, after the
-    # skill: `skill` verbatim, blank line, L1 index (the shared renderer's
-    # exact composition - never hand-written here).
-    index = render_skill_index(skills_for_role("hunting_hunter"))
+    # skill: `skill` verbatim, blank line, the direct-reference line (the
+    # shared renderer's exact composition - never hand-written here).
+    binding = auth_capable_binding("hunting_hunter")
+    index = render_skill_references(binding.context["skills"])
     seen: list = []
     import tempfile  # noqa: PLC0415
 
@@ -328,10 +326,8 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
     assert len(seen) == 2
     for turn_messages in seen:
         assert turn_messages[0] == f"{skill}\n\n{index}"  # the leading SystemMessage
-        assert "steel-browser" in turn_messages[0]  # the bounded set is indexed
-        # ... and the line the model actually reads is the skill's frontmatter
-        # `description` VERBATIM (not a paraphrase, not a re-render).
-        assert skill_meta("steel-browser")["description"] in turn_messages[0]
+        assert "`steel-browser`" in turn_messages[0]  # the bounded set is named
+        assert "Skills available through the `load_skill` tool" not in turn_messages[0]
         assert skill not in turn_messages[1]  # the grounding HumanMessage
         assert "You are dispatched to hunt" in turn_messages[1]
 

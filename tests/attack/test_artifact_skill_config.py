@@ -16,7 +16,6 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from polymerhus.app.llm.skills import skill_meta
 from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.llm import (
     POD_TRIAGER_ROLE,
@@ -109,9 +108,9 @@ def test_spec_skills_render_into_the_pod_runners_system_prompt(tmp_path):
 
     assert seen, "the pod must have taken a runner turn"
     system = _system_messages(seen)[0]
-    assert f"- csrf: {skill_meta('csrf')['description']}" in system
+    assert "`csrf`" in system
     for name in ("lightrag-query", "steel-browser"):
-        assert f"- {name}: {skill_meta(name)['description']}" in system
+        assert f"`{name}`" in system
 
 
 def test_spec_skills_render_into_the_pod_triagers_system_prompt(tmp_path):
@@ -138,8 +137,8 @@ def test_spec_skills_render_into_the_pod_triagers_system_prompt(tmp_path):
 
     assert seen, "the triager must have taken a turn"
     system = _system_messages(seen)[0]
-    assert f"- csrf: {skill_meta('csrf')['description']}" in system
-    assert f"- lightrag-query: {skill_meta('lightrag-query')['description']}" in system
+    assert "`csrf`" in system
+    assert "`lightrag-query`" in system
 
 
 def test_a_malformed_spec_skills_field_is_init_rejected_not_a_crash(tmp_path):
@@ -251,7 +250,7 @@ def test_a_minted_variant_inherits_the_parent_specs_declared_skills(tmp_path):
     systems = _system_messages(seen)
     assert len(systems) >= 3, "two runner stretches, one model call each"
     for system in systems:
-        assert f"- ssrf: {skill_meta('ssrf')['description']}" in system
+        assert "`ssrf`" in system
 
 
 def test_a_minted_variant_with_its_own_declaration_wins(tmp_path):
@@ -269,7 +268,7 @@ def test_a_minted_variant_with_its_own_declaration_wins(tmp_path):
 
     systems = _system_messages(seen)
     last = systems[-1]
-    assert f"- csrf: {skill_meta('csrf')['description']}" in last
+    assert "`csrf`" in last
     assert "ssrf" not in last
 
 

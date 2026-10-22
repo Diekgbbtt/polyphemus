@@ -19,7 +19,9 @@ If it does not answer, record the blocker and say so loudly in the report; a rea
 ## The one deviation from the meta-skill: no live store seeding
 
 There is no live polymerhus store to seed in this environment.
-Instead of `PUT /projects/{project_id}/auth`, you author the store's two files DIRECTLY, and write the skill bundle, into a staging directory that mirrors the app-owned project data dir (`<data_root>/<project_id>/`).
+Instead of `PUT /projects/{project_id}/auth`, you author the store's two files DIRECTLY, and write the skill bundle, into the upload-source staging directory `<staging>/<target>/`.
+The auth files are the source for the app data root; the authn bundle is the source for the live skills root's `target-specific-procedure/<project_id>/authn/`.
+The staging directory is not the app data dir, and the data root never carries skills.
 Everything else in the procedure is unchanged: probe FIRST, classify the three signals, name the defence, derive the mode, execute and verify, then record.
 
 Write to (`<staging>` is the staging root from the Substitutions block, `<project_id>` = `<target>`):
@@ -44,7 +46,7 @@ Secret values live in `credentials.yaml` and NEVER in the skill.
 
 `skills/authn/SKILL.md` - the replayable procedure per P5: valid frontmatter (`name: authn`, a `description`, `metadata.version`), the mandatory anti-bot block verbatim, sign-up and sign-in as SEPARATE named procedures, each step citing its tool AND reason, secret NAMES only (never values), and login-specific scripts under `references/`.
 
-The skill is CONSUMED by the L1 crawl, which runs immediately after you and reuses the running target.
+The skill is uploaded through the authn-skill endpoint and lands in the canonical skills root (`skills/target-specific-procedure/<project_id>/authn/`), then is CONSUMED by the L1 crawl, which runs immediately after you and reuses the running target.
 So the skill must be self-describing enough for a fresh agent to reproduce the login without your session: name every required secret, the exact request shape, the endpoint, and how to verify the authenticated landing.
 Record the **persisted session snapshot** (`snapshot.headers`, `snapshot.cookies`, and any token) in `credentials.yaml` with `captured_at`, so the L1 crawl can replay the session without re-running sign-in; the crawl falls back to the skill's sign-in procedure when the snapshot is stale or not portable.
 

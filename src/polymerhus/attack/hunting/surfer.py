@@ -727,7 +727,8 @@ async def _run_hunter_idle(
             # threat model retires the orchestrator's HuntConfig declaration;
             # the hunter's suite pair carries the loop's class skill, and the
             # idle turn keeps the same role binding as the graph-phase turns.
-            binding = auth_capable_binding(hunt_session.role_id)
+            binding = auth_capable_binding(
+                hunt_session.role_id, project_id=project_id or None)
             await run_session_agent(
                 hunt_session.role_id, hunt_session.thread_id, None,
                 checkpointer=get_session_checkpointer(),

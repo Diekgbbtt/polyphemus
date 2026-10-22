@@ -81,7 +81,8 @@ class TargetConfig:
     `eval/data/<dataset>/<target>/` directory when unset.
 
     `data_dir` is the host directory holding the pre-built data dependencies
-    (`auth/overview.yaml`, `auth/credentials.yaml`, `skills/authn/`, and
+    (`auth/overview.yaml`, `auth/credentials.yaml`, `skills/authn/` as the
+    upload source, and
     `operator_kb.md`); the harness places them through the multipart endpoints.
     It defaults to `operator_kb`'s parent directory when unset. The retired
     inline `auth` / `l1_surface` mappings are no longer accepted.

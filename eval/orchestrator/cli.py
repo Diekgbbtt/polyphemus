@@ -156,6 +156,12 @@ def _parser() -> argparse.ArgumentParser:
         help="the instance's app data root (default: <repo>/data)",
     )
     run_parser.add_argument(
+        "--skills-root",
+        default=os.environ.get("EVAL_SKILLS_ROOT"),
+        help="the live skills root (default: <repo>/skills); the project-specific "
+             "skills live under its target-specific-procedure/<project_id>/ branch",
+    )
+    run_parser.add_argument(
         "--runs-root",
         default=os.environ.get("EVAL_RUNS_ROOT", DEFAULT_RUNS_ROOT),
         help="where per-trial record directories live",
@@ -667,6 +673,9 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         token_budget=run.token_budget,
         target_run_id=target_run_id,
         data_root=data_root,
+        skills_root=(
+            Path(args.skills_root) if args.skills_root else Path("skills")
+        ),
         runs_root=Path(args.runs_root),
         with_analysis=True,
         # The streamed-analysis gate (settings.recon.streaming_analysis): ON for

@@ -12,7 +12,7 @@ _Avoid_: system instance, stack, system
 
 **Instance worktree**:
 The per-instance git worktree, `<instances_root>/<instance_id>`, detached at the `eval` branch commit.
-It holds the instance's `.env` and its data root (`data/`) - the live evidence (threat-model store, project/pod memory, L0+L1 graph, auth, skills).
+It holds the instance's `.env` and its data root (`data/`) - the live evidence (threat-model store, project/pod memory, L0+L1 graph, auth). The project-specific skills live in the live skills root (`skills/target-specific-procedure/<project_id>/`), not in the data root.
 `up` CREATES it idempotently when absent and brings up the stack from it; the stack lifecycle NEVER removes it - a `down`, a project stop/drain, or an eval termination preserves the worktree and its data root.
 Removal is an operator-only action (`orchestrator worktree-remove`), deliberately outside the loop, that re-provisions an instance from scratch.
 _Avoid_: checkout, instance dir, tree
@@ -106,7 +106,7 @@ _Avoid_: prebuild, pre-pull, on-demand
 
 **AuthContext**:
 The externally bootstrapped authentication state seeded into the store (overview + accounts), plus the project `authn` skill capturing the sign-in/sign-up procedure.
-It is placed by direct file write through the **Data-dependency placement endpoint**, so the agent container finds `auth/` and `skills/authn/` mounted at startup.
+It is placed by direct file write through the **Data-dependency placement endpoint**, so the agent container finds the `auth/` bucket under the data root and the `authn` skill under the live skills root's `target-specific-procedure/<project_id>/` branch at startup.
 _Avoid_: auth, credentials, session
 
 **Data-dependency placement endpoint**:

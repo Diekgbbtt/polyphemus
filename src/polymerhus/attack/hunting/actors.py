@@ -142,7 +142,8 @@ class _TurnActor:
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
         binding = auth_capable_binding(
-            self._address.role_id, arm_exempt_surface=self._arm_exempt_surface)
+            self._address.role_id, arm_exempt_surface=self._arm_exempt_surface,
+            project_id=getattr(self, "project_id", "") or None)
         middleware = middleware + binding.middleware
         kwargs = {
             "checkpointer": self._checkpointer,

@@ -116,12 +116,12 @@ The endpoint-surface change ripples across the eval system. Consumers of the old
 
 | Component | Old behaviour | New behaviour |
 |---|---|---|
-| `eval/orchestrator/trial.py` | `seed_auth` PUT + `write_text` of the skill + host-side `scaffold.py` command | `_place_data_dependencies` uploads auth-overview / auth-credentials / authn-skill (as a `.tar.gz`) through the multipart endpoints; `_place_l1` uploads `operator_kb.md`; `ScaffoldSpec` / `plan_scaffold` deleted; the trial verifies the skill landed |
+| `eval/orchestrator/trial.py` | `seed_auth` PUT + `write_text` of the skill + host-side `scaffold.py` command | `_place_data_dependencies` uploads auth-overview / auth-credentials / authn-skill (as a `.tar.gz`) through the multipart endpoints; `_place_l1` uploads `operator_kb.md`; `ScaffoldSpec` / `plan_scaffold` deleted; the trial verifies the skill landed in the live skills root's `target-specific-procedure/<project_id>/authn/` branch |
 | `eval/orchestrator/api.py` | `seed_auth(overview, accounts)` PUT builder, JSON-only `HttpApiRunner` | `place_auth_overview/credentials/authn_skill/l1` builders; `ApiFile` + multipart body encoding in `HttpApiRunner`; `seed_auth` deleted |
-| `eval/orchestrator/cli.py` | `auth=run.target_config.auth`, built `ScaffoldSpec` | `data_dir=_data_dependency_dir(...)` and `auth_surface=<data_dir>/skills/authn exists`; no `scaffold=` |
+| `eval/orchestrator/cli.py` | `auth=run.target_config.auth`, built `ScaffoldSpec` | `data_dir=_data_dependency_dir(...)` is the upload source; `auth_surface=<source_dir>/skills/authn exists`; the runtime read uses `skills_root` (`<repo>/skills` by default); no `scaffold=` |
 | `eval/orchestrator/setup.py` | `TargetConfig.auth` / `l1_surface` mappings | `TargetConfig.data_dir`; the retired keys are refused; the dead shadowing `TargetConfig` dataclass removed |
-| `eval/orchestrator/files.py` | `authn_skill_path` (used by the trial writer) | unchanged (still the read path the predicate and the trial's landing check use) |
-| `eval/orchestrator/predicates.py` | `recon_entry` reads the skill file + `GET /auth` | unchanged (reads the placed state; no write) |
+| `eval/orchestrator/files.py` | `authn_skill_path` addressed a data-root mirror | `authn_skill_path(skills_root, project_id)` reads the canonical `skills/target-specific-procedure/<project_id>/authn/SKILL.md`; no data-root mirror |
+| `eval/orchestrator/predicates.py` | `recon_entry` read the skill file + `GET /auth` | `recon_entry` reads the canonical project skill through `skills_root` + `GET /auth`; no write |
 | `eval/scaffold.py` | standalone deterministic scaffold | thin CLI wrapper over `polymerhus.analysis.scaffold` (the platform module the `l1` endpoint reuses) |
 | `eval/setups/first-8.yaml` | inline `auth:` blocks per target | blocks removed; each target declares `data_dir: eval/data/webexploitbench/<target>`; auth-bootstrap work item complete |
 | `eval/setups/{first,comfyui-*.yaml,webexploitbench-chain,mock-local}.yaml` | no inline `auth:` (never carried one) | unchanged |

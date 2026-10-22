@@ -36,7 +36,7 @@ from dataclasses import replace
 # The per-project authentication-procedure skill (the meta skill
 # `meta/authn-skill-writing` authors it). It is project-authored - no canonical
 # catalogue copy - so the L1 index renders it only when its bundle exists at
-# `<data_root>/<project_id>/skills/authn/SKILL.md`.
+# `<skills_root>/target-specific-procedure/<project_id>/authn/SKILL.md`.
 AUTHN_SKILL = "authn"
 
 
@@ -89,12 +89,12 @@ def auth_capable_binding(
         build_skill_tools,
         build_write_skill_tool,
         skill_agent_binding,
-        skill_index_middleware,
+        skill_reference_middleware,
     )
 
     binding = skill_agent_binding(
-        role_id, store=skill_store, lesson_store=lesson_store,
-        task_skills=task_skills,
+        role_id, project_id=project_id, store=skill_store,
+        lesson_store=lesson_store, task_skills=task_skills,
     )
     if not binding.tools:
         if with_write_skill:
@@ -107,7 +107,7 @@ def auth_capable_binding(
                 project_id = config.PROJECT_ID
             return SkillAgentBinding(
                 role_id=role_id,
-                middleware=[skill_index_middleware(store=skill_store)],
+                middleware=[skill_reference_middleware()],
                 tools=[*build_skill_tools(
                     project_id, with_write_skill=True, store=skill_store,
                     lesson_store=lesson_store, role_id=role_id),
@@ -126,7 +126,7 @@ def auth_capable_binding(
                 project_id = config.PROJECT_ID
             return SkillAgentBinding(
                 role_id=role_id,
-                middleware=[skill_index_middleware(store=skill_store)],
+                middleware=[skill_reference_middleware()],
                 tools=[*build_skill_tools(
                     project_id, store=skill_store,
                     lesson_store=lesson_store, role_id=role_id),
@@ -144,7 +144,7 @@ def auth_capable_binding(
                 project_id = config.PROJECT_ID
             return SkillAgentBinding(
                 role_id=role_id,
-                middleware=[skill_index_middleware(store=skill_store)],
+                middleware=[skill_reference_middleware()],
                 tools=[*build_skill_tools(
                     project_id, store=skill_store,
                     lesson_store=lesson_store, role_id=role_id),
@@ -164,6 +164,7 @@ def auth_capable_binding(
         tools.append(build_write_skill_tool(context.get("project_id"), store=skill_store))
     return replace(
         binding,
+        middleware=[skill_reference_middleware()],
         tools=[*tools, build_auth_store_tool(
             store=store, read_only=with_readonly_auth_store)],
         context=context,

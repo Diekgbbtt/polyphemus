@@ -212,46 +212,16 @@ def write_authn_skill(project_id: str, data: bytes, *, store=None) -> dict:
     `DataDependencyError` on a malformed/traversing archive, and `ValueError`
     (`SkillInvalidError` / `SkillTargetError`) on a malformed bundle.
 
-    The SAME validated bytes are mirrored to the eval's documented read surface,
-    `<data_root>/<project_id>/skills/authn/` (`eval/orchestrator/files.py::
-    authn_skill_path`). The live skill store remains the loader's authority; the
-    mirror is the data-dependency contract the eval's recon gate reads. Both
-    copies are written only after the bundle validates, so a refusal lands
-    neither."""
-    import os
-    import tempfile
-    from pathlib import Path
-
-    from polymerhus.app import data_root as data_root_mod
-    from polymerhus.app.llm.skills import StoreUnavailableError
+    The store is the only destination:
+    `skills/target-specific-procedure/<project_id>/authn/`. The data root keeps
+    the AuthContext only; no runtime copy of a project-specific skill lives
+    there."""
     from polymerhus.project_management import data_dependencies as dd
 
     _require_project(project_id)
     files = dd.unpack_authn_archive(data)
     seam = store if store is not None else _default_skill_store()
     seam.replace_bundle(project_id, dd.AUTHN_SKILL, files)
-    mirror = (
-        data_root_mod.project_dir(project_id)
-        / "skills"
-        / dd.AUTHN_SKILL
-    )
-    try:
-        for relative, text in files.items():
-            path = mirror / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".authn-")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    handle.write(text)
-                os.replace(temporary, path)
-            except BaseException:
-                Path(temporary).unlink(missing_ok=True)
-                raise
-    except OSError as exc:
-        raise StoreUnavailableError(
-            f"store_unavailable: cannot mirror the authn bundle to the data "
-            f"root ({exc})"
-        ) from exc
     return {"ok": True, "skill": dd.AUTHN_SKILL, "files": sorted(files)}
 
 

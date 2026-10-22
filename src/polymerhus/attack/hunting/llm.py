@@ -116,7 +116,8 @@ def _hunter_turn(text: str) -> dict | None:
         from polymerhus.app.llm.session import stateful_turn
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = auth_capable_binding(HUNTER_ROLE)
+        binding = auth_capable_binding(
+            HUNTER_ROLE, project_id=getattr(ctx, "project_id", "") or None)
         return _parse_json_object(stateful_turn(
             HUNTER_ROLE, ctx.address, [HumanMessage(content=text)],
             checkpointer=ctx.checkpointer, tools=binding.tools,

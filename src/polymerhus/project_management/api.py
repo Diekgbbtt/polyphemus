@@ -320,12 +320,12 @@ def place_authn_skill(
     """Place the pre-built project `authn` skill bundle by direct file write.
 
     `file` is a single `.tar.gz`/`.zip` archive of the bundle; it is unpacked
-    into the canonical `<data_root>/<project_id>/skills/authn/` (SKILL.md plus
-    its canonical references) - the exact path `SkillStore` resolves and the eval
-    trial reads (`eval/orchestrator/files.py:authn_skill_path`). Traversal,
-    absolute, and symlink members are refused. Non-idempotent: a re-post
-    overwrites. `fileName` is ignored for path building. Replaces the obsolete
-    inline-`TargetConfig.auth` delivery."""
+    into the canonical
+    `<skills_root>/target-specific-procedure/<project_id>/authn/` (SKILL.md
+    plus its canonical references) - the exact path `SkillStore` resolves and
+    the eval trial reads. Traversal, absolute, and symlink members are refused.
+    Non-idempotent: a re-post overwrites. `fileName` is ignored for path
+    building. Replaces the obsolete inline-`TargetConfig.auth` delivery."""
     return _data_dependency_result(
         repository.write_authn_skill, project_id, file.file.read()
     )

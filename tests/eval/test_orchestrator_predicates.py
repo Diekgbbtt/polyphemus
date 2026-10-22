@@ -111,11 +111,13 @@ def test_recon_entry_blocks_without_an_l1_scaffold() -> None:
 
 def test_recon_entry_blocks_an_auth_surface_without_the_authn_skill(tmp_path) -> None:
     files = FileStore()
+    skills_root = tmp_path / "skills"
     state = predicates.PhaseState(
         project_id=PROJECT,
         target_seed="t.test",
         auth_surface=True,
         data_root=tmp_path,
+        skills_root=skills_root,
     )
 
     result = predicates.recon_entry(
@@ -128,7 +130,7 @@ def test_recon_entry_blocks_an_auth_surface_without_the_authn_skill(tmp_path) ->
     assert "authn" in result.reason
 
     # The skill bundle at its designed location lifts the block.
-    files.write_text(authn_skill_path(tmp_path, PROJECT), "# authn\n")
+    files.write_text(authn_skill_path(skills_root, PROJECT), "# authn\n")
     result = predicates.recon_entry(
         _routed(**{"GET /projects/pid/auth": {"overview": "sign in", "accounts": [{"name": "a"}]}}),
         files,
@@ -141,12 +143,14 @@ def test_recon_entry_blocks_an_auth_surface_without_overview_or_credentials(
     tmp_path,
 ) -> None:
     files = FileStore()
-    files.write_text(authn_skill_path(tmp_path, PROJECT), "# authn\n")
+    skills_root = tmp_path / "skills"
+    files.write_text(authn_skill_path(skills_root, PROJECT), "# authn\n")
     state = predicates.PhaseState(
         project_id=PROJECT,
         target_seed="t.test",
         auth_surface=True,
         data_root=tmp_path,
+        skills_root=skills_root,
     )
 
     no_overview = predicates.recon_entry(
@@ -205,6 +209,7 @@ def test_recon_entry_accumulates_the_auth_surface_blocks(tmp_path) -> None:
         target_seed="t.test",
         auth_surface=True,
         data_root=tmp_path,
+        skills_root=tmp_path / "skills",
     )
 
     result = predicates.recon_entry(

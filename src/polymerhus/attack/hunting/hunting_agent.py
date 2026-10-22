@@ -548,7 +548,7 @@ def build_hunting_agent(
         # request-only alongside the five hunter tools AND registered in the
         # harness executor map, joined by the tool name; the index middleware
         # joins the turn middleware and carries the role's bounded skill set.
-        binding = auth_capable_binding(_HUNTER_ROLE)
+        binding = auth_capable_binding(_HUNTER_ROLE, project_id=project_id or None)
         tools = list(tools) + binding.tools
         tools_by_name = {tool.name: tool for tool in tools}
         middleware = list(middleware) + binding.middleware
