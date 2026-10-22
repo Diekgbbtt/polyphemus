@@ -38,10 +38,13 @@ logger = logging.getLogger(__name__)
 # order, so a recorded breakdown is stable and readable.
 RISK_LEVELS: tuple[str, ...] = tuple(level.value for level in Likelihood)
 
-# The threshold's override variable and its recorded basis (S2 7.4).
+# The threshold's override variable and its recorded basis (S2 7.4). The DB
+# (`settings.hunting.risk_threshold`, ADR `hunting-pipeline-sync-adr.md`) wins
+# over the environment when set; the env stays the operator's fallback.
 RISK_THRESHOLD_ENV = "HUNT_RISK_THRESHOLD"
 THRESHOLD_BASIS_DEFAULT = "default"
 THRESHOLD_BASIS_OVERRIDE = "override"
+THRESHOLD_BASIS_DB = "db"
 
 # The run record's fixed key set (S1 7.4, S2 9.2): the run bootstrap writes the
 # intake order and the exclusions before the first unit, the accumulator updates
@@ -72,15 +75,34 @@ def risk_weights() -> dict[str, int]:
     return {level.value: RISK_WEIGHTS[level] for level in Likelihood}
 
 
-def threshold_config(env: Mapping[str, str] | None = None) -> tuple[int, str]:
+def threshold_config(
+    env: Mapping[str, str] | None = None, *, db_value: Any = None,
+) -> tuple[int, str]:
     """The effective risk threshold and its basis (S2 7.4).
 
     The default is a documented starting constant, not a calibrated value: the
     calibration replays recorded runs in intake order against the fixed weights
-    (ordering-halt ADR consequences). `HUNT_RISK_THRESHOLD` overrides it; a
-    malformed override warns and falls back to the default, so a typo can never
-    silently disable the halt.
+    (ordering-halt ADR consequences). The project's stored
+    `settings.hunting.risk_threshold` wins when set (basis `db`, ADR
+    `hunting-pipeline-sync-adr.md`); `HUNT_RISK_THRESHOLD` then overrides the
+    default; a malformed override warns and falls back to the default, so a
+    typo can never silently disable the halt.
     """
+    if db_value is not None:
+        try:
+            threshold = int(db_value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "run lifecycle: the stored risk_threshold %r is not an integer; "
+                "falling back to the env/default basis", db_value,
+            )
+        else:
+            if threshold >= 0:
+                return threshold, THRESHOLD_BASIS_DB
+            logger.warning(
+                "run lifecycle: the stored risk_threshold %r is negative; "
+                "falling back to the env/default basis", db_value,
+            )
     source = os.environ if env is None else env
     raw = (source.get(RISK_THRESHOLD_ENV) or "").strip()
     if not raw:

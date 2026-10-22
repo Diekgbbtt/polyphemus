@@ -16,11 +16,11 @@ import logging
 import math
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.analysis.scaffold import ScaffoldError
 from polymerhus.app.auth.store import (
@@ -80,6 +80,18 @@ class ProjectCreate(BaseModel):
 
 class SettingsUpdate(BaseModel):
     recon: dict = {}
+
+
+class HuntingConfigUpdate(BaseModel):
+    """The partial PUT body of the project's hunting config (ADR
+    `hunting-pipeline-sync-adr.md`). Only the provided keys land (deep-merged);
+    `risk_threshold: null` clears the DB override and falls back to the
+    env/default basis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_sync: Literal["serial", "batched", "parallel"] | None = None
+    risk_threshold: int | None = Field(default=None, ge=0)
 
 
 class ReconLaunch(BaseModel):
@@ -211,6 +223,33 @@ def read_settings(project_id: str) -> dict:
 def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     try:
         repository.save_project_settings(project_id, body.recon)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.get("/projects/{project_id}/hunting/config")
+def read_hunting_config(project_id: str) -> dict:
+    """The project's hunting config (ADR `hunting-pipeline-sync-adr.md`): the
+    frozen-at-run-start `pipeline_sync` mode and the threat-modeller risk
+    threshold. Unknown project -> 404; a project that never stored a blob reads
+    back the defaults (mode `batched`, threshold None)."""
+    try:
+        return repository.read_hunting_config(project_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+
+
+@router.put("/projects/{project_id}/hunting/config")
+def update_hunting_config(project_id: str, body: HuntingConfigUpdate) -> dict:
+    """Partial update: only the provided keys land (deep-merged into
+    `settings.hunting`). The mode is validated by the body enum; a bad
+    threshold or an unknown project is refused with nothing landing."""
+    payload = body.model_dump(exclude_unset=True)
+    try:
+        repository.save_hunting_config(project_id, payload)
     except ProjectNotFound:
         raise HTTPException(status_code=404, detail="unknown project")
     except ValueError as exc:

@@ -14,6 +14,10 @@ wiring T4 owns:
   project, and exits on quiesce or cancellation. The surfer is a dumb mover: it
   only reads the produced inboxes, drives the control plane, and applies the
   moves - every decision stays in the mover's deduction and its sequencing.
+  As of the pipeline-sync extension (ADR `hunting-pipeline-sync-adr.md`,
+  2026-10-22) it ALSO hands the run's `RunSyncGate` (when the frozen mode is
+  `batched`/`serial`) to the tick as the mover's pre-filter: the gate holds an
+  item by refusing it (stays produced, at-least-once), it never schedules.
 - The run DISPATCH builders (`build_run_dispatch`): the `coro_for` seam the
   mover's `run_delivery_tick` was designed for. A produced LOOP FILE becomes ONE
   hunter session under the per-loop id `hunting:<run_id>:hunt:<dispatch_id>`
@@ -220,6 +224,11 @@ class RunDispatchState:
     hunters_in_graph: set[str] = field(default_factory=set)
     loop_likelihoods: dict[str, str] = field(default_factory=dict)
     provider_failure: ProviderUnavailableError | None = None
+    # The run's pipeline sync gate (`hunting_pipeline_sync`, ADR 2026-10-22):
+    # None in `parallel` (the historical behaviour), a `RunSyncGate` in
+    # `batched`/`serial`. Consulted once per surfer tick; held items stay
+    # produced (the mover's at-least-once rule).
+    sync_gate: Any = None
 
 
 @dataclass(frozen=True)
@@ -843,6 +852,14 @@ async def run_surfer_loop(
     session's registry entry drains with the task."""
     ticks = 0
     last_tick = None
+
+    def _pre_filter(items, live_session_ids):
+        return state.sync_gate.filter(
+            items,
+            live_session_ids=live_session_ids,
+            hunts_in_graph=frozenset(state.hunters_in_graph),
+        )
+
     while True:
         last_tick = run_delivery_tick(
             project_id, run_id,
@@ -851,6 +868,7 @@ async def run_surfer_loop(
             pod_store=pod_store,
             control=control, coro_for=coro_for,
             live_loop_likelihoods=state.loop_likelihoods,
+            pre_filter=_pre_filter if state.sync_gate is not None else None,
         )
         ticks += 1
         if state.provider_failure is not None:
