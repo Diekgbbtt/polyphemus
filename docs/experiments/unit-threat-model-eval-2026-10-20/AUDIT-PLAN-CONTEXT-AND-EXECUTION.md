@@ -16,11 +16,14 @@ A signal that contradicts another source is recorded as a contradiction, never s
 - [x] S1.5 Inspect the tool data contracts and prompts.
 - [x] S1.6 Cluster and diagnose.
 - [x] S1.7 Write the surface 1 report.
-- [ ] S2.1 Read the official trial record.
-- [ ] S2.2 Audit the hunting artifacts.
-- [ ] S2.3 Audit the execution traces.
-- [ ] S2.4 Distinguish cap-stop effects from defects.
-- [ ] S2.5 Write the surface 2 report.
+- [x] S2.1 Read the official trial record.
+- [x] S2.2 Audit the hunting artifacts.
+- [x] S2.3 Audit the execution traces.
+- [x] S2.4 Distinguish cap-stop effects from defects.
+- [x] S2.5 Write the surface 2 report.
+
+Surface 1 and surface 2 are complete.
+The reports are `CONTEXT-LIFECYCLE-AUDIT-WHITE-JOTTER.md` and `EXECUTION-STACK-TRACE-AUDIT-WHITE-JOTTER.md`.
 
 ## Scope and assumptions
 
