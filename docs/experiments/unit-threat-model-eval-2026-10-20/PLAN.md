@@ -475,3 +475,24 @@ Next:
 - deploy and validate F-022 consumed-loop recovery, F-025 one-spec writes, F-026 per-child retry, and F-009 reasoning replay;
 - keep F-023 forced resume and F-024 pre-emptive cap enforcement deferred;
 - only then start the 7M white-jotter trial.
+
+## White-jotter 7M result - 2026-10-22
+
+Trial: `white-jotter-1-20261022T030303-1618c524` on project `4786aefc-c3fd-46c1-a2ab-45b05cc38e25`.
+Code: `5789ad3f` on the instance; fresh project; one trial.
+
+- terminal `stopped` at the 7M cap; spent 7,002,218 capped tokens (overshoot 3,405);
+- phases: recon `complete`, analysis `drained`, hunting `stopped` at intake position 5 of 27;
+- 7 COMPLETED unit models, all valid; 23 loops, 42 specs, 27 pod directories;
+- 4 ground-truth pod confirmations and 13 non-ground-truth confirmations;
+- official assessor: 1 identified (`white-jotter-002`), 2 partial (`001`, `003`), 4 missed (`004`-`007`);
+- identification 14.29%; partial-or-identified 42.86%; loop candidate recall 28.57%; spec candidate recall 14.29%; core floor 100%; full core 28.57%;
+- risk total 33/250: the 7M cap, not the risk threshold, is the binding terminator.
+
+The four misses are cap-coverage misses: the units that own the JNDI flow, the catalogue keyword path, the media-asset cover path, and the public registration handler were never modelled.
+`white-jotter-001` is a scoping miss (the pod confirmed `admin/123`, but the loop targeted rate limiting); `white-jotter-003` is a partial (storage confirmed, no output-encoding test).
+
+Decision: the pipeline is functional end to end.
+The next experiment settles the cap-versus-coverage tradeoff: a larger white-jotter budget, an intake that reaches the high-value units earlier, or a scoped fix for the weak-credential and stored-XSS loop classes.
+The official records are `trial.yaml`, `verdicts.yaml`, `diagnoses.yaml`, and `metrics.yaml` in the trial directory.
+The `eval-measurer` narrative was blocked by the opencode-go quota; the deterministic metrics and the assessor/diagnoser records are complete.

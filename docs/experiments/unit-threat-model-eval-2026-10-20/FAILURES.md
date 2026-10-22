@@ -280,6 +280,17 @@ The final section regroups the entries by failure domain and common root cause.
 - **Root cause:** the `#331` handler was the only child-failure path and it was run-global. There was no per-item retry state, so a single transient failure had to stop the run.
 - **Residual risk:** several different children may each fail twice without pausing the run; a broad outage converges only when one item reaches its third failure. This is intentional: the threshold detects a persistently failing item, not a broad provider outage.
 
+### F-027 - The threat modeller invents its own reference namespaces
+
+- **Detected:** during the 2026-10-22 white-jotter trial setup.
+- **Signal:** every COMPLETED model was archived with `referential_errors`: control/data-flow ids (`CF-3`, `DF-1`) in `trust_agreements[].interface_agreement_refs`, prose in `violations[].maps_to_fault`, and a loop `canonical_class` renamed away from its vulnerability.
+- **Impact:** the first two white-jotter attempts spent about 2.4M capped tokens and published zero loops; the modeller was writing a model the completion checker had to reject.
+- **Evidence:** the archived `ReverseProxy` model (`TA-1.interface_agreement_refs='CF-3'`, prose `maps_to_fault`), the run stats `degraded_units`, and the app log completion-check reasons.
+- **Status:** fixed as `5789ad3f`; the full 7M run produced 7/7 valid models with zero archived units.
+- **Resolution:** the modeller prompt carries a reference-field table (each `*_ref`/`*_refs`/`maps_to_fault`/`boundary_ref`/`transition_ref` is an id from a named namespace, never prose), the two critical schema fields carry descriptions, and the `hunts_store` description repeats the rule. The COMPLETED response is actionable: the model must fix every `missing`/`unclosed`/`referential_errors` finding and write COMPLETED again; a loop copies its vulnerability's classes verbatim.
+- **Domain:** threat-modeller prompt, schema, and completion validation.
+- **Root cause:** the stable prompt described the five states and the ontology but never named the reference ID spaces; the schema accepted any string, so the model's invented names passed parsing and failed only at the completion check.
+
 ## Runtime trials
 
 ### Canary attempt 1 - comfyui-1 - project c289978e-c321-4ff2-894d-587b12f575f2

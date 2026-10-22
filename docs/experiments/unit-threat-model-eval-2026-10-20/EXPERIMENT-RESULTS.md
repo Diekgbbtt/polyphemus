@@ -313,3 +313,60 @@ The next step is to deploy and validate the local fixes, then run the 7M white-j
 ---
 
 *Results documented on 2026-10-21. Decision: iterate before the measured eight-target run.*
+
+---
+
+## White-jotter 7M trial (2026-10-22)
+
+The first white-jotter trial ran from scratch on the fixed pipeline (`5789ad3f`) with the 7M capped-token budget and the 4-hour phase deadline.
+The trial is `white-jotter-1-20261022T030303-1618c524` on project `4786aefc-c3fd-46c1-a2ab-45b05cc38e25`.
+
+### Result
+
+| Metric | Result |
+|---|---|
+| Terminal | `stopped` at the 7M cap (not `complete`) |
+| Capped tokens | 7,002,218 of 7,000,000; overshoot 3,405 |
+| Phases | recon `complete`; analysis `drained`; hunting `stopped` |
+| Intake position at stop | 5 of 27 |
+| COMPLETED unit models | 7, all valid (`degraded_units: 0`) |
+| Loops / specs / pod directories | 23 / 42 / 27 |
+| GT pod confirmations | 4 |
+| Non-GT pod confirmations | 13 |
+| Official verdicts | 1 identified, 2 partial, 4 missed |
+| Identification rate | 14.29% |
+| Partial-or-identified rate | 42.86% |
+| Loop candidate recall | 28.57% (2/7) |
+| Spec candidate recall | 14.29% (1/7) |
+| Core floor / full core | 100% / 28.57% |
+| Risk total at stop | 33 / 250 (the cap bound before the threshold) |
+
+### Verdicts
+
+- `white-jotter-002` (access-control bypass at `/api/`): **identified**.
+  The reverse proxy matches the literal path while Tomcat resolves the matrix segment, so the authorizing filter is skipped; `/api/;/admin/user` returns the admin roster while the canonical twin returns 0 bytes.
+- `white-jotter-001` (weak/default credentials at `/api/login`): **partial**.
+  A pod control probe authenticated `admin/123` and the minted session worked, but the loop was scoped to rate limiting, not weak/default credentials; no loop or spec targeted the class.
+- `white-jotter-003` (stored XSS at `/api/admin/content/article`): **partial**.
+  The article handler stored caller HTML verbatim and read it back, but no output encoding or script execution was tested.
+- `white-jotter-004` (RCE/JNDI), `white-jotter-005` (SQLi), `white-jotter-006` (arbitrary file read), `white-jotter-007` (IDOR/overwrite at `/api/register`): **missed**.
+  The diagnoses attribute all four to the cap: the run stopped at intake position 5, before the units that own the JNDI flow, the catalogue keyword path, the media-asset cover path, and the public registration handler were modelled.
+
+### What the run establishes
+
+- The F-027 reference-ID contract works: all 7 COMPLETED models are valid, and the pre-fix attempts show the failure mode (the model put `CF-*`/`DF-*` in `interface_agreement_refs`, prose in `maps_to_fault`, and renamed classes at the loop).
+- The one-spec F-025 cadence wrote 42 specs without a transport truncation.
+- The pipeline reached pod execution: 27 pod directories, 4 GT confirmations, 13 non-GT symptoms.
+- The 7M cap, not the risk threshold, is the binding terminator.
+  The four missed vulnerabilities are coverage misses from the cap, not clean model-quality misses.
+- The run had no provider interruption, so F-022 and F-026 were deployed but not exercised by this trial.
+
+### Next
+
+The cap is the primary coverage bound.
+The next decision is either a larger white-jotter budget, an intake that reaches the high-value units earlier, or a scoped fix for the weak-credential and stored-XSS loop classes.
+The four cap misses are not evidence of model quality until the units are actually modelled.
+
+---
+
+*White-jotter result documented on 2026-10-22. Decision: the pipeline is functional; the next experiment must settle the cap-versus-coverage tradeoff.*
