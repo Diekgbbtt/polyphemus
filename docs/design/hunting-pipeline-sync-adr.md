@@ -1,6 +1,6 @@
 # Hunting pipeline phase synchronisation - ADR
 
-*Status: decided (2026-10-22). Not yet built; the implementation follows the TDD pipeline and lands its own spec + assertions docs.*
+*Status: decided (2026-10-22), built (2026-10-23). Spec: `docs/design/hunting-pipeline-sync-spec.md`; assertions: `docs/design/hunting-pipeline-sync-assertions.md`.*
 *Extends: `hunting-pipeline-wiring-adr.md` (the run-scoped inbox surfer, ADR #169/T4), `unit-threat-model-ordering-halt-adr.md` (the risk budget and the halt).*
 *Decision owner: operator. Grilled and settled 2026-10-22; every decision below is operator-ratified.*
 
@@ -102,16 +102,17 @@ storage-backed or registry-backed; no new artifact kind is introduced.
 - Modeller phase end: the modeller pass session is settled in the registry (its
   `threat-modeller` session id is gone), which covers both the halt and intake exhaustion.
 - Hunter terminal: the hunt session has left its ReAct graph (`hunters_in_graph` no longer
-  holds it) AND its spec set is terminal - the `test-specs/<hunt_key>/terminal.yaml` finalize
-  write with every produced spec `ratified` or `dropped` - OR the hunt degraded fail-open (a
-  builder failure or a non-provider harness degrade: it authors nothing more).
-  A transient provider requeue (F-026) is NOT terminal: the batch/cursor gate holds while the
-  child backs off and retries.
+  holds it). A hunt that ends without authoring a terminal spec set (a builder failure or a
+  non-provider harness degrade) authors nothing more, so it reads as done: its loop file was
+  consumed at admission and this branch has no consumed-loop recovery. A terminal set is
+  therefore the normal completion, never the gate's only signal.
+  A provider failure is not a gate state at all: it pauses the run (`interrupted`) through
+  the existing handler.
 - Pod terminal: the durable parent-keyed PodExport record exists for the spec (the ADR #169
   Q16 amendment record authored at pod completion) - a `successful`/`unsuccessful` verdict,
   the fail-open degraded export (`surfer-dispatch-degraded`), or any terminal export record
   credits completion.
-  A deferred child (provider backoff pending) is NOT terminal.
+  A pod still executing keeps its unit current; there is no other pod-side hold.
 - A batch (or the serial cursor) with an EMPTY member set advances immediately: a zero-loop
   unit skips hunting, a hunt with zero `ratified` specs skips the pod phase.
 - Empty-unit and degraded cases therefore never wedge the queue.
@@ -120,14 +121,17 @@ storage-backed or registry-backed; no new artifact kind is introduced.
 
 One new module, `attack/hunting/pipeline_sync.py`, clean separation of concerns:
 
-- `SyncMode` - the frozen enum (`serial` / `batched` / `parallel`).
-- `SyncPolicy` - the PURE policy interface over the gate decisions; `ParallelSyncPolicy`
-  (no-op, the today-seam), `BatchedSyncPolicy`, `SerialSyncPolicy`.
-- `PipelineSyncState` - the run-local ledger: the sorted unit queue, a per-unit
-  `BatchState` (its hunts and pod phases with each member's completion credit), and the
-  serial phase cursor.
-  It is in-memory and run-scoped, living beside `RunDispatchState`; the single worker loop
-  stands, so no lock.
+- `SyncMode` - the frozen enum (`serial` / `batched` / `parallel`) and `resolve_mode`.
+- The PURE surface - `SyncFacts` (the storage/registry snapshot), `UnitMeta`, `BatchState`
+  (the derived per-unit phase snapshot: `hunt`/`pod`/`serial`/`done`, the rank-ordered hunts,
+  the serial cursor and pod cursor), `order_units`, `batch_state`, and
+  `decide(mode, items, units, facts) -> frozenset[message_id]`, which dispatches to the
+  batched/serial rule bodies.
+- `PipelineSyncState` - the run-local ledger: the frozen mode, the intake-order source, and
+  the per-unit metadata cache. It is in-memory and run-scoped, living beside
+  `RunDispatchState`; the single worker loop stands, so no lock.
+- `RunSyncGate` - the impure adapter (`make_sync_gate`, None for `parallel`) that gathers the
+  facts from the stores and the session registry and applies `decide`.
 
 Wiring: the ledger is consulted at the TWO existing dispatch seams only.
 
@@ -148,8 +152,7 @@ A handful of small state classes (`BatchState`, the phase cursors) ride the modu
 
 The ledger holds NO durable state.
 Every gate decision re-derives from stored facts (the produced/consumed loop files and model
-documents, the spec statuses, the `terminal.yaml` sets, the durable PodExport records) plus
-registry liveness.
+documents, the spec statuses, the durable PodExport records) plus registry liveness.
 A resumed run therefore rebuilds the queue and applies its cursor to already-terminal work:
 modelled units that never dispatched (the provider-pause case), completed batches, and
 delivered exports are all recognised, and the cursor lands on the first unfinished phase.
@@ -158,8 +161,8 @@ resume verb T11 #398).
 
 ## Explicitly unchanged
 
-- The completion signals themselves (terminal spec set statuses, PodExport records) and the
-  F-022/F-017/F-026 recovery semantics.
+- The completion signals themselves (the hunt's graph exit, the terminal spec-set statuses,
+  the PodExport records) and the F-017 consumed-spec recovery.
 - The agent sub-module role gates (#317) and the module dispatch gate width (Q15): the
   policy refusals layer ON TOP, and a stopped role still refuses before the policy is asked.
 - The singular launches (`launch_modeller`, the pod resume verb): they carry no surfer and
@@ -184,8 +187,8 @@ resume verb T11 #398).
 ## Consequences
 
 - In `batched`/`serial`, produced loop files accumulate while the modeller pass runs; every
-  tick the pending sync-hold refusal is counted (`refused`/`paused` on the `TickReport`) and
-  logs are bounded by the existing log-once discipline.
+  tick the held items count as `paused` on the `TickReport` (they stay produced, never
+  dropped), and logs are bounded by the existing log-once discipline.
 - A long silent stretch between run start and the first hunter dispatch is EXPECTED in
   `batched`/`serial` (the whole risk budget is modelled first); operators read the run
   record's `stats` rather than judging liveness by dispatch activity.
