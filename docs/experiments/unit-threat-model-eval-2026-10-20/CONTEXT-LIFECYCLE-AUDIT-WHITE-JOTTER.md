@@ -160,10 +160,10 @@ The first generation of each session carries the system prompt and the tool sche
 | pod_triager | 11,712 | 11,724 | 14,318 |
 
 The nav1 hunter first input is 104,119 chars.
-It contains 27,920 system-message chars, 1,761 application-overview chars, 35,491 loop-payload chars, 37,330 preloaded tool-result chars, and the remaining tool-schema and request-framing chars.
+It contains 27,920 system-message chars, 1,761 application-overview chars, 35,491 loop-payload chars, 37,330 tool-description chars (the 12 tool schemas), and the remaining request-framing chars.
 The 25k-token figure is plausible at about four chars per token.
 The 19k-word figure is a rough token-to-word conversion, not a separate fault.
-The earlier component sentence omitted the preloaded tool results; the corrected breakdown is above.
+The earlier component sentence omitted the tool descriptions; the corrected breakdown is above.
 
 The hunter's fixed first-call context is about 25k tokens.
 At 397 hunter calls, the fixed first-call context alone is about 9.86M tokens.

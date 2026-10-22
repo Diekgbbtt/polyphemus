@@ -533,28 +533,29 @@ Make the payload richer and more direct, not merely shorter.
 Show the proposed compressed prompt for the largest entities.
 Do not implement it yet.
 
-### Task 9: Inventory the preloaded tool messages
+### Task 9: Inventory the tool descriptions
 
 **Files:**
 - Modify the context report
 
-- [ ] **Step 1: Name the 12 preloaded messages**
+- [ ] **Step 1: Name the 12 tool descriptions**
 
-The first hunter input contains 12 `tool` messages with sizes 8,259, 4,019, 2,486, 2,942, 1,753, 716, 566, 3,845, 2,231, 2,045, 2,104, and 6,364 chars.
+The first hunter input contains 12 `tool` entries with sizes 8,258, 4,012, 2,490, 2,942, 1,753, 716, 566, 3,845, 2,231, 2,045, 2,104, and 6,345 chars.
 Identify the tool and the content class of each.
-These are tool results, not tool descriptions.
+These are the 12 tool schemas/descriptions, not tool results.
 
-- [ ] **Step 2: Separate the descriptions from the results**
+- [ ] **Step 2: State the correction**
 
-The tool descriptions belong to the loop payload's tool surface.
-The 37,330-char block is the preloaded evidence.
+The 37,330-char block is the tool-description surface.
+It is not a preloaded result block.
+The first call carries no tool result; results arrive after the first tool call.
 State this correction explicitly.
 
-- [ ] **Step 3: Propose the preload contract**
+- [ ] **Step 3: Propose the tool-description contract**
 
 The target proxied environment overview, the data contract, and the success/error semantics are the description surface.
-The preloaded results should be projected or loaded on demand.
-Propose the minimal preload set and the projection.
+The full usage contracts should move behind `load_skill` or a help lookup.
+Propose the minimal description and the projection.
 Do not implement it yet.
 
 ### Task 10: Map the system prompt and propose compression
@@ -660,7 +661,7 @@ git commit -m "docs(eval): add context occupancy and n-turn offload analyses"
 - The triager context must contain the typed procedure exactly once.
 - The pod test must prove the middleware reaches the stateful turns.
 - The occupancy table must reconcile to the provider input total within the documented residual.
-- The loop payload and preloaded blocks must sum to the first-call message sizes.
+- The loop payload and tool-description blocks must sum to the first-call message sizes.
 - The offload simulation must report the raw improvement and the cache penalty together.
 - A design-level prompt/loop/preloaded change stops at the proposal and asks for the design decision.
 
@@ -673,7 +674,7 @@ git commit -m "docs(eval): add context occupancy and n-turn offload analyses"
 - Pod compaction middleware reaches the runner and triager stateful turns through the existing `after_model` pattern.
 - The cache-stable correction is in the report.
 - The occupancy report breaks down every component and averages the multi-session roles.
-- The loop payload, preloaded messages, and system prompt have measured entity tables and compression proposals.
+- The loop payload, tool descriptions, and system prompt have measured entity tables and compression proposals.
 - The n-turn offload simulation reports the observed-versus-simulated growth and the cache-prefix risk.
 - No unapproved inline offload, broad bound, task budget, F-024, or record-stamping change is implemented.
 - The design-level prompt, loop, and preload proposals are presented for the user's decision before implementation.
