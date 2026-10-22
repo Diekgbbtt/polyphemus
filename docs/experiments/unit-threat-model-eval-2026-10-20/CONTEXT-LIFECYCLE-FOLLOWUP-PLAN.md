@@ -198,7 +198,7 @@ git commit -m "fix(auth): default the auth store to a bounded summary view"
 **Design anchor:** `authn-antiblock-replayability-237-decisions.md` and the per-project bundle path in `skill-runtime-loading-222-decisions.md`.
 
 The binding already names `AUTHN_SKILL` in `context["skills"]`.
-The diagnosis is whether the project bundle resolves at the data-dir path and whether the listing includes it.
+The diagnosis is whether the project bundle resolves at the canonical live skills root path (`skills/target-specific-procedure/<project_id>/`) and whether the listing includes it.
 Do not add a second skill index.
 The direct reference belongs in the role system prompt.
 
@@ -206,16 +206,16 @@ The direct reference belongs in the role system prompt.
 
 ```python
 def test_auth_store_agents_can_list_and_load_the_project_authn_skill(tmp_path):
-    skill_root = tmp_path / "data"
+    skills_root = tmp_path / "skills"
     project = "p1"
-    bundle = skill_root / project / "skills" / "authn"
+    bundle = skills_root / "target-specific-procedure" / project / "authn"
     bundle.mkdir(parents=True)
     (bundle / "SKILL.md").write_text(
         "---\nname: authn\ndescription: Project authentication procedure\n---\n"
         "# Project authn\nUse the recorded login envelope.\n",
         encoding="utf-8",
     )
-    store = SkillStore(root=skill_root)
+    store = SkillStore(root_dir=skills_root)
     binding = auth_capable_binding(
         "hunting_hunter", project_id=project, skill_store=store,
         store=AuthStore(root=tmp_path / "auth"),
@@ -233,7 +233,8 @@ Expected: FAIL because the project bundle is not resolved or not listed.
 
 - [ ] **Step 3: Fix the project-bundle resolution**
 
-Use the canonical data-dir path `data/<project_id>/skills/<name>/SKILL.md`.
+Use the canonical live skills root path `skills/target-specific-procedure/<project_id>/<name>/SKILL.md`.
+The data root is not a skill location; the removed data-root mirror is not a fallback.
 The listing and loader must both use the same `SkillStore` seam.
 The `authn` skill must remain project-scoped; do not copy it into the shared catalogue.
 
@@ -259,39 +260,40 @@ git commit -m "fix(skills): expose the project authn skill to auth-store agents"
 **Files:**
 - Modify: `src/polymerhus/app/auth/seams.py`
 - Modify: `src/polymerhus/app/llm/skills.py`
-- Modify: `src/polymerhus/attack/hunting/hunting_agent.py`
-- Test: the hunter, modeller, and pod prompt tests
+- Test: `tests/app/test_auth_seams.py`
+- Test: `tests/recon/test_skills.py`
 
 **Design anchor:** `skill-runtime-loading-222-decisions.md` Q3 index and `progressive-skill-lifecycle-adr.md`.
 This is the approved index-removal deviation: discovery moves to the `load_skill` listing.
 
-- [ ] **Step 1: Write the failing no-index test**
+- [ ] **Step 1: Write the failing direct-reference test**
 
 ```python
-def test_hunting_system_prompt_has_direct_skills_but_no_full_index():
-    prompt = _load_hunting_agent_skill()
-    assert "Skills available through the" not in prompt
-    assert "authn" in prompt
-    assert "information-disclosure" in prompt
+def test_auth_capable_bindings_use_direct_references_not_the_full_index():
+    from polymerhus.app.llm.skills import render_skill_references
+
+    binding = auth_capable_binding("hunting_hunter", project_id="p1")
+    line = render_skill_references(binding.context["skills"])
+    assert "SKILLS - direct references" in line
+    assert "`authn`" in line
+    assert "`lightrag-query`" in line
+    assert "Skills available through the `load_skill` tool" not in line
+    assert len(binding.middleware) == 1
 ```
 
-The test for the bound role must also assert that `skill_index_middleware` is not in the turn middleware.
+The bound role must use the direct-reference middleware, not `skill_index_middleware`.
 
 - [ ] **Step 2: Run the test and verify it fails**
 
-Run: `pytest tests/attack/test_hunting_prompt.py -q -k skill_index`
-Expected: FAIL because the system prompt contains the rendered L1 index.
+Run: `pytest tests/app/test_auth_seams.py -q -k direct_references`
+Expected: FAIL because the auth binding still renders the full L1 index.
 
-- [ ] **Step 3: Replace the index middleware with a direct-reference block**
+- [ ] **Step 3: Replace the index middleware with the direct-reference middleware**
 
-Remove `skill_index_middleware` from the approved role bindings.
-Add a short static reference block to each role's system prompt:
-
-- the internal skills the cognitive map already names;
-- the project `authn` skill;
-- one line: use `load_skill` with no name or a `pattern` to list all skills;
-- one line: load a skill only at phase entry and only once.
-
+Replace `skill_index_middleware` with `skill_reference_middleware` in every
+`auth_capable_binding` path.
+`render_skill_references` names the bounded skills (the internal skills plus
+the project `authn`) and points at the `load_skill` listing.
 The `load_skill` listing remains the only full discovery surface.
 Do not add the full catalog to the prompt.
 
@@ -302,7 +304,7 @@ The index block must disappear; the direct reference block must be shorter.
 
 - [ ] **Step 5: Run the prompt and skills tests**
 
-Run: `pytest tests/attack/test_hunting_prompt.py tests/app/test_skills.py tests/recon/test_skills.py -q`
+Run: `pytest tests/app/test_auth_seams.py tests/recon/test_skills.py tests/recon/test_skill_seam.py -q`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**

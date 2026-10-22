@@ -85,9 +85,10 @@ LightRAG:
 - The embedding model remains `nvidia/nemotron-3-embed-1b` at dimension `2048`, because the existing KB store is indexed at that shape.
 - A model change without a reindex would invalidate retrieval.
 
-The eight data dependencies live at `/root/eval-dd/data/<target>/`.
+The eight data-dependency upload sources live at `/root/eval-dd/data/<target>/`.
 Each target has `operator_kb.md`, `l1-surface.yaml`, `auth/overview.yaml`, and `auth/credentials.yaml`.
-Seven have `skills/authn/SKILL.md`.
+Seven have the staging source `skills/authn/SKILL.md`.
+The auth files are placed under the app data root; the authn bundle is placed in the live skills root's `target-specific-procedure/<project_id>/authn/` branch, not under the data root.
 ComfyUI has no authn skill and no authentication surface, so its omission is not a blocker.
 The preflight must re-check presence and the AuthContext validators before every target.
 
