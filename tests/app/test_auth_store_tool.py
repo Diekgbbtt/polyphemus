@@ -31,7 +31,7 @@ def test_tool_name_is_auth_store(tmp_path):
 def test_tool_takes_no_project_identity_argument(tmp_path):
     tool = build_auth_store_tool(PROJECT, AuthStore(tmp_path))
     assert "project_id" not in tool.args
-    assert set(tool.args) == {"command", "path", "value"}
+    assert set(tool.args) == {"command", "path", "value", "view", "fields"}
 
 
 def test_factory_binds_the_project_id_once(tmp_path):
@@ -39,7 +39,7 @@ def test_factory_binds_the_project_id_once(tmp_path):
     other = AuthStore(tmp_path)
     other.write("proj-other", "accounts.bob.notes", "sibling secret")
     tool = build_auth_store_tool(PROJECT, store)
-    out = tool.invoke({"command": "read", "path": ""})
+    out = tool.invoke({"command": "read", "view": "full"})
     assert out["ok"] is True
     assert out["value"]["accounts"]["alice"]["notes"] == "agent-minted note"
     assert "bob" not in out["value"]["accounts"]
@@ -48,7 +48,7 @@ def test_factory_binds_the_project_id_once(tmp_path):
 def test_default_store_is_the_production_auth_store():
     tool = build_auth_store_tool(PROJECT)
     assert tool.name == "auth_store"
-    assert set(tool.args) == {"command", "path", "value"}
+    assert set(tool.args) == {"command", "path", "value", "view", "fields"}
 
 
 def test_factory_defaults_the_project_to_the_control_plane(tmp_path, monkeypatch):
@@ -114,7 +114,8 @@ def test_contract_carries_the_overall_schema():
 def test_contract_carries_the_read_write_rules():
     for marker in ("read", "write", "valid empty", "single-field",
                    "duplicate_auth", "duplicate_identity",
-                   "auth_invalid", "store_unavailable"):
+                   "auth_invalid", "store_unavailable", "summary",
+                   "view=\"full\""):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
@@ -130,10 +131,11 @@ def test_each_parameter_documents_its_role(tmp_path):
 
 # --- reads: full state, narrow paths, missing paths are valid-empty -----------
 
-def test_read_empty_path_returns_the_full_state(tmp_path):
+def test_read_empty_path_returns_the_full_state_with_the_explicit_view(tmp_path):
     tool = build_auth_store_tool(PROJECT, _seeded_store(tmp_path))
-    out = tool.invoke({"command": "read", "path": ""})
+    out = tool.invoke({"command": "read", "view": "full"})
     assert out["ok"] is True and out["command"] == "read" and out["path"] == ""
+    assert out["view"] == "full"
     assert isinstance(out["value"]["accounts"]["alice"].pop("updated_at"), str)
     assert out["value"] == {
         "overview": {"notes": "operator ground truth"},
@@ -166,9 +168,34 @@ def test_read_missing_path_is_a_valid_empty(tmp_path):
 
 def test_read_of_an_unseeded_project_is_a_valid_empty(tmp_path):
     tool = build_auth_store_tool(PROJECT, AuthStore(tmp_path))
-    out = tool.invoke({"command": "read", "path": ""})
+    out = tool.invoke({"command": "read"})
     assert out == {"ok": True, "command": "read", "path": "",
-                   "value": {"overview": {}, "accounts": {}}}
+                   "view": "summary",
+                   "value": {"overview": {}, "accounts": []}}
+
+
+def test_read_defaults_to_a_bounded_summary_without_secret_values(tmp_path):
+    store = _seeded_store(tmp_path)
+    store.write(PROJECT, "accounts.alice.credentials", {
+        "username": "alice", "password": "do-not-leak",
+        "login_url": "https://t.example/login",
+    }, origin="agent")
+    store.write(PROJECT, "accounts.alice.tokens.session", {
+        "value": "tok-do-not-leak", "location": "cookie",
+        "target": "t.example", "expiry": "2026-11-01T00:00:00+00:00",
+    }, origin="agent")
+    tool = build_auth_store_tool(PROJECT, store)
+    out = tool.invoke({"command": "read"})
+    assert out["view"] == "summary"
+    account = next(a for a in out["value"]["accounts"] if a["name"] == "alice")
+    assert account["tokens"]["session"] == {
+        "location": "cookie", "target": "t.example",
+        "expiry": "2026-11-01T00:00:00+00:00"}
+    assert "credentials" not in account
+    assert "steel" not in account
+    text = str(out)
+    assert "do-not-leak" not in text
+    assert "tok-do-not-leak" not in text
 
 
 def test_unknown_command_is_an_auth_invalid_envelope(tmp_path):

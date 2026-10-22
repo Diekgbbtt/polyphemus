@@ -105,7 +105,8 @@ def test_the_authn_bounding_binds_the_project_procedure_and_the_read_only_view(t
     assert binding.context == {"skills": [AUTHN_SKILL], "project_id": PROJECT}
     tool = binding.tools[-1]
     assert tool.description == AUTH_STORE_READ_CONTRACT
-    assert set(tool.args) == {"command", "path"}, "no write field is expressible"
+    assert set(tool.args) == {"command", "path", "view", "fields"}, (
+        "no write field is expressible")
     assert tool.invoke({"command": "read", "path": "overview"})["value"] == {
         "mechanism": "session cookie"}
 
@@ -139,7 +140,7 @@ def test_the_read_only_arming_stays_read_only_on_a_bound_role() -> None:
     assert [t.name for t in binding.tools] == [
         "load_skill", "record_skill_lesson", "auth_store"]
     auth_tool = binding.tools[-1]
-    assert set(auth_tool.args) == {"command", "path"}
+    assert set(auth_tool.args) == {"command", "path", "view", "fields"}
     assert auth_tool.description == AUTH_STORE_READ_CONTRACT
 
 
@@ -152,4 +153,5 @@ def test_the_gateway_arming_is_unchanged_and_still_write_capable() -> None:
 
     assert [t.name for t in binding.tools] == [
         "load_skill", "record_skill_lesson", "write_skill", "auth_store"]
-    assert set(binding.tools[-1].args) == {"command", "path", "value"}
+    assert set(binding.tools[-1].args) == {
+        "command", "path", "value", "view", "fields"}
