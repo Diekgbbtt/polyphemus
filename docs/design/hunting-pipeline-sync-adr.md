@@ -1,0 +1,192 @@
+# Hunting pipeline phase synchronisation - ADR
+
+*Status: decided (2026-10-22). Not yet built; the implementation follows the TDD pipeline and lands its own spec + assertions docs.*
+*Extends: `hunting-pipeline-wiring-adr.md` (the run-scoped inbox surfer, ADR #169/T4), `unit-threat-model-ordering-halt-adr.md` (the risk budget and the halt).*
+*Decision owner: operator. Grilled and settled 2026-10-22; every decision below is operator-ratified.*
+
+## Problem
+
+The pipeline wiring T4 interleaves the hunting phases: `start_hunting` schedules the
+threat-modeller pass and the run-scoped surfer as two independent sessions, and the surfer
+dispatches one hunter per produced loop file while the pass models the next unit (S1 7.3).
+There is no phase barrier anywhere.
+A deployed run therefore fans out hunters over every loop the modeller has already produced,
+and every hunter fans out pods over every `ratified` spec, regardless of what the other
+phases are doing.
+The operator wants the phases synchronisable per project: controllable burst shape, bounded
+downstream fan-out, and a dispatch order the operator can reason about.
+It must remain an extension of the current control plane, never a refactor of it.
+
+## Decision
+
+### 1. The sync mode is a project-level configuration
+
+- The configuration attribute is `hunting_pipeline_sync`.
+- It is a string enum with exactly the values `serial | batched | parallel`.
+- The default is `batched`.
+
+Storage: a new `hunting` JSONB column on the existing `settings` table, sibling of `recon`
+(upserted with the same deep-merge discipline as `save_settings`, so a partial write never
+drops siblings).
+pg accessors mirror the settings pair: `get_hunting_settings(project_id)` /
+`save_hunting_settings(project_id, body)`.
+The `hunting` blob also lifts the threat-modeller budget into it: a stored `risk_threshold`
+OVERRIDES the `HUNT_RISK_THRESHOLD` environment variable when set (the env stays the
+fallback), and `threshold_config()` gains the resulting `db` basis value next to
+`default`/`override`.
+(Verified fact at decision time: no hunting settings area existed; `settings` carried only
+the `recon` column, and the budget was env-only.)
+
+API surface (`project_management/api.py`): `GET /projects/{project_id}/hunting/config` and
+`PUT /projects/{project_id}/hunting/config`, typed pydantic body, validated enum, 404 on an
+unknown project.
+The endpoints read and write the project's `settings.hunting` blob only; they never touch a
+live run.
+
+Resolution timing: `start_hunting` reads the mode ONCE at run start and freezes it for the
+run's whole lifetime, like the intake freeze (S1 7.1).
+The frozen value is recorded on the run row's `stats` for observability.
+A mid-run `PUT` therefore affects future runs only; a running pipeline is never
+half-re-synchronised.
+The next releases may migrate the config to richer shapes without touching the mode
+vocabulary itself.
+
+### 2. The three modes
+
+**`parallel`** - today's behavior, byte-for-byte unchanged: the S1 7.3 interleave, the S2 8.3
+low-tier sequencing, and the shared dispatch gate width bound.
+The policy implementation is a no-op.
+
+**`batched`** - phase barriers BETWEEN phases, concurrency inside a phase:
+
+1. The modeller pass runs the intake ONE UNIT AT A TIME until the risk budget is fully
+   consumed - the pass settles on the halt (with its `blocked_unit`, S1 7.4) or on intake
+   exhaustion, exactly as today.
+   Nothing downstream dispatches while the pass session is live.
+2. When the pass settles, the surfer builds the dispatch queue: the run's units sorted by
+   their model's risk contribution (`model_sum`, the run record's own figures) DESCENDING,
+   ties broken by intake position ASCENDING.
+   The halt never influences the queue order beyond freezing the pass (the halt never
+   re-sorts, S1 7.4).
+3. Per unit, in queue order: ONE BATCH of hunters, one hunter per produced loop file of that
+   unit, dispatched CONCURRENTLY (each still bounded by the shared `HUNTING_DISPATCH_GATE_WIDTH`
+   gate).
+   The batch is the unit's whole loop set; the low-tier sequencing (S2 8.3) is subsumed and
+   does not order a batch.
+4. The batch advances only when every hunt of the batch is terminal (signals in section 3).
+5. Then the unit's pods: one pod per `ratified` spec of the batch, dispatched CONCURRENTLY
+   (same gate bound).
+   The pod phase advances only when every pod is terminal.
+6. The queue cursor moves to the next unit and the batch loop repeats, until the queue is
+   exhausted and the run quiesces as today (`is_run_quiesced`, unchanged).
+
+**`serial`** - the same queue, strictly one agent at a time:
+
+1. The modeller phase is identical to `batched` (full risk budget first).
+2. Intra-unit hunters are dispatched SEQUENTIALLY: hunter N+1 is dispatched only after
+   hunter N completed AND every downstream pod that consumed the `TestImplementationSpec`s of
+   hunter N has reached its terminal.
+3. Pods are dispatched SEQUENTIALLY within a hunt: one pod is dispatched only once the
+   previous one has completed.
+   The pod cursor order is deterministic and re-derivable: the spec files sorted by file stem
+   (`<fault>_<strategy>`); the order is cosmetic (all pods must complete before the cursor
+   advances anyway), never a priority claim.
+4. After the unit's last hunt and its pod chain finish, the cursor moves to the next unit.
+
+### 3. The gate signals (unchanged completion semantics)
+
+Every gate transition consumes the SAME completion signals the run already owns, all
+storage-backed or registry-backed; no new artifact kind is introduced.
+"Fully specified or in ratified status depending on the artifact itself" stays the rule.
+
+- Modeller phase end: the modeller pass session is settled in the registry (its
+  `threat-modeller` session id is gone), which covers both the halt and intake exhaustion.
+- Hunter terminal: the hunt session has left its ReAct graph (`hunters_in_graph` no longer
+  holds it) AND its spec set is terminal - the `test-specs/<hunt_key>/terminal.yaml` finalize
+  write with every produced spec `ratified` or `dropped` - OR the hunt degraded fail-open (a
+  builder failure or a non-provider harness degrade: it authors nothing more).
+  A transient provider requeue (F-026) is NOT terminal: the batch/cursor gate holds while the
+  child backs off and retries.
+- Pod terminal: the durable parent-keyed PodExport record exists for the spec (the ADR #169
+  Q16 amendment record authored at pod completion) - a `successful`/`unsuccessful` verdict,
+  the fail-open degraded export (`surfer-dispatch-degraded`), or any terminal export record
+  credits completion.
+  A deferred child (provider backoff pending) is NOT terminal.
+- A batch (or the serial cursor) with an EMPTY member set advances immediately: a zero-loop
+  unit skips hunting, a hunt with zero `ratified` specs skips the pod phase.
+- Empty-unit and degraded cases therefore never wedge the queue.
+
+### 4. The slim sync ledger (component shape)
+
+One new module, `attack/hunting/pipeline_sync.py`, clean separation of concerns:
+
+- `SyncMode` - the frozen enum (`serial` / `batched` / `parallel`).
+- `SyncPolicy` - the PURE policy interface over the gate decisions; `ParallelSyncPolicy`
+  (no-op, the today-seam), `BatchedSyncPolicy`, `SerialSyncPolicy`.
+- `PipelineSyncState` - the run-local ledger: the sorted unit queue, a per-unit
+  `BatchState` (its hunts and pod phases with each member's completion credit), and the
+  serial phase cursor.
+  It is in-memory and run-scoped, living beside `RunDispatchState`; the single worker loop
+  stands, so no lock.
+
+Wiring: the ledger is consulted at the TWO existing dispatch seams only.
+
+- `build_run_dispatch`'s `coro_for` asks the policy before it builds a hunter or pod
+  coroutine; a policy refusal answers `None` (the mover's `None`-means-refused rule), which
+  leaves the loop file / spec in produced for the next tick (at-least-once, never dropped).
+- `sequence_dispatch` (or the equivalent pre-deduction filter) is extended so the quiesce
+  read and the dispatch decision can still never disagree: a held item is produced work, and
+  `run_work_remaining` keeps counting it until dispatch or quiesce - the existing contract.
+
+The surfer worker loop keeps ticking unchanged; the mover protocol, the stores, the quiesce
+predicate, and the at-least-once ring are untouched.
+No new session is scheduled; the ledger is not a runtime entity, it is state the existing
+surfer and builders read.
+A handful of small state classes (`BatchState`, the phase cursors) ride the module.
+
+### 5. Resume and interruption
+
+The ledger holds NO durable state.
+Every gate decision re-derives from stored facts (the produced/consumed loop files and model
+documents, the spec statuses, the `terminal.yaml` sets, the durable PodExport records) plus
+registry liveness.
+A resumed run therefore rebuilds the queue and applies its cursor to already-terminal work:
+modelled units that never dispatched (the provider-pause case), completed batches, and
+delivered exports are all recognised, and the cursor lands on the first unfinished phase.
+Stop / interrupted / resume semantics are otherwise untouched (#331 stop-only, the operator
+resume verb T11 #398).
+
+## Explicitly unchanged
+
+- The completion signals themselves (terminal spec set statuses, PodExport records) and the
+  F-022/F-017/F-026 recovery semantics.
+- The agent sub-module role gates (#317) and the module dispatch gate width (Q15): the
+  policy refusals layer ON TOP, and a stopped role still refuses before the policy is asked.
+- The singular launches (`launch_modeller`, the pod resume verb): they carry no surfer and
+  are unaffected by the mode.
+- The verdict stub (Q16): pod exports stay consume-and-record only; the mode does not feed
+  any re-evaluation.
+- `report_dispatch_gap` remains the terminal diagnostic for runs that produced models but
+  dispatched nothing.
+- A transient provider requeue still pauses only its child, never the phase it sits in.
+
+## Alternatives considered
+
+- Persisting the ledger (queue position, per-member completion) durably: rejected - every
+  input of the gate is storage-backed, so a durable ledger would be a second record of
+  derived state that can contradict the stores.
+- Gating inside the mover's pure deduction only: rejected - the deduction is pure and the
+  gate needs registry liveness plus the policy object; the seams (`coro_for` / the
+  sequencing filter consulted per tick with the live state) already carry both.
+- Reading the mode live per tick: rejected - a mid-run flip could half-re-synchronise a
+  running pipeline; the freeze makes the run's semantics total.
+
+## Consequences
+
+- In `batched`/`serial`, produced loop files accumulate while the modeller pass runs; every
+  tick the pending sync-hold refusal is counted (`refused`/`paused` on the `TickReport`) and
+  logs are bounded by the existing log-once discipline.
+- A long silent stretch between run start and the first hunter dispatch is EXPECTED in
+  `batched`/`serial` (the whole risk budget is modelled first); operators read the run
+  record's `stats` rather than judging liveness by dispatch activity.
+- The `parallel` default of the past is now opt-in; `batched` is the new default.
