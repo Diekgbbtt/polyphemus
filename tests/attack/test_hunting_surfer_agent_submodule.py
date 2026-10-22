@@ -177,6 +177,29 @@ def test_C12_up_hunter_dispatches_and_acquires_the_role_gate(monkeypatch, tmp_pa
     assert log == ["enter", "exit"]    # the role gate bounded the stretch
 
 
+def test_run_pod_session_injects_the_role_compaction_middleware(monkeypatch, tmp_path):
+    """T5: the production pod dispatch passes the runner and triager
+    `after_model` compaction middleware to the pod builder."""
+    captured: dict = {}
+
+    async def _builder(spec, **kw):
+        captured.update(kw)
+        return {"verdict": "successful", "terminal_reason": "symptom-confirmed"}
+
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+
+    async def _go():
+        return await run_pod_session(
+            spec=_spec(), project_id=PROJECT, run_id=RUN, hunt_key=DISPATCH_ID,
+            spec_id=SPEC_FILE, inbox=None,
+            hunter_store=hunter, gate=None, pod_builder=_builder, pod_store=None,
+        )
+
+    asyncio.run(_go())
+    assert captured["runner_middleware"]
+    assert captured["triager_middleware"]
+
+
 def test_C12_up_pod_session_acquires_the_role_gate(monkeypatch, tmp_path):
     log: list[str] = []
     control = _RoleControl()

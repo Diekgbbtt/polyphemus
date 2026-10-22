@@ -16,6 +16,7 @@ This module is pure and DB/LLM-free (unit-tier safe).
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 
@@ -34,6 +35,22 @@ _BODY_SLICE = 1200
 # Max executed-probe lines and chars per line surfaced into the triager delta.
 _PROBE_LINES = 12
 _PROBE_SLICE = 200
+
+
+def _pod_spec_view(spec: dict) -> dict:
+    """The context-only projection of one pod spec (CL-3).
+
+    The typed `SkillProcedure` is rendered ONCE by `_skill_procedure_context`;
+    the full spec JSON must not repeat the same procedure through
+    `provenance.skill_procedure`. The spec schema and the store are unchanged:
+    this is a view over a deep copy, used only by the two context renderers."""
+    if not isinstance(spec, dict):
+        return spec
+    view = copy.deepcopy(spec)
+    provenance = view.get("provenance")
+    if isinstance(provenance, dict):
+        provenance.pop("skill_procedure", None)
+    return view
 
 
 def _skill_procedure_context(spec: dict) -> str:
@@ -267,7 +284,7 @@ class ExperimentLog:
         the Triager's feedback, and the budget state."""
         parts = [
             f"# Lap {iteration} of at most {budget}",
-            f"## Current spec variant\n{json.dumps(spec, indent=2)}",
+            f"## Current spec variant\n{json.dumps(_pod_spec_view(spec), indent=2)}",
         ]
         if self.executed:
             parts.append("## Probe signatures already executed (do not repeat)\n"
@@ -283,7 +300,7 @@ class ExperimentLog:
         procedure (prior variant bases + probe commands), the latest raw
         observation (body-capped), and every prior variant (so it does not
         re-mine one)."""
-        parts = [f"## Current spec variant\n{json.dumps(spec, indent=2)}",
+        parts = [f"## Current spec variant\n{json.dumps(_pod_spec_view(spec), indent=2)}",
                  _skill_procedure_context(spec)]
         if observation is not None:
             obs = observation.model_dump()

@@ -116,6 +116,38 @@ def test_runner_context_lists_executed_signatures():
     assert "Lap 2" in ctx
 
 
+def _spec_with_typed_procedure() -> dict:
+    return {
+        "target_identity": {"url": "http://svc/", "unit_id": "svc"},
+        "provenance": {
+            "loop_id": "loop-1",
+            "skill_procedure": {
+                "recon_action": "the role check trusts the session",
+                "bypass_technique": "swap the role cookie",
+                "pro_tips": "confirm the authenticated landing",
+            },
+        },
+    }
+
+
+def test_triager_context_renders_the_typed_procedure_once():
+    """CL-3 context-only dedup: the typed excerpt is the one rendering; the
+    full spec JSON no longer repeats `provenance.skill_procedure`."""
+    log = ExperimentLog()
+    ctx = log.triager_context(_spec_with_typed_procedure(), None)
+    assert ctx.count("## Skill procedure") == 1
+    assert "skill_procedure" not in ctx
+    assert "the role check trusts the session" in ctx
+
+
+def test_runner_context_projects_the_typed_procedure_out_of_the_spec_json():
+    log = ExperimentLog()
+    ctx = log.runner_context(_spec_with_typed_procedure(), feedback="", iteration=1,
+                             budget=3)
+    assert "skill_procedure" not in ctx
+    assert "the role check trusts the session" not in ctx
+
+
 def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):
     """D84-37 / the consolidated code-review finding: a re-run must NOT serve a
     prior run's `experiment_summary` for ANY order the new run does not reach

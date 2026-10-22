@@ -861,9 +861,16 @@ async def run_pod_session(
 
     async def _run() -> dict | None:
         try:
+            from polymerhus.attack.hunting.pod.agents import (  # noqa: PLC0415
+                runner_compaction_middleware,
+                triager_compaction_middleware,
+            )
+
             return await pod_builder(
                 d4_spec_body(spec), run_id=run_id, project_id=project_id,
                 memory_store=pod_store, spec_id=spec_id,
+                runner_middleware=(runner_compaction_middleware(),),
+                triager_middleware=(triager_compaction_middleware(),),
             )
         except ProviderUnavailableError as exc:
             # #329/#312 + F-026: a provider failure is infrastructure, not a pod
