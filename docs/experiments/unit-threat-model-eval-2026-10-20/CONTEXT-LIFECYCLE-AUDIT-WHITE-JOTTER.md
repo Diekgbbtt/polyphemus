@@ -29,6 +29,17 @@ It accounts for 1,348 of 1,430 generations, or 94.3%.
 The total is high because every session re-sends a large working context on every model call.
 The context is large because several tools return full, sparse payloads and the compaction layer does not interpose at the tool boundary.
 
+The measured first hunter call is 24,840 input tokens.
+It is 27,920 system chars, 1,761 application-overview chars, 35,491 loop-payload chars, 37,325 request tool-schema chars, and 1,622 request-framing chars.
+The loop payload repeats 22,470 chars of tool-description text; 22,219 of those are the same description text that the request carries.
+The system prompt is 27,920 chars; the worked examples are 9,263 and the pass sequence is 8,084.
+The role averages are 67,421 input tokens for the hunter, 215,777 for the modeller, 36,842 for the pod runner, 31,964 for the pod triager, 49,854 for the mechanism typist, and 16,929 for the assigner.
+The cache share is 93.4%, 96.1%, 93.3%, 66.3%, 88.5%, and 70.1% respectively.
+The fixed prompt and tool tax is 62.0% of the hunter average, 44.5% of the modeller average, 36.3% of the pod-runner average, and 52.2% of the pod-triager average.
+The n-turn offload lowers the raw modeller input by 77.0%, but loses 78.2% of the cache read; the full-session net is -435,207 tokens, and the first offload costs 18.1 times more cache than it saves raw.
+The offload is therefore rejected as a production fix.
+The system-prompt, loop-payload, and tool-description compressions remain design proposals; the direct-reference, auth-store, project-scope, CL-3, and pod-compaction fixes are implemented.
+
 The largest single payloads are:
 
 - the 50-row HTTP-history page at 74,649 chars, about 18.7k tokens;
@@ -40,7 +51,8 @@ The largest single payloads are:
 The compaction budget is 400,000 tokens, which is 0.4 of the model's 1,000,000-token window.
 The modeller reached 401,278 tokens and compacted once, reclaiming 196,204 tokens.
 The hunters peaked at 135,235 tokens and never compacted.
-The pod runner and pod triager have no compaction ledger at all, because the production pod path does not inject the middleware.
+The pod runner and pod triager have no compaction ledger in the recorded trial, because the trial ran before the production pod path injected the middleware.
+The post-trial code now supplies the runner and triager middleware; the next trial should show the ledger rows.
 
 The compaction is a last-resort turn-end pass, not an inline tool-response offload.
 `offload_tool_message` is called only inside `compact_pass`.
@@ -60,8 +72,8 @@ The three calls remain the 477,417 capped-token gap in the token reconciliation.
 |---|---:|---:|---:|---|---:|---:|
 | hunting_threat_modeller | 1,000,000 | 0.4 | 400,000 | yes | 161 | 401,278 |
 | hunting_hunter | 1,000,000 | 0.4 | 400,000 | yes | 397 | 135,235 |
-| pod_runner | 1,000,000 | 0.4 if wired | 400,000 if wired | no | 0 | 94,424 input |
-| pod_triager | 1,000,000 | 0.4 if wired | 400,000 if wired | no | 0 | 76,557 input |
+| pod_runner | 1,000,000 | 0.4 (trial no; code yes) | 400,000 (trial no; code yes) | trial no; code yes | 0 | 94,424 input |
+| pod_triager | 1,000,000 | 0.4 (trial no; code yes) | 400,000 (trial no; code yes) | trial no; code yes | 0 | 76,557 input |
 | assigner | 1,000,000 | 0.2 | 200,000 | yes | 10 | 43,799 |
 | mechanism_typist | 1,000,000 | 0.2 | 200,000 | yes | 43 | 95,280 |
 | job_orchestrator | 1,000,000 | 0.4 | 400,000 | yes | 13 | 26,619 |
@@ -70,9 +82,10 @@ The three calls remain the 477,417 capped-token gap in the token reconciliation.
 The `.env` sets `LLM_COMPACTION_THRESHOLD=0.4`, `LLM_COMPACTION_THRESHOLD_ASSIGNER=0.2`, and `LLM_COMPACTION_THRESHOLD_MECHANISM_TYPIST=0.2`.
 The app log confirms `budget=400000` for the hunting roles and `budget=200000` for the analysis roles.
 
-The pod role has no ledger row because `arun_pod` defaults `runner_middleware=()` and `triager_middleware=()`.
-The production `run_pod_session` path does not supply them.
-The builders `runner_compaction_middleware` and `triager_compaction_middleware` exist, but the pod path never calls them.
+The recorded trial has no pod ledger row because the trial ran before `run_pod_session` supplied the role middleware.
+The post-trial code now passes `runner_compaction_middleware()` and `triager_compaction_middleware()` to the pod builder in `run_pod_session` (commit `1ef3e548`).
+The next trial should show the pod ledger rows.
+The builders existed during the trial, but the production dispatch did not call them.
 
 ## Per-role growth
 
@@ -160,17 +173,423 @@ The first generation of each session carries the system prompt and the tool sche
 | pod_triager | 11,712 | 11,724 | 14,318 |
 
 The nav1 hunter first input is 104,119 chars.
-It contains 27,920 system-message chars, 1,761 application-overview chars, 35,491 loop-payload chars, 37,330 tool-description chars (the 12 tool schemas), and the remaining request-framing chars.
+It contains 27,920 system-message chars, 1,761 application-overview chars, 35,491 loop-payload chars, 37,325 tool-description chars (the 12 tool schemas), and 1,622 request-framing chars.
 The 25k-token figure is plausible at about four chars per token.
 The 19k-word figure is a rough token-to-word conversion, not a separate fault.
 The earlier component sentence omitted the tool descriptions; the corrected breakdown is above.
+The loop payload also contains a 22,470-char tool surface; 22,219 of those chars are the same description text as the request tools.
+The first call therefore pays the tool description text twice: once in the loop payload and once in the request schemas.
+The first call also pays 27,920 system chars, of which 9,263 are worked examples, 8,084 are the pass sequence, 1,488 are the cognitive map, and 1,081 are the skill index.
+The first call cache read is 16,128 tokens; the uncached input is 8,712 tokens.
+The system prompt and request tool schemas sit in the cached prefix; the loop payload and application overview are the uncached part.
 
 The hunter's fixed first-call context is about 25k tokens.
 At 397 hunter calls, the fixed first-call context alone is about 9.86M tokens.
 Across the four hunting roles, the first-call context is about 19.8M tokens, or 20.9% of the total.
 The system prompt is served on every turn.
 The tool schemas and the long tool descriptions ride every request.
-The system prompt, the application overview, the loop payload, the preloaded tool results, and the tool schemas are the fixed tax.
+The system prompt, the application overview, the loop payload, the tool descriptions, and the request framing are the fixed tax.
+The measured occupancy and the compression proposals are in the next section.
+
+## Measured context occupancy and compressions
+
+### Method
+
+The occupancy extractor `audit_context_occupancy.py` reads 1,437 generation records from the Langfuse v2 observations API with full message IO and provider usage.
+The input anchor is `usageDetails.input + usageDetails.input_cache_read`.
+The output anchor is `usageDetails.output + usageDetails.output_reasoning`.
+Component tokens are char-share estimates against that input anchor.
+The residual is the request envelope plus any truncated tail; it is reported, never silently dropped.
+The offload sample is the single 163-call modeller session.
+157 of the 163 stored inputs are truncated near 261k chars, so the offload script uses the response character share for the curve.
+The scripts and their exact commands are in the reproduction section.
+The earlier auth-store figure was wrong: the full redacted auth store is 22,302 chars; the 74,649-char message is the 50-row HTTP-history page.
+The first call carries no tool result; the 37,325-char tool block is the request schemas.
+
+### First call
+
+The canonical first call is the nav1 hunter at 01:24:08.
+It is 104,119 chars and 24,840 input tokens.
+The input is 8,712 uncached tokens and 16,128 cache-read tokens.
+The output is 98 visible/tool-call tokens and 66 reasoning tokens; the provider total is 25,004.
+The first call pays 27,920 system chars, 1,761 application-overview chars, 35,491 loop-payload chars, 37,325 request tool-schema chars, and 1,622 request-framing chars.
+
+| Component | Chars | Tokens | Share of input |
+|---|---:|---:|---:|
+| system prompt | 27,920 | 6,661 | 26.8% |
+| application overview | 1,761 | 420 | 1.7% |
+| loop payload | 35,491 | 8,468 | 34.1% |
+| request tool schemas | 37,325 | 8,904 | 35.8% |
+| request framing | 1,622 | 387 | 1.6% |
+| total | 104,119 | 24,840 | 100% |
+
+The loop payload splits as follows.
+
+| Loop section | Chars | Share of loop | Share of first call | Tokens |
+|---|---:|---:|---:|---:|
+| coupling lead | 131 | 0.4% | 0.1% | 31 |
+| grounding | 11,896 | 33.5% | 11.4% | 2,838 |
+| tool surface | 22,470 | 63.3% | 21.6% | 5,361 |
+| state summary | 41 | 0.1% | 0.0% | 10 |
+| step protocol | 951 | 2.7% | 0.9% | 227 |
+| total | 35,491 | 100% | 34.1% | 8,468 |
+
+The 22,470-char tool surface repeats the 22,219-char description text of the 12 request tools.
+The remaining 251 chars are the surface header and the multi-line taxonomy fragments.
+The request schemas add 15,106 chars of JSON parameter schema on top of the same description text.
+The first call therefore carries 59,544 chars of tool text: 22,219 duplicate description chars, 15,106 schema chars, and the loop surface formatting.
+This is 57.2% of the first call.
+
+The first-call system prompt splits as follows.
+
+| System section | Chars | Share of system | Tokens |
+|---|---:|---:|---:|
+| role body and pass sequence | 16,088 | 57.6% | 3,838 |
+| worked examples | 9,263 | 33.2% | 2,210 |
+| cognitive map | 1,488 | 5.3% | 355 |
+| skill index | 1,081 | 3.9% | 258 |
+| total | 27,920 | 100% | 6,661 |
+
+The role body includes `## The passes` at 8,084 chars and `## Discipline (binding)` at 2,343 chars.
+The full skill index is only 1,081 chars in this trial.
+The examples are the larger system block.
+
+The first call is 36.8% of the hunter average input.
+The cache covers 64.9% of the first call.
+The cached prefix is the system prompt and the request tool schemas; the loop payload and application overview are the uncached part.
+The loop tool surface alone is 5,361 uncached tokens.
+
+### Role occupancy
+
+The role totals use all generation records.
+The component shares use the non-truncated samples; the sample counts are in the table.
+
+| Role | Sessions | Calls | Input mean | Session mean | Cache share | Input sum | Output/call | Total/call |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| hunting_hunter | 17 | 398 | 67,421 | 64,317 | 93.4% | 26,833,448 | 984 | 68,404 |
+| hunting_threat_modeller | 1 | 163 | 215,777 | 215,777 | 96.1% | 35,171,652 | 1,648 | 217,425 |
+| pod_runner | 27 | 709 | 36,842 | 34,979 | 93.3% | 26,120,611 | 662 | 37,503 |
+| pod_triager | 24 | 79 | 31,964 | 28,293 | 66.3% | 2,525,158 | 2,404 | 34,368 |
+| mechanism_typist | 1 | 43 | 49,854 | 49,854 | 88.5% | 2,143,739 | 1,757 | 51,612 |
+| assigner | 1 | 10 | 16,929 | 16,929 | 70.1% | 169,285 | 1,630 | 18,559 |
+| job_orchestrator | 1 | 13 | 16,185 | 16,185 | 85.5% | 210,407 | 866 | 17,051 |
+| skill_evolver | 1 | 7 | 24,453 | 24,453 | 76.0% | 171,171 | 2,459 | 26,912 |
+| recon_triager | 9 | 9 | 10,820 | 10,820 | 42.7% | 97,379 | 1,044 | 11,864 |
+
+The occupancy extractor sees 398 hunter generations; the earlier ledger table has 397.
+The difference is one generation with usage but no compaction row.
+The input sums in the table total 93,442,850; the project total 94,703,380 includes about 1.26M output tokens.
+
+The component shares of the average context are as follows.
+
+| Role | System | Human input | Loop | Tool descriptions | Tool responses | Assistant output |
+|---|---:|---:|---:|---:|---:|---:|
+| hunting_hunter | 16.4% | 1.0% app | 22.7% | 21.9% | 36.1% | 1.8% |
+| hunting_threat_modeller | 15.9% | 3.4% | 0% | 25.2% | 55.0% | 0.5% |
+| pod_runner | 9.2% | 6.8% | 0% | 20.3% | 54.4% | 9.3% |
+| pod_triager | 12.8% | 17.2% | 0% | 22.1% | 46.0% | 1.8% |
+| mechanism_typist | 17.7% | 44.3% | 0% | 15.7% | 19.3% | 3.1% |
+| assigner | 23.1% | 27.2% | 0% | 31.3% | 17.7% | 0.7% |
+| job_orchestrator | 11.6% | 1.0% | 0% | 30.3% | 46.5% | 10.7% |
+| skill_evolver | 23.7% | 7.8% | 0% | 27.6% | 36.7% | 4.3% |
+
+The hunter's loop share splits into 8.8% grounding, 13.2% tool surface, 0.0% state, and 0.6% step protocol.
+The assistant output combines visible content and tool-call arguments; the output tokens are reported separately.
+
+The fixed prompt and tool tax is the system, human input, loop, and tool descriptions.
+The runtime share is the tool responses and assistant messages.
+
+| Role | First-call input | Average input | Fixed tax | Fixed share | Runtime share |
+|---|---:|---:|---:|---:|---:|
+| hunting_hunter | 24,840 | 67,421 | 41,797 | 62.0% | 38.0% |
+| hunting_threat_modeller | 17,076 | 215,777 | 96,098 | 44.5% | 55.5% |
+| pod_runner | 8,810 | 36,842 | 13,363 | 36.3% | 63.7% |
+| pod_triager | 11,712 | 31,964 | 16,674 | 52.2% | 47.8% |
+| mechanism_typist | 15,530 | 49,854 | 38,687 | 77.6% | 22.4% |
+| assigner | 8,747 | 16,929 | 13,821 | 81.6% | 18.4% |
+| job_orchestrator | 5,515 | 16,185 | 6,936 | 42.8% | 57.2% |
+| skill_evolver | 11,180 | 24,453 | 14,451 | 59.1% | 40.9% |
+
+The hunter and the pod roles are not dominated by the first call: their runtime tool responses are 36.1% to 54.4% of the average.
+The modeller is dominated by runtime tool responses at 55.0%; its first call is only 7.9% of its average.
+The analysis roles are dominated by the fixed prompt and tool tax: 77.6% for the mechanism typist and 81.6% for the assigner.
+The cache share is 93.4% for the hunter, 96.1% for the modeller, 93.3% for the pod runner, 66.3% for the pod triager, 88.5% for the mechanism typist, and 70.1% for the assigner.
+The high cache share means the fixed prompt and tool text is mostly cache-read, while the loop payload and the runtime tool responses are the uncached work.
+
+### First-call table for the other roles
+
+| Role | Raw chars | Input tokens | Cache read | System chars | First human chars | Loop chars | Tool chars | Framing |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| hunting_hunter nav1 | 104,119 | 24,840 | 16,128 | 27,920 | 1,761 | 35,491 | 37,325 | 1,622 |
+| hunting_threat_modeller | 65,799 | 17,076 | 14,336 | 23,297 | 5,015 | 0 | 36,820 | 667 |
+| pod_runner | 37,361 | 8,810 | 0 | 9,446 | 6,574 | 0 | 20,770 | 571 |
+| pod_triager | 46,410 | 11,712 | 7,424 | 11,724 | 14,318 | 0 | 19,580 | 788 |
+| mechanism_typist | 64,950 | 15,530 | 4,096 | 24,580 | 17,943 | 0 | 21,770 | 657 |
+| assigner | 37,374 | 8,747 | 8,704 | 12,831 | 6,617 | 0 | 17,411 | 515 |
+
+The mechanism and assigner first humans contain the app overview and the streamed analysis surface.
+The pod first humans contain the spec or the runner note; they are not the hunter loop payload.
+
+### Tool descriptions
+
+The hunter has 12 request tools.
+The table is ordered by schema size.
+
+| Tool | Schema chars | Description chars | Content class | Loop surface copy |
+|---|---:|---:|---|---|
+| hunts_store | 8,259 | 1,603 | store write/read | yes |
+| auth_store | 6,364 | 4,869 | auth read/write | yes |
+| notes | 4,014 | 1,364 | note store | yes |
+| search_http_history | 3,845 | 3,423 | HTTP history search | yes |
+| kb_query | 2,942 | 1,257 | KB retrieval | yes |
+| graph_view | 2,486 | 2,173 | graph read | yes |
+| get_http_artifact | 2,231 | 2,035 | HTTP artifact read | yes |
+| record_skill_lesson | 2,104 | 1,276 | skill lesson write | yes |
+| load_skill | 2,045 | 1,771 | skill load | yes |
+| exec | 1,753 | 1,526 | target command | yes |
+| skill_list | 716 | 589 | skill listing | yes |
+| skill_load | 566 | 333 | suite skill load | yes |
+| total | 37,325 | 22,219 | | 22,470 |
+
+The first call pays the 22,219-char description text twice: once in the 22,470-char loop surface and once in the request schemas.
+The request schemas add 15,106 chars of parameter structure.
+The tool text is 57.2% of the first call.
+
+The same tax exists in every role.
+
+| Role | Tools | Schema chars | Description chars | First-call share |
+|---|---:|---:|---:|---:|
+| hunting_hunter | 12 | 37,325 | 22,219 | 35.9% |
+| hunting_threat_modeller | 10 | 36,820 | 18,038 | 56.0% |
+| pod_runner | 8 | 20,770 | 14,584 | 55.6% |
+| pod_triager | 7 | 19,580 | 12,894 | 42.2% |
+| mechanism_typist | 8 | 21,770 | 15,166 | 33.5% |
+| assigner | 6 | 17,411 | 11,344 | 46.6% |
+
+The modeller `hunts_store` schema alone is 14,903 chars because it carries the model store and the hunt store contract.
+The pod runner and pod triager each carry the 6,364-char `auth_store` schema.
+The analysis roles carry the 3,386-char `auth_store` schema plus a typed output tool.
+
+The earlier "preloaded tool result" attribution was wrong.
+The first call has no tool result.
+The 37,325-char block is the request tool schema; the loop surface is its duplicate description text.
+
+### Loop-payload entities
+
+The nav1 loop payload is 35,491 chars.
+The tool surface is 22,470 chars, 63.3% of the loop and 21.6% of the first call.
+The grounding is 11,896 chars; the technical sharpening is 7,512 of those chars.
+The state summary is 41 chars; the step protocol is 951 chars.
+
+| Grounding entity | Chars | Share of grounding | Share of first call |
+|---|---:|---:|---:|
+| coupling lead | 129 | 1.1% | 0.1% |
+| unit dispatch | 77 | 0.6% | 0.1% |
+| loop | 76 | 0.6% | 0.1% |
+| canonical class | 183 | 1.5% | 0.2% |
+| vulnerability rationale | 689 | 5.8% | 0.7% |
+| likelihood rationale | 222 | 1.9% | 0.2% |
+| confidence degree | 27 | 0.2% | 0.0% |
+| programming fault | 601 | 5.1% | 0.6% |
+| trust agreement | 691 | 5.8% | 0.7% |
+| dynamic state | 1,270 | 10.7% | 1.2% |
+| technical sharpening | 7,512 | 63.1% | 7.2% |
+| loop evidence | 407 | 3.4% | 0.4% |
+| residual/target line | 12 | 0.1% | 0.0% |
+| grounding total | 11,896 | 100% | 11.4% |
+
+The technical sharpening is the largest real entity.
+The tool surface is larger but it is a copy of the request tools.
+The dynamic state and trust agreement are the next largest.
+
+The loop-payload compression proposal is:
+
+1. Remove the tool surface from the loop payload.
+The request tools already carry the names and schemas.
+If a text surface is required, use one line per tool, at most 500 chars.
+Save 22,470 chars, 5,361 uncached first-call tokens.
+2. Project the technical sharpening to the load-bearing fields: interface agreement, control flow, data flow, authorization boundary.
+Drop nested full objects and prose that repeats the unit contract.
+Target 4,000 chars; save 3,512 chars.
+3. Keep the unit, loop, canonical class, vulnerability rationale, likelihood, confidence, fault, trust, dynamic state, and evidence.
+These are the loop facts the hunter must not lose.
+4. Keep the state and step protocol; they are only 992 chars.
+
+The proposed compact form is:
+
+```text
+Tool surface: the request schemas carry the 12 tool contracts.
+Technical sharpening:
+- Interface agreement: ...
+- Control flow: ...
+- Data flow: ...
+- Authorization boundary: ...
+Programming fault: ...
+Trust agreement: ...
+Dynamic state: ...
+Evidence: ...
+```
+
+The projected loop payload is about 9,500 chars, down from 35,491.
+The first call falls to about 78,100 chars, or about 18,650 tokens.
+The uncached loop part falls from 8,468 to about 2,500 tokens.
+
+### System prompt
+
+The system prompt is 27,920 chars in the hunter.
+
+| Hunter section | Chars | Share |
+|---|---:|---:|
+| role body | 16,088 | 57.6% |
+| worked examples | 9,263 | 33.2% |
+| cognitive map | 1,488 | 5.3% |
+| skill index | 1,081 | 3.9% |
+
+The role body contains:
+
+| Body section | Chars |
+|---|---:|
+| loop ontology | 876 |
+| character | 471 |
+| discipline | 2,343 |
+| tree | 1,001 |
+| passes | 8,084 |
+| spec body | 2,005 |
+| tools | 1,028 |
+| preamble | 280 |
+
+The worked examples are 3,491 chars for the straight path and 5,772 for examples 2 to 4.
+The pass sequence alone is 29.0% of the system prompt.
+The examples are 33.2%.
+
+The same component view for the other roles:
+
+| Role | System total | Body | Examples | Map | Index | First-call share |
+|---|---:|---:|---:|---:|---:|---:|
+| hunting_hunter | 27,920 | 16,088 | 9,263 | 1,488 | 1,081 | 26.8% |
+| hunting_threat_modeller | 23,297 | 21,702 | 0 | 1,488 | 107 | 35.4% |
+| pod_runner | 9,446 | 6,877 | 0 | 1,488 | 1,081 | 25.3% |
+| pod_triager | 11,724 | 9,695 | 0 | 1,488 | 541 | 25.3% |
+| mechanism_typist | 24,580 | 14,653 | 7,863 | 1,488 | 576 | 37.8% |
+| assigner | 12,831 | 8,697 | 2,070 | 1,488 | 576 | 34.3% |
+| job_orchestrator | 6,037 | 5,461 | 0 | 0 | 576 | 26.5% |
+| skill_evolver | 18,034 | 12,050 | 5,984 | 0 | 272 | 39.4% |
+
+The cognitive map is a 1,488-char block repeated in every role.
+The skill index is 1,081 chars in the hunter, pod runner, and pod triager; 576 in the mechanism and assigner; 107 in the modeller.
+The skill-evolver body includes its 272-char index; its body and examples sum to the 18,034-char total.
+The index has been replaced by the direct-reference line in the code; the line is under 1,000 chars by test.
+The hunter system is 27,085 chars after the change: 26,837 static chars plus the 248-char direct-reference line.
+The old 27,920-char system is 835 chars larger; the net saving is 1,081 removed and 248 added.
+The first hunter call with the direct-reference system is 103,284 chars, down from 104,119.
+
+The system-prompt compression proposal has two variants.
+
+Variant A, direct, about 14,500 chars:
+
+- keep the loop ontology, character, discipline, tree, spec body, tools, and cognitive map;
+- replace the 8,084-char pass prose with an 8-row pass table of trigger, read, write, and exit;
+- replace the 9,263-char worked examples with a 1,500-char reasoning shape and move the full examples to `load_skill` or a worked-examples reference;
+- replace the 1,081-char index with the direct-reference line;
+- keep the same order and attention on the pass table.
+
+Variant B, similar length, about 24,000 to 28,000 chars:
+
+- keep the four worked examples but rewrite each as a compact decision shape;
+- keep the pass table and add a target-interaction and verification checklist;
+- keep the direct-reference line;
+- spend the same length on the loop facts and the pass gates rather than on repeated narrative.
+
+The pod-runner proposal keeps the role, spec, stretch plan, constraints, and output.
+It replaces the 1,145-char tools section with a one-line tool pointer, compresses the map to 500 chars, and uses the direct-reference line.
+The system moves from 9,446 to about 7,000 chars.
+
+The pod-triager proposal keeps the decision vocabulary and variant minting.
+It compresses the map to 500 chars and uses the direct-reference line.
+The system moves from 11,724 to about 9,500 chars.
+
+The modeller system is 23,297 chars, and its tool descriptions are 36,820.
+The tool descriptions are the modeller's first cut, not its system prompt.
+The mechanism and assigner systems are 24,580 and 12,831; their fixed tax is dominated by the system and the tool descriptions.
+
+The exact duplicate spans are:
+
+- the 1,488-char cognitive map in every role;
+- the 22,219-char tool description text in the loop surface and the request tools;
+- the pass sequence in the system and the loop step protocol;
+- the worked examples in the system and the repeated pass reasoning;
+- the typed procedure in the triager spec and the separate skill excerpt.
+
+### n-turn tool-response offload
+
+The offload rule is: at turn `t`, a tool response whose originating turn is older than 7 is replaced by a fixed 50-token marker.
+There is no retrieval call.
+The marker states that the response was offloaded and is not retrievable in this experiment.
+The first eight turns do not trigger the rule.
+The first offload is turn 8, the ninth call, for the 8,567-char skill-listing response from turn 0.
+
+| Window | Turns | First input | Peak observed | Peak simulated | Input sum observed | Input sum simulated | Raw saved | Cache lost | Net tokens |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| first 8 turns | 8 | 17,076 | 84,294 | 84,294 | 442,593 | 442,593 | 0 | 0 | 0 |
+| first 16 turns | 16 | 17,076 | 113,933 | 84,787 | 1,241,753 | 732,165 | 509,588 (41.0%) | 649,454 (52.3%) | -139,867 |
+| full 163 turns | 163 | 17,076 | 399,346 | 234,411 | 35,171,652 | 8,104,423 | 27,067,229 (77.0%) | 27,502,435 (78.2%) | -435,207 |
+
+The first offload details are:
+
+- turn 8, observed 88,715 input tokens, simulated 84,787, raw saved 3,928;
+- the first changed message is at 28,584 chars, a 13,273-token prefix;
+- the observed cache read is 84,224, so the lost cache is 70,950;
+- the first offload net is -67,022 tokens;
+- the cache penalty is 18.1 times the raw saving at the first offload.
+
+The 8-turn sample has no offload and no cache loss.
+The first offload is the ninth call; the eighth call is still below the `> 7` boundary.
+The 16-turn window already shows the problem: 41.0% raw saved, 52.3% cache lost, net -139,867.
+The full session shows the same sign at scale: 77.0% raw saved, 78.2% cache lost, net -435,207.
+The peak falls from 399,346 to 234,411; the raw context curve improves.
+The cache curve does not: the first changed message invalidates a large suffix, and the cache read is 84,224 at the first offload while the stable prefix is only 13,273.
+
+The offload is rejected as a production fix.
+It reduces the context but does not win on tokens and would cost more in cache and retrieval quality.
+
+### Proposal status
+
+The approved local fixes are implemented:
+
+- the auth-store summary view and field selection;
+- project `authn` skill access with the run project;
+- the full skill index removed and direct references retained;
+- the CL-3 context-only deduplication;
+- pod compaction through the existing `after_model` middleware;
+- the canonical `skills/target-specific-procedure/<project_id>/` path everywhere;
+- the cache-stable compaction verification.
+
+The measured proposals, not implemented:
+
+- remove the loop tool surface (22,470 chars, 5,361 uncached first-call tokens);
+- project the technical sharpening (7,512 to about 4,000 chars);
+- slim the request tool descriptions (22,219 to about 8,000 chars) and keep the schemas;
+- compress the hunter system prompt (Variant A or Variant B);
+- compress the pod and analysis prompt maps and indexes;
+- reject the n-turn offload.
+
+The projected hunter first call, if all proposals are applied:
+
+| Step | First-call chars | Input tokens | Uncached first-call tokens |
+|---|---:|---:|---:|
+| baseline | 104,119 | 24,840 | 8,712 |
+| remove loop tool surface | 81,649 | 19,479 | 3,351 |
+| project technical sharpening | 78,137 | 18,651 | 2,513 |
+| slim request descriptions | 63,918 | 15,258 | 2,513 |
+| Variant A system | 50,240 | 11,995 | 2,513 |
+| Variant B system | 63,918 | 15,258 | 2,513 |
+
+The table is a projection from the measured char shares; it is not a new trial.
+Variant B keeps the system length close to the current one and leaves the system cache mostly intact; its saving is the loop and tool duplication.
+Variant A is the shorter prompt and the larger context saving.
+
+The system-prompt, loop-payload, and tool-description compressions remain design decisions.
+The next action is the user decision, not a code change.
 
 ## Failure-mode families
 
@@ -449,7 +868,7 @@ The prompt says: use `-o /dev/null`, `head`, `wc`, or a status-only probe; never
 **Evidence.** The budget is 400,000.
 The hunter maximum is 135,235 and the pod maximum is 94,424.
 The only pass is the modeller at 401,278.
-The pod path has no compaction ledger.
+The pod path has no compaction ledger in the recorded trial.
 `offload_tool_message` is called only in `_compact_pass`.
 
 **Ranked hypotheses.**
@@ -465,13 +884,14 @@ They are not competing explanations; they are a chain.
 
 **Probe.** Read the app log for `over_budget=True`, `spawned`, and `applied`.
 The log has two over-budget rows and one applied pass.
-Read `arun_pod` and the surfer path for the middleware.
-The pod path passes none.
+Read `arun_pod` and the surfer path for the middleware at the trial commit.
+The trial pod path passes none.
+The post-trial code passes both `runner_compaction_middleware()` and `triager_compaction_middleware()` in `run_pod_session` (commit `1ef3e548`).
 
 **Root cause.** The compaction is a turn-end/next-model barrier at 0.4 of the model window.
 The hunter and pod sessions stay below that budget, so the pass never runs.
 The tool-output offload is coupled to the pass, so it never runs either.
-The pod path does not inject the middleware.
+The trial pod path did not inject the middleware; the post-trial code does.
 
 **Failure chain.**
 
@@ -592,6 +1012,13 @@ Only the items in the approved list are in the follow-up implementation plan.
 - pod compaction wiring through the existing `after_model` middleware;
 - verification and correction of the cache-stable compaction claim.
 
+The approved items are implemented on `fix/context-lifecycle-followup` in `7fb8dffe`, `c1de8b21`, and `1ef3e548`.
+The project skill path is canonical at `<skills_root>/target-specific-procedure/<project_id>/`.
+The live project bundle is at `4786aefc-c3fd-46c1-a2ab-45b05cc38e25/authn/SKILL.md` in the skills volume, 15,872 chars.
+The old data-root mirror is removed.
+The live `load_skill` with the explicit project returns the White Jotter authn body.
+The impact map is `docs/design/project-specific-skill-path-impact-map.md`.
+
 ### Not approved
 
 - the inline tool-response offload;
@@ -604,13 +1031,15 @@ Only the items in the approved list are in the follow-up implementation plan.
 
 - the component occupancy breakdown;
 - the loop-payload entity map;
-- the preloaded tool-message inventory;
+- the tool-description inventory;
 - the system-prompt compression proposal;
 - the n-turn offload simulation.
 
-The system-prompt, loop-payload, and preloaded-message compressions are design decisions.
+The system-prompt, loop-payload, and tool-description compressions are design decisions.
 They stop at the proposal for the user's decision.
 The n-turn offload experiment is an analysis; it does not change production code.
+The measured n-turn offload is rejected: it lowers raw context by 77.0%, but loses 78.2% of the cache read and has a full-session net of -435,207 tokens.
+The first offload costs 18.1 times more cache than it saves raw.
 
 ### Measurement
 
@@ -651,13 +1080,45 @@ The recorded trial fails on the 74,649-char HTTP-history page, the 22,302-char a
 The full trial token reconciliation is in `TOKEN-ACCOUNTING-WHITE-JOTTER.md`.
 The trial record and metrics are in the run directory under `eval/runs-utm-20261021-white-jotter/`.
 
+The occupancy extractor:
+
+```
+python3 audit_context_occupancy.py \
+  --project-id cmvgbld4j02enad0ktvximbio \
+  --from 2026-10-21T23:50:00Z \
+  --to 2026-10-22T03:20:00Z \
+  --out audit_context_occupancy.json
+```
+
+The offload simulator:
+
+```
+python3 audit_offload_simulation.py \
+  --project-id cmvgbld4j02enad0ktvximbio \
+  --session-id "5c9590ff-9a83-4cea-9aff-be1bd51e2667:hunting_threat_modeller" \
+  --from 2026-10-21T23:50:00Z \
+  --to 2026-10-22T03:20:00Z \
+  --out audit_offload_simulation.json
+```
+
+Both scripts read `/opt/polymerhus-dev/eval/instances/eval-server-1/.env` by default.
+The occupancy run covered 1,437 generation records across 9 roles.
+The offload run covered the 163-call modeller session.
+
 ## Limitations
 
-The Langfuse generation `input` is truncated at about 256k chars.
+The Langfuse generation `input` is truncated at about 261k chars; the report here used the earlier 256k limit.
 The tool-message sizes are exact for the parsed messages below that limit.
-The largest sessions are truncated; their sizes are lower bounds.
+The occupancy components use the non-truncated samples; the sample counts are in the role table.
+The largest sessions are truncated; their content sums are lower bounds.
 The per-role totals are complete because they come from `usageDetails`.
+The component tokens are char-share estimates against the provider input anchor, not a second tokenizer.
+The first-call component tokens use the nav1 point estimate; the role averages use the per-role input means.
+The analysis-chunk generations have no IO; the mechanism and assigner sessions were reconstructed from their 43 and 10 generation records.
+The 163-turn modeller session has 157 truncated turns; the offload response share is used for the curve.
+The cache model trusts the provider cache read and the first changed message position; it is not a provider billing record.
 The compaction ledger is the durable app log, not a reconstructed estimate.
-The cache explanation is a timing correlation, not a provider billing record.
+The pod compaction wiring was added after the recorded trial; the next trial must confirm the pod ledger rows.
+The recorded trial has no new trial; the live app still runs the pre-fix binary.
 The provider cache lifetime is inferred from the five-minute gap.
 The final authority for the provider charge remains the provider bill; Langfuse is the closest observable record.
