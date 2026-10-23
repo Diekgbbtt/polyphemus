@@ -19,10 +19,10 @@ The auth store adds about **3.4M** carry, and the skill body about **1.3M**.
 
 The most purely redundant component is the **hunter loop tool surface**.
 It is **22,470 chars**, of which **22,219 are the same description text as the request tools**.
-It is **11.7% of the hunter session context**, **3.14M lifecycle chars**, and **100% avoidable**.
+It is **11.7% of the hunter session context**, **3.14M lifecycle token-equivalent**, and **100% avoidable**. The raw loop-surface characters across hunter calls are about 8.94M.
 
 The largest fixed overlong component is the **tool-description surface**.
-It is **11.0M lifecycle chars**, 11.8% of all input.
+It is **11.0M lifecycle token-equivalent**, 11.8% of all input. The raw repeated tool-description characters are 38.2M. About 4.2M token-equivalent of the description text is compressible.
 About 38% of the description text is compressible without removing the schemas.
 Its first-call share is 35.8% for the hunter, 56.0% for the modeller, 55.6% for the pod runner, 42.2% for the pod triager, 33.5% for the mechanism typist, and 46.6% for the assigner.
 
@@ -113,7 +113,7 @@ The hunter input is 64,317 tokens on the session-unweighted average.
 The cache share is 93.4%.
 The first call is 24,840 tokens and 104,119 chars.
 
-| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle chars | Class |
+| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle token-equivalent | Class |
 |---|---:|---:|---:|---:|---:|---|
 | system | 9,315 | 14.5% | 6,661 | 26.8% | 3.89M | N/C |
 | system body | 5,368 | 8.3% | 3,838 | 15.5% | 2.24M | N/C |
@@ -150,7 +150,7 @@ The modeller input is 215,777 tokens per call.
 The cache share is 96.1%.
 The first call is 17,076 tokens and 65,799 chars.
 
-| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle chars | Class |
+| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle token-equivalent | Class |
 |---|---:|---:|---:|---:|---:|---|
 | system | 30,853 | 14.3% | 6,045 | 35.4% | 5.03M | N/C |
 | system body | 27,900 | 12.9% | 5,632 | 33.0% | 4.55M | N/C |
@@ -188,7 +188,7 @@ The pod-runner input is 34,979 tokens per call.
 The cache share is 93.3%.
 The first call is 8,810 tokens and 37,361 chars.
 
-| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle chars | Class |
+| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle token-equivalent | Class |
 |---|---:|---:|---:|---:|---:|---|
 | system | 3,094 | 8.8% | 2,227 | 25.3% | 2.31M | N/C |
 | human input | 2,362 | 6.8% | 1,550 | 17.6% | 1.76M | N |
@@ -213,7 +213,7 @@ The pod-triager input is 28,293 tokens per call.
 The cache share is 66.3%.
 The first call is 11,712 tokens and 46,410 chars.
 
-| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle chars | Class |
+| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle token-equivalent | Class |
 |---|---:|---:|---:|---:|---:|---|
 | system | 3,614 | 12.8% | 2,959 | 25.3% | 0.32M | N/C |
 | human input | 4,730 | 16.7% | 3,613 | 30.8% | 0.42M | N |
@@ -234,7 +234,7 @@ The mechanism-typist input is 49,854 tokens per call.
 The cache share is 88.5%.
 The first call is 15,530 tokens and 64,950 chars.
 
-| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle chars | Class |
+| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle token-equivalent | Class |
 |---|---:|---:|---:|---:|---:|---|
 | system | 8,012 | 16.1% | 5,877 | 37.8% | 0.34M | N/C |
 | system examples | 2,563 | 5.1% | 1,880 | 12.1% | 0.11M | C |
@@ -259,7 +259,7 @@ The assigner input is 16,929 tokens per call.
 The cache share is 70.1%.
 The first call is 8,747 tokens and 37,374 chars.
 
-| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle chars | Class |
+| Component | Session tokens | Session share | First-call tokens | First-call share | Lifecycle token-equivalent | Class |
 |---|---:|---:|---:|---:|---:|---|
 | system | 3,757 | 22.2% | 3,003 | 34.3% | 0.038M | N/C |
 | system examples | 606 | 3.6% | 485 | 5.5% | 0.006M | C |
@@ -315,8 +315,8 @@ With the three explicit classes, the answer is:
 
 1. **Largest lifecycle occupant:** tool responses, 55.7M tokens, 59.6% of the six-role input.
 2. **Largest illegitimate runtime occupant:** the full-read tool responses, 16.4M named chars; the HTTP-history page alone is 11.5M carry.
-3. **Largest fixed overlong occupant:** tool descriptions, 11.0M lifecycle tokens, 11.8%; 4.2M is compressible.
-4. **Largest pure duplicate:** hunter loop tool surface, 3.14M lifecycle chars, 11.7% of hunter, 100% avoidable.
+3. **Largest fixed overlong occupant:** tool descriptions, 11.0M token-equivalent, 11.8%; 4.2M token-equivalent is compressible; the raw repeated description chars are 38.2M.
+4. **Largest pure duplicate:** hunter loop tool surface, 3.14M lifecycle token-equivalent, 11.7% of hunter, 100% avoidable.
 5. **Largest single payload:** HTTP-history page, 11.5M carry, 154x amplification.
 6. **Largest single first-call component for the modeller and pod runner:** tool descriptions, 56.0% and 55.6%.
 
