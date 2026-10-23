@@ -200,6 +200,36 @@ def test_run_pod_session_injects_the_role_compaction_middleware(monkeypatch, tmp
     assert captured["triager_middleware"]
 
 
+def test_default_pod_builder_forwards_the_role_compaction_middleware(monkeypatch):
+    """The production builder accepts the surfer's middleware kwargs and
+    forwards them to `arun_pod` verbatim. Regression: the builder signature
+    lacked both kwargs, so every production pod degraded before execution."""
+    from polymerhus.attack.hunting import runtime as runtime_mod
+
+    captured: dict = {}
+
+    async def _fake_arun_pod(spec, **kw):
+        captured["spec"] = spec
+        captured.update(kw)
+        return {"verdict": "successful"}
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.pod.pod.arun_pod", _fake_arun_pod)
+    runner_middleware = (object(),)
+    triager_middleware = (object(),)
+
+    asyncio.run(runtime_mod._default_pod_builder(
+        _spec(), run_id=RUN, project_id=PROJECT, memory_store=None,
+        spec_id=SPEC_FILE,
+        runner_middleware=runner_middleware,
+        triager_middleware=triager_middleware,
+    ))
+
+    assert captured["runner_middleware"] == runner_middleware
+    assert captured["triager_middleware"] == triager_middleware
+    assert captured["spec_id"] == SPEC_FILE
+
+
 def test_C12_up_pod_session_acquires_the_role_gate(monkeypatch, tmp_path):
     log: list[str] = []
     control = _RoleControl()

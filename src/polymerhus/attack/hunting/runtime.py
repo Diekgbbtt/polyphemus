@@ -1051,18 +1051,34 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     )
 
 
-async def _default_pod_builder(spec, *, run_id, project_id, memory_store, spec_id):
+async def _default_pod_builder(
+    spec,
+    *,
+    run_id,
+    project_id,
+    memory_store,
+    spec_id,
+    runner_middleware=(),
+    triager_middleware=(),
+):
     """The production pod-session builder seam (T4): `arun_pod` with the
     run's pod memory store and the semantic `<fault>_<strategy>` spec id (ADR
     Q13). The pod never raises a DOMAIN failure into the run (IA-4); a provider
     failure propagates as the typed `ProviderUnavailableError` (#329). The
-    surfer's wrapper adds the export-delivery ring on top."""
+    surfer's wrapper adds the export-delivery ring on top.
+
+    The two middleware sequences are the per-role compaction bindings the
+    surfer injects at dispatch (`run_pod_session`). They must reach `arun_pod`
+    verbatim: dropping them silently disables the pod compaction contract and
+    used to fail the dispatch with an unexpected-keyword error."""
     from polymerhus.attack.hunting.pod.pod import arun_pod  # noqa: PLC0415
     from polymerhus.app.clients.kali_http_history import default_replay_fn  # noqa: PLC0415
 
     return await arun_pod(
         spec, run_id=run_id, memory_store=memory_store,
         project_id=project_id, spec_id=spec_id,
+        runner_middleware=runner_middleware,
+        triager_middleware=triager_middleware,
         replay_fn=default_replay_fn,
     )
 
