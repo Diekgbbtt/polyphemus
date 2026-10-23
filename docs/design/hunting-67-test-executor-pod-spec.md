@@ -57,7 +57,17 @@ The plan itself lives in the Runner's ReAct session thread, preserved across lap
 - **`query_lightrag` (`KbQueryTool`)** - the single knowledge-base tool from the `lightrag` branch, **always-bound as of #197** (the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED; D84-26, resolved when the `lightrag` merge landed). Bound as a LangChain `BaseTool` into the Runner's `create_agent` `tools=[...]` - the SAME pattern the hunting agent's author lane uses. The former `kb_retrieve` symptom-technique typed seam (surface B) is **retired**; the pod binds `KbQueryTool`, which wraps the real `query_lightrag` and - T3/#179 - records every KB response as a first-class `KbObservation` into the variant's experiment-log file (distinct from the exec `RawObservation`). Fail-open (empty/raising -> a denoted degraded bundle, O13).
 - **`graph_view` (#197)** - the shared read-only L0/L1 tool (`graph_view_tool.py::build_graph_view_tool`, the SAME single-source contract the orchestrator and hunter bind), riding `ReadOnlyGraphView(project_id).read` and bound into the Runner's AND the Triager's `tools=[...]` - always-on, never gated.
 - **`note_tool`** - the note write/read tool (D84-17/20/27): the Runner writes ONE consolidated experiment-summary note at P3 exhaustion (prompt-verbatim); the Triager reads it per lap as its primary reasoning artifact. Bound into the respective agents' `tools=[...]` (Runner: write; Triager: read).
+- **`auth_store`** - the shared per-project auth view, bound READ-ONLY into the Runner and the Triager. The pod reads the login overview and the account records to type an authenticated request. It never writes the store and never replays a secret.
+- **`load_skill` / `record_skill_lesson`** - the project skill loader and the skill-usage lesson recorder, bound into the Runner and the Triager through the shared auth-capable binding.
 - **Tool-call validation is the tool's own contract** (D84-22): a wrong parameter fails as a tool-call request REJECTED with an error message + code describing the semantic explicitly - the harness does not re-validate arguments, it only enforces the cap, raw recording (G4), and dedup (O7).
+
+The request tool definitions are the full tool surface.
+The system prompts carry a complete human tool summary, not a second description body.
+The top-level descriptions carry purpose, operation, constraints, the coded error envelope, and the critical usage clauses.
+The schemas remain the machine contract.
+
+The first human context is pinned through compaction for both pod roles.
+The pinned message carries the spec and the target context.
 
 The specialised fault-targeting tool registry is #71's future home.
 The tool calls are the only place the live target is touched.
@@ -66,7 +76,8 @@ The tool calls are the only place the live target is touched.
 
 The `TestImplementationSpec` (D4); the communication interface with the parent HuntingAgent (the typed handoff: D4 in, D5 + D6 out); the memory and observability seams; and the pod experiment-memory store.
 
-The pod has **no graph access**.
+The pod has **no graph write access**.
+It binds the read-only `graph_view` tool for the target surface.
 It OWNS a pod experiment-memory store (D84-33 through D84-38, adapted as of T1/#177 and re-scoped 2026-08-24): a per-project, deterministic-key store at `data/<project_id>/test-executor-pod/` with three bodies under the per-spec directory `<fault>_<strategy>/` - `variants/<variant-ref>.yaml` (the minted TestImplementationSpec variants, `v0`/`v1`/...), `experiment-log/<order>.yaml` (one file per variant - the D6 slice with the `executed` dedup ledger and the `experiment_summary` terminal record, overwritten idempotently) and the per-project `notes.yaml` keyed `<fault>_<strategy>:<order>:<note_name>`. The variant ref `vN` and the order `N` are the SAME ordinal in two spellings, easily mappable. The spec identifier is the #164 hunter's `<fault>_<strategy>` (D84-34), NOT a content-addressed hash; the order number is the variant ordinal. There is NO `_seq`/`_ref` (D84-36): the deterministic key plus the natural list order disambiguate every artifact; reads are latest-first. The note tool reads/writes this store; the `experiment_summary` write sinks into the variant's experiment-log file as its terminal record (D84-35), `kb_insight`/`freeform` accumulate in `notes.yaml`. The authoritative build spec for the store is `docs/design/hunting-84-pod-memory-system-spec.md`.
 The pod prompts embed an INDEXABLE LIST of the pod memory's keys (notes by key + the experiment-log identifiers, spec id + orders on file) plus note-reading guidance, mirroring the hunt-orchestrator's prior-config key-list + reading-tool pattern, so the Runner/Triager can index into the store when required (D84-27).
 
@@ -202,7 +213,7 @@ C9 - Variant provenance: given a variant basis, exercising success, the experime
 C10 - Duplicate probe: given the same variant + payload re-decided, exercising duplicate-idempotent, exactly one execution is recorded in the log.
 C11 - Empty payload vector: given a spec with an empty payload vector space, exercising empty-valid, the Runner still probes once (or the run lands `space-exhausted` when no probe is derivable).
 C12 - Langfuse stub failure: given the observability stub raising, exercising degradation, the run completes unaffected.
-C13 - KB tool bound: given a spec whose concretization needs a KB query, exercising tool-surface, the Runner's `create_agent` is bound with `exec` + `note` (+ the always-bound `query_lightrag` tool and the shared `graph_view` tool as of #197), and a query returns through the seam fail-open. The KB tool's fail-open + `KbObservation` recording (T3/#179) is asserted at the unit tier (`tests/attack/pod/test_tools.py`).
+C13 - Tool surface bound: given a spec whose concretization needs a KB query, exercising tool-surface, the Runner's `create_agent` is bound with `exec` + `note` + the always-bound `query_lightrag` tool + the shared `graph_view` tool + the read-only `auth_store` + `load_skill` + `record_skill_lesson`, and a query returns through the seam fail-open. The KB tool's fail-open + `KbObservation` recording (T3/#179) is asserted at the unit tier (`tests/attack/pod/test_tools.py`).
 C14 - Note written on P3: given a space-exhausted run, exercising success, the pod experiment-memory store holds ONE consolidated experiment-summary note keyed by the spec id + variant, and the Triager reads it.
 C15 - Tool-contract validation: given a tool call with a wrong parameter, exercising degradation, the call is REJECTED with an error message + code (never executed, never harness-revalidated).
 
@@ -317,7 +328,20 @@ TestImplementationSpec:
   assumptions: list[str]
   rationale: str
   parent_spec_ref: str | None
-  provenance: dict
+  provenance: SpecProvenance
+  skills: list[str]
+
+SpecProvenance:
+  run_id: str
+  loop_id: str
+  unit_id: str
+  canonical_class: str
+  web_vulnerability_class: str
+  baseline_ref: str | None
+  source_recon_refs: list[str]
+  assumption_ref: str | None
+  playbook: str | None
+  skill_procedure: SkillProcedure | None
 ```
 
 The semantics are:
@@ -333,7 +357,14 @@ The semantics are:
 - `rationale` is the vulnerability-level rationale.
   It carries no failure-mode detail and no narrowed vector.
 - `parent_spec_ref` is the variant lineage.
-- `provenance` carries `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), and the bounded `skill_procedure`.
+- `provenance` carries `run_id` (bound by the store, never authored), `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded `skill_procedure`.
+- `skills` is the optional flat pod-runner skill list.
+  Each name is a skill the runner may carry.
+  It is never a path and never a meta-skill.
+
+The hunter write adds `status`, `fault_keyword`, and `strategy_keyword`.
+`spec_id` is derived as `<fault_keyword>_<strategy_keyword>`.
+It is never authored.
 
 The `skill_procedure` is typed:
 
@@ -538,3 +569,27 @@ The workbench R8-3 and Q48 are the decision authority.
 The reduced D4 surface is shared with S3 8.6.
 The variant basis is the only new decision object.
 The pod's binary terminal invariant, six-way termination, fixed caps, and experiment-log shape stay.
+### 8.11 Context dedup amendment (2026-10-23)
+
+The shared decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
+The impact map is `docs/design/hunting-context-dedup-impact-map.md`.
+
+The pod changes are:
+
+- The Runner and the Triager name their full bound tool surfaces.
+  The Runner names `auth_store`.
+  The Triager names `graph_view` and `auth_store`.
+- The auth store is read-only on both roles.
+  The full write contract is not bound.
+- The request tool definitions are the full surface.
+  The prompt tool lists are complete human summaries.
+- The tool descriptions are shared constants.
+  The runner surface falls from 12,979 to 5,101 chars.
+  The triager surface falls from 12,715 to 4,837 chars.
+  The 4,649-char auth-mode cut is included in both totals.
+- The shared conciseness directive is shortened and embedded once.
+- The first human context is pinned through compaction for both roles.
+- The spec paragraph names `skills`.
+- The variant bases and the critic's five terminal reasons are pinned by tests.
+
+The full spec, variant, and terminal generation remains a follow-up.
