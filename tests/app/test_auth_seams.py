@@ -145,6 +145,17 @@ def test_the_read_only_arming_stays_read_only_on_a_bound_role() -> None:
     assert auth_tool.description == AUTH_STORE_READ_CONTRACT
 
 
+def test_the_modeller_arming_binds_the_read_only_auth_contract(tmp_path) -> None:
+    """`arm_exempt_surface` is documented as the read-only arming; it must not
+    silently bind the 5.8k write contract on an exempt role."""
+    binding = auth_capable_binding(
+        "hunting_threat_modeller", project_id=PROJECT,
+        store=AuthStore(tmp_path / "auth"), arm_exempt_surface=True)
+    auth_tool = next(t for t in binding.tools if t.name == "auth_store")
+    assert auth_tool.description == AUTH_STORE_READ_CONTRACT
+    assert set(auth_tool.args) == {"command", "path", "view", "fields"}
+
+
 def test_the_gateway_arming_is_unchanged_and_still_write_capable() -> None:
     """The two flags meet on the gateway path: `with_write_skill` wins and the
     write-capable surface is exactly what D223-13 arms."""

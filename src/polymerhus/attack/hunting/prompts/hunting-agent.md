@@ -34,7 +34,7 @@ You navigate the decision tree below: moving back to an earlier pass is normal r
   A loop whose slice stays thin, whose class skill is missing, or whose probes are blocked is a normal outcome: keep the set, record the drops and the residual gaps, and let the finalize land.
   Never manufacture a confirmation to avoid an empty result.
 
-Hunting-artifact conciseness (binding): cap every spec `rationale` and every note body (`note` / `body`) at roughly 500 characters, and write assertive, specific prose carrying only the essential information in meaningful concrete language - no filler, no restated context, no hedging, no narrative around the load-bearing fact.
+Hunting-artifact conciseness (binding): cap spec `rationale` and each note body at roughly 500 characters; write assertive, specific prose with no filler, restated context, or hedging.
 
 ## The tree
 
@@ -165,26 +165,16 @@ Do not call another tool.
 
 ## The spec body
 
-Every spec in the set carries the same reduced surface at every status:
+<!-- SPEC_BODY -->
 
-- `target_identity`: `{"url": <base url>, "unit_id": <L1 identity>}`.
-  The `url` is the base URL the pod probes; author it from the projected L0 attack surface.
-- `verification_symptoms`: a non-empty list of the concrete observable failure modes of the trust agreement over an interface or a state transition.
-  Write each symptom so its absence is observable: the symptom list is the manifestation ground truth, and a spec that cannot come back symptom-absent is not a spec.
-- `assumptions`: the technical requirements the pod may falsify.
-  They are not the modeller's trust assumptions; write them as conditions the target can contradict.
-- `rationale`: the vulnerability-level rationale.
-  It carries no failure-mode detail and no narrowed vector.
-- `parent_spec_ref`: the parent identity, only when the spec is derived from another.
-- `provenance`: `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, and the optional `baseline_ref`, plus `skill_procedure`.
-  `baseline_ref` is ONE recorded artifact id (`http_...`) from the payload's baseline evidence, never a request line: the pod replays that artifact to keep its lineage.
-
-The `skill_procedure` is the typed seven-field excerpt from the loaded class skill: `recon_action`, `bypass_technique`, `technology_grounding`, `pro_tips`, `advanced_technique`, `preliminary_chaining`, `interpretation_pitfalls`.
-Each field carries the skill's text for that procedure section; keep the whole excerpt under 4000 characters.
+The symptom list is the manifestation ground truth: write each symptom so its absence is observable, and never author a spec that cannot come back symptom-absent.
+`verification_symptoms` is a non-empty list for a spec that can be dispatched.
+`assumptions` are the technical conditions the pod may falsify, not the modeller's trust assumptions.
+`rationale` is the vulnerability-level claim. It carries no failure-mode detail and no narrowed vector.
+`provenance.baseline_ref` is ONE recorded artifact id (`http_...`) from the payload's baseline evidence, never a request line.
+The `skill_procedure` is the typed seven-field excerpt from the loaded class skill; keep the whole excerpt under 4000 characters.
 A section the skill does not carry stays an empty string, which the triager treats as a recorded gap.
-
-The identity is derived from the two keywords, so write them as stable, specific words.
-The store creates the identity at the first write and upserts it in place at each later status write.
+Write `fault_keyword` and `strategy_keyword` as stable, specific words; the store derives the identity from them and upserts it in place at each later status write.
 Read the set back with `hunts_store command: "read"` when you need the persisted statuses; the store is authoritative for the set.
 
 ## The tools
@@ -199,7 +189,8 @@ Read the set back with `hunts_store command: "read"` when you need the persisted
 - `exec`: live probes; the target-front availability rule above binds every call.
 - `skill_list` / `skill_load`: the web-vulnerability suite; load the class skill the loop's suite class names, and optionally a sibling leaf for the assumption check.
 
-Each tool result may carry a `<phase-transition-hint>`; follow it as the next pass.
+When the workflow transitions to a new pass, the ending tool response carries a `<phase-transition-hint>` that names the next pass.
+Follow it.
 A hint is guidance, never a gate: no call is refused for the pass the state is in.
 
 ## Worked example 1 - the straight path

@@ -428,23 +428,17 @@ def build_modeller_notes_tool(store, project_id: str, unit_id: str,
 # fail-open, recording the gap instead of breaking the class mapping.
 
 SKILL_LIST_DESCRIPTION = (
-    "List the web-vulnerability suite: one entry per suite skill, carrying the "
-    "name (a class parent or a variant leaf) and its frontmatter description. "
-    "The class parent is the directory name you store in "
-    "`web_vulnerability_class`; a variant leaf is additional procedure material "
-    "for an assumption check. Call it before mapping a freely named canonical "
-    "class onto the suite class that covers it. When the suite is unavailable "
-    "the call degrades to a coded gap (`suite_gap` true): keep the canonical "
-    "class name, leave `web_vulnerability_class` empty, and flag the gap - "
-    "never invent a suite class."
+    "List the web-vulnerability suite: class parents and variant leaves, with "
+    "frontmatter descriptions. The class parent is the directory name for "
+    "`web_vulnerability_class`; a variant leaf is assumption-check material. "
+    "An unavailable suite degrades to `suite_gap`: keep the canonical name, "
+    "leave `web_vulnerability_class` empty, never invent a class."
 )
 
 SKILL_LOAD_DESCRIPTION = (
-    "Load one web-vulnerability suite skill by its name (a class parent or a "
-    "variant leaf from `skill_list`): the class procedure the downstream hunter "
-    "binds, or a variant leaf for an assumption check. A name the suite does "
-    "not carry degrades to a coded gap (`suite_gap` true) - keep the canonical "
-    "name you reasoned from and flag the gap."
+    "Load one suite skill by name from `skill_list` (a class parent or a "
+    "variant leaf). An unknown name degrades to a coded `suite_gap`; keep the "
+    "canonical name and flag the gap."
 )
 
 

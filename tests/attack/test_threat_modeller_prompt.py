@@ -94,6 +94,60 @@ def test_the_prompt_carries_the_required_material():
     assert missing == []
 
 
+def test_the_prompt_names_every_bound_tool_including_the_lesson_tool():
+    """The tool section is the human projection of the bound surface; a bound
+    tool the prompt never names is a hidden capability."""
+    prompt = _modeller_skill()
+    for name in ("hunts_store", "notes", "search_http_history",
+                 "get_http_artifact", "exec", "skill_list", "skill_load",
+                 "load_skill", "record_skill_lesson", "auth_store"):
+        assert name in prompt, name
+
+
+def test_the_prompt_delegates_the_target_front_rule_to_the_shared_constant():
+    """The 5xx paragraph was an exact copy shared with the hunter. The prompt
+    now points at the one shared rule instead of paying a second full copy."""
+    from polymerhus.attack.hunting.hunting_status import (  # noqa: PLC0415
+        TARGET_UNAVAILABLE_DIRECTIVE,
+    )
+
+    prompt = _modeller_skill()
+    assert TARGET_UNAVAILABLE_DIRECTIVE not in prompt
+    assert "shared target-front 5xx rule" in prompt
+    assert "502 Bad Gateway" in prompt
+    assert "404" in prompt
+
+
+def test_the_prompt_state_and_section_table_matches_the_typed_contract():
+    """The five states and their sections are pinned to the typed source, so a
+    gate change cannot leave the human projection stale."""
+    prompt = _modeller_skill()
+    for state in ModelState:
+        assert state.value in prompt, state.value
+    for state, sections in GATE_SECTIONS.items():
+        for section in sections:
+            assert section in prompt, f"{state.value}:{section}"
+
+
+def test_the_prompt_reference_table_matches_the_typed_paths():
+    """The reference-field table is pinned to the canonical field paths."""
+    prompt = _modeller_skill()
+    for path in (
+        "vulnerabilities[].fault_ref",
+        "assumptions[].boundary_ref",
+        "trust_model.trust_agreements[].interface_agreement_refs[]",
+        "trust_model.dynamic_state_trust.transitions[].source",
+        "trust_model.dynamic_state_trust.transitions[].target",
+        "trust_model.dynamic_state_trust.violations[].maps_to_fault",
+        "trust_model.dynamic_state_trust.violations[].transition_ref",
+        "failure_modes[].vulnerability_ref",
+        "loops[].fault_ref",
+        "loops[].vulnerability_ref",
+        "loops[].failure_mode_refs[]",
+    ):
+        assert path in prompt, path
+
+
 def test_the_prompt_embeds_the_retired_notes_material():
     """The per-state material comes from the retired notes documents: the
     request-handling stack and the trust-boundary steps for grounding, and the

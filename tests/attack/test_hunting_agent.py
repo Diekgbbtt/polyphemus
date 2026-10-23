@@ -71,6 +71,65 @@ def test_compose_grounding_renders_the_loop_payload():
         assert gone not in text
 
 
+def test_step_protocol_respecifies_the_phase_hint_as_a_transition_signal():
+    """The step protocol says the ENDING tool response of a pass carries the
+    hint; it does not claim every tool result carries one."""
+    from polymerhus.attack.hunting.hunting_agent import _STEP_PROTOCOL  # noqa: PLC0415
+
+    assert "A result may carry" not in _STEP_PROTOCOL
+    assert "When the workflow transitions to a new pass" in _STEP_PROTOCOL
+    assert "ending tool response" in _STEP_PROTOCOL
+    assert "guidance, never a gate" in _STEP_PROTOCOL
+
+
+def test_compose_grounding_projects_technical_sharpening_to_load_bearing_fields():
+    """The first-step sharpening is a projection, not an evidence dump: every
+    agreement id and statement survives, while repeated evidence entries do not
+    inflate the block past its 4,000-char bound."""
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+
+    detail = "probe detail " * 200
+    agreement = {
+        "id": "IA-1",
+        "statement": "The download route authorises the report id against the caller's tenant.",
+        "confidence": "observed",
+        "evidences": [{"kind": "probe", "ref": "http_1", "detail": detail}],
+    }
+    control = {
+        "id": "CF-1",
+        "statement": "The handler loads the report before it checks ownership.",
+        "confidence": "inferred",
+        "evidences": [{"kind": "source", "ref": "src_1", "detail": detail}],
+    }
+    data = {
+        "id": "DF-1",
+        "statement": "The report id crosses the service boundary as a client value.",
+        "confidence": "assumed",
+        "evidences": [{"kind": "note", "ref": "n_1", "detail": detail}],
+    }
+    payload = {
+        "unit_id": "Service:reports:a",
+        "loop_id": "loop-1",
+        "technical_sharpening": {
+            "interface_agreements": [agreement],
+            "control_flows": [control],
+            "data_flows": [data],
+        },
+        "target_context": {"unit_id": "Service:reports:a"},
+    }
+
+    text = _compose_grounding(payload)
+    start = text.index("Technical sharpening")
+    block = text[start:text.index("Loop evidence", start)]
+
+    assert len(block) <= 4000
+    for token in ("IA-1", "CF-1", "DF-1", "authorises the report id",
+                  "loads the report before", "crosses the service boundary"):
+        assert token in block, token
+    assert "probe detail" not in block
+    assert "http_1" not in block
+
+
 def test_payload_gaps_flags_the_missing_grounding():
     """The O3 gap flags name each missing payload part; a complete payload
     flags nothing."""
@@ -141,6 +200,25 @@ def _run_stubbed_dispatch(monkeypatch, turns, *, overview=None):
     return dispatch(_hunter_payload()), calls
 
 
+def test_hunter_binds_the_read_only_auth_store(monkeypatch):
+    """The hunter reads auth context; it never writes the store. The binding
+    must select the read-only contract, not the 5.8k full write contract."""
+    from polymerhus.app.auth import seams  # noqa: PLC0415
+    from langchain_core.messages import AIMessage  # noqa: PLC0415
+
+    captured: dict = {}
+    real = seams.auth_capable_binding
+
+    def spy(role_id, **kwargs):
+        captured.update(kwargs)
+        return real(role_id, **kwargs)
+
+    monkeypatch.setattr(seams, "auth_capable_binding", spy)
+    _run_stubbed_dispatch(monkeypatch, [{"answer": "done",
+                                         "message": AIMessage(content="done")}])
+    assert captured.get("with_readonly_auth_store") is True
+
+
 def test_skill_body_rides_system_prompt_not_first_human_message(monkeypatch):
     """(a) the skill body is served as `system_prompt` on the turn, never
     inside the first HumanMessage."""
@@ -168,9 +246,9 @@ def test_hunter_turns_thread_the_project_as_usage_scope(monkeypatch):
     assert calls[0]["usage_scope"] == "proj-a"
 
 
-def test_first_step_carries_the_dedicated_overview_message(monkeypatch):
-    """Q4: the hunt's first turn heads with the dedicated Overview-only
-    HumanMessage; the grounding/first-step message chains to it."""
+def test_first_step_carries_one_pinned_overview_and_loop_message(monkeypatch):
+    """The first human message carries the application overview and the loop
+    grounding together, so the compaction pin preserves both."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
 
     overview = {
@@ -187,12 +265,11 @@ def test_first_step_carries_the_dedicated_overview_message(monkeypatch):
         monkeypatch, [{"answer": "done", "message": AIMessage(content="done")}],
         overview=overview)
     first_turn = calls[0]["new_messages"]
-    assert len(first_turn) == 2
-    assert first_turn[0].content.startswith("APPLICATION OVERVIEW (")
-    assert "Domain: comfyui" in first_turn[0].content
-    grounded = first_turn[1].content
+    assert len(first_turn) == 1
+    grounded = first_turn[0].content
+    assert grounded.startswith("APPLICATION OVERVIEW (")
+    assert "Domain: comfyui" in grounded
     assert "Grounded in the application overview above" in grounded
-    assert "APPLICATION OVERVIEW" not in grounded
     assert "fault-1" in grounded  # the loop grounding still rides the message
 
 
@@ -221,10 +298,10 @@ def test_skill_includes_the_off_path_examples_companion():
     assert "read `examples.md`" not in skill
 
 
-def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
+def test_first_human_message_carries_grounding_state_protocol_in_order(
         monkeypatch):
-    """(b) the first HumanMessage still carries grounding + surface + state +
-    protocol in order, and no skill body."""
+    """(b) the first HumanMessage carries grounding + state + protocol in order,
+    never the loop tool surface and never the skill body."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
     from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
         _load_hunting_agent_skill,
@@ -235,11 +312,11 @@ def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
                        "message": AIMessage(content="done")}])
     first_human = calls[0]["new_messages"][0].content
     assert _load_hunting_agent_skill() not in first_human
+    assert "Tool surface" not in first_human
     grounding = first_human.index("You are dispatched to hunt")
-    surface = first_human.index("Tool surface")
     state = first_human.index("state: grounding")
     protocol = first_human.index("Each turn you either call")
-    assert grounding < surface < state < protocol
+    assert grounding < state < protocol
 
 
 def test_two_step_scripted_dispatch_terminates_with_terminal_assembly(

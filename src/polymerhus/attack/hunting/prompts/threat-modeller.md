@@ -40,7 +40,8 @@ The completion check resolves every reference; an unresolved reference is a vali
 | `vulnerabilities[].fault_ref` | the `id` of an `assumptions[].fault` (`F-*`) |
 | `assumptions[].boundary_ref` | the `id` of a `trust_model.trust_agreements[]` (`TA-*`) |
 | `trust_model.trust_agreements[].interface_agreement_refs[]` | the `id` of a `technical_sharpening.interface_agreements[]` (`IA-*`) - never control flows (`CF-*`) or data flows (`DF-*`) |
-| `trust_model.dynamic_state_trust.transitions[].source` and `.target` | the `id` of a `...states[]` (`S*`) |
+| `trust_model.dynamic_state_trust.transitions[].source` | the `id` of a `...states[]` (`S*`) |
+| `trust_model.dynamic_state_trust.transitions[].target` | the `id` of a `...states[]` (`S*`) |
 | `trust_model.dynamic_state_trust.violations[].maps_to_fault` | the `id` of an `assumptions[].fault` (`F-*`), never prose |
 | `trust_model.dynamic_state_trust.violations[].transition_ref` | the `id` of a `transitions[]` (`TR-*`), or omit it |
 | `failure_modes[].vulnerability_ref` | the `id` of a `vulnerabilities[]` (`V-*`) |
@@ -158,7 +159,7 @@ This check is optional, and it is never a skill write and never a lesson.
 - The surface is black-box: the HTTP surface only, no internal network probing beyond the target's own interfaces.
 - Server-side fetch classes must be probed behind file, reference, import, and URL-shaped inputs - a reference that resolves server-side is a fetch you must test.
 
-Target-front availability (binding): a 5xx from the target front - 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout - means the target's upstream is currently unavailable (down, restarting, or overloaded), NOT that the route is absent. A restart can be self-inflicted: probing a destructive control route (for example a manager `reboot` / `restart` operation) makes the target restart, and the front then answers 502 for the whole restart window. Do NOT loop or retry on a 5xx and do not read it as 404-style route-absence: record that the target is temporarily unavailable, stop probing, and let a later check resume once it is back. A 404 (or any 4xx) is the real route-absence signal; a 5xx is not.
+The shared target-front 5xx rule binds every `exec` call: 502 Bad Gateway, 503 Service Unavailable, and 504 Gateway Timeout mean the target's upstream is unavailable, not that the route is absent. Do not retry a 5xx; record the temporary unavailability and stop. A 404 (or any 4xx) is the route-absence signal.
 
 ## Completion, the drop rule, and the ranking (COMPLETED)
 
@@ -215,7 +216,8 @@ An unclosed assumption is recorded as a validation finding - close it before the
 - `search_http_history` / `get_http_artifact` - the recorded request traffic for the unit's endpoints. Search returns candidate summary rows; get inspects one artifact and its capture state. Their ids and request records are your evidence entries. You never replay: replay belongs to the test-executor pod.
 - `exec` - the live probe against the Kali surface, for the mechanics and the evidence above.
 - `skill_list` / `skill_load` - the web-vulnerability suite: list the suite skills (class parents and variant leaves, each with its frontmatter description) and load the one that covers a named class. A degraded answer is a coded gap: keep your canonical name and flag it.
-- `load_skill` / `auth_store` - the project skill and the project's authentication context: load the skill named in your context before the phase whose discipline it bears on, and read the auth store for the project's real authentication material before you reason about identity or authorization boundaries.
+- `load_skill` / `record_skill_lesson` - the project skill loader and the skill-usage lesson recorder: load the skill named in your context before the phase whose discipline it bears on, and record one reusable lesson when a skill materially shaped a decision.
+- `auth_store` - the project's read-only authentication context: read it before you reason about identity or authorization boundaries. Never write it.
 
 ## Termination
 

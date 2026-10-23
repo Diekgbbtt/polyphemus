@@ -62,6 +62,34 @@ def test_runner_prompt_instructs_the_note_final_step():
     assert "final" in lc or "final tool call" in lc
 
 
+def test_runner_prompt_names_every_bound_tool():
+    for name in ("exec", "replay", "query_lightrag", "note", "graph_view",
+                 "load_skill", "record_skill_lesson", "auth_store"):
+        assert name in POD_RUNNER_SYSTEM, name
+
+
+def test_triager_prompt_variant_table_matches_the_typed_bases():
+    from polymerhus.attack.hunting.pod.variant_basis import VARIANT_BASES
+
+    for basis in VARIANT_BASES:
+        assert basis in POD_TRIAGER_SYSTEM, basis
+
+
+def test_triager_prompt_names_the_critics_terminal_reasons():
+    """`budget-timeout` is a harness terminal, not a critic choice; the prompt
+    must name the five reasons the triager can actually decide."""
+    for reason in ("symptom-confirmed", "technical-infeasibility",
+                   "specific-defence-prevention", "space-exhausted",
+                   "no-symptom-evidence"):
+        assert reason in POD_TRIAGER_SYSTEM, reason
+
+
+def test_triager_prompt_names_every_bound_tool():
+    for name in ("note", "query_lightrag", "graph_view", "load_skill",
+                 "record_skill_lesson", "auth_store"):
+        assert name in POD_TRIAGER_SYSTEM, name
+
+
 def test_runner_prompt_names_the_full_three_tool_surface():
     # D84-16/27: exec + query_lightrag + note all bound and all described.
     assert "exec" in POD_RUNNER_SYSTEM
@@ -86,7 +114,7 @@ def test_runner_prompt_names_the_baseline_not_the_retired_vector():
 
 def test_runner_prompt_names_the_reduced_spec_surface():
     for token in ("target_identity", "verification_symptoms", "assumptions",
-                  "rationale", "provenance", "skill_procedure"):
+                  "rationale", "provenance", "skill_procedure", "skills"):
         assert token in POD_RUNNER_SYSTEM, token
 
 

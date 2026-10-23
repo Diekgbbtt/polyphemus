@@ -58,6 +58,8 @@ no driver and performs no I/O at import (CODING_STANDARD section 6).
 from __future__ import annotations
 
 import json
+import types
+import typing
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
@@ -77,8 +79,12 @@ from .http_history_contract import (
     GET_HTTP_ARTIFACT_DESCRIPTION,
     SEARCH_HTTP_HISTORY_DESCRIPTION,
 )
-from .spec_contract import SpecProvenance, TargetIdentity
-from .hunting_status import TARGET_UNAVAILABLE_DIRECTIVE
+from .spec_contract import (
+    SKILL_PROCEDURE_FIELDS,
+    SkillProcedure,
+    SpecProvenance,
+    TargetIdentity,
+)
 from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
     StoreNotesTool,
@@ -269,6 +275,88 @@ class SpecWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def _contract_type(field) -> str:
+    """A compact, human-readable type for one pydantic field."""
+    annotation = field.annotation
+    origin = typing.get_origin(annotation)
+    if origin is list:
+        args = typing.get_args(annotation)
+        inner = _contract_type_name(args[0]) if args else "Any"
+        return f"list[{inner}]"
+    if origin in (typing.Union, types.UnionType):
+        args = typing.get_args(annotation)
+        return " / ".join(_contract_type_name(arg) for arg in args)
+    return _contract_type_name(annotation)
+
+
+def _contract_type_name(annotation) -> str:
+    if annotation is str:
+        return "str"
+    if annotation is type(None):
+        return "null"
+    name = getattr(annotation, "__name__", None)
+    if name:
+        return name
+    return str(annotation).replace("typing.", "")
+
+
+def _contract_row(field, name: str) -> str:
+    """One markdown row for a pydantic field, with the field's own description."""
+    required = "required" if field.is_required() else "optional"
+    description = str(field.description or "").strip()
+    for prefix in ("Optional: ", "Required. "):
+        if description.startswith(prefix):
+            description = description[len(prefix):]
+    description = description.replace(" Required.", "").replace("|", "\\|")
+    if len(description) > 140:
+        description = description[:137].rstrip() + "..."
+    return f"| `{name}` | `{_contract_type(field)}` | {required} | {description} |"
+
+
+def render_spec_contract() -> str:
+    """The human projection of the writable spec contract.
+
+    The pydantic models are the single source. The prompt names every field,
+    its type, its requiredness, and its own description; the request schema
+    remains the machine contract. `run_id` is bound by the tool and `spec_id`
+    is derived from the two keywords, so neither is model-authored.
+    """
+    lines = [
+        "Write exactly one `spec` object per `hunts_store` call. The request "
+        "schema is the machine contract; this table is its human projection.",
+        "`spec_id` is derived as `<fault_keyword>_<strategy_keyword>` and is "
+        "never authored. `run_id` is bound by the tool and is never authored.",
+        "",
+        "The nested `target_identity` and `provenance` objects are expanded below.",
+        "",
+        "| field | type | required | meaning |",
+        "|---|---|---|---|",
+    ]
+    for name, field in SpecWrite.model_fields.items():
+        if name == "status":
+            lines.append("| `status` | `\"hypothesised\" / \"ratified\" / "
+                         "\"dropped\"` | required | The lifecycle verbatim. |")
+            continue
+        if name == "provenance":
+            for pname, pfield in SpecProvenance.model_fields.items():
+                row = _contract_row(pfield, f"provenance.{pname}")
+                if pname == "run_id":
+                    row = row.replace("| optional |", "| bound |")
+                if pname == "skill_procedure":
+                    row = ("| `provenance.skill_procedure` | `SkillProcedure` | "
+                           "optional | The typed seven-field excerpt: "
+                           + ", ".join(f"`{n}`" for n in SKILL_PROCEDURE_FIELDS)
+                           + ". |")
+                lines.append(row)
+            continue
+        if name == "target_identity":
+            for tname, tfield in TargetIdentity.model_fields.items():
+                lines.append(_contract_row(tfield, f"target_identity.{tname}"))
+            continue
+        lines.append(_contract_row(field, name))
+    return "\n".join(lines)
+
+
 class HuntsStoreArgs(BaseModel):
     """The `hunts_store` tool's ARGS contract: `read` / `write` / `finalize`.
 
@@ -419,26 +507,17 @@ class HuntsStoreTool(StoreToolBase):
 
     name: str = "hunts_store"
     description: str = (
-        "The hunt's spec-set memory seam, bound to THIS hunt's own loop "
-        "(you never supply the hunt key). Commands: read / write / finalize.\n"
-        "write takes exactly ONE spec object in `spec` - never a list. Its "
-        "REQUIRED fields are status (hypothesised | ratified | dropped), "
-        "fault_keyword, strategy_keyword, and target_identity.url. Every other "
-        "SpecWrite field is optional. Each spec file name is DERIVED from the "
-        "two keywords, never authored (do not send `spec_id`). A re-author of "
-        "the same identity upserts it in place. A payload missing a required "
-        "field is rejected with a coded hunts_store_write_rejected error "
-        "naming it. The spec's target_identity is {'url': <base url>, "
-        "'unit_id': <L1 service/system identity>}; author the url from the "
-        "projected L0 attack surface (read via graph_view), because the pod "
-        "probes it and INIT-rejects an empty one. `skills` optionally names "
-        "the flat skills the pod runner should carry.\n"
-        "finalize closes the set: every produced spec must already be "
-        "ratified or dropped, then the durable terminal record is written. "
-        "A zero-spec hunt is a valid terminal set. Call finalize once, after "
-        "the last spec write. A write after finalize is rejected.\n"
-        "read takes optional statuses / attributes filters and returns the "
-        "loop's produced specs - never the whole surface."
+        "The hunt's spec-set seam, bound to THIS hunt's loop. Commands: read / "
+        "write / finalize.\n"
+        "write carries exactly ONE spec object in `spec`, never a list. "
+        "`status`, `fault_keyword`, `strategy_keyword`, and "
+        "`target_identity.url` are required. The file name is derived from the "
+        "two keywords; never send `spec_id`. A missing required field is a "
+        "coded hunts_store_write_rejected naming it.\n"
+        "finalize requires every produced spec to be ratified or dropped, "
+        "then writes the terminal record. A write after finalize is rejected.\n"
+        "read takes optional statuses/attributes filters and returns this "
+        "loop's specs."
     )
     args_schema: type[BaseModel] = HuntsStoreArgs
     _discriminator: str = "command"
@@ -624,24 +703,15 @@ class HuntsStoreTool(StoreToolBase):
 
 
 _NOTES_DESCRIPTION = append_conciseness_directive((
-    "The hunt's notes seam - one note per hunt key covering all decisions that "
-    "concern it, more detailed than the rationale. Commands: read / write. "
-    "Bound to THIS hunt's own loop (you never supply the hunt key).\n"
-    "A write MUST set command=\"write\" (action is the write option - "
-    "append | update | delete - not the command); a read sets "
-    "command=\"read\".\n"
-    "write takes an action (append | update | delete), a "
-    "note_name, the note kind (hypothesis_refusal | implicit_test_primitive "
-    "| freeform | phase_summary), and the body. phase_summary is the "
-    "interposed pass exit: name it phase:<state> (e.g. phase:grounding), one "
-    "note per pass; a loop re-iteration rewrites the same note with update. "
-    "evidence is a plain string (prose); "
-    "structured refs go in provenance, the typed object with source, run_id, "
-    "verdict_stub, and probe_refs (extra=forbid - a stray provenance key is "
-    "rejected). "
-    "update/delete on a missing note returns a denoted note_missing. read "
-    "is the grep-match read, latest-first, by the key / "
-    "body keyword, optionally projected onto attributes."
+    "The hunt's notes seam, bound to THIS hunt's loop. Commands: read / "
+    "write.\n"
+    "write sets command=\"write\"; `action` is append | update | delete. "
+    "Supply `note_name`, `kind` (hypothesis_refusal | "
+    "implicit_test_primitive | freeform | phase_summary), and `body`. "
+    "phase_summary is the pass exit: phase:<state>, one per pass; re-iteration "
+    "rewrites it with update. `evidence` is prose; structured refs in "
+    "`provenance` {source, run_id, verdict_stub, probe_refs}. Missing note -> "
+    "note_missing. read matches key/body keyword, latest first."
 ))
 
 
@@ -908,21 +978,15 @@ class ExecTool(BaseTool):
 
     name: str = "exec"
     description: str = (
-        "Run a command on the target's Kali execution surface: cheap "
-        "assumption-falsification probes inside VERIFY-CLAIMS (curl for HTTP "
-        "probes, read-only inspection). Each call is bounded by EXEC_TIMEOUT_S "
-        "(an optional shorter timeout_s is accepted). The probe frequency is "
-        "unbounded - you decide when to probe. A probe tries to contradict a "
-        "load-bearing assumption (technique feasibility, chained "
+        "Run a target-surface command for assumption-falsification probes in "
+        "VERIFY-CLAIMS: curl HTTP probes and read-only inspection. Each call "
+        "is bounded by EXEC_TIMEOUT_S; timeout_s may be shorter. A probe "
+        "contradicts a load-bearing assumption (technique feasibility, chained "
         "preliminary-vulnerability feasibility, technology-configuration "
         "evidence); it never probes a payload vector and never manufactures a "
-        "symptom. If the spec's provenance carries a `baseline_ref`, do NOT "
-        "re-create that request by hand here: a hand-written curl loses the "
-        "replay lineage "
-        "(derived_from / replay_kind stay null and the artifact looks like "
-        "original traffic) - the pod's baseline replay path is what preserves "
-        "it.\n\n"
-        f"{TARGET_UNAVAILABLE_DIRECTIVE}"
+        "symptom. With `provenance.baseline_ref`, use the pod replay; a "
+        "hand-written curl loses lineage.\n"
+        "The target front 5xx rule in your role prompt binds every call."
     )
     args_schema: type[BaseModel] = ExecArgs
 
