@@ -226,16 +226,6 @@ _STEP_PROTOCOL = (
     "remains the only source of experimental evidence for a ratified spec."
 )
 
-# The tool surface the model requests against (Template reuse): derived from the
-# actual bound tools' own contracts (`hunter_tools.py`), name + description -
-# never a hand-written parallel copy (the tool contracts are the single source).
-# The model sees the surface here - the tools are executed by the harness
-# between steps, never by the agent itself.
-def _tool_surface(tools) -> str:
-    lines = "\n".join(f"- {t.name}: {t.description}" for t in tools)
-    return f"Tool surface - you request exactly ONE tool call per step:\n{lines}"
-
-
 def _render(value: Any) -> str:
     """Deterministic render of one payload slot: JSON for mappings/lists, the
     scalar verbatim, `(none)` for an absent one. A non-serialisable value falls
@@ -248,6 +238,40 @@ def _render(value: Any) -> str:
         except (TypeError, ValueError):
             return str(value)
     return str(value)
+
+
+_SHARPENING_AGREEMENT_FIELDS = ("id", "statement", "confidence")
+
+
+def _project_agreement(value: Any) -> Any:
+    """One technical-sharpening agreement projected to its load-bearing fields.
+
+    The agreement's evidence entries are already represented by the loop
+    evidence the payload carries; repeating them in the sharpening block is the
+    occupancy defect this projection removes. A non-mapping value passes
+    through unchanged so a malformed payload still degrades visibly."""
+    if not isinstance(value, Mapping):
+        return value
+    return {
+        field: value[field]
+        for field in _SHARPENING_AGREEMENT_FIELDS
+        if field in value
+    }
+
+
+def _project_sharpening(value: Any) -> Any:
+    """Project the payload's technical sharpening to ids, statements, and
+    confidence, preserving the three agreement families."""
+    if not isinstance(value, Mapping):
+        return value
+    projected: dict[str, Any] = {}
+    for family in ("interface_agreements", "control_flows", "data_flows"):
+        items = value.get(family)
+        if isinstance(items, (list, tuple)):
+            projected[family] = [_project_agreement(item) for item in items]
+        elif items is not None:
+            projected[family] = items
+    return projected
 
 
 def _compose_grounding(payload: Mapping[str, Any]) -> str:
@@ -281,7 +305,7 @@ def _compose_grounding(payload: Mapping[str, Any]) -> str:
         f"Dynamic-state transition/violation: "
         f"{_render(payload.get('dynamic_state'))}\n"
         f"Technical sharpening (interface agreements, control flows, data "
-        f"flows): {_render(sharpening)}\n"
+        f"flows): {_render(_project_sharpening(sharpening))}\n"
         f"Loop evidence (choose a baseline from the request/http-history "
         f"refs): {_render(payload.get('evidence'))}\n"
         f"Target context: {_render(target)}"
@@ -375,8 +399,8 @@ def _fold_persisted_specs(
 
 
 _HUNTER_CHAIN = (
-    "Grounded in the application overview above, your loop payload, the tool "
-    "surface, the current state, and the step protocol follow."
+    "Grounded in the application overview above, your loop payload, the "
+    "current state, and the step protocol follow."
 )
 
 
@@ -399,15 +423,16 @@ def _overview_message_for(overview_fn, project_id: str) -> str:
     return overview_message(value)
 
 
-def _compose_first_step(payload: Mapping[str, Any], state: dict,
-                        tool_surface: str, *, chained: bool = False) -> str:
-    """The first step's HUMAN input: the loop grounding, the tool surface, the
-    current state, and the step protocol, in that order. The stable skill rides
-    the SYSTEM channel (`system_prompt=` on every turn - the orchestrator's
+def _compose_first_step(payload: Mapping[str, Any], state: dict, *,
+                        chained: bool = False) -> str:
+    """The first step's HUMAN input: the loop grounding, the current state, and
+    the step protocol, in that order. The stable skill rides the SYSTEM channel
+    (`system_prompt=` on every turn - the orchestrator's
     [SystemMessage(skill), HumanMessage(prompt)] composed-turn precedent), never
     this message: this message is per-dispatch instance data (the correct human
-    channel), while the skill is the stable system prompt. Later steps resume
-    the thread from the checkpoint, so the grounding/surface are never repeated
+    channel), while the skill is the stable system prompt. The request tool
+    schemas ride the request prefix; the loop does not repeat them. Later steps
+    resume the thread from the checkpoint, so the grounding is never repeated
     into the conversation.
 
     The Q4 model: the structured Overview rides its OWN dedicated HumanMessage
@@ -416,7 +441,6 @@ def _compose_first_step(payload: Mapping[str, Any], state: dict,
     lead = f"{_HUNTER_CHAIN}\n\n" if chained else ""
     return lead + "\n\n".join([
         _compose_grounding(payload),
-        tool_surface,
         _state_summary(state),
         _STEP_PROTOCOL,
     ])
@@ -564,7 +588,7 @@ def build_hunting_agent(
         new_messages = (
             ([HumanMessage(content=overview)] if overview else [])
             + [HumanMessage(content=_compose_first_step(
-                payload, state, _tool_surface(tools), chained=bool(overview)))]
+                payload, state, chained=bool(overview)))]
         )
         # The five tools ride the generation request REQUEST-ONLY (the standard
         # tool interface): each `convert_to_openai_tool` dict carries its JSON

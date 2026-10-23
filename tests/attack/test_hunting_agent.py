@@ -71,6 +71,54 @@ def test_compose_grounding_renders_the_loop_payload():
         assert gone not in text
 
 
+def test_compose_grounding_projects_technical_sharpening_to_load_bearing_fields():
+    """The first-step sharpening is a projection, not an evidence dump: every
+    agreement id and statement survives, while repeated evidence entries do not
+    inflate the block past its 4,000-char bound."""
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+
+    detail = "probe detail " * 200
+    agreement = {
+        "id": "IA-1",
+        "statement": "The download route authorises the report id against the caller's tenant.",
+        "confidence": "observed",
+        "evidences": [{"kind": "probe", "ref": "http_1", "detail": detail}],
+    }
+    control = {
+        "id": "CF-1",
+        "statement": "The handler loads the report before it checks ownership.",
+        "confidence": "inferred",
+        "evidences": [{"kind": "source", "ref": "src_1", "detail": detail}],
+    }
+    data = {
+        "id": "DF-1",
+        "statement": "The report id crosses the service boundary as a client value.",
+        "confidence": "assumed",
+        "evidences": [{"kind": "note", "ref": "n_1", "detail": detail}],
+    }
+    payload = {
+        "unit_id": "Service:reports:a",
+        "loop_id": "loop-1",
+        "technical_sharpening": {
+            "interface_agreements": [agreement],
+            "control_flows": [control],
+            "data_flows": [data],
+        },
+        "target_context": {"unit_id": "Service:reports:a"},
+    }
+
+    text = _compose_grounding(payload)
+    start = text.index("Technical sharpening")
+    block = text[start:text.index("Loop evidence", start)]
+
+    assert len(block) <= 4000
+    for token in ("IA-1", "CF-1", "DF-1", "authorises the report id",
+                  "loads the report before", "crosses the service boundary"):
+        assert token in block, token
+    assert "probe detail" not in block
+    assert "http_1" not in block
+
+
 def test_payload_gaps_flags_the_missing_grounding():
     """The O3 gap flags name each missing payload part; a complete payload
     flags nothing."""
@@ -221,10 +269,10 @@ def test_skill_includes_the_off_path_examples_companion():
     assert "read `examples.md`" not in skill
 
 
-def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
+def test_first_human_message_carries_grounding_state_protocol_in_order(
         monkeypatch):
-    """(b) the first HumanMessage still carries grounding + surface + state +
-    protocol in order, and no skill body."""
+    """(b) the first HumanMessage carries grounding + state + protocol in order,
+    never the loop tool surface and never the skill body."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
     from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
         _load_hunting_agent_skill,
@@ -235,11 +283,11 @@ def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
                        "message": AIMessage(content="done")}])
     first_human = calls[0]["new_messages"][0].content
     assert _load_hunting_agent_skill() not in first_human
+    assert "Tool surface" not in first_human
     grounding = first_human.index("You are dispatched to hunt")
-    surface = first_human.index("Tool surface")
     state = first_human.index("state: grounding")
     protocol = first_human.index("Each turn you either call")
-    assert grounding < surface < state < protocol
+    assert grounding < state < protocol
 
 
 def test_two_step_scripted_dispatch_terminates_with_terminal_assembly(
