@@ -241,6 +241,16 @@ def _resolve_variant_decision(decision: dict, spec: dict,
     # omits it cannot strip the next stretch's diff material.
     if isinstance(spec.get("provenance"), dict):
         derived = {**derived, "provenance": spec["provenance"]}
+    # The off-spec guard: a variant that changes the verification symptoms is a
+    # DERIVED spec, not a confirmation of the base spec. The variant is still
+    # minted (the next stretch confirms its own symptoms), but the interpretation
+    # records that the base symptom was never confirmed through this variant.
+    base_symptoms = [str(s) for s in (spec.get("verification_symptoms") or [])]
+    derived_symptoms = [str(s) for s in (derived.get("verification_symptoms") or [])]
+    if derived_symptoms and derived_symptoms != base_symptoms:
+        note = (note + " [off-spec: the derived variant changes the verification "
+                "symptoms; it is recorded as a derived spec and its confirmation "
+                "does not confirm the base spec's symptom]").strip()
     if is_duplicate_variant(log.variant_specs, basis, derived):
         return {"classification": classification, "action": "terminate",
                 "verdict": "unsuccessful", "terminal_reason": NO_SYMPTOM_EVIDENCE,
