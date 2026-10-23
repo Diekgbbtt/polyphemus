@@ -20,6 +20,8 @@ The generation records carry `usageDetails` (`input`, `input_cache_read`, `outpu
 The auxiliary files are `/tmp/lf-obs.json`, `/tmp/lf-nav1-gens.json`, `/tmp/lf-mod-0006-gens.json`, `/tmp/lf-pod-runner-gens.json`, and `/tmp/lf-pod-triager-gens.json`.
 
 The eval source is `trial.yaml`, `metrics.yaml`, and the prior token reconciliation `TOKEN-ACCOUNTING-WHITE-JOTTER.md`.
+The session-unweighted occupancy analysis is `CONTEXT-OCCUPANCY-ANALYSIS.md`.
+The occupancy and offload scripts are `audit_context_occupancy.py` and `audit_offload_simulation.py`.
 
 ## Executive answer
 
@@ -33,9 +35,10 @@ The measured first hunter call is 24,840 input tokens.
 It is 27,920 system chars, 1,761 application-overview chars, 35,491 loop-payload chars, 37,325 request tool-schema chars, and 1,622 request-framing chars.
 The loop payload repeats 22,470 chars of tool-description text; 22,219 of those are the same description text that the request carries.
 The system prompt is 27,920 chars; the worked examples are 9,263 and the pass sequence is 8,084.
-The role averages are 67,421 input tokens for the hunter, 215,777 for the modeller, 36,842 for the pod runner, 31,964 for the pod triager, 49,854 for the mechanism typist, and 16,929 for the assigner.
+The session-unweighted role means are 64,317 input tokens for the hunter, 215,777 for the modeller, 34,979 for the pod runner, 28,293 for the pod triager, 49,854 for the mechanism typist, and 16,929 for the assigner.
+The all-generation means are 67,421, 36,842, and 31,964 for the three multi-session roles; the session means are the ones to use.
 The cache share is 93.4%, 96.1%, 93.3%, 66.3%, 88.5%, and 70.1% respectively.
-The fixed prompt and tool tax is 62.0% of the hunter average, 44.5% of the modeller average, 36.3% of the pod-runner average, and 52.2% of the pod-triager average.
+The fixed prompt and tool tax is 45.5% of the hunter session average, 17.1% of the modeller, 34.4% of the pod runner, and 51.4% of the pod triager.
 The n-turn offload lowers the raw modeller input by 77.0%, but loses 78.2% of the cache read; the full-session net is -435,207 tokens, and the first offload costs 18.1 times more cache than it saves raw.
 The offload is therefore rejected as a production fix.
 The system-prompt, loop-payload, and tool-description compressions remain design proposals; the direct-reference, auth-store, project-scope, CL-3, and pod-compaction fixes are implemented.
@@ -284,35 +287,39 @@ The component shares of the average context are as follows.
 
 | Role | System | Human input | Loop | Tool descriptions | Tool responses | Assistant output |
 |---|---:|---:|---:|---:|---:|---:|
-| hunting_hunter | 16.4% | 1.0% app | 22.7% | 21.9% | 36.1% | 1.8% |
-| hunting_threat_modeller | 15.9% | 3.4% | 0% | 25.2% | 55.0% | 0.5% |
-| pod_runner | 9.2% | 6.8% | 0% | 20.3% | 54.4% | 9.3% |
-| pod_triager | 12.8% | 17.2% | 0% | 22.1% | 46.0% | 1.8% |
-| mechanism_typist | 17.7% | 44.3% | 0% | 15.7% | 19.3% | 3.1% |
-| assigner | 23.1% | 27.2% | 0% | 31.3% | 17.7% | 0.7% |
-| job_orchestrator | 11.6% | 1.0% | 0% | 30.3% | 46.5% | 10.7% |
-| skill_evolver | 23.7% | 7.8% | 0% | 27.6% | 36.7% | 4.3% |
+| hunting_hunter | 14.5% | 0.9% app | 19.9% | 10.2% | 51.2% | 2.8% |
+| hunting_threat_modeller | 14.3% | 2.5% | 0% | 0.2% | 72.9% | 10.0% |
+| pod_runner | 8.8% | 6.8% | 0% | 18.8% | 55.7% | 9.9% |
+| pod_triager | 12.8% | 16.7% | 0% | 21.9% | 47.1% | 1.5% |
+| mechanism_typist | 16.1% | 45.2% | 0% | 11.0% | 23.6% | 4.1% |
+| assigner | 22.2% | 27.2% | 0% | 30.1% | 19.8% | 0.7% |
+| job_orchestrator | 11.3% | 1.0% | 0% | 29.6% | 46.7% | 11.4% |
+| skill_evolver | 22.8% | 7.5% | 0% | 26.6% | 38.0% | 4.9% |
 
-The hunter's loop share splits into 8.8% grounding, 13.2% tool surface, 0.0% state, and 0.6% step protocol.
+The table is session-unweighted, not all-generation weighted.
+The modeller tool-description 0.2% is the truncated-session scanner value.
+The fixed first-call tool descriptions are 4.4% of the session input and 56.0% of the first call.
+The hunter's loop share splits into 7.7% grounding, 11.7% tool surface, 0.0% state, and 0.5% step protocol.
 The assistant output combines visible content and tool-call arguments; the output tokens are reported separately.
+The full lifecycle-weighted analysis, including the carried payloads, is in `CONTEXT-OCCUPANCY-ANALYSIS.md`.
 
 The fixed prompt and tool tax is the system, human input, loop, and tool descriptions.
 The runtime share is the tool responses and assistant messages.
 
-| Role | First-call input | Average input | Fixed tax | Fixed share | Runtime share |
+| Role | First-call input | Session average | Fixed tax | Fixed share | Runtime share |
 |---|---:|---:|---:|---:|---:|
-| hunting_hunter | 24,840 | 67,421 | 41,797 | 62.0% | 38.0% |
-| hunting_threat_modeller | 17,076 | 215,777 | 96,098 | 44.5% | 55.5% |
-| pod_runner | 8,810 | 36,842 | 13,363 | 36.3% | 63.7% |
-| pod_triager | 11,712 | 31,964 | 16,674 | 52.2% | 47.8% |
-| mechanism_typist | 15,530 | 49,854 | 38,687 | 77.6% | 22.4% |
-| assigner | 8,747 | 16,929 | 13,821 | 81.6% | 18.4% |
-| job_orchestrator | 5,515 | 16,185 | 6,936 | 42.8% | 57.2% |
-| skill_evolver | 11,180 | 24,453 | 14,451 | 59.1% | 40.9% |
+| hunting_hunter | 24,840 | 64,317 | 29,257 | 45.5% | 54.5% |
+| hunting_threat_modeller | 17,076 | 215,777 | 36,838 | 17.1% | 82.9% |
+| pod_runner | 8,810 | 34,979 | 12,037 | 34.4% | 65.6% |
+| pod_triager | 11,712 | 28,293 | 14,533 | 51.4% | 48.6% |
+| mechanism_typist | 15,530 | 49,854 | 36,022 | 72.3% | 27.7% |
+| assigner | 8,747 | 16,929 | 13,456 | 79.5% | 20.5% |
+| job_orchestrator | 5,515 | 16,185 | 6,785 | 41.9% | 58.1% |
+| skill_evolver | 11,180 | 24,453 | 13,933 | 57.0% | 43.0% |
 
-The hunter and the pod roles are not dominated by the first call: their runtime tool responses are 36.1% to 54.4% of the average.
-The modeller is dominated by runtime tool responses at 55.0%; its first call is only 7.9% of its average.
-The analysis roles are dominated by the fixed prompt and tool tax: 77.6% for the mechanism typist and 81.6% for the assigner.
+The hunter and the pod roles are not dominated by the first call: their runtime tool responses are 51.2%, 55.7%, and 47.1% of the session average.
+The modeller is dominated by runtime tool responses at 72.9%; its first call is only 7.9% of its average.
+The analysis roles are dominated by the fixed prompt and tool tax: 72.3% for the mechanism typist and 79.5% for the assigner.
 The cache share is 93.4% for the hunter, 96.1% for the modeller, 93.3% for the pod runner, 66.3% for the pod triager, 88.5% for the mechanism typist, and 70.1% for the assigner.
 The high cache share means the fixed prompt and tool text is mostly cache-read, while the loop payload and the runtime tool responses are the uncached work.
 

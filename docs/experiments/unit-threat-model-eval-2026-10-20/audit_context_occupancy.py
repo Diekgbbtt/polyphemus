@@ -509,6 +509,64 @@ def main() -> None:
                 "tokens": round(tokens, 1),
                 "share": round(tokens / average_input, 4) if average_input else 0.0,
             }
+        cumulative_input = sum(value["input_total"] for value in usages)
+        cumulative: dict[str, Any] = {}
+        for field in component_fields:
+            total = 0.0
+            for (component, _, _), value in zip(bucket["components"], usages):
+                total += scaled(
+                    getattr(component, field), component.content, value["input_total"]
+                )
+            cumulative[field] = {
+                "tokens": round(total, 1),
+                "share": round(total / cumulative_input, 4) if cumulative_input else 0.0,
+            }
+        session_inputs: list[float] = []
+        session_field_values: dict[str, list[float]] = {
+            field: [] for field in component_fields
+        }
+        session_rows_out: list[dict[str, Any]] = []
+        for session_id, session_rows in bucket["sessions"].items():
+            if not session_rows:
+                continue
+            session_input = statistics.mean(
+                value["input_total"] for _, value, _ in session_rows
+            )
+            session_inputs.append(session_input)
+            session_tokens: dict[str, float] = {}
+            for field in component_fields:
+                values = [
+                    scaled(getattr(component, field), component.content,
+                           value["input_total"])
+                    for component, value, _ in session_rows
+                ]
+                session_tokens[field] = statistics.mean(values)
+                session_field_values[field].append(session_tokens[field])
+            session_rows_out.append(
+                {
+                    "session_id": session_id,
+                    "generations": len(session_rows),
+                    "input_mean": round(session_input, 1),
+                    "components": {
+                        field: round(session_tokens[field], 1)
+                        for field in component_fields
+                    },
+                }
+            )
+        session_input_mean = (
+            statistics.mean(session_inputs) if session_inputs else 0.0
+        )
+        session_components: dict[str, Any] = {}
+        for field in component_fields:
+            mean = (
+                statistics.mean(session_field_values[field])
+                if session_field_values[field] else 0.0
+            )
+            session_components[field] = {
+                "tokens": round(mean, 1),
+                "share": round(mean / session_input_mean, 4)
+                if session_input_mean else 0.0,
+            }
         first_component, first_details, first_truncated = bucket["components"][0]
         first_row = gen_rows[0]
         first_usage = usage(first_row)
@@ -552,7 +610,11 @@ def main() -> None:
                 ) if statistics.mean(value["input_total"] for value in usages) else 0.0,
             },
             "average_input_tokens": round(average_input, 1),
+            "session_input_mean": round(session_input_mean, 1),
             "components": components,
+            "session_components": session_components,
+            "session_rows": session_rows_out,
+            "cumulative": cumulative,
             "first_call": first_call,
         }
     reference = next(
