@@ -1,5 +1,9 @@
 # Pod triager minimisation: token and quality feasibility
 
+> **Staged update 2026-10-23:** the pure-removal scenario below is the lower bound.
+> The recommended staged design is in `POD-TRIAGER-STAGED-FIRST-CALL-CLAIM.md`.
+> The staged design keeps the 4 variants and the 20 symptom-confirmed pods at about 280k capped, with the 19 first-shot pods at about 10k each.
+
 ## Scope
 
 This report assesses a change requirement for the `pod_triager` in the test-executor pod.
@@ -213,6 +217,12 @@ The variant capability is not zero, but it is a small, mixed product.
 
 ## Proposed minimised role
 
+> **Staged update 2026-10-23:** this section is the pure-removal lower bound.
+> The recommended staged design is in `POD-TRIAGER-STAGED-FIRST-CALL-CLAIM.md`.
+> The first stage runs the failure and confirmed-symptom check on a compact context.
+> The bounded-variant stage receives the same skill that was fed to the runner, in the same concrete prompt rendering as the spec.
+> The staged design keeps the 20 symptom-confirmed pods and the 4 variants at about 280k capped tokens.
+
 The minimised triager should be a one-call structured assessment with a compact context.
 
 It should receive:
@@ -223,7 +233,7 @@ It should receive:
 - the clean and blocked/unreachable evidence needed for the `clean` flag;
 - the terminal-reason vocabulary.
 
-It should not receive:
+The first-stage triage should not receive:
 
 - the full experiment log;
 - the variants already tried;
@@ -232,6 +242,11 @@ It should not receive:
 - the graph view;
 - the procedure-gap mining instructions;
 - the variant-minting schema.
+
+The bounded-variant stage receives the same skill that was fed to the runner, in the same concrete prompt rendering as the spec.
+It also receives the typed `SkillProcedure`, the variants already tried, and the KB on demand.
+It mints at most one variant, only when the runner is inconclusive and a populated procedure gap exists.
+The off-spec guard applies: a variant that changes the symptom must be recorded as a derived spec, not as the original spec's confirmation.
 
 It should return a compact `TriagerAssessment`:
 
@@ -242,8 +257,10 @@ It should return a compact `TriagerAssessment`:
 - `clean`: the clean-completion flag;
 - `note`: the interpretation note.
 
-The graph should route the assessment directly to the deterministic `_export` node.
-The `mint_variant` node, the `decide_router` variant branch, the `variant_basis` resolver, and the `variant_specs` growth should be removed or gated off.
+The first-stage assessment should route directly to the deterministic `_export` node when the symptom is confirmed or the runner failed.
+The bounded-variant stage keeps a gated `mint_variant` node with a one-variant cap.
+The pure-removal lower bound removes the `mint_variant` node, the `decide_router` variant branch, the `variant_basis` resolver, and the `variant_specs` growth.
+The staged design keeps the gated branch.
 The pod store keeps `variants/v0.yaml` and `experiment-log/0.yaml`; the export keeps the same IA-4 shape.
 The `variant_specs` list becomes the initial v0 only, or empty if the parent tolerates it.
 The `iterations` count becomes 1.
@@ -368,12 +385,14 @@ The mitigation is a bounded variant path:
 - require the variant to keep the parent symptom identity or mark the parent spec as superseded;
 - measure the variant rate and the off-spec rate in the next trial.
 
-The triager itself should not keep the full variant context.
-The bounded variant path belongs to the hunter or a dedicated thin miner, not to the general critic.
+The triager should not keep the full variant context in the confirmed-symptom stage.
+The bounded-variant stage does keep the skill, the typed procedure, the variants already tried, and the KB on demand.
+The bounded variant path stays inside the triager but is gated to the ambiguous pods.
 
 ## Recommendation
 
 Proceed with the minimisation as the default.
+The staged design is the recommended implementation; the pure-removal numbers in this section are the lower bound.
 The measured triager cost is 1.04M capped for a product that is dominated by the 20 measured confirmations the Runner produced.
 The one-call assessment preserves the 23 exports and the 19 v0 symptom-confirmed pods, the clean flag, and the six terminal reasons.
 The off-spec `forwarded-address-counter` success is lost.
