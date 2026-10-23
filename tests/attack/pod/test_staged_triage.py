@@ -269,6 +269,24 @@ def test_staged_stage_failure_degrades_to_a_safe_terminal():
                for i in env["evidence"]["interpretations"])
 
 
+def test_staged_provider_failure_propagates():
+    """A provider failure is infrastructure, never a domain verdict - the staged
+    orchestrator re-raises the typed error through `arun_pod`."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    def assess(spec, observation, messages, log):
+        raise ProviderUnavailableError("quota exhausted", status_code=429,
+                                       quota_exhausted=True)
+
+    with pytest.raises(ProviderUnavailableError):
+        _run(arun_pod(
+            SEMANTIC_SPEC, exec_fn=_exec, runner_step_fn=symbolic_runner_step_fn,
+            triager_stages=_stages(
+                assess=assess,
+                diverge=lambda s, o, m, l: pytest.fail("must not run")),
+            trace_fn=_no_trace))
+
+
 # --- the first-call occupancy proof -------------------------------------------
 
 def test_stage_a_receives_the_compact_delta_and_stage_c_the_full_delta():
