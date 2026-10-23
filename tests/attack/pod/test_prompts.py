@@ -62,6 +62,18 @@ def test_runner_prompt_instructs_the_note_final_step():
     assert "final" in lc or "final tool call" in lc
 
 
+def test_runner_prompt_names_every_bound_tool():
+    for name in ("exec", "replay", "query_lightrag", "note", "graph_view",
+                 "load_skill", "record_skill_lesson", "auth_store"):
+        assert name in POD_RUNNER_SYSTEM, name
+
+
+def test_triager_prompt_names_every_bound_tool():
+    for name in ("note", "query_lightrag", "graph_view", "load_skill",
+                 "record_skill_lesson", "auth_store"):
+        assert name in POD_TRIAGER_SYSTEM, name
+
+
 def test_runner_prompt_names_the_full_three_tool_surface():
     # D84-16/27: exec + query_lightrag + note all bound and all described.
     assert "exec" in POD_RUNNER_SYSTEM

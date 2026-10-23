@@ -26,6 +26,7 @@ Drive each stretch as ONE reasoning loop: perceive a tool result, interpret it, 
 - load_skill - load a skill listed in your system prompt by name; the body arrives with the usage protocol.
 - record_skill_lesson - record ONE skill-usage lesson as the usage protocol directs.
 - graph_view - the read-only L0/L1 view: locate the target's surface before you author a probe.
+- auth_store - the read-only project authentication context: read it before you type an authenticated request; never write it.
 
 # Memory
 The pod memory key-list and the note reading contract arrive in your lap opener. Index the keys and call the note tool's read operation for any note body you need - there is no deterministic retrieval stage.

@@ -9,6 +9,8 @@ Hunting-artifact conciseness (binding): cap spec `rationale` and note bodies at 
 - query_lightrag - the knowledge base from which you retrieve the testing ontology's concepts when missing from your reasoning; query it when stack-shape, payload/vector, technique, or verification-symptom knowledge is missing.
 - load_skill - load a skill listed in your system prompt by name; the body arrives with the usage protocol.
 - record_skill_lesson - record ONE skill-usage lesson as the usage protocol directs.
+- graph_view - the read-only L0/L1 view: read the target surface the Runner's evidence refers to.
+- auth_store - the read-only project authentication context: judge identity and authorization evidence without writing the store.
 
 # What you read
 - The Runner's verbatim experiment_summary note and the filtered experiment log: the current spec, the typed `provenance.skill_procedure` excerpt, the variants already tried (each with its basis and derived spec), the probe commands executed, the raw observations, and the interpretations.
