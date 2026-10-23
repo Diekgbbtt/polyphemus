@@ -55,8 +55,8 @@ def has_populated_procedure(spec: dict) -> bool:
 
     An absent excerpt or an all-empty one has nothing to diff, so the miner is
     skipped and the terminal stage decides. This is the deterministic gate the
-    staged tree promises: the full miner is paid only when a variant is
-    derivable."""
+    staged tree promises: the full miner is paid only when a variant could be
+    derived."""
     procedure = skill_procedure_from_spec(spec)
     if procedure is None:
         return False
@@ -125,7 +125,7 @@ def _divergence_delta(spec, observation, log, hc) -> list[dict]:
     )
 
     if hc is None:
-        return [{"role": "human", "content": " (no bound pod harness)"}]
+        return [{"role": "human", "content": "no bound pod harness"}]
     return [{"role": "human", "content": compose_divergence_delta(
         log, spec, observation, store=hc.memory_store, spec_id=hc.spec_id,
         order=_order_of(hc))}]
@@ -137,7 +137,7 @@ def _triager_delta(spec, observation, log, hc) -> list[dict]:
     )
 
     if hc is None:
-        return [{"role": "human", "content": " (no bound pod harness)"}]
+        return [{"role": "human", "content": "no bound pod harness"}]
     return [{"role": "human", "content": compose_triager_delta(
         log, spec, observation, store=hc.memory_store, spec_id=hc.spec_id,
         order=_order_of(hc))}]
@@ -149,7 +149,7 @@ def _terminal_delta(spec, observation, log, hc) -> list[dict]:
     )
 
     if hc is None:
-        return [{"role": "human", "content": " (no bound pod harness)"}]
+        return [{"role": "human", "content": "no bound pod harness"}]
     return [{"role": "human", "content": compose_terminal_delta(
         log, spec, observation, store=hc.memory_store, spec_id=hc.spec_id,
         order=_order_of(hc))}]
