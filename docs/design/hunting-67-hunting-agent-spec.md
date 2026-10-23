@@ -327,9 +327,9 @@ The hunter's reasoning passes are:
 | `SLICE` | The grounding output | Define the region of the failure-modes space the loop opens. | `phase:slice` note | The slice definition is explicit, with the boundary and the variables that delimit it. |
 | `COLLECT` | The slice | Query the methodology KB, the previous hunt stores, and the notes for as many instances as possible of the discrimination axis. | `phase:collect` note | The instance set covers the axis broadly enough to discriminate. |
 | `DISCRIMINATE` | The slice and the instances | Split the slice over the axis instances. Choose the discriminating variables. Resolve the narrow/broad trade-off. | `phase:discriminate` note | The axis instances and the discrimination are explicit; each spec slot is distinguishable from its nearest alternative. |
-| `GENERATE` | The discrimination | Generate the spec set combinatorially over the axis instances. Write every spec with `status=hypothesised`. | `hunts_store` write: the spec set, all `hypothesised` | The spec set is written. |
+| `GENERATE` | The discrimination | Generate the spec set combinatorially over the axis instances. Write one spec per `hunts_store` call, each with `status=hypothesised`. | One `hunts_store` write per spec | The spec set is written. |
 | `WELL-FORMEDNESS` | The spec set | Check no overlap and exhaustive coverage over the slice. Merge or drop. A new iteration re-enters COLLECT or GENERATE in the reasoning. | `phase:well_formedness` note | The set is well formed, or the iteration has a recorded remaining gap. |
-| `VERIFY-CLAIMS` | The surviving specs | Probe the load-bearing technical requirements with falsification-only probes. Loop until the requirement is resolved or the meaningfulness guard ends it. | Terminal `hunts_store` write: promote survivors to `ratified`, declass unfeasible to `dropped` | The terminal write is persisted. |
+| `VERIFY-CLAIMS` | The surviving specs | Probe the load-bearing technical requirements with falsification-only probes. Loop until the requirement is resolved or the meaningfulness guard ends it. | One `hunts_store` write per survivor to `ratified`, then `finalize`; declass unfeasible specs to `dropped` | The terminal set is persisted. |
 | `COMPLETE` | The final spec set | No model work. The surfer dispatches the pod. | Terminal | The hunt ends. |
 
 The harness tracks the pass sequence passively.
@@ -442,6 +442,13 @@ No pod map-back exists today.
 The second DISCRIMINATE phase is removed.
 The fault-hypothesis vocabulary is removed from the hunter prompt.
 
+**Phase hints.**
+The workflow injects a `<phase-transition-hint>` only when a pass exits.
+The ending tool response of the pass carries the hint.
+The hint names the next pass.
+The hint is guidance, never a gate.
+No call is refused for the pass the tracked state is in.
+
 **Examples.**
 The worked examples are rewritten for the new passes and the reduced spec surface.
 They imitate the reasoning shape, not the old domain.
@@ -461,7 +468,22 @@ The D4 surface is reduced:
   It carries no failure-mode detail and no narrowed vector.
 - `parent_spec_ref`: the variant lineage, when the spec is derived.
 - `provenance`: the dispatch context.
-  It carries `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), and the bounded `skill_procedure` for the pod's triager.
+  It carries `run_id` (bound by the tool, never authored), `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded `skill_procedure` for the pod's triager.
+- `skills`: the optional flat pod-runner skill list.
+  Each name is a skill the runner may carry.
+  It is never a path and never a meta-skill.
+
+The write surface adds three fields to the canonical `TestImplementationSpec`:
+
+- `status`: `hypothesised`, `ratified`, or `dropped`;
+- `fault_keyword` and `strategy_keyword`: the two words the store derives the identity from.
+
+`spec_id` is derived as `<fault_keyword>_<strategy_keyword>`.
+It is never authored.
+
+The prompt's `## The spec body` is a generated projection of `SpecWrite`, `SpecProvenance`, `TargetIdentity`, and `SkillProcedure`.
+It names every writable field, its type, and its requiredness.
+A hand-written partial field list is not allowed to drift from the models.
 
 The retired fields are `payload_vector_space`, `interpretation_guidance`, and `testing_pattern`.
 The pod's variant machinery is S5.
@@ -523,10 +545,13 @@ The hunter's tool surface is:
 - `hunts_store`: read/write over the loop's spec folder.
   - The hunt key is the loop dispatch id `<unit_name>__<loop_id>`.
   - The key is bound at tool construction; it is never a request field.
-  - The write takes a `specs` list; each entry carries `status` and the typed spec.
-  A single-spec write is a set of one.
-  The GENERATE write carries the whole set, all `hypothesised`.
-  The terminal write carries the whole set with the surviving specs `ratified` and the unfeasible specs `dropped`.
+  - The write carries exactly ONE `spec` object, never a list.
+  - The required fields are `status`, `fault_keyword`, `strategy_keyword`, and `target_identity.url`.
+  - A rejected write is a coded `hunts_store_write_rejected` naming the field.
+  - The GENERATE write persists one spec with `status=hypothesised`.
+  - The terminal write closes the set after the surviving specs are `ratified` and the unfeasible specs are `dropped`.
+  - A zero-spec hunt is a valid terminal set.
+  - A write after `finalize` is rejected.
   - The store derives the file name `<fault_keyword>_<strategy_keyword>.yaml` and the folder `test-specs/<hunt_key>/`.
   - The `hypothesised` write creates; a later status upserts in place.
   - A duplicate identity is a dedup signal; a re-author updates in place.
@@ -544,6 +569,31 @@ The hunter's tool surface is:
   - The target-front availability directive applies.
 - `skill_list` / `skill_load`: the web-vulnerability suite.
   - The loop's suite class selects the class skill.
+- `search_http_history` / `get_http_artifact`: the project's recorded HTTP traffic.
+  - Search returns sanitized candidate rows.
+  - Get inspects one artifact and its capture state.
+  - The record's artifact id becomes the spec's `provenance.baseline_ref`.
+  - Replay is the pod's act, never the hunter's.
+- `load_skill`: the project skill catalogue.
+- `record_skill_lesson`: the skill-usage lesson recorder.
+- `auth_store`: the project authentication context, in READ-ONLY mode.
+  - The hunter reads the view.
+  - The hunter never writes the store.
+
+The request tool definition is the full tool surface.
+The loop tool surface is removed.
+The prompt's `## The tools` is a complete human summary of the bound surface.
+It names every tool above and carries no second description body.
+The request schemas remain the machine contract.
+The top-level descriptions carry purpose, operation, constraints, the coded error envelope, and the critical usage clauses.
+
+The hunter's first human message is ONE instance-context message.
+It carries the application overview, the loop grounding, the current state, and the step protocol.
+It carries no loop tool surface.
+The compaction pin preserves this message for the whole hunt.
+
+The technical sharpening in the loop grounding is projected to `id`, `statement`, and `confidence`.
+The agreement evidence entries stay out of the projection; the loop evidence carries the references.
 
 The pod dispatch path stays:
 
@@ -576,7 +626,9 @@ The dead verdict and pod-result surfaces are removed:
 
 The pod dispatch path stays.
 The `hunts_store`, `notes`, `graph_view`, `kb_query`, and `exec` tool names stay.
-The `skill_list` and `skill_load` tools are added.
+The `skill_list`, `skill_load`, `search_http_history`, `get_http_artifact`, `load_skill`, `record_skill_lesson`, and `auth_store` tools are added.
+The loop tool surface is removed.
+The request tool definitions are the full surface.
 
 ### 8.9 Implementation decisions
 
@@ -587,10 +639,16 @@ The `skill_list` and `skill_load` tools are added.
 - The hunter's spec folder is `test-specs/<hunt_key>/`.
 - The spec body is the reduced D4 surface at every status.
 - The status values are `{hypothesised, ratified, dropped}`.
-- The GENERATE write carries the whole spec set in one call.
-- The terminal write carries the whole spec set and applies the promotes and declasses.
+- The GENERATE write persists one spec per call.
+- The terminal write closes the set and applies the promotes and declasses.
+- The `skills` field carries the flat pod-runner skill list.
+- The `run_id` is bound and never authored.
+- The `spec_id` is derived and never authored.
 - The `skill_procedure` is the typed seven-field excerpt above.
 - The `baseline_ref` rides the provenance when the hunter has a recorded baseline.
+- The prompt's spec body is generated from the typed models.
+- The first human context is pinned through compaction.
+- The auth store is bound read-only.
 - The `variants` concept stays pod-side; the spec set is not a variant set.
 - The prompt's discipline paragraph extends the existing wider discipline paragraph.
 - The phase-summary notes carry the pass exits.
@@ -644,3 +702,26 @@ The workbench R8-2 and R8-3 carry the harness and pod decisions.
 The impact map carries the supersession ledger.
 The production prompt work phase is the only place the final prose is written.
 The prompt work phase must run through multiple refine-and-adversarial-review iterations.
+
+### 8.13 Context dedup amendment (2026-10-23)
+
+The shared decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
+The impact map is `docs/design/hunting-context-dedup-impact-map.md`.
+
+The hunter changes are:
+
+- The loop tool surface is removed.
+  It duplicated the request descriptions inside the first human message.
+- The first human message is one instance-context message.
+  It carries the application overview and the loop grounding together.
+- The compaction pass pins that first human message.
+- The `## The spec body` is generated from `SpecWrite`, `SpecProvenance`, `TargetIdentity`, and `SkillProcedure`.
+- The `skills` field is documented as the flat pod-runner skill list.
+- The `run_id` is documented as bound and the `spec_id` as derived.
+- The technical sharpening is projected to `id`, `statement`, and `confidence`.
+- The phase hint is described as a transition signal.
+- The tool descriptions are dense usage projections under an 8,500-char ceiling.
+  The schemas remain the machine contract.
+- The auth store is bound read-only.
+
+The tool-list completion and the description budget are covered by `tests/attack/test_hunting_agent_prompt.py` and `tests/attack/test_tool_description_budget.py`.

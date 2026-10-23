@@ -62,15 +62,22 @@ The prompt now names it and marks `auth_store` as read-only.
 
 | Change | Before | After | Delta |
 |---|---:|---:|---:|
-| Tool-description characters | 18,594 | 6,847 | -11,747 (-63.2%) |
+| Tool-description characters | 18,594 | 6,850 | -11,744 (-63.2%) |
 | System-prompt characters | 23,297 | 22,887 | -410 (-1.8%) |
-| Auth-store binding | full write contract | read-only contract | -5,234 chars |
+| Auth-store binding | full write contract | read-only contract | -4,649 chars |
 | Tool names | 9 named | 10 named | +1 |
 | 5xx rule | 715-char copy | shared pointer | -about 500 chars |
 
 The tool-description metric is the sum of `len(tool.description)` over the bound surface.
 It includes the shared conciseness directive where the tool appends it.
 It is not the audit's request-schema character count.
+
+The 11,744-char modeller cut is not a modeller-only edit.
+It decomposes into 7,095 chars of shared description text and 4,649 chars from the full-to-read-only auth-store mode.
+The shared text is the same constant set that the hunter, runner, and triager bind.
+The modeller-specific `hunts_store` description did not change.
+The modeller `notes` change is the shared conciseness directive.
+The exact per-role decomposition is in `docs/design/hunting-context-dedup-impact-map.md`.
 
 ## Cache effect
 

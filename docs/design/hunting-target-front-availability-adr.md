@@ -31,8 +31,12 @@ The defect is behavioural: the hunter had no single-sourced rule distinguishing 
 
 ### 2. The rule reaches the hunter where the 502 arrived
 
-The hunter's `exec` tool description and the `hunting-agent.md` role prompt embed `TARGET_UNAVAILABLE_DIRECTIVE` verbatim.
-The drift guards in `tests/attack/test_hunting_status.py` assert the exact text at both sites, so the rule can never drift between the tool and the reasoning prompt.
+The `hunting-agent.md` role prompt carries `TARGET_UNAVAILABLE_DIRECTIVE` verbatim.
+The hunter's `exec` tool description points at that role-prompt rule instead of paying a second full copy.
+The pointer says: "The target front 5xx rule in your role prompt binds every call."
+The drift guards in `tests/attack/test_hunting_status.py` assert the directive in the prompt and the pointer in the `exec` description.
+The modeller prompt carries the same rule as a short pointer with the 502, 503, 504, and 404 semantics.
+The rule cannot drift between the tool and the reasoning prompt because the full text has one home.
 
 ### 3. The pod reuses the rule; the conflated defence set retires
 

@@ -3,9 +3,81 @@
 *Status: DRAFT - not operator-locked.*
 *T10b (#397) note: the orchestrator/`HuntConfig` references below are historical.*
 The modeller writes the unit threat model; the hunter spec set is keyed by the loop dispatch id.
-This document captures the design of the hunting module's agent tool surfaces. It is intentionally incomplete: as of this revision it covers ONLY the `graph_view` tool (the surface changed by #197); the other tools (`hunts_store`, `notes`, `kb_query`/`query_lightrag`, `exec`, `note`) are future sections and are NOT redesigned here.
+This document captures the design of the hunting module's agent tool surfaces.
+It covers the shared `graph_view` tool, the store/notes contracts, the KB tool, and the 2026-10-23 description-budget policy.
+The per-agent surfaces are authoritative in `docs/design/hunting-67-hunting-agent-spec.md` §8.7, `docs/design/hunting-67-threat-modeller-spec.md` §5.5, and `docs/design/hunting-67-test-executor-pod-spec.md` §1.4 and §8.11.
+Where this draft and a ratified spec overlap, the ratified spec is the authority until this draft is locked.
 
-The authority for the tool-surface contracts that already exist is the per-agent lineage: `docs/design/hunting-orchestrator-candidates-rewrite-spec.md` §3.4 (the orchestrator's `hunts_store` / `notes` / `graph_view` surface), `docs/design/hunting-164-state-graph-spec.md` (the hunter's five-tool surface), and `docs/design/hunting-67-test-executor-pod-spec.md` (the pod's `exec` / `note` / `query_lightrag` surface). Where this draft and a ratified spec overlap, the ratified spec is the authority until this draft is locked.
+## Tool description policy (2026-10-23)
+
+The request tool definition is the full tool surface.
+It carries the name, the top-level description, and the JSON schema.
+The schema is the machine contract for every field and nested type.
+The top-level description is a dense usage projection, not a second schema.
+
+The top-level description carries only:
+
+- the purpose;
+- the operation or command semantics;
+- the hard constraints;
+- the coded error envelope;
+- the one or two clauses a wrong call would lose.
+
+Field-level detail belongs in the pydantic field descriptions.
+A role prompt carries a complete high-level tool summary, never a second description body.
+
+Shared descriptions live in one module and are imported by every binding.
+The shared constants are:
+
+- `load_skill` and `record_skill_lesson` in `app/llm/skills.py`;
+- `graph_view` in `attack/hunting/graph_view_tool.py`;
+- `query_lightrag` in `lightrag/tool.py`;
+- the HTTP read pair in `attack/hunting/http_history_contract.py`;
+- the auth-store read contract in `app/auth/tool.py`;
+- the suite pair in `attack/hunting/threat_modeller_tools.py`.
+
+The role-local descriptions are the hunter and modeller `hunts_store` seams, the pod `exec` seam, and the pod note seam.
+The conciseness directive is shared through `attack/hunting/conciseness.py`.
+
+The hunter's 12 top-level descriptions are bounded at 8,500 chars.
+The current committed total is 8,478 chars.
+The critical-clause test is `tests/attack/test_tool_description_budget.py`.
+
+### The sharing measurement
+
+The description metric is `sum(len(tool.description))` over the bound surface.
+It includes the shared conciseness directive where a tool appends it.
+It is not the request-schema character count.
+
+| Role | Before | After, same full auth | Description text cut | Auth-mode cut | Production after | Total cut |
+|---|---:|---:|---:|---:|---:|---:|
+| Hunter | 22,775 | 13,127 | 9,648 | 4,649 | 8,478 | 14,297 |
+| Modeller | 18,594 | 11,499 | 7,095 | 4,649 | 6,850 | 11,744 |
+| Runner | 12,979 | 9,750 | 3,229 | 4,649 | 5,101 | 7,878 |
+| Triager | 12,715 | 9,486 | 3,229 | 4,649 | 4,837 | 7,878 |
+
+The `After, same full auth` column isolates the shared description compaction.
+The `Auth-mode cut` column is the full-to-read-only auth-store switch.
+The full auth-store description remains 5,291 chars.
+
+The shared text cut is the sum of the tools a role binds.
+It is not four independent edits.
+The modeller's cut is 7,095 shared text plus 4,649 auth mode.
+The runner and triager receive the same 3,229 shared text cut and the same auth-mode cut.
+
+`replay` is bound only when the runner has a replay seam.
+Its description fell from 2,161 to 1,718 chars, a 443-char cut.
+
+The loop tool surface is removed.
+The first human message carries the application and loop context, not a second tool catalog.
+The compaction pin keeps that context through a fold.
+
+The cache accounting is in `docs/design/session-cache-measurement-348-adr.md`.
+Removing cached fixed text lowers occupancy but can raise the miss share.
+The hunter is the exception because the loop surface was uncached.
+
+The decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
+The impact map is `docs/design/hunting-context-dedup-impact-map.md`.
 
 ## Why a tools design exists (the gap)
 
@@ -251,6 +323,7 @@ log, so its observation metadata is the same shape for consistency.
 ## Open / not yet designed
 
 - The `exec` tool contract (`exec` remains a partially future section).
+  Its 2026-10-23 description is a dense usage projection that points at the shared target-front 5xx rule in the role prompt.
 - The orchestrator's `hunts_store` / `notes` closures MIGRATED into the shared
   module (`app.memory.tool_contract`, originally `attack/hunting/tool_contract.py`)
   as of #293 - see the #293 section above. The

@@ -73,8 +73,8 @@ The binding is now read-only, which also removes the write arguments from the sc
 
 | Change | Runner before | Runner after | Triager before | Triager after |
 |---|---:|---:|---:|---:|
-| Tool-description characters | 12,979 | 5,098 | 12,715 | 4,834 |
-| Tool-description delta | -7,881 (-60.7%) | | -7,881 (-62.0%) | |
+| Tool-description characters | 12,979 | 5,101 | 12,715 | 4,837 |
+| Tool-description delta | -7,878 (-60.7%) | | -7,878 (-62.0%) | |
 | System-prompt characters | 9,446 | 8,124 | 11,724 | 10,764 |
 | System-prompt delta | -1,322 (-14.0%) | | -960 (-8.2%) | |
 | Named bound tools | 7 | 8 | 4 | 6 |
@@ -83,6 +83,12 @@ The binding is now read-only, which also removes the write arguments from the sc
 The tool-description metric is the sum of `len(tool.description)` over the bound surface.
 It includes the shared conciseness directive where the tool appends it.
 It is not the audit's request-schema character count.
+
+The runner and triager cuts are not pod-only edits.
+Each role has the same 3,229 chars of shared description text and the same 4,649-char full-to-read-only auth-store mode.
+The pod `exec` description did not change.
+The pod note change is the shared conciseness directive.
+The exact per-role decomposition is in `docs/design/hunting-context-dedup-impact-map.md`.
 
 ## Cache effect
 

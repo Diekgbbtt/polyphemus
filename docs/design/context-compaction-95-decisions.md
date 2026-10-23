@@ -202,3 +202,32 @@ folded, or vice versa), and a complete fold stranding an assistant with no
 results. Grouping the trail into pairing atoms before retention, folding, and
 staging closes all three while keeping the summariser's inputs and the
 partial-fold `outcome.folded` semantics.
+
+## D13 - The hunting roles pin the first human context
+
+The four hunting roles preserve the leading messages through the first human message at every compact pass.
+The roles are `hunting_hunter`, `hunting_threat_modeller`, `pod_runner`, and `pod_triager`.
+The role list is `PIN_FIRST_HUMAN_ROLES` in `app/llm/compaction.py`.
+The flag is `compact_pass(..., pin_first_human=True)`.
+It is wired through `build_role_compaction_middleware`.
+
+The pinned prefix is `messages[0:first_human_index + 1]`.
+It stays byte-identical at the head of the staged trail.
+The running summary follows it.
+The replay tail and the pass cap are unchanged.
+The default path for every other role is unchanged.
+
+**Rationale.**
+The first human message carries context the later trail does not repeat.
+For the hunter it carries the application overview and the loop grounding.
+For the modeller it carries the initial unit context.
+For the pod runner and triager it carries the spec and the target context.
+Folding that message into a summary loses the exact target and contract it holds.
+The pin costs occupancy, not correctness.
+A pinned context larger than the budget still cannot converge; the D6 cap and the fail-open barrier remain the safety net.
+
+**Cache interaction.**
+The pinned message is stable across a thread.
+The summary is volatile and sits after the pinned prefix.
+Removing cached fixed text lowers occupancy but can raise the miss share.
+See `docs/design/session-cache-measurement-348-adr.md` and `docs/design/hunting-context-dedup-2026-10-23-adr.md`.

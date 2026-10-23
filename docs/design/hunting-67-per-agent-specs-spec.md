@@ -244,6 +244,11 @@ The shared recipe (section 8): one Langfuse trace per pod run, spans per loop it
 
 ## 7. The TestImplementationSpec structure (D67-03, D67-10)
 
+*Superseded 2026-10-23 by `docs/design/hunting-67-hunting-agent-spec.md` 8.6 and `docs/design/hunting-67-test-executor-pod-spec.md` 8.4.
+The live surface carries `target_identity`, `verification_symptoms`, `assumptions`, `rationale`, `parent_spec_ref`, the typed `SpecProvenance`, and `skills`.
+The write adds `status`, `fault_keyword`, and `strategy_keyword`.
+The text below is the historical D67 structure, not the live contract.*
+
 Core NL body inside a fundamental typed base.
 The typed base covers everything except two NL fields: the rationale and the interpretation guidance.
 

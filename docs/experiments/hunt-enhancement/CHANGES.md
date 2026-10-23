@@ -47,7 +47,7 @@ The critical clauses are pinned by `tests/attack/test_tool_description_budget.py
 
 | Change | Before | After | Effect |
 |---|---:|---:|---:|
-| Tool descriptions | 18,594 chars | 6,847 chars | -11,747 chars (-63.2%) |
+| Tool descriptions | 18,594 chars | 6,850 chars | -11,744 chars (-63.2%) |
 | System prompt | 23,297 chars | 22,887 chars | -410 chars |
 | Auth store | full write contract | read-only | no write capability |
 | Tools list | 9 named | 10 named | `record_skill_lesson` is no longer hidden |
@@ -60,7 +60,7 @@ It is now a short pointer that keeps the 502, 503, 504, and 404 semantics.
 
 | Change | Runner before | Runner after | Triager before | Triager after |
 |---|---:|---:|---:|---:|
-| Tool descriptions | 12,979 | 5,098 | 12,715 | 4,834 |
+| Tool descriptions | 12,979 | 5,101 | 12,715 | 4,837 |
 | System prompt | 9,446 | 8,124 | 11,724 | 10,764 |
 | Auth store | full | read-only | full | read-only |
 | Tool list | 7 named | 8 named | 4 named | 6 named |
@@ -78,6 +78,24 @@ The first human message through compaction stays byte-identical.
 The hunter sends one instance-context message, so the pin covers the application overview and the loop.
 The modeller, runner, and triager pin their first human context.
 Analysis roles keep the previous fold behavior.
+
+## Tool-description sharing
+
+The descriptions are shared constants, not four independent edits.
+The role surfaces bind different subsets.
+The exact decomposition is:
+
+| Role | Before | After, same full auth | Description text cut | Auth-mode cut | Production after | Total cut |
+|---|---:|---:|---:|---:|---:|---:|
+| Hunter | 22,775 | 13,127 | 9,648 | 4,649 | 8,478 | 14,297 |
+| Modeller | 18,594 | 11,499 | 7,095 | 4,649 | 6,850 | 11,744 |
+| Runner | 12,979 | 9,750 | 3,229 | 4,649 | 5,101 | 7,878 |
+| Triager | 12,715 | 9,486 | 3,229 | 4,649 | 4,837 | 7,878 |
+
+The auth-mode cut is the full-to-read-only store switch.
+The full write contract remains 5,291 chars.
+The shared text cut is the sum of the tools the role binds.
+The per-tool table and the design impact map are in `docs/design/hunting-context-dedup-impact-map.md`.
 
 ## Measured cache effect
 

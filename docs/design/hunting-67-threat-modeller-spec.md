@@ -272,9 +272,14 @@ Probe rules:
 
 ### 5.5 Auth store and skills
 
-The auth store is bound by replicating the recon-orchestrator coupling.
-The system prompt carries a concise verbatim on when and how to use it.
+The auth store is bound in READ-ONLY mode.
+The modeller reads the login overview and the account records.
+It never writes the store and never replays a secret.
+The binding goes through the shared `auth_capable_binding` `arm_exempt_surface` path.
+That path also carries the project `authn` skill.
+
 The project skill is bound through `load_skill`.
+The skill-usage lesson recorder is bound through `record_skill_lesson`.
 
 The web-vulnerability skills suite is bound through `skill_list` and `skill_load`.
 The suite class is the stored `web_vulnerability_class` of a vulnerability.
@@ -282,6 +287,27 @@ The class name must equal a skills-suite directory name.
 If the suite lands with different tool names, an adapter maps the assumed `skill_list` / `skill_load` names to the built tools.
 The role is enabled only when the suite contract test passes.
 The control plan binds that skill to the hunter prompts.
+
+The modeller's bound surface is:
+
+- `hunts_store`;
+- `notes`;
+- `search_http_history`;
+- `get_http_artifact`;
+- `exec`;
+- `skill_list`;
+- `skill_load`;
+- `load_skill`;
+- `record_skill_lesson`;
+- `auth_store` (read-only).
+
+The prompt's tool section names every tool in that list.
+The request tool definitions are the full surface.
+The system prompt carries no second description body.
+
+The 5xx rule is the shared target-front rule.
+The prompt points at it with the 502, 503, 504, and 404 semantics.
+It does not copy the full directive.
 
 ### 5.6 Not bound
 
@@ -686,7 +712,7 @@ The system prompt must carry:
 - The assumption-to-loop closure check.
 - The risk-scoring ontology: attack vector, attack requirements, privileges required, complexity; the five-level enum; the monotonic weights; the likelihood-only rule.
 - The probe rules and the target-front availability directive.
-- The tool guidance for `hunts_store`, `notes`, HTTP history, `exec`, the auth store, and the skills suite.
+- The tool guidance for `hunts_store`, `notes`, HTTP history, `exec`, the auth store, the skills suite, `load_skill`, and `record_skill_lesson`.
 - The saturation stop.
 - The output contract for each gate.
 
@@ -872,3 +898,25 @@ The implementation work items are:
 - The documentation and hygiene pass.
 
 The tickets are cut from this spec set through `/to-tickets`.
+
+## 13. Context dedup amendment (2026-10-23)
+
+The shared decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
+The impact map is `docs/design/hunting-context-dedup-impact-map.md`.
+
+The modeller changes are:
+
+- The six state and section families remain the same.
+  Their human projection is pinned to `ModelState`, `GATE_SECTIONS`, and `ModelSections` by tests.
+- The prompt names the full 10-tool surface.
+  `record_skill_lesson` is no longer hidden.
+- The auth store is read-only.
+  The `arm_exempt_surface` path no longer binds the write contract.
+- The 5xx paragraph is a pointer to the shared target-front rule.
+- The tool descriptions are shared constants.
+  The modeller surface falls from 18,594 to 6,850 chars.
+  Of that cut, 7,095 chars are shared description text and 4,649 chars are the auth-mode switch.
+- The first human context is pinned through compaction.
+
+The state, gate, and reference table generation remains a follow-up.
+The current tests pin the prompt projection to the typed sources so it cannot drift silently.

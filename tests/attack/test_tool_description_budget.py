@@ -9,6 +9,11 @@ from __future__ import annotations
 from polymerhus.app.auth.tool import build_auth_store_tool
 from polymerhus.app.llm.skills import build_skill_tools
 from polymerhus.attack.hunting.hunter_tools import build_hunter_tools
+from polymerhus.attack.hunting.pod.agents import runner_react_tools, triager_react_tools
+from polymerhus.attack.hunting.threat_modeller_tools import (
+    ModellerTools,
+    build_modeller_tool_surface,
+)
 
 
 def _surface():
@@ -70,3 +75,45 @@ def test_the_typed_spec_schema_still_describes_every_field():
     provenance = schema["$defs"]["SpecProvenance"]["properties"]
     assert provenance["run_id"].get("description")
     assert provenance["skill_procedure"].get("description")
+
+
+def _role_surfaces():
+    auth = [build_auth_store_tool(project_id="p", read_only=True)]
+    skills = list(build_skill_tools("p"))
+    modeller = list(build_modeller_tool_surface(
+        "p", "u", ModellerTools(project_id="p", run_id="r")).values())
+    runner = runner_react_tools(None, None, "s", None, "v", project_id="p")
+    triager = triager_react_tools(None, "s")
+    return {
+        "hunter": {tool.name: tool for tool in _surface()},
+        "modeller": {tool.name: tool for tool in modeller + auth + skills},
+        "runner": {tool.name: tool for tool in runner + auth + skills},
+        "triager": {tool.name: tool for tool in triager + auth + skills},
+    }
+
+
+def test_shared_tool_descriptions_are_byte_identical_across_bindings():
+    """The shared constants are the sharing mechanism: the same tool text is
+
+    bound by every role that carries the tool, so a role subset cannot drift.
+    """
+    roles = _role_surfaces()
+    for name in ("graph_view", "load_skill", "record_skill_lesson", "auth_store"):
+        texts = {
+            role: tools[name].description
+            for role, tools in roles.items()
+            if name in tools
+        }
+        assert len(set(texts.values())) == 1, name
+
+    for name in ("search_http_history", "get_http_artifact", "exec",
+                 "skill_list", "skill_load"):
+        assert (roles["hunter"][name].description
+                == roles["modeller"][name].description), name
+
+    kb_texts = {
+        roles["hunter"]["kb_query"].description,
+        roles["runner"]["query_lightrag"].description,
+        roles["triager"]["query_lightrag"].description,
+    }
+    assert len(kb_texts) == 1
