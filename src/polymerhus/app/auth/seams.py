@@ -148,7 +148,8 @@ def auth_capable_binding(
                 tools=[*build_skill_tools(
                     project_id, store=skill_store,
                     lesson_store=lesson_store, role_id=role_id),
-                    build_auth_store_tool(project_id=project_id, store=store)],
+                    build_auth_store_tool(
+                        project_id=project_id, store=store, read_only=True)],
                 context={"skills": [AUTHN_SKILL], "project_id": project_id},
             )
         # An exempt role binds no skill surface: no auth capability either.
