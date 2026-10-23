@@ -118,6 +118,36 @@ def test_the_prompt_delegates_the_target_front_rule_to_the_shared_constant():
     assert "404" in prompt
 
 
+def test_the_prompt_state_and_section_table_matches_the_typed_contract():
+    """The five states and their sections are pinned to the typed source, so a
+    gate change cannot leave the human projection stale."""
+    prompt = _modeller_skill()
+    for state in ModelState:
+        assert state.value in prompt, state.value
+    for state, sections in GATE_SECTIONS.items():
+        for section in sections:
+            assert section in prompt, f"{state.value}:{section}"
+
+
+def test_the_prompt_reference_table_matches_the_typed_paths():
+    """The reference-field table is pinned to the canonical field paths."""
+    prompt = _modeller_skill()
+    for path in (
+        "vulnerabilities[].fault_ref",
+        "assumptions[].boundary_ref",
+        "trust_model.trust_agreements[].interface_agreement_refs[]",
+        "trust_model.dynamic_state_trust.transitions[].source",
+        "trust_model.dynamic_state_trust.transitions[].target",
+        "trust_model.dynamic_state_trust.violations[].maps_to_fault",
+        "trust_model.dynamic_state_trust.violations[].transition_ref",
+        "failure_modes[].vulnerability_ref",
+        "loops[].fault_ref",
+        "loops[].vulnerability_ref",
+        "loops[].failure_mode_refs[]",
+    ):
+        assert path in prompt, path
+
+
 def test_the_prompt_embeds_the_retired_notes_material():
     """The per-state material comes from the retired notes documents: the
     request-handling stack and the trust-boundary steps for grounding, and the

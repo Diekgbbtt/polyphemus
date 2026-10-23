@@ -40,7 +40,8 @@ The completion check resolves every reference; an unresolved reference is a vali
 | `vulnerabilities[].fault_ref` | the `id` of an `assumptions[].fault` (`F-*`) |
 | `assumptions[].boundary_ref` | the `id` of a `trust_model.trust_agreements[]` (`TA-*`) |
 | `trust_model.trust_agreements[].interface_agreement_refs[]` | the `id` of a `technical_sharpening.interface_agreements[]` (`IA-*`) - never control flows (`CF-*`) or data flows (`DF-*`) |
-| `trust_model.dynamic_state_trust.transitions[].source` and `.target` | the `id` of a `...states[]` (`S*`) |
+| `trust_model.dynamic_state_trust.transitions[].source` | the `id` of a `...states[]` (`S*`) |
+| `trust_model.dynamic_state_trust.transitions[].target` | the `id` of a `...states[]` (`S*`) |
 | `trust_model.dynamic_state_trust.violations[].maps_to_fault` | the `id` of an `assumptions[].fault` (`F-*`), never prose |
 | `trust_model.dynamic_state_trust.violations[].transition_ref` | the `id` of a `transitions[]` (`TR-*`), or omit it |
 | `failure_modes[].vulnerability_ref` | the `id` of a `vulnerabilities[]` (`V-*`) |

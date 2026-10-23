@@ -18,9 +18,9 @@ from __future__ import annotations
 # (`tests/attack/test_hunting_llm.py` and the per-tool tests) asserts the exact
 # string in every one of those sites.
 HUNTING_CONCISENESS_DIRECTIVE = (
-    "Hunting-artifact conciseness (binding): cap spec `rationale` and note "
-    "bodies at roughly 500 characters; write assertive, specific prose with no "
-    "filler, restated context, or hedging."
+    "Hunting-artifact conciseness (binding): cap spec `rationale` and each "
+    "note body at roughly 500 characters; write assertive, specific prose with "
+    "no filler, restated context, or hedging."
 )
 
 

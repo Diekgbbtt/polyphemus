@@ -75,6 +75,25 @@ Implement the safe cuts in this branch, measure the result, and stop before any 
 - The branch is merged back into `hunt-enhancement-trunk`.
 - No trial is run.
 
+## Status at handoff
+
+The plan is the execution contract; this section records the actual state.
+
+- Phase 0 is complete.
+- Phase 1 is complete and the hunter harness suite is green.
+- Phase 2 is complete and the hunter prompt and tool suites are green.
+- Phase 3 is complete: the 12 hunter descriptions total 8,478 chars, under the 8,500 ceiling.
+- Phase 4 is complete for all four roles and the compaction suite is green.
+- Phase 5.1 is complete: the modeller report is written.
+- Phase 5.2 is partial: the tool list, the shared 5xx pointer, and the contract coverage tests are done; the state, gate, and reference table generation is deferred.
+- Phase 6.1 is complete: the pod report is written.
+- Phase 6.2 is partial: the tool lists, the read-only auth store, and the contract coverage tests are done; spec, variant, terminal, and memory generation is deferred.
+- Phase 7 is partial: the reports and focused suites are done; the full suite is blocked by the missing Docker, Steel, database, and sibling-agent tiers; no trial ran.
+
+The system-prompt decision is the user's minimal cut.
+The body, examples, and cortex-only option was not taken.
+The hand-written `## The tools` section and the direct-reference line stay.
+
 ## Phase 0: Trunk and plan
 
 - [x] Create `hunt-enhancement-trunk` from `fix/context-lifecycle-followup`.
