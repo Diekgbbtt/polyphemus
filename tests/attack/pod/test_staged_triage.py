@@ -218,6 +218,31 @@ def test_staged_no_populated_procedure_calls_the_terminal_not_the_miner():
     assert env["evidence"]["iterations"] == 1
 
 
+def test_staged_all_empty_procedure_calls_the_terminal_not_the_miner():
+    """An excerpt with every field empty is a skipped procedure, not a gap: the
+    miner is not paid and the compact terminal decides."""
+    from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_FIELD
+
+    empty = {field: "" for field in PROCEDURE_GAP_FIELD.values()}
+    spec = {**SEMANTIC_SPEC, "provenance": {
+        **SEMANTIC_SPEC["provenance"], "skill_procedure": empty}}
+    calls = []
+    env = _run(arun_pod(
+        spec, exec_fn=_exec, runner_step_fn=symbolic_runner_step_fn,
+        triager_stages=_stages(
+            assess=lambda s, o, m, l: _assessment(note="the marker is not reflected"),
+            diverge=lambda s, o, m, l: {"runner_diverged": False, "note": ""},
+            mine=lambda s, o, m, l: pytest.fail("the miner must not run on an empty procedure"),
+            terminal=lambda s, o, m, l: {"verdict": "unsuccessful",
+                                         "terminal_reason": "no-symptom-evidence",
+                                         "clean": False, "note": "no populated gap"},
+            calls=calls),
+        trace_fn=_no_trace))
+
+    assert calls == ["assess", "diverge", "terminal"]
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+
+
 def test_staged_duplicate_basis_still_degrades_honestly():
     calls = []
     laps = {"n": 0}
