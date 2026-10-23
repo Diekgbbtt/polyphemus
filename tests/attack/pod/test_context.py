@@ -8,10 +8,15 @@ from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
     _lc_to_dicts,
+    compose_divergence_delta,
+    compose_terminal_delta,
+    compose_triage_delta,
+    compose_triager_delta,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.types import (
     Interpretation,
+    KbObservation,
     RawObservation,
     VariantSpec,
 )
@@ -146,6 +151,97 @@ def test_runner_context_projects_the_typed_procedure_out_of_the_spec_json():
                              budget=3)
     assert "skill_procedure" not in ctx
     assert "the role check trusts the session" not in ctx
+
+
+# --- the staged triage deltas --------------------------------------------------
+
+def _staged_log_and_spec(tmp_path):
+    store = PodMemoryStore(tmp_path)
+    spec_id = spec_identifier("sqli", "blind")
+    store.write_experiment_log(spec_id, 1, {"order": 1, "variant_ref": "v1",
+                                            "raw_observations": [],
+                                            "kb_observations": [],
+                                            "interpretations": [], "executed": []})
+    store.write_variant_summary(spec_id, 1, "the consolidated stretch note")
+    log = ExperimentLog(store=store, spec_id=spec_id)
+    log.record_variant(VariantSpec(ref="v0", spec={}))
+    log.record_variant(VariantSpec(
+        ref="v1", parent_ref="v0", declined_attribute="bypass-technique",
+        spec={"rationale": "swap the marker in the reflected field"}))
+    log.record_observation(RawObservation(
+        variant_ref="v1", request={"command": "curl -k https://svc/search?q=marker"},
+        status=404))
+    log.record_kb_observation(KbObservation(
+        variant_ref="v1", query="reflected markers", source=None, degraded=True))
+    log.record_interpretation(Interpretation(
+        variant="v0", classification="symptom-absent", note="not reflected"))
+    spec = _spec_with_typed_procedure()
+    spec["verification_symptoms"] = ["reflects the marker"]
+    spec["assumptions"] = ["the session cookie is the only auth factor"]
+    observation = RawObservation(variant_ref="v1", status=404, body="not found")
+    return store, spec_id, log, spec, observation
+
+
+def test_the_triage_delta_is_compact(tmp_path):
+    """Stage A reads the note, the symptoms, the identity, the assumptions, and
+    the observation - and nothing the first-pass check does not need: no typed
+    procedure, no variants, no probe trail, no interpretations, no memory
+    key-list."""
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    delta = compose_triage_delta(log, spec, observation, store=store,
+                                 spec_id=spec_id, order=1)
+    assert "the consolidated stretch note" in delta
+    assert "## Verification symptoms" in delta
+    assert "reflects the marker" in delta
+    assert "## Target identity" in delta
+    assert "http://svc/" in delta
+    assert "## Assumptions" in delta
+    assert "the session cookie" in delta
+    assert "## Latest observation" in delta
+    assert "## Skill procedure" not in delta
+    assert "## Variants already tried" not in delta
+    assert "## Probes executed" not in delta
+    assert "## Recent interpretations" not in delta
+    assert "Pod experiment memory" not in delta
+
+
+def test_the_divergence_delta_adds_the_typed_procedure_and_the_probes(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    delta = compose_divergence_delta(log, spec, observation, store=store,
+                                     spec_id=spec_id, order=1)
+    assert "## Skill procedure" in delta
+    assert "the role check trusts the session" in delta
+    assert "## Probes executed" in delta
+    assert "curl -k https://svc/search?q=marker" in delta
+    # Divergence is a procedure comparison, not a duplicate check.
+    assert "## Variants already tried" not in delta
+    assert "## Recent interpretations" not in delta
+
+
+def test_the_terminal_delta_carries_the_trail_and_the_kb_flags(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    delta = compose_terminal_delta(log, spec, observation, store=store,
+                                   spec_id=spec_id, order=1)
+    assert "## Probes executed" in delta
+    assert "curl -k https://svc/search?q=marker" in delta
+    assert "## Variants already tried" in delta
+    assert "bypass-technique" in delta
+    assert "## KB observations" in delta
+    assert "degraded=True" in delta
+    assert "## Recent interpretations" in delta
+    # The terminal stage does not need the procedure diff material.
+    assert "## Skill procedure" not in delta
+
+
+def test_the_full_triager_delta_stays_full(tmp_path):
+    store, spec_id, log, spec, observation = _staged_log_and_spec(tmp_path)
+    delta = compose_triager_delta(log, spec, observation, store=store,
+                                  spec_id=spec_id, order=1)
+    assert "## Skill procedure" in delta
+    assert "## Variants already tried" in delta
+    assert "## Probes executed" in delta
+    assert "## Recent interpretations" in delta
+    assert "Pod experiment memory" in delta
 
 
 def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):

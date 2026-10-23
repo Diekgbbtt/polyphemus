@@ -24,6 +24,18 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 # reasons without its prompt.
 _RUNNER_SKILL: str | None = None
 _TRIAGER_SKILL: str | None = None
+_TRIAGE_SKILL: str | None = None
+_DIVERGENCE_SKILL: str | None = None
+_TERMINAL_SKILL: str | None = None
+
+
+def _compose(name: str) -> str:
+    """Read one stage prompt and append the shared cortex (C1). The read is
+    FAIL-CLOSED: a missing prompt file raises, so a pod role never reasons
+    without its prompt."""
+    from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+
+    return with_cortex((_PROMPTS_DIR / name).read_text(encoding="utf-8"))
 
 
 def load_pod_runner_skill() -> str:
@@ -32,23 +44,43 @@ def load_pod_runner_skill() -> str:
     FAIL-CLOSED."""
     global _RUNNER_SKILL
     if _RUNNER_SKILL is None:
-        from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
-
-        _RUNNER_SKILL = with_cortex(
-            (_PROMPTS_DIR / "pod-runner.md").read_text(encoding="utf-8")
-        )
+        _RUNNER_SKILL = _compose("pod-runner.md")
     return _RUNNER_SKILL
 
 
 def load_pod_triager_skill() -> str:
-    """The `pod_triager` system prompt, read directly from the module's
-    `prompts/` dir and carrying the shared cortex (C1). Memoized on first call;
-    FAIL-CLOSED."""
+    """The `pod_triager` system prompt (the full bounded variant miner), read
+    directly from the module's `prompts/` dir and carrying the shared cortex
+    (C1). Memoized on first call; FAIL-CLOSED."""
     global _TRIAGER_SKILL
     if _TRIAGER_SKILL is None:
-        from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
-
-        _TRIAGER_SKILL = with_cortex(
-            (_PROMPTS_DIR / "pod-triager.md").read_text(encoding="utf-8")
-        )
+        _TRIAGER_SKILL = _compose("pod-triager.md")
     return _TRIAGER_SKILL
+
+
+def load_pod_triage_skill() -> str:
+    """Stage A's compact system prompt: failure and symptom confirmation only.
+    Memoized; FAIL-CLOSED."""
+    global _TRIAGE_SKILL
+    if _TRIAGE_SKILL is None:
+        _TRIAGE_SKILL = _compose("pod-triage.md")
+    return _TRIAGE_SKILL
+
+
+def load_pod_divergence_skill() -> str:
+    """Stage B's compact system prompt: the typed-procedure divergence check.
+    Memoized; FAIL-CLOSED."""
+    global _DIVERGENCE_SKILL
+    if _DIVERGENCE_SKILL is None:
+        _DIVERGENCE_SKILL = _compose("pod-divergence.md")
+    return _DIVERGENCE_SKILL
+
+
+def load_pod_terminal_skill() -> str:
+    """Stage D's compact system prompt: the terminal verdict when no procedure
+    attribute can be bent into a variant. Memoized; FAIL-CLOSED."""
+    global _TERMINAL_SKILL
+    if _TERMINAL_SKILL is None:
+        _TERMINAL_SKILL = _compose("pod-terminal.md")
+    return _TERMINAL_SKILL
+

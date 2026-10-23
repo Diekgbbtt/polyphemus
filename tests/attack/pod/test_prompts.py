@@ -12,13 +12,19 @@ from __future__ import annotations
 
 import polymerhus.attack.hunting.pod.prompts as prompts_mod
 from polymerhus.attack.hunting.pod.prompts import (
+    load_pod_divergence_skill,
     load_pod_runner_skill,
+    load_pod_terminal_skill,
+    load_pod_triage_skill,
     load_pod_triager_skill,
 )
 
 KB_TOOL = "query_lightrag"
 POD_RUNNER_SYSTEM = load_pod_runner_skill()
 POD_TRIAGER_SYSTEM = load_pod_triager_skill()
+POD_TRIAGE_SYSTEM = load_pod_triage_skill()
+POD_DIVERGENCE_SYSTEM = load_pod_divergence_skill()
+POD_TERMINAL_SYSTEM = load_pod_terminal_skill()
 
 
 # --- the Runner: the P0-P3 plan (D84-16) --------------------------------------
@@ -259,6 +265,45 @@ def test_triager_prompt_names_the_coverage_assessment_fields():
         assert field in POD_TRIAGER_SYSTEM, field
 
 
+# --- the STAGED triage prompts (the compact stages) ---------------------------
+
+def test_the_triage_prompt_is_compact_and_has_no_variant_mining():
+    """Stage A carries only the failure and symptom-confirmation judgments; the
+    variant-mining material stays in the Stage C prompt. This is the structural
+    half of the first-call token claim: a smaller fixed prompt and no tool
+    descriptions."""
+    assert len(POD_TRIAGE_SYSTEM) < len(POD_TRIAGER_SYSTEM)
+    assert "runner_failed" in POD_TRIAGE_SYSTEM
+    assert "symptom_confirmed" in POD_TRIAGE_SYSTEM
+    assert "clean" in POD_TRIAGE_SYSTEM
+    assert "Variant minting" not in POD_TRIAGE_SYSTEM
+    for basis in VARIANT_BASES:
+        assert basis not in POD_TRIAGE_SYSTEM, basis
+
+
+def test_the_divergence_prompt_names_the_typed_procedure_and_divergence():
+    assert "SkillProcedure" in POD_DIVERGENCE_SYSTEM
+    assert "runner_diverged" in POD_DIVERGENCE_SYSTEM
+    assert "diverge" in POD_DIVERGENCE_SYSTEM.lower()
+    assert "procedure" in POD_DIVERGENCE_SYSTEM.lower()
+
+
+def test_the_terminal_prompt_keeps_the_binary_vocabulary():
+    for token in ("symptom-confirmed", "space-exhausted", "technical-infeasibility",
+                  "specific-defence-prevention", "no-symptom-evidence",
+                  "budget-timeout", "clean", "degraded"):
+        assert token in POD_TERMINAL_SYSTEM, token
+    assert "variant mining" not in POD_TERMINAL_SYSTEM.lower()
+
+
+def test_the_stage_prompts_carry_the_shared_cortex():
+    from polymerhus.attack.hunting.cortex import cognitive_architecture_map
+
+    cortex = cognitive_architecture_map()
+    for prompt in (POD_TRIAGE_SYSTEM, POD_DIVERGENCE_SYSTEM, POD_TERMINAL_SYSTEM):
+        assert prompt.endswith(cortex)
+
+
 # --- T9: the runner honours the basis, not the retired attribute decline ------
 
 def test_runner_prompt_names_the_variant_basis():
@@ -317,5 +362,6 @@ def test_prompts_carry_no_differential_reference():
 
     source = inspect.getsource(prompts_mod)
     assert "differential" not in source
-    assert "differential" not in POD_RUNNER_SYSTEM
-    assert "differential" not in POD_TRIAGER_SYSTEM
+    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM, POD_TRIAGE_SYSTEM,
+                   POD_DIVERGENCE_SYSTEM, POD_TERMINAL_SYSTEM):
+        assert "differential" not in prompt

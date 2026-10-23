@@ -249,3 +249,39 @@ def test_the_triager_decision_carries_the_coverage_assessment():
     filled = TriagerDecision(covered_gap_classes=["recon-action"],
                              failure_mode_plausible=True)
     assert filled.model_dump()["covered_gap_classes"] == ["recon-action"]
+
+
+# --- the off-spec guard -------------------------------------------------------
+
+def test_an_off_spec_variant_is_recorded_as_a_derived_spec():
+    """A variant that changes the verification symptoms is a DERIVED spec, not a
+    confirmation of the base spec. The record keeps the changed symptoms and the
+    interpretation note carries the off-spec marker, so a later audit can see
+    that the base symptom was never confirmed."""
+    off_spec = {**SPEC,
+                "verification_symptoms": ["the response leaks another user's email"],
+                "rationale": "confirm the authority field selects the upstream account"}
+    env = _drive([
+        _variant(covered_gap_classes=sorted(ALL_GAPS - {"bypass-technique"}),
+                 variant_spec=off_spec),
+        TERMINATE,
+    ])
+    variants = env["evidence"]["variant_specs"]
+    assert [v["ref"] for v in variants] == ["v0", "v1"]
+    assert variants[1]["spec"]["verification_symptoms"] == [
+        "the response leaks another user's email"]
+    assert variants[0]["spec"]["verification_symptoms"] == [
+        "the response leaks another user's order id"]
+    assert any("off-spec" in i["note"].lower()
+               for i in env["evidence"]["interpretations"])
+
+
+def test_a_same_symptom_variant_has_no_off_spec_note():
+    derived = {**SPEC, "rationale": "cover the unexecuted bypass technique"}
+    env = _drive([
+        _variant(covered_gap_classes=sorted(ALL_GAPS - {"bypass-technique"}),
+                 variant_spec=derived),
+        TERMINATE,
+    ])
+    assert not any("off-spec" in i["note"].lower()
+                   for i in env["evidence"]["interpretations"])

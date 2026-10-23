@@ -461,8 +461,12 @@ The minting algorithm is:
 7. Record the variant with the basis in `declined_attribute`, the parent ref, and the derived spec.
    The derived spec keeps the base `provenance`, including the typed skill procedure; the graph enforces the field (T10 H6).
 
-The triager's context carries the note, the filtered experiment log, the base spec, and the bounded skill procedure excerpt.
-The triager prompt's mining section is rewritten to the algorithm above.
+The triager is STAGED (8.11).
+The Stage A delta carries the note, the verification symptoms, the target identity, the assumptions, and the latest observation.
+The Stage B delta adds the bounded skill procedure excerpt and the executed probe trail.
+The Stage C (variant miner) delta carries the note, the filtered experiment log, the base spec, and the bounded skill procedure excerpt.
+The Stage D delta carries the note, the verification symptoms, the latest observation, the executed probe trail, the variant bases, the recent interpretations, and the KB degraded flags.
+The triager prompt's mining section is rewritten to the algorithm above (the Stage C prompt).
 The terminal decision output is unchanged.
 
 The `space-exhausted` exhaustion rule is prompt-level, not symbolically enforced (T10 H2).
@@ -516,6 +520,11 @@ Seams:
 - The duplicate guard: a basis and detail already in the log is not re-minted.
 - The storage: the variant record shape; `declined_attribute` carries the basis.
 - The prompt: the mining algorithm and the ten bases.
+- The staged order: a confirmed symptom calls only Stage A; a runner failure calls only Stage A and mints `runner-failure`; a divergence calls Stage A and B and mints `runner-divergence`; a populated procedure calls the miner; no populated procedure calls the terminal stage, never the miner.
+- The stage contexts: Stage A excludes the procedure, the variants, the probe trail, and the memory key-list; Stage B adds the typed procedure and the probes; Stage D adds the trail, the variants, and the KB flags; the miner delta stays full.
+- The stage tool surfaces: Stages A, B, and D bind no tools; Stage C keeps the full skill/KB/note/graph surface.
+- The stage prompts: the compact triage prompt is shorter and carries no variant-mining material; the divergence and terminal prompts carry their judgments; all carry the cortex.
+- The off-spec guard: a variant that changes the verification symptoms is recorded as a derived spec and the interpretation carries the off-spec marker.
 
 Prior art:
 
@@ -538,3 +547,52 @@ The workbench R8-3 and Q48 are the decision authority.
 The reduced D4 surface is shared with S3 8.6.
 The variant basis is the only new decision object.
 The pod's binary terminal invariant, six-way termination, fixed caps, and experiment-log shape stay.
+
+### 8.11 Staged triage decision tree (2026-10-23)
+
+The triager walks four decisions in this order.
+The order is structural: a confirmed or failed execution short-circuits before the later stages, and the bounded variant miner is never paid when the spec carries no populated procedure attribute.
+
+**Stage A: failure and symptom confirmation.**
+The compact turn reads the spec's verification symptoms, target identity, and assumptions, the Runner's verbatim consolidation note, and the latest observation.
+It returns `TriageDecision` (`runner_failed`, `symptom_confirmed`, `clean`, `note`).
+It binds no tools, no skill, no KB, and no procedure excerpt.
+A `runner_failed` outcome mints the `runner-failure` recovery variant (8.6 step 3).
+A `symptom_confirmed` outcome terminates `successful` / `symptom-confirmed` and the deterministic terminal writes the `PodExport`.
+Anything else walks on.
+
+**Stage B: divergence.**
+The compact turn reads the note, the spec's typed `SkillProcedure` excerpt, the executed probe trail, and the latest observation.
+It returns `DivergenceDecision` (`runner_diverged`, `note`).
+It binds no tools.
+A divergence mints the `runner-divergence` recovery variant (8.6 step 3).
+
+**Stage C: bounded variant mining.**
+The miner runs only when the spec carries at least one populated `SkillProcedure` attribute.
+It keeps the full context and tool surface of 8.6 and returns the existing `TriagerDecision`.
+The graph resolves the basis, refuses a duplicate, and mints at most one variant per decision.
+The `failure-mode` fallback of 8.6 step 5 remains available when every populated class is covered.
+
+**Stage D: terminal verdict.**
+The terminal turn runs when the spec carries no populated `SkillProcedure` attribute.
+It reads the note, the verification symptoms, the latest observation, the executed probe trail, the variant bases, the recent interpretations, and the KB degraded flags.
+It returns `TerminalDecision` (`verdict`, `terminal_reason`, `clean`, `note`).
+It binds no tools and mines no variant.
+The binary terminal vocabulary and the `clean` rule are the existing 8.6/#304 rules.
+
+**The seam.**
+`build_pod_graph(..., triager_stages=...)` / `arun_pod(..., triager_stages=...)` inject the four stage callables (`TriageStages`).
+The production defaults are the stateful turns in `pod/agents.py`; an injected `triager_fn` keeps the pre-staging single-turn critic for the contract tier.
+`pod/triage.py::make_staged_triager` owns the order.
+A stage provider failure propagates as the typed `ProviderUnavailableError`; any other stage exception degrades to a safe `no-symptom-evidence` terminal, exactly like the single-turn triager.
+
+**The off-spec guard.**
+`pod/graph.py::_resolve_variant_decision` appends an `[off-spec: ...]` marker when the derived variant's `verification_symptoms` differ from the base spec's.
+The variant is recorded as its own derived spec; its confirmation is not the base spec's confirmation.
+The variant record shape stays four fields.
+
+**The token intent.**
+Stage A removes the tool-description block, the skill index, the typed procedure, the variants, and the probe trail from the first call.
+The confirmed first-shot path is one compact call instead of the single-turn triager's 2-6 calls.
+The full miner and its tool surface are paid only on the ambiguous pods.
+The measured baseline and the estimate are recorded in the experiment report on the docs branch; the implementation does not change the terminal or variant contracts.
