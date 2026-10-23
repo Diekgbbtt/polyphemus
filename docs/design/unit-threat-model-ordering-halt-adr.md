@@ -12,8 +12,9 @@ Nothing here is built yet.
   The order is recorded in the run.
 - The run accumulates a symbolic risk score over the completed loops and checks the running sum against a threshold (`>=`) at each model completion (Q16, R2-5).
   When the threshold is reached, the crossing unit is fully modelled and dispatched; only the next unit is never modelled: this is the progressive halt.
-- The run interleaves modelling and dispatch: the surfer dispatches each admitted unit's loops while later units are still modelled (R2-6, R5-1).
-- The interleave makes the halt set a function of the intake order.
+- The run's DISPATCH may interleave with modelling: the surfer dispatches each admitted unit's loops while later units are still modelled (R2-6, R5-1).
+  Since the pipeline-sync decision (2026-10-22, ADR `hunting-pipeline-sync-adr.md`) that interleave is the `parallel` sync mode only; the default `batched` (and `serial`) models the whole risk budget before any downstream dispatch.
+- The coupling of the halt set to the intake order is unaffected: the interleave makes the halt set a function of the intake order.
   Which units are ever modelled depends on how far the run gets, and the run stops on the score that the ordered units yield.
 
 ## Decision

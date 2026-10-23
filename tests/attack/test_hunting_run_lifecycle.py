@@ -145,7 +145,7 @@ def test_the_run_record_carries_every_fixed_key_and_the_accumulated_sum(
     ))
 
     record = fake.run_record(RUN)
-    assert set(record) == set(RUN_RECORD_KEYS)
+    assert set(record) == set(RUN_RECORD_KEYS) | {"pipeline_sync"}
     assert record["intake_order"] == [UNIT_A, UNIT_B]
     assert record["intake_position"] == 2
     assert record["intake_excluded"] == []
@@ -289,7 +289,7 @@ def test_a_resumed_run_re_enters_at_the_intake_position(tmp_path, monkeypatch):
 
     assert seen == [UNIT_B]                      # UNIT_A is never re-modelled
     record = fake.run_record(RUN)
-    assert set(record) == set(RUN_RECORD_KEYS)
+    assert set(record) == set(RUN_RECORD_KEYS) | {"pipeline_sync"}
     assert record["intake_order"] == [UNIT_A, UNIT_B]
     assert record["intake_position"] == 2
     assert record["risk_total"] == 6
@@ -497,11 +497,12 @@ def test_an_abandoned_model_is_ignored_and_the_unit_is_retried(
     assert fake.run_record(RUN)["intake_excluded"] == []
 
 
-def test_the_modeller_does_not_wait_for_dispatch(tmp_path, monkeypatch):
-    """S1 7.3: the pass and the surfer are independent sessions - the surfer
-    dispatches produced work while the pass is still modelling, so the pass
-    never waits for a dispatch."""
-    fake = _FakePg()
+def test_parallel_mode_keeps_the_modeller_dispatch_interleave(tmp_path, monkeypatch):
+    """S1 7.3 in the `parallel` mode: the pass and the surfer are independent
+    sessions - the surfer dispatches produced work while the pass is still
+    modelling, so the pass never waits for a dispatch. (The default `batched`
+    mode deliberately closes this interleave; see the test below.)"""
+    fake = _FakePg(hunting_settings={"pipeline_sync": "parallel"})
     _patch_pg(monkeypatch, fake)
     hunter, models = _stores(tmp_path)
     # a produced loop file of THIS run is the dispatch input (S2 8.4): the
@@ -534,10 +535,54 @@ def test_the_modeller_does_not_wait_for_dispatch(tmp_path, monkeypatch):
         tick_interval=0.001,
     ))
 
-    assert "dispatch" in events, "the surfer must dispatch the produced config"
+    assert "dispatch" in events, "the surfer must dispatch the produced loop file"
     assert events.index("dispatch") < events.index(f"modelled:{UNIT_A}"), (
-        "the hunt dispatched while the pass was still modelling the unit"
+        "the parallel mode dispatched while the pass was still modelling the unit"
     )
+    assert fake.run_record(RUN)["pipeline_sync"] == "parallel"
+
+
+def test_default_mode_is_batched_and_holds_dispatch_until_the_pass_settles(
+    tmp_path, monkeypatch,
+):
+    """The default `hunting_pipeline_sync` is `batched`: the whole risk budget is
+    modelled before any hunter dispatches (ADR `hunting-pipeline-sync-adr.md`)."""
+    fake = _FakePg()  # no stored hunting config -> the documented default
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    produce_model(
+        models, project_id=PROJECT, unit_id=UNIT_C, run_id=RUN)
+    events: list[str] = []
+
+    async def slow_pass(project_id, run_id, unit_id, tools, **kwargs):
+        events.append(f"model:{unit_id}")
+        await asyncio.sleep(0.05)
+        events.append(f"modelled:{unit_id}")
+        return UnitOutcome(unit_id=unit_id, status="degraded")
+
+    def hunter_builder(*, run_id, project_id, hunter_store, **kw):
+        async def dispatch(payload):
+            events.append("dispatch")
+            hunter_store.finalize_specs(
+                project_id, payload["dispatch_id"], run_id=run_id)
+            return None
+        return dispatch, None
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 1)),
+        modeller_pass_fn=slow_pass,
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert "dispatch" in events, "the batched mode must dispatch after the pass"
+    assert events.index(f"modelled:{UNIT_A}") < events.index("dispatch"), (
+        "the batched mode dispatched before the modeller pass settled"
+    )
+    assert fake.run_record(RUN)["pipeline_sync"] == "batched"
 
 
 def test_the_runtime_no_longer_selects_units_through_the_fault_source_path():
@@ -787,3 +832,25 @@ def test_a_resumed_run_clears_the_stale_provider_interrupt_keys(
     assert record["quota_exhausted"] is None
     assert record["retry_after_s"] is None
     assert record["risk_total"] == 3      # the run record itself is untouched
+
+
+# --- the DB-backed risk threshold (ADR `hunting-pipeline-sync-adr.md`) ----------
+
+def test_threshold_config_prefers_the_db_value_over_the_env():
+    from polymerhus.attack.hunting.run_lifecycle import threshold_config
+
+    threshold, basis = threshold_config({"HUNT_RISK_THRESHOLD": "7"}, db_value=250)
+    assert (threshold, basis) == (250, "db")
+
+
+def test_threshold_config_falls_back_to_the_env_on_a_malformed_db_value():
+    from polymerhus.attack.hunting.run_lifecycle import threshold_config
+
+    threshold, basis = threshold_config({"HUNT_RISK_THRESHOLD": "7"}, db_value="oops")
+    assert (threshold, basis) == (7, "override")
+
+
+def test_threshold_config_without_a_db_value_keeps_the_env_basis():
+    from polymerhus.attack.hunting.run_lifecycle import threshold_config
+
+    assert threshold_config({}, db_value=None)[1] == "default"

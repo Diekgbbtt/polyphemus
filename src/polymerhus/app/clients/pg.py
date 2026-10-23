@@ -407,6 +407,31 @@ def save_settings(project_id: str, recon: dict) -> None:
         )
 
 
+def get_hunting_settings(project_id: str) -> dict:
+    """Return the project's `settings.hunting` JSONB dict, or {} if no row.
+
+    The hunting sibling of `load_settings` (`hunting_pipeline_sync` and the
+    threat-modeller budget live here, ADR `hunting-pipeline-sync-adr.md`)."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT hunting FROM settings WHERE project_id = %s", (project_id,))
+        row = cur.fetchone()
+        return row[0] if row else {}
+
+
+def save_hunting_settings(project_id: str, hunting: dict) -> None:
+    """Upsert the project's `settings.hunting` JSONB blob, MERGING the incoming
+    keys into any existing blob (the SAME recursive merge as `save_settings`:
+    a partial PUT setting `pipeline_sync` never drops `risk_threshold`)."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO settings (project_id, hunting) VALUES (%s, %s) "
+            "ON CONFLICT (project_id) DO UPDATE SET "
+            "hunting = jsonb_deep_merge(settings.hunting, EXCLUDED.hunting)",
+            (project_id, json.dumps(hunting)),
+        )
+
+
 def create_run(run_id: str, project_id: str) -> None:
     """Insert a recon_runs row. Idempotent: the REST route creates the run
     synchronously so a poll right after launch sees it, and `run_pipeline`

@@ -14,6 +14,10 @@ wiring T4 owns:
   project, and exits on quiesce or cancellation. The surfer is a dumb mover: it
   only reads the produced inboxes, drives the control plane, and applies the
   moves - every decision stays in the mover's deduction and its sequencing.
+  As of the pipeline-sync extension (ADR `hunting-pipeline-sync-adr.md`,
+  2026-10-22) it ALSO hands the run's `RunSyncGate` (when the frozen mode is
+  `batched`/`serial`) to the tick as the mover's pre-filter: the gate holds an
+  item by refusing it (stays produced, at-least-once), it never schedules.
 - The run DISPATCH builders (`build_run_dispatch`): the `coro_for` seam the
   mover's `run_delivery_tick` was designed for. A produced LOOP FILE becomes ONE
   hunter session under the per-loop id `hunting:<run_id>:hunt:<dispatch_id>`
@@ -253,6 +257,11 @@ class RunDispatchState:
     loop_likelihoods: dict[str, str] = field(default_factory=dict)
     child_failures: dict[str, ChildFailure] = field(default_factory=dict)
     provider_failure: ProviderUnavailableError | None = None
+    # The run's pipeline sync gate (`hunting_pipeline_sync`, ADR 2026-10-22):
+    # None in `parallel` (the historical behaviour), a `RunSyncGate` in
+    # `batched`/`serial`. Consulted once per surfer tick; held items stay
+    # produced (the mover's at-least-once rule).
+    sync_gate: Any = None
 
     def record_child_failure(
         self,
@@ -960,6 +969,14 @@ async def run_surfer_loop(
     to the #331 stop/flush/stamp handler."""
     ticks = 0
     last_tick = None
+
+    def _pre_filter(items, live_session_ids):
+        return state.sync_gate.filter(
+            items,
+            live_session_ids=live_session_ids,
+            hunts_in_graph=frozenset(state.hunters_in_graph),
+        )
+
     while True:
         # F-026: a fatal child failure recorded during the previous tick's
         # child sessions must stop the NEXT dispatch before it happens.
@@ -973,6 +990,7 @@ async def run_surfer_loop(
             control=control, coro_for=coro_for,
             live_loop_likelihoods=state.loop_likelihoods,
             deferred_session_ids=state.deferred_session_ids(),
+            pre_filter=_pre_filter if state.sync_gate is not None else None,
         )
         ticks += 1
         if state.provider_failure is not None:

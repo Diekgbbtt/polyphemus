@@ -155,6 +155,62 @@ def save_project_settings(project_id: str, recon: dict) -> None:
     pg.save_settings(project_id, recon)
 
 
+# The hunting config vocabulary (`hunting_pipeline_sync`, ADR
+# `docs/design/hunting-pipeline-sync-adr.md`, 2026-10-22). The API's pydantic
+# Literal mirrors these values; the default is `batched` (the phase-barrier
+# mean between the fully interleaved `parallel` and the strict `serial`).
+HUNTING_SYNC_MODES: tuple[str, ...] = ("serial", "batched", "parallel")
+HUNTING_SYNC_DEFAULT = "batched"
+
+
+def read_hunting_config(project_id: str) -> dict:
+    """The project's hunting config (`{"pipeline_sync", "risk_threshold"}`).
+
+    Unknown project -> ProjectNotFound; a known project that never stored a
+    blob reads back the documented defaults (mode `batched`, threshold None -
+    the env/default basis). A stored mode outside the enum (a hand-edited row)
+    reads back as the default rather than an error."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    stored = dict(pg.get_hunting_settings(project_id) or {})
+    mode = stored.get("pipeline_sync")
+    if mode not in HUNTING_SYNC_MODES:
+        mode = HUNTING_SYNC_DEFAULT
+    return {
+        "pipeline_sync": mode,
+        "risk_threshold": stored.get("risk_threshold"),
+    }
+
+
+def save_hunting_config(project_id: str, body: dict) -> None:
+    """Persist a PARTIAL hunting config PUT (deep-merged into the stored blob).
+
+    Only the provided keys land (`pipeline_sync`, `risk_threshold`). The mode
+    must be a known enum value; the threshold must be a non-negative integer
+    (or an explicit None, which clears the DB override and falls back to the
+    env/default basis). Raises ProjectNotFound if unknown, ValueError on an
+    invalid value - nothing lands on a refusal."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    if "pipeline_sync" in body and body["pipeline_sync"] not in HUNTING_SYNC_MODES:
+        raise ValueError(
+            f"hunting_pipeline_sync must be one of {HUNTING_SYNC_MODES}; "
+            f"got {body['pipeline_sync']!r}"
+        )
+    if "risk_threshold" in body and body["risk_threshold"] is not None:
+        try:
+            threshold = int(body["risk_threshold"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "risk_threshold must be a non-negative integer or null"
+            ) from exc
+        if threshold < 0:
+            raise ValueError(
+                "risk_threshold must be a non-negative integer or null")
+        body = {**body, "risk_threshold": threshold}
+    pg.save_hunting_settings(project_id, body)
+
+
 def _default_auth_store():
     """The production auth bucket store, resolved lazily per call
     (CODING_STANDARD §6: collaborators resolve lazily, never at import).

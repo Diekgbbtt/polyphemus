@@ -128,6 +128,12 @@ class _FakePg:
                 state[first] = {"hunting_run_id": first, "status": second}
         return list(state.values())
 
+    def get_hunting_settings(self, project_id: str) -> dict:
+        """These wiring tests pin the HISTORICAL interleaved dispatch
+        (`parallel`) explicitly; the batched/serial phase gates are exercised in
+        the dedicated `test_hunting_pipeline_sync*` / lifecycle files."""
+        return {"pipeline_sync": "parallel"}
+
 
 class _FakeControl:
     """The session-capable control-plane fake: RUNS every dispatched/started
@@ -206,6 +212,7 @@ def test_bootstrap_schedules_orchestrator_and_surfer_sessions(stores, monkeypatc
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     models, hunter, pod = stores
     control = _FakeControl()
     _preproduce(models)
@@ -253,6 +260,7 @@ def test_guard_refuses_a_second_live_run_per_project(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     models, hunter, pod = stores
     control = _FakeControl()
 
@@ -284,6 +292,7 @@ def test_guard_refusal_closes_a_preopened_row_in_band(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     models, hunter, pod = stores
     control = _FakeControl()
 
@@ -311,6 +320,7 @@ def test_guard_lets_the_runs_own_pinned_row_through(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     models, hunter, pod = stores
     control = _FakeControl()
     _preproduce(models)
@@ -344,6 +354,7 @@ def test_a_produced_loop_dispatches_one_hunter_and_moves(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     _preproduce(models)
     control = _FakeControl()
 
@@ -378,6 +389,7 @@ def test_n_loops_fan_out_but_the_gate_caps_concurrent_hunters(stores, monkeypatc
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     _preproduce(models, loops=[loop_row(), loop_row(), loop_row()])
     control = _FakeControl(gate=asyncio.Semaphore(2))
     tracking = {"now": 0, "max": 0, "sees": []}
@@ -435,6 +447,7 @@ def test_ratified_spec_dispatches_one_pod_through_the_same_mover(stores, monkeyp
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     _preproduce(models)
     control = _FakeControl()
     pod_calls: list[tuple[str, str]] = []
@@ -485,6 +498,7 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     _preproduce(models)
 
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
@@ -598,6 +612,7 @@ def test_a_loop_file_from_another_run_never_dispatches_or_blocks_quiesce(
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
 
     _preproduce(models, run_id="another-run")
     control = _FakeControl()
@@ -640,6 +655,7 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     _preproduce(models)
     control = _FakeControl()
     export = {"verdict": "successful", "terminal_reason": "symptom-confirmed",
@@ -717,6 +733,7 @@ def test_cross_run_ratified_spec_dispatches_a_pod_without_a_parent(stores,
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
 
     # A produced `ratified` spec with NO live parent hunter inbox at all - the
     # parent hunt was consumed by an earlier run, no hunter dispatches.
@@ -778,6 +795,7 @@ def test_run_does_not_complete_while_a_session_is_live(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     _preproduce(models)
     control = _FakeControl()
     release = asyncio.Event()
@@ -835,6 +853,7 @@ def test_run_does_not_complete_while_produced_is_non_empty(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     _preproduce(models)
     hunt_refuse = hunter_session_id(RUN, DISPATCH_ID)
     control = _FakeControl(refuse={hunt_refuse})
@@ -877,6 +896,7 @@ def test_stop_cancels_every_session_and_leaves_the_registry_empty(stores, monkey
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     _preproduce(models)
 
     def block_hunts(*, run_id, project_id, hunter_store, **kw):
@@ -946,6 +966,7 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_settings", fake.get_hunting_settings)
     # Seed the produced draft directly: no loop file exists, so F-022 has no
     # consumed loop to recover and the test isolates the mover's own-status gate.
     hunter.write_specs(

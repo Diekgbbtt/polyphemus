@@ -53,15 +53,21 @@ UNIT_C = "RESTApi"
 class _FakePg:
     """The fake pg accessors (the `test_hunting_runtime` seam contract): mint a
     deterministic run id, record every status write in order, carry the merged
-    run record (the `stats` JSONB the driver updates), fail on demand."""
+    run record (the `stats` JSONB the driver updates), fail on demand, and serve
+    the project's hunting config (default: the `batched` mode)."""
 
-    def __init__(self, *, fail_create: bool = False, resume_record: dict | None = None):
+    def __init__(self, *, fail_create: bool = False, resume_record: dict | None = None,
+                 hunting_settings: dict | None = None):
         self.fail_create = fail_create
         self.statuses: list[tuple[str, str]] = []
         self.stats_writes: list[tuple[str, str, dict | None]] = []
         self.records: dict[str, dict] = {}
+        self.hunting_settings: dict = dict(hunting_settings or {})
         if resume_record is not None:
             self.records[RUN] = dict(resume_record)
+
+    def get_hunting_settings(self, project_id: str) -> dict:
+        return dict(self.hunting_settings)
 
     def create_hunting_run(self, project_id: str) -> str:
         if self.fail_create:
@@ -142,6 +148,10 @@ def _patch_pg(monkeypatch, fake):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr(
+        "polymerhus.app.clients.pg.get_hunting_settings",
+        fake.get_hunting_settings,
+    )
 
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):

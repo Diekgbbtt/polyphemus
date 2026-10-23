@@ -62,11 +62,14 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import AbstractSet, Any, Callable, Iterable, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, AbstractSet, Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from polymerhus.attack.hunting.threat_model import Likelihood, UnitKind
 from polymerhus.attack.hunting.threat_model_store import dispatch_id, is_loop_id
 from polymerhus.app.runtime import ModuleAdmissionRefused
+
+if TYPE_CHECKING:
+    from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -751,6 +754,9 @@ def run_delivery_tick(
     coro_for: Callable[[ProducedItem], Any],
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
     deferred_session_ids: AbstractSet[str] = frozenset(),
+    pre_filter: Callable[
+        [Sequence[ProducedItem], AbstractSet[str]], Sequence[ProducedItem],
+    ] | None = None,
 ) -> TickReport:
     """One impure mover tick: reads the produced inboxes, calls the pure
     deduction, drives the delivery against the control plane, and applies the
@@ -761,7 +767,9 @@ def run_delivery_tick(
     1. Read the produced inbox (the threat model store's loop files and the
        hunter memory's test specs) plus the live registry session ids.
     2. Apply the sequencing filter: a `low` loop file waits while a higher-tier
-       loop file is produced or a higher-tier hunter session is live (S2 8.3).
+       loop file is produced or a higher-tier hunter session is live (S2 8.3),
+       then the run's sync pre-filter (`hunting_pipeline_sync`): a held item
+       stays produced and counts as paused.
     3. Deduce with empty feedback -> the items `to_dispatch` this lap. An item
        whose child is backing off (F-026) is held pending and never dispatched;
        the run cannot quiesce while it remains.
@@ -787,6 +795,12 @@ def run_delivery_tick(
     produced = inbox.items
     live = control.live_session_ids()
     dispatchable = sequence_dispatch(produced, live_loop_likelihoods)
+    if pre_filter is not None:
+        # The run's sync policy (`hunting_pipeline_sync`, ADR 2026-10-22): the
+        # items it holds stay produced (at-least-once) and count as paused -
+        # the quiesce read uses the UNFILTERED inbox, so held work still blocks
+        # the run terminal.
+        dispatchable = tuple(pre_filter(dispatchable, live))
     deferred_now = {
         item.session_id for item in dispatchable
         if item.session_id in deferred_session_ids

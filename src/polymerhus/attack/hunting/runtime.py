@@ -559,7 +559,23 @@ async def _run_intake(
                for key in lifecycle.RUN_RECORD_KEYS):
             await _write_record()
 
-    threshold, basis = lifecycle.threshold_config()
+    # The threshold (S2 7.4 + ADR `hunting-pipeline-sync-adr.md`): the project's
+    # stored `settings.hunting.risk_threshold` wins over the env. Blocking pg
+    # read, offloaded; fail-open to the env/default basis.
+    try:
+        from polymerhus.app.clients import pg as _pg  # noqa: PLC0415
+
+        hunting_settings = await asyncio.to_thread(
+            _pg.get_hunting_settings, project_id)
+    except Exception as exc:  # noqa: BLE001 - fail-open: the env basis holds
+        logger.warning(
+            "hunting run %s: the hunting settings read degraded (%s); the "
+            "threshold falls back to the env/default basis (fail-open)",
+            run_id, exc,
+        )
+        hunting_settings = {}
+    threshold, basis = lifecycle.threshold_config(
+        db_value=(hunting_settings or {}).get("risk_threshold"))
     if record:
         run = await asyncio.to_thread(
             _resume_intake, store, project_id, record)
@@ -1095,10 +1111,15 @@ async def start_hunting(
     the whole pipeline is observable through this coroutine. T4b (#387) retired
     the config family: there is no config input and no hunt-store threading.
 
-    The INTERLEAVE (S1 7.3): the pass and the surfer are independent sessions,
-    so the surfer moves and dispatches produced loop files while the pass models
-    the next unit. The pass never waits for dispatch: `_run_intake` awaits only
-    the pass body, the model read and the run-record write.
+    The INTERLEAVE (S1 7.3) in the `parallel` sync mode: the pass and the
+    surfer are independent sessions, so the surfer moves and dispatches produced
+    loop files while the pass models the next unit.
+    The default `batched` mode and `serial` deliberately close that interleave:
+    the whole risk budget is modelled first, then the run's queue is worked one
+    phase at a time (ADR `hunting-pipeline-sync-adr.md`, the mode is frozen on
+    the run record's `pipeline_sync`). The pass never waits for dispatch in any
+    mode: `_run_intake` awaits only the pass body, the model read and the
+    run-record write.
 
     RESUME (S1 7.5): when the run row already carries a run record with an
     `intake_order`, the run RESUMES it - it re-enters at the recorded
@@ -1147,6 +1168,10 @@ async def start_hunting(
             arun_modeller_pass,
         )
         from polymerhus.attack.hunting import surfer as surfer_mod  # noqa: PLC0415
+        from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
+            make_sync_gate,
+            resolve_mode,
+        )
         from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
             RunDispatchState,
             build_run_dispatch,
@@ -1303,20 +1328,60 @@ async def start_hunting(
         if not resume_record.get("intake_order"):
             resume_record = None
 
+        # The pipeline sync mode (ADR `hunting-pipeline-sync-adr.md`): the run
+        # record's frozen value wins on a resume, else the project setting, else
+        # `batched`. The read is blocking, offloaded, and fail-open to the
+        # documented default.
+        try:
+            hunting_settings = await asyncio.to_thread(
+                pg.get_hunting_settings, project_id)
+        except Exception as exc:  # noqa: BLE001 - fail-open: the default mode
+            logger.warning(
+                "start_hunting: hunting config read for project %s failed (%s); "
+                "the default sync mode applies (fail-open)", project_id, exc,
+            )
+            hunting_settings = {}
+        sync_mode = resolve_mode(
+            (resume_record or {}).get("pipeline_sync"), hunting_settings)
+
+        # The latest run record the sync gate reads its queue tie-break from
+        # (the intake order): updated by every `_write_run_record` (same worker
+        # loop, no lock).
+        run_record_cell: dict = dict(resume_record or {})
+
         async def _write_run_record(record: dict) -> None:
             """Persist the run record onto the run row (S1 9.4, S2 9.2).
 
-            Blocking pg write, offloaded like every other pg call here. Fail-open:
-            a failed record write warns and the run continues - the total stays
-            re-derivable from the models on disk, and the resume recomputes it."""
+            The frozen sync mode rides every write (`pipeline_sync`), so the run
+            row says how the run was synchronised. Blocking pg write, offloaded
+            like every other pg call here. Fail-open: a failed record write warns
+            and the run continues - the total stays re-derivable from the models
+            on disk, and the resume recomputes it."""
+            run_record_cell.clear()
+            run_record_cell.update(record)
+            payload = {**record, "pipeline_sync": sync_mode.value}
             try:
                 await asyncio.to_thread(
-                    pg.set_hunting_run_stats, hunting_run_id, record)
+                    pg.set_hunting_run_stats, hunting_run_id, payload)
             except Exception as exc:  # noqa: BLE001 - fail-open
                 logger.warning(
                     "start_hunting: run record write for %s failed (%s); "
                     "continuing (fail-open)", hunting_run_id, exc,
                 )
+
+        # The sync gate (ADR `hunting-pipeline-sync-adr.md`): None in
+        # `parallel`, the ledger-backed gate in `batched`/`serial`. It is run
+        # state, never a session; the surfer consults it once per tick.
+        state.sync_gate = make_sync_gate(
+            sync_mode,
+            project_id=project_id,
+            run_id=hunting_run_id,
+            threat_store=run_threat_store,
+            hunter_store=hunter_store,
+            pod_store=pod_store,
+            intake_order=lambda: tuple(
+                run_record_cell.get("intake_order") or ()),
+        )
 
         async def _modeller_units_pass():
             """The run's ONE pass session: freeze the intake (or resume the run

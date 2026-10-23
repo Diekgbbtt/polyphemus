@@ -80,7 +80,7 @@ Each decision below must appear in the named spec section. The adversarial revie
 | R2-3: hunter data contract delta (one loop record per dispatch) | S3 8.2; S2 8.2 |
 | R2-4: no `HuntConfig`; the per-loop payload is materialised at dispatch | S2 8; S3 8.2 |
 | R2-5: progressive risk budget | S1 7.4; S2 7.4 |
-| R2-6: dispatch interleave | S1 7.3; S2 8.4 |
+| R2-6: dispatch interleave (the `parallel` sync mode; `batched`/`serial` add the phase gate) | S1 7.3; S2 8.4; ADR `hunting-pipeline-sync-adr.md` |
 | R2-7: KB disposal | S1 5.6; S3 8.8 |
 | R2-8 / R2-9: model lifecycle and consumption | S2 8.4, 9 |
 | R2-11: one generic store-write surface; passive trajectory keeping | S1 5.1; S2 10.3 |

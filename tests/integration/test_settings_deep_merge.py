@@ -89,3 +89,21 @@ def test_partial_nested_put_preserves_sibling_blocks(pg_mod, project):
     assert scope["mode"] == "exact"
     assert scope["exclusions"] == ["static.example"]  # sibling field preserved
     assert pg_mod.load_settings(project)["notes"] == {"owner": "ops"}  # untouched
+
+
+def test_partial_hunting_put_preserves_siblings_and_the_recon_blob(pg_mod, project):
+    """The hunting sibling blob merges like `recon` and never touches it
+    (`hunting_pipeline_sync` + the risk threshold are independent keys)."""
+    pg_mod.save_hunting_settings(project, {"pipeline_sync": "serial"})
+    pg_mod.save_hunting_settings(project, {"risk_threshold": 250})
+    pg_mod.save_settings(project, {"target_domain": "shop.example"})
+
+    hunting = pg_mod.get_hunting_settings(project)
+    assert hunting == {"pipeline_sync": "serial", "risk_threshold": 250}
+    assert pg_mod.load_settings(project)["target_domain"] == "shop.example"
+
+    # A later mode-only write keeps the threshold (and the recon blob untouched).
+    pg_mod.save_hunting_settings(project, {"pipeline_sync": "parallel"})
+    assert pg_mod.get_hunting_settings(project) == {
+        "pipeline_sync": "parallel", "risk_threshold": 250}
+    assert pg_mod.load_settings(project)["target_domain"] == "shop.example"
