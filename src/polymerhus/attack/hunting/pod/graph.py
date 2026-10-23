@@ -247,7 +247,7 @@ def _resolve_variant_decision(decision: dict, spec: dict,
     # records that the base symptom was never confirmed through this variant.
     base_symptoms = [str(s) for s in (spec.get("verification_symptoms") or [])]
     derived_symptoms = [str(s) for s in (derived.get("verification_symptoms") or [])]
-    if derived_symptoms and derived_symptoms != base_symptoms:
+    if derived_symptoms != base_symptoms:
         note = (note + " [off-spec: the derived variant changes the verification "
                 "symptoms; it is recorded as a derived spec and its confirmation "
                 "does not confirm the base spec's symptom]").strip()
