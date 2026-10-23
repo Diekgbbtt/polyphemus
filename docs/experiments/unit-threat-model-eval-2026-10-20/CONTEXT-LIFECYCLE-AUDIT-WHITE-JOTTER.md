@@ -1044,6 +1044,8 @@ The impact map is `docs/design/project-specific-skill-path-impact-map.md`.
 
 The system-prompt, loop-payload, and tool-description compressions are design decisions.
 They stop at the proposal for the user's decision.
+The formal source-level duplication audit is in `CONTEXT-DUPLICATION-FORMAL-ANALYSIS.md`.
+It covers every analysis, hunting, and boundary agent and proposes the single typed context compiler.
 The n-turn offload experiment is an analysis; it does not change production code.
 The measured n-turn offload is rejected: it lowers raw context by 77.0%, but loses 78.2% of the cache read and has a full-session net of -435,207 tokens.
 The first offload costs 18.1 times more cache than it saves raw.
