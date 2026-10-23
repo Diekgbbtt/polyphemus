@@ -201,3 +201,26 @@ PYTHONPATH=src .../python -m compileall -q src/polymerhus/attack/hunting/pod
 ## Known baseline failure
 
 `tests/integration/test_test_executor_pod_contracts.py::test_tool_contract_rejects_foreign_params` fails before this work because the shared `StoreToolBase` translates `extra_forbidden` into a coded rejection instead of raising. Slice 0 updates the test to the current contract.
+
+## Result
+
+All slices landed on `feat/staged-triage-decision-tree`.
+
+- The staged order and the compact short-circuits: `tests/attack/pod/test_staged_triage.py`.
+- The stage context projections: `tests/attack/pod/test_context.py`.
+- The stage tool surfaces: `tests/attack/pod/test_react_seams.py`.
+- The stage prompts: `tests/attack/pod/test_prompts.py`.
+- The off-spec guard: `tests/attack/pod/test_variant_mint.py`.
+- The production staged lane: the integration pod contracts and the e2e walkthrough, with the stage-aware fake model in `tests/support/staged_triager_fake.py`.
+
+Verification:
+
+- `tests/attack/pod` + the pod integration contracts + the e2e walkthrough: **340 passed**.
+- `tests/attack`: **959 passed**.
+- `tests/integration`: 287 passed, 79 skipped, 3 failed / 3 errors in the live assigner eval (`tests/integration/test_assigner_eval_live.py`) - unrelated to the pod and pre-existing/environmental.
+- `compileall` on `src/polymerhus/attack/hunting/pod`: clean.
+
+The design spec update is in `docs/design/hunting-67-test-executor-pod-spec.md` section 8.11, `docs/design/hunting-84-pod-memory-system-spec.md` section 7, and `src/polymerhus/attack/hunting/CONTEXT.md`.
+
+The token estimate is not re-measured on a live trial in this branch; the structural tests pin the compact first call (no tools, compact delta, shorter prompt) and the full miner call.
+

@@ -91,7 +91,12 @@ def _normalize_decision(raw) -> dict:
 
     The graph validates a terminal and resolves a variant; an unknown action
     degrades to a safe terminal so a malformed stage result never mints."""
-    decision = dict(raw) if isinstance(raw, dict) else {}
+    if hasattr(raw, "model_dump"):
+        decision = raw.model_dump()
+    elif isinstance(raw, dict):
+        decision = dict(raw)
+    else:
+        decision = {}
     if decision.get("action") not in ("terminate", "variant"):
         decision["action"] = "terminate"
     if decision["action"] == "terminate":
