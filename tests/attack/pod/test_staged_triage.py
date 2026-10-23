@@ -267,3 +267,47 @@ def test_staged_stage_failure_degrades_to_a_safe_terminal():
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
     assert any("degraded" in i["note"].lower()
                for i in env["evidence"]["interpretations"])
+
+
+# --- the first-call occupancy proof -------------------------------------------
+
+def test_stage_a_receives_the_compact_delta_and_stage_c_the_full_delta():
+    """The graph hands Stage A the compact delta (no procedure, no variants, no
+    probe trail, no memory key-list); the orchestrator hands the miner the full
+    triager delta. The compact delta is strictly smaller - the structural half
+    of the first-call token claim."""
+    seen = {}
+
+    def assess(spec, observation, messages, log):
+        seen["compact"] = messages[0]["content"]
+        return _assessment(note="the marker is not reflected")
+
+    def diverge(spec, observation, messages, log):
+        return {"runner_diverged": False, "note": "the procedure was followed"}
+
+    def mine(spec, observation, messages, log):
+        seen["full"] = messages[0]["content"]
+        return {"classification": "symptom-absent", "action": "terminate",
+                "verdict": "unsuccessful",
+                "terminal_reason": "no-symptom-evidence", "clean": False,
+                "note": "no further variant"}
+
+    env = _run(arun_pod(
+        PROCEDURE_SPEC, exec_fn=_exec, runner_step_fn=symbolic_runner_step_fn,
+        triager_stages=_stages(assess=assess, diverge=diverge, mine=mine),
+        trace_fn=_no_trace))
+
+    compact, full = seen["compact"], seen["full"]
+    assert "## Verification symptoms" in compact
+    assert "## Target identity" in compact
+    assert "## Latest observation" in compact
+    assert "## Skill procedure" not in compact
+    assert "## Variants already tried" not in compact
+    assert "## Probes executed" not in compact
+    assert "Pod experiment memory" not in compact
+    assert "## Skill procedure" in full
+    assert "## Variants already tried" in full
+    assert "## Probes executed" in full
+    assert "Pod experiment memory" in full
+    assert len(compact) < len(full)
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
