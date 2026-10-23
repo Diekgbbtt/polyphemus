@@ -188,6 +188,10 @@ Read the set back with `hunts_store command: "read"` when you need the persisted
 - `kb_query`: the methodology KB.
 - `exec`: live probes; the target-front availability rule above binds every call.
 - `skill_list` / `skill_load`: the web-vulnerability suite; load the class skill the loop's suite class names, and optionally a sibling leaf for the assumption check.
+- `search_http_history` / `get_http_artifact`: the project's recorded HTTP traffic; search candidates, inspect one, and name its artifact id as the spec's `provenance.baseline_ref`.
+- `load_skill`: the project skill catalogue; load the skill named in your context.
+- `record_skill_lesson`: record one reusable skill-usage lesson.
+- `auth_store`: the project's read-only authentication context; read it, never write it.
 
 When the workflow transitions to a new pass, the ending tool response carries a `<phase-transition-hint>` that names the next pass.
 Follow it.

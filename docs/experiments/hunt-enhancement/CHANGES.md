@@ -22,8 +22,9 @@ The trunk is pushed to origin.
 |---|---:|---:|---:|
 | Loop tool surface | 22,470 chars | 0 | 5,361 uncached first-call tokens removed |
 | First human messages | overview + loop, 2 messages | one instance-context message | the compaction pin preserves both |
-| System prompt | 27,085 chars | 28,631 chars | generated spec table and writing rules |
+| System prompt | 27,085 chars | 28,965 chars | generated spec table, writing rules, and the complete tool list |
 | Spec body | 2,004-char partial prose | 2,675-char generated projection | every writable field, `skills`, and the bound `run_id` |
+| Tools section | 7 names | 12 names | the stale subset is closed |
 | Phase hint | "each tool result may carry" | transition-only wording | removes a false universal claim |
 | Sharpening block | full evidence dump | id, statement, confidence | evidence detail no longer repeated |
 | Tool descriptions | 22,775 chars | 8,478 chars | -14,297 chars (-62.8%) |
@@ -117,7 +118,7 @@ Focused suites:
 - `tests/recon/test_skill_protocol.py`
 - `tests/recon/test_skill_data_section.py`
 
-The focused runs passed 283 and 397 tests in the two main batches.
+The focused runs passed 283, 397, and 606 tests in the three main batches.
 The combined non-e2e run passed 6,135 tests, skipped 126, and xfailed 1.
 It reported 25 failures and 3 errors.
 Three of those failures reproduce on the untouched trunk and are not caused by this branch:

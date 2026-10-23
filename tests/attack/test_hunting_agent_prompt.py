@@ -397,6 +397,18 @@ def test_the_examples_are_rewritten_for_the_new_passes_and_surface():
     assert "the signed-URL spec is unfeasible" not in examples
 
 
+def test_the_tools_section_names_every_bound_tool():
+    """The hand-written summary is a human projection; it must not omit a
+    bound capability."""
+    prompt = _prompt()
+    section = prompt[prompt.index("## The tools"):prompt.index("\n## ", prompt.index("## The tools"))]
+    for name in ("hunts_store", "notes", "graph_view", "kb_query", "exec",
+                 "skill_list", "skill_load", "search_http_history",
+                 "get_http_artifact", "load_skill", "record_skill_lesson",
+                 "auth_store"):
+        assert name in section, name
+
+
 def test_the_phase_hint_wording_is_transition_only():
     """The hint is injected only when a pass exits and the response drives the
     next pass; the prompt must not claim that every tool result carries one."""
