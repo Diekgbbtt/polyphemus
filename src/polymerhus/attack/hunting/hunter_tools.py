@@ -58,6 +58,8 @@ no driver and performs no I/O at import (CODING_STANDARD section 6).
 from __future__ import annotations
 
 import json
+import types
+import typing
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
@@ -77,7 +79,12 @@ from .http_history_contract import (
     GET_HTTP_ARTIFACT_DESCRIPTION,
     SEARCH_HTTP_HISTORY_DESCRIPTION,
 )
-from .spec_contract import SpecProvenance, TargetIdentity
+from .spec_contract import (
+    SKILL_PROCEDURE_FIELDS,
+    SkillProcedure,
+    SpecProvenance,
+    TargetIdentity,
+)
 from .hunting_status import TARGET_UNAVAILABLE_DIRECTIVE
 from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
@@ -267,6 +274,88 @@ class SpecWrite(BaseModel):
         return self
 
     model_config = ConfigDict(extra="forbid")
+
+
+def _contract_type(field) -> str:
+    """A compact, human-readable type for one pydantic field."""
+    annotation = field.annotation
+    origin = typing.get_origin(annotation)
+    if origin is list:
+        args = typing.get_args(annotation)
+        inner = _contract_type_name(args[0]) if args else "Any"
+        return f"list[{inner}]"
+    if origin in (typing.Union, types.UnionType):
+        args = typing.get_args(annotation)
+        return " / ".join(_contract_type_name(arg) for arg in args)
+    return _contract_type_name(annotation)
+
+
+def _contract_type_name(annotation) -> str:
+    if annotation is str:
+        return "str"
+    if annotation is type(None):
+        return "null"
+    name = getattr(annotation, "__name__", None)
+    if name:
+        return name
+    return str(annotation).replace("typing.", "")
+
+
+def _contract_row(field, name: str) -> str:
+    """One markdown row for a pydantic field, with the field's own description."""
+    required = "required" if field.is_required() else "optional"
+    description = str(field.description or "").strip()
+    for prefix in ("Optional: ", "Required. "):
+        if description.startswith(prefix):
+            description = description[len(prefix):]
+    description = description.replace(" Required.", "").replace("|", "\\|")
+    if len(description) > 140:
+        description = description[:137].rstrip() + "..."
+    return f"| `{name}` | `{_contract_type(field)}` | {required} | {description} |"
+
+
+def render_spec_contract() -> str:
+    """The human projection of the writable spec contract.
+
+    The pydantic models are the single source. The prompt names every field,
+    its type, its requiredness, and its own description; the request schema
+    remains the machine contract. `run_id` is bound by the tool and `spec_id`
+    is derived from the two keywords, so neither is model-authored.
+    """
+    lines = [
+        "Write exactly one `spec` object per `hunts_store` call. The request "
+        "schema is the machine contract; this table is its human projection.",
+        "`spec_id` is derived as `<fault_keyword>_<strategy_keyword>` and is "
+        "never authored. `run_id` is bound by the tool and is never authored.",
+        "",
+        "The nested `target_identity` and `provenance` objects are expanded below.",
+        "",
+        "| field | type | required | meaning |",
+        "|---|---|---|---|",
+    ]
+    for name, field in SpecWrite.model_fields.items():
+        if name == "status":
+            lines.append("| `status` | `\"hypothesised\" / \"ratified\" / "
+                         "\"dropped\"` | required | The lifecycle verbatim. |")
+            continue
+        if name == "provenance":
+            for pname, pfield in SpecProvenance.model_fields.items():
+                row = _contract_row(pfield, f"provenance.{pname}")
+                if pname == "run_id":
+                    row = row.replace("| optional |", "| bound |")
+                if pname == "skill_procedure":
+                    row = ("| `provenance.skill_procedure` | `SkillProcedure` | "
+                           "optional | The typed seven-field excerpt: "
+                           + ", ".join(f"`{n}`" for n in SKILL_PROCEDURE_FIELDS)
+                           + ". |")
+                lines.append(row)
+            continue
+        if name == "target_identity":
+            for tname, tfield in TargetIdentity.model_fields.items():
+                lines.append(_contract_row(tfield, f"target_identity.{tname}"))
+            continue
+        lines.append(_contract_row(field, name))
+    return "\n".join(lines)
 
 
 class HuntsStoreArgs(BaseModel):

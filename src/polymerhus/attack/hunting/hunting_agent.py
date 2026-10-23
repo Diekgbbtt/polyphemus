@@ -149,9 +149,17 @@ def _load_hunting_agent_skill() -> str:
         from pathlib import Path  # noqa: PLC0415
 
         from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+        from polymerhus.attack.hunting.hunter_tools import (  # noqa: PLC0415
+            render_spec_contract,
+        )
 
         prompts = Path(__file__).resolve().parent / "prompts"
         main = (prompts / "hunting-agent.md").read_text(encoding="utf-8")
+        marker = "<!-- SPEC_BODY -->"
+        if marker not in main:
+            raise ValueError(
+                "hunting-agent.md is missing the generated spec-body marker")
+        main = main.replace(marker, render_spec_contract())
         examples = (prompts / "examples.md").read_text(encoding="utf-8")
         _HUNTING_AGENT_SKILL = with_cortex(
             main.rstrip("\n") + "\n\n" + examples)
@@ -215,8 +223,10 @@ _STEP_PROTOCOL = (
     "below and 'args' is a JSON object conforming EXACTLY to that tool's JSON "
     "schema (the schemas are supplied with this request; unknown fields are "
     "rejected). The harness executes the tool and returns its result as the "
-    "next message. A result may carry a <phase-transition-hint> - follow it as "
-    "the next reasoning phase.\n"
+    "next message. When the workflow transitions to a new pass, the ending tool "
+    "response carries a <phase-transition-hint> naming the next pass; follow "
+    "it. A hint is guidance, never a gate: no call is refused for the pass the "
+    "state is in.\n"
     "- Conclude with a plain message carrying the final rationale (no tool "
     "call) only when the terminal spec-set write has landed or no pass has "
     "work left; the terminal write itself ends the hunt.\n"

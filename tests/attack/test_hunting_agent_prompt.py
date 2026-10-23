@@ -97,6 +97,37 @@ def test_the_encoding_scheme_is_not_a_discrimination_variable():
     assert "never split a spec by encoding" in prompt
 
 
+# --- the spec contract --------------------------------------------------------
+
+def test_the_spec_body_names_every_writable_field_and_nested_contract():
+    """The human projection is complete: every writable `SpecWrite` field, every
+    `SpecProvenance` field, every `TargetIdentity` field, and every
+    `SkillProcedure` field appears. `run_id` is bound and `spec_id` is derived,
+    so neither is a model-authored field."""
+    from polymerhus.attack.hunting.hunter_tools import SpecWrite  # noqa: PLC0415
+    from polymerhus.attack.hunting.spec_contract import (  # noqa: PLC0415
+        SKILL_PROCEDURE_FIELDS,
+        SPEC_PROVENANCE_FIELDS,
+        TargetIdentity,
+    )
+
+    prompt = _prompt()
+    start = prompt.index("## The spec body")
+    body = prompt[start:prompt.index("\n## ", start)]
+
+    for name in SpecWrite.model_fields:
+        assert name in body, name
+    for name in TargetIdentity.model_fields:
+        assert name in body, name
+    for name in SPEC_PROVENANCE_FIELDS:
+        assert name in body, name
+    for name in SKILL_PROCEDURE_FIELDS:
+        assert name in body, name
+    assert "run_id" in body and "bound" in body.lower()
+    assert "spec_id" in body and "derived" in body.lower()
+    assert "skills" in body and "pod runner" in body.lower()
+
+
 # --- the removals -------------------------------------------------------------
 
 
@@ -364,6 +395,17 @@ def test_the_examples_are_rewritten_for_the_new_passes_and_surface():
     assert "The share-route spec is unfeasible" in normalized
     assert "the widened direct-route and signed-URL specs ratified" in normalized
     assert "the signed-URL spec is unfeasible" not in examples
+
+
+def test_the_phase_hint_wording_is_transition_only():
+    """The hint is injected only when a pass exits and the response drives the
+    next pass; the prompt must not claim that every tool result carries one."""
+    prompt = _prompt()
+    assert "Each tool result may carry" not in prompt
+    assert "A result may carry" not in prompt
+    assert "When the workflow transitions to a new pass" in prompt
+    assert "ending tool response" in prompt
+    assert "guidance, never a gate" in prompt
 
 
 def test_the_prompt_stays_within_a_reasonable_size():

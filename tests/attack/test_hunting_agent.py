@@ -71,6 +71,17 @@ def test_compose_grounding_renders_the_loop_payload():
         assert gone not in text
 
 
+def test_step_protocol_respecifies_the_phase_hint_as_a_transition_signal():
+    """The step protocol says the ENDING tool response of a pass carries the
+    hint; it does not claim every tool result carries one."""
+    from polymerhus.attack.hunting.hunting_agent import _STEP_PROTOCOL  # noqa: PLC0415
+
+    assert "A result may carry" not in _STEP_PROTOCOL
+    assert "When the workflow transitions to a new pass" in _STEP_PROTOCOL
+    assert "ending tool response" in _STEP_PROTOCOL
+    assert "guidance, never a gate" in _STEP_PROTOCOL
+
+
 def test_compose_grounding_projects_technical_sharpening_to_load_bearing_fields():
     """The first-step sharpening is a projection, not an evidence dump: every
     agreement id and statement survives, while repeated evidence entries do not
