@@ -246,9 +246,9 @@ def test_hunter_turns_thread_the_project_as_usage_scope(monkeypatch):
     assert calls[0]["usage_scope"] == "proj-a"
 
 
-def test_first_step_carries_the_dedicated_overview_message(monkeypatch):
-    """Q4: the hunt's first turn heads with the dedicated Overview-only
-    HumanMessage; the grounding/first-step message chains to it."""
+def test_first_step_carries_one_pinned_overview_and_loop_message(monkeypatch):
+    """The first human message carries the application overview and the loop
+    grounding together, so the compaction pin preserves both."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
 
     overview = {
@@ -265,12 +265,11 @@ def test_first_step_carries_the_dedicated_overview_message(monkeypatch):
         monkeypatch, [{"answer": "done", "message": AIMessage(content="done")}],
         overview=overview)
     first_turn = calls[0]["new_messages"]
-    assert len(first_turn) == 2
-    assert first_turn[0].content.startswith("APPLICATION OVERVIEW (")
-    assert "Domain: comfyui" in first_turn[0].content
-    grounded = first_turn[1].content
+    assert len(first_turn) == 1
+    grounded = first_turn[0].content
+    assert grounded.startswith("APPLICATION OVERVIEW (")
+    assert "Domain: comfyui" in grounded
     assert "Grounded in the application overview above" in grounded
-    assert "APPLICATION OVERVIEW" not in grounded
     assert "fault-1" in grounded  # the loop grounding still rides the message
 
 

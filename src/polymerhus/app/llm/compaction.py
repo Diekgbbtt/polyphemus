@@ -719,21 +719,47 @@ def _compact_pass(
     replay_keep_tokens: int,
     keep_last_tools: int | None = DEFAULT_KEEP_LAST_TOOLS,
     window: CompactionWindow | None = None,
+    pin_first_human: bool = False,
 ) -> CompactResult:
     """The compact pass's assembly, wrapped by `compact_pass` for fail-open.
 
     Tool pairs are atomic throughout: the exempt tail aligns to a group boundary,
     retention folds or retains whole groups, and the staged trail keeps every
-    group contiguous with the running-summary message only ever on a boundary."""
+    group contiguous with the running-summary message only ever on a boundary.
+
+    `pin_first_human` preserves the leading messages through the first human
+    message byte-identically. The hunting roles use it to keep the application
+    overview, loop payload, unit context, and spec context after compaction."""
     original = list(messages)
+    pinned_count = 0
+    if pin_first_human:
+        for index, message in enumerate(original):
+            if isinstance(message, HumanMessage):
+                pinned_count = index + 1
+                break
+    pinned_prefix = original[:pinned_count]
+    working = original[pinned_count:]
+    if not working:
+        return CompactResult(
+            messages=original,
+            report=CompactReport(
+                exempted_spans=len(original),
+                summarised_spans=0,
+                offloaded_bodies=0,
+                reclaimed_tokens=0,
+                readability=READABILITY_UNCHANGED,
+                summary_status="ok",
+                new_summary=existing,
+            ),
+        )
     tail_size = _align_tail_to_group(
-        original, _exempt_tail_size(original, profile, replay_keep_tokens))
-    tail = original[len(original) - tail_size:] if tail_size else []
+        working, _exempt_tail_size(working, profile, replay_keep_tokens))
+    tail = working[len(working) - tail_size:] if tail_size else []
     # T4 (#216): an oversized message (a failed reasoning turn's giant payload) is
     # never reserved wholesale in the tail - it is bounded (usage stripped + payload
     # excerpted), so post-pass occupancy walks back and the thread converges.
     tail = _bound_oversized_tail(tail, replay_keep_tokens)
-    region = original[:len(original) - tail_size] if tail_size else original
+    region = working[:len(working) - tail_size] if tail_size else working
 
     # Bounded tool retention (#187), pair-atomic: retention is computed over tool
     # GROUPS, not individual `ToolMessage`s - a group is retained iff ALL its tool
@@ -821,7 +847,7 @@ def _compact_pass(
             return CompactResult(
                 messages=original,
                 report=CompactReport(
-                    exempted_spans=tail_size,
+                    exempted_spans=tail_size + pinned_count,
                     summarised_spans=folded_ai_spans,
                     offloaded_bodies=offloaded_bodies,
                     reclaimed_tokens=0,
@@ -851,10 +877,10 @@ def _compact_pass(
                 break
             start = end
         unfolded = folded_input[cut:]
-        staged = (region_staged + unfolded
+        staged = (pinned_prefix + region_staged + unfolded
                   + [SystemMessage(content=new_summary.to_text())] + tail)
     else:
-        staged = _dedup_system_messages(staged) + tail
+        staged = pinned_prefix + _dedup_system_messages(staged) + tail
 
     if not _tool_pairs_adjacent(staged):
         # A malformed input trail (an orphan result no assistant owns) can still
@@ -866,7 +892,7 @@ def _compact_pass(
     return CompactResult(
         messages=staged,
         report=CompactReport(
-            exempted_spans=tail_size,
+            exempted_spans=tail_size + pinned_count,
             summarised_spans=folded_ai_spans,
             offloaded_bodies=offloaded_bodies,
             reclaimed_tokens=reclaimed,
@@ -891,6 +917,7 @@ def compact_pass(
     replay_keep_tokens: int = DEFAULT_REPLAY_KEEP_TOKENS,
     keep_last_tools: int | None = DEFAULT_KEEP_LAST_TOOLS,
     window: CompactionWindow | None = None,
+    pin_first_human: bool = False,
 ) -> CompactResult:
     """Run ONE compact pass (D7/D8, D1-staging): compose the tool-output offload
     and the running summary into a single STAGED result.
@@ -916,7 +943,8 @@ def compact_pass(
             messages, thread_id=thread_id, profile=profile, store=store,
             summariser=summariser, existing=existing,
             replay_keep_tokens=replay_keep_tokens,
-            keep_last_tools=keep_last_tools, window=window)
+            keep_last_tools=keep_last_tools, window=window,
+            pin_first_human=pin_first_human)
     except Exception:  # noqa: BLE001 - fail-open: never into the caller
         logger.warning("compact pass failed; returning the original trail unchanged",
                        exc_info=True)
@@ -937,6 +965,16 @@ def compact_pass(
 # releases on last-known-good. A later successful pass or a recovery trigger
 # resets the streak.
 CONSECUTIVE_PASS_CAP = 3
+
+# The hunting roles' first human message carries the application, loop, unit,
+# and spec context. It is pinned through every compact pass so the model never
+# loses the target after a fold. Other roles keep the default fold behavior.
+PIN_FIRST_HUMAN_ROLES = frozenset({
+    "hunting_hunter",
+    "hunting_threat_modeller",
+    "pod_runner",
+    "pod_triager",
+})
 
 # The barrier's bound on awaiting a pending pass (D1/D4): "generous" - the compact
 # pass runs under the #73 escalating schedule whose default sum is 4500s, so the
@@ -977,14 +1015,16 @@ def _compaction_middleware_cls():
 
         class _CompactionMiddleware(AgentMiddleware):
             def __init__(self, window, ledger, *, store, summariser, profile,
-                         replay_keep_tokens, pending_timeout_s, consecutive_pass_cap):
+                         replay_keep_tokens, pending_timeout_s, consecutive_pass_cap,
+                         pin_first_human=False):
                 self.window = window
                 self.ledger = ledger
                 self.manager = CompactionManager(
                     window, ledger, store=store, summariser=summariser, profile=profile,
                     replay_keep_tokens=replay_keep_tokens,
                     pending_timeout_s=pending_timeout_s,
-                    consecutive_pass_cap=consecutive_pass_cap)
+                    consecutive_pass_cap=consecutive_pass_cap,
+                    pin_first_human=pin_first_human)
 
             def after_model(self, state, runtime):  # noqa: D401 - slice A: ledger only
                 """Update the ledger from the real trail. Non-blocking, never spawns,
@@ -1072,6 +1112,7 @@ class CompactionManager:
         replay_keep_tokens: int = DEFAULT_REPLAY_KEEP_TOKENS,
         pending_timeout_s: float = BARRIER_PENDING_TIMEOUT_S,
         consecutive_pass_cap: int = CONSECUTIVE_PASS_CAP,
+        pin_first_human: bool = False,
     ):
         self.window = window
         self.ledger = ledger or UsageLedger(window)
@@ -1081,6 +1122,7 @@ class CompactionManager:
         self.replay_keep_tokens = replay_keep_tokens
         self.pending_timeout_s = pending_timeout_s
         self.consecutive_pass_cap = consecutive_pass_cap
+        self.pin_first_human = pin_first_human
         self._pending: dict[str, Future] = {}
         self._existing: dict[str, Any] = {}
         self._streak: dict[str, int] = {}
@@ -1304,7 +1346,8 @@ class CompactionManager:
             return compact_pass(
                 messages, thread_id=thread_id, profile=self.profile, store=self.store,
                 summariser=self.summariser, existing=existing,
-                replay_keep_tokens=self.replay_keep_tokens, window=self.window)
+                replay_keep_tokens=self.replay_keep_tokens, window=self.window,
+                pin_first_human=self.pin_first_human)
         except Exception:  # noqa: BLE001 - a pass never raises into the barrier
             logger.warning("compaction: out-of-band pass raised; treating it as failed",
                            exc_info=True)
@@ -1393,6 +1436,7 @@ def create_compaction_middleware(
     replay_keep_tokens: int = DEFAULT_REPLAY_KEEP_TOKENS,
     pending_timeout_s: float = BARRIER_PENDING_TIMEOUT_S,
     consecutive_pass_cap: int = CONSECUTIVE_PASS_CAP,
+    pin_first_human: bool = False,
 ) -> Any:
     """Build the compaction middleware (slices A + E: ledger, spawn, barrier).
 
@@ -1414,6 +1458,7 @@ def create_compaction_middleware(
         replay_keep_tokens=replay_keep_tokens,
         pending_timeout_s=pending_timeout_s,
         consecutive_pass_cap=consecutive_pass_cap,
+        pin_first_human=pin_first_human,
     )
 
 
@@ -1452,6 +1497,7 @@ def build_role_compaction_middleware(
         store=store,
         summariser=build_summariser(role_id),
         profile=resolve_compaction_profile(role_id),
+        pin_first_human=role_id in PIN_FIRST_HUMAN_ROLES,
     )
 
 

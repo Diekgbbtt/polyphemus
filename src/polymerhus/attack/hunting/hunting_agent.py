@@ -597,11 +597,12 @@ def build_hunting_agent(
         # never starts without its prompt.
         skill = _load_hunting_agent_skill()
         overview = _overview_message_for(overview_fn, project_id)
-        new_messages = (
-            ([HumanMessage(content=overview)] if overview else [])
-            + [HumanMessage(content=_compose_first_step(
-                payload, state, chained=bool(overview)))]
-        )
+        first_step = _compose_first_step(
+            payload, state, chained=bool(overview))
+        # ONE pinned instance-context message: the compaction pin preserves the
+        # application overview AND the loop grounding together.
+        first_content = f"{overview}\n\n{first_step}" if overview else first_step
+        new_messages = [HumanMessage(content=first_content)]
         # The five tools ride the generation request REQUEST-ONLY (the standard
         # tool interface): each `convert_to_openai_tool` dict carries its JSON
         # schema in the request's `tools` body - the model emits valid args per
