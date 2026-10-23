@@ -72,7 +72,7 @@ It is additional to the runner total when bound.
 | Tool-description budget and sharing | tool modules | `hunting-tools-design.md` | new policy section | Updated |
 | Auth store read-only for hunting roles | auth seams, pod agents | `auth-store-220-decisions.md`, `analysis-auth-store-view-364-adr.md` | amendments | Updated |
 | Modeller tool list and 5xx pointer | `threat-modeller.md` | `hunting-67-threat-modeller-spec.md` | 5.5, new 13 | Updated |
-| Pod tool lists and auth store | pod prompts, pod agents | `hunting-67-test-executor-pod-spec.md` | 1.4, new 8.11 | Updated |
+| Pod tool lists and auth store | pod prompts, pod agents | `hunting-67-test-executor-pod-spec.md` | 1.4, new 8.12 | Updated |
 | 5xx directive pointer on `exec` | `hunter_tools.py` | `hunting-target-front-availability-adr.md` | decision 2 | Updated |
 | Cache interpretation | measurement only | `session-cache-measurement-348-adr.md` | amendment | Updated |
 | Spec field list superseded pointer | merged spec | `hunting-67-per-agent-specs-spec.md` | 7 | Pointer added |
