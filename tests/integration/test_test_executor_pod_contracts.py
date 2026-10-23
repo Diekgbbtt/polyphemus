@@ -525,9 +525,12 @@ def test_minted_variant_persists_to_its_variants_file(tmp_path):
 
 def test_tool_contract_rejects_foreign_params(tmp_path):
     """A `note` write carrying a parameter outside `NoteToolSpec` is REJECTED by
-    the args schema (`extra="forbid"`, D84-22) - a ValueError at the schema
-    boundary - and `_run` provably never executes. The harness does not
-    re-validate: the tool's OWN contract is the validator."""
+    the args schema (`extra="forbid"`, D84-22) and `_run` provably never
+    executes. The harness does not re-validate: the tool's OWN contract is the
+    validator. The shared `StoreToolBase` translates the known schema drift
+    (`extra_forbidden`) into the coded teaching rejection the model can act on,
+    instead of a bare validation raise (#209 contract); the call is still
+    rejected before `_run`."""
     store = PodMemoryStore(tmp_path)
     calls = []
 
@@ -537,10 +540,11 @@ def test_tool_contract_rejects_foreign_params(tmp_path):
             return super()._run(**kwargs)
 
     tool = SpyTool(store=store, spec_id="spec-x")
-    with pytest.raises(ValueError):
-        tool.invoke({"operation": "write", "order": 0,
-                     "note_name": "x", "kind": "experiment_summary",
-                     "body": "consolidation", "surprise_field": "oops"})
+    rejected = tool.invoke({"operation": "write", "order": 0,
+                            "note_name": "x", "kind": "experiment_summary",
+                            "body": "consolidation", "surprise_field": "oops"})
+    assert "note_args_rejected" in rejected
+    assert "surprise_field" in rejected
     assert calls == []                              # never reached _run
 
 
