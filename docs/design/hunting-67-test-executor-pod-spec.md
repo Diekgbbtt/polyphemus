@@ -569,7 +569,7 @@ The workbench R8-3 and Q48 are the decision authority.
 The reduced D4 surface is shared with S3 8.6.
 The variant basis is the only new decision object.
 The pod's binary terminal invariant, six-way termination, fixed caps, and experiment-log shape stay.
-### 8.11 Context dedup amendment (2026-10-23)
+### 8.12 Context dedup amendment (2026-10-23)
 
 The shared decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
 The impact map is `docs/design/hunting-context-dedup-impact-map.md`.
