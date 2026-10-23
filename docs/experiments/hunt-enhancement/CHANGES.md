@@ -118,7 +118,7 @@ Focused suites:
 - `tests/recon/test_skill_protocol.py`
 - `tests/recon/test_skill_data_section.py`
 
-The focused runs passed 283, 397, and 606 tests in the three main batches.
+The focused runs passed 283, 397, and 607 tests in the three main batches.
 The combined non-e2e run passed 6,135 tests, skipped 126, and xfailed 1.
 It reported 25 failures and 3 errors.
 Three of those failures reproduce on the untouched trunk and are not caused by this branch:
