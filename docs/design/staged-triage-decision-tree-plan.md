@@ -215,8 +215,8 @@ All slices landed on `feat/staged-triage-decision-tree`.
 
 Verification:
 
-- `tests/attack/pod` + the pod integration contracts + the e2e walkthrough: **340 passed**.
-- `tests/attack`: **959 passed**.
+- `tests/attack/pod` + the pod integration contracts + the e2e walkthrough: **342 passed**.
+- `tests/attack`: **961 passed**.
 - `tests/integration`: 287 passed, 79 skipped, 3 failed / 3 errors in the live assigner eval (`tests/integration/test_assigner_eval_live.py`) - unrelated to the pod and pre-existing/environmental.
 - `compileall` on `src/polymerhus/attack/hunting/pod`: clean.
 
