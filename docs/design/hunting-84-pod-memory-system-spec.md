@@ -224,6 +224,13 @@ data/<project_id>/test-executor-pod/
 - The model's JUDGMENT enters only as CONTENT through these mechanical stages (the triager's classification/note,
   the runner's command), never as an LLM-initiated log write.
 
+**Staged triage reads (2026-10-23).**
+The triager is staged (`hunting-67-test-executor-pod-spec.md` section 8.11): Stage A reads the note + the spec symptoms + the observation, Stage B adds the typed procedure and the probe trail, Stage C reads the full log slice, and Stage D reads the trail + the variants + the KB flags.
+All four stages read the SAME per-spec store and the SAME variant's experiment-log file; none writes it.
+The graph's triager node still records ONE `Interpretation` per lap from the staged orchestrator's final decision, through the existing `record_interpretation` stage - the pure-log invariant is unchanged.
+The per-turn memory key-list is included only in the full Stage C delta; the compact stages do not pay it.
+The `experiment_summary` is still the terminal record of the variant's experiment-log file; Stage A and Stage B read it verbatim, Stage C reads it with the full slice, and Stage D reads it with the trail and the KB flags.
+
 ### 8. KB-retrieve response recording (implemented T3/#179)
 
 - The KB tool is `KbQueryTool` - the single `query_lightrag` tool from the `lightrag` branch, always-bound as of
