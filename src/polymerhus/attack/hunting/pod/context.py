@@ -355,3 +355,111 @@ def compose_triager_delta(log: ExperimentLog, spec: dict,
                        "(no consolidation note for this stretch yet)")
     return (f"{note_part}\n\n{log.triager_context(spec, observation)}\n\n"
             f"{compose_memory_guidance(store, spec_id)}")
+
+
+def _note_block(store, spec_id: str, order: int) -> str:
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+
+    note_body = read_variant_summary(store, spec_id, order)
+    return (f"## Runner's consolidation note (verbatim)\n{note_body}" if note_body
+            else "## Runner's consolidation note (verbatim)\n"
+                 "(no consolidation note for this stretch yet)")
+
+
+def _symptom_block(spec: dict) -> str:
+    symptoms = spec.get("verification_symptoms") or []
+    if not isinstance(symptoms, (list, tuple)) or not symptoms:
+        return ""
+    return "## Verification symptoms\n" + "\n".join(f"- {s}" for s in symptoms)
+
+
+def _identity_block(spec: dict) -> str:
+    identity = spec.get("target_identity")
+    if not isinstance(identity, dict) or not identity:
+        return ""
+    rows = [f"- {key}: {value}" for key, value in identity.items() if value]
+    return "## Target identity\n" + "\n".join(rows) if rows else ""
+
+
+def _assumption_block(spec: dict) -> str:
+    assumptions = spec.get("assumptions") or []
+    if not isinstance(assumptions, (list, tuple)) or not assumptions:
+        return ""
+    return "## Assumptions\n" + "\n".join(f"- {a}" for a in assumptions)
+
+
+def _observation_block(observation: RawObservation | None) -> str:
+    if observation is None:
+        return ""
+    obs = observation.model_dump()
+    obs["body"] = (obs.get("body") or "")[:_BODY_SLICE]
+    return f"## Latest observation\n{json.dumps(obs, indent=2)}"
+
+
+def compose_triage_delta(log: ExperimentLog, spec: dict,
+                         observation: RawObservation | None, *, store,
+                         spec_id: str, order: int) -> str:
+    """Stage A's COMPACT delta: the note, the verification symptoms, the target
+    identity, the assumptions, and the latest observation.
+
+    It deliberately excludes the typed procedure excerpt, the variants already
+    tried, the executed probe trail, the interpretations, and the memory
+    guidance - the material the first-pass failure/confirmation check does not
+    need and the full miner loads only when it is reached."""
+    parts = [_note_block(store, spec_id, order), _symptom_block(spec),
+             _identity_block(spec), _assumption_block(spec),
+             _observation_block(observation)]
+    return "\n\n".join(part for part in parts if part)
+
+
+def compose_divergence_delta(log: ExperimentLog, spec: dict,
+                             observation: RawObservation | None, *, store,
+                             spec_id: str, order: int) -> str:
+    """Stage B's delta: the compact triage delta plus the typed `SkillProcedure`
+    excerpt and the executed probe trail.
+
+    The typed excerpt is the procedure-diff material the spec renders; the
+    probes are what actually ran. The variants and the interpretations stay out:
+    divergence is a procedure comparison, not a duplicate check."""
+    parts = [compose_triage_delta(log, spec, observation, store=store,
+                                  spec_id=spec_id, order=order),
+             _skill_procedure_context(spec)]
+    probes = _executed_probe_lines(log.raw_observations)
+    if probes:
+        parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
+    return "\n\n".join(part for part in parts if part)
+
+
+def compose_terminal_delta(log: ExperimentLog, spec: dict,
+                           observation: RawObservation | None, *, store,
+                           spec_id: str, order: int) -> str:
+    """Stage D's delta: the compact triage delta plus the executed probe trail,
+    the variant bases already tried, the recent interpretations, and the KB
+    degraded flags.
+
+    The terminal reason needs the coverage and the KB impairment, not the typed
+    procedure or the skill surface. A degraded KB observation is printed as
+    such so the compact turn can refuse a clean absence."""
+    parts = [compose_triage_delta(log, spec, observation, store=store,
+                                  spec_id=spec_id, order=order)]
+    probes = _executed_probe_lines(log.raw_observations)
+    if probes:
+        parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))
+    if log.variant_specs:
+        lines = []
+        for v in log.variant_specs:
+            label = v.ref if not v.declined_attribute else \
+                f"{v.ref} (basis: {v.declined_attribute}, parent {v.parent_ref})"
+            lines.append(f"- {label}")
+        parts.append("## Variants already tried\n" + "\n".join(lines))
+    if log.kb_observations:
+        lines = [
+            f"- {k.variant_ref or 'v?'} query={k.query[:120]!r} "
+            f"source={k.source} degraded={k.degraded}"
+            for k in log.kb_observations[-_PROBE_LINES:]]
+        parts.append("## KB observations\n" + "\n".join(lines))
+    if log.interpretations:
+        recent = log.interpretations[-5:]
+        parts.append("## Recent interpretations\n"
+                     + "\n".join(f"- [{i.classification}] {i.note}" for i in recent))
+    return "\n\n".join(part for part in parts if part)

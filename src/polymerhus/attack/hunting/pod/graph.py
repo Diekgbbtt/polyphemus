@@ -63,7 +63,10 @@ import logging
 from langgraph.graph import END, START, StateGraph
 
 from polymerhus.attack.hunting.pod.agents import (
+    default_divergence_fn,
     default_runner_step_fn,
+    default_terminal_fn,
+    default_triage_fn,
     default_triager_fn,
 )
 from polymerhus.attack.hunting.pod.prompts import (
@@ -81,8 +84,10 @@ from polymerhus.attack.hunting.pod.context import (
     _dicts_to_lc,
     _lc_to_dicts,
     compose_runner_delta,
-    compose_triager_delta,
+    compose_triage_delta,
 )
+from polymerhus.attack.hunting.pod.triage import TriageStages, make_staged_triager
+
 from polymerhus.attack.hunting.pod.llm import (
     POD_DEFAULT_RUN_ID,
     POD_RUNNER_ROLE,
@@ -425,6 +430,7 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
+                    triager_stages=None,
                     runner_middleware=(), triager_middleware=(),
                     memory_store=None, model_factory=None,
                     project_id=None, spec_id=None, graph_view_fn=None,
@@ -437,7 +443,12 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
       stretch (the `tool_exec` node stays unregistered); an injected sync fake =
       the contract-tier lane (the bounded `runner_agent` <-> `tool_exec` loop).
     - `triager_fn(spec, observation, messages, log) -> decision` - the critic;
-      the production default is the note-reading `stateful_turn` (D84-23).
+      an injected seam keeps the pre-staging single-turn lane. The PRODUCTION
+      default (`None`) is the staged triage tree (`triage.make_staged_triager`).
+    - `triager_stages` - the four stage callables (`TriageStages`) the staged
+      tree runs; the production defaults are the compact failure/confirmation,
+      divergence, terminal turns and the full bounded variant miner. Tests
+      inject fakes to observe the decision order.
     - `runner_middleware` / `triager_middleware` - the per-role #95 compaction
       middleware sets the run injected (T5); the production default seams pass
       them to the stateful turns verbatim (D84-12). Default `()` = uncompacted.
@@ -464,7 +475,10 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     else:
         production_runner = False
     if triager_fn is None:
-        triager_fn = default_triager_fn
+        stages = triager_stages or TriageStages(
+            assess=default_triage_fn, diverge=default_divergence_fn,
+            mine=default_triager_fn, terminal=default_terminal_fn)
+        triager_fn = make_staged_triager(stages)
         production_triager = True
     else:
         production_triager = False
@@ -685,12 +699,14 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         symptoms = [str(s) for s in (spec.get("verification_symptoms", []) or [])]
         symbolic = evaluate_symptom(symptoms, obs)
         if production_triager:
-            # D84-23/Q13: the delta = the verbatim P3 note + the filtered
-            # context + the memory guidance + variant_refs; the thread holds
-            # the history, so only the delta is new_messages (D84-11). The
-            # session and memory ride the SAME semantic spec id.
+            # The STAGED triage lane: the compact Stage A delta (the note + the
+            # symptoms + the identity + the assumptions + the observation) is
+            # the first call's only human context. The later stages compose
+            # their own deltas from the bound harness. The thread holds the
+            # history, so only the delta is new_messages (D84-11). The session
+            # and memory ride the SAME semantic spec id.
             mem_key = _mem_key(state, spec_id, memory_store)
-            human = {"role": "human", "content": compose_triager_delta(
+            human = {"role": "human", "content": compose_triage_delta(
                 log, spec, obs, store=memory_store,
                 spec_id=mem_key,
                 order=_variant_order(state))}

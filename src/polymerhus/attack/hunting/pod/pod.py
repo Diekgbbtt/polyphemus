@@ -56,6 +56,7 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                    exec_fn: Callable | None = None,
                    runner_step_fn: Callable | None = None,
                    triager_fn: Callable | None = None,
+                   triager_stages=None,
                    trace_fn: Callable | None = None,
                    runner_middleware: Sequence = (),
                    triager_middleware: Sequence = (),
@@ -83,6 +84,12 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     `stateful_turn` verbatim. Default `()` = compaction disabled - the pod runs
     exactly as before, nothing breaks.
 
+    `triager_stages` is the staged triage tree's injection seam (`TriageStages`):
+    the four stage callables the production default builds from the compact
+    failure/confirmation, divergence, terminal turns and the full bounded
+    variant miner. The contract tier injects fakes to observe the order; an
+    explicit `triager_fn` keeps the old single-turn critic.
+
     `memory_store` is the pod-owned experiment-memory store (D84-33; default =
     the per-project root `data/<project_id>/test-executor-pod/` when a PRODUCTION
     seam is in play and `project_id` is provided, else `None` fail-open); the
@@ -105,7 +112,7 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     try:
         graph = build_pod_graph(
             exec_fn=exec_fn, runner_step_fn=runner_step_fn,
-            triager_fn=triager_fn,
+            triager_fn=triager_fn, triager_stages=triager_stages,
             runner_middleware=runner_middleware, triager_middleware=triager_middleware,
             memory_store=memory_store, model_factory=model_factory,
             project_id=project_id, spec_id=spec_id, graph_view_fn=graph_view_fn,

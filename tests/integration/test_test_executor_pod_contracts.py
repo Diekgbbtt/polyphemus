@@ -45,6 +45,12 @@ from polymerhus.attack.hunting.pod.tools import (
 )
 from polymerhus.attack.hunting.pod.types import RunnerStep, TERMINAL_REASONS
 from polymerhus.recon.domain.types import ExecResult
+from tests.support.staged_triager_fake import (
+    StagedTriagerFake,
+    divergence_reply,
+    terminal_reply,
+    triage_reply,
+)
 
 VALID_SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
@@ -370,6 +376,27 @@ _TRIAGER_ABSENT = [
 ]
 
 
+def _staged_factory(runner_script, *, terminal_reason="space-exhausted",
+                    clean=True, note="the terminal stage: no populated procedure"):
+    """A role-keyed factory whose `pod_triager` model answers each staged schema.
+
+    The staged triager runs up to four structured turns on the SAME role; the
+    schema tool name discriminates them. The runner keeps its role script."""
+    def make(role_id):
+        if role_id == POD_TRIAGER_ROLE:
+            return StagedTriagerFake(by_schema={
+                "TriageDecision": triage_reply(
+                    note="the symptom is not confirmed by the observation"),
+                "DivergenceDecision": divergence_reply(
+                    note="the executed procedure followed the typed procedure"),
+                "TerminalDecision": terminal_reply(
+                    terminal_reason=terminal_reason, clean=clean, note=note),
+                "TriagerDecision": _TRIAGER_ABSENT,
+            })
+        return _FakeModel(replies=list(runner_script), idx={})
+    return make
+
+
 def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     """On P3 space exhaustion the production Runner writes the ONE consolidated
     `experiment_summary` as its FINAL tool call (D84-17/19); it lands as the
@@ -395,8 +422,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_factory({POD_RUNNER_ROLE: runner_script,
-                                POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
+        model_factory=_staged_factory(runner_script)))
 
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "space-exhausted"

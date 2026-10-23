@@ -62,6 +62,12 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     spec_identifier,
 )
 from polymerhus.recon.domain.types import ExecResult
+from tests.support.staged_triager_fake import (
+    StagedTriagerFake,
+    divergence_reply,
+    terminal_reply,
+    triage_reply,
+)
 
 # The E1 spec fixture (spec 6.2 E1 input, mirroring the contract tier's
 # VALID_SPEC): target identity "service:web:soupmarket", verification symptom
@@ -201,6 +207,28 @@ _TRIAGER_ABSENT = [
 ]
 
 
+def _staged_factory(runner_script, *, terminal_reason="space-exhausted",
+                    clean=True,
+                    note="the terminal stage: no populated procedure attribute"):
+    """A role-keyed factory whose `pod_triager` model answers each staged schema.
+
+    The staged triager runs up to four structured turns on the SAME role; the
+    schema tool name discriminates them. The runner keeps its role script."""
+    def make(role_id):
+        if role_id == POD_TRIAGER_ROLE:
+            return StagedTriagerFake(by_schema={
+                "TriageDecision": triage_reply(
+                    note="the default probe returned 404; the symptom is not confirmed"),
+                "DivergenceDecision": divergence_reply(
+                    note="the executed probe followed the typed procedure"),
+                "TerminalDecision": terminal_reply(
+                    terminal_reason=terminal_reason, clean=clean, note=note),
+                "TriagerDecision": _TRIAGER_ABSENT,
+            })
+        return _FakeModel(replies=list(runner_script), idx={})
+    return make
+
+
 def _exec(stdout=_OK, returncode=0, calls=None):
     def fake(command, timeout_s):
         if calls is not None:
@@ -292,8 +320,10 @@ def test_degraded_kb_run_does_not_claim_clean_exhaustion(tmp_path, monkeypatch):
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_EXEC_NOTE_CONCLUDE,
-                                POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
+        model_factory=_staged_factory(
+            _REACT_KB_EXEC_NOTE_CONCLUDE,
+            note="the degraded KB is not absence evidence; no populated procedure "
+                 "attribute to bend")))
 
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
@@ -301,9 +331,9 @@ def test_degraded_kb_run_does_not_claim_clean_exhaustion(tmp_path, monkeypatch):
     assert len(exec_calls) == 1
     assert len(env["evidence"]["raw_observations"]) == 1
     assert env["evidence"]["raw_observations"][0]["status"] == 404
-    # The triager's production stateful turn ran (its note rides the
-    # interpretation) - not a symbolic fast path.
-    assert "third-party miner" in env["evidence"]["interpretations"][0]["note"]
+    # The triager's production staged turn ran (its terminal note rides the
+    # interpretation) - the compact terminal stage, not a symbolic fast path.
+    assert "no populated procedure" in env["evidence"]["interpretations"][0]["note"]
 
     # The P3 note still lands as the TERMINAL RECORD of the variant slice.
     from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
@@ -347,8 +377,7 @@ def test_clean_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_factory({POD_RUNNER_ROLE: _REACT_EXEC_NOTE_CONCLUDE,
-                                POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
+        model_factory=_staged_factory(_REACT_EXEC_NOTE_CONCLUDE)))
 
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "space-exhausted"
@@ -356,7 +385,7 @@ def test_clean_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
     assert len(exec_calls) == 1
     assert len(env["evidence"]["raw_observations"]) == 1
     assert env["evidence"]["raw_observations"][0]["status"] == 404
-    assert "third-party miner" in env["evidence"]["interpretations"][0]["note"]
+    assert "no populated procedure" in env["evidence"]["interpretations"][0]["note"]
 
     from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
     slice = store.read_experiment_log(SPEC_ID, 0)
