@@ -60,7 +60,7 @@ from __future__ import annotations
 import json
 import types
 import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
@@ -1078,7 +1078,7 @@ class HttpHistorySearchTool(BaseTool):
         except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
             _note_seam_gap(self, f"http_history_failed: {exc}")
             return json.dumps({"ok": False, "error": "http_history_failed", "detail": str(exc)})
-        return json.dumps(result)
+        return json.dumps(result, separators=(",", ":"))
 
 
 class HttpHistoryGetTool(BaseTool):
@@ -1107,7 +1107,7 @@ class HttpHistoryGetTool(BaseTool):
         except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
             _note_seam_gap(self, f"http_history_failed: {exc}")
             return json.dumps({"ok": False, "error": "http_history_failed", "detail": str(exc)})
-        return json.dumps(result)
+        return json.dumps(result, separators=(",", ":"))
 
 
 def build_hunter_tools(
@@ -1124,6 +1124,7 @@ def build_hunter_tools(
     suite_tools: Sequence[BaseTool] = (),
     suite_classes: Sequence[str] = (),
     suite_read_fn: Callable[[str], str] | None = None,
+    suite_parents: Mapping[str, str] | None = None,
     suite=None,
 ) -> list[BaseTool]:
     """Assemble the bound hunter tool list for the harness `create_agent`
@@ -1139,6 +1140,8 @@ def build_hunter_tools(
     pair wins, else the pair is built over `suite` / `suite_classes` +
     `suite_read_fn` (an empty seam still binds the pair in its fail-open mode,
     so the role is always enabled with an honest class-mapping contract).
+    `suite_parents` is the class-parent map the filtered `skill_list` cascade
+    uses to expand a parent to its leaves and a leaf to its parent.
     Returns the tools in the spec's surface order: `hunts_store` / `notes` /
     `graph_view` / `kb_query` / `exec` / `skill_list` / `skill_load` /
     `search_http_history` / `get_http_artifact`. `graph_view` is the ONE
@@ -1156,7 +1159,8 @@ def build_hunter_tools(
         skills: list[BaseTool] = list(suite_tools)
     else:
         skills = build_vulnerability_suite_tools(
-            classes=suite_classes, read_fn=suite_read_fn, suite=suite)
+            classes=suite_classes, read_fn=suite_read_fn,
+            parents=suite_parents, suite=suite)
 
     return [
         HuntsStoreTool(store=store, project_id=project_id, hunt_key=hunt_key,

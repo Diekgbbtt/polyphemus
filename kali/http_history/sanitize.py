@@ -128,28 +128,29 @@ def sanitize_artifact(artifact: HttpArtifact) -> dict:
 
 
 def sanitize_summary(artifact: HttpArtifact) -> dict:
-    """The compact search-row projection: identity + safe scalars only."""
-    try:
-        host = urlsplit(artifact.request.url).hostname or ""
-    except ValueError:
-        host = ""
+    """The candidate-row projection: identity, triage scalars, and lineage.
+
+    The search row is a menu, not a record. The full view is
+    `sanitize_artifact`, which carries `capture_state`, timings, and the
+    connection record. Do not add a field here unless the search decision
+    needs it on every row.
+    """
     response = artifact.response
     status = response.status if response is not None else None
-    return {
+    summary = {
         "artifact_id": artifact.artifact_id,
-        "project_id": artifact.project_id,
-        "created_at": artifact.created_at,
         "method": artifact.request.method,
         "url": sanitize_url(artifact.request.url),
-        "host": host,
         "status": status,
-        "status_class": f"{status // 100}xx" if isinstance(status, int) else None,
-        "http_version": artifact.request.http_version,
-        "request_size": artifact.request.body_size,
-        "response_size": response.body_size if response is not None else 0,
-        "timing_ms": artifact.timings.total_ms,
-        "tls": artifact.connection.tls,
-        "error_type": artifact.error.type if artifact.error is not None else None,
-        "derived_from": artifact.derived_from,
-        "replay_kind": artifact.replay_kind,
     }
+    if artifact.request.body_size:
+        summary["request_size"] = artifact.request.body_size
+    if response is not None and response.body_size:
+        summary["response_size"] = response.body_size
+    if artifact.derived_from:
+        summary["derived_from"] = artifact.derived_from
+    if artifact.replay_kind:
+        summary["replay_kind"] = artifact.replay_kind
+    if artifact.error is not None:
+        summary["error"] = artifact.error.type
+    return summary

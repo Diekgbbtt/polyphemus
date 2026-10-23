@@ -232,6 +232,20 @@ def list_suite_leaves(catalogue: "SkillCatalogue | None" = None) -> list[str]:
     return _live_catalogue().suite_leaves()
 
 
+def list_suite_parents(
+    catalogue: "SkillCatalogue | None" = None,
+) -> dict[str, str]:
+    """Every suite skill's class parent, for the filtered listing cascade.
+
+    A class parent maps to itself. A variant leaf maps to its level-1 class
+    directory. The map is derived from the mounted tree, so an abbreviated
+    leaf such as `bfla-alternate-path` resolves to
+    `broken-function-level-authorization` without a hand-written index."""
+    if catalogue is not None:
+        return catalogue.suite_parents()
+    return _live_catalogue().suite_parents()
+
+
 def read_suite_raw(name: str, catalogue: "SkillCatalogue | None" = None) -> str:
     """One suite class's raw `SKILL.md` text (frontmatter intact), for the
     suite seam's listing parser and load. An unknown name degrades to ""."""
@@ -435,6 +449,26 @@ class SkillCatalogue:
             name for name, bundle in self._bundles.items()
             if suite_root in bundle.resolve().parents
         )
+
+    def suite_parents(self) -> dict[str, str]:
+        """Map every suite skill to its class parent.
+
+        A class parent maps to itself. A variant leaf maps to its level-1
+        class directory. Names outside the suite are absent. The map is
+        derived from the mounted tree, so an abbreviated leaf such as
+        `bfla-alternate-path` still resolves to
+        `broken-function-level-authorization`."""
+        suite_root = (self._root / self._logical_root).resolve()
+        parents: dict[str, str] = {}
+        for name, bundle in self._bundles.items():
+            resolved = bundle.resolve()
+            if suite_root not in resolved.parents:
+                continue
+            if resolved.parent == suite_root:
+                parents[name] = name
+            else:
+                parents[name] = resolved.parent.name
+        return parents
 
     def read_raw(self, name: str) -> str:
         """The named skill's `SKILL.md` text with the frontmatter INTACT (the
@@ -2524,6 +2558,7 @@ __all__ = [
     "list_skills",
     "list_suite_classes",
     "list_suite_leaves",
+    "list_suite_parents",
     "read_suite_raw",
     "render_skill_index",
     "skill_agent_binding",

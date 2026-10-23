@@ -674,11 +674,13 @@ def _default_modeller_tools(
     try:
         from polymerhus.app.llm.skills import (  # noqa: PLC0415
             list_suite_leaves,
+            list_suite_parents,
             read_suite_raw,
         )
 
         tools.suite_classes = tuple(list_suite_leaves())
         tools.suite_read_fn = read_suite_raw
+        tools.suite_parents = list_suite_parents()
     except Exception as exc:  # noqa: BLE001 - the suite seam degrades fail-open
         logger.warning(
             "start_hunting: web-vulnerability suite seam unavailable (%s); "

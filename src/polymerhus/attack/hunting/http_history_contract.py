@@ -58,13 +58,15 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
     "`absent` instead. `value` is a string or number; `eq` does not accept "
     "booleans. A misspelled op, side, or namespace is `invalid_filter`, not an "
     "empty result. `limit` is 1..200; paging is deterministic on "
-    "(created_at, artifact_id): pass `next_cursor` back. Rows are sanitized "
-    "summaries and candidates. Inspect one with `get_http_artifact` and record "
-    "its artifact_id in `provenance.baseline_ref`.\n"
+    "(created_at, artifact_id): pass `next_cursor` back. Inspect one with "
+    "`get_http_artifact` and record its artifact_id in "
+    "`provenance.baseline_ref`.\n"
     "Failures are in-band: `invalid_filter`, `not_found`, `corrupt_artifact`, "
-    "`unavailable` or `http_history_failed` (missing evidence, never proof of "
-    "an empty surface). Each row carries `capture_state`, `derived_from`, and "
-    "`replay_kind`."
+    "`unavailable` or `http_history_failed` (missing evidence, never proof of an "
+    "empty surface). Rows are candidate summaries: `artifact_id`, `method`, "
+    "`url`, `status`, `request_size`, `response_size`, and non-null "
+    "`derived_from`/`replay_kind`/`error`; `capture_state` is on "
+    "`get_http_artifact`."
 )
 
 GET_HTTP_ARTIFACT_DESCRIPTION: str = (

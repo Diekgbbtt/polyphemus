@@ -492,6 +492,7 @@ def build_hunting_agent(
     http_get_fn=None,
     suite_classes=(),
     suite_read_fn=None,
+    suite_parents=None,
     overview_fn=None,
     checkpointer=None,
     middleware=None,
@@ -506,6 +507,8 @@ def build_hunting_agent(
     S3 8.9, the payload's `dispatch_id`) into the tool surface so the store
     tools can only address that loop; `graph_view_fn` / `kb_fn` / `exec_fn` are
     the injected tool seams (each absent degrades fail-open, O3/O4/C2/C3).
+    `suite_classes` / `suite_read_fn` / `suite_parents` are the suite seam
+    (the filtered `skill_list` cascade uses the parent map).
     `checkpointer` defaults to `get_session_checkpointer()` under
     `module_context("hunting")`; `middleware` defaults to the R5 compaction
     middleware (`build_hunter_compaction_middleware`, #95 D9) - capability
@@ -566,6 +569,7 @@ def build_hunting_agent(
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
             http_search_fn=http_search_fn, http_get_fn=http_get_fn,
             suite_classes=suite_classes, suite_read_fn=suite_read_fn,
+            suite_parents=suite_parents,
         )
         state: dict = {"state": "grounding", "specs": [], "trail": []}
 

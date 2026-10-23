@@ -16,7 +16,8 @@ This module imports no driver and performs no I/O at import (CODING_STANDARD 6).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -38,6 +39,9 @@ from .threat_modeller import (
 )
 
 logger = logging.getLogger(__name__)
+
+MAX_SKILL_FILTER_CHARS = 200
+MAX_SKILL_LIST_ENTRIES = 20
 
 MODEL_SECTIONS: tuple[str, ...] = (
     "technical_sharpening", "trust_model", "assumptions", "vulnerabilities",
@@ -428,11 +432,10 @@ def build_modeller_notes_tool(store, project_id: str, unit_id: str,
 # fail-open, recording the gap instead of breaking the class mapping.
 
 SKILL_LIST_DESCRIPTION = (
-    "List the web-vulnerability suite: class parents and variant leaves, with "
-    "frontmatter descriptions. The class parent is the directory name for "
-    "`web_vulnerability_class`; a variant leaf is assumption-check material. "
-    "An unavailable suite degrades to `suite_gap`: keep the canonical name, "
-    "leave `web_vulnerability_class` empty, never invent a class."
+    "List the suite by a REQUIRED case-insensitive regex over names. A parent "
+    "match includes its leaves; a leaf match includes its parent. Parent: "
+    "`web_vulnerability_class`. Missing/invalid -> `skill_filter_required`/"
+    "`skill_filter_invalid`; no match -> []; unavailable -> `suite_gap`."
 )
 
 SKILL_LOAD_DESCRIPTION = (
@@ -447,7 +450,8 @@ class VulnerabilitySuiteSeam:
     """The web-vulnerability suite seam behind `skill_list` / `skill_load`.
 
     `classes` is the assumed suite's skill set (the class parents and the
-    variant leaves); `read_fn` is the optional injected skill-body reader (the
+    variant leaves); `parents` maps every skill to its class parent (a parent
+    maps to itself); `read_fn` is the optional injected skill-body reader (the
     suite's own contract). A
     seam with no classes - the suite has not landed, or its store is empty -
     degrades fail-open: the listing returns an empty class set, the load returns
@@ -455,6 +459,7 @@ class VulnerabilitySuiteSeam:
     degraded class mapping instead of silently inventing one."""
 
     classes: tuple[str, ...] = ()
+    parents: Mapping[str, str] = field(default_factory=dict)
     read_fn: Callable[[str], str] | None = None
     gaps: list[str] = field(default_factory=list)
 
@@ -465,23 +470,67 @@ class VulnerabilitySuiteSeam:
     def available(self) -> bool:
         return bool(self.classes) and self.read_fn is not None
 
-    def list_classes(self) -> dict:
+    def list_classes(self, pattern: re.Pattern[str] | None = None) -> dict:
+        """List the suite, optionally filtered by a compiled name regex.
+
+        A matched class parent expands to its variant leaves. A matched leaf
+        adds its class parent. The response is grouped parent-first and capped;
+        `omitted` states how many selected entries the cap hid. With no
+        pattern the call lists the whole suite (the seam's fail-open default);
+        the tool always passes a pattern.
+        """
         if not self.classes:
             self.record_gap("suite_unavailable: no suite class is resolvable")
             return {"skills": [], "suite_gap": True,
                     "error": "suite_unavailable",
                     "detail": "the web-vulnerability suite is not available; "
                               "keep the canonical classes and flag the gap"}
+        matched = [
+            name for name in self.classes
+            if pattern is None or pattern.search(name)
+        ]
+        if pattern is not None and not matched:
+            return {"skills": [], "suite_gap": False,
+                    "detail": "no suite skill matches the filter"}
+        selected: set[str] = set()
+        for name in matched:
+            parent = self.parents.get(name, name)
+            selected.add(name)
+            if parent != name:
+                if parent in self.classes:
+                    selected.add(parent)
+            else:
+                selected.update(
+                    child for child, child_parent in self.parents.items()
+                    if child_parent == name and child in self.classes
+                )
+        ordered = sorted(selected, key=lambda name: (
+            self.parents.get(name, name),
+            0 if self.parents.get(name, name) == name else 1,
+            name,
+        ))
+        omitted = max(0, len(ordered) - MAX_SKILL_LIST_ENTRIES)
+        ordered = ordered[:MAX_SKILL_LIST_ENTRIES]
         entries = []
-        for name in self.classes:
+        for name in ordered:
             description = ""
             if self.read_fn is not None:
                 try:
                     description = _frontmatter_description(self.read_fn(name))
                 except Exception:  # noqa: BLE001 - a per-entry degrade
                     description = ""
-            entries.append({"name": name, "description": description})
-        return {"skills": entries, "suite_gap": False}
+            entry = {"name": name, "description": description}
+            parent = self.parents.get(name, name)
+            if self.parents:
+                entry["kind"] = "parent" if name == parent else "leaf"
+                if name != parent:
+                    entry["parent"] = parent
+            entries.append(entry)
+        result = {"skills": entries, "suite_gap": False}
+        if omitted:
+            result["omitted"] = omitted
+            result["detail"] = "narrow the filter; the cap hid the remaining matches"
+        return result
 
     def load_class(self, name: str) -> dict:
         if not self.classes:
@@ -526,7 +575,14 @@ class _SuiteArgs(BaseModel):
 
 
 class SkillListArgs(_SuiteArgs):
-    pass
+    filter: str = Field(
+        default="",
+        description=(
+            "REQUIRED. Case-insensitive Python regex over suite skill names. "
+            "A class-parent match also returns its variant leaves; a leaf "
+            "match also returns its class parent."
+        ),
+    )
 
 
 class SkillLoadArgs(_SuiteArgs):
@@ -543,12 +599,31 @@ class _SkillListTool(BaseTool):
         self._suite = suite
 
     def _run(self, **kwargs: Any) -> dict:
+        filter_text = str(kwargs.get("filter") or "").strip()
+        if not filter_text:
+            return {"skills": [], "suite_gap": False,
+                    "error": "skill_filter_required",
+                    "detail": "pass filter, a case-insensitive regex over suite "
+                              "skill names; for example 'session|csrf'"}
+        if len(filter_text) > MAX_SKILL_FILTER_CHARS:
+            return {"skills": [], "suite_gap": False,
+                    "error": "skill_filter_invalid",
+                    "detail": f"filter is longer than "
+                              f"{MAX_SKILL_FILTER_CHARS} characters"}
         try:
-            return self._suite.list_classes()
+            pattern = re.compile(filter_text, re.IGNORECASE)
+        except re.error as exc:
+            return {"skills": [], "suite_gap": False,
+                    "error": "skill_filter_invalid",
+                    "detail": str(exc), "filter": filter_text}
+        try:
+            result = self._suite.list_classes(pattern=pattern)
         except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
             self._suite.record_gap(f"suite_list_failed: {exc}")
             return {"skills": [], "suite_gap": True,
                     "error": "suite_list_failed", "detail": str(exc)}
+        result["filter"] = filter_text
+        return result
 
 
 class _SkillLoadTool(BaseTool):
@@ -571,6 +646,7 @@ class _SkillLoadTool(BaseTool):
 
 def build_vulnerability_suite_tools(
     *, classes: Sequence[str] = (), read_fn: Callable[[str], str] | None = None,
+    parents: Mapping[str, str] | None = None,
     suite: VulnerabilitySuiteSeam | None = None,
 ) -> list[BaseTool]:
     """Build the `skill_list` / `skill_load` pair over the suite seam.
@@ -579,9 +655,11 @@ def build_vulnerability_suite_tools(
     client component written against its assumed names. A seam without classes
     binds the same tools in the fail-open mode (coded gaps, recorded), so the
     role is always enabled with an honest class-mapping contract instead of a
-    missing tool."""
+    missing tool. `parents` maps every suite skill to its class parent; the
+    filtered listing uses it to expand a parent to its leaves and a leaf to its
+    parent."""
     seam = suite or VulnerabilitySuiteSeam(
-        classes=tuple(classes), read_fn=read_fn)
+        classes=tuple(classes), parents=dict(parents or {}), read_fn=read_fn)
     return [_SkillListTool(suite=seam), _SkillLoadTool(suite=seam)]
 
 
@@ -605,8 +683,9 @@ class ModellerTools:
     unit's pass (the actor's captured tools share it); `unit_cell` is the
     retargetable unit identity; `exec_fn` / `http_search_fn` / `http_get_fn` are
     the live probe and HTTP-history seams (each absent degrades fail-open);
-    `suite` / `suite_tools` / `suite_classes` / `suite_read_fn` are the
-    web-vulnerability suite seam and its injectable pair; `context_provider`
+    `suite` / `suite_tools` / `suite_classes` / `suite_read_fn` /
+    `suite_parents` are the web-vulnerability suite seam and its injectable
+    pair; `context_provider`
     plus the explicit `projection` / `surface_overview` are the grounding-input
     seams (S1 4.6, 5.6). The auth store and the project skill are NOT seams
     here: they arrive through the role's `load_skill` binding (the
@@ -621,6 +700,7 @@ class ModellerTools:
     suite_tools: Sequence[Any] = ()
     suite_classes: Sequence[str] = ()
     suite_read_fn: Callable[[str], str] | None = None
+    suite_parents: Mapping[str, str] = field(default_factory=dict)
     suite: VulnerabilitySuiteSeam | None = None
     unit_cell: ModellerUnit | None = None
     # The RUN-scoped passive tracker. The per-run actor captures its tool
@@ -712,6 +792,7 @@ def build_modeller_tool_surface(
             # recorded (a fresh seam per surface build would lose them)
             tools.suite = VulnerabilitySuiteSeam(
                 classes=tuple(tools.suite_classes),
+                parents=dict(tools.suite_parents),
                 read_fn=tools.suite_read_fn)
         surface.extend(build_vulnerability_suite_tools(suite=tools.suite))
     return {tool.name: tool for tool in surface}

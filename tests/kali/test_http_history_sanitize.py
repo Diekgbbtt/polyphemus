@@ -6,6 +6,7 @@ import json
 from kali.http_history.models import (
     CaptureContext,
     HttpArtifact,
+    HttpError,
     NameValue,
     RequestRecord,
     ResponseRecord,
@@ -50,14 +51,47 @@ def test_sanitized_artifact_keeps_non_secret_headers_and_status():
     assert ["accept", "application/json"] in view["request"]["headers"]
 
 
-def test_sanitized_summary_is_a_compact_safe_projection():
+def test_sanitized_summary_is_the_lean_candidate_projection():
     summary = sanitize_summary(_artifact())
+    assert set(summary) == {
+        "artifact_id", "method", "url", "status", "request_size", "response_size",
+    }
     assert summary["artifact_id"] == "http_01J0000000000000000000000A"
     assert summary["method"] == "POST"
     assert summary["status"] == 200
-    assert summary["host"] == "target.example"
+    assert "target.example" in summary["url"]
+    assert summary["request_size"] == 10
     assert summary["response_size"] == 5
+    assert "capture_state" not in summary
+    assert "project_id" not in summary
     assert _SECRET not in json.dumps(summary)
+
+
+def test_sanitized_summary_carries_only_sparse_lineage_and_error():
+    artifact = _artifact().model_copy(update={
+        "derived_from": "http_01J0000000000000000000000P",
+        "replay_kind": "mutated",
+        "error": HttpError(type="timeout", message="probe timed out"),
+    })
+    summary = sanitize_summary(artifact)
+    assert summary["derived_from"] == "http_01J0000000000000000000000P"
+    assert summary["replay_kind"] == "mutated"
+    assert summary["error"] == "timeout"
+
+    clean = sanitize_summary(_artifact())
+    assert "derived_from" not in clean
+    assert "replay_kind" not in clean
+    assert "error" not in clean
+
+
+def test_sanitized_summary_omits_empty_sizes():
+    artifact = _artifact().model_copy(update={
+        "request": RequestRecord(method="GET", url="https://target.example/"),
+        "response": ResponseRecord(status=204),
+    })
+    summary = sanitize_summary(artifact)
+    assert "request_size" not in summary
+    assert "response_size" not in summary
 
 
 def test_sanitize_never_exposes_body_identity_or_content():
