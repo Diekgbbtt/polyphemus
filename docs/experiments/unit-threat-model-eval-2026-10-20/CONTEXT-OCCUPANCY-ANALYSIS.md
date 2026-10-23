@@ -6,6 +6,13 @@
 **Script:** `audit_context_occupancy.py`.
 **Raw data:** `audit_context_occupancy.json` is produced by the script.
 
+> **Correction (2026-10-23):** the worst-payload attribution below is wrong.
+> The 74,649-character modeller payload is `auth_store`, not `search_http_history`.
+> The modeller's 50-row HTTP page is 22,302 characters.
+> The 11.5M carry figure belongs to the auth store, and the auth-store summary default has already fixed it.
+> The largest remaining hunter payload is `skill_list`.
+> See `TOOL-RESPONSE-OCCUPANCY-ASSESSMENT.md` for the corrected totals and the new ranking.
+
 ## Short answer
 
 The component that occupies the most context over its lifecycle is **tool responses**.
