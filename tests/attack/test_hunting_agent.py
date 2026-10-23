@@ -200,6 +200,25 @@ def _run_stubbed_dispatch(monkeypatch, turns, *, overview=None):
     return dispatch(_hunter_payload()), calls
 
 
+def test_hunter_binds_the_read_only_auth_store(monkeypatch):
+    """The hunter reads auth context; it never writes the store. The binding
+    must select the read-only contract, not the 5.8k full write contract."""
+    from polymerhus.app.auth import seams  # noqa: PLC0415
+    from langchain_core.messages import AIMessage  # noqa: PLC0415
+
+    captured: dict = {}
+    real = seams.auth_capable_binding
+
+    def spy(role_id, **kwargs):
+        captured.update(kwargs)
+        return real(role_id, **kwargs)
+
+    monkeypatch.setattr(seams, "auth_capable_binding", spy)
+    _run_stubbed_dispatch(monkeypatch, [{"answer": "done",
+                                         "message": AIMessage(content="done")}])
+    assert captured.get("with_readonly_auth_store") is True
+
+
 def test_skill_body_rides_system_prompt_not_first_human_message(monkeypatch):
     """(a) the skill body is served as `system_prompt` on the turn, never
     inside the first HumanMessage."""

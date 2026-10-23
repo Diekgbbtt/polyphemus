@@ -44,14 +44,14 @@ def test_directive_names_the_upstream_unavailable_semantics():
     assert "loop" in d or "retry" in d
 
 
-def test_directive_appears_verbatim_in_the_exec_tool_description():
-    """Drift guard: the `exec` claim-verification probe carries the rule verbatim
-    so the hunter model sees it at the exact tool that produced the 502."""
+def test_the_exec_tool_points_at_the_single_sourced_role_rule():
+    """The directive lives once in the role prompt; the `exec` description names
+    it instead of paying a second verbatim copy on every call."""
     from polymerhus.attack.hunting.hunter_tools import ExecTool
 
-    assert hunting_status.TARGET_UNAVAILABLE_DIRECTIVE in ExecTool.model_fields[
-        "description"
-    ].default
+    description = ExecTool.model_fields["description"].default
+    assert hunting_status.TARGET_UNAVAILABLE_DIRECTIVE not in description
+    assert "target front 5xx rule in your role prompt" in description
 
 
 def test_directive_appears_verbatim_in_the_hunter_role_prompt():

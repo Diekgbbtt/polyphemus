@@ -82,60 +82,43 @@ def _schema_surface() -> str:
         (" + L1DataItem" if "L1DataItem" in L1_RECONCILE_LABELS else "")
     sys_rels = ", ".join(sorted(SYSTEM_EDGE_RELS))
     return (
-        "SCHEMA - node labels:\n"
-        f"- L1 (judged): {labels_l1}\n"
-        "- L0 (observed): Endpoint, Parameter, BaseURL, Header, Technology, "
-        "Certificate\n"
-        "relationship types:\n"
-        "- cross-layer: AGGREGATES ((:L1Service)-[:AGGREGATES]->(:L0)), "
-        "SURFACES_AT ((:L1DataItem)-[:SURFACES_AT]->(:L0)), "
-        "EVIDENCED_BY ((:L1System)-[:EVIDENCED_BY]->(:L0))\n"
-        f"- data flow: {', '.join(sorted(set(_DATA_FLOW_RELS.values())))}\n"
-        f"- System-edge taxonomy: {sys_rels}\n"
-        "key identity properties: a Service's `business_function_slug`; a "
-        "System's `kind` + `discriminator`; an Endpoint's `path` / `method` / "
-        "`baseurl` (full URL in `url`); a Parameter's `name` / `position`."
+        f"SCHEMA: L1 {labels_l1}; L0 Endpoint, Parameter, BaseURL, Header, "
+        "Technology, Certificate.\n"
+        "Edges: AGGREGATES (L1 service -> L0), SURFACES_AT (L1 data item -> "
+        "L0), EVIDENCED_BY (L1 system -> L0), CONSUMES, PRODUCES; system edges "
+        f"{sys_rels}.\n"
+        "Identity: Service business_function_slug; System kind+discriminator; "
+        "Endpoint path/method/baseurl (full URL in url); Parameter "
+        "name/position."
     )
 
 
 _QUERY_PRIMITIVES = (
-    "QUERY LANGUAGE (read-only Cypher) - you may use: MATCH, OPTIONAL MATCH, "
-    "WHERE, RETURN, ORDER BY, LIMIT, DISTINCT, labels(), type(), properties(), "
-    "relationship patterns (a)-[:REL]->(b), collect(...), and $param parameters. "
-    "Write-shaped tokens (MERGE / CREATE / DELETE / SET / REMOVE / FOREACH / "
-    "LOAD CSV) are refused. Text inside a string literal is DATA, not Cypher: "
-    "a path filter that happens to contain a write word is legal and always "
-    "allowed (`WHERE e.path CONTAINS 'create'`) - the guard refuses a write "
-    "word only where it stands as a Cypher keyword, so always quote your "
-    "literals. Always LIMIT: the view returns no cap."
+    "QUERY LANGUAGE (read-only Cypher): MATCH, OPTIONAL MATCH, WHERE, RETURN, "
+    "ORDER BY, LIMIT, DISTINCT, labels(), type(), properties(), relationship "
+    "patterns, collect(), and $params. Write-shaped tokens (MERGE / CREATE / "
+    "DELETE / SET / REMOVE / FOREACH / LOAD CSV) are refused. Text inside a "
+    "string is data: always quote your literals, because a write word inside a "
+    "literal is legal. Always LIMIT; the view returns no cap."
 )
 
-_READ_ONLY_GUARD = (
-    "READ-ONLY GUARD - write-shaped cypher is rejected (ReadOnlyGraphViewError), "
-    "never a write."
-)
+_READ_ONLY_GUARD = "READ-ONLY GUARD: write-shaped cypher is refused."
 
 _RETURN_SHAPE = (
-    "RETURN SHAPE - on success {\"rows\": [...]} (a list of plain dict rows); on "
-    "an absent/misconfigured/failing view {\"error\": ...} (fail-open)."
+    "RETURN SHAPE: {\"rows\": [...]} on success; {\"error\": ...} on a "
+    "fail-open read."
 )
 
 _EXAMPLE = (
-    "EXAMPLE - the observed attack surface of a Service (navigate L1 down to L0):\n"
-    "MATCH (s:L1Service {business_function_slug: $slug, project_id: $project_id})\n"
-    "MATCH (s)-[:AGGREGATES]->(e:Endpoint)\n"
-    "OPTIONAL MATCH (e)-[:HAS_PARAMETER]->(p:Parameter)\n"
-    "RETURN e.url, e.method, e.path, collect(p.name) AS parameters\n"
-    "ORDER BY e.path LIMIT 50"
+    "EXAMPLE: MATCH (s:L1Service {business_function_slug:$slug, "
+    "project_id:$project_id})-[:AGGREGATES]->(e:Endpoint) RETURN e.url, "
+    "e.method, e.path ORDER BY e.path LIMIT 50"
 )
 
 # The single usage contract, rendered verbatim into the tool description at
 # every binding so no agent receives a divergent contract (#197).
 GRAPH_VIEW_CONTRACT = (
-    "Read the live L0/L1 graph through the run's read-only view: navigate from "
-    "the L1 units (Service / System / DataItem) down to the observed L0 attack "
-    "surface (Endpoints / Parameters / BaseURLs / Headers) to ground your "
-    "reasoning in the target's surface.\n\n"
+    "Read the live L0/L1 graph through the run's read-only view.\n\n"
     f"{_schema_surface()}\n\n"
     f"{_QUERY_PRIMITIVES}\n\n"
     f"{_READ_ONLY_GUARD}\n\n"

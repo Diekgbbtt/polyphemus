@@ -44,21 +44,16 @@ from lightrag.query_spec import QuerySpecV1, RetrievalConfigV1, R_A
 _QUERY_SPEC_FIELD_LIST = ", ".join(QuerySpecV1.model_fields)
 QUERY_LIGHTRAG_DESCRIPTION = (
     "Retrieve web-application testing methodology from the LightRAG knowledge "
-    "base when specific knowledge is missing from your reasoning. Query it for "
-    "the target stack's mechanisms or shape, for payloads and their vectors, "
-    "for a technique or methodology gap, or for verification-symptom shape. It "
-    "covers the ontology's concepts: technology stack, attack technique, "
-    "payload pattern, artifact, observable signal, vulnerability class, attack "
-    "goal, attacker capability, precondition environment, and defensive "
-    "control. Returns a structured answer: a summary plus per-concept "
-    "explanations (type, canonical name, prose) with provenance references and "
-    "knowledge gaps. Answers may enrich beyond the retrieved context - confirm "
-    "concrete target parameters on the target. An empty result means the KB has "
-    "nothing further; a degraded or unavailable result means the KB could not "
-    "answer - it is NOT evidence of absence, so never conclude a gap is "
-    "exhausted from it. In either case continue on your own grounding. "
-    f"Pass the query as a QuerySpecV1 object; its fields are: "
-    f"{_QUERY_SPEC_FIELD_LIST}."
+    "base when knowledge is missing. Query for stack mechanisms, payloads and "
+    "vectors, techniques, or verification-symptom shape. Concepts: technology "
+    "stack, attack technique, payload pattern, artifact, observable signal, "
+    "vulnerability class, attack goal, attacker capability, precondition "
+    "environment, defensive control. Returns a summary plus per-concept "
+    "explanations with provenance and gaps. Answers may enrich beyond "
+    "retrieval; confirm target parameters on the target. Empty means nothing "
+    "further; degraded means the KB could not answer, not evidence of absence; "
+    "continue on your grounding. "
+    f"Pass QuerySpecV1 with fields: {_QUERY_SPEC_FIELD_LIST}."
 )
 
 
