@@ -145,9 +145,14 @@ missing terminal marker blocks the hunt and its unit; it is never silently skipp
 unknown blocked unit sorts ahead of the known queue so the queue fails closed.
 
 The surfer's `surfer-dispatch-degraded` path persists its degraded envelope as the durable
-`PodExport` before the serial gate reads completion. The upstream write-time validation,
-stale-draft controller, and consumed-transition ownership are ticket #401; the gate-side
-hold is a safety net, not the repair.
+`PodExport` before the serial gate reads completion. At the hunter graph COMPLETE, the
+settle hook declasses any produced `hypothesised` spec to `dropped` and writes the terminal
+marker; an undecided draft can therefore not wedge a completed hunt. The surfer's quiesce
+audit (`hunting_artifacts_terminal`) blocks `complete` while any current-run malformed,
+stale, pending, or export-less artifact remains, even when the mover has no dispatchable
+item. The upstream write-time validation, structured draft loop, consumed-transition
+ownership, and run-record blocked state are ticket #401; the gate-side hold is a safety
+net, not the repair.
 
 ### 4. The slim sync ledger (component shape)
 

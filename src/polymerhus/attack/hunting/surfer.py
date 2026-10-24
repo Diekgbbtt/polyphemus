@@ -395,11 +395,33 @@ async def is_run_quiesced(
         return False
     if state.hunters_in_graph:
         return False
-    return not run_work_remaining(
+    if run_work_remaining(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
         live_loop_likelihoods=state.loop_likelihoods,
+    ):
+        return False
+    # Hard completion fail-safe: a malformed or stale artifact that the mover
+    # cannot turn into a dispatchable item still blocks quiesce. The surfer is
+    # a passive consumer; it must not complete a run whose artifacts are not
+    # terminal just because it has nothing left to dispatch.
+    from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
+        hunting_artifacts_terminal,
     )
+
+    complete, reasons = hunting_artifacts_terminal(
+        project_id, run_id,
+        hunter_store=hunter_store, pod_store=pod_store,
+        threat_store=threat_store,
+    )
+    if not complete:
+        log_refusal_once(
+            project_id, run_id, "lifecycle-incomplete",
+            "surfer: run %s not quiesced - %s",
+            run_id, "; ".join(reasons[:3]),
+        )
+        return False
+    return True
 
 
 def post_settle(state: RunDispatchState) -> int:
@@ -691,6 +713,18 @@ async def run_hunter_session(
 
     if graph_completed:
         state.record_child_success(session_id)
+        # The symbolic layer reached COMPLETE: no further draft decision will
+        # arrive. Declass any leftover `hypothesised` spec to `dropped` and
+        # write the terminal marker. This is the hard fail-safe that prevents
+        # a completed hunt from wedging the serial gate on an undecided draft.
+        try:
+            hunter_store.settle_hypothesised(
+                project_id, hunt_key, run_id=run_id)
+        except Exception as exc:  # noqa: BLE001 - degrade; the gate blocks
+            logger.warning(
+                "surfer: hunt %s terminal spec settlement degraded (%s)",
+                hunt_key, exc,
+            )
     if not paused_on_provider_failure:
         await _run_hunter_idle(
             project_id=project_id, run_id=run_id, hunt_key=hunt_key,

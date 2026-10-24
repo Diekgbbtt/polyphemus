@@ -1,62 +1,104 @@
-# Ticket 401: hunting spec lifecycle - malformed/stale prevention and the consumed-completion controller
+# Ticket 401: hunting spec lifecycle
 
 - **Tracker:** https://github.com/Diekgbbtt/polyphemus/issues/401
 - **Severity:** high (run wedge and false completion).
 - **Area:** `src/polymerhus/attack/hunting/`.
-- **Status:** open, needs-triage.
+- **Status:** open, `enhancement`, `needs-triage`.
 
 ## Summary
 
-The serial sync gate now fails closed on a stale or malformed spec set, but the
-upstream hunter lifecycle does not prevent those states and has no controller to
-repair them. The gate can hold a run indefinitely when a hunter ends without
-finalizing, and a builder-exception pod path previously returned a degraded
-envelope without a durable `PodExport`.
+The gate-side lifecycle is hardened. The remaining work is the upstream spec
+lifecycle: write-time validation, a structured loop over `hypothesised` drafts,
+the produced-to-consumed ownership decision, and a named run-record
+blocked/degraded state.
 
-## Gaps
+## Implemented on the current branch
 
-- **Write-time validation:** `HunterMemoryStore.write_specs` does not validate
-  the full body at the `hunts_store.write` seam. A malformed or unparsable file
-  can exist outside the tool path, and the surfer must be able to read the state.
-- **Stale `hypothesised` specs:** `finalize_specs` refuses a produced
-  `hypothesised` set, but nothing detects a hunter that ends or stalls before
-  finalizing, re-prompts it, or presents each draft in a structured sequential
-  loop.
-- **Consumed transition:** `hunts_store` writes `ratified` specs to `produced/`;
-  the mover moves them to `consumed/` at pod admission. The ADR says the move is
-  ADMISSION, while the operator wording says "dispatchable = consumed". The
-  lifecycle contract needs one explicit definition.
-- **Pod terminal/degraded state:** the surfer's `surfer-dispatch-degraded` path
-  must persist a durable `PodExport`, or expose an equivalent terminal state the
-  serial gate can read.
-- **Run health:** a stale/malformed hunt must surface a named blocked/degraded
-  state, not only an invisible serial hold.
+- The serial gate distinguishes pending produced `ratified` specs, consumed
+  `ratified` completion specs, and produced `dropped` specs.
+- A hunt is done only with the run-scoped `terminal.yaml` marker, no pending
+  produced `ratified` spec, and a terminal state for every consumed spec.
+- The hunter's symbolic COMPLETE hook calls
+  `HunterMemoryStore.settle_hypothesised()`: leftover `hypothesised` specs are
+  declassed to `dropped` with `declassified: hunter-complete`, then the terminal
+  marker is written.
+- `is_run_quiesced()` calls `hunting_artifacts_terminal()`: any current-run
+  stale, malformed, pending, or export-less artifact blocks completion. The
+  surfer cannot quiesce `complete` just because it has no dispatchable item.
+- The `surfer-dispatch-degraded` path persists its degraded envelope as a
+  durable `PodExport`.
+- The gate scans actual files, so a late `hypothesised` write behind an older
+  marker is blocked.
+
+## Historical evidence
+
+Scan of 1,514 historical spec files (963 hunter specs, 551 pod variants) under
+`/opt/polymerhus-dev/eval/instances/data/eval-server-1`:
+
+- YAML syntax and duplicate-key parse errors: **0**.
+- Current D4 shape: **150** (9.9%).
+- Unknown D4 fields: **1,358** (89.7%).
+- Retired D4 fields `testing_pattern` / `payload_vector_space` /
+  `interpretation_guidance`: **1,271** (83.9%).
+- Legacy hypothesis/mechanism shape (`hypothesis`, `conflicts`, `mechanism`,
+  `supports`, `test`, `fault_class`, `rank`): **465** (30.7%).
+- Missing verification symptoms: **48** (3.2%).
+- Empty verification symptoms: **51** (3.4%).
+- Missing target identity: **3** (0.2%).
+- Current live project `0c8cb6e6-7e91-4a01-880e-408896c0ce4a`: 14/14
+  canonical.
+
+The historical failures are schema-level, not YAML-level. The old D4
+`extra="forbid"` rejects the retired fields at INIT; the live schema is clean.
+
+## Remaining gaps
+
+1. **Write-time validation.** Reject a body that fails the current contract
+   before it lands. Add a coded rejection at the `hunts_store.write` seam and a
+   repair path for an existing corrupt file.
+2. **Structured hypothesised loop.** No free-form re-prompt is in scope. The
+   hunter should present each produced `hypothesised` spec sequentially for an
+   explicit promote/drop decision before graph COMPLETE. If the tracker reaches
+   COMPLETE with an undecided spec, the settle hook declasses it to `dropped`.
+3. **Consumed transition ownership.** Decide whether the hunter controller
+   moves `ratified` specs to consumed before COMPLETE, or whether the mover's
+   admission move remains the contract. The ADR says admission; the operator
+   wording says "dispatchable = consumed". The gate uses produced `ratified` as
+   pending admission and consumed `ratified` as the completion set.
+4. **Run-record health.** Expose the `hunting_artifacts_terminal()`
+   blocked/degraded reason on the run record. The gate and audit hold
+   completion, but the operator needs a named state.
 
 ## Acceptance criteria
 
-- A write that fails the spec contract is rejected at the tool seam with a coded
-  error; no file lands. An existing corrupt file is reported as a named degraded
-  state.
-- A hunt with produced `hypothesised` specs is detected after its hunter graph
-  ends. The controller re-prompts or walks each draft sequentially, bounded; the
-  run records the outcome and does not quiesce `complete`.
-- The serial cursor uses consumed `ratified` specs as the completion set,
-  produced `ratified` specs as pending admission, and produced `dropped` specs as
-  terminal. A hunt is done only with the run-scoped terminal marker, no pending
-  produced `ratified` specs, and a `PodExport` or explicit terminal/degraded
-  state for every consumed spec.
-- `surfer-dispatch-degraded` persists a durable terminal `PodExport` (or an
-  equivalent state read) and credits serial completion.
-- Tests cover malformed write rejection, stale hypothesised blocking or
-  re-prompt, consumed-vs-produced cursor, dropped exclusion, terminal-marker
-  requirement, and degraded pod export completion.
+- `hunts_store.write` rejects a malformed body with a coded error before any
+  file lands.
+- A completed hunt with a strained `hypothesised` set is impossible: each
+  draft is promoted or dropped by the structured loop; the COMPLETE settle hook
+  declasses any remaining draft.
+- The serial cursor uses consumed `ratified` specs as its completion set,
+  produced `ratified` specs as pending admission, and produced `dropped` specs
+  as terminal.
+- `is_run_quiesced()` never returns true while a current-run malformed, stale,
+  pending, or export-less artifact exists.
+- A named blocked/degraded reason is visible on the run record when the audit
+  holds completion.
+- Tests cover malformed write rejection, structured draft decisions,
+  consumed-vs-produced cursor, dropped exclusion, terminal-marker requirement,
+  declass-at-COMPLETE, and quiesce fail-safe.
 
-## Evidence
+## Code map
 
-- Live run `a5f487fb-8329-431c-b95d-207799a038f9`, hunt
-  `Service-sign-in__loop-1`: one successful `PodExport` for
-  `attempt-accounting-absent_account-spread`, three pending `ratified` specs, and
-  one `dropped` spec (`attempt-accounting-absent_envelope-collapse`).
-- The dropped spec wedged the serial cursor before commit `74788514`.
-- The builder-exception path returned `surfer-dispatch-degraded` without a
-  durable export before the 2026-10-24 gate/surfer repair.
+- `src/polymerhus/attack/hunting/hunter_memory.py` - `write_specs`,
+  `finalize_specs`, `settle_hypothesised`, `consume_spec`,
+  `read_terminal_set`.
+- `src/polymerhus/attack/hunting/hunter_tools.py` - `hunts_store` write/finalize
+  seam.
+- `src/polymerhus/attack/hunting/pipeline_sync.py` - `RunSyncGate`, `SyncFacts`,
+  `hunting_artifacts_terminal`.
+- `src/polymerhus/attack/hunting/surfer.py` - hunter COMPLETE settle hook, pod
+  degraded export, `is_run_quiesced`.
+- `src/polymerhus/attack/hunting/pod/pod_memory.py` - `read_pod_export`,
+  `write_pod_export`.
+- `src/polymerhus/attack/hunting/mover.py` - produced/consumed recovery and
+  `consume_spec`.

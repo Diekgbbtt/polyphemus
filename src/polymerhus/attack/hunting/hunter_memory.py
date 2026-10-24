@@ -632,6 +632,42 @@ class HunterMemoryStore(BoundedRecordStore):
             )
             return marker
 
+    def settle_hypothesised(
+        self,
+        project_id: str,
+        hunt_key: str,
+        *,
+        run_id: str = "",
+    ) -> dict:
+        """Close a COMPLETE hunt: declass leftover drafts and finalize.
+
+        The hunter's symbolic graph reaching COMPLETE is the authoritative
+        end-of-work signal. Any spec still `hypothesised` at that point was
+        never promoted or explicitly dropped; leaving it in produced would
+        make the serial gate fail closed on a hunt the tracker has already
+        completed. Declass each such spec to `dropped` with a durable reason,
+        then write the terminal marker. A spec that is already `ratified` or
+        `dropped` is untouched. A malformed spec raises (the gate blocks and
+        the upstream write-gate ticket owns repair); no partial terminal is
+        written.
+        """
+        self._validate_hunt_key(hunt_key)
+        with self._lock_for(project_id):
+            existing = self.read_terminal_set(project_id, hunt_key)
+            if existing is not None and str(
+                    existing.get("run_id") or "") == str(run_id or ""):
+                return existing
+            produced = self._spec_dir(project_id, hunt_key) / "produced"
+            if produced.exists():
+                for path in sorted(produced.glob("*.yaml")):
+                    body = self._read_spec_file(path)
+                    if str(body.get("status") or "") != "hypothesised":
+                        continue
+                    body["status"] = "dropped"
+                    body["declassified"] = "hunter-complete"
+                    write_text_atomic(path, yaml.safe_dump(body, sort_keys=False))
+        return self.finalize_specs(project_id, hunt_key, run_id=run_id)
+
     def read_terminal_set(self, project_id: str, hunt_key: str) -> dict | None:
         """The durable terminal-set record for the hunt key, or None.
 

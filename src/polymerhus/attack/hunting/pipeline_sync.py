@@ -786,6 +786,20 @@ class RunSyncGate:
                 stems.append(stem)
         return tuple(stems)
 
+    def _spec_run_id(self, hunt_key: str, spec_id: str, side: str) -> str:
+        """The run id a spec's typed provenance names, or empty."""
+        try:
+            body = self.hunter_store.read_spec(
+                self.project_id, hunt_key, spec_id, side=side)
+        except Exception:  # noqa: BLE001 - unattributable
+            return ""
+        if not isinstance(body, Mapping):
+            return ""
+        provenance = body.get("provenance")
+        if not isinstance(provenance, Mapping):
+            return ""
+        return str(provenance.get("run_id") or "")
+
     def _spec_status(self, hunt_key: str, spec_id: str, side: str) -> str:
         """The persisted status, or a sentinel for a missing/malformed body.
 
@@ -810,6 +824,109 @@ class RunSyncGate:
             return bool(self.pod_store.read_pod_export(spec_id, self.run_id))
         except Exception:  # noqa: BLE001 - fail-open: a corrupt export is not terminal
             return False
+
+
+def hunting_artifacts_terminal(
+    project_id: str,
+    run_id: str,
+    *,
+    hunter_store: Any,
+    pod_store: Any,
+    threat_store: Any = None,
+) -> tuple[bool, tuple[str, ...]]:
+    """Hard completion audit over every CURRENT-RUN hunting artifact.
+
+    This is the quiesce fail-safe. It does not ask the mover whether it has a
+    dispatchable item; it asks whether any artifact of this run is still in a
+    non-terminal lifecycle state. A malformed/unparsable body therefore blocks
+    completion even though the mover cannot turn it into a produced item.
+
+    Current-run attribution is explicit: a hunt belongs to the run when its
+    terminal marker names the run, when one of its specs carries the run id, or
+    when a threat-model loop of the run names its dispatch key. Foreign-run and
+    legacy unattributed hunts are ignored, never treated as this run's work.
+    """
+    gate = RunSyncGate(
+        mode=SyncMode.SERIAL,
+        project_id=project_id,
+        run_id=run_id,
+        threat_store=threat_store,
+        hunter_store=hunter_store,
+        pod_store=pod_store,
+    )
+    reasons: list[str] = []
+    current_hunts: set[str] = set()
+
+    if threat_store is not None:
+        for reader_name, side in (
+            ("read_produced_loops", "produced"),
+            ("read_consumed_loops", "consumed"),
+        ):
+            reader = getattr(threat_store, reader_name, None)
+            if reader is None:
+                continue
+            try:
+                entries = reader(project_id)
+            except Exception as exc:  # noqa: BLE001 - cannot prove completion
+                reasons.append(f"threat {side} read failed: {exc}")
+                continue
+            for entry in entries:
+                if str(entry.get("run_id") or "") != run_id:
+                    continue
+                unit_name = str(entry.get("unit_name") or "")
+                for malformed in entry.get("malformed_loops") or ():
+                    loop_id = str(malformed.get("loop_id") or "")
+                    if loop_id:
+                        current_hunts.add(f"{unit_name}__{loop_id}")
+                        reasons.append(
+                            f"{unit_name}__{loop_id}: malformed loop body")
+                for loop in entry.get("loops") or ():
+                    loop_id = str(loop.get("loop_id") or "")
+                    if loop_id:
+                        current_hunts.add(f"{unit_name}__{loop_id}")
+
+    if hunter_store is None:
+        return False, ("hunter store unavailable",)
+
+    try:
+        hunt_keys = hunter_store.list_hunt_keys(project_id)
+    except Exception as exc:  # noqa: BLE001 - cannot prove completion
+        return False, (f"hunt inventory read failed: {exc}",)
+
+    for hunt in hunt_keys:
+        marker = gate._terminal_marker(hunt)
+        if marker is not None:
+            current_hunts.add(hunt)
+        for side in ("produced", "consumed"):
+            for stem in gate._side_stems(hunt, side):
+                if gate._spec_run_id(hunt, stem, side) == run_id:
+                    current_hunts.add(hunt)
+
+    for hunt in sorted(current_hunts):
+        marker = gate._terminal_marker(hunt)
+        if marker is None:
+            reasons.append(f"{hunt}: no terminal marker")
+        else:
+            for status in (marker.get("spec_statuses") or {}).values():
+                if status not in ("ratified", "dropped"):
+                    reasons.append(f"{hunt}: terminal marker carries {status!r}")
+        for stem in gate._side_stems(hunt, "produced"):
+            status = gate._spec_status(hunt, stem, "produced")
+            if status == "dropped":
+                continue
+            if status == "ratified":
+                reasons.append(f"{hunt}/{stem}: produced ratified spec pending")
+            else:
+                reasons.append(f"{hunt}/{stem}: produced {status} spec")
+        for stem in gate._side_stems(hunt, "consumed"):
+            status = gate._spec_status(hunt, stem, "consumed")
+            if status != "ratified":
+                reasons.append(f"{hunt}/{stem}: consumed {status} spec")
+                continue
+            if not gate._export_exists(stem):
+                reasons.append(f"{hunt}/{stem}: consumed spec has no PodExport")
+
+    return (not reasons, tuple(reasons))
 
 
 def make_sync_gate(
@@ -837,6 +954,7 @@ __all__ = [
     "current_unit",
     "decide",
     "hunt_rank",
+    "hunting_artifacts_terminal",
     "make_sync_gate",
     "order_units",
     "resolve_mode",

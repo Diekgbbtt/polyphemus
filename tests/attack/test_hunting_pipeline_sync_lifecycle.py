@@ -16,9 +16,16 @@ import asyncio
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import ThreatLoopItem
-from polymerhus.attack.hunting.pipeline_sync import RunSyncGate, SyncMode
+from polymerhus.attack.hunting.pipeline_sync import (
+    RunSyncGate, SyncMode, hunting_artifacts_terminal,
+)
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
-from polymerhus.attack.hunting.surfer import run_pod_session
+from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+from tests.hunting_fixtures import produce_model
+from polymerhus.attack.hunting import surfer as surfer_mod
+from polymerhus.attack.hunting.surfer import (
+    RunDispatchState, is_run_quiesced, run_hunter_session, run_pod_session,
+)
 
 PROJECT = "proj-lifecycle"
 RUN = "run-lifecycle"
@@ -150,3 +157,190 @@ def test_surfer_degraded_pod_export_is_durable(tmp_path):
     stored = pod.read_pod_export("f_keep", RUN)
     assert stored["terminal_reason"] == "surfer-dispatch-degraded"
     assert stored["verdict"] == "unsuccessful"
+
+
+def test_hunter_complete_declasses_leftover_hypothesised(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    hunt = "u1__loop-1"
+    hunter.write_specs(
+        PROJECT, hunt,
+        [_spec("f", "draft", "hypothesised")],
+        enforce_complete=False,
+    )
+    hunter.write_specs(
+        PROJECT, hunt,
+        [_spec("f", "keep", "ratified")],
+        enforce_complete=False,
+    )
+
+    marker = hunter.settle_hypothesised(PROJECT, hunt, run_id=RUN)
+
+    assert marker["spec_statuses"] == {
+        "f_draft": "dropped", "f_keep": "ratified"}
+    body = hunter.read_spec(PROJECT, hunt, "f_draft", side="produced")
+    assert body["status"] == "dropped"
+    assert body["declassified"] == "hunter-complete"
+
+
+def test_run_hunter_session_settles_at_graph_complete(tmp_path, monkeypatch):
+    """The symbolic COMPLETE hook declasses and finalizes before the idle loop."""
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    hunt = "u1__loop-1"
+
+    async def _noop_idle(**kw):
+        return None
+
+    monkeypatch.setattr(surfer_mod, "_run_hunter_idle", _noop_idle)
+
+    def _builder(*, run_id, project_id, hunter_store):
+        async def _dispatch(payload):
+            hunter_store.write_specs(
+                project_id, hunt,
+                [_spec("f", "draft", "hypothesised")],
+                enforce_complete=False,
+            )
+        return _dispatch, None
+
+    asyncio.run(run_hunter_session(
+        payload={}, project_id=PROJECT, run_id=RUN, hunt_key=hunt,
+        likelihood="high", hunter_store=hunter, state=RunDispatchState(),
+        gate=None, hunter_builder=_builder,
+    ))
+
+    body = hunter.read_spec(PROJECT, hunt, "f_draft", side="produced")
+    assert body["status"] == "dropped"
+    marker = hunter.read_terminal_set(PROJECT, hunt)
+    assert marker is not None
+    assert marker["run_id"] == RUN
+    assert marker["spec_statuses"] == {"f_draft": "dropped"}
+
+
+def test_artifacts_terminal_blocks_a_hypothesised_current_run_spec(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    hunt = "u1__loop-1"
+    hunter.write_specs(
+        PROJECT, hunt, [_spec("f", "draft", "hypothesised")],
+        enforce_complete=False,
+    )
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+    )
+    assert complete is False
+    assert any("no terminal marker" in reason for reason in reasons)
+
+
+def test_artifacts_terminal_requires_a_pod_export(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    hunt = "u1__loop-1"
+    hunter.write_specs(
+        PROJECT, hunt, [_spec("f", "keep", "ratified")],
+        enforce_complete=False,
+    )
+    hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+    hunter.consume_spec(PROJECT, hunt, "f_keep")
+
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+    )
+    assert complete is False
+    assert any("no PodExport" in reason for reason in reasons)
+
+    pod.write_pod_export(
+        "f_keep", RUN,
+        {"verdict": "unsuccessful", "evidence": {
+            "terminal_reason": "surfer-dispatch-degraded"}},
+    )
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+    )
+    assert complete is True, reasons
+
+
+def test_artifacts_terminal_ignores_a_foreign_run_spec(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    hunt = "u1__loop-1"
+    foreign = _spec("f", "keep", "ratified")
+    foreign["provenance"] = {"run_id": "another-run"}
+    hunter.write_specs(PROJECT, hunt, [foreign], enforce_complete=False)
+
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+    )
+    assert complete is True, reasons
+
+
+def test_artifacts_terminal_blocks_a_malformed_current_run_spec(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    hunt = "u1__loop-1"
+    hunter.write_specs(
+        PROJECT, hunt, [_spec("f", "keep", "ratified")],
+        enforce_complete=False,
+    )
+    hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+    path = (
+        tmp_path / "hunter" / PROJECT / "hunting" / "hunter"
+        / "test-specs" / hunt / "produced" / "f_keep.yaml"
+    )
+    path.write_text("not: [a: valid: yaml", encoding="utf-8")
+
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+    )
+    assert complete is False
+    assert any("produced malformed" in reason for reason in reasons)
+
+
+class _NoLiveSessions:
+    def live_session_ids(self):
+        return frozenset()
+
+
+def test_is_run_quiesced_blocks_on_a_stale_spec(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunt = "u1__loop-1"
+    hunter.write_specs(
+        PROJECT, hunt, [_spec("f", "draft", "hypothesised")],
+        enforce_complete=False,
+    )
+
+    complete = asyncio.run(is_run_quiesced(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        pod_store=pod, control=_NoLiveSessions(), state=RunDispatchState(),
+    ))
+    assert complete is False
+
+
+def test_artifacts_terminal_attributes_a_malformed_spec_via_the_consumed_loop(tmp_path):
+    """A malformed produced spec is current-run work when its loop is consumed.
+
+    The loop is the run-scoped join. The audit must use it to fail closed even
+    when the spec body itself cannot be parsed.
+    """
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    threat = ThreatModelStore(tmp_path / "threat")
+    unit = "u1"
+    hunt = "u1__loop-1"
+    produce_model(threat, project_id=PROJECT, unit_id=unit, run_id=RUN)
+    assert threat.consume_loop(PROJECT, unit, "loop-1") is True
+
+    spec_dir = (
+        tmp_path / "hunter" / PROJECT / "hunting" / "hunter"
+        / "test-specs" / hunt / "produced"
+    )
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "f_bad.yaml").write_text(
+        "not: [a: valid: yaml", encoding="utf-8")
+
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+        threat_store=threat,
+    )
+    assert complete is False
+    assert any("produced malformed" in reason for reason in reasons)
