@@ -713,10 +713,14 @@ async def run_hunter_session(
 
     if graph_completed:
         state.record_child_success(session_id)
-        # The symbolic layer reached COMPLETE: no further draft decision will
-        # arrive. Declass any leftover `hypothesised` spec to `dropped` and
-        # write the terminal marker. This is the hard fail-safe that prevents
-        # a completed hunt from wedging the serial gate on an undecided draft.
+    if not paused_on_provider_failure:
+        # The graph stretch is over and this item will not be requeued: no
+        # further draft decision can arrive, whether the graph completed or
+        # degraded. Declass any leftover `hypothesised` spec to `dropped` and
+        # write the terminal marker BEFORE idling. This is the hard fail-safe
+        # that stops a completed-but-empty hunt from wedging the cursor: the
+        # consumed-loop recovery (F-022) re-offers a consumed loop for ever
+        # while its hunt has no current-run terminal set.
         try:
             hunter_store.settle_hypothesised(
                 project_id, hunt_key, run_id=run_id)
@@ -725,7 +729,6 @@ async def run_hunter_session(
                 "surfer: hunt %s terminal spec settlement degraded (%s)",
                 hunt_key, exc,
             )
-    if not paused_on_provider_failure:
         await _run_hunter_idle(
             project_id=project_id, run_id=run_id, hunt_key=hunt_key,
             hunter_store=hunter_store, state=state,

@@ -344,3 +344,42 @@ def test_artifacts_terminal_attributes_a_malformed_spec_via_the_consumed_loop(tm
     )
     assert complete is False
     assert any("produced malformed" in reason for reason in reasons)
+
+
+def test_run_hunter_session_settles_when_the_graph_degrades(tmp_path, monkeypatch):
+    """A degraded graph still settles: no draft decision can arrive after it.
+
+    Without this the hunt keeps no current-run terminal set, so the F-022
+    consumed-loop recovery re-offers its consumed loop for ever and pins the
+    cursor.
+    """
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    hunt = "u1__loop-1"
+
+    async def _noop_idle(**kw):
+        return None
+
+    monkeypatch.setattr(surfer_mod, "_run_hunter_idle", _noop_idle)
+
+    def _builder(*, run_id, project_id, hunter_store):
+        async def _dispatch(payload):
+            hunter_store.write_specs(
+                project_id, hunt,
+                [_spec("f", "draft", "hypothesised")],
+                enforce_complete=False,
+            )
+            raise RuntimeError("graph blew up")
+
+        return _dispatch, None
+
+    asyncio.run(run_hunter_session(
+        payload={}, project_id=PROJECT, run_id=RUN, hunt_key=hunt,
+        likelihood="high", hunter_store=hunter, state=RunDispatchState(),
+        gate=None, hunter_builder=_builder,
+    ))
+
+    body = hunter.read_spec(PROJECT, hunt, "f_draft", side="produced")
+    assert body["status"] == "dropped"
+    marker = hunter.read_terminal_set(PROJECT, hunt)
+    assert marker is not None
+    assert marker["spec_statuses"] == {"f_draft": "dropped"}
