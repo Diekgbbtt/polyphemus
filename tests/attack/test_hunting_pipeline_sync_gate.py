@@ -168,6 +168,28 @@ def test_gate_serial_reads_stems_and_exports_for_the_cursor_hunt():
     assert _ids(gate_x.filter([spec_b])) == (spec_b.message_id,)
 
 
+def test_gate_serial_ignores_a_dropped_spec_at_the_cursor():
+    """A hunter-dropped spec is terminal by decision, not a missing export.
+
+    Regression: the serial cursor counted every produced/consumed stem, so a
+    dropped spec with no PodExport held the hunt forever.
+    """
+    hunt = "u1__loop-1"
+    bodies = {
+        (hunt, "a_dropped"): {
+            "status": "dropped", "target": {"unit_id": "Service:u1"}},
+        (hunt, "b_ratified"): {
+            "status": "ratified", "target": {"unit_id": "Service:u1"}},
+    }
+    gate = _gate(
+        SyncMode.SERIAL,
+        produced={hunt: ["a_dropped", "b_ratified"]},
+        bodies=bodies,
+    )
+    spec_b = _spec(hunt, "b_ratified")
+    assert _ids(gate.filter([spec_b])) == (spec_b.message_id,)
+
+
 def test_gate_serial_moves_to_the_next_hunt_after_the_pods_are_terminal():
     hunt = "u1__loop-1"
     gate = _gate(

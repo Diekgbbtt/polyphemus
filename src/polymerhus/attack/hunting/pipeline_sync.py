@@ -31,6 +31,7 @@ from enum import StrEnum
 from typing import Any
 
 from polymerhus.attack.hunting.mover import (
+    SPEC_DISPATCH_STATUS,
     ProducedItem,
     TestSpecItem,
     ThreatLoopItem,
@@ -623,7 +624,7 @@ class RunSyncGate:
         stems: dict[str, tuple[str, ...]] = {}
         terminal: set[tuple[str, str]] = set()
         for hunt in hunts:
-            files = tuple(sorted(self._stems(hunt)))
+            files = self._dispatchable_stems(hunt)
             stems[hunt] = files
             for stem in files:
                 if self._export_exists(stem):
@@ -646,6 +647,36 @@ class RunSyncGate:
             except Exception:  # noqa: BLE001 - fail-open: a read never blocks
                 continue
         return stems
+
+    def _dispatchable_stems(self, hunt_key: str) -> tuple[str, ...]:
+        """The cursor's spec stems: only bodies the pod can actually dispatch.
+
+        A hunter may write a spec and mark it `dropped` (a declined variant).
+        Such a spec has no pod and never gets a PodExport, so counting it in
+        the serial cursor would wedge the hunt forever. A body that cannot be
+        read is treated as dispatchable (fail-open): the mover's own produced
+        read is the authority and an unreadable body must not silently skip a
+        pod."""
+        return tuple(
+            stem for stem in sorted(self._stems(hunt_key))
+            if self._spec_dispatchable(hunt_key, stem)
+        )
+
+    def _spec_dispatchable(self, hunt_key: str, spec_id: str) -> bool:
+        """Whether the stored spec carries the pod dispatch status.
+
+        Read produced first, then consumed. A readable non-ratified body is
+        terminal-by-decision and is excluded; a body absent from both sides is
+        treated as dispatchable so a transient read gap cannot skip a pod."""
+        for side in ("produced", "consumed"):
+            try:
+                body = self.hunter_store.read_spec(
+                    self.project_id, hunt_key, spec_id, side=side)
+            except Exception:  # noqa: BLE001 - fail-open per record
+                continue
+            if body is not None:
+                return body.get("status") == SPEC_DISPATCH_STATUS
+        return True
 
     def _export_exists(self, spec_id: str) -> bool:
         if self.pod_store is None:
