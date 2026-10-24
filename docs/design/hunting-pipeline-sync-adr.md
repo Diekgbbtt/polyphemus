@@ -231,3 +231,25 @@ resume verb T11 #398).
   `batched`/`serial` (the whole risk budget is modelled first); operators read the run
   record's `stats` rather than judging liveness by dispatch activity.
 - The `parallel` default of the past is now opt-in; `batched` is the new default.
+
+## Known issue: cross-unit tier hold in `serial`
+
+The S2 8.3 tier ordering is global over the run's produced loop files, and
+`serial` still applies it.
+The queue admits only the current unit, so a `low` loop of the current unit is
+held while ANY unit's higher-tier loop is produced.
+Those higher-tier loops cannot consume until their own unit is current, which is
+after the current unit finishes.
+A current unit whose only remaining loops are `low` therefore cannot progress,
+and the run wedges on produced work.
+
+`batched` is unaffected: the tier ordering is subsumed and does not order a
+batch (section 2).
+The `serial` fix is a product decision:
+
+- scope the tier check to the current unit's loop set (the natural reading under
+  a unit-serialising queue), or
+- drop the tier ordering in `serial` as well and let the cursor own the order.
+
+Until that decision lands, do not run `serial` on a unit whose only remaining
+loops are `low` while a later unit still has produced medium/high loops.
