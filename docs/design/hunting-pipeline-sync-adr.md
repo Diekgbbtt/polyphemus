@@ -126,6 +126,29 @@ storage-backed or registry-backed; no new artifact kind is introduced.
 - Empty-unit cases therefore never wedge the queue; a degraded hunt holds its unit until a
   retry finalizes, which is the trunk's existing at-least-once resilience, not a new hold.
 
+### 3a. Spec-lifecycle completion amendment (2026-10-24)
+
+The serial cursor has three distinct sets; it must not collapse them:
+
+- **Pending admission:** produced `ratified` specs. These are pod-dispatchable to the mover;
+  the mover moves one to consumed at admission.
+- **Completion set:** consumed `ratified` specs. Each must carry a durable `PodExport`
+  (`successful`, `unsuccessful`, or the fail-open `surfer-dispatch-degraded` export) or an
+  equivalent terminal/degraded state.
+- **Decided:** produced `dropped` specs. They are terminal by decision and never need an
+  export.
+
+A hunt is done only when the run-scoped hunter terminal marker (`terminal.yaml`, with this
+run's id) exists, no produced `ratified` spec remains pending, and every consumed `ratified`
+spec has a terminal export. A stale `hypothesised` spec, an unreadable/malformed body, or a
+missing terminal marker blocks the hunt and its unit; it is never silently skipped. An
+unknown blocked unit sorts ahead of the known queue so the queue fails closed.
+
+The surfer's `surfer-dispatch-degraded` path persists its degraded envelope as the durable
+`PodExport` before the serial gate reads completion. The upstream write-time validation,
+stale-draft controller, and consumed-transition ownership are ticket #401; the gate-side
+hold is a safety net, not the repair.
+
 ### 4. The slim sync ledger (component shape)
 
 One new module, `attack/hunting/pipeline_sync.py`, clean separation of concerns:

@@ -68,12 +68,20 @@ def _unit(name: str, risk: int = 1, intake: int = 1) -> UnitMeta:
 
 
 def _facts(**overrides) -> SyncFacts:
+    stems = overrides.get("spec_stems") or {}
     values = dict(
         modeller_live=False,
         hunts_in_graph=frozenset(),
         live_pod_hunts=frozenset(),
         spec_stems={},
         terminal_specs=frozenset(),
+        # The pure decision tests model an already-finalized hunter: every
+        # hunt that carries a dispatch cursor is terminal for this run unless a
+        # test overrides the lifecycle facts explicitly.
+        pending_spec_stems={},
+        consumed_spec_stems=dict(stems),
+        terminal_hunts=frozenset(stems),
+        blocked_hunts=frozenset(),
     )
     values.update(overrides)
     return SyncFacts(**values)

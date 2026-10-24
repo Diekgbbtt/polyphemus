@@ -911,6 +911,17 @@ async def run_pod_session(
 
     if export is None:
         return None
+    # The ADR's completion signal is the durable PodExport. `arun_pod` writes
+    # one on its own terminal paths, but the surfer's degraded path (a builder
+    # exception) only returns the envelope. Persist it here so the serial gate
+    # sees a failed/degraded execution as terminal instead of re-dispatching
+    # the same consumed spec forever. Idempotent overwrite on the normal path.
+    if pod_store is not None and spec_id:
+        try:
+            pod_store.write_pod_export(spec_id, run_id, export)
+        except Exception as exc:  # noqa: BLE001 - O3/IA-4 fail-open
+            logger.warning(
+                "surfer: pod %s export persistence failed (%s)", spec_id, exc)
     if state is not None:
         state.record_child_success(source)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the

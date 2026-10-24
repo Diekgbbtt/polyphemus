@@ -48,6 +48,10 @@ UNKNOWN_INTAKE_POSITION = 1_000_000
 # malformed or foreign key): it sorts after every ranked hunt and never crashes
 # the decision.
 UNRANKED = 1 << 30
+# An unknown blocked unit sorts ahead of every known unit: without a readable
+# spec body the gate cannot prove its identity or risk, so it fails closed and
+# holds the queue instead of silently skipping the stale hunt.
+BLOCKED_RISK = 1 << 30
 
 
 class SyncMode(StrEnum):
@@ -90,6 +94,16 @@ class SyncFacts:
     live_pod_hunts: frozenset[str] = frozenset()
     spec_stems: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     terminal_specs: frozenset[tuple[str, str]] = frozenset()
+    # The spec-lifecycle facts. `pending_spec_stems` are produced/ ratified
+    # specs awaiting pod admission; `consumed_spec_stems` are the completion
+    # set the pod exports must cover. `terminal_hunts` carries the hunter's
+    # durable terminal marker for THIS run; `blocked_hunts` carries a stale
+    # hypothesised, malformed, or un-finalized spec set that must not be
+    # silently skipped.
+    pending_spec_stems: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    consumed_spec_stems: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    terminal_hunts: frozenset[str] = frozenset()
+    blocked_hunts: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -231,6 +245,7 @@ def _pending_units(
     pending = {unit_of_item(item) for item in items}
     pending |= {unit_of_dispatch(hunt) for hunt in facts.hunts_in_graph}
     pending |= {unit_of_dispatch(hunt) for hunt in facts.live_pod_hunts}
+    pending |= {unit_of_dispatch(hunt) for hunt in facts.blocked_hunts}
     pending.discard(None)
     return pending
 
@@ -379,6 +394,10 @@ def _decide_serial(
     if cursor in facts.hunts_in_graph:
         # The hunt is still authoring its spec set: no pod yet.
         return frozenset()
+    if cursor not in facts.terminal_hunts:
+        # The hunter has not closed its set. A pod must never start from a
+        # draft or from an un-finalized hunt, even when the graph has ended.
+        return frozenset()
     if state.pod_cursor is None:
         return frozenset()
     match = next(
@@ -403,9 +422,15 @@ def _hunt_done(
         return False
     if hunt in facts.live_pod_hunts:
         return False
+    if hunt in facts.blocked_hunts:
+        return False
+    if hunt not in facts.terminal_hunts:
+        return False
+    if facts.pending_spec_stems.get(hunt):
+        return False
     return all(
         (hunt, stem) in facts.terminal_specs
-        for stem in facts.spec_stems.get(hunt, ())
+        for stem in facts.consumed_spec_stems.get(hunt, ())
     )
 
 
@@ -482,6 +507,12 @@ class RunSyncGate:
             return items
         live = frozenset(live_session_ids)
         facts = self._base_facts(live, hunts_in_graph)
+        if self.mode is SyncMode.SERIAL:
+            # The lifecycle facts must land before the queue is built: a stale
+            # or malformed hunt is pending work even when it contributes no
+            # produced item, so its unit must stay current and block a silent
+            # skip to the next unit.
+            facts = self._lifecycle_facts(facts)
         units = self._units(items, facts)
         if self.mode is SyncMode.SERIAL:
             facts = self._serial_facts(items, units, facts)
@@ -522,7 +553,11 @@ class RunSyncGate:
             if name is None or name in metas:
                 continue
             metas[name] = self._meta_for(item, name)
-        session_hunts = set(facts.live_pod_hunts) | set(facts.hunts_in_graph)
+        session_hunts = (
+            set(facts.live_pod_hunts)
+            | set(facts.hunts_in_graph)
+            | set(facts.blocked_hunts)
+        )
         for hunt in session_hunts:
             name = unit_of_dispatch(hunt)
             if name in metas:
@@ -532,8 +567,12 @@ class RunSyncGate:
                 metas[name] = cached
                 continue
             unit_id = self._unit_id_for_hunt(hunt)
-            metas[name] = self.state.meta_for(
-                name, unit_id, risk=self._risk(unit_id))
+            risk = self._risk(unit_id)
+            if hunt in facts.blocked_hunts and not unit_id:
+                # Unknown identity or unreadable spec: fail closed. The unit
+                # must stay current so the stale hunt is surfaced, never skipped.
+                risk = BLOCKED_RISK
+            metas[name] = self.state.meta_for(name, unit_id, risk=risk)
         return tuple(metas.values())
 
     def _unit_id_for_hunt(self, hunt_key: str) -> str:
@@ -593,15 +632,75 @@ class RunSyncGate:
                 return position
         return UNKNOWN_INTAKE_POSITION
 
+    def _lifecycle_facts(self, facts: SyncFacts) -> SyncFacts:
+        """The hunter-side lifecycle facts for every hunt on disk.
+
+        A hunt is terminal only when its durable terminal marker names THIS
+        run. A hunt with no marker and no live graph or pod is stale: it is
+        blocked, never skipped. A marker that records a status outside
+        `ratified`/`dropped` is blocked too. This is the gate-side half of the
+        lifecycle contract; the upstream controller ticket owns prevention and
+        re-prompting of stale drafts.
+        """
+        terminal: set[str] = set()
+        blocked: set[str] = set()
+        if self.hunter_store is None:
+            return facts
+        try:
+            hunt_keys = self.hunter_store.list_hunt_keys(self.project_id)
+        except Exception:  # noqa: BLE001 - a read failure is not a false done
+            return facts
+        live = set(facts.hunts_in_graph) | set(facts.live_pod_hunts)
+        for hunt in hunt_keys:
+            marker = self._terminal_marker(hunt)
+            if marker is not None:
+                terminal.add(hunt)
+                statuses = marker.get("spec_statuses") or {}
+                if any(
+                    status not in ("ratified", "dropped")
+                    for status in statuses.values()
+                ):
+                    blocked.add(hunt)
+                if self._spec_set_blocked(hunt):
+                    blocked.add(hunt)
+                continue
+            if hunt in live:
+                continue
+            blocked.add(hunt)
+        return replace(
+            facts,
+            terminal_hunts=frozenset(terminal),
+            blocked_hunts=frozenset(blocked),
+        )
+
+    def _terminal_marker(self, hunt_key: str) -> dict | None:
+        """The terminal marker for THIS run, or None.
+
+        A marker from another run is not this run's completion proof. A corrupt
+        marker is treated as absent by the caller, which marks the hunt
+        blocked; it is never a false terminal."""
+        reader = getattr(self.hunter_store, "read_terminal_set", None)
+        if reader is None:
+            return None
+        try:
+            marker = reader(self.project_id, hunt_key)
+        except Exception:  # noqa: BLE001 - corrupt terminal is not completion
+            return None
+        if not isinstance(marker, Mapping):
+            return None
+        if str(marker.get("run_id") or "") != self.run_id:
+            return None
+        return dict(marker)
+
     def _serial_facts(
         self,
         items: Sequence[ProducedItem],
         units: Sequence[UnitMeta],
         facts: SyncFacts,
     ) -> SyncFacts:
-        """The cursor facts: the current unit's spec stems (produced plus
-        consumed) and the durable export set. No other unit needs them this
-        tick."""
+        """The cursor facts: pending (produced) pod specs, the consumed
+        completion set, and the durable exports. Only the current unit needs
+        its per-spec facts this tick."""
         current = current_unit(items, units, facts)
         if current is None:
             return facts
@@ -622,61 +721,87 @@ class RunSyncGate:
             if unit_of_dispatch(hunt) == current
         }
         stems: dict[str, tuple[str, ...]] = {}
+        pending: dict[str, tuple[str, ...]] = {}
+        consumed: dict[str, tuple[str, ...]] = {}
         terminal: set[tuple[str, str]] = set()
         for hunt in hunts:
-            files = self._dispatchable_stems(hunt)
-            stems[hunt] = files
-            for stem in files:
+            produced = self._ratified_stems(hunt, "produced")
+            consumed_stems = self._ratified_stems(hunt, "consumed")
+            pending[hunt] = produced
+            consumed[hunt] = consumed_stems
+            # The dispatch cursor considers both sides: a produced ratified
+            # spec is a pending pod move, a consumed one is the completion set.
+            stems[hunt] = tuple(sorted(set(produced) | set(consumed_stems)))
+            for stem in consumed_stems:
                 if self._export_exists(stem):
                     terminal.add((hunt, stem))
         return replace(
-            facts, spec_stems=stems, terminal_specs=frozenset(terminal))
-
-    def _stems(self, hunt_key: str) -> set[str]:
-        stems: set[str] = set()
-        if self.hunter_store is None:
-            return stems
-        for reader in (
-            getattr(self.hunter_store, "produced_spec_files", None),
-            getattr(self.hunter_store, "consumed_spec_files", None),
-        ):
-            if reader is None:
-                continue
-            try:
-                stems.update(reader(self.project_id, hunt_key))
-            except Exception:  # noqa: BLE001 - fail-open: a read never blocks
-                continue
-        return stems
-
-    def _dispatchable_stems(self, hunt_key: str) -> tuple[str, ...]:
-        """The cursor's spec stems: only bodies the pod can actually dispatch.
-
-        A hunter may write a spec and mark it `dropped` (a declined variant).
-        Such a spec has no pod and never gets a PodExport, so counting it in
-        the serial cursor would wedge the hunt forever. A body that cannot be
-        read is treated as dispatchable (fail-open): the mover's own produced
-        read is the authority and an unreadable body must not silently skip a
-        pod."""
-        return tuple(
-            stem for stem in sorted(self._stems(hunt_key))
-            if self._spec_dispatchable(hunt_key, stem)
+            facts,
+            spec_stems=stems,
+            pending_spec_stems=pending,
+            consumed_spec_stems=consumed,
+            terminal_specs=frozenset(terminal),
         )
 
-    def _spec_dispatchable(self, hunt_key: str, spec_id: str) -> bool:
-        """Whether the stored spec carries the pod dispatch status.
+    def _side_stems(self, hunt_key: str, side: str) -> tuple[str, ...]:
+        reader = getattr(self.hunter_store, f"{side}_spec_files", None)
+        if reader is None:
+            return ()
+        try:
+            return tuple(reader(self.project_id, hunt_key))
+        except Exception:  # noqa: BLE001 - a read failure is not a false done
+            return ()
 
-        Read produced first, then consumed. A readable non-ratified body is
-        terminal-by-decision and is excluded; a body absent from both sides is
-        treated as dispatchable so a transient read gap cannot skip a pod."""
+    def _stems(self, hunt_key: str) -> set[str]:
+        """Both sides' stems, used only for unit-id recovery."""
+        return set(self._side_stems(hunt_key, "produced")) | set(
+            self._side_stems(hunt_key, "consumed"))
+
+    def _spec_set_blocked(self, hunt_key: str) -> bool:
+        """Whether any stored spec is outside the terminal lifecycle shape.
+
+        Produced `ratified` (pending admission) and produced `dropped`
+        (terminal by decision) are valid. A produced `hypothesised` draft, any
+        consumed non-ratified body, or an unreadable/missing body is blocked.
+        This check runs even with a terminal marker: a late/direct write must
+        not hide behind an older marker.
+        """
         for side in ("produced", "consumed"):
-            try:
-                body = self.hunter_store.read_spec(
-                    self.project_id, hunt_key, spec_id, side=side)
-            except Exception:  # noqa: BLE001 - fail-open per record
-                continue
-            if body is not None:
-                return body.get("status") == SPEC_DISPATCH_STATUS
-        return True
+            for stem in self._side_stems(hunt_key, side):
+                status = self._spec_status(hunt_key, stem, side)
+                if status not in ("ratified", "dropped"):
+                    return True
+                if side == "consumed" and status == "dropped":
+                    return True
+        return False
+
+    def _ratified_stems(self, hunt_key: str, side: str) -> tuple[str, ...]:
+        """The ratified stems on one side. A malformed/non-ratified body is
+        not dispatchable and not completion; the lifecycle facts mark the hunt
+        blocked instead of silently skipping it."""
+        stems: list[str] = []
+        for stem in self._side_stems(hunt_key, side):
+            status = self._spec_status(hunt_key, stem, side)
+            if status == SPEC_DISPATCH_STATUS:
+                stems.append(stem)
+        return tuple(stems)
+
+    def _spec_status(self, hunt_key: str, spec_id: str, side: str) -> str:
+        """The persisted status, or a sentinel for a missing/malformed body.
+
+        The surfer must be able to read the state. A missing or unreadable
+        body is `malformed`, never silently treated as dispatchable; the
+        upstream write gate owns prevention of this state.
+        """
+        try:
+            body = self.hunter_store.read_spec(
+                self.project_id, hunt_key, spec_id, side=side)
+        except Exception:  # noqa: BLE001 - malformed body
+            return "malformed"
+        if not isinstance(body, Mapping):
+            return "malformed"
+        status = body.get("status")
+        return str(status) if status else "malformed"
 
     def _export_exists(self, spec_id: str) -> bool:
         if self.pod_store is None:

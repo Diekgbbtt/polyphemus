@@ -62,10 +62,13 @@ class FakeThreatStore:
 
 
 class FakeHunterStore:
-    def __init__(self, produced=None, consumed=None, bodies=None):
+    def __init__(self, produced=None, consumed=None, bodies=None,
+                 terminals=None, malformed=()):
         self._produced = produced or {}
         self._consumed = consumed or {}
         self._bodies = bodies or {}
+        self._terminals = terminals or {}
+        self._malformed = set(malformed)
 
     def produced_spec_files(self, project_id, hunt_key):
         return list(self._produced.get(hunt_key, ()))
@@ -74,7 +77,15 @@ class FakeHunterStore:
         return list(self._consumed.get(hunt_key, ()))
 
     def read_spec(self, project_id, hunt_key, spec_id, *, side="produced"):
+        if (hunt_key, spec_id) in self._malformed:
+            raise OSError(f"malformed spec {hunt_key}/{spec_id}")
         return self._bodies.get((hunt_key, spec_id))
+
+    def read_terminal_set(self, project_id, hunt_key):
+        return self._terminals.get(hunt_key)
+
+    def list_hunt_keys(self, project_id):
+        return sorted(set(self._produced) | set(self._consumed))
 
 
 class FakePodStore:
@@ -86,16 +97,29 @@ class FakePodStore:
 
 
 def _gate(mode: SyncMode, *, models=None, produced=None, consumed=None,
-          bodies=None, exports=(), intake_order=None) -> RunSyncGate:
+          bodies=None, exports=(), intake_order=None, terminals=None,
+          malformed=()) -> RunSyncGate:
     return RunSyncGate(
         mode=mode,
         project_id=PROJECT,
         run_id=RUN,
         threat_store=FakeThreatStore(models),
-        hunter_store=FakeHunterStore(produced, consumed, bodies),
+        hunter_store=FakeHunterStore(
+            produced, consumed, bodies, terminals=terminals,
+            malformed=malformed),
         pod_store=FakePodStore(exports),
         intake_order=intake_order,
     )
+
+
+def _terminal(hunt: str, **statuses: str) -> dict:
+    return {
+        "schema_version": 1,
+        "hunt_key": hunt,
+        "run_id": RUN,
+        "status": "terminal",
+        "spec_statuses": dict(statuses),
+    }
 
 
 def _ids(items):
@@ -146,14 +170,23 @@ def test_gate_holds_the_next_unit_behind_a_live_pod():
 
 def test_gate_serial_reads_stems_and_exports_for_the_cursor_hunt():
     hunt = "u1__loop-1"
+    bodies = {
+        (hunt, "a_first"): {
+            "status": "ratified", "target": {"unit_id": "Service:u1"}},
+        (hunt, "b_second"): {
+            "status": "ratified", "target": {"unit_id": "Service:u1"}},
+    }
+    terminal = _terminal(hunt, a_first="ratified", b_second="ratified")
     gate = _gate(
         SyncMode.SERIAL,
         produced={hunt: ["a_first", "b_second"]},
+        bodies=bodies,
+        terminals={hunt: terminal},
     )
     # loop-1 is still a produced file: the hunter is the only admissible item.
     assert _ids(gate.filter([_loop("u1")])) == (f"{hunt}",)
 
-    # The hunter left the graph and authored two specs: the first pod goes now.
+    # The hunter left the graph and finalized: the first pod goes now.
     spec_a = _spec(hunt, "a_first")
     spec_b = _spec(hunt, "b_second")
     admitted = gate.filter([spec_a, spec_b])
@@ -162,7 +195,10 @@ def test_gate_serial_reads_stems_and_exports_for_the_cursor_hunt():
     # The first export is durable: the second pod goes now.
     gate_x = _gate(
         SyncMode.SERIAL,
-        produced={hunt: ["a_first", "b_second"]},
+        produced={hunt: ["b_second"]},
+        consumed={hunt: ["a_first"]},
+        bodies=bodies,
+        terminals={hunt: terminal},
         exports={(("a_first"), RUN)},
     )
     assert _ids(gate_x.filter([spec_b])) == (spec_b.message_id,)
@@ -185,16 +221,142 @@ def test_gate_serial_ignores_a_dropped_spec_at_the_cursor():
         SyncMode.SERIAL,
         produced={hunt: ["a_dropped", "b_ratified"]},
         bodies=bodies,
+        terminals={hunt: _terminal(
+            hunt, a_dropped="dropped", b_ratified="ratified")},
     )
     spec_b = _spec(hunt, "b_ratified")
     assert _ids(gate.filter([spec_b])) == (spec_b.message_id,)
 
 
-def test_gate_serial_moves_to_the_next_hunt_after_the_pods_are_terminal():
-    hunt = "u1__loop-1"
+def test_gate_serial_blocks_a_stale_hypothesised_hunt():
+    """A stale draft must hold the queue, not be silently skipped."""
+    stale = "u1__loop-1"
+    models = {
+        "Service:u1": {"unit_id": "Service:u1", "loops": [
+            {"id": "loop-1", "likelihood": "high"}]},
+        "Service:u2": {"unit_id": "Service:u2", "loops": [
+            {"id": "loop-1", "likelihood": "low"}]},
+    }
+    bodies = {
+        (stale, "a_draft"): {
+            "status": "hypothesised", "target": {"unit_id": "Service:u1"}},
+    }
     gate = _gate(
         SyncMode.SERIAL,
-        produced={hunt: ["a_first"]},
+        models=models,
+        produced={stale: ["a_draft"]},
+        bodies=bodies,
+    )
+    assert gate.filter([_loop("u2")]) == ()
+
+
+def test_gate_serial_blocks_a_hypothesised_spec_behind_a_terminal_marker():
+    """A stale draft written after finalize must not hide behind the marker."""
+    hunt = "u1__loop-1"
+    models = {
+        "Service:u1": {"unit_id": "Service:u1", "loops": [
+            {"id": "loop-1", "likelihood": "high"}]},
+        "Service:u2": {"unit_id": "Service:u2", "loops": [
+            {"id": "loop-1", "likelihood": "low"}]},
+    }
+    bodies = {
+        (hunt, "a_late"): {
+            "status": "hypothesised", "target": {"unit_id": "Service:u1"}},
+    }
+    gate = _gate(
+        SyncMode.SERIAL,
+        models=models,
+        produced={hunt: ["a_late"]},
+        bodies=bodies,
+        terminals={hunt: _terminal(hunt, a_late="ratified")},
+    )
+    assert gate.filter([_loop("u2")]) == ()
+
+
+def test_gate_serial_requires_the_hunter_terminal_marker():
+    """A consumed spec with an export is not completion without the marker."""
+    hunt = "u1__loop-1"
+    models = {
+        "Service:u1": {"unit_id": "Service:u1", "loops": [
+            {"id": "loop-1", "likelihood": "high"}]},
+        "Service:u2": {"unit_id": "Service:u2", "loops": [
+            {"id": "loop-1", "likelihood": "low"}]},
+    }
+    bodies = {
+        (hunt, "a_first"): {
+            "status": "ratified", "target": {"unit_id": "Service:u1"}},
+    }
+    gate = _gate(
+        SyncMode.SERIAL,
+        models=models,
+        consumed={hunt: ["a_first"]},
+        bodies=bodies,
+        exports={(("a_first"), RUN)},
+    )
+    assert gate.filter([_loop("u2")]) == ()
+
+
+def test_gate_serial_blocks_an_invalid_spec_status():
+    """A non-ratified, non-dropped status is not dispatchable and must not be
+    skipped. An unparsable YAML body is the same failure, owned by the upstream
+    write-gate ticket; the gate also treats it as blocked when the unit id is
+    recoverable."""
+    hunt = "u1__loop-1"
+    models = {
+        "Service:u1": {"unit_id": "Service:u1", "loops": [
+            {"id": "loop-1", "likelihood": "high"}]},
+        "Service:u2": {"unit_id": "Service:u2", "loops": [
+            {"id": "loop-1", "likelihood": "low"}]},
+    }
+    bodies = {
+        (hunt, "bad"): {
+            "status": "garbage", "target": {"unit_id": "Service:u1"}},
+    }
+    gate = _gate(
+        SyncMode.SERIAL,
+        models=models,
+        produced={hunt: ["bad"]},
+        bodies=bodies,
+    )
+    assert gate.filter([_loop("u2")]) == ()
+
+
+def test_gate_serial_treats_unsuccessful_export_as_terminal():
+    """A failed or degraded pod execution still closes the consumed spec."""
+    hunt = "u1__loop-1"
+    models = {
+        "Service:u1": {"unit_id": "Service:u1", "loops": [
+            {"id": "loop-1", "likelihood": "high"}]},
+        "Service:u2": {"unit_id": "Service:u2", "loops": [
+            {"id": "loop-1", "likelihood": "low"}]},
+    }
+    bodies = {
+        (hunt, "a_first"): {
+            "status": "ratified", "target": {"unit_id": "Service:u1"}},
+    }
+    gate = _gate(
+        SyncMode.SERIAL,
+        models=models,
+        consumed={hunt: ["a_first"]},
+        bodies=bodies,
+        terminals={hunt: _terminal(hunt, a_first="ratified")},
+        exports={(("a_first"), RUN)},
+    )
+    assert _ids(gate.filter([_loop("u2")])) == (
+        _loop("u2").message_id,)
+
+
+def test_gate_serial_moves_to_the_next_hunt_after_the_pods_are_terminal():
+    hunt = "u1__loop-1"
+    bodies = {
+        (hunt, "a_first"): {
+            "status": "ratified", "target": {"unit_id": "Service:u1"}},
+    }
+    gate = _gate(
+        SyncMode.SERIAL,
+        consumed={hunt: ["a_first"]},
+        bodies=bodies,
+        terminals={hunt: _terminal(hunt, a_first="ratified")},
         exports={(("a_first"), RUN)},
     )
     next_loop = _loop("u1", "loop-2")
