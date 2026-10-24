@@ -99,3 +99,131 @@ def test_pre_filter_admitting_the_item_dispatches_and_moves_normally(tmp_path):
         entry.get("run_id") == RUN
         for entry in threat.read_produced_loops(PROJECT)
     )
+
+
+# --- batched: the low-tier sequencing must not order a batch ---------------------
+
+
+def _model_with_loops(threat, unit_id, loops):
+    produce_model(
+        threat, project_id=PROJECT, unit_id=unit_id, run_id=RUN, loops=loops,
+    )
+
+
+def _ratified_spec(hunt: str) -> dict:
+    return {
+        "status": "ratified",
+        "fault_keyword": "f",
+        "strategy_keyword": "keep",
+        "target": {"unit_id": UNIT},
+        "provenance": {"run_id": RUN},
+    }
+
+
+def test_batched_admits_a_low_loop_named_by_another_units_high_loop(tmp_path):
+    """The batch is the unit's WHOLE loop set (ADR, section 2, `batched`).
+
+    The S2 8.3 low-tier sequencing is subsumed in `batched`: a high loop file
+    produced for a LATER unit must never hold the current unit's low loop. Held
+    forever, that low loop would also keep the batched gate from ever leaving
+    the hunt phase - and the run would wedge on a produced loop no unit could
+    consume.
+    """
+    from polymerhus.attack.hunting.pipeline_sync import RunSyncGate, SyncMode
+    from tests.hunting_fixtures import loop_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    _model_with_loops(threat, UNIT, [
+        loop_row(likelihood="high"),
+        loop_row(likelihood="low"),
+    ])
+    # A later unit with a high loop: risk 3 against the current unit's 4, so
+    # the current unit stays first and the later loop stays produced.
+    _model_with_loops(threat, "Service:later", [loop_row(likelihood="high")])
+    hunt = "Service-catalogue-and-discovery__loop-1"
+    hunter.write_specs(
+        PROJECT, hunt, [_ratified_spec(hunt)], enforce_complete=False)
+    hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+
+    gate = RunSyncGate(
+        mode=SyncMode.BATCHED, project_id=PROJECT, run_id=RUN,
+        threat_store=threat, hunter_store=hunter, pod_store=None,
+        intake_order=lambda: (UNIT, "Service:later"),
+    )
+    control = RecordingControlPlane()
+
+    from polymerhus.attack.hunting.surfer import tier_sequencing_enabled
+
+    def _tick_once():
+        return run_delivery_tick(
+            PROJECT, RUN,
+            threat_store=threat,
+            hunter_store=hunter,
+            pod_store=None,
+            control=control,
+            coro_for=lambda item: _noop(),
+            pre_filter=lambda items, live: gate.filter(
+                items, live_session_ids=live),
+            sequence_tiers=tier_sequencing_enabled(gate),
+        )
+
+    first = _tick_once()
+    # The WHOLE unit batch: the high loop AND the low loop dispatch together,
+    # even though the later unit's high loop is still produced.
+    assert first.dispatched == 2
+    assert any(call.endswith("loop-1") for call in control.calls)
+    assert any(call.endswith("loop-2") for call in control.calls)
+    # The pod phase waits for the batch: the spec stays produced.
+    assert [call for call in control.calls if ":pod:" in call] == []
+    assert hunter.read_spec(
+        PROJECT, hunt, "f_keep", side="produced") is not None
+
+    # Close both hunts so the F-022 consumed-loop recovery does not re-offer
+    # them; the batch is then done and the pod may start.
+    hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+    hunter.finalize_specs(
+        PROJECT, "Service-catalogue-and-discovery__loop-2", run_id=RUN)
+
+    second = _tick_once()
+    assert second.dispatched == 1
+    assert [call for call in control.calls if ":pod:" in call] != []
+
+
+def test_tier_sequencing_applies_to_parallel_and_serial_only():
+    """The S2 8.3 tier ordering does not order a `batched` batch."""
+    from polymerhus.attack.hunting.pipeline_sync import RunSyncGate, SyncMode
+    from polymerhus.attack.hunting.surfer import tier_sequencing_enabled
+
+    def _gate(mode):
+        return RunSyncGate(
+            mode=mode, project_id=PROJECT, run_id=RUN,
+            hunter_store=HunterMemoryStore("/nonexistent"),
+        )
+
+    assert tier_sequencing_enabled(None) is True
+    assert tier_sequencing_enabled(_gate(SyncMode.PARALLEL)) is True
+    assert tier_sequencing_enabled(_gate(SyncMode.SERIAL)) is True
+    assert tier_sequencing_enabled(_gate(SyncMode.BATCHED)) is False
+
+
+def test_run_work_remaining_counts_a_held_low_when_sequencing_is_off(tmp_path):
+    """`batched` quiesce reads the low as work: the tier filter must not hide it.
+
+    With the tier ordering on, a live higher-tier hunter holds the low loop and
+    the read reports no work; a batched run releases it, so its quiesce must
+    keep counting it.
+    """
+    from polymerhus.attack.hunting.surfer import run_work_remaining
+    from tests.hunting_fixtures import loop_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    _model_with_loops(threat, UNIT, [loop_row(likelihood="low")])
+
+    kwargs = dict(
+        threat_store=threat, hunter_store=hunter,
+        live_loop_likelihoods={"hunting:run-1:hunt:other__loop-1": "high"},
+    )
+    assert run_work_remaining(PROJECT, RUN, **kwargs) is False
+    assert run_work_remaining(PROJECT, RUN, sequence_tiers=False, **kwargs) is True

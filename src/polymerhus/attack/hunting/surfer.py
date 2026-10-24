@@ -318,6 +318,22 @@ class SurferReport:
     quiesced: bool = False
 
 
+def tier_sequencing_enabled(sync_gate: Any) -> bool:
+    """Whether the S2 8.3 low-tier ordering applies to this run.
+
+    It orders `parallel` and `serial` dispatches. A `batched` run dispatches
+    the unit's WHOLE loop set, so the ordering is subsumed and must never hold
+    a loop behind another unit's produced higher-tier loop (the pipeline-sync
+    ADR, section 2, `batched`). `sync_gate` is None for `parallel`."""
+    if sync_gate is None:
+        return True
+    from polymerhus.attack.hunting.pipeline_sync import SyncMode  # noqa: PLC0415
+
+    # A fake gate in a test carries no mode; without evidence of a batch, keep
+    # the historical ordering (fail-safe).
+    return getattr(sync_gate, "mode", None) is not SyncMode.BATCHED
+
+
 def run_work_remaining(
     project_id: str,
     run_id: str,
@@ -326,6 +342,7 @@ def run_work_remaining(
     hunter_store: HunterMemoryStore,
     pod_store: Any = None,
     live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
+    sequence_tiers: bool = True,
 ) -> bool:
     """True when a DISPATCHABLE-NOW produced item remains for this run.
 
@@ -356,6 +373,10 @@ def run_work_remaining(
         # a produced COMPLETED valid model with no dispatchable loop left: the
         # mover consumes it on its next tick (S2 8.4), so the move itself is work
         return True
+    if not sequence_tiers:
+        # A `batched` run dispatches the unit's whole loop set: the S2 8.3 tier
+        # ordering does not order a batch, so every produced loop is work.
+        return bool(inbox.items)
     return bool(sequence_dispatch(inbox.items, live_loop_likelihoods))
 
 
@@ -377,7 +398,8 @@ async def is_run_quiesced(
       may yet write a produced spec after quiesce;
     - no pod session is live - an in-flight pod may still deliver an export;
     - no dispatchable-now produced item remains (the mover's own produced read
-      plus the sequencing filter).
+      plus the sequencing filter). A `batched` run reads every produced loop as
+      work: the tier ordering does not order a batch.
 
     Idle hunters deliberately do NOT block this predicate: their graphs have
     ended, they author nothing more, and they settle on the run-terminal
@@ -399,6 +421,9 @@ async def is_run_quiesced(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
         live_loop_likelihoods=state.loop_likelihoods,
+        # A batched run's lows are real work even while another unit's higher
+        # loop is produced: the tier ordering does not order a batch.
+        sequence_tiers=tier_sequencing_enabled(state.sync_gate),
     ):
         return False
     # Hard completion fail-safe: a malformed or stale artifact that the mover
@@ -1039,6 +1064,10 @@ async def run_surfer_loop(
             live_loop_likelihoods=state.loop_likelihoods,
             deferred_session_ids=state.deferred_session_ids(),
             pre_filter=_pre_filter if state.sync_gate is not None else None,
+            # A batched run admits the unit's WHOLE loop set: the low-tier
+            # sequencing must not hold a loop behind another unit's produced
+            # high loop (the pipeline-sync ADR, section 2, `batched`).
+            sequence_tiers=tier_sequencing_enabled(state.sync_gate),
         )
         ticks += 1
         if state.provider_failure is not None:

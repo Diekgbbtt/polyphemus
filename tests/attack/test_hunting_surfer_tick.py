@@ -287,7 +287,7 @@ def test_a_ratified_spec_without_a_parent_inbox_still_dispatches_a_pod(stores):
     assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
 
 
-def test_run_work_remaining_agrees_with_the_dispatch_gate(stores):
+def test_run_work_remaining_agrees_with_the_dispatch_gate(stores, tmp_path):
     """The never-disagree contract (spec #169 "Testing Decisions"): the quiesce
     pending-work predicate (`run_work_remaining`) gates on the SAME predicates
     `build_run_dispatch` gates on, so real work is always dispatchable - it can
@@ -316,10 +316,21 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores):
     hunter.finalize_specs(PROJECT, DISPATCH_ID, run_id=RUN)
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
-    # and with nothing left and no live session, quiesce is REACHABLE - the
-    # produced-spec wedge is gone
+    # The consumed ratified spec still needs its durable PodExport: admission
+    # (the produced->consumed move) is not completion (F-017).
+    from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
+
+    pod = PodMemoryStore(tmp_path / "pod")
+    pod.write_pod_export(
+        "sqli_blind", RUN,
+        {"verdict": "successful",
+         "evidence": {"terminal_reason": "symptom-confirmed"}},
+    )
+    # With nothing left, its export landed, and no live session, quiesce is
+    # REACHABLE - the produced-spec wedge is gone.
     assert asyncio.run(is_run_quiesced(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        pod_store=pod,
         control=RecordingControlPlane(), state=RunDispatchState(),
     )) is True
 

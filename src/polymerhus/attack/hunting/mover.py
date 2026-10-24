@@ -757,6 +757,7 @@ def run_delivery_tick(
     pre_filter: Callable[
         [Sequence[ProducedItem], AbstractSet[str]], Sequence[ProducedItem],
     ] | None = None,
+    sequence_tiers: bool = True,
 ) -> TickReport:
     """One impure mover tick: reads the produced inboxes, calls the pure
     deduction, drives the delivery against the control plane, and applies the
@@ -769,7 +770,9 @@ def run_delivery_tick(
     2. Apply the sequencing filter: a `low` loop file waits while a higher-tier
        loop file is produced or a higher-tier hunter session is live (S2 8.3),
        then the run's sync pre-filter (`hunting_pipeline_sync`): a held item
-       stays produced and counts as paused.
+       stays produced and counts as paused. `sequence_tiers=False` skips the
+       tier ordering: a `batched` run admits the unit's whole loop set, so the
+       tier filter must not hide a loop from the batch.
     3. Deduce with empty feedback -> the items `to_dispatch` this lap. An item
        whose child is backing off (F-026) is held pending and never dispatched;
        the run cannot quiesce while it remains.
@@ -794,7 +797,16 @@ def run_delivery_tick(
     )
     produced = inbox.items
     live = control.live_session_ids()
-    dispatchable = sequence_dispatch(produced, live_loop_likelihoods)
+    # S2 8.3 orders tiers only where the sync mode admits one item at a time
+    # (`parallel`, `serial`). A `batched` run dispatches the unit's WHOLE loop
+    # set: the low-tier sequencing is subsumed and must not order a batch (the
+    # pipeline-sync ADR, section 2, `batched`), otherwise another unit's
+    # produced high loop would hold this unit's low loop for ever and pin the
+    # batch in the hunt phase.
+    dispatchable = (
+        sequence_dispatch(produced, live_loop_likelihoods)
+        if sequence_tiers else tuple(produced)
+    )
     if pre_filter is not None:
         # The run's sync policy (`hunting_pipeline_sync`, ADR 2026-10-22): the
         # items it holds stay produced (at-least-once) and count as paused -
