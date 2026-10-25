@@ -8,7 +8,7 @@ the mover's dispatch deferral; the runtime tests pin the live sibling behaviour.
 """
 from polymerhus.attack.hunting.mover import (
     DeliveryPlan,
-    ThreatLoopItem,
+    ThreatItem,
     deduce_delivery,
 )
 from polymerhus.attack.hunting.surfer import (
@@ -26,14 +26,14 @@ def _throttle(*, retry_after_s=None, quota=False) -> ProviderUnavailableError:
     )
 
 
-def _recovered_loop() -> ThreatLoopItem:
-    return ThreatLoopItem(
-        message_id="Service-a__loop-1",
-        session_id="hunting:run-1:hunt:Service-a__loop-1",
+def _recovered_threat() -> ThreatItem:
+    return ThreatItem(
+        message_id="Service-a__threat-1",
+        session_id="hunting:run-1:hunt:Service-a__threat-1",
         unit_id="Service:a",
         unit_name="Service-a",
-        loop_id="loop-1",
-        dispatch_id="Service-a__loop-1",
+        threat_id="threat-1",
+        dispatch_id="Service-a__threat-1",
         likelihood="high",
         record={},
         recovered=True,
@@ -110,7 +110,7 @@ def test_the_default_backoff_applies_when_the_provider_supplies_none():
 # --- the mover's deferral -----------------------------------------------------
 
 def test_a_deferred_item_is_neither_dispatched_nor_moved():
-    item = _recovered_loop()
+    item = _recovered_threat()
     plan = deduce_delivery(
         [item], deferred_session_ids={item.session_id})
     assert plan == DeliveryPlan(to_dispatch=(), to_move=(), to_retry=())
@@ -122,13 +122,13 @@ def test_a_live_deferred_item_still_lands_its_admission_move():
     """The crash-window move is about admission, not dispatch: a live item that
     is also backing off must still land the produced->consumed marker (and a
     recovered one is already moved, so no plan at all)."""
-    produced = ThreatLoopItem(
-        message_id="Service-a__loop-1",
-        session_id="hunting:run-1:hunt:Service-a__loop-1",
+    produced = ThreatItem(
+        message_id="Service-a__threat-1",
+        session_id="hunting:run-1:hunt:Service-a__threat-1",
         unit_id="Service:a",
         unit_name="Service-a",
-        loop_id="loop-1",
-        dispatch_id="Service-a__loop-1",
+        threat_id="threat-1",
+        dispatch_id="Service-a__threat-1",
         likelihood="high",
         record={},
     )
@@ -138,7 +138,7 @@ def test_a_live_deferred_item_still_lands_its_admission_move():
     assert plan.to_move == (produced,)
     assert plan.to_dispatch == () and plan.to_retry == ()
 
-    recovered = _recovered_loop()
+    recovered = _recovered_threat()
     plan = deduce_delivery(
         [recovered], live_session_ids={recovered.session_id},
         deferred_session_ids={recovered.session_id})

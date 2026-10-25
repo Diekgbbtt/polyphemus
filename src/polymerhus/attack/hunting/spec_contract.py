@@ -152,7 +152,7 @@ class SkillConcretisedProcedure(BaseModel):
 
 SPEC_PROVENANCE_FIELDS: tuple[str, ...] = (
     "run_id",
-    "loop_id",
+    "threat_id",
     "unit_id",
     "canonical_class",
     "web_vulnerability_class",
@@ -163,7 +163,7 @@ SPEC_PROVENANCE_FIELDS: tuple[str, ...] = (
 )
 """The provenance fields the hunter writes into every spec (S3 8.6/8.9).
 
-`loop_id`, `unit_id`, the two classes and the loop's provenance ride the
+`threat_id`, `unit_id`, the two classes and the threat's provenance ride the
 dispatch payload; `baseline_ref` is optional; `source_recon_refs`,
 `assumption_ref` and `playbook` record the grounding the hunter used. The
 copied `skill_procedure` is retired: the concretised procedure is a top-level
@@ -184,7 +184,7 @@ class TargetIdentity(BaseModel):
     url: str = Field(
         default="",
         description="The base URL the pod probes. Bound by the symbolic layer "
-                    "from the project's canonical origin and the loop's "
+                    "from the project's canonical origin and the threat's "
                     "evidence; a spec without a url is INIT-rejected.")
     unit_id: str = Field(
         default="",
@@ -205,7 +205,7 @@ class SpecProvenance(BaseModel):
         default="",
         description="The hunting run id the spec was authored under; bound by "
                     "the hunts_store tool, never authored by the model.")
-    loop_id: str = Field(default="", description="The dispatching loop id.")
+    threat_id: str = Field(default="", description="The dispatching threat id.")
     unit_id: str = Field(default="", description="The L1 unit identity.")
     canonical_class: str = Field(
         default="", description="The freely named taxonomy class.")

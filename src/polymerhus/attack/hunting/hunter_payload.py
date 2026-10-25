@@ -1,40 +1,40 @@
-"""The per-loop hunter payload (S2 8.2; T4 #377).
+"""The per-threat hunter payload (S2 8.2; T4 #377).
 
-The surfer materialises ONE payload per loop file at DISPATCH time - never at
-model time: the model document and the loop file are the durable artifacts, and
+The surfer materialises ONE payload per threat file at DISPATCH time - never at
+model time: the model document and the threat file are the durable artifacts, and
 the payload is the dispatch-shaped projection of them that the hunter consumes.
 
 The payload carries (S2 8.2):
 
-- the loop record;
+- the threat record;
 - the unit id and unit kind;
 - the relevant technical sharpening: the interface agreements referenced by the
   trust agreement, plus the control-flow and data-flow overview;
 - the relevant trust agreement, and - when a trust-transition violation maps to
-  the loop's fault - the dynamic-state transition and its violation;
+  the threat's fault - the dynamic-state transition and its violation;
 - the programming fault;
 - the canonical class and the web vulnerability class;
-- the evidence pointers from the loop, including any recorded HTTP-history
+- the evidence pointers from the threat, including any recorded HTTP-history
   artifact ids, so the hunter can choose a baseline;
 - the likelihood and the vulnerability-level rationale;
 - the confidence degree;
 - the target context the spec's target identity is authored from (the unit
-  identity, and the request/http-history refs the loop grounds on).
+  identity, and the request/http-history refs the threat grounds on).
 
 It does NOT carry (S2 8.2): any narrowed vector or payload, a
 `HuntConfig`, or a pre-authored payload vector space. The rationale stays
 vulnerability-level, so the hunter keeps the room to engineer its own procedure.
 The key set is exactly the list above (T4a review F4): the importing assumption
-record and the loop's `suite_gap` flag are NOT separate payload fields - the
-programming fault carries the fault, and the loop record the hunter receives
+record and the threat's `suite_gap` flag are NOT separate payload fields - the
+programming fault carries the fault, and the threat record the hunter receives
 already carries `suite_gap`.
 
-PURE by construction (CODING_STANDARD s3): the model document and the loop
+PURE by construction (CODING_STANDARD s3): the model document and the threat
 record go in, one dict comes out; no I/O, no clock, no LLM. Every lookup is
 fail-open and deterministic - a missing assumption, boundary, transition or
 violation degrades that ONE payload field to None/empty, never raising into the
 dispatch tick (the mover would read a raise as a refusal and the run would
-hot-loop the same loop file).
+hot-loop the same threat file).
 """
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def _by_id(items: Any, ident: Any) -> dict | None:
 
 
 def _assumption_for_fault(model: Mapping, fault_ref: str) -> dict | None:
-    """The assumption that carries the loop's fault (`assumptions[].fault.id`,
+    """The assumption that carries the threat's fault (`assumptions[].fault.id`,
     the fault index of the completion checker, S2 5.7)."""
     for assumption in _as_list(model.get("assumptions")):
         if not isinstance(assumption, Mapping):
@@ -104,7 +104,7 @@ def _transition_for_violation(model: Mapping, violation: Mapping | None) -> dict
 
 
 def _baseline_refs(evidences: Sequence[Any]) -> list[str]:
-    """The refs a baseline can be chosen from: the loop's request records and
+    """The refs a baseline can be chosen from: the threat's request records and
     its HTTP-history artifact ids (S2 8.2). Ordered and deduplicated."""
     refs: list[str] = []
     for evidence in evidences:
@@ -120,19 +120,19 @@ def _baseline_refs(evidences: Sequence[Any]) -> list[str]:
 
 def materialise_hunter_payload(
     model: Mapping,
-    loop_file: Mapping,
+    threat_file: Mapping,
     *,
     dispatch_id: str,
 ) -> dict:
-    """The hunter payload for ONE loop file (S2 8.2). `model` is the unit's
-    COMPLETED model document, `loop_file` the produced loop file's body (the
+    """The hunter payload for ONE threat file (S2 8.2). `model` is the unit's
+    COMPLETED model document, `threat_file` the produced threat file's body (the
     mover's dispatch record, S2 8.1). Pure and fail-open."""
-    loop = dict(loop_file.get("loop") or {})
-    # The impact is hunter context. The derived impact weight and loop risk are
+    threat = dict(threat_file.get("threat") or {})
+    # The impact is hunter context. The derived impact weight and threat risk are
     # dispatch concerns; the hunter does not reason over the score.
     for derived in ("impact_weight", "risk"):
-        loop.pop(derived, None)
-    fault_ref = str(loop.get("fault_ref") or "")
+        threat.pop(derived, None)
+    fault_ref = str(threat.get("fault_ref") or "")
     assumption = _assumption_for_fault(model, fault_ref)
     trust_model = model.get("trust_model") or {}
     trust_agreement = _by_id(trust_model.get("trust_agreements"), (assumption or {}).get("boundary_ref"))
@@ -161,17 +161,17 @@ def materialise_hunter_payload(
         None,
     )
     transition = _transition_for_violation(model, violation)
-    evidences = _as_list(loop.get("evidences"))
-    vulnerability = _by_id(model.get("vulnerabilities"), loop.get("vulnerability_ref")) or {}
-    unit_id = str(model.get("unit_id") or loop_file.get("unit_id") or "")
-    unit_kind = str(model.get("unit_kind") or loop_file.get("unit_kind") or "")
+    evidences = _as_list(threat.get("evidences"))
+    vulnerability = _by_id(model.get("vulnerabilities"), threat.get("vulnerability_ref")) or {}
+    unit_id = str(model.get("unit_id") or threat_file.get("unit_id") or "")
+    unit_kind = str(model.get("unit_kind") or threat_file.get("unit_kind") or "")
     return {
         "dispatch_id": dispatch_id,
-        "run_id": str(loop_file.get("run_id") or model.get("run_id") or ""),
-        "loop_id": str(loop_file.get("loop_id") or loop.get("id") or ""),
+        "run_id": str(threat_file.get("run_id") or model.get("run_id") or ""),
+        "threat_id": str(threat_file.get("threat_id") or threat.get("id") or ""),
         "unit_id": unit_id,
         "unit_kind": unit_kind,
-        "loop": loop,
+        "threat": threat,
         "technical_sharpening": {
             "interface_agreements": interface_agreements,
             "control_flows": _as_list(sharpening.get("control_flows")),
@@ -183,13 +183,13 @@ def materialise_hunter_payload(
             if transition is not None or violation is not None else None
         ),
         "programming_fault": dict((assumption or {}).get("fault") or {}),
-        "canonical_class": str(loop.get("canonical_class") or ""),
-        "web_vulnerability_class": str(loop.get("web_vulnerability_class") or ""),
+        "canonical_class": str(threat.get("canonical_class") or ""),
+        "web_vulnerability_class": str(threat.get("web_vulnerability_class") or ""),
         "evidence": evidences,
-        "likelihood": str(loop_file.get("likelihood") or loop.get("likelihood") or ""),
-        "likelihood_rationale": str(loop.get("likelihood_rationale") or ""),
+        "likelihood": str(threat_file.get("likelihood") or threat.get("likelihood") or ""),
+        "likelihood_rationale": str(threat.get("likelihood_rationale") or ""),
         "vulnerability_rationale": str(vulnerability.get("characterisation") or ""),
-        "confidence": str(loop.get("confidence") or ""),
+        "confidence": str(threat.get("confidence") or ""),
         "target_context": {
             "unit_id": unit_id,
             "unit_kind": unit_kind,

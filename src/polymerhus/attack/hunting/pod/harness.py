@@ -3,7 +3,7 @@
 G1 (the per-stretch tool-call cap `HUNT_POD_MAX_TOOL_CALLS`), G4 (the hanging
 guarantee that every exec result is recorded RAW in the D6 log), and O7 (the
 one-execution-per-identical-probe dedup gate) move HERE, onto the `create_agent`
-agent - the tool-call loop lives inside `create_agent`, so the graph's `tool_exec`
+agent - the tool-call threat lives inside `create_agent`, so the graph's `tool_exec`
 node disappears from the production lane. O7 covers both executing verbs: an
 identical `exec` command and an identical baseline `replay` (S5 8.5).
 
@@ -12,10 +12,10 @@ ARGUMENT validation is the tool's own contract (`extra="forbid"` args schemas,
 D84-22) - a wrong parameter fails as a REJECTED tool call at the pydantic layer;
 this middleware never re-validates arguments. RAW execution recording (G4) lives
 in the exec tool itself (it holds the full `ExecResult`); this middleware only
-counts calls, gates a repeat, and ends the loop at the cap.
+counts calls, gates a repeat, and ends the threat at the cap.
 
 Fail-open throughout: a hook that cannot see the state/runtime degrades to a
-pass-through, never raises into the loop.
+pass-through, never raises into the threat.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class _HarnessMiddleware(AgentMiddleware):
     @hook_config(can_jump_to=["end"])
     def after_model(self, state, runtime=None):
         """G1: once the stretch's tool-call budget is spent, END the ReAct loop -
-        the trail hands to the critic, never an unbounded loop (the old `tool_exec`
+        the trail hands to the critic, never an unbounded threat (the old `tool_exec`
         cap's exact semantics, enforced at the middleware layer)."""
         if self.calls >= self.cap:
             return {"jump_to": "end"}

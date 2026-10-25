@@ -165,7 +165,7 @@ def test_a_later_signals_forward_jump_records_the_skipped_passes():
 
 
 def test_an_earlier_signal_stays_trail_only():
-    """An inner-loop re-entry appends to the trail as `reentry` and never moves
+    """An inner-threat re-entry appends to the trail as `reentry` and never moves
     the state back (S4 14.5)."""
     assert S.detect_signal({"state": "verify_claims"},
                            _note_signal("grounding")) == (
@@ -281,7 +281,7 @@ def test_the_seven_transition_hints_are_the_ratified_literals():
     assert S.TRANSITION_HINTS == {
         "grounding": (
             "The grounding summary is persisted. Define the variant and manifestation space "
-            "the loop opens."
+            "the threat opens."
         ),
         "slice": (
             "Write the slice note, then collect the discrimination-axis instances."

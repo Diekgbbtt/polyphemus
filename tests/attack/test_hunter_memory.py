@@ -1,8 +1,8 @@
 """Unit tier: the hunter-memory spec-set store (S3 8.6-8.9, T6 #379).
 
-Pure filesystem mechanics - no Neo4j, no LLM. Pins the loop-driven store's
+Pure filesystem mechanics - no Neo4j, no LLM. Pins the threat-driven store's
 contract: the batched `specs` set write, the `{hypothesised, ratified,
-dropped}` lifecycle, the loop dispatch store key / folder / derived file name,
+dropped}` lifecycle, the threat dispatch store key / folder / derived file name,
 the move-aware write (the #205 rule), the reduced-D4-at-every-status body, the
 typed skill-procedure provenance, and the atomic/bounded notes surface.
 """
@@ -24,7 +24,7 @@ from polymerhus.attack.hunting.hunter_memory import (
 )
 
 PROJECT = "proj-1"
-HUNT_KEY = "Service-account-registration__loop-1"
+HUNT_KEY = "Service-account-registration__threat-1"
 SPEC_ID = "spec__registration__probe"
 
 
@@ -44,7 +44,7 @@ def _spec(*, status: str = "hypothesised", fault_keyword: str = "registration",
         "assumptions": ["the ownership check is absent"],
         "rationale": "an anonymous caller reads another user's item",
         "parent_spec_ref": None,
-        "provenance": {"loop_id": "loop-1", "unit_id": "Service:a"},
+        "provenance": {"threat_id": "threat-1", "unit_id": "Service:a"},
     }
     body.update(extra)
     return body
@@ -115,7 +115,7 @@ def test_finalize_records_the_terminal_set_and_is_idempotent(tmp_path):
 
 def test_finalize_accepts_a_zero_spec_hunt(tmp_path):
     """A hunter that authors no spec still needs a durable completion marker,
-    or its consumed loop would be recovered forever."""
+    or its consumed threat would be recovered forever."""
     store = HunterMemoryStore(root_dir=tmp_path)
     marker = store.finalize_specs(PROJECT, HUNT_KEY, run_id="run-empty")
     assert marker["spec_ids"] == []
@@ -127,7 +127,7 @@ def test_finalize_accepts_a_zero_spec_hunt(tmp_path):
 
 def test_a_batched_specs_write_creates_the_whole_set(tmp_path):
     """S3 8.7: one write carries the WHOLE set, all `hypothesised`, and the
-    store creates one file per derived identity in the loop's folder."""
+    store creates one file per derived identity in the threat's folder."""
     store = HunterMemoryStore(root_dir=tmp_path)
     written = store.write_specs(PROJECT, HUNT_KEY, [
         _spec(fault_keyword="registration", strategy_keyword="probe"),
@@ -283,7 +283,7 @@ def test_the_file_name_is_derived_from_the_class_and_values(tmp_path):
 
 def test_the_store_key_is_the_hunt_key_folder(tmp_path):
     """S3 8.9: the folder is `test-specs/<hunt_key>/`, where the hunt key is
-    the loop dispatch id `<unit_name>__<loop_id>`."""
+    the threat dispatch id `<unit_name>__<threat_id>`."""
     store = HunterMemoryStore(root_dir=tmp_path)
     store.write_specs(PROJECT, HUNT_KEY, [_spec()])
     expected = (

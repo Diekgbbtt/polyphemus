@@ -8,7 +8,7 @@ REASONING SHAPE, never the domain.
 ### Example 2 - well-formedness re-entry, then a merge
 
 ```
-GROUNDING: the same report loop; the target surfaces now show a second route,
+GROUNDING: the same report threat; the target surfaces now show a second route,
 GET /reports/{id}/export, that also carries the report id. Class skill idor
 loaded; the methodology KB answers the object-store configuration only.
 Failure modes: the download ownership check, the export ownership check, the
@@ -73,10 +73,10 @@ COMPLETE.
 ### Example 4 - worst case, graceful degradation
 
 ```
-GROUNDING: loop-2 names a class whose skill is absent from the suite; the
+GROUNDING: threat-2 names a class whose skill is absent from the suite; the
 methodology KB returns empty and the target front answers 504 for every probe.
 The 504 family means the target's upstream is down or restarting, not that the
-routes are absent: stop probing, record the unavailability, and do not loop.
+routes are absent: stop probing, record the unavailability, and do not threat.
 Gaps recorded in phase:grounding: class skill absent, KB empty, target
 temporarily unavailable. Grounding is weaker; it still proceeds. phase:grounding.
 SLICE: the region the trust agreement opens on the item lookup, bounded by the

@@ -27,7 +27,7 @@ VALID_SPEC = {
     "assumptions": ["network egress allowed"],
     "rationale": "reachability",
     "provenance": {
-        "loop_id": "loop-1",
+        "threat_id": "threat-1",
         "unit_id": "service:web:soupmarket",
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",

@@ -31,13 +31,13 @@ from polymerhus.attack.hunting.mover import (
     DispatchFeedback,
     ProducedItem,
     TestSpecItem,
-    ThreatLoopItem,
+    ThreatItem,
     d4_spec_body,
     deduce_delivery,
     hunter_session_id,
     pod_session_id,
     sequence_dispatch,
-    threat_loop_item,
+    threat_item,
 )
 
 
@@ -52,19 +52,19 @@ RUN = "run-1"
 PROJECT = "proj-1"
 
 
-def _loop_record(*, unit_id=UNIT, loop_id="loop-1", likelihood="high",
+def _threat_record(*, unit_id=UNIT, threat_id="threat-1", likelihood="high",
                  run_id=RUN, **overrides) -> dict:
-    """One loop file record exactly as the store writes it (S2 8.1)."""
+    """One threat file record exactly as the store writes it (S2 8.1)."""
     unit_name = unit_id.replace(":", "-")
     record = {
-        "loop_id": loop_id,
+        "threat_id": threat_id,
         "unit_id": unit_id,
         "unit_kind": "service",
         "run_id": run_id,
-        "dispatch_id": f"{unit_name}__{loop_id}",
+        "dispatch_id": f"{unit_name}__{threat_id}",
         "likelihood": likelihood,
-        "loop": {
-            "id": loop_id,
+        "threat": {
+            "id": threat_id,
             "fault_ref": "fault-1",
             "vulnerability_ref": "v-1",
             "canonical_class": "IDOR",
@@ -89,102 +89,102 @@ def _loop_record(*, unit_id=UNIT, loop_id="loop-1", likelihood="high",
     return record
 
 
-def _loop_item(*, record=None, loop_id="loop-1", likelihood="high",
-               run_id=RUN, unit_id=UNIT, unit_name=UNIT_NAME) -> "ThreatLoopItem | None":
-    return threat_loop_item(
-        project_id=PROJECT, unit_id=unit_id, unit_name=unit_name, loop_id=loop_id,
-        record=_loop_record(unit_id=unit_id, loop_id=loop_id,
+def _threat_item(*, record=None, threat_id="threat-1", likelihood="high",
+               run_id=RUN, unit_id=UNIT, unit_name=UNIT_NAME) -> "ThreatItem | None":
+    return threat_item(
+        project_id=PROJECT, unit_id=unit_id, unit_name=unit_name, threat_id=threat_id,
+        record=_threat_record(unit_id=unit_id, threat_id=threat_id,
                             likelihood=likelihood, run_id=run_id)
         if record is None else record,
         run_id=run_id,
     )
 
 
-def test_the_loop_item_carries_the_combined_risk_bucket():
-    record = _loop_record()
+def test_the_threat_item_carries_the_combined_risk_bucket():
+    record = _threat_record()
     record["risk"] = 7
 
-    item = threat_loop_item(
+    item = threat_item(
         project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
-        loop_id="loop-1", record=record, run_id=RUN)
+        threat_id="threat-1", record=record, run_id=RUN)
 
     assert item is not None
     assert item.risk == 7
     assert item.bucket == "medium"
 
 
-def test_a_zero_risk_loop_file_is_refused():
-    record = _loop_record()
+def test_a_zero_risk_threat_file_is_refused():
+    record = _threat_record()
     record["risk"] = 0
 
-    assert threat_loop_item(
+    assert threat_item(
         project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
-        loop_id="loop-1", record=record, run_id=RUN) is None
+        threat_id="threat-1", record=record, run_id=RUN) is None
 
 
-# --- the loop dispatch record and the validity predicate (T4, #377) -----------
+# --- the threat dispatch record and the validity predicate (T4, #377) -----------
 
-def test_a_produced_loop_file_becomes_one_dispatch_item():
-    """S2 8.1/8.4: ONE loop file dispatches ONE hunter. The item's message id IS
-    the loop file's dispatch id and its session id is the per-loop hunter id
-    (S3 8.9) - the loop record travels with the item for the payload."""
-    item = _loop_item()
+def test_a_produced_threat_file_becomes_one_dispatch_item():
+    """S2 8.1/8.4: ONE threat file dispatches ONE hunter. The item's message id IS
+    the threat file's dispatch id and its session id is the per-threat hunter id
+    (S3 8.9) - the threat record travels with the item for the payload."""
+    item = _threat_item()
 
     assert item is not None
-    assert item.message_id == f"{UNIT_NAME}__loop-1"
-    assert item.session_id == f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-1"
+    assert item.message_id == f"{UNIT_NAME}__threat-1"
+    assert item.session_id == f"hunting:{RUN}:hunt:{UNIT_NAME}__threat-1"
     assert item.unit_id == UNIT
     assert item.unit_name == UNIT_NAME
-    assert item.loop_id == "loop-1"
+    assert item.threat_id == "threat-1"
     assert item.likelihood == "high"
-    assert item.record["loop"]["id"] == "loop-1"
+    assert item.record["threat"]["id"] == "threat-1"
 
 
-def test_a_loop_file_from_another_run_is_refused():
-    """S2 8.3: the sequencing is run-scoped - another run's loop file is left
+def test_a_threat_file_from_another_run_is_refused():
+    """S2 8.3: the sequencing is run-scoped - another run's threat file is left
     untouched, never dispatched by this run."""
-    assert _loop_item(record=_loop_record(run_id="another-run")) is None
-    assert _loop_item(record=_loop_record(), run_id="another-run") is None
+    assert _threat_item(record=_threat_record(run_id="another-run")) is None
+    assert _threat_item(record=_threat_record(), run_id="another-run") is None
 
 
 @pytest.mark.parametrize("broken", [
     pytest.param("not-a-mapping", id="record-not-a-mapping"),
-    pytest.param({**_loop_record(), "likelihood": "urgent"}, id="bad-likelihood"),
-    pytest.param({**_loop_record(), "likelihood": "none"}, id="none-has-no-file"),
-    pytest.param({**_loop_record(), "dispatch_id": ""}, id="missing-dispatch-id"),
-    pytest.param({**_loop_record(), "dispatch_id": f"{UNIT_NAME}__loop-2"},
+    pytest.param({**_threat_record(), "likelihood": "urgent"}, id="bad-likelihood"),
+    pytest.param({**_threat_record(), "likelihood": "none"}, id="none-has-no-file"),
+    pytest.param({**_threat_record(), "dispatch_id": ""}, id="missing-dispatch-id"),
+    pytest.param({**_threat_record(), "dispatch_id": f"{UNIT_NAME}__threat-2"},
                  id="dispatch-id-disagrees-with-the-file"),
-    pytest.param({**_loop_record(), "unit_id": ""}, id="missing-unit-id"),
-    pytest.param({**_loop_record(), "unit_kind": "unknown"}, id="bad-unit-kind"),
-    pytest.param({**_loop_record(), "loop": None}, id="missing-loop-record"),
-    pytest.param({**_loop_record(), "loop": {"id": "loop-1"}},
-                 id="loop-record-without-its-refs"),
+    pytest.param({**_threat_record(), "unit_id": ""}, id="missing-unit-id"),
+    pytest.param({**_threat_record(), "unit_kind": "unknown"}, id="bad-unit-kind"),
+    pytest.param({**_threat_record(), "threat": None}, id="missing-threat-record"),
+    pytest.param({**_threat_record(), "threat": {"id": "threat-1"}},
+                 id="threat-record-without-its-refs"),
 ])
-def test_a_malformed_loop_file_is_refused(broken):
-    """S2 8.4 (T4 AC): a malformed loop is refused - it is never dispatched and
+def test_a_malformed_threat_file_is_refused(broken):
+    """S2 8.4 (T4 AC): a malformed threat is refused - it is never dispatched and
     never counted as dispatchable work, so it cannot wedge the quiesce."""
-    assert _loop_item(record=broken) is None
+    assert _threat_item(record=broken) is None
 
 
-def test_the_file_stem_must_be_the_loop_id_of_the_form():
-    """The store owns the `loop-<rank>` id (S2 10.2); a file whose stem is not
+def test_the_file_stem_must_be_the_threat_id_of_the_form():
+    """The store owns the `threat-<rank>` id (S2 10.2); a file whose stem is not
     one (or disagrees with the record) is refused."""
-    assert _loop_item(loop_id="loop-2", record=_loop_record()) is None
-    assert _loop_item(
-        loop_id="not-a-loop", record=_loop_record(loop_id="not-a-loop")) is None
-    assert _loop_item(
-        loop_id="loop-1",
-        record=_loop_record(loop_id="loop-2",
-                            dispatch_id=f"{UNIT_NAME}__loop-2")) is None
+    assert _threat_item(threat_id="threat-2", record=_threat_record()) is None
+    assert _threat_item(
+        threat_id="not-a-threat", record=_threat_record(threat_id="not-a-threat")) is None
+    assert _threat_item(
+        threat_id="threat-1",
+        record=_threat_record(threat_id="threat-2",
+                            dispatch_id=f"{UNIT_NAME}__threat-2")) is None
 
 
 # --- the dispatch sequencing filter (S2 8.3, S1 7.6) --------------------------
 
-def test_higher_tier_loops_dispatch_and_low_loops_pause_behind_them():
-    high = _loop_item()
-    low = _loop_item(
-        loop_id="loop-2",
-        record=_loop_record(loop_id="loop-2", dispatch_id=f"{UNIT_NAME}__loop-2",
+def test_higher_tier_threats_dispatch_and_low_threats_pause_behind_them():
+    high = _threat_item()
+    low = _threat_item(
+        threat_id="threat-2",
+        record=_threat_record(threat_id="threat-2", dispatch_id=f"{UNIT_NAME}__threat-2",
                             likelihood="low"),
     )
 
@@ -193,8 +193,8 @@ def test_higher_tier_loops_dispatch_and_low_loops_pause_behind_them():
     assert sequence_dispatch([low, high]) == (high,)
 
 
-def test_a_low_loop_pauses_while_a_higher_tier_session_is_live():
-    low = _loop_item(record=_loop_record(likelihood="low"))
+def test_a_low_threat_pauses_while_a_higher_tier_session_is_live():
+    low = _threat_item(record=_threat_record(likelihood="low"))
 
     assert sequence_dispatch([low], live_likelihoods={"d-1": "medium"}) == ()
     assert sequence_dispatch([low], live_likelihoods={"d-1": "low"}) == (low,)
@@ -203,14 +203,14 @@ def test_a_low_loop_pauses_while_a_higher_tier_session_is_live():
 
 
 def test_the_low_pause_is_per_tick_and_cross_unit():
-    """S2 8.3/S1 7.6: a low loop is released on the tick where no higher loop
-    file is produced (cross-unit: another unit's produced high loop holds it)."""
-    low = _loop_item(record=_loop_record(likelihood="low"))
-    other_high = threat_loop_item(
+    """S2 8.3/S1 7.6: a low threat is released on the tick where no higher threat
+    file is produced (cross-unit: another unit's produced high threat holds it)."""
+    low = _threat_item(record=_threat_record(likelihood="low"))
+    other_high = threat_item(
         project_id=PROJECT,
-        unit_id="Service:other", unit_name="Service-other", loop_id="loop-1",
-        record=_loop_record(
-            unit_id="Service:other", dispatch_id="Service-other__loop-1"),
+        unit_id="Service:other", unit_name="Service-other", threat_id="threat-1",
+        record=_threat_record(
+            unit_id="Service:other", dispatch_id="Service-other__threat-1"),
         run_id=RUN,
     )
 
@@ -219,8 +219,8 @@ def test_the_low_pause_is_per_tick_and_cross_unit():
 
 
 def test_sequence_dispatch_leaves_the_spec_family_alone():
-    """The pod path stays (S3 8.7): the sequencing ranks LOOPS; a produced spec
-    is not held by a higher-ranked loop file."""
+    """The pod path stays (S3 8.7): the sequencing ranks THREATS; a produced spec
+    is not held by a higher-ranked threat file."""
     spec = TestSpecItem(message_id="k/f.yaml", session_id="s", hunt_key="k",
                         spec_file="f.yaml")
     assert sequence_dispatch([spec]) == (spec,)
@@ -337,67 +337,67 @@ def test_unknown_feedback_value_is_rejected():
         deduce_delivery([item], feedback={item.message_id: "admitted"})
 
 
-def test_a_recovered_loop_dispatches_but_its_move_is_already_satisfied():
-    """F-022: a consumed loop recovered from consumed/ has already landed its
+def test_a_recovered_threat_dispatches_but_its_move_is_already_satisfied():
+    """F-022: a consumed threat recovered from consumed/ has already landed its
     produced->consumed move. It is dispatched when idle (at-least-once), but an
-    admitted or live recovered loop NEVER lands in `to_move` again."""
-    loop = ThreatLoopItem(
-        message_id="Service-a__loop-1",
-        session_id="hunting:run-1:hunt:Service-a__loop-1",
+    admitted or live recovered threat NEVER lands in `to_move` again."""
+    threat = ThreatItem(
+        message_id="Service-a__threat-1",
+        session_id="hunting:run-1:hunt:Service-a__threat-1",
         unit_id="Service:a",
         unit_name="Service-a",
-        loop_id="loop-1",
-        dispatch_id="Service-a__loop-1",
+        threat_id="threat-1",
+        dispatch_id="Service-a__threat-1",
         likelihood="high",
         record={},
         recovered=True,
     )
-    assert deduce_delivery([loop]).to_dispatch == (loop,)
+    assert deduce_delivery([threat]).to_dispatch == (threat,)
     admitted = deduce_delivery(
-        [loop], feedback={loop.message_id: DispatchFeedback.ADMITTED})
+        [threat], feedback={threat.message_id: DispatchFeedback.ADMITTED})
     assert admitted == DeliveryPlan(
         to_dispatch=(), to_move=(), to_retry=())
-    live = deduce_delivery([loop], live_session_ids={loop.session_id})
+    live = deduce_delivery([threat], live_session_ids={threat.session_id})
     assert live == DeliveryPlan(to_dispatch=(), to_move=(), to_retry=())
     refused = deduce_delivery(
-        [loop], feedback={loop.message_id: DispatchFeedback.REFUSED})
-    assert refused.to_retry == (loop,)
+        [threat], feedback={threat.message_id: DispatchFeedback.REFUSED})
+    assert refused.to_retry == (threat,)
 
 
-def test_the_one_loop_predicate_carries_the_recovered_flag():
-    record = _loop_record()
-    item = threat_loop_item(
+def test_the_one_threat_predicate_carries_the_recovered_flag():
+    record = _threat_record()
+    item = threat_item(
         project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
-        loop_id="loop-1", record=record, run_id=RUN, recovered=True)
+        threat_id="threat-1", record=record, run_id=RUN, recovered=True)
     assert item is not None and item.recovered is True
-    produced = threat_loop_item(
+    produced = threat_item(
         project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
-        loop_id="loop-1", record=record, run_id=RUN)
+        threat_id="threat-1", record=record, run_id=RUN)
     assert produced is not None and produced.recovered is False
 
 
 def test_family_items_mix_in_one_deduction():
-    loop = ThreatLoopItem(
-        message_id="Service-a__loop-1",
-        session_id="hunting:run-1:hunt:Service-a__loop-1",
+    threat = ThreatItem(
+        message_id="Service-a__threat-1",
+        session_id="hunting:run-1:hunt:Service-a__threat-1",
         unit_id="Service:a",
         unit_name="Service-a",
-        loop_id="loop-1",
-        dispatch_id="Service-a__loop-1",
+        threat_id="threat-1",
+        dispatch_id="Service-a__threat-1",
         likelihood="high",
         record={},
     )
     spec = TestSpecItem(
-        message_id="Service-a__loop-1/sqli_blind",
-        session_id="hunting:run-1:pod:Service-a__loop-1:sqli_blind",
-        hunt_key="Service-a__loop-1",
+        message_id="Service-a__threat-1/sqli_blind",
+        session_id="hunting:run-1:pod:Service-a__threat-1:sqli_blind",
+        hunt_key="Service-a__threat-1",
         spec_file="sqli__blind__boolean",
     )
-    plan = deduce_delivery([loop, spec], feedback={
-        loop.message_id: DispatchFeedback.ADMITTED,
+    plan = deduce_delivery([threat, spec], feedback={
+        threat.message_id: DispatchFeedback.ADMITTED,
         spec.message_id: DispatchFeedback.REFUSED,
     })
-    assert plan.to_move == (loop,)
+    assert plan.to_move == (threat,)
     assert plan.to_retry == (spec,)
     assert plan.to_dispatch == ()
 
@@ -417,8 +417,8 @@ def test_equal_inputs_are_deterministic_across_calls():
 # --- the ADR Q13 session-id scheme ----------------------------------------------
 
 def test_hunter_session_id_is_the_adr_shape():
-    assert hunter_session_id("r-9", "Service-a__loop-1") == \
-        "hunting:r-9:hunt:Service-a__loop-1"
+    assert hunter_session_id("r-9", "Service-a__threat-1") == \
+        "hunting:r-9:hunt:Service-a__threat-1"
 
 
 def test_pod_session_id_embeds_config_and_spec():
@@ -451,7 +451,7 @@ def test_d4_spec_body_drops_only_the_store_metadata():
         "assumptions": [],
         "rationale": "r",
         "parent_spec_ref": None,
-        "provenance": {"loop_id": "loop-1"},
+        "provenance": {"threat_id": "threat-1"},
     }
     projected = d4_spec_body(body)
     assert projected == {

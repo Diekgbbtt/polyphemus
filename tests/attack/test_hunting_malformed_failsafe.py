@@ -26,7 +26,7 @@ from polymerhus.attack.hunting.spec_contract import TargetIdentity
 
 PROJECT = "proj-malformed"
 RUN = "run-malformed"
-HUNT = "Service-u1__loop-1"
+HUNT = "Service-u1__threat-1"
 STEM = "idor__report-id__signed-url"
 
 

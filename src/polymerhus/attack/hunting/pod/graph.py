@@ -37,7 +37,7 @@ The FSM (production):
 
 THE CONTRACT-TIER LANE: an injected `runner_step_fn` (a sync fake such as
 `symbolic_runner_step_fn`) keeps the pre-regrounding node shape - the same
-`runner_agent` <-> `tool_exec` bounded loop with dict message views (the interim
+`runner_agent` <-> `tool_exec` bounded threat with dict message views (the interim
 `curate_messages` pre_model_hook is removed - D84-13) - so the LLM-free
 contract tier runs unchanged. The PRODUCTION default seam
 (`default_runner_step_fn`, chosen when `runner_step_fn=None`) performs the whole
@@ -454,7 +454,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     - `runner_step_fn(spec, messages, tool_calls) -> RunnerStep` - PRODUCTION
       default (`None`) = `default_runner_step_fn`, ONE stateful ReAct turn per
       stretch (the `tool_exec` node stays unregistered); an injected sync fake =
-      the contract-tier lane (the bounded `runner_agent` <-> `tool_exec` loop).
+      the contract-tier lane (the bounded `runner_agent` <-> `tool_exec` threat).
     - `triager_fn(spec, observation, messages, log) -> decision` - the critic;
       an injected seam keeps the pre-staging single-turn lane. The PRODUCTION
       default (`None`) is the staged triage tree (`triage.make_staged_triager`).
@@ -537,7 +537,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         # a partial body into a queue halt.
         return init_route(state.get("init_validation"))
 
-    # --- the runner's stretch (production ReAct turn OR contract-tier loop) ----
+    # --- the runner's stretch (production ReAct turn OR contract-tier threat) ----
 
     async def runner_agent(state: PodState) -> dict:
         spec = state["spec"]
@@ -882,7 +882,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     g.add_conditional_edges("init", init_router,
                             {"reject": "terminal", "runner": "runner_agent"})
     if production_runner:
-        # D84-29: the ReAct tool-call loop lives INSIDE `create_agent` - the
+        # D84-29: the ReAct tool-call threat lives INSIDE `create_agent` - the
         # `tool_exec` node is NOT registered for the production lane. The harness
         # middleware owns G1/G4/O7 (D84-22).
         g.add_conditional_edges("runner_agent", runner_router,

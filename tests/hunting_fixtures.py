@@ -21,7 +21,7 @@ from polymerhus.attack.hunting.hunting_agent import build_sync_hunting_agent
 PROJECT = "proj-a"
 UNIT_ID = "Service:slug:a"
 UNIT_NAME = "Service-slug-a"
-HUNT_KEY = f"{UNIT_NAME}__loop-1"
+HUNT_KEY = f"{UNIT_NAME}__threat-1"
 
 
 class _ScriptedFake(BaseChatModel):
@@ -126,17 +126,17 @@ def _answer(text):
 
 
 def _hunter_payload(**overrides) -> dict:
-    """The canonical loop payload the surfer materialises at dispatch (S2 8.2)
-    for the `(Service:slug:a, loop-1)` pair - the SAME key set
+    """The canonical threat payload the surfer materialises at dispatch (S2 8.2)
+    for the `(Service:slug:a, threat-1)` pair - the SAME key set
     `materialise_hunter_payload` emits."""
     payload = {
         "dispatch_id": HUNT_KEY,
         "run_id": "run-1",
-        "loop_id": "loop-1",
+        "threat_id": "threat-1",
         "unit_id": UNIT_ID,
         "unit_kind": "service",
-        "loop": {
-            "id": "loop-1",
+        "threat": {
+            "id": "threat-1",
             "fault_ref": "fault-1",
             "vulnerability_ref": "v-1",
             "canonical_class": "IDOR",
@@ -379,7 +379,7 @@ def modeller_gate_payloads() -> dict:
             }],
         },
         ModelState.COMPLETED: {
-            "loops": [{
+            "threats": [{
                 "fault_ref": "fault-1",
                 "vulnerability_ref": "v-1",
                 "canonical_class": "IDOR",
@@ -408,7 +408,7 @@ def modeller_gate_payloads() -> dict:
 # --- the produced-model fixtures (T4b, #387) ------------------------------------
 #
 # The ONE home of the produced-model ladder: a test that needs a dispatchable
-# loop file drives the REAL store, never a copied per-file helper.
+# threat file drives the REAL store, never a copied per-file helper.
 
 def produce_model(
     store,
@@ -416,14 +416,14 @@ def produce_model(
     project_id: str,
     unit_id: str,
     run_id: str,
-    loops=None,
+    threats=None,
 ) -> str:
     """Drive a REAL `ThreatModelStore`'s five gates to COMPLETED for `unit_id` -
     the produced COMPLETED valid model the mover dispatches from.
 
     The one home of the worked example's ladder (T4b #387 lifted it out of the
     per-file test helpers, so the retired-config tests could be re-pointed at the
-    same produced model): `loops` overrides the COMPLETED write's loop rows
+    same produced model): `threats` overrides the COMPLETED write's threat rows
     (the sequencing fixtures). The gate payloads are a KNOWN-GOOD literal
     (`modeller_gate_payloads`), never derived from the code under test."""
     payloads = modeller_gate_payloads()
@@ -431,16 +431,16 @@ def produce_model(
 
     for state in ModelState:
         sections = dict(payloads[state])
-        if state is ModelState.COMPLETED and loops is not None:
-            sections["loops"] = loops
+        if state is ModelState.COMPLETED and threats is not None:
+            sections["threats"] = threats
         store.write_sections(project_id, unit_id, state, sections, run_id=run_id)
     return unit_id
 
 
-def loop_row(**overrides) -> dict:
-    """One COMPLETED-write loop row (the shared worked example): one `high`
-    loop over fault-1 / v-1. `overrides` carry the sequencing fixtures'
-    likelihood (or a distinct loop's rows)."""
+def threat_row(**overrides) -> dict:
+    """One COMPLETED-write threat row (the shared worked example): one `high`
+    threat over fault-1 / v-1. `overrides` carry the sequencing fixtures'
+    likelihood (or a distinct threat's rows)."""
     row = {
         "fault_ref": "fault-1",
         "vulnerability_ref": "v-1",
@@ -466,7 +466,7 @@ def loop_row(**overrides) -> dict:
     row.update(overrides)
     if "impact" not in overrides:
         # Keep the fixture's combined risk aligned with its likelihood tier, so
-        # a `high` loop is a high-bucket loop in the sequencing tests.
+        # a `high` threat is a high-bucket threat in the sequencing tests.
         level = {
             "low": "low", "medium": "medium", "high": "high",
             "critical": "high", "none": "none",
@@ -541,7 +541,7 @@ class ScriptedModellerTurns:
             notes.invoke({
                 "cmd": "write", "option": "append",
                 "note_name": "wellformedness", "kind": "wellformedness",
-                "body": "every loop checked; no new assumption",
+                "body": "every threat checked; no new assumption",
             })
             from polymerhus.attack.hunting.threat_model import ModelState
             payload = self.payloads[ModelState.COMPLETED]

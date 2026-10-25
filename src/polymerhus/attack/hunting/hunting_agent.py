@@ -1,14 +1,14 @@
 """The hunting agent (S3 8.4-8.9, T6 #379): the turn-by-turn ReAct host.
 
-The harness drives the model through the ratified loop tool surface
+The harness drives the model through the ratified threat tool surface
 (`hunts_store` / `notes` / `graph_view` / `kb_query` / `exec` / `skill_list` /
 `skill_load`, R3/R1/R2, S3 8.7) as a turn-by-turn ReAct loop OVER the
-pass-chain tracker (`hunter_graph.py`). It is dispatched with ONE loop PAYLOAD
-(S2 8.2: the loop record, the unit context, the trust agreement or transition,
+pass-chain tracker (`hunter_graph.py`). It is dispatched with ONE threat PAYLOAD
+(S2 8.2: the threat record, the unit context, the trust agreement or transition,
 the programming fault, the two classes, the evidence, the likelihood and the
 target context) - never a `HuntConfig` (retired T6). Persistence rides the
-per-project hunter memory store under the loop dispatch id
-`<unit_name>__<loop_id>` (S3 8.9), and the harness derives no verdict: the hunt
+per-project hunter memory store under the threat dispatch id
+`<unit_name>__<threat_id>` (S3 8.9), and the harness derives no verdict: the hunt
 idles at END (R4/GP2-b).
 
 The harness is the TURN-BY-TURN DRIVER (ADR R4): per LLM step it runs ONE
@@ -102,7 +102,7 @@ logger = logging.getLogger(__name__)
 # differently from the role registry / session address.
 _HUNTER_ROLE = "hunting_hunter"
 
-# The step-budget safety bound: the turn-by-turn loop is the model's to conclude,
+# The step-budget safety bound: the turn-by-turn threat is the model's to conclude,
 # but a stalled or looping model must never pin a hunt forever (fail-open O3).
 _MAX_STEPS = 60
 
@@ -121,7 +121,7 @@ _MAX_STEPS = 60
 # --- the stable system prompt (single-sourced from the SKILL.md) ---------------
 
 # The stable system prompt is read directly from this module's `prompts/` dir:
-# `hunting-agent.md` (the role, the loop ontology, the discipline, the decision
+# `hunting-agent.md` (the role, the threat ontology, the discipline, the decision
 # tree, the eight passes, the spec body, and the tools) plus its companion
 # `examples.md` (the off-path worked examples Example 2-4 the main body points
 # at), concatenated into ONE prompt. Memoized on first call (no
@@ -191,7 +191,7 @@ def derive_technological_axis(card: dict | None) -> str:
 
 
 def _payload_gaps(payload: Mapping[str, Any]) -> list[str]:
-    """The O3 gap flags for a degraded loop payload: the agent still authors
+    """The O3 gap flags for a degraded threat payload: the agent still authors
     from the present parts and flags each missing part in the feedback."""
     gaps: list[str] = []
     if not payload.get("unit_id"):
@@ -214,7 +214,7 @@ def _payload_gaps(payload: Mapping[str, Any]) -> list[str]:
 
 # The step protocol: the structured-output contract the model follows every turn
 # (Structured Output + Chain-of-Thought). Never changes across steps - the
-# constant is the template; the variable parts (the loop grounding, the tool
+# constant is the template; the variable parts (the threat grounding, the tool
 # surface, the state) compose the first step below and the tool results carry
 # the later steps.
 _STEP_PROTOCOL = (
@@ -257,7 +257,7 @@ _SHARPENING_AGREEMENT_FIELDS = ("id", "statement", "confidence")
 def _project_agreement(value: Any) -> Any:
     """One technical-sharpening agreement projected to its load-bearing fields.
 
-    The agreement's evidence entries are already represented by the loop
+    The agreement's evidence entries are already represented by the threat
     evidence the payload carries; repeating them in the sharpening block is the
     occupancy defect this projection removes. A non-mapping value passes
     through unchanged so a malformed payload still degrades visibly."""
@@ -286,8 +286,8 @@ def _project_sharpening(value: Any) -> Any:
 
 
 def _compose_grounding(payload: Mapping[str, Any]) -> str:
-    """The loop payload rendered once, ahead of the first step (S2 8.2): the
-    loop's context (the unit, the trust agreement or dynamic-state transition,
+    """The threat payload rendered once, ahead of the first step (S2 8.2): the
+    threat's context (the unit, the trust agreement or dynamic-state transition,
     the programming fault, the two classes), the technical sharpening, the
     evidence the hunter may choose a baseline from, the likelihood/confidence
     and the target context. The rationale stays vulnerability-level - the
@@ -295,14 +295,14 @@ def _compose_grounding(payload: Mapping[str, Any]) -> str:
     payload vector space, so the hunter keeps the room to engineer its
     procedure."""
     unit_id = str(payload.get("unit_id") or "(unknown unit)")
-    loop_id = str(payload.get("loop_id") or "(unknown loop)")
+    threat_id = str(payload.get("threat_id") or "(unknown threat)")
     sharpening = payload.get("technical_sharpening") or {}
     target = payload.get("target_context") or {}
-    impact = (payload.get("loop") or {}).get("impact") or {}
+    impact = (payload.get("threat") or {}).get("impact") or {}
     end_impact = str(impact.get("end_impact") or "(none)")
     return (
-        f"You are dispatched to hunt {unit_id} for one threat-model loop.\n"
-        f"Loop: {loop_id} (dispatch id "
+        f"You are dispatched to hunt {unit_id} for one threat-model threat.\n"
+        f"Threat: {threat_id} (dispatch id "
         f"{payload.get('dispatch_id') or '(none)'}), likelihood "
         f"{payload.get('likelihood') or '(none)'}.\n"
         f"Canonical class: {payload.get('canonical_class') or '(none)'}; "
@@ -323,7 +323,7 @@ def _compose_grounding(payload: Mapping[str, Any]) -> str:
         f"{_render(payload.get('dynamic_state'))}\n"
         f"Technical sharpening (interface agreements, control flows, data "
         f"flows): {_render(_project_sharpening(sharpening))}\n"
-        f"Loop evidence (choose a baseline from the request/http-history "
+        f"Threat evidence (choose a baseline from the request/http-history "
         f"refs): {_render(payload.get('evidence'))}\n"
         f"Target context: {_render(target)}"
     )
@@ -421,7 +421,7 @@ def _fold_persisted_specs(
 
 
 _HUNTER_CHAIN = (
-    "Grounded in the application overview above, your loop payload, the "
+    "Grounded in the application overview above, your threat payload, the "
     "current state, and the step protocol follow."
 )
 
@@ -447,13 +447,13 @@ def _overview_message_for(overview_fn, project_id: str) -> str:
 
 def _compose_first_step(payload: Mapping[str, Any], state: dict, *,
                         chained: bool = False) -> str:
-    """The first step's HUMAN input: the loop grounding, the current state, and
+    """The first step's HUMAN input: the threat grounding, the current state, and
     the step protocol, in that order. The stable skill rides the SYSTEM channel
     (`system_prompt=` on every turn - the orchestrator's
     [SystemMessage(skill), HumanMessage(prompt)] composed-turn precedent), never
     this message: this message is per-dispatch instance data (the correct human
     channel), while the skill is the stable system prompt. The request tool
-    schemas ride the request prefix; the loop does not repeat them. Later steps
+    schemas ride the request prefix; the threat does not repeat them. Later steps
     resume the thread from the checkpoint, so the grounding is never repeated
     into the conversation.
 
@@ -514,9 +514,9 @@ def build_hunting_agent(
 
     `run_id` / `project_id` are the hunt's run and project (the project keys the
     per-project `HunterMemoryStore`); `memory_store` is that per-project store;
-    each dispatch BINDS the loop's own hunt key (`<unit_name>__<loop_id>`,
+    each dispatch BINDS the threat's own hunt key (`<unit_name>__<threat_id>`,
     S3 8.9, the payload's `dispatch_id`) into the tool surface so the store
-    tools can only address that loop; `graph_view_fn` / `kb_fn` / `exec_fn` are
+    tools can only address that threat; `graph_view_fn` / `kb_fn` / `exec_fn` are
     the injected tool seams (each absent degrades fail-open, O3/O4/C2/C3).
     `checkpointer` defaults to `get_session_checkpointer()` under
     `module_context("hunting")`; `middleware` defaults to the R5 compaction
@@ -525,11 +525,11 @@ def build_hunting_agent(
     injects a fake model for tests; `observe` toggles session observability.
     Returns `async dispatch_fn(payload: Mapping) -> dict` (the async-native
     harness; sync callers use `build_sync_hunting_agent`). The payload is the
-    loop dispatch record materialised by the surfer (S2 8.2).
+    threat dispatch record materialised by the surfer (S2 8.2).
 
     The closure binds the injected seams once; each dispatch (hunt) compiles
     its OWN in-memory state graph (OUTLIER-1, no graph-level checkpointer),
-    binds the per-hunt tool surface, and drives its turn-by-turn loop on its
+    binds the per-hunt tool surface, and drives its turn-by-turn threat on its
     `HuntSession(run_id, hunt_key)` thread."""
     import inspect
 
@@ -564,10 +564,10 @@ def build_hunting_agent(
         hunt_key = str(payload.get("dispatch_id") or "")
         if not hunt_key:
             # The store key and the session id derive from the dispatch id; a
-            # payload without one cannot address its own loop. Degrade loudly
+            # payload without one cannot address its own threat. Degrade loudly
             # rather than write into a fabricated folder.
             feedback.append(
-                "loop payload carries no dispatch_id; the hunt cannot address "
+                "threat payload carries no dispatch_id; the hunt cannot address "
                 "its own spec folder")
             return _assemble({"state": "grounding", "specs": [], "trail": []},
                              feedback)
@@ -603,7 +603,7 @@ def build_hunting_agent(
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        # The skill seams ride BOTH planes of the hybrid loop (the declaration /
+        # The skill seams ride BOTH planes of the hybrid threat (the declaration /
         # execution split): the binding's `load_skill` tool is declared
         # request-only alongside the five hunter tools AND registered in the
         # harness executor map, joined by the tool name; the index middleware
@@ -626,7 +626,7 @@ def build_hunting_agent(
         first_step = _compose_first_step(
             payload, state, chained=bool(overview))
         # ONE pinned instance-context message: the compaction pin preserves the
-        # application overview AND the loop grounding together.
+        # application overview AND the threat grounding together.
         first_content = f"{overview}\n\n{first_step}" if overview else first_step
         new_messages = [HumanMessage(content=first_content)]
         # The five tools ride the generation request REQUEST-ONLY (the standard
@@ -755,7 +755,7 @@ def build_hunting_agent(
                 feedback.append(_terminal_feedback(state, ""))
                 return _assemble(state, feedback)
         else:
-            # A natural loop end (no break) is genuine budget exhaustion; the
+            # A natural threat end (no break) is genuine budget exhaustion; the
             # break paths above already reported their own degradation, so a
             # degraded turn must never surface a budget message.
             feedback.append(f"hunt {hunt_key} step budget exhausted ({_MAX_STEPS} steps)")
@@ -775,7 +775,7 @@ def build_hunting_agent(
 
     async def dispatch_fn(payload: Mapping[str, Any]) -> dict[str, Any]:
         payload = payload if isinstance(payload, Mapping) else {}
-        hunt_key = str(payload.get("dispatch_id") or "(unaddressed loop)")
+        hunt_key = str(payload.get("dispatch_id") or "(unaddressed threat)")
         feedback: list[str] = list(_payload_gaps(payload))
         # The seam pieces resolve lazily so this module stays driver-free at
         # import (CODING_STANDARD section 6): the checkpointer resolves under
@@ -832,7 +832,7 @@ def build_sync_hunting_agent(**kwargs):
     Sync injectable seams travel through `asyncio.to_thread` inside the canon;
     async seams are awaited natively. When called from a running event loop,
     `run_coro_blocking` runs the dispatch on a separate thread so `asyncio.run`
-    is never re-entered on the caller's loop."""
+    is never re-entered on the caller's threat."""
     from polymerhus.recon.control.async_bridge import run_coro_blocking  # noqa: PLC0415
 
     dispatch_fn = build_hunting_agent(**kwargs)

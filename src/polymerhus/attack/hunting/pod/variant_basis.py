@@ -83,7 +83,7 @@ def first_uncovered_gap(
     Iterates the seven fields in the S5 8.6 table order. A field the skill left
     EMPTY is a SKIPPED class, not a gap: there is no authored procedure for the
     triager to execute or the variant to cover, so re-minting it every lap
-    would loop to the budget cap without a new prediction (T10 H1). A populated
+    would threat to the budget cap without a new prediction (T10 H1). A populated
     class is covered only when the triager judged its action, technique, or
     check present in the D6 trail. An ABSENT excerpt is not a diff at all: the
     caller records the gap and no variant basis is derivable."""

@@ -1066,14 +1066,14 @@ async def get_skill_evolution_status(project_id: str, pass_id: str) -> dict:
 # so the run-scoped inbox surfer's mover dispatches it on the next tick - a
 # singular launch never BOOTS a component directly and never fabricates a
 # chained-dependency error. T4b (#387) retired the HUNT config enqueue with the
-# config family: the loop file is the dispatch record, so `/hunting/hunt` is a
+# config family: the threat file is the dispatch record, so `/hunting/hunt` is a
 # loud 410 tombstone. The pod resume keeps its fail-closed 404 (no fabricated
 # `ratified` spec), and the modeller pass schedules its own input.
 
 class HuntingModellerLaunch(BaseModel):
     """Modeller-only launch body. The pass reads the L1 inventory itself (T3
     #376 retired the caller-supplied candidate batch), freezes and orders it,
-    and writes its models and loop files into the project's threat model store -
+    and writes its models and threat files into the project's threat model store -
     this endpoint schedules the pass, it never fakes the pass's output.
     """
 
@@ -1095,7 +1095,7 @@ async def launch_modeller_only(project_id: str, body: HuntingModellerLaunch) -> 
     """The modeller-only launch: schedule ONE modelling pass through the
     launcher seam - no surfer, no dispatch, no run (T5). The pass models the
     selected units into the project's threat model store, where a later run's
-    surfer dispatches the produced loops. The outcome is asynchronous; the
+    surfer dispatches the produced threats. The outcome is asynchronous; the
     response carries the pass's run id for observability. 404 unknown project;
     503 fail-closed on the control plane (a real LLM pass must never ride the
     uvicorn request loop); admission refusal maps to 503.
@@ -1148,10 +1148,10 @@ async def launch_hunt_only(project_id: str) -> dict:
     raise HTTPException(
         status_code=410,
         detail=(
-            "the hunt-config enqueue is retired (T4b #387): the loop file is "
+            "the hunt-config enqueue is retired (T4b #387): the threat file is "
             "the dispatch record (S2 8.4) and a live run's surfer dispatches "
             "it; launch the whole run (POST /projects/{project_id}/hunting) "
-            "and the modeller produces the loop files. The eval translation "
+            "and the modeller produces the threat files. The eval translation "
             "is T10b (#397)"
         ),
     )

@@ -43,7 +43,7 @@ SPEC = {
     "rationale": "IDOR over the order endpoint",
     "skill_concretised_procedure": PROCEDURE,
     "provenance": {
-        "loop_id": "loop-1",
+        "threat_id": "threat-1",
         "unit_id": "service:web:soupmarket",
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",

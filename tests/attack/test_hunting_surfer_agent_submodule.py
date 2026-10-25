@@ -36,14 +36,14 @@ UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
 UNIT_NAME = "Service-catalogue-and-discovery"
-LOOP_ID = "loop-1"
-DISPATCH_ID = f"{UNIT_NAME}__{LOOP_ID}"
+THREAT_ID = "threat-1"
+DISPATCH_ID = f"{UNIT_NAME}__{THREAT_ID}"
 HUNTER_SESSION = mover_mod.hunter_session_id(RUN, DISPATCH_ID)
 SPEC_FILE = "sqli__blind__boolean"
 
 
 def _produce(threat):
-    """One produced COMPLETED valid model with its loop file (S2 8.1)."""
+    """One produced COMPLETED valid model with its threat file (S2 8.1)."""
     return produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN)
 
@@ -116,7 +116,7 @@ def _coro_for(threat, hunter, state, control):
 
 # --- C10/C11: a down role refuses dispatch, the item stays produced ----------
 
-def test_C10_down_hunter_role_refuses_loop_dispatch(stores):
+def test_C10_down_hunter_role_refuses_threat_dispatch(stores):
     threat, hunter = stores
     _produce(threat)
     control = _RecordingControl()
@@ -127,8 +127,8 @@ def test_C10_down_hunter_role_refuses_loop_dispatch(stores):
     )
     assert control.calls == []           # no coroutine was even admitted
     assert report.refused == 1 and report.moved == 0 and report.admitted == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats(PROJECT)[0]["threats"]] == [THREAT_ID]
 
 
 def test_C11_down_pod_role_refuses_spec_dispatch(stores):

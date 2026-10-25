@@ -1,7 +1,7 @@
 """Unit tier: the surfer wiring for `hunting_pipeline_sync`.
 
 The surfer consults the run's sync gate once per tick and passes its verdict to
-the mover as the pre-filter: a held loop file never reaches the control plane
+the mover as the pre-filter: a held threat file never reaches the control plane
 and stays produced. The gate receives the live session set and the run's
 mid-graph hunt set, so a resumed run and a phase barrier read the same facts.
 
@@ -23,7 +23,7 @@ PROJECT = "proj-1"
 RUN = "run-1"
 UNIT = "Service:catalogue-and-discovery"
 UNIT_NAME = "Service-catalogue-and-discovery"
-DISPATCH = f"{UNIT_NAME}__loop-1"
+DISPATCH = f"{UNIT_NAME}__threat-1"
 
 
 class RecordingControl:
@@ -56,7 +56,7 @@ async def _noop():
     return None
 
 
-def test_surfer_holds_the_loop_file_until_the_sync_gate_admits_it(tmp_path):
+def test_surfer_holds_the_threat_file_until_the_sync_gate_admits_it(tmp_path):
     async def scenario():
         threat = ThreatModelStore(tmp_path / "threat")
         hunter = HunterMemoryStore(tmp_path / "hunter")

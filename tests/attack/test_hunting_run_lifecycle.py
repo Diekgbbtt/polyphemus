@@ -78,7 +78,7 @@ def _seed_record(**overrides) -> dict:
 
 
 def _completed_sum(unit_id: str, total: int = 3) -> dict:
-    """The recorded sum of one completed model: one `high` loop (weight 3)."""
+    """The recorded sum of one completed model: one `high` threat (weight 3)."""
     return {
         "unit_id": unit_id,
         "total": total,
@@ -99,7 +99,7 @@ def _resume_fake(record: dict) -> _FakePg:
 def _write_completed_model(models: ThreatModelStore, unit_id: str,
                            *, run_id: str = "earlier-run") -> None:
     """Drive the REAL store to a COMPLETED, valid model for `unit_id` through
-    its five gates (the shared worked example: one `high` loop)."""
+    its five gates (the shared worked example: one `high` threat)."""
     from tests.hunting_fixtures import modeller_gate_payloads
 
     for state, sections in modeller_gate_payloads().items():
@@ -111,7 +111,7 @@ def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     """The agent-seam hunter builder fake: it is a SYNCHRONOUS factory (the seam
     is called, not awaited) returning an async dispatch - the real shape. It
     concludes immediately and writes the zero-spec terminal set (F-022), so the
-    consumed loop is a completed hunt and the run can quiesce."""
+    consumed threat is a completed hunt and the run can quiesce."""
     async def dispatch(payload):
         hunt_key = payload.get("dispatch_id")
         if hunt_key:
@@ -155,7 +155,7 @@ def test_the_run_record_carries_every_fixed_key_and_the_accumulated_sum(
     assert record["threshold_basis"] == "default"
     assert record["risk_weights"] == {"none": 0, "low": 1, "medium": 2,
                                       "high": 3, "critical": 4}
-    # one `high` loop per unit (the shared worked example): 3 + 3
+    # one `high` threat per unit (the shared worked example): 3 + 3
     assert record["risk_total"] == 6
     assert record["risk_breakdown"] == {"none": 0, "low": 0, "medium": 0,
                                         "high": 2, "critical": 0}
@@ -186,7 +186,7 @@ def test_the_halt_completes_the_crossing_unit_and_never_models_the_blocked_one(
 
     async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
         seen.append(unit_id)
-        # one `high` loop's worth of budget (3), committed through the store
+        # one `high` threat's worth of budget (3), committed through the store
         from tests.hunting_fixtures import modeller_gate_payloads
         for state, sections in modeller_gate_payloads().items():
             tools.threat_store.write_sections(
@@ -396,8 +396,8 @@ def test_the_freeze_excludes_the_completed_and_the_in_flight_units(
     )
     hunter, models = _stores(tmp_path)
     _write_completed_model(models, UNIT_A)
-    # the model moves with its last loop file: the unit is decided in consumed/
-    assert models.consume_loop(PROJECT, UNIT_A, "loop-1") is True
+    # the model moves with its last threat file: the unit is decided in consumed/
+    assert models.consume_threat(PROJECT, UNIT_A, "threat-1") is True
     assert models.read_completed_units(PROJECT) == [UNIT_A]
     models.write_sections(PROJECT, UNIT_B, ModelState.TRUST_MODELLED, {
         "trust_model": {"trust_agreements": [{
@@ -507,7 +507,7 @@ def test_parallel_mode_keeps_the_modeller_dispatch_interleave(tmp_path, monkeypa
     fake = _FakePg(hunting_settings={"pipeline_sync": "parallel"})
     _patch_pg(monkeypatch, fake)
     hunter, models = _stores(tmp_path)
-    # a produced loop file of THIS run is the dispatch input (S2 8.4): the
+    # a produced threat file of THIS run is the dispatch input (S2 8.4): the
     # surfer dispatches it while the pass is still modelling
     produce_model(
         models, project_id=PROJECT, unit_id=UNIT_C, run_id=RUN)
@@ -537,7 +537,7 @@ def test_parallel_mode_keeps_the_modeller_dispatch_interleave(tmp_path, monkeypa
         tick_interval=0.001,
     ))
 
-    assert "dispatch" in events, "the surfer must dispatch the produced loop file"
+    assert "dispatch" in events, "the surfer must dispatch the produced threat file"
     assert events.index("dispatch") < events.index(f"modelled:{UNIT_A}"), (
         "the parallel mode dispatched while the pass was still modelling the unit"
     )
@@ -611,7 +611,7 @@ def test_a_stopped_runs_produced_model_is_in_flight_and_its_unit_is_skipped(
     """S1 7.5 / S2 9.3: a `stopped` run is RESUMABLE (it resumes from the
     persisted run record), so its produced model must be treated as in flight -
     the next run SKIPS the unit and never archives (destroys) the stopped run's
-    model and its pending loop files."""
+    model and its pending threat files."""
     fake = _FakePg()
     fake.statuses.append(("stopped-run", "stopped"))
     _patch_pg(monkeypatch, fake)
@@ -646,14 +646,14 @@ def test_a_stopped_runs_produced_model_is_in_flight_and_its_unit_is_skipped(
 def test_a_resume_that_models_nothing_re_persists_the_recomputed_record(
         tmp_path, monkeypatch):
     """S1 7.5: a resume whose ADOPTION itself crosses the threshold halts before
-    the unit loop runs, so no loop iteration can write the record. The persisted
+    the unit threat runs, so no threat iteration can write the record. The persisted
     row must still carry the recomputed total, the adopted model sum and the
     halt fields - the pre-crash record would otherwise read `risk_total=0` and
     `halt=false` for a run that is already halted."""
     fake = _resume_fake(_seed_record(
         intake_order=[UNIT_A, UNIT_B],
         intake_position=0,
-        risk_threshold=3,                 # one adopted `high` loop crosses it
+        risk_threshold=3,                 # one adopted `high` threat crosses it
         threshold_basis="override",
         risk_total=0,                     # stale: the record never updated
         model_sums=[],

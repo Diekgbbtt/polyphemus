@@ -36,12 +36,12 @@ def test_is_target_unavailable_matches_only_that_family():
 def test_directive_names_the_upstream_unavailable_semantics():
     """The directive states the load-bearing rule: a 5xx from the target front is
     the upstream being down/restarting, NOT the route being absent, and the
-    prober must stop rather than loop."""
+    prober must stop rather than threat."""
     d = hunting_status.TARGET_UNAVAILABLE_DIRECTIVE
     assert "502" in d
     assert "upstream" in d
     assert "restart" in d or "down" in d
-    assert "loop" in d or "retry" in d
+    assert "threat" in d or "retry" in d
 
 
 def test_the_exec_tool_points_at_the_single_sourced_role_rule():
@@ -56,7 +56,7 @@ def test_the_exec_tool_points_at_the_single_sourced_role_rule():
 
 def test_directive_appears_verbatim_in_the_hunter_role_prompt():
     """Drift guard: the hunting-agent role prompt carries the same text, so the
-    discipline reaches the reasoning loop and never drifts from the tool."""
+    discipline reaches the reasoning threat and never drifts from the tool."""
     prompts_dir = Path(hunting_status.__file__).resolve().parent / "prompts"
     text = (prompts_dir / "hunting-agent.md").read_text(encoding="utf-8")
     assert hunting_status.TARGET_UNAVAILABLE_DIRECTIVE in text

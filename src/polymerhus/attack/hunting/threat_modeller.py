@@ -2,7 +2,7 @@
 
 The hunt-orchestrator planner was rewritten in place into the **threat modeller**
 (S1 2.1): for each admitted L1 unit it builds a formal trust model and publishes
-a ranked set of loops, one gate write at a time, into the per-project
+a ranked set of threats, one gate write at a time, into the per-project
 `ThreatModelStore` (T1, `threat_model_store.py`).
 
 The machine is an extended finite state machine of five states, whose gates are
@@ -12,7 +12,7 @@ gate writes (S1 6.1):
     TRUST_MODELLED            trust_model
     TRUST_ASSUMPTIONS_WRITTEN assumptions
     VULNERABILITIES_WRITTEN   vulnerabilities
-    COMPLETED                 loops
+    COMPLETED                 threats
 
 Three rules govern the harness side:
 
@@ -120,12 +120,12 @@ GATE_HINTS: dict[ModelState, str] = {
     ),
     ModelState.VULNERABILITIES_WRITTEN: (
         "Proceed to the well-formedness phase: for every vulnerability whose "
-        "class will bound a loop, load the class skill, read its title, "
+        "class will bound a threat, load the class skill, read its title, "
         "overview, Trust Assumptions section, and closing summary, and add the "
-        "missed assumptions. Patch a local gap or loop back over the "
+        "missed assumptions. Patch a local gap or return to the "
         "undermodelled part for a structural gap. When the pass yields no new "
         "assumption, write the wellformedness note and then the COMPLETED write "
-        "with the loops and their end impacts."
+        "with the threats and their end impacts."
     ),
 }
 
@@ -166,11 +166,11 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "well-formedness phase."
     ),
     ModelState.COMPLETED: (
-        "Rank the loops: apply the two-clause drop rule, write each surviving "
-        "loop's end impact as VC, VI, and VA plus a literal end-impact "
+        "Rank the threats: apply the two-clause drop rule, write each surviving "
+        "threat's end impact as VC, VI, and VA plus a literal end-impact "
         "statement, and score its likelihood from the four risk factors. Copy "
-        "each loop's canonical_class and web_vulnerability_class verbatim from "
-        "its vulnerability. Write ONLY the loops section. The store computes "
+        "each threat's canonical_class and web_vulnerability_class verbatim from "
+        "its vulnerability. Write ONLY the threats section. The store computes "
         "the combined risk profile and runs the completion checker after your "
         "write; if validation.valid is false, fix every finding and write "
         "COMPLETED again before ending the pass."
@@ -185,12 +185,12 @@ WELLFORMEDNESS = "WELLFORMEDNESS"
 
 WELLFORMEDNESS_INSTRUCTION = (
     "Run the well-formedness phase: for every vulnerability whose class will "
-    "bound a loop, load the class skill, read its title and overview, its "
+    "bound a threat, load the class skill, read its title and overview, its "
     "Trust Assumptions section, and its closing summary, and add the missed "
-    "assumptions. Patch a local gap or loop back over the undermodelled part "
+    "assumptions. Patch a local gap or return to the undermodelled part "
     "for a structural gap. When the pass yields no new assumption and every "
     "vulnerability has a bound suite class, write ONE wellformedness note and "
-    "then the COMPLETED write with the loops and their end impacts."
+    "then the COMPLETED write with the threats and their end impacts."
 )
 
 # The last gate carries no hint: the model is published (S1 9.3).
@@ -530,7 +530,7 @@ class UnitOutcome(BaseModel):
 
     `status` is `completed` only when the persisted model reached COMPLETED and
     its completion validation is valid; everything else is `degraded` with the
-    reason recorded and no loop dispatched."""
+    reason recorded and no threat dispatched."""
 
     unit_id: str
     status: UnitStatus
@@ -650,9 +650,9 @@ async def arun_modeller_pass(
     missing section for the completion checker to report.
 
     The pass returns after one turn per state at most. It never waits for
-    dispatch (S1 7.3). The store's produced loop files ARE the dispatch handoff:
-    T6 (#379) made the per-loop dispatch live end to end (the run-scoped surfer
-    materialises the payload and dispatches one hunter per loop file); the pass
+    dispatch (S1 7.3). The store's produced threat files ARE the dispatch handoff:
+    T6 (#379) made the per-threat dispatch live end to end (the run-scoped surfer
+    materialises the payload and dispatches one hunter per threat file); the pass
     itself never dispatches.
 
     ONE pass at a time per run: the pass mutates the shared `ModellerTools`
@@ -918,7 +918,7 @@ def _archive_degraded(store, project_id: str, unit_id: str,
 
 
 def run_modeller_pass(*args, **kwargs) -> UnitOutcome:
-    """The SYNC lane to one modeller pass, for a caller with no running loop."""
+    """The SYNC lane to one modeller pass, for a caller with no running threat."""
     from polymerhus.recon.control.async_bridge import run_coro_blocking  # noqa: PLC0415
 
     return run_coro_blocking(arun_modeller_pass(*args, **kwargs))

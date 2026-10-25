@@ -2,15 +2,15 @@
 
 T10 (#383) disposed of the hunt-config family and the per-project
 `memory.yaml` notes store: the hunt store's config I/O retired in T6 (#379)
-with the loop-payload rework, its key helpers (`semantic_key`,
+with the threat-payload rework, its key helpers (`semantic_key`,
 `config_file_name`, ...) had no live consumer, and its bounded notes surface
 (`HuntStore`) was read by no dispatch path. What remains is the phase-1 note
 vocabulary (`ProjectMemoryStore.NOTE_KINDS`) that the hunter and threat-model
 stores take as their base kind set, plus the small record I/O that keeps the
 vocabulary's own store honest.
 
-The live stores are `hunter_memory.HunterMemoryStore` (the loop-keyed spec and
-note store) and `threat_model_store.ThreatModelStore` (the unit model, loop
+The live stores are `hunter_memory.HunterMemoryStore` (the threat-keyed spec and
+note store) and `threat_model_store.ThreatModelStore` (the unit model, threat
 files and phase notes); this module imports no driver and performs no I/O at
 import (CODING_STANDARD section 6).
 """

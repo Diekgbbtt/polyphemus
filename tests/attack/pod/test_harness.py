@@ -3,8 +3,8 @@
 G1 (the per-stretch tool-call cap `HUNT_POD_MAX_TOOL_CALLS`), G4 (every exec
 result recorded RAW in the D6 log) and O7 (one execution per identical probe)
 move off the graph's `tool_exec` node and onto the `create_agent` agent. This
-tier runs a REAL `create_agent` loop on a FAKE chat model with the pod's bound
-tools + harness, and asserts the loop is bounded, deduped, and honest. No live
+tier runs a REAL `create_agent` threat on a FAKE chat model with the pod's bound
+tools + harness, and asserts the threat is bounded, deduped, and honest. No live
 LLM, no live target.
 """
 from __future__ import annotations
@@ -66,7 +66,7 @@ def _exec_tool_call(command, cid):
 
 # --- G4: every exec result is recorded RAW ------------------------------------
 
-def test_harness_loop_records_raw_observations():
+def test_harness_threat_records_raw_observations():
     calls = []
     log = ExperimentLog()
     harness = build_harness_middleware(log=log, variant_ref="v0", cap=10)
@@ -139,7 +139,7 @@ def test_harness_scope_is_per_variant():
     assert len(log1.raw_observations) == 1
 
 
-# --- G1: the per-stretch cap ends the loop -------------------------------------
+# --- G1: the per-stretch cap ends the threat -------------------------------------
 
 def test_harness_cap_ends_the_react_loop():
     calls = []

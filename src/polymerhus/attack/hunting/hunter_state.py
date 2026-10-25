@@ -5,7 +5,7 @@ eight-pass chain (S4 14.2, S3 8.4), the phase-summary note contract, the signal
 extraction off the observed tool call, the signal-acceptance rule, and the
 passive advance. The pre-#164 fault lifecycle (`{hypothesised, verified,
 dropped, specified}` and its four semantic lists) is retired: the redesigned
-hunter runs a pass sequence over one loop and its phases mostly end without a
+hunter runs a pass sequence over one threat and its phases mostly end without a
 status-bearing store write, so the tracker advances on the most accurate
 available proxy signal per pass (S4 14.4).
 
@@ -362,7 +362,7 @@ def detect_signal(state: HuntState, signal: PhaseSignal | None) -> SignalOutcome
 
 GROUNDING_HINT = (
     "The grounding summary is persisted. Define the variant and manifestation space the "
-    "loop opens."
+    "threat opens."
 )
 """Injected when the grounding exit fires: define the slice."""
 

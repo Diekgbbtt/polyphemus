@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.attack.hunting.mover import ThreatLoopItem
+from polymerhus.attack.hunting.mover import ThreatItem
 from polymerhus.attack.hunting.pipeline_sync import (
     RunSyncGate, SyncMode, hunting_artifacts_terminal,
 )
@@ -31,17 +31,17 @@ PROJECT = "proj-lifecycle"
 RUN = "run-lifecycle"
 
 
-def _loop(unit_name: str, loop_id: str = "loop-1") -> ThreatLoopItem:
-    dispatch = f"{unit_name}__{loop_id}"
-    return ThreatLoopItem(
+def _threat(unit_name: str, threat_id: str = "threat-1") -> ThreatItem:
+    dispatch = f"{unit_name}__{threat_id}"
+    return ThreatItem(
         message_id=dispatch,
         session_id=f"hunting:{RUN}:hunt:{dispatch}",
         unit_id=f"Service:{unit_name}",
         unit_name=unit_name,
-        loop_id=loop_id,
+        threat_id=threat_id,
         dispatch_id=dispatch,
         likelihood="high",
-        record={"loop": {"id": loop_id}},
+        record={"threat": {"id": threat_id}},
     )
 
 
@@ -82,7 +82,7 @@ def _gate(hunter: HunterMemoryStore, pod: PodMemoryStore) -> RunSyncGate:
 def test_real_store_terminal_and_export_advance_the_queue(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     _write_set(hunter, hunt, [
         _spec("f", "drop", "dropped"), _spec("f", "keep", "ratified")])
     hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
@@ -94,30 +94,30 @@ def test_real_store_terminal_and_export_advance_the_queue(tmp_path):
     )
 
     gate = _gate(hunter, pod)
-    next_loop = _loop("u2")
+    next_threat = _threat("u2")
     # The dropped spec stays produced; it does not need an export. The consumed
     # ratified spec has one. The next hunter is admissible.
-    assert gate.filter([next_loop]) == (next_loop,)
+    assert gate.filter([next_threat]) == (next_threat,)
 
 
 def test_real_store_stale_hypothesised_hunt_holds_the_queue(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     hunter.write_specs(
         PROJECT, hunt, [_spec("f", "draft", "hypothesised")],
         enforce_complete=False,
     )
 
     gate = _gate(hunter, pod)
-    next_loop = _loop("u2")
-    assert gate.filter([next_loop]) == ()
+    next_threat = _threat("u2")
+    assert gate.filter([next_threat]) == ()
 
 
 def test_real_store_unreadable_spec_fails_closed(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     _write_set(hunter, hunt, [_spec("f", "keep", "ratified")])
     path = (
         tmp_path / "hunter" / PROJECT / "hunting" / "hunter"
@@ -127,8 +127,8 @@ def test_real_store_unreadable_spec_fails_closed(tmp_path):
     path.write_text("not: [a: valid: yaml", encoding="utf-8")
 
     gate = _gate(hunter, pod)
-    next_loop = _loop("u2")
-    assert gate.filter([next_loop]) == ()
+    next_threat = _threat("u2")
+    assert gate.filter([next_threat]) == ()
 
 
 def test_surfer_degraded_pod_export_is_durable(tmp_path):
@@ -141,7 +141,7 @@ def test_surfer_degraded_pod_export_is_durable(tmp_path):
     """
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     spec = {
         "status": "ratified",
         "discriminators": [
@@ -169,7 +169,7 @@ def test_surfer_degraded_pod_export_is_durable(tmp_path):
 
 def test_hunter_complete_declasses_leftover_hypothesised(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     hunter.write_specs(
         PROJECT, hunt,
         [_spec("f", "draft", "hypothesised")],
@@ -189,7 +189,7 @@ def test_hunter_complete_declasses_leftover_hypothesised(tmp_path):
 def test_run_hunter_session_settles_at_graph_complete(tmp_path, monkeypatch):
     """The symbolic COMPLETE hook declasses and finalizes before the idle loop."""
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
 
     async def _noop_idle(**kw):
         return None
@@ -222,7 +222,7 @@ def test_run_hunter_session_settles_at_graph_complete(tmp_path, monkeypatch):
 def test_artifacts_terminal_blocks_a_hypothesised_current_run_spec(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     hunter.write_specs(
         PROJECT, hunt, [_spec("f", "draft", "hypothesised")],
         enforce_complete=False,
@@ -237,7 +237,7 @@ def test_artifacts_terminal_blocks_a_hypothesised_current_run_spec(tmp_path):
 def test_artifacts_terminal_requires_a_pod_export(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     _write_set(hunter, hunt, [_spec("f", "keep", "ratified")])
     hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
     hunter.consume_spec(PROJECT, hunt, "spec__f__keep")
@@ -262,7 +262,7 @@ def test_artifacts_terminal_requires_a_pod_export(tmp_path):
 def test_artifacts_terminal_ignores_a_foreign_run_spec(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     foreign = _spec("f", "keep", "ratified")
     foreign["provenance"] = {"run_id": "another-run"}
     _write_set(hunter, hunt, [foreign])
@@ -276,7 +276,7 @@ def test_artifacts_terminal_ignores_a_foreign_run_spec(tmp_path):
 def test_artifacts_terminal_blocks_a_malformed_current_run_spec(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     _write_set(hunter, hunt, [_spec("f", "keep", "ratified")])
     hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
     path = (
@@ -301,7 +301,7 @@ def test_is_run_quiesced_blocks_on_a_stale_spec(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     threat = ThreatModelStore(tmp_path / "threat")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     hunter.write_specs(
         PROJECT, hunt, [_spec("f", "draft", "hypothesised")],
         enforce_complete=False,
@@ -314,19 +314,19 @@ def test_is_run_quiesced_blocks_on_a_stale_spec(tmp_path):
     assert complete is False
 
 
-def test_artifacts_terminal_attributes_a_malformed_spec_via_the_consumed_loop(tmp_path):
-    """A malformed produced spec is current-run work when its loop is consumed.
+def test_artifacts_terminal_attributes_a_malformed_spec_via_the_consumed_threat(tmp_path):
+    """A malformed produced spec is current-run work when its threat is consumed.
 
-    The loop is the run-scoped join. The audit must use it to fail closed even
+    The threat is the run-scoped join. The audit must use it to fail closed even
     when the spec body itself cannot be parsed.
     """
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     threat = ThreatModelStore(tmp_path / "threat")
     unit = "u1"
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
     produce_model(threat, project_id=PROJECT, unit_id=unit, run_id=RUN)
-    assert threat.consume_loop(PROJECT, unit, "loop-1") is True
+    assert threat.consume_threat(PROJECT, unit, "threat-1") is True
 
     spec_dir = (
         tmp_path / "hunter" / PROJECT / "hunting" / "hunter"
@@ -348,11 +348,11 @@ def test_run_hunter_session_settles_when_the_graph_degrades(tmp_path, monkeypatc
     """A degraded graph still settles: no draft decision can arrive after it.
 
     Without this the hunt keeps no current-run terminal set, so the F-022
-    consumed-loop recovery re-offers its consumed loop for ever and pins the
+    consumed-threat recovery re-offers its consumed threat for ever and pins the
     cursor.
     """
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    hunt = "u1__loop-1"
+    hunt = "u1__threat-1"
 
     async def _noop_idle(**kw):
         return None

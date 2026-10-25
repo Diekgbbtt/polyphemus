@@ -42,7 +42,7 @@ def probe_signature(chain: ProbeChain) -> str:
     """The dedup key (O7/C10): a stable hash over `(variant_ref, the core call)`.
     Two probe chains with the same variant and the same core payload dedup to
     one execution - and, fed into the exhaustion check, an all-duplicate draw
-    advances the loop to `space-exhausted` rather than spinning."""
+    advances the threat to `space-exhausted` rather than spinning."""
     core = next((s for s in chain.steps if s.role == "core"), None)
     payload = core.model_dump() if core is not None else {}
     blob = json.dumps([chain.variant_ref, payload], sort_keys=True)
@@ -86,7 +86,7 @@ def evaluate_symptom(verification_symptoms: list[str],
     Returns one of the observation classes when the symptom is mechanically
     decidable, or `None` when it is not (the LLM Triager then judges). Also
     surfaces `infeasibility-signal` for a structurally impossible observation
-    (no response captured) so the loop can route to technical-infeasibility."""
+    (no response captured) so the threat can route to technical-infeasibility."""
     # A structurally missing response is an infeasibility signal, not an absence.
     if observation.status is None and not observation.body and observation.returncode not in (0, None):
         return INFEASIBILITY_SIGNAL_CLASS

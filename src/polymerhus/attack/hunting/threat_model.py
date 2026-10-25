@@ -8,20 +8,20 @@ level, so a typo can never silently persist.
 
 The entity names are the artifact contract's (`UnitThreatModel`,
 `TechnicalSharpening`, `TrustModel`, `TrustAgreement`, `DynamicStateTrust`,
-`Assumption`, `Fault`, `Vulnerability`, `Loop`, `Evidence`,
+`Assumption`, `Fault`, `Vulnerability`, `Threat`, `Evidence`,
 `Confidence`, `Likelihood`, `RiskFactors`, `RiskProfile`, `Validation`).
 
 Rules this module owns:
 
 - The likelihood weights (`RISK_WEIGHTS`) and the default progressive risk
   threshold (`DEFAULT_RISK_THRESHOLD`) - the run driver records both.
-- The risk profile is computed from the loop likelihoods, never authored: the
+- The risk profile is computed from the threat likelihoods, never authored: the
   model's own total is untrusted (S2 7.3).
-- The loop normalisation (S2 5.6): a stable sort by likelihood weight
-  descending, ties in the modeller's write order, ids renumbered `loop-1..n`.
-  The store owns the id, so the write schema defaults `Loop.id` empty.
+- The threat normalisation (S2 5.6): a stable sort by likelihood weight
+  descending, ties in the modeller's write order, ids renumbered `threat-1..n`.
+  The store owns the id, so the write schema defaults `Threat.id` empty.
 - The completion checker (S2 5.7): the loose necessary-attribute set, the
-  referential integrity, the assumption-to-loop closure, the loop order, and a
+  referential integrity, the assumption-to-threat closure, the threat order, and a
   REGRESSION check of the stored risk profile against a fresh recomputation.
   It is non-blocking: it records findings, it never rejects the model.
 
@@ -36,7 +36,7 @@ from typing import AbstractSet
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Technique families are class parents in the suite tree, but they name a
 # technique, not a vulnerability class. The completion checker records their
@@ -46,7 +46,7 @@ TECHNIQUE_FAMILIES: frozenset[str] = frozenset(
 )
 
 # Migration note (2026-10-25): the failure-mode contraction removed the
-# `failure_modes` section and the `Loop.failure_mode_refs` link WITHOUT a
+# `failure_modes` section and the `Threat.failure_mode_refs` link WITHOUT a
 # version bump - the A/B uses fresh models and no legacy model is migrated.
 # A legacy document that still carries either key no longer parses here
 # (`extra="forbid"`), so the store refuses to merge it instead of silently
@@ -67,7 +67,7 @@ class Confidence(StrEnum):
 
 
 class Likelihood(StrEnum):
-    """The loop likelihood enum; the weight is monotonic (S2 7.1)."""
+    """The threat likelihood enum; the weight is monotonic (S2 7.1)."""
 
     NONE = "none"
     LOW = "low"
@@ -158,7 +158,7 @@ GATE_SECTIONS: dict[ModelState, tuple[str, ...]] = {
     ModelState.TRUST_MODELLED: ("trust_model",),
     ModelState.TRUST_ASSUMPTIONS_WRITTEN: ("assumptions",),
     ModelState.VULNERABILITIES_WRITTEN: ("vulnerabilities",),
-    ModelState.COMPLETED: ("loops",),
+    ModelState.COMPLETED: ("threats",),
 }
 
 
@@ -331,11 +331,11 @@ class RiskFactors(_Record):
 
 
 class Impact(_Record):
-    """The end impact of exploiting the loop's vulnerability.
+    """The end impact of exploiting the threat's vulnerability.
 
     The modeller authors the three CVSS 4.0-like metrics and the literal
     end-impact statement. The store computes the sub-score, the ordinal weight,
-    the loop risk, and the profile; the modeller never authors a score.
+    the threat risk, and the profile; the modeller never authors a score.
     """
 
     confidentiality: ImpactLevel = ImpactLevel.NONE
@@ -376,18 +376,18 @@ def impact_severity(weight: int) -> ImpactSeverity:
     return IMPACT_SEVERITY_BY_WEIGHT[weight]
 
 
-def loop_risk(likelihood: Likelihood, impact: Impact) -> int:
-    """The combined loop risk: likelihood weight times impact weight."""
+def threat_risk(likelihood: Likelihood, impact: Impact) -> int:
+    """The combined threat risk: likelihood weight times impact weight."""
     return RISK_WEIGHTS[likelihood] * impact_weight(impact)
 
 
-# The dispatch buckets over the combined loop risk (ADR, 2026-10-25). The mover
-# uses the bucket, never the raw likelihood, to order and hold loops.
+# The dispatch buckets over the combined threat risk (ADR, 2026-10-25). The mover
+# uses the bucket, never the raw likelihood, to order and hold threats.
 RISK_BUCKETS: tuple[str, ...] = ("none", "low", "medium", "high", "critical")
 
 
 def risk_bucket(risk: int) -> str:
-    """The dispatch bucket of a combined loop risk, 0..16."""
+    """The dispatch bucket of a combined threat risk, 0..16."""
     if risk <= 0:
         return "none"
     if risk <= 3:
@@ -399,10 +399,10 @@ def risk_bucket(risk: int) -> str:
     return "critical"
 
 
-class Loop(_Record):
+class Threat(_Record):
     """One ranked research direction and the dispatch grain.
 
-    `id` defaults empty: the loop id is a store-owned derived symbol assigned
+    `id` defaults empty: the threat id is a store-owned derived symbol assigned
     at the COMPLETED write (S2 5.6 / 10.2), never authored by the modeller.
     """
 
@@ -454,7 +454,7 @@ class ModelSections(BaseModel):
     trust_model: TrustModel | None = None
     assumptions: list[Assumption] | None = None
     vulnerabilities: list[Vulnerability] | None = None
-    loops: list[Loop] | None = None
+    threats: list[Threat] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -478,7 +478,7 @@ class UnitThreatModel(_Record):
     trust_model: TrustModel = Field(default_factory=TrustModel)
     assumptions: list[Assumption] = Field(default_factory=list)
     vulnerabilities: list[Vulnerability] = Field(default_factory=list)
-    loops: list[Loop] = Field(default_factory=list)
+    threats: list[Threat] = Field(default_factory=list)
     risk_profile: RiskProfile | None = None
     validation: Validation | None = None
 
@@ -503,23 +503,23 @@ def unit_kind_from_unit_id(unit_id: str) -> UnitKind:
     return UnitKind.SERVICE if unit_id.startswith("Service:") else UnitKind.SYSTEM
 
 
-def compute_risk_profile(loops: list[Loop]) -> RiskProfile:
+def compute_risk_profile(threats: list[Threat]) -> RiskProfile:
     """The authoritative per-unit risk profile (S2 7.3, amended 2026-10-25).
 
-    The total sums every loop's combined risk (`likelihood_weight * impact_
-    weight`). The likelihood breakdown counts every loop by likelihood, and the
-    impact breakdown counts every loop by its ordinal impact severity. The
-    profile recomputes from the loop's authored impact; it never trusts the
-    loop's derived `risk` field. The modeller never authors the profile.
+    The total sums every threat's combined risk (`likelihood_weight * impact_
+    weight`). The likelihood breakdown counts every threat by likelihood, and the
+    impact breakdown counts every threat by its ordinal impact severity. The
+    profile recomputes from the threat's authored impact; it never trusts the
+    threat's derived `risk` field. The modeller never authors the profile.
     """
     breakdown = {level: 0 for level in Likelihood}
     impact_breakdown = {level: 0 for level in ImpactSeverity}
     total = 0
-    for loop in loops:
-        breakdown[loop.likelihood] += 1
-        weight = impact_weight(loop.impact)
+    for threat in threats:
+        breakdown[threat.likelihood] += 1
+        weight = impact_weight(threat.impact)
         impact_breakdown[impact_severity(weight)] += 1
-        total += RISK_WEIGHTS[loop.likelihood] * weight
+        total += RISK_WEIGHTS[threat.likelihood] * weight
     return RiskProfile(
         total=total,
         breakdown=breakdown,
@@ -527,32 +527,32 @@ def compute_risk_profile(loops: list[Loop]) -> RiskProfile:
     )
 
 
-def normalise_loops(loops: list[Loop]) -> list[Loop]:
-    """The ranked order and the derived loop fields (S2 5.6, amended).
+def normalise_threats(threats: list[Threat]) -> list[Threat]:
+    """The ranked order and the derived threat fields (S2 5.6, amended).
 
     Stable sort by combined risk descending, then impact weight descending,
     then likelihood weight descending; ties keep the modeller's write order.
-    Renumber `loop-1..n` in that order and fill the derived `impact_weight` and
+    Renumber `threat-1..n` in that order and fill the derived `impact_weight` and
     `risk` fields. Rank 1 is the highest risk.
     """
-    def key(loop: Loop) -> tuple[int, int, int]:
-        weight = impact_weight(loop.impact)
+    def key(threat: Threat) -> tuple[int, int, int]:
+        weight = impact_weight(threat.impact)
         return (
-            RISK_WEIGHTS[loop.likelihood] * weight,
+            RISK_WEIGHTS[threat.likelihood] * weight,
             weight,
-            RISK_WEIGHTS[loop.likelihood],
+            RISK_WEIGHTS[threat.likelihood],
         )
 
-    ordered = sorted(loops, key=key, reverse=True)
+    ordered = sorted(threats, key=key, reverse=True)
     return [
-        loop.model_copy(
+        threat.model_copy(
             update={
-                "id": f"loop-{rank}",
-                "impact_weight": impact_weight(loop.impact),
-                "risk": RISK_WEIGHTS[loop.likelihood] * impact_weight(loop.impact),
+                "id": f"threat-{rank}",
+                "impact_weight": impact_weight(threat.impact),
+                "risk": RISK_WEIGHTS[threat.likelihood] * impact_weight(threat.impact),
             }
         )
-        for rank, loop in enumerate(ordered, start=1)
+        for rank, threat in enumerate(ordered, start=1)
     ]
 
 
@@ -596,31 +596,31 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
     every_vulnerability_dropped = bool(model.vulnerabilities) and all(
         vulnerability.dropped for vulnerability in model.vulnerabilities
     )
-    if not model.loops and not every_vulnerability_dropped:
-        missing.append("loops")
-    for loop in model.loops:
-        if not loop.likelihood_rationale:
-            missing.append(f"loop:{loop.id}.likelihood_rationale")
-        if not loop.evidences:
-            missing.append(f"loop:{loop.id}.evidences")
-        if not loop.impact.end_impact:
-            missing.append(f"loop:{loop.id}.impact")
-        expected_weight = impact_weight(loop.impact)
-        if loop.impact_weight != expected_weight:
-            missing.append(f"loop:{loop.id}.impact_weight")
-        if loop.risk != RISK_WEIGHTS[loop.likelihood] * expected_weight:
-            missing.append(f"loop:{loop.id}.risk")
-    keys = [(loop.risk, loop.impact_weight, RISK_WEIGHTS[loop.likelihood])
-            for loop in model.loops]
+    if not model.threats and not every_vulnerability_dropped:
+        missing.append("threats")
+    for threat in model.threats:
+        if not threat.likelihood_rationale:
+            missing.append(f"threat:{threat.id}.likelihood_rationale")
+        if not threat.evidences:
+            missing.append(f"threat:{threat.id}.evidences")
+        if not threat.impact.end_impact:
+            missing.append(f"threat:{threat.id}.impact")
+        expected_weight = impact_weight(threat.impact)
+        if threat.impact_weight != expected_weight:
+            missing.append(f"threat:{threat.id}.impact_weight")
+        if threat.risk != RISK_WEIGHTS[threat.likelihood] * expected_weight:
+            missing.append(f"threat:{threat.id}.risk")
+    keys = [(threat.risk, threat.impact_weight, RISK_WEIGHTS[threat.likelihood])
+            for threat in model.threats]
     if any(left < right for left, right in zip(keys, keys[1:])):
-        missing.append("loops.order")
-    expected_ids = [f"loop-{rank}" for rank in range(1, len(model.loops) + 1)]
-    if [loop.id for loop in model.loops] != expected_ids:
-        missing.append("loops.ids")
+        missing.append("threats.order")
+    expected_ids = [f"threat-{rank}" for rank in range(1, len(model.threats) + 1)]
+    if [threat.id for threat in model.threats] != expected_ids:
+        missing.append("threats.ids")
     if model.risk_profile is None:
         missing.append("risk_profile")
     else:
-        expected = compute_risk_profile(model.loops)
+        expected = compute_risk_profile(model.threats)
         if model.risk_profile != expected:
             if model.risk_profile.total != expected.total:
                 missing.append("risk_profile.total")
@@ -669,25 +669,25 @@ def _check_references(model: UnitThreatModel) -> list[str]:
         if violation.transition_ref and violation.transition_ref not in transition_ids:
             unresolved(f"violation:{violation.id}", "transition_ref",
                        violation.transition_ref)
-    for loop in model.loops:
-        if loop.fault_ref not in fault_ids:
-            unresolved(f"loop:{loop.id}", "fault_ref", loop.fault_ref)
-        if loop.vulnerability_ref not in vulnerability_ids:
-            unresolved(f"loop:{loop.id}", "vulnerability_ref", loop.vulnerability_ref)
-        vulnerability = vulnerability_index.get(loop.vulnerability_ref)
+    for threat in model.threats:
+        if threat.fault_ref not in fault_ids:
+            unresolved(f"threat:{threat.id}", "fault_ref", threat.fault_ref)
+        if threat.vulnerability_ref not in vulnerability_ids:
+            unresolved(f"threat:{threat.id}", "vulnerability_ref", threat.vulnerability_ref)
+        vulnerability = vulnerability_index.get(threat.vulnerability_ref)
         if vulnerability is not None:
-            if loop.canonical_class != vulnerability.canonical_class:
-                unresolved(f"loop:{loop.id}", "canonical_class", loop.canonical_class)
-            if loop.web_vulnerability_class != vulnerability.web_vulnerability_class:
+            if threat.canonical_class != vulnerability.canonical_class:
+                unresolved(f"threat:{threat.id}", "canonical_class", threat.canonical_class)
+            if threat.web_vulnerability_class != vulnerability.web_vulnerability_class:
                 unresolved(
-                    f"loop:{loop.id}", "web_vulnerability_class",
-                    loop.web_vulnerability_class,
+                    f"threat:{threat.id}", "web_vulnerability_class",
+                    threat.web_vulnerability_class,
                 )
     return errors
 
 
 def _check_closure(model: UnitThreatModel) -> list[str]:
-    """The assumption-to-loop closure findings (S2 5.7), as dotted paths."""
+    """The assumption-to-threat closure findings (S2 5.7), as dotted paths."""
     unclosed: list[str] = []
     vulnerability_index = {vulnerability.id: vulnerability for vulnerability in model.vulnerabilities}
     for assumption in model.assumptions:
@@ -703,12 +703,12 @@ def _check_closure(model: UnitThreatModel) -> list[str]:
             if not vulnerability.drop_probe:
                 unclosed.append(f"vulnerability:{vulnerability.id}.drop_probe")
             continue
-        if not any(loop.vulnerability_ref == vulnerability.id for loop in model.loops):
-            unclosed.append(f"vulnerability:{vulnerability.id}.loops")
-    for loop in model.loops:
-        vulnerability = vulnerability_index.get(loop.vulnerability_ref)
+        if not any(threat.vulnerability_ref == vulnerability.id for threat in model.threats):
+            unclosed.append(f"vulnerability:{vulnerability.id}.threats")
+    for threat in model.threats:
+        vulnerability = vulnerability_index.get(threat.vulnerability_ref)
         if vulnerability is not None and vulnerability.dropped:
-            unclosed.append(f"loop:{loop.id}.vulnerability_ref")
+            unclosed.append(f"threat:{threat.id}.vulnerability_ref")
     return unclosed
 
 
@@ -750,7 +750,7 @@ def check_completion(
     It records the necessary-attribute, referential-integrity, and closure
     findings; `valid` is true only when the model parsed and all three finding
     lists are empty. The stored risk profile is REGRESSION-checked against a
-    fresh recomputation from the loops, never trusted.
+    fresh recomputation from the threats, never trusted.
 
     `class_names` is the optional suite index (class parents and variant
     leaves). Its findings ride the separate `class_findings` list and never
@@ -796,7 +796,7 @@ __all__ = [
     "ImpactLevel",
     "ImpactSeverity",
     "Likelihood",
-    "Loop",
+    "Threat",
     "ModelState",
     "PartialThreatModel",
     "PrivilegesRequired",
@@ -823,8 +823,8 @@ __all__ = [
     "impact_severity",
     "impact_weight",
     "impact_weight_from_sub_score",
-    "loop_risk",
-    "normalise_loops",
+    "threat_risk",
+    "normalise_threats",
     "risk_bucket",
     "unit_kind_from_unit_id",
 ]

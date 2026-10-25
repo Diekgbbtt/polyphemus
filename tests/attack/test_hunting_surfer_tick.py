@@ -17,9 +17,9 @@ coroutines) and the control plane. Pins the at-least-once ACs:
 - an already-live registry session is never re-dispatched (and its move
   lands - the crash-window completion);
 - the produced->consumed rename is SINGLE-OWNER: only the mover calls the
-  store move primitives (`ThreatModelStore.consume_loop`,
+  store move primitives (`ThreatModelStore.consume_threat`,
   `HunterMemoryStore.consume_spec`), and a refused tick moves nothing;
-- T4b (#387): the loop file is the ONLY hunter dispatch record - the retired
+- T4b (#387): the threat file is the ONLY hunter dispatch record - the retired
   config family is not an item, is not dispatched and is not work;
 - a failed move is counted, never aborting the tick (fail-open ring, s5).
 
@@ -44,7 +44,7 @@ from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
     ProducedItem,
     RuntimeControlPlane,
-    ThreatLoopItem,
+    ThreatItem,
     hunter_session_id,
     pod_session_id,
     read_produced_inbox,
@@ -58,18 +58,18 @@ from polymerhus.attack.hunting.surfer import (
     run_work_remaining,
 )
 
-from tests.hunting_fixtures import loop_row, produce_model
+from tests.hunting_fixtures import threat_row, produce_model
 
 PROJECT = "proj-1"
 RUN = "run-1"
 UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
-# The hunter memory key is the loop dispatch id `<unit_name>__<loop_id>` (S3
-# 8.9) - never a config key; the pod's parent key IS that same loop id.
+# The hunter memory key is the threat dispatch id `<unit_name>__<threat_id>` (S3
+# 8.9) - never a config key; the pod's parent key IS that same threat id.
 UNIT_NAME = "Service-catalogue-and-discovery"
-LOOP_ID = "loop-1"
-DISPATCH_ID = f"{UNIT_NAME}__{LOOP_ID}"
+THREAT_ID = "threat-1"
+DISPATCH_ID = f"{UNIT_NAME}__{THREAT_ID}"
 HUNTER_SESSION = hunter_session_id(RUN, DISPATCH_ID)
 
 
@@ -126,7 +126,7 @@ def _wait_until(pred, timeout=5):
 @pytest.fixture
 def stores(tmp_path):
     """The two PRODUCTION stores the dispatch path reads: the threat model
-    store (the produced loop files) and the hunter memory (the produced specs).
+    store (the produced threat files) and the hunter memory (the produced specs).
     The hunt store is not here: nothing on the dispatch path reads it (T4b),
     and T10 removed its residual notes surface."""
     return (
@@ -135,11 +135,11 @@ def stores(tmp_path):
     )
 
 
-def _produce(stores, *, loops=None, run_id=RUN):
+def _produce(stores, *, threats=None, run_id=RUN):
     """One produced COMPLETED valid model on the test's threat store."""
     threat, _hunter = stores
     return produce_model(
-        threat, project_id=PROJECT, unit_id=UNIT, run_id=run_id, loops=loops)
+        threat, project_id=PROJECT, unit_id=UNIT, run_id=run_id, threats=threats)
 
 
 def _write_spec(hunter, *, hunt_key=DISPATCH_ID, keyword="sqli", strategy="blind",
@@ -191,7 +191,7 @@ def _real_coro_for(threat, hunter, state=None):
 
 
 def test_the_surfer_work_read_and_dispatch_carry_no_config_clause(stores):
-    """T4b (#387): the surfer's work read and dispatch decision are loop-only.
+    """T4b (#387): the surfer's work read and dispatch decision are threat-only.
 
     No config predicate, no config dispatch branch, no config refuse-once log,
     and no hunt-store parameter on any dispatch seam. A produced ratified hunt
@@ -237,10 +237,10 @@ def test_empty_inbox_yields_a_noop_tick(stores):
     assert report.moved == 0 and report.move_failed == 0
 
 
-def test_one_produced_loop_dispatches_a_hunter_and_moves_both_records(stores):
-    """S2 8.4: the loop file IS the dispatch grain - ONE loop file admits ONE
-    hunter session under the per-loop id, and the admission moves the loop file
-    to consumed/ with the model document (its last loop file, S2 8.1)."""
+def test_one_produced_threat_dispatches_a_hunter_and_moves_both_records(stores):
+    """S2 8.4: the threat file IS the dispatch grain - ONE threat file admits ONE
+    hunter session under the per-threat id, and the admission moves the threat file
+    to consumed/ with the model document (its last threat file, S2 8.1)."""
     threat, hunter = stores
     _produce(stores)
     control = RecordingControlPlane()
@@ -253,8 +253,8 @@ def test_one_produced_loop_dispatches_a_hunter_and_moves_both_records(stores):
     assert report.dispatched == 1 and report.admitted == 1 and report.refused == 0
     assert report.moved == 1 and report.move_failed == 0
     # the produced->consumed move IS the at-least-once marker: nothing left in
-    # produced/, the loop file and the model document live in consumed/
-    assert threat.read_produced_loops(PROJECT) == []
+    # produced/, the threat file and the model document live in consumed/
+    assert threat.read_produced_threats(PROJECT) == []
     assert threat.read_completed_units(PROJECT) == [UNIT]
 
 
@@ -302,7 +302,7 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores, tmp_path):
     `build_run_dispatch` gates on, so real work is always dispatchable - it can
     never wedge the quiesce."""
     threat, hunter = stores
-    # a produced loop file is dispatchable work
+    # a produced threat file is dispatchable work
     _produce(stores)
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is True
@@ -318,7 +318,7 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores, tmp_path):
     )
     assert report.admitted == 2 and report.moved == 2
     # F-022: the move is admission, not completion. The tick's admitted hunter
-    # did not run in this fake plane, so the consumed loop has no terminal spec
+    # did not run in this fake plane, so the consumed threat has no terminal spec
     # set yet and IS still work. The hunter's finalize settles it.
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is True
@@ -344,30 +344,30 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores, tmp_path):
     )) is True
 
 
-# --- F-022: the consumed-loop recovery family -----------------------------------
+# --- F-022: the consumed-threat recovery family -----------------------------------
 
-def _consumed_loop(stores):
-    """One loop consumed at admission: the loop file and model live in
+def _consumed_threat(stores):
+    """One threat consumed at admission: the threat file and model live in
     consumed/, and no hunter has written a terminal spec set yet."""
     threat, hunter = stores
     _produce(stores)
-    assert threat.consume_loop(PROJECT, UNIT, LOOP_ID) is True
-    assert threat.read_produced_loops(PROJECT) == []
+    assert threat.consume_threat(PROJECT, UNIT, THREAT_ID) is True
+    assert threat.read_produced_threats(PROJECT) == []
     return threat, hunter
 
 
-def test_a_consumed_loop_without_a_terminal_set_is_recovered(stores):
+def test_a_consumed_threat_without_a_terminal_set_is_recovered(stores):
     """F-022: the produced->consumed move is admission, not completion. The
     recovery item carries the consumed model document (never a re-model) and
-    the same loop identity/session; the hunter's zero-spec finalize settles it."""
-    threat, hunter = _consumed_loop(stores)
+    the same threat identity/session; the hunter's zero-spec finalize settles it."""
+    threat, hunter = _consumed_threat(stores)
 
     inbox = read_produced_inbox(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter)
 
-    loops = [item for item in inbox.items if isinstance(item, ThreatLoopItem)]
-    assert len(loops) == 1
-    item = loops[0]
+    threats = [item for item in inbox.items if isinstance(item, ThreatItem)]
+    assert len(threats) == 1
+    item = threats[0]
     assert item.recovered is True
     assert item.message_id == DISPATCH_ID
     assert item.session_id == HUNTER_SESSION
@@ -379,59 +379,59 @@ def test_a_consumed_loop_without_a_terminal_set_is_recovered(stores):
 
     assert [i for i in read_produced_inbox(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter).items
-        if isinstance(i, ThreatLoopItem)] == []
+        if isinstance(i, ThreatItem)] == []
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
 
 
-def test_a_consumed_loop_is_recovered_while_its_sibling_stays_produced(stores):
-    """F-022 model dependency: a multi-loop unit consumes its model only with
-    the LAST loop. The consumed loop is recovered from the still-produced
-    model, while the sibling produced loop stays a normal dispatch candidate."""
+def test_a_consumed_threat_is_recovered_while_its_sibling_stays_produced(stores):
+    """F-022 model dependency: a multi-threat unit consumes its model only with
+    the LAST threat. The consumed threat is recovered from the still-produced
+    model, while the sibling produced threat stays a normal dispatch candidate."""
     threat, hunter = stores
-    _produce(stores, loops=[loop_row(), loop_row(likelihood="low")])
-    assert threat.consume_loop(PROJECT, UNIT, "loop-1") is True
-    assert [e["unit_id"] for e in threat.read_consumed_loops(PROJECT)] == [UNIT]
-    assert [e["unit_id"] for e in threat.read_produced_loops(PROJECT)] == [UNIT]
+    _produce(stores, threats=[threat_row(), threat_row(likelihood="low")])
+    assert threat.consume_threat(PROJECT, UNIT, "threat-1") is True
+    assert [e["unit_id"] for e in threat.read_consumed_threats(PROJECT)] == [UNIT]
+    assert [e["unit_id"] for e in threat.read_produced_threats(PROJECT)] == [UNIT]
 
     inbox = read_produced_inbox(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter)
 
     recovered = [i for i in inbox.items
-                 if isinstance(i, ThreatLoopItem) and i.recovered]
+                 if isinstance(i, ThreatItem) and i.recovered]
     produced = [i for i in inbox.items
-                if isinstance(i, ThreatLoopItem) and not i.recovered]
-    assert [i.loop_id for i in recovered] == ["loop-1"]
-    assert [i.loop_id for i in produced] == ["loop-2"]
+                if isinstance(i, ThreatItem) and not i.recovered]
+    assert [i.threat_id for i in recovered] == ["threat-1"]
+    assert [i.threat_id for i in produced] == ["threat-2"]
     assert recovered[0].model is not None
     assert recovered[0].model["unit_id"] == UNIT
 
 
-def test_a_terminal_set_from_another_run_does_not_settle_this_loop(stores):
-    """The terminal-set marker is run-scoped, like the loop body: a stale marker
-    from an earlier run must not suppress recovery of the current run's loop."""
-    threat, hunter = _consumed_loop(stores)
+def test_a_terminal_set_from_another_run_does_not_settle_this_threat(stores):
+    """The terminal-set marker is run-scoped, like the threat body: a stale marker
+    from an earlier run must not suppress recovery of the current run's threat."""
+    threat, hunter = _consumed_threat(stores)
     hunter.finalize_specs(PROJECT, DISPATCH_ID, run_id="run-earlier")
 
     assert any(
-        isinstance(item, ThreatLoopItem) and item.recovered
+        isinstance(item, ThreatItem) and item.recovered
         for item in read_produced_inbox(
             PROJECT, RUN, threat_store=threat, hunter_store=hunter).items
     )
 
     hunter.finalize_specs(PROJECT, DISPATCH_ID, run_id=RUN)
     assert not any(
-        isinstance(item, ThreatLoopItem)
+        isinstance(item, ThreatItem)
         for item in read_produced_inbox(
             PROJECT, RUN, threat_store=threat, hunter_store=hunter).items
     )
 
 
-def test_a_recovered_loop_redispatches_without_a_second_move(stores):
-    """At-least-once: a recovered loop is dispatched again, and its move is
+def test_a_recovered_threat_redispatches_without_a_second_move(stores):
+    """At-least-once: a recovered threat is dispatched again, and its move is
     already satisfied - the tick lands no second produced->consumed move. A live
     recovered session is never re-dispatched."""
-    threat, hunter = _consumed_loop(stores)
+    threat, hunter = _consumed_threat(stores)
 
     live = RecordingControlPlane(live={HUNTER_SESSION})
     report = run_delivery_tick(
@@ -449,10 +449,10 @@ def test_a_recovered_loop_redispatches_without_a_second_move(stores):
     assert control.calls == [HUNTER_SESSION]
     assert report.produced == 1 and report.admitted == 1
     assert report.moved == 0 and report.models_consumed == 0
-    # the loop stays in consumed/ (the move is already satisfied), and the
+    # the threat stays in consumed/ (the move is already satisfied), and the
     # still-unsettled hunter keeps the work pending for the next tick
-    assert [loop["loop_id"] for loop in
-            threat.read_consumed_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    assert [threat["threat_id"] for threat in
+            threat.read_consumed_threats(PROJECT)[0]["threats"]] == [THREAT_ID]
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is True
 
@@ -461,12 +461,12 @@ def test_a_recovered_loop_redispatches_without_a_second_move(stores):
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
 
 
-def test_a_foreign_run_consumed_loop_is_not_recovered(stores):
-    """The recovery read is run-scoped: another run's consumed loop is its own
+def test_a_foreign_run_consumed_threat_is_not_recovered(stores):
+    """The recovery read is run-scoped: another run's consumed threat is its own
     mover's work, never stolen by this run."""
     threat, hunter = stores
     _produce(stores, run_id="run-other")
-    assert threat.consume_loop(PROJECT, UNIT, LOOP_ID) is True
+    assert threat.consume_threat(PROJECT, UNIT, THREAT_ID) is True
 
     assert read_produced_inbox(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter).items == ()
@@ -477,8 +477,8 @@ def test_a_foreign_run_consumed_loop_is_not_recovered(stores):
 def test_undispatchable_statuses_are_not_work(stores):
     """A hypothesised spec draft is NOT dispatchable work: `run_work_remaining`
     says False (its status is not the dispatch gate) and the produced read does
-    not even hand it over as an item - the two never disagree. A malformed loop
-    file is refused by the ONE loop validity predicate instead, and never counts
+    not even hand it over as an item - the two never disagree. A malformed threat
+    file is refused by the ONE threat validity predicate instead, and never counts
     as work either."""
     threat, hunter = stores
     _write_spec(hunter, status="hypothesised")
@@ -497,7 +497,7 @@ def test_undispatchable_statuses_are_not_work(stores):
 
 # --- the shell: refusal is at-least-once, never dropped -------------------------
 
-def test_refused_loop_stays_produced_and_is_retried_next_tick(stores):
+def test_refused_threat_stays_produced_and_is_retried_next_tick(stores):
     threat, hunter = stores
     _produce(stores)
     denied = RecordingControlPlane(refused={HUNTER_SESSION})
@@ -507,16 +507,16 @@ def test_refused_loop_stays_produced_and_is_retried_next_tick(stores):
     )
     assert denied.calls == [HUNTER_SESSION]
     assert report.refused == 1 and report.moved == 0 and report.admitted == 0
-    # nothing dropped: the produced loop file survives, readable
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    # nothing dropped: the produced threat file survives, readable
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats(PROJECT)[0]["threats"]] == [THREAT_ID]
     # the retry: a fresh tick (the next loop lap) admits and completes the move
     report2 = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
         control=RecordingControlPlane(), coro_for=_real_coro_for(threat, hunter),
     )
     assert report2.moved == 1 and report2.refused == 0
-    assert threat.read_produced_loops(PROJECT) == []
+    assert threat.read_produced_threats(PROJECT) == []
 
 
 def test_refused_spec_stays_produced_and_is_retried_next_tick(stores):
@@ -551,8 +551,8 @@ def test_a_fully_refused_tick_moves_nothing_for_either_family(stores):
         control=denied, coro_for=_real_coro_for(threat, hunter),
     )
     assert report.refused == 2 and report.moved == 0 and report.admitted == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats(PROJECT)[0]["threats"]] == [THREAT_ID]
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == ["sqli__blind__boolean"]
 
 
@@ -572,7 +572,7 @@ def test_live_session_is_never_redispatched_and_its_move_lands(stores):
     assert control.calls == []             # no double dispatch
     assert report.dispatched == 0 and report.refused == 0
     assert report.moved == 1               # registry-confirmed: marker stamped
-    assert threat.read_produced_loops(PROJECT) == []
+    assert threat.read_produced_threats(PROJECT) == []
 
 
 # --- the shell: fail-open rings (never abort the tick) --------------------------
@@ -589,18 +589,18 @@ def test_coro_builder_failure_is_refused_and_stays_produced(stores):
         control=RecordingControlPlane(), coro_for=broken,
     )
     assert report.refused == 1 and report.moved == 0 and report.admitted == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats(PROJECT)[0]["threats"]] == [THREAT_ID]
 
 
 def test_move_failure_is_counted_and_never_aborts_the_tick(stores, monkeypatch):
     threat, hunter = stores
-    _produce(stores, loops=[loop_row(), loop_row(likelihood="critical")])
+    _produce(stores, threats=[threat_row(), threat_row(likelihood="critical")])
 
-    def failing_consume(project_id, unit_id, loop_id):
+    def failing_consume(project_id, unit_id, threat_id):
         raise OSError("disk failure (fixture)")
 
-    monkeypatch.setattr(threat, "consume_loop", failing_consume)
+    monkeypatch.setattr(threat, "consume_threat", failing_consume)
     report = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
         control=RecordingControlPlane(), coro_for=_real_coro_for(threat, hunter),
@@ -608,7 +608,7 @@ def test_move_failure_is_counted_and_never_aborts_the_tick(stores, monkeypatch):
     assert report.admitted == 2 and report.moved == 0
     assert report.move_failed == 2
     assert report.dispatched == 2            # the tick completed, nothing raised
-    assert len(threat.read_produced_loops(PROJECT)[0]["loops"]) == 2
+    assert len(threat.read_produced_threats(PROJECT)[0]["threats"]) == 2
 
 
 # --- the store move primitives (single-owner, at-least-once idempotency) --------
@@ -645,12 +645,12 @@ def test_list_hunt_keys_and_produced_spec_files_are_deterministic(tmp_path):
     hunter = HunterMemoryStore(tmp_path)
     _write_spec(hunter)
     _write_spec(hunter, keyword="xss", strategy="reflected")
-    other = "Service-b__loop-2"                 # a distinct loop dispatch id
+    other = "Service-b__threat-2"                 # a distinct threat dispatch id
     _write_spec(hunter, hunt_key=other, keyword="sqli", strategy="blind")
     assert hunter.list_hunt_keys(PROJECT) == [other, DISPATCH_ID]  # lexical order
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == [
         "sqli__blind__boolean", "xss__reflected__boolean"]
-    assert hunter.produced_spec_files(PROJECT, "Service-zzz__loop-9") == []
+    assert hunter.produced_spec_files(PROJECT, "Service-zzz__threat-9") == []
 
 
 # --- the real control-plane adapter: ModuleAdmissionRefused is the refusal ------
@@ -686,8 +686,8 @@ def test_runtime_plane_refuses_while_paused_then_admits_after_resume(
         control=plane, coro_for=_real_coro_for(threat, hunter),
     )
     assert report.refused == 1 and report.moved == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats(PROJECT)[0]["threats"]] == [THREAT_ID]
 
     # resumed -> the same produced item is retried and admitted this lap. This
     # is a control-plane admission test, NOT a dispatch-decision test, so the
@@ -706,7 +706,7 @@ def test_runtime_plane_refuses_while_paused_then_admits_after_resume(
     _wait_until(lambda: HUNTER_SESSION in runtime.run_ids("hunting"), timeout=15)
     runtime.cancel_run("hunting", HUNTER_SESSION)
     _wait_until(lambda: runtime.run_ids("hunting") == [], timeout=15)
-    assert threat.read_produced_loops(PROJECT) == []
+    assert threat.read_produced_threats(PROJECT) == []
 
 
 def test_runtime_plane_without_a_manager_refuses_fail_open(tmp_path):
@@ -721,8 +721,8 @@ def test_runtime_plane_without_a_manager_refuses_fail_open(tmp_path):
         control=plane, coro_for=_real_coro_for(threat, hunter),
     )
     assert report.refused == 1 and report.moved == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats(PROJECT)[0]["threats"]] == [THREAT_ID]
 
 
 class _NullManager:
@@ -760,7 +760,7 @@ def test_hunter_idle_loop_threads_the_project_as_usage_scope(tmp_path, monkeypat
     monkeypatch.setattr(
         "polymerhus.app.auth.seams.auth_capable_binding", lambda *a, **k: binding)
 
-    hunt_key = "Service-a__loop-1"
+    hunt_key = "Service-a__threat-1"
     state = RunDispatchState()
     state.hunter_inboxes[hunt_key] = _A.AgentInbox()
     asyncio.run(_run_hunter_idle(

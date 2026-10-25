@@ -16,7 +16,7 @@ BASELINE = "http_01J0000000000000000000000A"
 _SPEC = {
     "target_identity": {"url": "http://target.example/", "unit_id": "service:web:t"},
     "verification_symptoms": ["HTTP 403 on GET /admin"],
-    "provenance": {"loop_id": "loop-1", "baseline_ref": BASELINE},
+    "provenance": {"threat_id": "threat-1", "baseline_ref": BASELINE},
 }
 
 
@@ -38,7 +38,7 @@ def test_the_baseline_ref_authors_a_replay_chain():
 
 def test_without_a_baseline_the_runner_authors_the_target_probe():
     chain = author_probe_from_spec(
-        {**_SPEC, "provenance": {"loop_id": "loop-1"}}, "v0")
+        {**_SPEC, "provenance": {"threat_id": "threat-1"}}, "v0")
     assert chain.steps[0].request_ref == ""
     assert chain.steps[0].url == "http://target.example/"
 

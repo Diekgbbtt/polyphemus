@@ -1,4 +1,4 @@
-"""The test-executor pod's typed records (D4 in, D5 + D6 out) and its loop state.
+"""The test-executor pod's typed records (D4 in, D5 + D6 out) and its threat state.
 
 The pod consumes the `TestImplementationSpec` (D4) via IA-3 and returns the
 `{verdict, evidence}` envelope (D5 + the D6 experiment log) via IA-4 - nothing
@@ -61,7 +61,7 @@ class TestImplementationSpec(BaseModel):
     the mandatory URL/symptom violations instead of raising;
     `verification.validate_spec` is the gate.
 
-    `provenance` carries `loop_id`, `unit_id`, `canonical_class` (the freely
+    `provenance` carries `threat_id`, `unit_id`, `canonical_class` (the freely
     named taxonomy class), `web_vulnerability_class` (the suite directory
     name; empty when the class is a `suite_gap`), `baseline_ref` (optional),
     `source_recon_refs`, `assumption_ref`, and `playbook`."""
@@ -266,7 +266,7 @@ class RunnerStep(BaseModel):
 
 
 class PodState(TypedDict, total=False):
-    """The LangGraph loop state. Injected side-effecting collaborators
+    """The LangGraph threat state. Injected side-effecting collaborators
     (runner/triager/exec/kb) read and extend it; the terminal node renders the
     `PodExport`. The D6 experiment log lives on the `log` object
     (`context.ExperimentLog`), mutated in place across nodes. The two message

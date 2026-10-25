@@ -5,7 +5,7 @@ The intake freeze and the ordering live in `unit_intake`; THIS module owns what
 the run does with the frozen order:
 
 - the **symbolic risk accumulator** (S2 7.4): the unit total is the sum of the
-  loop likelihood weights, the run total is their running sum, and the halt
+  threat likelihood weights, the run total is their running sum, and the halt
   comparison is INCLUSIVE (`run_total >= threshold`);
 - the **halt** (S1 7.4, ordering-halt ADR): the crossing unit completes and is
   dispatched, the NEXT unit in the intake order is never modelled, and the
@@ -144,7 +144,8 @@ class ModelSum:
     unit_id: str
     total: int
     breakdown: dict[str, int]
-    impact_breakdown: dict[str, int] = field(default_factory=lambda: _empty_impact_breakdown())
+    impact_breakdown: dict[str, int] = field(
+        default_factory=lambda: _empty_impact_breakdown())
 
     def record(self) -> dict[str, Any]:
         return {
@@ -163,9 +164,9 @@ def _empty_impact_breakdown() -> dict[str, int]:
     return {level: 0 for level in IMPACT_LEVELS}
 
 
-def _loop_impact(loop: Mapping[str, Any]) -> Impact:
-    """The loop's authored impact, tolerant of a legacy or malformed record."""
-    raw = loop.get("impact")
+def _threat_impact(threat: Mapping[str, Any]) -> Impact:
+    """The threat's authored impact, tolerant of a legacy or malformed record."""
+    raw = threat.get("impact")
     if not isinstance(raw, Mapping):
         return Impact()
     try:
@@ -177,28 +178,28 @@ def _loop_impact(loop: Mapping[str, Any]) -> Impact:
 def model_sum(unit_id: str, model: Mapping[str, Any] | None) -> ModelSum:
     """The harness-owned sum of ONE persisted model (S2 7.3, amended).
 
-    The total sums the combined loop risk (`likelihood_weight * impact_weight`).
-    The likelihood breakdown counts every loop by likelihood, and the impact
-    breakdown counts every loop by ordinal impact severity. The store computes
+    The total sums the combined threat risk (`likelihood_weight * impact_weight`).
+    The likelihood breakdown counts every threat by likelihood, and the impact
+    breakdown counts every threat by ordinal impact severity. The store computes
     the same profile at the COMPLETED write and the completion checker
-    regression-checks it, so the recorded sum always restates the loops the
-    model carries. A model with no loops (a zero-loop unit, or a partial
-    document) sums to zero - it consumes no budget. A loop without an impact
+    regression-checks it, so the recorded sum always restates the threats the
+    model carries. A model with no threats (a zero-threat unit, or a partial
+    document) sums to zero - it consumes no budget. A threat without an impact
     contributes zero risk and counts in the `none` impact bucket.
     """
     breakdown = _empty_breakdown()
     impact_breakdown = _empty_impact_breakdown()
     total = 0
-    for loop in (model or {}).get("loops") or []:
-        likelihood = str((loop or {}).get("likelihood") or "")
+    for threat in (model or {}).get("threats") or []:
+        likelihood = str((threat or {}).get("likelihood") or "")
         if likelihood not in RISK_LEVELS:
             logger.warning(
-                "run lifecycle: model %s carries an unknown loop likelihood %r; "
-                "the loop contributes no budget", unit_id, likelihood,
+                "run lifecycle: model %s carries an unknown threat likelihood %r; "
+                "the threat contributes no budget", unit_id, likelihood,
             )
             continue
         breakdown[likelihood] += 1
-        weight = impact_weight(_loop_impact(loop))
+        weight = impact_weight(_threat_impact(threat))
         impact_breakdown[impact_severity(weight).value] += 1
         total += RISK_WEIGHTS[Likelihood(likelihood)] * weight
     return ModelSum(
@@ -214,7 +215,7 @@ class RiskAccumulator:
     """The symbolic run accumulator (S1 7.4, S2 7.4).
 
     `total` is the running sum of the completed units' totals, `breakdown` the
-    summed per-level loop counts, and `model_sums` the per-unit entries the run
+    summed per-level threat counts, and `model_sums` the per-unit entries the run
     record carries. `crossing_unit`, `blocked_unit` and `halt` are the halt's
     audit trail: the crossing unit completed (and is dispatched), the blocked
     unit is the next unit in the intake order that was never modelled.
@@ -234,7 +235,7 @@ class RiskAccumulator:
 
     def add(self, entry: ModelSum) -> None:
         """Accumulate one modelled unit. The total is symbolic: the weights are
-        fixed, so the same loops always yield the same sum."""
+        fixed, so the same threats always yield the same sum."""
         self.total += entry.total
         for level, count in entry.breakdown.items():
             self.breakdown[level] = self.breakdown.get(level, 0) + count
@@ -413,7 +414,7 @@ def resume_run(
       between the two leaves a complete model the record does not mention: the
       resume ADOPTS every complete model at or after `intake_position`, which is
       why a stale total can never survive a restart.
-    - A halted record resumes as halted: the run dispatches its produced loops
+    - A halted record resumes as halted: the run dispatches its produced threats
       and models nothing more.
     """
     order = tuple(str(unit) for unit in record.get("intake_order") or ())

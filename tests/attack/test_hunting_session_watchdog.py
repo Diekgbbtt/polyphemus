@@ -21,7 +21,7 @@ from polymerhus.attack.hunting.surfer import (
 
 PROJECT = "proj-watchdog"
 RUN = "run-watchdog"
-HUNT = "Service-u1__loop-1"
+HUNT = "Service-u1__threat-1"
 SPEC_ID = "idor__report-id__signed-url"
 
 

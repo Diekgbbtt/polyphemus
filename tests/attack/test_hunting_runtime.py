@@ -105,7 +105,7 @@ class _FakePg:
 
 class _FakeControl:
     """The T4 session-capable control-plane fake: RUNS the dispatched/started
-    sessions as tasks on the current loop (so the whole pipeline is observable
+    sessions as tasks on the current threat (so the whole pipeline is observable
     through the bootstrap with no live runtime), mirrors the real manager's
     registry through the live-task set, and can refuse/close unadmitted
     sessions. Implements the mover's `DispatchControlPlane` verbs and the run
@@ -147,7 +147,7 @@ class _FakeControl:
 
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     """The fake hunt-session graph: concludes immediately (no specs authored)
-    and writes the zero-spec terminal set, so the F-022 loop recovery sees a
+    and writes the zero-spec terminal set, so the F-022 threat recovery sees a
     completed hunt and the run quiesces without producing pods."""
     async def dispatch(config):
         hunt_key = config.get("dispatch_id")
@@ -175,7 +175,7 @@ def test_the_runtime_carries_no_hunt_store_threading():
 
     `start_hunting` and `report_dispatch_gap` take no hunt store, the run
     bootstrap constructs none, and no enqueue seam exists - the config family
-    has no producer and no dispatch consumer (the loop file is the dispatch
+    has no producer and no dispatch consumer (the threat file is the dispatch
     record, S2 8.4)."""
     import inspect
 
@@ -387,14 +387,14 @@ def test_provider_abort_stops_the_runs_sessions_before_the_terminal(monkeypatch)
 
 def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     """#312: a provider failure inside a dispatched HUNTER - after the pass has
-    modelled and the surfer dispatched a produced loop file - must pause the run
+    modelled and the surfer dispatched a produced threat file - must pause the run
     as the resumable `interrupted` with the provider cause, never let it quiesce
     `complete` with zero specs and no reason. This is the trial-2 outcome: 11
     configs consumed, 0 specs authored, no typed reason. The #329/#331 fixes
     scoped the pass and the pod verdict; the hunter harness still swallowed the
     typed provider error and the run quiesced silently.
 
-    T4b (#387): the dispatch input is the produced loop file, not an enqueued
+    T4b (#387): the dispatch input is the produced threat file, not an enqueued
     config. The real harness's raw-raise classification is asserted at its own
     seam (`tests/attack/test_hunting_agent.py`); the run-terminal propagation is
     asserted here through the injected builder."""
@@ -434,10 +434,10 @@ def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
 
 # --- F-026 (B): transient child failures do not stop the fleet -----------------
 
-def test_a_transient_hunter_failure_requeues_only_that_loop_and_keeps_the_sibling_live(
+def test_a_transient_hunter_failure_requeues_only_that_threat_and_keeps_the_sibling_live(
         tmp_path, monkeypatch):
-    """One child's 429 is not the run's failure: the failed loop is requeued
-    after its backoff (the consumed loop has no terminal set, so F-022 recovers
+    """One child's 429 is not the run's failure: the failed threat is requeued
+    after its backoff (the consumed threat has no terminal set, so F-022 recovers
     it) while the unaffected sibling finishes and finalizes. The run completes."""
     from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 
@@ -479,10 +479,10 @@ def test_a_transient_hunter_failure_requeues_only_that_loop_and_keeps_the_siblin
     ))
 
     assert fake.statuses[-1] == (hid, "complete")
-    assert attempts["Service-slug-a__loop-1"] == 2
-    assert attempts["GraphQLApi__loop-1"] == 1
+    assert attempts["Service-slug-a__threat-1"] == 2
+    assert attempts["GraphQLApi__threat-1"] == 1
     assert sorted(finalized) == [
-        "GraphQLApi__loop-1", "Service-slug-a__loop-1"]
+        "GraphQLApi__threat-1", "Service-slug-a__threat-1"]
     for did in finalized:
         assert hunter.read_terminal_set("rt-project", did)["run_id"] == run_id
 
@@ -528,7 +528,7 @@ def test_three_consecutive_transient_hunter_failures_pause_the_run(
     assert stats["quota_exhausted"] is False
 
 
-# T6 (#379): the production harness consumes the loop payload end to end. The
+# T6 (#379): the production harness consumes the threat payload end to end. The
 # raw-raise classification AT that seam and the end-to-end run pause are
 # asserted below (`test_the_production_hunter_seam_...`) and in
 # `test_hunter_provider_failure_interrupts_the_run` above.
@@ -547,9 +547,9 @@ def test_build_production_hunting_agent_wires_real_seams(tmp_path):
     assert registry is not None
 
 
-def test_the_production_hunter_builder_consumes_the_loop_payload(tmp_path):
-    """T6 (#379): the production hunter builder hands the materialised loop
-    payload straight to the harness - no refusal marker, no `consumes_loop_payload`
+def test_the_production_hunter_builder_consumes_the_threat_payload(tmp_path):
+    """T6 (#379): the production hunter builder hands the materialised threat
+    payload straight to the harness - no refusal marker, no `consumes_threat_payload`
     flag, no `Mapping` discrimination. The raw provider error AT the real seam
     propagates as the typed pause cause (the #312 end-to-end variant restored
     once the harness consumed the payload)."""
@@ -569,7 +569,7 @@ def test_the_production_hunter_builder_consumes_the_loop_payload(tmp_path):
         build_memory_store,
     )
 
-    assert not hasattr(_default_hunter_builder, "consumes_loop_payload")
+    assert not hasattr(_default_hunter_builder, "consumes_threat_payload")
 
     dispatch, registry = build_production_hunting_agent(
         run_id="prod-run", project_id="p",
@@ -674,14 +674,14 @@ def test_hunting_module_context_sets_the_shared_module_seam():
 
     async def probe():
         async with hunting_runtime.hunting_module_context():
-            on_loop = C._MODULE_CTX.get()
+            module_context = C._MODULE_CTX.get()
             cp = C.get_session_checkpointer()
             offloaded = await asyncio.to_thread(C.get_session_checkpointer)
-            return on_loop, cp, offloaded
+            return module_context, cp, offloaded
 
-    on_loop, cp, offloaded = asyncio.run(probe())
+    module_context, cp, offloaded = asyncio.run(probe())
     fallback = C.get_session_checkpointer()
-    assert on_loop == "hunting"
+    assert module_context == "hunting"
     assert cp is not fallback
     assert cp._index.module == "hunting"
     assert offloaded is cp
@@ -802,7 +802,7 @@ def test_cancel_hunting_is_a_safe_no_op_with_no_active_run():
 # the modeller pass's sync lane still works through the module boundaries
 def test_explicit_root_store_trail_is_written(tmp_path):
     """The sync lane (`run_modeller_pass`) models one unit end to end: the five
-    gate writes land through the real store and the produced loop file exists."""
+    gate writes land through the real store and the produced threat file exists."""
     store = ThreatModelStore(root_dir=tmp_path)
     outcome = run_modeller_pass(
         "rt-project", "run-rt", UNIT,
@@ -811,8 +811,8 @@ def test_explicit_root_store_trail_is_written(tmp_path):
     )
     assert outcome.status == "completed"
     assert store.read_model("rt-project", UNIT)["state"] == "COMPLETED"
-    assert [loop["loop_id"] for loop in store.read_loop_files("rt-project", UNIT)] \
-        == ["loop-1"]
+    assert [threat["threat_id"] for threat in store.read_threat_files("rt-project", UNIT)] \
+        == ["threat-1"]
 
 
 def _modeller_tools(store):

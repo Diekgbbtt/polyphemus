@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_SECTIONS: tuple[str, ...] = (
     "technical_sharpening", "trust_model", "assumptions",
-    "vulnerabilities", "loops",
+    "vulnerabilities", "threats",
 )
 
 
@@ -105,7 +105,7 @@ _HUNTS_STORE_DESCRIPTION = (
     "or a path. The states and their sections are: UNIT_TECHNICAL_SHARP "
     "(technical_sharpening), TRUST_MODELLED (trust_model), "
     "TRUST_ASSUMPTIONS_WRITTEN (assumptions), VULNERABILITIES_WRITTEN "
-    "(vulnerabilities), COMPLETED (loops; the store computes the risk profile "
+    "(vulnerabilities), COMPLETED (threats; the store computes the risk profile "
     "and runs the completion checker). A section outside the "
     "state's set is rejected; the model state is monotonic, so a later write for "
     "an earlier gate updates that section without regressing the state.\n"

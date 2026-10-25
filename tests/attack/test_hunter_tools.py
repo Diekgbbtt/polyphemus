@@ -24,7 +24,7 @@ from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.spec_contract import TargetIdentity
 
 PROJECT = "proj-1"
-HUNT_KEY = "Service-account-registration__loop-1"
+HUNT_KEY = "Service-account-registration__threat-1"
 TARGET = TargetIdentity(url="https://a", unit_id="Service:a")
 
 
@@ -214,9 +214,9 @@ def test_hunts_store_write_missing_identity_is_a_coded_rejection(tmp_path):
     assert store.read_specs(PROJECT, HUNT_KEY) == []
 
 
-def test_hunts_store_read_is_bound_to_the_loop_key(tmp_path):
+def test_hunts_store_read_is_bound_to_the_threat_key(tmp_path):
     """S3 8.9: the hunt key is BOUND at construction; the read never accepts a
-    key from the request, so the hunter can only address its own loop."""
+    key from the request, so the hunter can only address its own threat."""
     store = HunterMemoryStore(root_dir=tmp_path)
     _hunts(store, command="write", spec={
         "status": "hypothesised",
@@ -283,7 +283,7 @@ def test_hunts_store_refuses_a_write_after_finalize(tmp_path):
     assert store.read_spec(PROJECT, HUNT_KEY, "spec__f2__probe") is None
 
 
-def test_hunts_store_zero_spec_finalize_is_the_loop_completion_marker(tmp_path):
+def test_hunts_store_zero_spec_finalize_is_the_threat_completion_marker(tmp_path):
     store = HunterMemoryStore(root_dir=tmp_path)
     out = json.loads(_hunts(store, command="finalize"))
     assert out["ok"] is True and out["specs"] == []
@@ -367,7 +367,7 @@ def test_hunts_store_injects_the_bound_run_id_into_spec_provenance(tmp_path):
 
 def test_build_hunter_tools_binds_the_skill_pair(tmp_path):
     """S3 8.7: the hunter's surface carries `skill_list` / `skill_load` over the
-    web-vulnerability suite, so the loop's suite class can select the class
+    web-vulnerability suite, so the threat's suite class can select the class
     skill."""
     from polymerhus.attack.hunting.hunter_tools import build_hunter_tools
 

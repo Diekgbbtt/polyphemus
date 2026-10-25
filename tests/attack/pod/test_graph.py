@@ -40,7 +40,7 @@ VALID_SPEC = {
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "assumptions": ["network egress allowed"],
     "rationale": "reachability",
-    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+    "provenance": {"threat_id": "threat-1", "unit_id": "service:web:soupmarket",
                    "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
@@ -287,7 +287,7 @@ def test_runner_sees_tool_results_in_its_curated_session():
     assert any("TOOL RESULT" in m["content"] for m in seen[1])   # 2nd turn sees the 1st result
 
 
-def test_variant_loop_records_provenance():
+def test_variant_threat_records_provenance():
     decisions = iter([
         {"classification": "symptom-absent", "action": "variant",
          "declined_attribute": "recon-action",

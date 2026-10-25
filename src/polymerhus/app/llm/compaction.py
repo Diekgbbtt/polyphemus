@@ -729,7 +729,7 @@ def _compact_pass(
 
     `pin_first_human` preserves the leading messages through the first human
     message byte-identically. The hunting roles use it to keep the application
-    overview, loop payload, unit context, and spec context after compaction."""
+    overview, threat payload, unit context, and spec context after compaction."""
     original = list(messages)
     pinned_count = 0
     if pin_first_human:

@@ -64,26 +64,26 @@ def _impact(confidentiality="low", integrity="none", availability="none") -> dic
 
 
 def _model(*likelihoods: str) -> dict:
-    """A persisted COMPLETED, valid model carrying the given loop levels.
+    """A persisted COMPLETED, valid model carrying the given threat levels.
 
-    The impact weight is 1 for every loop, so the combined total equals the
+    The impact weight is 1 for every threat, so the combined total equals the
     likelihood total in the resume fixtures.
     """
     return {
         "state": "COMPLETED",
         "validation": {"valid": True},
-        "loops": [
+        "threats": [
             {"likelihood": level, "impact": _impact()} for level in likelihoods
         ],
     }
 
 
-def test_the_unit_total_sums_the_combined_loop_risk():
+def test_the_unit_total_sums_the_combined_threat_risk():
     """S2 7.3 (amended 2026-10-25): the harness-owned per-unit total sums the
-    combined loop risk (likelihood weight x impact weight), the likelihood
-    breakdown counts every loop, and the impact breakdown counts every loop by
+    combined threat risk (likelihood weight x impact weight), the likelihood
+    breakdown counts every threat, and the impact breakdown counts every threat by
     its ordinal impact severity."""
-    model = {"loops": [
+    model = {"threats": [
         {"likelihood": "critical", "impact": _impact("high", "high", "high")},
         {"likelihood": "high", "impact": _impact("high", "high")},
         {"likelihood": "medium", "impact": _impact("medium")},
@@ -101,8 +101,8 @@ def test_the_unit_total_sums_the_combined_loop_risk():
     )
 
 
-def test_a_loop_without_impact_contributes_zero_to_the_unit_total():
-    model = {"loops": [
+def test_a_threat_without_impact_contributes_zero_to_the_unit_total():
+    model = {"threats": [
         {"likelihood": "critical"},
         {"likelihood": "high"},
     ]}
@@ -323,7 +323,7 @@ def test_the_trajectory_entry_records_the_signal_states_and_skipped_gates():
     entry = trajectory_entry("Service:a", TrailEntry(
         kind="gate", state="COMPLETED", previous_state="TRUST_MODELLED",
         skipped=["TRUST_ASSUMPTIONS_WRITTEN", "VULNERABILITIES_WRITTEN"],
-        sections=["loops"],
+        sections=["threats"],
         at=datetime(2026, 10, 19, 9, 30, tzinfo=timezone.utc),
     ))
 

@@ -79,7 +79,7 @@ def _spec(**overrides) -> dict:
         "verification_symptoms": ["reflects the marker"],
         "assumptions": ["the reflection is server-side"],
         "rationale": "the marker can be reflected",
-        "provenance": {"loop_id": "loop-1", "unit_id": "svc"},
+        "provenance": {"threat_id": "threat-1", "unit_id": "svc"},
     }
     data.update(overrides)
     return data

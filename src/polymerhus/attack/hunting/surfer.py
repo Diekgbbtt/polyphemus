@@ -1,5 +1,5 @@
 """The run-scoped inbox surfer loop and the run dispatch builders (tracker
-#173, ADR #169 Q2a/Q3/Q11/Q12/Q15/Q16, spec #169; the per-loop dispatch is
+#173, ADR #169 Q2a/Q3/Q11/Q12/Q15/Q16, spec #169; the per-threat dispatch is
 T4 #377, S2 8, S1 7.6, S3 8.7/8.9).
 
 The T2/T3 workstreams built the control plane (per-session lifecycle, the
@@ -19,24 +19,24 @@ wiring T4 owns:
   `batched`/`serial`) to the tick as the mover's pre-filter: the gate holds an
   item by refusing it (stays produced, at-least-once), it never schedules.
 - The run DISPATCH builders (`build_run_dispatch`): the `coro_for` seam the
-  mover's `run_delivery_tick` was designed for. A produced LOOP FILE becomes ONE
-  hunter session under the per-loop id `hunting:<run_id>:hunt:<dispatch_id>`
+  mover's `run_delivery_tick` was designed for. A produced THREAT FILE becomes ONE
+  hunter session under the per-threat id `hunting:<run_id>:hunt:<dispatch_id>`
   (S3 8.9), handed the payload materialised at dispatch time (S2 8.2) - the
-  loop dispatch path is live end to end (T6 #379). A produced dispatchable test
+  threat dispatch path is live end to end (T6 #379). A produced dispatchable test
   spec becomes ONE pod
   session (ADR Q13 pod session id, S3 8.7) riding the SAME mover. An item that
   is not dispatchable now - a
-  `low` loop behind a higher-tier loop or a live higher-tier HUNTER session
+  `low` threat behind a higher-tier threat or a live higher-tier HUNTER session
   (S2 8.3 - the sequencing reads that role only), a
   stopped role, a draft spec - yields NO coroutine (the mover's
   `None`-means-refused rule): it stays in produced and the next tick
   re-attempts it (at-least-once, never dropped).
-- The hunter session's IDLE LOOP (ADR "Agent idle state", spec `Agent idle
-  state`): after the hunt's ReAct graph ends, the session enters a simple loop
+- The hunter session's IDLE THREAT (ADR "Agent idle state", spec `Agent idle
+  state`): after the hunt's ReAct graph ends, the session enters a simple threat
   over its mailbox - REUSING the existing `run_session_agent` machinery, never
   checkpoint-resume mechanisation. The pod->hunter verdict handling is the ADR
   Q16 STUB (identity-based refactor, 2026-08-25): the DURABLE export record is
-  authored at pod completion keyed by the hunt key (the loop's dispatch id),
+  authored at pod completion keyed by the hunt key (the threat's dispatch id),
   and a delivered `PodExport` in the idle loop is a WITHIN-RUN LIVE FEED for the
   future verdict node - consumed only, no re-evaluation, no further dispatch.
   The idle loop ends on a `settle` kind message (the run-terminal path posts it:
@@ -51,17 +51,17 @@ wiring T4 owns:
   the run-terminal `settle` message (the ADR "all its component sessions have
   settled" end).
 
-Session bookkeeping (`RunDispatchState`) is run-local and single-loop: the
+Session bookkeeping (`RunDispatchState`) is run-local and single-threat: the
 bootstrap, the surfer, the hunters, and the pods all execute on the ONE shared
 worker loop, so no lock is needed. `hunters_in_graph` is the mid-graph vs
 idle-loop distinction the quiesce predicate needs (a hunter whose graph is
 still running may yet author a produced spec; an idling one cannot), and
-`loop_likelihoods` is the live-loop half of the low-loop sequencing (S2 8.3).
+`threat_buckets` is the live-threat half of the low-threat sequencing (S2 8.3).
 
 T4b (#387) retired the config family from this module: there is no
 `HuntConfigItem` branch, no ratified-config predicate and no hunt-store read.
-The loop file is the dispatch record (S2 8.2: no `HuntConfig`); a hunter is
-dispatched per produced loop file and handed the materialised payload.
+The threat file is the dispatch record (S2 8.2: no `HuntConfig`); a hunter is
+dispatched per produced threat file and handed the materialised payload.
 
 This module performs no I/O at import (CODING_STANDARD section 6): the session
 seams (`run_session_agent`, `HuntSession`, the checkpointer) resolve lazily on
@@ -83,11 +83,11 @@ from polymerhus.attack.hunting.mover import (
     MODELLER_SESSION_SEGMENT,
     SPEC_DISPATCH_STATUS,
     d4_spec_body,
-    loop_refusal_detail,
+    threat_refusal_detail,
     produced_spec_body,
     ProducedItem,
     TestSpecItem,
-    ThreatLoopItem,
+    ThreatItem,
     TickReport,
     hunter_session_id,
     pod_session_id,
@@ -194,7 +194,7 @@ def is_modeller_session_id(session_id: str, run_id: str) -> bool:
 
 def is_hunter_session_id(session_id: str) -> bool:
     """True for a hunter session
-    (`hunting:<run_id>:hunt:<dispatch_id>`, the loop dispatch id)."""
+    (`hunting:<run_id>:hunt:<dispatch_id>`, the threat dispatch id)."""
     return ":hunt:" in session_id
 
 
@@ -226,7 +226,7 @@ class ChildFailure:
     `attempts` counts failures since the last success of THIS session id;
     `retry_after` is a monotonic deadline; `error` is the last typed cause
     (kept for operators and diagnostics). A different child failing never
-    advances this counter - the threshold is per item, so one bad loop cannot
+    advances this counter - the threshold is per item, so one bad threat cannot
     stop a fleet of healthy siblings on its first failure."""
 
     attempts: int
@@ -241,15 +241,15 @@ class ChildFailure:
 class RunDispatchState:
     """The run-local wire state the surfer and the bootstrap share (single
     worker loop - no lock). `hunter_inboxes` maps the dispatched item's memory
-    key (the loop dispatch id) to the AgentInbox its pod exports are delivered
+    key (the threat dispatch id) to the AgentInbox its pod exports are delivered
     into (built at hunter dispatch, before any of its specs can exist);
     `hunters_in_graph` is the set
     of those keys whose hunter is still running its ReAct graph - the
     mid-graph vs idle-loop distinction the quiesce predicate needs (a mid-graph
-    hunter may still author produced specs). `loop_likelihoods` is the subset
-    that came from a LOOP file: the dispatch id -> likelihood map the low-loop
+    hunter may still author produced specs). `threat_buckets` is the subset
+    that came from a THREAT file: the dispatch id -> likelihood map the low-threat
     sequencing reads (S2 8.3 - only an ACTIVE higher-tier hunter holds a low
-    loop; an idle one authors nothing more and settles with the run terminal, so
+    threat; an idle one authors nothing more and settles with the run terminal, so
     counting it would deadlock the quiesce).
 
     F-026 (B): `child_failures` is the per-child retry ledger. A transient
@@ -262,7 +262,7 @@ class RunDispatchState:
 
     hunter_inboxes: dict[str, AgentInbox] = field(default_factory=dict)
     hunters_in_graph: set[str] = field(default_factory=set)
-    loop_likelihoods: dict[str, str] = field(default_factory=dict)
+    threat_buckets: dict[str, str] = field(default_factory=dict)
     child_failures: dict[str, ChildFailure] = field(default_factory=dict)
     provider_failure: ProviderUnavailableError | None = None
     # The watchdog ceiling for one dispatched hunter or pod session. A session
@@ -322,8 +322,8 @@ class RunDispatchState:
 @dataclass(frozen=True)
 class SurferReport:
     """The surfer loop's terminal report: how many delivery laps ran, the last
-    `TickReport`, and why the loop ended. `quiesced` True = the run's work is
-    exhausted (the natural terminal); False = the loop was cancelled."""
+    `TickReport`, and why the threat ended. `quiesced` True = the run's work is
+    exhausted (the natural terminal); False = the threat was cancelled."""
 
     ticks: int
     last_tick: "TickReport | None" = None
@@ -334,8 +334,8 @@ def tier_sequencing_enabled(sync_gate: Any) -> bool:
     """Whether the S2 8.3 low-tier ordering applies to this run.
 
     It orders `parallel` and `serial` dispatches. A `batched` run dispatches
-    the unit's WHOLE loop set, so the ordering is subsumed and must never hold
-    a loop behind another unit's produced higher-tier loop (the pipeline-sync
+    the unit's WHOLE threat set, so the ordering is subsumed and must never hold
+    a threat behind another unit's produced higher-tier threat (the pipeline-sync
     ADR, section 2, `batched`). `sync_gate` is None for `parallel`."""
     if sync_gate is None:
         return True
@@ -353,7 +353,7 @@ def run_work_remaining(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any = None,
-    live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
+    live_threat_buckets: Mapping[str, str] | Iterable[str] = (),
     sequence_tiers: bool = True,
 ) -> bool:
     """True when a DISPATCHABLE-NOW produced item remains for this run.
@@ -362,34 +362,34 @@ def run_work_remaining(
     sequencing filter, so the quiesce predicate and the dispatch decision can
     never disagree - they are the same two functions:
 
-    - a produced LOOP file of this run that is dispatchable now (a
-      critical/high/medium loop; a `low` loop only when no higher-tier loop file
+    - a produced THREAT file of this run that is dispatchable now (a
+      critical/high/medium threat; a `low` threat only when no higher-tier threat file
       is produced and no higher-tier hunter session is live, S2 8.3);
-    - a produced COMPLETED valid model with no loop file (the mover consumes it
+    - a produced COMPLETED valid model with no threat file (the mover consumes it
       on its next tick, S2 8.4) - the model document move IS work;
     - a produced spec carrying the pod family's dispatch status.
 
     The config family retired in T4b (#387): there is no produced-config clause
     here - a hunt config is not dispatch input at all, so it is not work.
 
-    A malformed or foreign loop file contributes NOTHING (the validity
+    A malformed or foreign threat file contributes NOTHING (the validity
     predicate refuses it in the read), so it can never wedge the run's quiesce;
-    neither can a loop waiting on a live higher-tier session, because that
-    session's own loop file is already consumed and its hunter is mid-graph -
+    neither can a threat waiting on a live higher-tier session, because that
+    session's own threat file is already consumed and its hunter is mid-graph -
     `is_run_quiesced` holds on the mid-graph clause in that window."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
     )
     if inbox.models_to_consume:
-        # a produced COMPLETED valid model with no dispatchable loop left: the
+        # a produced COMPLETED valid model with no dispatchable threat left: the
         # mover consumes it on its next tick (S2 8.4), so the move itself is work
         return True
     if not sequence_tiers:
-        # A `batched` run dispatches the unit's whole loop set: the S2 8.3 tier
-        # ordering does not order a batch, so every produced loop is work.
+        # A `batched` run dispatches the unit's whole threat set: the S2 8.3 tier
+        # ordering does not order a batch, so every produced threat is work.
         return bool(inbox.items)
-    return bool(sequence_dispatch(inbox.items, live_loop_likelihoods))
+    return bool(sequence_dispatch(inbox.items, live_threat_buckets))
 
 
 async def is_run_quiesced(
@@ -405,18 +405,18 @@ async def is_run_quiesced(
     """The quiesce predicate: the run's work is exhausted. ALL must hold:
 
     - the modeller pass session is settled (its registry entry gone - a live
-      pass may still write a model and produce loop files);
+      pass may still write a model and produce threat files);
     - no hunter is still mid-graph (`state.hunters_in_graph`) - a running graph
       may yet write a produced spec after quiesce;
     - no pod session is live - an in-flight pod may still deliver an export;
     - no dispatchable-now produced item remains (the mover's own produced read
-      plus the sequencing filter). A `batched` run reads every produced loop as
+      plus the sequencing filter). A `batched` run reads every produced threat as
       work: the tier ordering does not order a batch.
 
     Idle hunters deliberately do NOT block this predicate: their graphs have
     ended, they author nothing more, and they settle on the run-terminal
-    `settle` message once the surfer proves quiesce. The low-loop pause is
-    therefore consistent with the predicate: a `low` loop held behind an ACTIVE
+    `settle` message once the surfer proves quiesce. The low-threat pause is
+    therefore consistent with the predicate: a `low` threat held behind an ACTIVE
     higher hunter is covered by the mid-graph clause above, and it is released
     (or dispatched) as soon as that hunter leaves its graph - so the work can
     never leak past quiesce."""
@@ -432,9 +432,9 @@ async def is_run_quiesced(
     if run_work_remaining(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
-        live_loop_likelihoods=state.loop_likelihoods,
+        live_threat_buckets=state.threat_buckets,
         # A batched run's lows are real work even while another unit's higher
-        # loop is produced: the tier ordering does not order a batch.
+        # threat is produced: the tier ordering does not order a batch.
         sequence_tiers=tier_sequencing_enabled(state.sync_gate),
     ):
         return False
@@ -494,14 +494,14 @@ def build_run_dispatch(
     #169 "The inbox surfer semantics"): the produced family member -> the
     dispatch coroutine the control plane schedules under its Q13 session id.
 
-    - `ThreatLoopItem` -> ONE hunter session for the produced loop file
-      (S2 8.4: the loop file is the dispatch grain). The payload is materialised
+    - `ThreatItem` -> ONE hunter session for the produced threat file
+      (S2 8.4: the threat file is the dispatch grain). The payload is materialised
       HERE, at dispatch time (S2 8.2), from the unit's model document (read
       produced-first: a model the mover already consumed is still a valid
-      context source) plus the loop record the mover read. The hunter's inbox is
-      minted under the loop's dispatch id so a spec the hunt authors is
-      addressable, and the loop's likelihood is registered on the run state for
-      the duration of its graph so a later `low` loop waits behind it (S2 8.3).
+      context source) plus the threat record the mover read. The hunter's inbox is
+      minted under the threat's dispatch id so a spec the hunt authors is
+      addressable, and the threat's likelihood is registered on the run state for
+      the duration of its graph so a later `low` threat waits behind it (S2 8.3).
       A model that vanished, or a stopped hunter role, yields `None` (the
       mover's refused rule - stays produced, retried next tick, never dropped).
     - `TestSpecItem` -> ONE pod session for the produced spec, ONLY when its
@@ -510,7 +510,7 @@ def build_run_dispatch(
       spec's OWN persisted status - NEVER by a chain-adjacent parent's liveness
       (identity-based refactor, 2026-08-25): a produced spec whose hunt key's
       parent was consumed by an earlier run (no live parent inbox this run)
-      still dispatches. The parent key IS the spec's folder (the loop dispatch
+      still dispatches. The parent key IS the spec's folder (the threat dispatch
       id, S3 8.9), the completed export is RECORDED DURABLY at pod completion
       keyed by it (Q16 amendment), and a within-run co-running parent MAY also
       receive a live inbox notification (optional, best-effort - never the only
@@ -519,7 +519,7 @@ def build_run_dispatch(
 
     The session coroutines are gate-bounded (Q15): the hunting dispatch gate is
     acquired around each session's active stretch, so the shared width caps
-    concurrent hunting work no matter how many loops fan out.
+    concurrent hunting work no matter how many threats fan out.
 
     #317 role enforcement: the builder consults the target role's agent
     sub-module state via `control.role_running(run_id, role)` - a role that is
@@ -560,8 +560,8 @@ def build_run_dispatch(
             return None
 
     def coro_for(item: ProducedItem) -> Any:
-        if isinstance(item, ThreatLoopItem):
-            return _loop_dispatch(item)
+        if isinstance(item, ThreatItem):
+            return _threat_dispatch(item)
         if isinstance(item, TestSpecItem):
             return _spec_dispatch(item)
         logger.warning(
@@ -592,11 +592,11 @@ def build_run_dispatch(
                 _target_url_cache[0] = ""
         return _target_url_cache[0]
 
-    def _loop_dispatch(item: ThreatLoopItem) -> Any:
-        """ONE hunter session for ONE produced loop file (S2 8.4): the payload is
+    def _threat_dispatch(item: ThreatItem) -> Any:
+        """ONE hunter session for ONE produced threat file (S2 8.4): the payload is
         materialised at dispatch time from the unit's model document and the
-        session is keyed by the loop's dispatch id. The run-local registration
-        (the inbox, the mid-graph key, the loop's likelihood) lands INSIDE the
+        session is keyed by the threat's dispatch id. The run-local registration
+        (the inbox, the mid-graph key, the threat's likelihood) lands INSIDE the
         session coroutine, so a coroutine the control plane refuses - which is
         closed without ever running - mutates nothing (T4a review I1)."""
         model = item.model
@@ -606,15 +606,15 @@ def build_run_dispatch(
             # readable model, so this is the belt-and-braces path.
             model = threat_store.read_model(project_id, item.unit_id)
         if model is None:
-            # The model is the payload's context (S2 8.1: the loop file does not
-            # duplicate it): without it there is nothing to dispatch. The loop
+            # The model is the payload's context (S2 8.1: the threat file does not
+            # duplicate it): without it there is nothing to dispatch. The threat
             # file stays produced, is NOT counted as work (the read refuses it
             # too - T4a review F2: an unreadable model must not wedge the run),
             # and the refusal is logged ONCE, never per tick.
             log_refusal_once(
-                project_id, run_id, loop_refusal_detail(
-                    "loop-model", item.unit_name, item.loop_id),
-                "surfer: produced loop %s refused - no readable model for %s; "
+                project_id, run_id, threat_refusal_detail(
+                    "threat-model", item.unit_name, item.threat_id),
+                "surfer: produced threat %s refused - no readable model for %s; "
                 "never dispatched and not counted as work",
                 item.message_id, item.unit_id,
             )
@@ -676,7 +676,7 @@ def build_run_dispatch(
         # consumed by an earlier run (no live parent inbox in THIS run) still
         # dispatches, so the never-disagree contract holds - run_work_remaining
         # and build_run_dispatch gate on the same own-status and a produced
-        # spec can never wedge the quiesce. The parent key IS the loop dispatch
+        # spec can never wedge the quiesce. The parent key IS the threat dispatch
         # id the spec lives under (S3 8.9); no config key is derived.
         inbox = state.hunter_inboxes.get(item.hunt_key)
         return run_pod_session(
@@ -714,19 +714,19 @@ async def run_hunter_session(
 ) -> None:
     """ONE hunter session (ADR Q13 hunter id `hunting:<run_id>:hunt:<hunt_key>`,
     S3 8.9): the build-to-END ReAct graph on the hunt's own thread - handed
-    the loop PAYLOAD materialised at dispatch time (S2 8.2) and the loop's
-    likelihood, never a config - gate-bounded (Q15), then the IDLE LOOP over
+    the threat PAYLOAD materialised at dispatch time (S2 8.2) and the threat's
+    likelihood, never a config - gate-bounded (Q15), then the IDLE THREAT over
     the run's inbox (ADR "Agent idle state", verdict handling stubbed - Q16).
-    The dispatch coroutine the mover schedules when a loop file is admitted.
+    The dispatch coroutine the mover schedules when a threat file is admitted.
 
     The payload is the ONLY input: the config bridge retired in T4b (#387).
-    T6 (#379) made the production harness consume the loop payload end to end
+    T6 (#379) made the production harness consume the threat payload end to end
     (`_default_hunter_builder` hands it straight to `build_hunting_agent`), so
-    the per-loop dispatch path is live - never a fabricated config.
+    the per-threat dispatch path is live - never a fabricated config.
 
-    The run state carries the session's loop for the duration of its GRAPH
+    The run state carries the session's threat for the duration of its GRAPH
     stretch: `hunters_in_graph` holds quiesce while the hunt may still author
-    specs, and `loop_likelihoods` is what a later `low` loop waits behind
+    specs, and `threat_buckets` is what a later `low` threat waits behind
     (S2 8.3). Both are released when the graph ends - an idle hunter authors
     nothing more, so it must not hold the sequencing (or the run terminal's
     settle could never land).
@@ -735,7 +735,7 @@ async def run_hunter_session(
     mover builds this coroutine and the control plane may REFUSE to schedule it
     (gate full, module paused), in which case the coroutine is closed and never
     runs - so the dispatch seam itself must not mutate run state, or the leaked
-    key would hold the quiesce and every later low loop for ever."
+    key would hold the quiesce and every later low threat for ever."
 
     #317: the session acquires the MODULE gate (Q15 width bound) AND its OWN
     hunter role gate around the active stretch, so a stopped hunter role holds
@@ -744,10 +744,10 @@ async def run_hunter_session(
     session_id = hunter_session_id(run_id, hunt_key)
     state.hunter_inboxes[hunt_key] = AgentInbox()
     state.hunters_in_graph.add(hunt_key)
-    # every hunter session now comes from a loop file, so it always carries the
-    # loop's tier: a later lower loop waits behind it for the graph stretch
+    # every hunter session now comes from a threat file, so it always carries the
+    # threat's tier: a later lower threat waits behind it for the graph stretch
     # (S2 8.3)
-    state.loop_likelihoods[hunt_key] = likelihood
+    state.threat_buckets[hunt_key] = likelihood
     registry: Any = None
     try:
         dispatch_fn, registry = hunter_builder(
@@ -761,7 +761,7 @@ async def run_hunter_session(
         # mid-graph key would hold the quiesce (M-c, T4a review round 2).
         state.hunter_inboxes.pop(hunt_key, None)
         state.hunters_in_graph.discard(hunt_key)
-        state.loop_likelihoods.pop(hunt_key, None)
+        state.threat_buckets.pop(hunt_key, None)
         return
     paused_on_provider_failure = False
     graph_completed = False
@@ -797,10 +797,10 @@ async def run_hunter_session(
         logger.warning("surfer: hunt graph degraded for %s (%s)", hunt_key, exc)
     finally:
         # The graph stretch is over: the hunt authors no more specs, so the
-        # quiesce predicate no longer needs to wait on it and a later low loop is
+        # quiesce predicate no longer needs to wait on it and a later low threat is
         # no longer held behind it.
         state.hunters_in_graph.discard(hunt_key)
-        state.loop_likelihoods.pop(hunt_key, None)
+        state.threat_buckets.pop(hunt_key, None)
 
     if graph_completed:
         state.record_child_success(session_id)
@@ -810,7 +810,7 @@ async def run_hunter_session(
         # degraded. Declass any leftover `hypothesised` spec to `dropped` and
         # write the terminal marker BEFORE idling. This is the hard fail-safe
         # that stops a completed-but-empty hunt from wedging the cursor: the
-        # consumed-loop recovery (F-022) re-offers a consumed loop for ever
+        # consumed-threat recovery (F-022) re-offers a consumed threat for ever
         # while its hunt has no current-run terminal set.
         try:
             hunter_store.settle_hypothesised(
@@ -839,13 +839,13 @@ async def _run_hunter_idle(
     hunter_store: HunterMemoryStore,
     state: RunDispatchState,
 ) -> None:
-    """The hunt's idle stretch (ADR "Agent idle state"): the mailbox loop
+    """The hunt's idle stretch (ADR "Agent idle state"): the mailbox threat
     machinery (`run_session_agent`) iteratively reading the hunt's inbox on the
     hunt's own `HuntSession` thread, NOT checkpoint-resume mechanisation. The
     verdict handling is the ADR Q16 STUB (identity-based refactor, 2026-08-25):
     a delivered pod export is a WITHIN-RUN LIVE FEED for the future verdict
     node, consumed only - the DURABLE parent-keyed record was authored at pod
-    completion. The loop ends on the `settle` kind message the run-terminal
+    completion. The threat ends on the `settle` kind message the run-terminal
     path posts once quiesce is proven, or on session cancellation (stop)."""
     inbox = state.hunter_inboxes[hunt_key]
     from polymerhus.app.llm.actor import run_session_agent  # noqa: PLC0415
@@ -862,7 +862,7 @@ async def _run_hunter_idle(
 
             # The idle-loop turns are hunter turns of the SAME hunt. The unit
             # threat model retires the orchestrator's HuntConfig declaration;
-            # the hunter's suite pair carries the loop's class skill, and the
+            # the hunter's suite pair carries the threat's class skill, and the
             # idle turn keeps the same role binding as the graph-phase turns.
             binding = auth_capable_binding(
                 hunt_session.role_id, project_id=project_id or None)
@@ -890,7 +890,7 @@ def _verdict_stub_handler(*, hunt_key):
     The DURABLE parent-keyed export record was already authored at pod
     completion (`run_pod_session` -> `_record_durable_pod_export`), so the
     idle loop never double-records: it acknowledges the feed and keeps
-    listening. `settle` ends the loop; every other kind is consumed silently."""
+    listening. `settle` ends the threat; every other kind is consumed silently."""
 
     async def _stub(message, last_turn):
         if message.kind == "settle":
@@ -910,11 +910,11 @@ def _record_durable_pod_export(*, hunter_store, project_id, run_id, hunt_key,
                                spec_id, source, export) -> None:
     """The DURABLE parent-keyed export record (identity-based refactor,
     2026-08-25 / ADR Q16 amendment, note key pinned by #199): authored
-    deterministically at pod completion, keyed by the parent's loop dispatch id
+    deterministically at pod completion, keyed by the parent's threat dispatch id
     (`hunt_key`, S3 8.9) - independent of any live parent session, crash-safe,
     never lost to a live-mailbox-only path. The export envelope is recorded as
     a freeform note on the hunter memory (the verdict-stub marker), keyed
-    `<hunt_key>:pod-export:<spec_id>` (the parent's loop key + the
+    `<hunt_key>:pod-export:<spec_id>` (the parent's threat key + the
     `pod-export:` marker + the derived `<fault>_<strategy>` spec id), with
     ONE current record per (hunt, spec): a re-export UPDATES the same key
     (one TestImplementationSpec yields at most one PodExport), and the first
@@ -969,7 +969,7 @@ async def run_pod_session(
 ) -> dict | None:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
     injected builder; `arun_pod` in production), then record the completed
-    export DURABLY at pod completion keyed by the parent's loop dispatch id
+    export DURABLY at pod completion keyed by the parent's threat dispatch id
     (`hunt_key`, S3 8.9) (identity-based refactor, 2026-08-25 / Q16 amendment -
     crash-safe, independent of any live parent session, never lost to a crash
     between dispatch and an in-memory inbox consumption), and finally deliver
@@ -1067,7 +1067,7 @@ async def run_pod_session(
     if state is not None:
         state.record_child_success(source)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the
-    # parent's loop dispatch id + the pod-export:<spec_id> marker (#199) - the
+    # parent's threat dispatch id + the pod-export:<spec_id> marker (#199) - the
     # single crash-safe record, independent of any live parent inbox.
     _record_durable_pod_export(
         hunter_store=hunter_store, project_id=project_id, run_id=run_id,
@@ -1099,11 +1099,11 @@ async def run_surfer_loop(
     """The run-scoped inbox surfer loop (ADR Q2a): one delivery lap per tick,
     quiesce check, sleep, repeat - until quiesce or cancellation. The surfer
     owns NO scheduling and NEVER gates admission (Q11/Q15: the control plane
-    and the shared gate do); it is the mover's loop runner, nothing more.
+    and the shared gate do); it is the mover's threat runner, nothing more.
 
     The quiesce check is deferred for a tick that MOVED anything (a produced
     record to consumed/, or a model document): an admitted dispatch lands a
-    produced->consumed move, and its session task registers on the loop
+    produced->consumed move, and its session task registers on the threat
     asynchronously - the next lap re-reads the registry fresh, so a
     just-dispatched session can never slip past a premature quiesce while its
     item's move is still seen. A REFUSED lap (dispatched but nothing moved - a
@@ -1111,12 +1111,12 @@ async def run_surfer_loop(
     NOT delay the check: the refusal already left the item produced, and
     `run_work_remaining` is what decides whether it is real work.
 
-    The loop is a session on the shared runtime manager (per-session cancel
+    The threat is a session on the shared runtime manager (per-session cancel
     works on it, Q12); cancellation (stop) propagates out of the sleep, and the
     session's registry entry drains with the task.
 
     F-026 (B): a transient child provider failure does NOT raise. Its item is
-    deferred by `state.child_failures` and the loop keeps ticking while the
+    deferred by `state.child_failures` and the threat keeps ticking while the
     healthy siblings finish. Only a fatal failure (quota exhaustion or the third
     consecutive failure of one child) sets `state.provider_failure` and raises
     to the #331 stop/flush/stamp handler."""
@@ -1141,12 +1141,12 @@ async def run_surfer_loop(
             hunter_store=hunter_store,
             pod_store=pod_store,
             control=control, coro_for=coro_for,
-            live_loop_likelihoods=state.loop_likelihoods,
+            live_threat_buckets=state.threat_buckets,
             deferred_session_ids=state.deferred_session_ids(),
             pre_filter=_pre_filter if state.sync_gate is not None else None,
-            # A batched run admits the unit's WHOLE loop set: the low-tier
-            # sequencing must not hold a loop behind another unit's produced
-            # high loop (the pipeline-sync ADR, section 2, `batched`).
+            # A batched run admits the unit's WHOLE threat set: the low-tier
+            # sequencing must not hold a threat behind another unit's produced
+            # high threat (the pipeline-sync ADR, section 2, `batched`).
             sequence_tiers=tier_sequencing_enabled(state.sync_gate),
         )
         ticks += 1

@@ -1,7 +1,7 @@
 """Unit tier: the production hunter prompt contract (T7, #380).
 
 The prompt is the S3 8.5 artifact: one system prompt carrying the role framing,
-the loop ontology, the discipline, the decision tree, the eight passes, the four
+the threat ontology, the discipline, the decision tree, the eight passes, the four
 collection axes, the reduced D4 spec body, and the falsification-only verify
 scope. These predicates hold the prompt to the contract's CLAUSES, not to a
 wording preference: each required clause is a statement a reader (or the model)
@@ -218,15 +218,15 @@ def test_the_role_framing_names_the_hunting_process_only():
         assert re.search(rf"\b{gone}\b", prompt, re.IGNORECASE) is None, gone
 
 
-# --- the loop ontology --------------------------------------------------------
+# --- the threat ontology --------------------------------------------------------
 
 
-def test_the_prompt_carries_the_loop_ontology():
+def test_the_prompt_carries_the_threat_ontology():
     """S3 8.5: one paragraph with the unit and its technical sharpening, the
     trust model, the abduction chain, the confidence degree, the
-    variant and manifestation space, and the reasoning from the loop to attacks."""
+    variant and manifestation space, and the reasoning from the threat to attacks."""
     prompt = _prompt()
-    start = prompt.index("## The loop ontology")
+    start = prompt.index("## The threat ontology")
     ontology = prompt[start:prompt.index("\n## ", start)]
     for clause in (
         "the unit and its technical sharpening",
@@ -235,7 +235,7 @@ def test_the_prompt_carries_the_loop_ontology():
         "the abduction chain: the programming fault and the vulnerability",
         "the confidence degree",
         "the variant and manifestation space",
-        "The reasoning from the loop to engineered attacks",
+        "The reasoning from the threat to engineered attacks",
     ):
         assert clause in ontology, clause
 

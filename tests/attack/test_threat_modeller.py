@@ -87,8 +87,8 @@ def test_a_scripted_pass_writes_all_five_gates_to_the_real_store(tmp_path):
     assert model["vulnerabilities"]
     assert model["risk_profile"]["total"] == 3
     assert model["validation"]["valid"] is True
-    # the loop file landed for the non-`none` loop
-    assert [loop["loop_id"] for loop in store.read_loop_files(PROJECT, UNIT)] == ["loop-1"]
+    # the threat file landed for the non-`none` threat
+    assert [threat["threat_id"] for threat in store.read_threat_files(PROJECT, UNIT)] == ["threat-1"]
 
 
 def test_the_pass_prompts_each_state_in_order_with_its_gate_instruction(tmp_path):
@@ -184,7 +184,7 @@ def test_a_pass_that_never_completes_reports_a_degraded_unit(tmp_path):
 
 
 def test_a_lower_gate_write_re_enters_the_wellformedness_turn(tmp_path):
-    """The well-formedness phase is a loop: the first turn writes a lower gate
+    """The well-formedness phase is a threat: the first turn writes a lower gate
     (a local patch), the pass asks the phase again, and the second turn writes
     the exit note and COMPLETED. The harness records the lower-gate re-entry."""
     store = ThreatModelStore(root_dir=tmp_path)
@@ -206,7 +206,7 @@ def test_a_lower_gate_write_re_enters_the_wellformedness_turn(tmp_path):
                 notes.invoke({
                     "cmd": "write", "option": "append",
                     "note_name": "wellformedness", "kind": "wellformedness",
-                    "body": "every loop checked after the local patch",
+                    "body": "every threat checked after the local patch",
                 })
                 self.store_tool(turn).invoke({
                     "cmd": "write", "state": ModelState.COMPLETED.value,
@@ -356,16 +356,16 @@ def test_notes_are_keyed_by_the_bound_unit_and_refuse_phase_summary(tmp_path):
 def test_an_invalid_completed_model_is_archived_and_reported_degraded(tmp_path):
     """The completion validation call (S1 6.6): a COMPLETED write whose model
     fails the loose checker is non-blocking for the write, and the pass archives
-    the model and reports the unit degraded - no loop is dispatched."""
+    the model and reports the unit degraded - no threat is dispatched."""
     store = ThreatModelStore(root_dir=tmp_path)
     payloads = {
         ModelState.COMPLETED: {
-            "loops": [{
+            "threats": [{
                 "fault_ref": "fault-not-in-the-model",
                 "vulnerability_ref": "v-missing",
                 "canonical_class": "IDOR",
                 "likelihood": "none",
-                "likelihood_rationale": "the loop is deliberately unclosed",
+                "likelihood_rationale": "the threat is deliberately unclosed",
                 "risk_factors": {
                     "attack_vector": "network", "attack_requirements": "none",
                     "privileges_required": "none", "complexity": "low"},
@@ -462,7 +462,7 @@ def test_a_run_scoped_actor_capture_completes_every_unit_of_the_run(tmp_path):
                 captured_surface()["notes"].invoke({
                     "cmd": "write", "option": "append",
                     "note_name": "wellformedness", "kind": "wellformedness",
-                    "body": "every loop checked",
+                    "body": "every threat checked",
                 })
                 captured_surface()["hunts_store"].invoke({
                     "cmd": "write", "state": ModelState.COMPLETED.value,
@@ -634,8 +634,8 @@ def test_a_consumed_identity_write_does_not_advance_the_tracker(tmp_path):
     store = ThreatModelStore(root_dir=tmp_path)
     asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, _tools(store),
                                    turn_fn=_ScriptedTurns()))
-    for loop in store.read_loop_files(PROJECT, UNIT):
-        store.consume_loop(PROJECT, UNIT, loop["loop_id"])
+    for threat in store.read_threat_files(PROJECT, UNIT):
+        store.consume_threat(PROJECT, UNIT, threat["threat_id"])
     assert store.consume_model_if_done(PROJECT, UNIT) is True
     assert store.read_model(PROJECT, UNIT)["state"] == ModelState.COMPLETED.value
 
@@ -670,7 +670,7 @@ def test_the_suite_gap_reaches_the_unit_outcome(tmp_path):
                 notes.invoke({
                     "cmd": "write", "option": "append",
                     "note_name": "wellformedness", "kind": "wellformedness",
-                    "body": "every loop checked",
+                    "body": "every threat checked",
                 })
                 self.store_tool(turn).invoke({
                     "cmd": "write", "state": ModelState.COMPLETED.value,
@@ -712,7 +712,7 @@ def test_injected_suite_tools_still_report_their_gaps(tmp_path):
                 notes.invoke({
                     "cmd": "write", "option": "append",
                     "note_name": "wellformedness", "kind": "wellformedness",
-                    "body": "every loop checked",
+                    "body": "every threat checked",
                 })
                 self.store_tool(turn).invoke({
                     "cmd": "write", "state": ModelState.COMPLETED.value,

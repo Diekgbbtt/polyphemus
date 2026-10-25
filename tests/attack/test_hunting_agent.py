@@ -48,9 +48,9 @@ def test_axis_empty_card_defaults():
 
 # --- the hunting roles join the LLM role registry (Q1, #93/#94) --------------
 
-def test_compose_grounding_renders_the_loop_payload():
-    """The first-step grounding renders the loop payload's context (S2 8.2):
-    the unit and loop, the two classes, the trust agreement, the programming
+def test_compose_grounding_renders_the_threat_payload():
+    """The first-step grounding renders the threat payload's context (S2 8.2):
+    the unit and threat, the two classes, the trust agreement, the programming
     fault, the technical sharpening, the evidence and the target context - and
     never a retired config field or a failure mode."""
     from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
@@ -59,7 +59,7 @@ def test_compose_grounding_renders_the_loop_payload():
     payload = _hunter_payload()
     text = _compose_grounding(payload)
     assert "You are dispatched to hunt Service:slug:a" in text
-    assert "Loop: loop-1" in text and "Service-slug-a__loop-1" in text
+    assert "Threat: threat-1" in text and "Service-slug-a__threat-1" in text
     assert "Canonical class: IDOR" in text
     assert "web-vulnerability suite class: idor" in text
     assert "An anonymous caller reads another user's item." in text
@@ -122,7 +122,7 @@ def test_compose_grounding_projects_technical_sharpening_to_load_bearing_fields(
     }
     payload = {
         "unit_id": "Service:reports:a",
-        "loop_id": "loop-1",
+        "threat_id": "threat-1",
         "technical_sharpening": {
             "interface_agreements": [agreement],
             "control_flows": [control],
@@ -133,7 +133,7 @@ def test_compose_grounding_projects_technical_sharpening_to_load_bearing_fields(
 
     text = _compose_grounding(payload)
     start = text.index("Technical sharpening")
-    block = text[start:text.index("Loop evidence", start)]
+    block = text[start:text.index("Threat evidence", start)]
 
     assert len(block) <= 4000
     for token in ("IA-1", "CF-1", "DF-1", "authorises the report id",
@@ -259,8 +259,8 @@ def test_hunter_turns_thread_the_project_as_usage_scope(monkeypatch):
     assert calls[0]["usage_scope"] == "proj-a"
 
 
-def test_first_step_carries_one_pinned_overview_and_loop_message(monkeypatch):
-    """The first human message carries the application overview and the loop
+def test_first_step_carries_one_pinned_overview_and_threat_message(monkeypatch):
+    """The first human message carries the application overview and the threat
     grounding together, so the compaction pin preserves both."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
 
@@ -283,7 +283,7 @@ def test_first_step_carries_one_pinned_overview_and_loop_message(monkeypatch):
     assert grounded.startswith("APPLICATION OVERVIEW (")
     assert "Domain: comfyui" in grounded
     assert "Grounded in the application overview above" in grounded
-    assert "fault-1" in grounded  # the loop grounding still rides the message
+    assert "fault-1" in grounded  # the threat grounding still rides the message
 
 
 def test_first_step_stays_single_message_without_an_overview(monkeypatch):
@@ -314,7 +314,7 @@ def test_skill_includes_the_off_path_examples_companion():
 def test_first_human_message_carries_grounding_state_protocol_in_order(
         monkeypatch):
     """(b) the first HumanMessage carries grounding + state + protocol in order,
-    never the loop tool surface and never the skill body."""
+    never the threat tool surface and never the skill body."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
     from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
         _load_hunting_agent_skill,

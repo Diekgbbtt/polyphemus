@@ -4,7 +4,7 @@ The prompt contract of S1 8: the system prompt carries the stable role and
 method (the five states and their content requirements, the trust-modelling
 ontology and the two-branch method, the confidence degrees and their
 falsification lifecycle, the evidence discipline, the live-authority rule, the
-retention-first drop rule, the assumption-to-loop closure check, the risk-scoring
+retention-first drop rule, the assumption-to-threat closure check, the risk-scoring
 ontology, the probe rules with the target-front directive, the tool guidance,
 the saturation stop, and the output contract), with the retired notes
 documents' material embedded at the point of use - and the gate hints NOT in
@@ -41,7 +41,7 @@ def test_the_prompt_carries_the_required_material():
     prompt = _modeller_skill()
     required = {
         "role": "You are the **threat modeller**",
-        "goal": "ranked set of **loops**",
+        "goal": "ranked set of **threats**",
         "state_unit_technical_sharp": "UNIT_TECHNICAL_SHARP",
         "state_trust_modelled": "TRUST_MODELLED",
         "state_assumptions": "TRUST_ASSUMPTIONS_WRITTEN",
@@ -51,7 +51,7 @@ def test_the_prompt_carries_the_required_material():
         "section_trust_model": "trust_model",
         "section_assumptions": "assumptions",
         "section_vulnerabilities": "vulnerabilities",
-        "section_loops": "loops",
+        "section_threats": "threats",
         "axis_identity": "### Identity",
         "axis_spatial": "### Spatial",
         "axis_temporal": "### Temporal",
@@ -69,7 +69,7 @@ def test_the_prompt_carries_the_required_material():
         "retention_first": "Retention first",
         "drop_rule": "A drop requires ONE of two findings",
         "unobserved_assumptions": "Unobserved assumptions survive",
-        "closure_check": "Assumption-to-loop closure",
+        "closure_check": "Assumption-to-threat closure",
         "risk_factor_attack_vector": "**attack vector**",
         "risk_factor_attack_requirements": "**attack requirements**",
         "risk_factor_privileges": "**privileges required**",
@@ -148,8 +148,8 @@ def test_the_prompt_reference_table_matches_the_typed_paths():
         "trust_model.dynamic_state_trust.transitions[].target",
         "trust_model.dynamic_state_trust.violations[].maps_to_fault",
         "trust_model.dynamic_state_trust.violations[].transition_ref",
-        "loops[].fault_ref",
-        "loops[].vulnerability_ref",
+        "threats[].fault_ref",
+        "threats[].vulnerability_ref",
     ):
         assert path in prompt, path
 
@@ -354,9 +354,9 @@ def test_the_hunts_store_description_names_the_reference_fields():
 
 
 def test_the_completed_gate_teaches_class_copying_and_the_validation_rewrite():
-    """The final gate must copy the loop classes from the vulnerability and
+    """The final gate must copy the threat classes from the vulnerability and
     treat an invalid COMPLETED write as feedback, not a terminal outcome. The
-    white-jotter model renamed the loop classes and left V-4 unclosed; the pass
+    white-jotter model renamed the threat classes and left V-4 unclosed; the pass
     archived the unit before the model could fix it."""
     prompt = _modeller_skill()
     assert "Class identity is copied, never re-derived" in prompt

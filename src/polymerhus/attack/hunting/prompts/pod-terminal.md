@@ -20,7 +20,7 @@ Present `verdict` and `terminal_reason` as SEPARATE outputs - never a slash-join
 - budget/timeout reached -> verdict unsuccessful, terminal_reason budget-timeout.
 
 # Clean
-Set `clean` true only when the loop completed with every observation captured, none blocked or unreachable, and the symptom's absence is credibly established.
+Set `clean` true only when the threat completed with every observation captured, none blocked or unreachable, and the symptom's absence is credibly established.
 A degraded, failed, or unavailable KB result is NOT absence evidence: use no-symptom-evidence with `clean` false.
 
 # Output

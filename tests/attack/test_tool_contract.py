@@ -225,11 +225,11 @@ def test_builder_rejects_a_field_map_naming_an_absent_schema_field(tmp_path):
 
 def test_hunter_notes_tool_is_bound_to_its_own_config(tmp_path):
     """The hunt key is BOUND at construction (S3 8.9): two tools bound to
-    different loops read and write ONLY their own folder. The model never
-    supplies the key, and there is no cross-loop read."""
+    different threats read and write ONLY their own folder. The model never
+    supplies the key, and there is no cross-threat read."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    key_a = "Service-aaa__loop-1"
-    key_b = "Service-bbb__loop-1"
+    key_a = "Service-aaa__threat-1"
+    key_b = "Service-bbb__threat-1"
     tool_a = notes_tool_for(store=store, project_id=PROJECT, hunt_key=key_a)
     tool_b = notes_tool_for(store=store, project_id=PROJECT, hunt_key=key_b)
     tool_a.invoke({"command": "write", "action": "append",

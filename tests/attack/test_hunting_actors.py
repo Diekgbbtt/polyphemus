@@ -367,7 +367,7 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
 
 
 def test_hunting_hunter_actor_runs_query_lightrag_tool_loop_hermetically():
-    """The full tool-calling loop, without any live service: the outer model
+    """The full tool-calling threat, without any live service: the outer model
     first calls `query_lightrag`, the fake client/llm answer hermetically, a
     ToolMessage is produced, and the actor's final author reply uses the tool
     output (the mini live smoke, repeatable in the unit suite)."""

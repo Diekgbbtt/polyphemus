@@ -250,8 +250,8 @@ def test_no_store_reads_fail_open_never_raise(spec_id):
 
 
 def test_no_store_create_agent_loop_still_concludes(spec_id):
-    """A note tool bound with a None store inside a real create_agent loop does
-    not break the lane - the write is a coded rejection the loop's model sees."""
+    """A note tool bound with a None store inside a real create_agent threat does
+    not break the lane - the write is a coded rejection the threat's model sees."""
     from langchain_core.language_models import BaseChatModel
     from langchain_core.outputs import ChatGeneration, ChatResult
     from langchain_core.messages import HumanMessage
@@ -287,7 +287,7 @@ def test_no_store_create_agent_loop_still_concludes(spec_id):
             model_factory=factory, observe=False)
 
     turn = asyncio.run(_drive())
-    assert turn.content == "concluded"               # the loop survived the rejected write
+    assert turn.content == "concluded"               # the threat survived the rejected write
     assert any("NOTES_NO_STORE" in m.content for m in turn.messages)
 
 
@@ -297,7 +297,7 @@ def test_create_agent_loop_write_wrong_param_and_read(store, spec_id):
     """D84-22 + D84-36 end-to-end on a FAKE model: a valid write persists
     through the ReAct loop, a wrong parameter becomes the rejected
     `Error invoking tool 'notes' ... Extra inputs are not permitted` ToolMessage
-    the loop sees, and a valid read returns the note verbatim."""
+    the threat sees, and a valid read returns the note verbatim."""
     from langchain_core.language_models import BaseChatModel
     from langchain_core.outputs import ChatGeneration, ChatResult
     from langchain_core.messages import HumanMessage
@@ -357,7 +357,7 @@ def test_notes_args_rejected_code_is_declared():
 
 def test_malformed_write_is_a_coded_teaching_rejection(store, spec_id):
     """#209: a malformed note call is a CODED teaching rejection (the D84-22
-    'rejected call' refinement) - the loop sees the code and self-corrects,
+    'rejected call' refinement) - the threat sees the code and self-corrects,
     never a silent degrade. A write without the variant order is rejected with
     `NOTES_ARGS_REJECTED` naming the missing field."""
     out = _tool(store=store, spec_id=spec_id).invoke(

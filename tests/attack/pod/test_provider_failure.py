@@ -32,7 +32,7 @@ def _rate_limit() -> openai.RateLimitError:
 
 
 def test_provider_throttle_is_not_recorded_as_technical_infeasibility():
-    """The red loop: a runner seam that raises a 429 must NOT return a
+    """The red threat: a runner seam that raises a 429 must NOT return a
     fabricated `technical-infeasibility` domain verdict - it propagates the
     typed provider error with a backoff hint instead."""
     async def throttled_runner(spec, messages, tool_calls):

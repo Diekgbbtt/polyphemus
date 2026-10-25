@@ -42,7 +42,7 @@ SPEC = {
     "assumptions": ["the session cookie is the only auth factor"],
     "rationale": "IDOR over the order endpoint",
     "skill_concretised_procedure": PROCEDURE,
-    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+    "provenance": {"threat_id": "threat-1", "unit_id": "service:web:soupmarket",
                    "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
@@ -101,7 +101,7 @@ def test_the_graph_mints_the_first_uncovered_gap_as_the_basis():
 
 def test_an_empty_procedure_section_is_skipped_not_minted():
     # T10 H1: an empty section is a skipped class. Even when the triager claims
-    # full coverage, the diff never loops on the empty pro-tips section, and no
+    # full coverage, the diff never threats on the empty pro-tips section, and no
     # variant basis is derivable.
     spec = {**SPEC, "skill_concretised_procedure": {
         **PROCEDURE, "pro_tips": ""}}
@@ -203,7 +203,7 @@ def test_the_variant_record_keeps_its_shape_and_carries_the_basis():
 
 def test_an_absent_excerpt_is_recorded_and_mints_no_variant():
     spec = {**SPEC, "skill_concretised_procedure": None,
-            "provenance": {"loop_id": "loop-1"}}
+            "provenance": {"threat_id": "threat-1"}}
     derived = {**spec, "rationale": "test an additional observable failure mode"}
     env = _drive([
         _variant(covered_gap_classes=[], variant_spec=derived),

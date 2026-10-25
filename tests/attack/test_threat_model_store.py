@@ -3,8 +3,8 @@
 Pure filesystem mechanics and pure schema logic - no Neo4j, no LLM. Pins the
 partial/complete document contract, the gate merge and monotonic state, the
 completion checker (necessary attributes, referential integrity, the
-assumption-to-loop closure, the loop order, the risk profile), the
-loop-file emission and the commit protocol, the mover primitives, the
+assumption-to-threat closure, the threat order, the risk profile), the
+threat-file emission and the commit protocol, the mover primitives, the
 move-aware write, the collision-safe unit name, the invalid-model archive,
 and the bounded notes store.
 
@@ -150,7 +150,7 @@ def _legacy_failure_modes() -> list[dict]:
     }]
 
 
-def _loop(likelihood: str = "high") -> dict:
+def _threat(likelihood: str = "high") -> dict:
     return {
         "id": "modeller-1",
         "fault_ref": "fault-1",
@@ -185,14 +185,14 @@ def _sections_below_completed() -> list[tuple[str, dict]]:
     ]
 
 
-def _completed_sections(loops: list[dict] | None = None) -> dict:
-    return {"loops": [_loop()] if loops is None else loops}
+def _completed_sections(threats: list[dict] | None = None) -> dict:
+    return {"threats": [_threat()] if threats is None else threats}
 
 
-def _write_to_completed(store: ThreatModelStore, *, loops: list[dict] | None = None) -> None:
+def _write_to_completed(store: ThreatModelStore, *, threats: list[dict] | None = None) -> None:
     for state, sections in _sections_below_completed():
         store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
-    store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(loops), run_id=RUN)
+    store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(threats), run_id=RUN)
 
 
 def _dropped_vulnerabilities() -> list[dict]:
@@ -204,7 +204,7 @@ def _dropped_vulnerabilities() -> list[dict]:
     }]
 
 
-def _write_zero_loop_completed(store: ThreatModelStore) -> None:
+def _write_zero_threat_completed(store: ThreatModelStore) -> None:
     for state, sections in _sections_below_completed()[:-1]:
         store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
     store.write_sections(
@@ -212,7 +212,7 @@ def _write_zero_loop_completed(store: ThreatModelStore) -> None:
         {"vulnerabilities": _dropped_vulnerabilities()}, run_id=RUN,
     )
     store.write_sections(
-        PROJECT, UNIT, "COMPLETED", {"loops": []}, run_id=RUN,
+        PROJECT, UNIT, "COMPLETED", {"threats": []}, run_id=RUN,
     )
 
 
@@ -239,7 +239,7 @@ def test_write_sections_persists_a_partial_model_and_reads_it_back(tmp_path):
     )
     assert path.exists()
     model = store.read_model(PROJECT, UNIT)
-    assert model["schema_version"] == 1
+    assert model["schema_version"] == 2
     assert model["unit_id"] == UNIT
     assert model["unit_kind"] == "service"
     assert model["run_id"] == RUN
@@ -261,7 +261,7 @@ def test_gate_writes_merge_sections_into_one_document(tmp_path):
     assert model["assumptions"][0]["fault"]["id"] == "fault-1"
     assert model["vulnerabilities"][0]["canonical_class"] == "IDOR"
     assert "failure_modes" not in model
-    assert model["loops"] == []
+    assert model["threats"] == []
 
 
 def test_a_lower_gate_write_never_regresses_the_state(tmp_path):
@@ -313,9 +313,9 @@ def test_a_section_outside_the_gates_set_is_a_coded_rejection(tmp_path):
     assert store.read_model(PROJECT, UNIT) is None
 
 
-def test_the_completed_gate_accepts_only_the_loops_section(tmp_path):
+def test_the_completed_gate_accepts_only_the_threats_section(tmp_path):
     """The failure-mode contraction (ADR 2026-10-25): the COMPLETED gate carries
-    the loops alone, so a `failure_modes` section is a coded rejection and
+    the threats alone, so a `failure_modes` section is a coded rejection and
     nothing is persisted."""
     store = ThreatModelStore(tmp_path)
     for state, sections in _sections_below_completed():
@@ -324,33 +324,34 @@ def test_the_completed_gate_accepts_only_the_loops_section(tmp_path):
     with pytest.raises(ThreatModelIdentityError) as raised:
         store.write_sections(
             PROJECT, UNIT, "COMPLETED",
-            {"failure_modes": _legacy_failure_modes(), "loops": [_loop()]}, run_id=RUN,
+            {"failure_modes": _legacy_failure_modes(), "threats": [_threat()]}, run_id=RUN,
         )
 
     assert raised.value.fields == ["failure_modes"]
-    assert GATE_SECTIONS[ModelState.COMPLETED] == ("loops",)
+    assert GATE_SECTIONS[ModelState.COMPLETED] == ("threats",)
     assert store.read_model(PROJECT, UNIT)["state"] == "VULNERABILITIES_WRITTEN"
 
 
 def test_the_stored_model_carries_no_failure_mode_key(tmp_path):
-    """The section and the loop link are gone from the persisted document, the
-    model and the loop file alike (the contract half of the expand-contract)."""
+    """The section and the threat link are gone from the persisted document, the
+    model and the threat file alike (the contract half of the expand-contract)."""
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
 
     model = store.read_model(PROJECT, UNIT)
 
     assert "failure_modes" not in model
-    assert "failure_mode_refs" not in model["loops"][0]
-    loop_file = store.read_loop_files(PROJECT, UNIT)[0]
-    assert "failure_mode_refs" not in loop_file["loop"]
+    assert "failure_mode_refs" not in model["threats"][0]
+    threat_file = store.read_threat_files(PROJECT, UNIT)[0]
+    assert "failure_mode_refs" not in threat_file["threat"]
 
 
 def test_a_model_with_a_failure_modes_key_is_rejected_by_the_strict_schema(tmp_path):
-    """The contraction removes the section without a `schema_version` bump: a
-    legacy document that still carries `failure_modes` no longer parses, so the
-    store refuses to merge it rather than silently dropping the section (the
-    migration note in `threat_model` records the decision)."""
+    """The contraction removed the section, and the later loop->threat rename
+    bumped the schema: a legacy document that still carries `failure_modes` (or
+    the old `loops` key) no longer parses, so the store refuses to merge it
+    rather than silently dropping the section (the migration note in
+    `threat_model` records both decisions)."""
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
@@ -359,9 +360,9 @@ def test_a_model_with_a_failure_modes_key_is_rejected_by_the_strict_schema(tmp_p
     with pytest.raises(ValueError):
         UnitThreatModel.model_validate(document)
 
-    # the loop link went with the section: a legacy loop carrying it is rejected
+    # the threat link went with the section: a legacy threat carrying it is rejected
     document.pop("failure_modes")
-    document["loops"][0]["failure_mode_refs"] = ["fm-1"]
+    document["threats"][0]["failure_mode_refs"] = ["fm-1"]
     with pytest.raises(ValueError):
         UnitThreatModel.model_validate(document)
 
@@ -372,7 +373,7 @@ def test_an_unknown_schema_version_refuses_to_load_and_never_migrates(tmp_path):
     unit_dir.mkdir(parents=True)
     document = unit_dir / f"{name}.yaml"
     document.write_text(
-        yaml.safe_dump({"schema_version": 2, "unit_id": UNIT, "state": "COMPLETED"}),
+        yaml.safe_dump({"schema_version": 3, "unit_id": UNIT, "state": "COMPLETED"}),
         encoding="utf-8",
     )
     before = document.read_bytes()
@@ -395,7 +396,7 @@ def test_a_persisted_document_with_an_unknown_state_is_a_coded_refusal(tmp_path)
     unit_dir.mkdir(parents=True)
     (unit_dir / f"{name}.yaml").write_text(
         yaml.safe_dump({
-            "schema_version": 1,
+            "schema_version": 2,
             "unit_id": UNIT,
             "unit_kind": "service",
             "run_id": RUN,
@@ -413,17 +414,17 @@ def test_a_persisted_document_with_an_unknown_state_is_a_coded_refusal(tmp_path)
         )
 
 
-# --- the COMPLETED write: loops, risk profile, validation --------------------
+# --- the COMPLETED write: threats, risk profile, validation --------------------
 
-def test_completed_ranks_loops_emits_one_file_per_non_none_loop(tmp_path):
+def test_completed_ranks_threats_emits_one_file_per_non_none_threat(tmp_path):
     store = ThreatModelStore(tmp_path)
 
-    _write_to_completed(store, loops=[_loop("none"), _loop("high")])
+    _write_to_completed(store, threats=[_threat("none"), _threat("high")])
 
     model = store.read_model(PROJECT, UNIT)
     assert model["state"] == "COMPLETED"
-    assert [loop["id"] for loop in model["loops"]] == ["loop-1", "loop-2"]
-    assert [loop["likelihood"] for loop in model["loops"]] == ["high", "none"]
+    assert [threat["id"] for threat in model["threats"]] == ["threat-1", "threat-2"]
+    assert [threat["likelihood"] for threat in model["threats"]] == ["high", "none"]
     assert model["risk_profile"] == {
         "total": RISK_WEIGHTS["high"],
         "breakdown": {"none": 1, "low": 0, "medium": 0, "high": 1, "critical": 0},
@@ -438,27 +439,27 @@ def test_completed_ranks_loops_emits_one_file_per_non_none_loop(tmp_path):
 
     unit_name = "Service-catalogue-and-discovery"
     produced = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / unit_name
-    assert sorted(p.name for p in produced.glob("loop-*.yaml")) == ["loop-1.yaml"]
-    records = store.read_loop_files(PROJECT, UNIT)
-    assert [record["loop_id"] for record in records] == ["loop-1"]
+    assert sorted(p.name for p in produced.glob("threat-*.yaml")) == ["threat-1.yaml"]
+    records = store.read_threat_files(PROJECT, UNIT)
+    assert [record["threat_id"] for record in records] == ["threat-1"]
     record = records[0]
     assert record["unit_id"] == UNIT
     assert record["unit_kind"] == "service"
     assert record["run_id"] == RUN
-    assert record["dispatch_id"] == "Service-catalogue-and-discovery__loop-1"
+    assert record["dispatch_id"] == "Service-catalogue-and-discovery__threat-1"
     assert record["likelihood"] == "high"
-    assert record["loop"]["id"] == "loop-1"
-    assert record["loop"]["fault_ref"] == "fault-1"
+    assert record["threat"]["id"] == "threat-1"
+    assert record["threat"]["fault_ref"] == "fault-1"
     assert record["created_at"]
 
 
-def test_a_zero_loop_model_emits_no_loop_files(tmp_path):
+def test_a_zero_threat_model_emits_no_threat_files(tmp_path):
     store = ThreatModelStore(tmp_path)
 
-    _write_zero_loop_completed(store)
+    _write_zero_threat_completed(store)
 
     model = store.read_model(PROJECT, UNIT)
-    assert model["loops"] == []
+    assert model["threats"] == []
     assert model["risk_profile"] == {
         "total": 0,
         "breakdown": {"none": 0, "low": 0, "medium": 0, "high": 0, "critical": 0},
@@ -467,12 +468,12 @@ def test_a_zero_loop_model_emits_no_loop_files(tmp_path):
         },
     }
     assert model["validation"]["valid"] is True
-    assert store.read_loop_files(PROJECT, UNIT) == []
+    assert store.read_threat_files(PROJECT, UNIT) == []
 
 
 # --- the commit protocol (S2 4.3) --------------------------------------------
 
-def test_a_failing_model_write_after_the_loop_files_leaves_the_previous_state(
+def test_a_failing_model_write_after_the_threat_files_leaves_the_previous_state(
     tmp_path, monkeypatch
 ):
     store = ThreatModelStore(tmp_path)
@@ -483,7 +484,7 @@ def test_a_failing_model_write_after_the_loop_files_leaves_the_previous_state(
 
     def _fail_the_model_write(path, body):
         if path.name == f"{unit_name}.yaml":
-            raise OSError("simulated crash between the loop files and the commit")
+            raise OSError("simulated crash between the threat files and the commit")
         return _dump_yaml(path, body)
 
     monkeypatch.setattr(store, "_dump_yaml_atomic", _fail_the_model_write)
@@ -491,17 +492,17 @@ def test_a_failing_model_write_after_the_loop_files_leaves_the_previous_state(
     with pytest.raises(OSError):
         store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
-    # the loop files landed (the crash window), the model did not commit
-    assert (produced / "loop-1.yaml").exists()
+    # the threat files landed (the crash window), the model did not commit
+    assert (produced / "threat-1.yaml").exists()
     model = store.read_model(PROJECT, UNIT)
     assert model["state"] == "VULNERABILITIES_WRITTEN"
-    assert model["loops"] == []
+    assert model["threats"] == []
     assert model["risk_profile"] is None
     assert model["validation"] is None
 
 
-def test_read_loop_files_is_empty_for_a_model_below_completed(tmp_path, monkeypatch):
-    # S2 4.3: a loop file is never read for a model whose state is not
+def test_read_threat_files_is_empty_for_a_model_below_completed(tmp_path, monkeypatch):
+    # S2 4.3: a threat file is never read for a model whose state is not
     # COMPLETED - the crash window leaves files on disk that must not surface
     # as dispatch work
     store = ThreatModelStore(tmp_path)
@@ -514,18 +515,18 @@ def test_read_loop_files_is_empty_for_a_model_below_completed(tmp_path, monkeypa
 
     def _fail_the_model_write(path, body):
         if path.name == f"{unit_name}.yaml":
-            raise OSError("simulated crash between the loop files and the commit")
+            raise OSError("simulated crash between the threat files and the commit")
         return _dump_yaml(path, body)
 
     monkeypatch.setattr(store, "_dump_yaml_atomic", _fail_the_model_write)
     with pytest.raises(OSError):
         store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
-    assert (produced / "loop-1.yaml").exists()
-    assert store.read_loop_files(PROJECT, UNIT) == []
+    assert (produced / "threat-1.yaml").exists()
+    assert store.read_threat_files(PROJECT, UNIT) == []
 
 
-def test_read_loop_files_is_empty_for_an_invalid_completed_model(tmp_path):
+def test_read_threat_files_is_empty_for_an_invalid_completed_model(tmp_path):
     store = ThreatModelStore(tmp_path)
     store.write_sections(
         PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
@@ -545,12 +546,12 @@ def test_read_loop_files_is_empty_for_an_invalid_completed_model(tmp_path):
         tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced"
         / "Service-catalogue-and-discovery"
     )
-    assert (produced / "loop-1.yaml").exists()  # emitted, but never read
+    assert (produced / "threat-1.yaml").exists()  # emitted, but never read
     assert store.read_model(PROJECT, UNIT)["validation"]["valid"] is False
-    assert store.read_loop_files(PROJECT, UNIT) == []
+    assert store.read_threat_files(PROJECT, UNIT) == []
 
 
-def test_a_lower_gate_write_deletes_the_orphan_loop_files(tmp_path, monkeypatch):
+def test_a_lower_gate_write_deletes_the_orphan_threat_files(tmp_path, monkeypatch):
     store = ThreatModelStore(tmp_path)
     for state, sections in _sections_below_completed():
         store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
@@ -559,23 +560,23 @@ def test_a_lower_gate_write_deletes_the_orphan_loop_files(tmp_path, monkeypatch)
 
     def _fail_the_model_write(path, body):
         if path.name == f"{unit_name}.yaml":
-            raise OSError("simulated crash between the loop files and the commit")
+            raise OSError("simulated crash between the threat files and the commit")
         return _dump_yaml(path, body)
 
     monkeypatch.setattr(store, "_dump_yaml_atomic", _fail_the_model_write)
     with pytest.raises(OSError):
         store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
     monkeypatch.undo()
-    assert (produced / "loop-1.yaml").exists()
+    assert (produced / "threat-1.yaml").exists()
 
     store.write_sections(
         PROJECT, UNIT, "TRUST_MODELLED", {"trust_model": _trust_model()}, run_id=RUN,
     )
 
-    assert list(produced.glob("loop-*.yaml")) == []
+    assert list(produced.glob("threat-*.yaml")) == []
     model = store.read_model(PROJECT, UNIT)
     assert model["state"] == "VULNERABILITIES_WRITTEN"
-    assert model["loops"] == []
+    assert model["threats"] == []
 
 
 # --- the completion checker (S2 5.7) -----------------------------------------
@@ -609,7 +610,7 @@ def test_completion_reports_missing_necessary_attributes(tmp_path):
 def test_write_sections_accepts_typed_section_objects(tmp_path):
     # T2 may bind either plain payloads or the schema's typed section objects
     from polymerhus.attack.hunting.threat_model import (
-        Loop,
+        Threat,
         TechnicalSharpening,
         TrustModel,
     )
@@ -636,7 +637,7 @@ def test_write_sections_accepts_typed_section_objects(tmp_path):
 
     store.write_sections(
         PROJECT, UNIT, "COMPLETED",
-        {"loops": [Loop.model_validate(_loop("high"))]},
+        {"threats": [Threat.model_validate(_threat("high"))]},
         run_id=RUN,
     )
 
@@ -644,7 +645,7 @@ def test_write_sections_accepts_typed_section_objects(tmp_path):
     assert model["technical_sharpening"]["interface_agreements"][0]["id"] == "ia-1"
     assert model["trust_model"]["trust_agreements"][0]["id"] == "ta-1"
     assert model["validation"]["valid"] is True
-    assert [loop["id"] for loop in model["loops"]] == ["loop-1"]
+    assert [threat["id"] for threat in model["threats"]] == ["threat-1"]
 
 
 def test_completion_reports_referential_errors(tmp_path):
@@ -726,7 +727,7 @@ def test_completion_reports_an_unclosed_assumption(tmp_path):
 
 def test_check_completion_recomputes_the_risk_profile(tmp_path):
     # the stored profile is never trusted: the checker recomputes it from the
-    # stored loops (the regression check against a store bug, S2 5.7)
+    # stored threats (the regression check against a store bug, S2 5.7)
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
@@ -751,9 +752,9 @@ def test_the_store_records_the_non_suite_class_finding(tmp_path):
                 "web_vulnerability_class": "made-up-class",
             }]}
         store.write_sections(PROJECT, UNIT, state, payload, run_id=RUN)
-    loops = [{**_loop("high"), "web_vulnerability_class": "made-up-class"}]
+    threats = [{**_threat("high"), "web_vulnerability_class": "made-up-class"}]
     store.write_sections(
-        PROJECT, UNIT, "COMPLETED", _completed_sections(loops), run_id=RUN)
+        PROJECT, UNIT, "COMPLETED", _completed_sections(threats), run_id=RUN)
 
     validation = store.read_model(PROJECT, UNIT)["validation"]
 
@@ -781,9 +782,9 @@ def test_the_modeller_surface_wires_the_suite_class_index(tmp_path):
                 "web_vulnerability_class": "made-up-class",
             }]}
         store.write_sections(PROJECT, UNIT, state, payload, run_id=RUN)
-    loops = [{**_loop("high"), "web_vulnerability_class": "made-up-class"}]
+    threats = [{**_threat("high"), "web_vulnerability_class": "made-up-class"}]
     store.write_sections(
-        PROJECT, UNIT, "COMPLETED", _completed_sections(loops), run_id=RUN)
+        PROJECT, UNIT, "COMPLETED", _completed_sections(threats), run_id=RUN)
 
     validation = store.read_model(PROJECT, UNIT)["validation"]
 
@@ -795,7 +796,7 @@ def test_the_completion_records_a_technique_family_as_a_class_finding(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
-    for target in (document["vulnerabilities"][0], document["loops"][0]):
+    for target in (document["vulnerabilities"][0], document["threats"][0]):
         target["web_vulnerability_class"] = "defence-bypass"
 
     validation = check_completion(
@@ -812,7 +813,7 @@ def test_the_completion_records_a_non_suite_class_finding(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
-    for target in (document["vulnerabilities"][0], document["loops"][0]):
+    for target in (document["vulnerabilities"][0], document["threats"][0]):
         target["web_vulnerability_class"] = "made-up-class"
 
     validation = check_completion(
@@ -827,7 +828,7 @@ def test_the_completion_records_an_empty_class_finding(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
-    for target in (document["vulnerabilities"][0], document["loops"][0]):
+    for target in (document["vulnerabilities"][0], document["threats"][0]):
         target["web_vulnerability_class"] = ""
 
     validation = check_completion(UnitThreatModel.model_validate(document))
@@ -848,92 +849,92 @@ def test_check_completion_recomputes_the_impact_breakdown(tmp_path):
     assert "risk_profile.impact_breakdown" in validation.missing
 
 
-def test_check_completion_reports_a_tampered_loop_risk(tmp_path):
+def test_check_completion_reports_a_tampered_threat_risk(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
-    document["loops"][0]["impact_weight"] = 0
-    document["loops"][0]["risk"] = 0
+    document["threats"][0]["impact_weight"] = 0
+    document["threats"][0]["risk"] = 0
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
-    assert "loop:loop-1.impact_weight" in validation.missing
-    assert "loop:loop-1.risk" in validation.missing
+    assert "threat:threat-1.impact_weight" in validation.missing
+    assert "threat:threat-1.risk" in validation.missing
 
 
 def test_check_completion_reports_a_missing_end_impact(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
-    document["loops"][0]["impact"]["end_impact"] = ""
+    document["threats"][0]["impact"]["end_impact"] = ""
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
-    assert "loop:loop-1.impact" in validation.missing
+    assert "threat:threat-1.impact" in validation.missing
 
 
-def test_a_legacy_loop_without_impact_parses_and_contributes_zero(tmp_path):
+def test_a_legacy_threat_without_impact_parses_and_contributes_zero(tmp_path):
     store = ThreatModelStore(tmp_path)
-    legacy = dict(_loop("high"))
+    legacy = dict(_threat("high"))
     legacy.pop("impact")
 
-    _write_to_completed(store, loops=[legacy])
+    _write_to_completed(store, threats=[legacy])
 
     model = store.read_model(PROJECT, UNIT)
     assert model["risk_profile"]["total"] == 0
     assert model["risk_profile"]["impact_breakdown"]["none"] == 1
-    assert "loop:loop-1.impact" in model["validation"]["missing"]
+    assert "threat:threat-1.impact" in model["validation"]["missing"]
 
 
-def test_a_zero_risk_loop_is_stored_but_emits_no_loop_file(tmp_path):
-    """The impact axis can zero a high-likelihood direction. The loop stays in
+def test_a_zero_risk_threat_is_stored_but_emits_no_threat_file(tmp_path):
+    """The impact axis can zero a high-likelihood direction. The threat stays in
     the model and the risk profile, but it is never dispatched."""
     store = ThreatModelStore(tmp_path)
-    zero = {**_loop("high"), "impact": {
+    zero = {**_threat("high"), "impact": {
         "confidentiality": "none", "integrity": "none", "availability": "none",
         "end_impact": "no end impact",
     }}
 
-    _write_to_completed(store, loops=[zero])
+    _write_to_completed(store, threats=[zero])
 
     model = store.read_model(PROJECT, UNIT)
-    assert model["loops"][0]["risk"] == 0
+    assert model["threats"][0]["risk"] == 0
     assert model["risk_profile"]["total"] == 0
-    assert store.read_loop_files(PROJECT, UNIT) == []
+    assert store.read_threat_files(PROJECT, UNIT) == []
 
 
-def test_the_loop_file_carries_the_impact_and_the_risk(tmp_path):
+def test_the_threat_file_carries_the_impact_and_the_risk(tmp_path):
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high")])
+    _write_to_completed(store, threats=[_threat("high")])
 
-    record = store.read_loop_files(PROJECT, UNIT)[0]
+    record = store.read_threat_files(PROJECT, UNIT)[0]
 
-    assert record["loop"]["impact"] == {
+    assert record["threat"]["impact"] == {
         "confidentiality": "low",
         "integrity": "none",
         "availability": "none",
         "end_impact": "A caller reads another tenant's item.",
     }
-    assert record["loop"]["impact_weight"] == 1
-    assert record["loop"]["risk"] == 3
+    assert record["threat"]["impact_weight"] == 1
+    assert record["threat"]["risk"] == 3
 
 
-def test_check_completion_reports_a_broken_loop_order_and_ids(tmp_path):
+def test_check_completion_reports_a_broken_threat_order_and_ids(tmp_path):
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high"), _loop("medium")])
+    _write_to_completed(store, threats=[_threat("high"), _threat("medium")])
     document = store.read_model(PROJECT, UNIT)
 
-    document["loops"].reverse()
-    document["loops"][0]["id"] = "loop-1"
-    document["loops"][1]["id"] = "loop-2"
+    document["threats"].reverse()
+    document["threats"][0]["id"] = "threat-1"
+    document["threats"][1]["id"] = "threat-2"
     validation = check_completion(UnitThreatModel.model_validate(document))
-    assert "loops.order" in validation.missing
+    assert "threats.order" in validation.missing
 
-    document["loops"][1]["id"] = "loop-7"
+    document["threats"][1]["id"] = "threat-7"
     validation = check_completion(UnitThreatModel.model_validate(document))
-    assert "loops.ids" in validation.missing
+    assert "threats.ids" in validation.missing
 
 
 def test_completion_reports_the_trust_model_referential_rules(tmp_path):
@@ -967,26 +968,26 @@ def test_completion_reports_the_trust_model_referential_rules(tmp_path):
 
 def test_completed_keeps_the_write_order_on_a_likelihood_tie(tmp_path):
     store = ThreatModelStore(tmp_path)
-    loops = [
-        {**_loop("medium"), "likelihood_rationale": "first medium"},
-        {**_loop("critical"), "likelihood_rationale": "the critical one"},
-        {**_loop("medium"), "likelihood_rationale": "second medium"},
+    threats = [
+        {**_threat("medium"), "likelihood_rationale": "first medium"},
+        {**_threat("critical"), "likelihood_rationale": "the critical one"},
+        {**_threat("medium"), "likelihood_rationale": "second medium"},
     ]
 
-    _write_to_completed(store, loops=loops)
+    _write_to_completed(store, threats=threats)
 
     model = store.read_model(PROJECT, UNIT)
-    assert [(loop["id"], loop["likelihood"]) for loop in model["loops"]] == [
-        ("loop-1", "critical"), ("loop-2", "medium"), ("loop-3", "medium"),
+    assert [(threat["id"], threat["likelihood"]) for threat in model["threats"]] == [
+        ("threat-1", "critical"), ("threat-2", "medium"), ("threat-3", "medium"),
     ]
-    assert [loop["likelihood_rationale"] for loop in model["loops"]] == [
+    assert [threat["likelihood_rationale"] for threat in model["threats"]] == [
         "the critical one", "first medium", "second medium",
     ]
     assert model["risk_profile"]["total"] == (
         RISK_WEIGHTS["critical"] + RISK_WEIGHTS["medium"] * 2
     )
-    assert [record["loop_id"] for record in store.read_loop_files(PROJECT, UNIT)] == [
-        "loop-1", "loop-2", "loop-3",
+    assert [record["threat_id"] for record in store.read_threat_files(PROJECT, UNIT)] == [
+        "threat-1", "threat-2", "threat-3",
     ]
 
 
@@ -996,16 +997,16 @@ def _threat_modeller_root(tmp_path):
     return tmp_path / PROJECT / "hunting" / "threat_modeller"
 
 
-def test_the_model_document_moves_with_its_last_loop_file(tmp_path):
+def test_the_model_document_moves_with_its_last_threat_file(tmp_path):
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high"), _loop("medium")])
+    _write_to_completed(store, threats=[_threat("high"), _threat("medium")])
     unit_name = "Service-catalogue-and-discovery"
 
-    assert store.consume_model_if_done(PROJECT, UNIT) is False  # loops remain
-    assert store.consume_loop(PROJECT, UNIT, "loop-1") is True
+    assert store.consume_model_if_done(PROJECT, UNIT) is False  # threats remain
+    assert store.consume_threat(PROJECT, UNIT, "threat-1") is True
     assert store.read_model(PROJECT, UNIT)["state"] == "COMPLETED"
-    assert store.consume_loop(PROJECT, UNIT, "loop-1") is True  # at-least-once no-op
-    assert store.consume_loop(PROJECT, UNIT, "loop-2") is True
+    assert store.consume_threat(PROJECT, UNIT, "threat-1") is True  # at-least-once no-op
+    assert store.consume_threat(PROJECT, UNIT, "threat-2") is True
 
     root = _threat_modeller_root(tmp_path)
     assert not (root / "produced" / unit_name).exists()
@@ -1014,163 +1015,163 @@ def test_the_model_document_moves_with_its_last_loop_file(tmp_path):
     assert store.read_model(PROJECT, UNIT)["state"] == "COMPLETED"
 
 
-def test_a_zero_loop_completed_model_is_consumed_without_a_dispatch(tmp_path):
+def test_a_zero_threat_completed_model_is_consumed_without_a_dispatch(tmp_path):
     store = ThreatModelStore(tmp_path)
-    _write_zero_loop_completed(store)
+    _write_zero_threat_completed(store)
 
     assert store.consume_model_if_done(PROJECT, UNIT) is True
     assert store.consume_model_if_done(PROJECT, UNIT) is True  # at-least-once
 
     assert store.read_completed_units(PROJECT) == [UNIT]
-    assert store.read_loop_files(PROJECT, UNIT) == []
+    assert store.read_threat_files(PROJECT, UNIT) == []
     unit_name = "Service-catalogue-and-discovery"
     root = _threat_modeller_root(tmp_path)
     assert not (root / "produced" / unit_name).exists()
     assert (root / "consumed" / unit_name / f"{unit_name}.yaml").exists()
 
 
-def test_read_produced_loops_returns_the_unit_and_its_produced_loop_files(tmp_path):
+def test_read_produced_threats_returns_the_unit_and_its_produced_threat_files(tmp_path):
     """S2 8.1/8.4 (T4, #377): the mover's dispatch inbox read - one entry per
     produced, consumable unit carrying the derived on-disk identity and the
-    loop file records VERBATIM (an unreadable record is the mover's to refuse,
+    threat file records VERBATIM (an unreadable record is the mover's to refuse,
     never the store's to hide)."""
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high"), _loop("low")])
+    _write_to_completed(store, threats=[_threat("high"), _threat("low")])
     unit_name = "Service-catalogue-and-discovery"
 
-    entries = store.read_produced_loops(PROJECT)
+    entries = store.read_produced_threats(PROJECT)
 
     assert [(e["unit_id"], e["unit_name"], e["run_id"]) for e in entries] == [
         (UNIT, unit_name, RUN),
     ]
-    assert [loop["loop_id"] for loop in entries[0]["loops"]] == ["loop-1", "loop-2"]
-    record = entries[0]["loops"][0]["record"]
-    assert record["dispatch_id"] == f"{unit_name}__loop-1"
+    assert [threat["threat_id"] for threat in entries[0]["threats"]] == ["threat-1", "threat-2"]
+    record = entries[0]["threats"][0]["record"]
+    assert record["dispatch_id"] == f"{unit_name}__threat-1"
     assert record["likelihood"] == "high"
-    assert record["loop"]["id"] == "loop-1"
+    assert record["threat"]["id"] == "threat-1"
 
 
-def test_read_produced_loops_is_empty_for_a_consumed_or_unconsumable_model(tmp_path):
+def test_read_produced_threats_is_empty_for_a_consumed_or_unconsumable_model(tmp_path):
     """The mover's inbox is the PRODUCED family only: a consumed (decided) unit
     is not dispatched again, and a model below COMPLETED (or invalid) is never
     dispatch input (S2 4.3, 5.7)."""
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
-    store.consume_loop(PROJECT, UNIT, "loop-1")
-    assert store.read_produced_loops(PROJECT) == []
+    store.consume_threat(PROJECT, UNIT, "threat-1")
+    assert store.read_produced_threats(PROJECT) == []
 
     other = ThreatModelStore(tmp_path)
     other.write_sections(
         PROJECT, "Service:other", "UNIT_TECHNICAL_SHARP",
         {"technical_sharpening": _sharpening()}, run_id=RUN,
     )
-    assert other.read_produced_loops(PROJECT) == []
+    assert other.read_produced_threats(PROJECT) == []
 
 
-def test_read_consumed_loops_reports_the_consumed_unit_and_its_model(tmp_path):
+def test_read_consumed_threats_reports_the_consumed_unit_and_its_model(tmp_path):
     """F-022: the recovery read is the SAME entry shape as the produced read,
     over the consumed family. The model document is the consumed one - the
-    model moved with its last loop file - so a recovery dispatch never needs a
+    model moved with its last threat file - so a recovery dispatch never needs a
     re-model."""
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high")])
-    assert store.consume_loop(PROJECT, UNIT, "loop-1") is True
+    _write_to_completed(store, threats=[_threat("high")])
+    assert store.consume_threat(PROJECT, UNIT, "threat-1") is True
 
-    entries = store.read_consumed_loops(PROJECT)
+    entries = store.read_consumed_threats(PROJECT)
 
     assert [(e["unit_id"], e["unit_name"], e["run_id"]) for e in entries] == [
         (UNIT, "Service-catalogue-and-discovery", RUN),
     ]
-    assert [loop["loop_id"] for loop in entries[0]["loops"]] == ["loop-1"]
-    assert entries[0]["loops"][0]["record"]["loop_id"] == "loop-1"
+    assert [threat["threat_id"] for threat in entries[0]["threats"]] == ["threat-1"]
+    assert entries[0]["threats"][0]["record"]["threat_id"] == "threat-1"
     assert entries[0]["model"]["unit_id"] == UNIT
-    assert store.read_produced_loops(PROJECT) == []
+    assert store.read_produced_threats(PROJECT) == []
 
 
-def test_read_consumed_loops_falls_back_to_the_produced_model_for_a_multi_loop_unit(
+def test_read_consumed_threats_falls_back_to_the_produced_model_for_a_multi_threat_unit(
         tmp_path):
-    """F-022 model dependency: the model moves with the unit's LAST loop file.
-    A consumed loop from a multi-loop unit therefore finds its original model
+    """F-022 model dependency: the model moves with the unit's LAST threat file.
+    A consumed threat from a multi-threat unit therefore finds its original model
     still in produced/; the recovery read falls back to it and never re-models.
-    Consuming the last loop moves the model, and both reads still agree."""
+    Consuming the last threat moves the model, and both reads still agree."""
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high"), _loop("low")])
-    assert store.consume_loop(PROJECT, UNIT, "loop-1") is True
+    _write_to_completed(store, threats=[_threat("high"), _threat("low")])
+    assert store.consume_threat(PROJECT, UNIT, "threat-1") is True
 
-    entries = store.read_consumed_loops(PROJECT)
+    entries = store.read_consumed_threats(PROJECT)
 
-    assert [loop["loop_id"] for loop in entries[0]["loops"]] == ["loop-1"]
+    assert [threat["threat_id"] for threat in entries[0]["threats"]] == ["threat-1"]
     assert entries[0]["model"]["unit_id"] == UNIT
-    assert [loop["loop_id"] for loop in
-            store.read_produced_loops(PROJECT)[0]["loops"]] == ["loop-2"]
+    assert [threat["threat_id"] for threat in
+            store.read_produced_threats(PROJECT)[0]["threats"]] == ["threat-2"]
 
-    assert store.consume_loop(PROJECT, UNIT, "loop-2") is True
-    assert store.read_produced_loops(PROJECT) == []
-    entries = store.read_consumed_loops(PROJECT)
-    assert [loop["loop_id"] for loop in entries[0]["loops"]] == [
-        "loop-1", "loop-2"]
+    assert store.consume_threat(PROJECT, UNIT, "threat-2") is True
+    assert store.read_produced_threats(PROJECT) == []
+    entries = store.read_consumed_threats(PROJECT)
+    assert [threat["threat_id"] for threat in entries[0]["threats"]] == [
+        "threat-1", "threat-2"]
     assert entries[0]["model"]["unit_id"] == UNIT
 
 
-def test_read_produced_loops_reports_a_zero_loop_produced_model(tmp_path):
-    """S2 8.4: a zero-loop produced COMPLETED valid model IS the mover's input -
-    it carries no loop file, so the entry proves the model is consumable, and
+def test_read_produced_threats_reports_a_zero_threat_produced_model(tmp_path):
+    """S2 8.4: a zero-threat produced COMPLETED valid model IS the mover's input -
+    it carries no threat file, so the entry proves the model is consumable, and
     the mover consumes it without a dispatch."""
     store = ThreatModelStore(tmp_path)
-    _write_zero_loop_completed(store)
+    _write_zero_threat_completed(store)
 
-    entries = store.read_produced_loops(PROJECT)
+    entries = store.read_produced_threats(PROJECT)
 
     assert len(entries) == 1
     assert entries[0]["unit_id"] == UNIT
-    assert entries[0]["loops"] == []
+    assert entries[0]["threats"] == []
 
 
-def test_read_produced_loops_does_not_read_an_abandoned_unit(tmp_path):
-    """S2 4.2/8.4: the mover ignores abandoned/ - a degraded unit's loop files
+def test_read_produced_threats_does_not_read_an_abandoned_unit(tmp_path):
+    """S2 4.2/8.4: the mover ignores abandoned/ - a degraded unit's threat files
     are never dispatched (the archive moved them out of produced/)."""
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     store.archive_unit(PROJECT, UNIT, "degraded (fixture)")
 
-    assert store.read_produced_loops(PROJECT) == []
+    assert store.read_produced_threats(PROJECT) == []
 
 
-def test_read_produced_loops_reports_a_malformed_loop_file_instead_of_dropping_it(
+def test_read_produced_threats_reports_a_malformed_threat_file_instead_of_dropping_it(
         tmp_path):
-    """S2 10.5 (T4a review F1): an unreadable or non-mapping loop file is
+    """S2 10.5 (T4a review F1): an unreadable or non-mapping threat file is
     REPORTED, never silently dropped - a dropped file would read as "the unit has
-    no loops", the mover would try to consume the model, and the store would
-    refuse because a `loop-*.yaml` remains: the run then never quiesces."""
+    no threats", the mover would try to consume the model, and the store would
+    refuse because a `threat-*.yaml` remains: the run then never quiesces."""
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high")])
+    _write_to_completed(store, threats=[_threat("high")])
     unit_name = "Service-catalogue-and-discovery"
     produced = (_threat_modeller_root(tmp_path) / "produced" / unit_name)
-    (produced / "loop-2.yaml").write_text("{[ unparseable", encoding="utf-8")
-    (produced / "loop-3.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
+    (produced / "threat-2.yaml").write_text("{[ unparseable", encoding="utf-8")
+    (produced / "threat-3.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
 
-    entry = store.read_produced_loops(PROJECT)[0]
+    entry = store.read_produced_threats(PROJECT)[0]
 
-    assert [loop["loop_id"] for loop in entry["loops"]] == ["loop-1"]
-    assert [broken["loop_id"] for broken in entry["malformed_loops"]] \
-        == ["loop-2", "loop-3"]
-    assert all(broken["reason"] for broken in entry["malformed_loops"])
+    assert [threat["threat_id"] for threat in entry["threats"]] == ["threat-1"]
+    assert [broken["threat_id"] for broken in entry["malformed_threats"]] \
+        == ["threat-2", "threat-3"]
+    assert all(broken["reason"] for broken in entry["malformed_threats"])
 
 
-def test_consume_model_if_done_ignores_the_refused_loop_files(tmp_path):
-    """S2 10.5/8.4: the model-consume gate counts only PENDING loop files - a
-    loop file the mover refused (a malformed body) can never dispatch or be
-    consumed as a loop record, so it must not hold the model document."""
+def test_consume_model_if_done_ignores_the_refused_threat_files(tmp_path):
+    """S2 10.5/8.4: the model-consume gate counts only PENDING threat files - a
+    threat file the mover refused (a malformed body) can never dispatch or be
+    consumed as a threat record, so it must not hold the model document."""
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high")])
+    _write_to_completed(store, threats=[_threat("high")])
     unit_name = "Service-catalogue-and-discovery"
     produced = (_threat_modeller_root(tmp_path) / "produced" / unit_name)
-    (produced / "loop-2.yaml").write_text("{[ unparseable", encoding="utf-8")
+    (produced / "threat-2.yaml").write_text("{[ unparseable", encoding="utf-8")
 
-    # a pending loop file still holds the model; a refused one does not
+    # a pending threat file still holds the model; a refused one does not
     assert store.consume_model_if_done(PROJECT, UNIT) is False
     assert store.consume_model_if_done(
-        PROJECT, UNIT, refused_loops=("loop-1", "loop-2")) is True
+        PROJECT, UNIT, refused_threats=("threat-1", "threat-2")) is True
     assert store.read_completed_units(PROJECT) == [UNIT]
 
 
@@ -1179,7 +1180,7 @@ def test_read_produced_units_reports_each_produced_model_and_its_run(tmp_path):
     the producing run, and the persisted state - so it can tell an in-flight
     model from a stale one."""
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(store, loops=[_loop("high")])
+    _write_to_completed(store, threats=[_threat("high")])
     store.write_sections(
         PROJECT, "Service:other", "UNIT_TECHNICAL_SHARP",
         {"technical_sharpening": _sharpening()}, run_id="run-2",
@@ -1194,7 +1195,7 @@ def test_read_produced_units_reports_each_produced_model_and_its_run(tmp_path):
 
 def test_a_write_after_the_move_is_a_noop_returning_the_consumed_path(tmp_path):
     store = ThreatModelStore(tmp_path)
-    _write_zero_loop_completed(store)
+    _write_zero_threat_completed(store)
     assert store.consume_model_if_done(PROJECT, UNIT) is True
     unit_name = "Service-catalogue-and-discovery"
     root = _threat_modeller_root(tmp_path)
@@ -1239,7 +1240,7 @@ def test_an_invalid_completed_model_is_not_consumable_and_is_archived(tmp_path):
     assert archived == root / "abandoned" / unit_name
     assert not (root / "produced" / unit_name).exists()
     assert (archived / f"{unit_name}.yaml").exists()
-    assert (archived / "loop-1.yaml").exists()  # the emitted loops move with it
+    assert (archived / "threat-1.yaml").exists()  # the emitted threats move with it
     assert store.read_abandoned_units(PROJECT) == [UNIT]
     document = yaml.safe_load((archived / f"{unit_name}.yaml").read_text(encoding="utf-8"))
     assert document["validation"]["valid"] is False
@@ -1267,7 +1268,7 @@ def test_archive_returns_none_when_there_is_nothing_to_archive(tmp_path):
     assert store.archive_unit(PROJECT, UNIT, "no model was ever written") is None
 
     _write_to_completed(store)
-    assert store.consume_loop(PROJECT, UNIT, "loop-1") is True
+    assert store.consume_threat(PROJECT, UNIT, "threat-1") is True
     assert store.read_completed_units(PROJECT) == [UNIT]
     assert store.archive_unit(PROJECT, UNIT, "already decided") is None
 
@@ -1426,16 +1427,16 @@ def test_reads_of_an_unknown_unit_are_empty(tmp_path):
     store = ThreatModelStore(tmp_path)
 
     assert store.read_model(PROJECT, "Service:absent") is None
-    assert store.read_section(PROJECT, "Service:absent", "loops") is None
-    assert store.read_loop_files(PROJECT, "Service:absent") == []
+    assert store.read_section(PROJECT, "Service:absent", "threats") is None
+    assert store.read_threat_files(PROJECT, "Service:absent") == []
     assert store.read_completed_units(PROJECT) == []
     assert store.read_abandoned_units(PROJECT) == []
     assert store.read_notes(PROJECT) == []
     assert store.consume_model_if_done(PROJECT, "Service:absent") is False
-    assert store.consume_loop(PROJECT, "Service:absent", "loop-1") is False
+    assert store.consume_threat(PROJECT, "Service:absent", "threat-1") is False
 
 
-def test_a_retried_completed_write_repairs_the_loop_set(tmp_path, monkeypatch):
+def test_a_retried_completed_write_repairs_the_threat_set(tmp_path, monkeypatch):
     store = ThreatModelStore(tmp_path)
     for state, sections in _sections_below_completed():
         store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
@@ -1443,7 +1444,7 @@ def test_a_retried_completed_write_repairs_the_loop_set(tmp_path, monkeypatch):
 
     def _fail_the_model_write(path, body):
         if path.name == f"{unit_name}.yaml":
-            raise OSError("simulated crash between the loop files and the commit")
+            raise OSError("simulated crash between the threat files and the commit")
         return _dump_yaml(path, body)
 
     monkeypatch.setattr(store, "_dump_yaml_atomic", _fail_the_model_write)
@@ -1456,17 +1457,17 @@ def test_a_retried_completed_write_repairs_the_loop_set(tmp_path, monkeypatch):
     model = store.read_model(PROJECT, UNIT)
     assert model["state"] == "COMPLETED"
     assert model["validation"]["valid"] is True
-    assert [loop["id"] for loop in model["loops"]] == ["loop-1"]
-    assert [record["loop_id"] for record in store.read_loop_files(PROJECT, UNIT)] == ["loop-1"]
+    assert [threat["id"] for threat in model["threats"]] == ["threat-1"]
+    assert [record["threat_id"] for record in store.read_threat_files(PROJECT, UNIT)] == ["threat-1"]
 
 
-def test_a_late_lower_gate_write_on_a_completed_model_keeps_the_loop_files(tmp_path):
+def test_a_late_lower_gate_write_on_a_completed_model_keeps_the_threat_files(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     unit_name = "Service-catalogue-and-discovery"
     root = _threat_modeller_root(tmp_path)
-    loop_file = root / "produced" / unit_name / "loop-1.yaml"
-    before = loop_file.read_bytes()
+    threat_file = root / "produced" / unit_name / "threat-1.yaml"
+    before = threat_file.read_bytes()
 
     store.write_sections(
         PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
@@ -1476,4 +1477,4 @@ def test_a_late_lower_gate_write_on_a_completed_model_keeps_the_loop_files(tmp_p
     model = store.read_model(PROJECT, UNIT)
     assert model["state"] == "COMPLETED"  # the state never regresses
     assert model["technical_sharpening"]["data_flows"] == []  # content still merges
-    assert loop_file.read_bytes() == before  # the committed loop set is untouched
+    assert threat_file.read_bytes() == before  # the committed threat set is untouched

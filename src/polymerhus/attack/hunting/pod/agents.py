@@ -3,7 +3,7 @@
 The `pod_runner` (actor) is a pure ReAct plan designer: ONE `create_agent` turn
 per stretch, `tools=[exec, note]` (plus the config-gated `query_lightrag` tool),
 the P0-P3 plan as `system_prompt`,
-the consumed inbox delta as `new_messages` (D84-9/10/11) - the tool-call loop
+the consumed inbox delta as `new_messages` (D84-9/10/11) - the tool-call threat
 lives INSIDE `create_agent`, with the harness middleware owning G1/G4/O7
 (D84-22). Its final tool call at P3 space-exhaustion writes the consolidated
 `experiment_summary` note (D84-17/19). The `pod_triager` (critic) is a third-party
@@ -172,7 +172,7 @@ def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> Runn
 
 async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
     """The PRODUCTION Runner (D84-16/17/22/29): ONE stateful `create_agent`
-    ReAct turn per stretch - the tool-call loop lives INSIDE the agent, the graph
+    ReAct turn per stretch - the tool-call threat lives INSIDE the agent, the graph
     never interrupts per tool result. Reads the typed session + run-scoped
     harness (exec/store/log/variant/model_factory) from the D84-7 binding
     (`pod_session()` / `pod_harness()`), binds `tools=[exec, note]` (plus the
@@ -242,7 +242,7 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
     the verbatim P3 note + filtered triager context + memory guidance, D84-23).
     Bound tools: note read + (config-gated) query_lightrag (D84-27) - NEVER exec.
     Hard-fails on an unbound session/harness (D84-14); a FAILED turn degrades to
-    a safe honest terminal, never raises a DOMAIN failure into the loop - a
+    a safe honest terminal, never raises a DOMAIN failure into the threat - a
     provider failure propagates as the typed `ProviderUnavailableError` (#329)."""
     from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.context import _dicts_to_lc  # noqa: PLC0415

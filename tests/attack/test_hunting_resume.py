@@ -7,7 +7,7 @@ Two seams:
   disposition;
 - the runtime RESUME path: `start_hunting` re-entered with an existing run id
   (no re-freeze, re-entry at `intake_position`, adoption of committed models,
-  a halted run resuming dispatch only, and the run's own produced loops
+  a halted run resuming dispatch only, and the run's own produced threats
   dispatching while a foreign run's stay produced).
 
 The endpoint's HTTP mapping lives in `tests/project_management/test_hunting_api.py`.
@@ -29,7 +29,7 @@ from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from polymerhus.attack.hunting.threat_modeller import UnitOutcome
 from polymerhus.attack.hunting.threat_modeller_tools import ModellerTools
 
-from tests.hunting_fixtures import intake_unit, loop_row, produce_model
+from tests.hunting_fixtures import intake_unit, threat_row, produce_model
 
 NOW = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -40,9 +40,9 @@ UNIT_B = "GraphQLApi"
 UNIT_C = "RESTApi"
 FOREIGN_RUN = "foreign-run-0001"
 FOREIGN_UNIT = "Service:foreign"
-LOOP_A_DISPATCH = "Service-slug-a__loop-1"
-LOOP_B_DISPATCH = "GraphQLApi__loop-1"
-LOOP_C_DISPATCH = "RESTApi__loop-1"
+THREAT_A_DISPATCH = "Service-slug-a__threat-1"
+THREAT_B_DISPATCH = "GraphQLApi__threat-1"
+THREAT_C_DISPATCH = "RESTApi__threat-1"
 
 
 def test_a_stopped_run_is_resumable_immediately():
@@ -352,7 +352,7 @@ class _ResumePg:
 
 class _ResumeControl:
     """The session-capable control-plane fake: runs the started sessions as
-    tasks on the current loop and mirrors the registry through the live-task
+    tasks on the current threat and mirrors the registry through the live-task
     set. `live_extra` is a callable supplying PRE-REGISTERED live sessions (a
     crash-window session the resumed run must adopt, not re-dispatch)."""
 
@@ -488,7 +488,7 @@ def test_a_resumed_run_adopts_the_committed_models_and_recomputes_risk_total(
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_B, run_id=RUN,
-                  loops=[loop_row(likelihood="high")])
+                  threats=[threat_row(likelihood="high")])
     seen: list[str] = []
     dispatched: list[str] = []
 
@@ -502,16 +502,16 @@ def test_a_resumed_run_adopts_the_committed_models_and_recomputes_risk_total(
     assert fake.record["risk_total"] == 10
     assert [entry["unit_id"] for entry in fake.record["model_sums"]] == [
         UNIT_A, UNIT_B]
-    assert dispatched == [LOOP_B_DISPATCH]  # the adopted unit's loop dispatches
+    assert dispatched == [THREAT_B_DISPATCH]  # the adopted unit's threat dispatches
 
 
 def test_a_halted_run_resumes_dispatch_only(tmp_path, monkeypatch):
     """S1 7.5: a halted run resumes dispatch only - it models nothing more,
-    keeps its halt audit trail, and its produced loop file dispatches."""
+    keeps its halt audit trail, and its produced threat file dispatches."""
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_C, run_id=RUN,
-                  loops=[loop_row(likelihood="high")])
+                  threats=[threat_row(likelihood="high")])
     seen: list[str] = []
     dispatched: list[str] = []
 
@@ -521,23 +521,23 @@ def test_a_halted_run_resumes_dispatch_only(tmp_path, monkeypatch):
         threat=threat, hunter=hunter, seen=seen, dispatched=dispatched)
 
     assert seen == []  # the halted run never models another unit
-    assert dispatched == [LOOP_C_DISPATCH]  # ... it only resumes dispatch
-    assert threat.read_produced_loops(PROJECT) == []  # the loop was consumed
+    assert dispatched == [THREAT_C_DISPATCH]  # ... it only resumes dispatch
+    assert threat.read_produced_threats(PROJECT) == []  # the threat was consumed
     assert fake.record["halt"] is True
     assert fake.record["intake_position"] == 1
     assert fake.status == "complete"
 
 
-def test_only_the_resumed_runs_produced_loops_dispatch(tmp_path, monkeypatch):
-    """The surfer is run-scoped: the resumed run's own produced loop file
-    dispatches and moves, while a FOREIGN run's produced loop file stays
+def test_only_the_resumed_runs_produced_threats_dispatch(tmp_path, monkeypatch):
+    """The surfer is run-scoped: the resumed run's own produced threat file
+    dispatches and moves, while a FOREIGN run's produced threat file stays
     produced for its own run's surfer."""
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_A, run_id=RUN,
-                  loops=[loop_row(likelihood="high")])
+                  threats=[threat_row(likelihood="high")])
     produce_model(threat, project_id=PROJECT, unit_id=FOREIGN_UNIT,
-                  run_id=FOREIGN_RUN, loops=[loop_row(likelihood="high")])
+                  run_id=FOREIGN_RUN, threats=[threat_row(likelihood="high")])
     seen: list[str] = []
     dispatched: list[str] = []
 
@@ -546,31 +546,31 @@ def test_only_the_resumed_runs_produced_loops_dispatch(tmp_path, monkeypatch):
         record=_record(halt=True, crossing_unit=UNIT_A, blocked_unit=UNIT_B),
         threat=threat, hunter=hunter, seen=seen, dispatched=dispatched)
 
-    assert dispatched == [LOOP_A_DISPATCH]
-    remaining = threat.read_produced_loops(PROJECT)
+    assert dispatched == [THREAT_A_DISPATCH]
+    remaining = threat.read_produced_threats(PROJECT)
     assert [entry["run_id"] for entry in remaining] == [FOREIGN_RUN]
 
 
-def test_a_resumed_run_never_redispatches_a_live_loop(tmp_path, monkeypatch):
-    """Idempotency: a produced loop whose hunter session is ALREADY LIVE is
+def test_a_resumed_run_never_redispatches_a_live_threat(tmp_path, monkeypatch):
+    """Idempotency: a produced threat whose hunter session is ALREADY LIVE is
     adopted (the produced->consumed marker lands), never dispatched a second
     time - the crash window after admission cannot double-run a hunter."""
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_A, run_id=RUN,
-                  loops=[loop_row(likelihood="high")])
-    session_id = hunter_session_id(RUN, LOOP_A_DISPATCH)
+                  threats=[threat_row(likelihood="high")])
+    session_id = hunter_session_id(RUN, THREAT_A_DISPATCH)
 
     def _live_while_adopting():
         # The pre-registered session is live until the move lands; after the
         # admission, it completes like a real hunter and writes its zero-spec
         # terminal set (F-022). It reports live for the tick that writes the
-        # marker, then settles: the consumed loop was already read as recovered
+        # marker, then settles: the consumed threat was already read as recovered
         # in that tick, so it must never be re-dispatched.
-        if threat.read_produced_loops(PROJECT):
+        if threat.read_produced_threats(PROJECT):
             return {session_id}
-        if hunter.read_terminal_set(PROJECT, LOOP_A_DISPATCH) is None:
-            hunter.finalize_specs(PROJECT, LOOP_A_DISPATCH, run_id=RUN)
+        if hunter.read_terminal_set(PROJECT, THREAT_A_DISPATCH) is None:
+            hunter.finalize_specs(PROJECT, THREAT_A_DISPATCH, run_id=RUN)
             return {session_id}
         return set()
 
@@ -586,7 +586,7 @@ def test_a_resumed_run_never_redispatches_a_live_loop(tmp_path, monkeypatch):
 
     assert dispatched == []  # never a second hunter for a live dispatch
     assert session_id not in control.started  # the live session is never re-run
-    assert threat.read_produced_loops(PROJECT) == []  # the move completed
+    assert threat.read_produced_threats(PROJECT) == []  # the move completed
 
 
 def test_a_resumed_run_never_redispatches_a_live_pod(tmp_path, monkeypatch):
@@ -603,13 +603,13 @@ def test_a_resumed_run_never_redispatches_a_live_pod(tmp_path, monkeypatch):
         "provenance": {"web_vulnerability_class": "sqli"},
         "verification_symptoms": ["a foreign item renders"],
     }
-    hunter.write_specs(PROJECT, LOOP_A_DISPATCH, [spec])
+    hunter.write_specs(PROJECT, THREAT_A_DISPATCH, [spec])
     hunter.write_specs(
-        PROJECT, LOOP_A_DISPATCH, [{**spec, "status": "ratified"}])
-    session_id = pod_session_id(RUN, LOOP_A_DISPATCH, "sqli__blind__boolean")
+        PROJECT, THREAT_A_DISPATCH, [{**spec, "status": "ratified"}])
+    session_id = pod_session_id(RUN, THREAT_A_DISPATCH, "sqli__blind__boolean")
     control = _ResumeControl(live_extra=lambda: (
         {session_id}
-        if hunter.produced_spec_files(PROJECT, LOOP_A_DISPATCH) else set()))
+        if hunter.produced_spec_files(PROJECT, THREAT_A_DISPATCH) else set()))
     seen: list[str] = []
 
     _resume_run(
@@ -617,7 +617,7 @@ def test_a_resumed_run_never_redispatches_a_live_pod(tmp_path, monkeypatch):
         record=_record(halt=True, crossing_unit=UNIT_A, blocked_unit=UNIT_B),
         threat=threat, hunter=hunter, seen=seen, control=control)
 
-    assert hunter.produced_spec_files(PROJECT, LOOP_A_DISPATCH) == []
+    assert hunter.produced_spec_files(PROJECT, THREAT_A_DISPATCH) == []
     assert session_id not in control.started  # the live pod is never re-run
 
 
@@ -632,12 +632,12 @@ def test_the_intake_freeze_consumes_the_resume_decision(tmp_path, monkeypatch):
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_A,
-                  run_id="quota-producer", loops=[loop_row(likelihood="high")])
+                  run_id="quota-producer", threats=[threat_row(likelihood="high")])
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_B,
                   run_id="throttled-producer",
-                  loops=[loop_row(likelihood="high")])
+                  threats=[threat_row(likelihood="high")])
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_C,
-                  run_id="backoff-producer", loops=[loop_row(likelihood="high")])
+                  run_id="backoff-producer", threats=[threat_row(likelihood="high")])
     now = datetime.now(timezone.utc)
     fake = _ResumePg(
         {}, run_id="freeze-launch-run",

@@ -135,7 +135,7 @@ def _spec_with_typed_procedure() -> dict:
             "technology_misconfiguration": "the gateway trusts the client role",
             "pro_tips": "confirm the authenticated landing",
         },
-        "provenance": {"loop_id": "loop-1"},
+        "provenance": {"threat_id": "threat-1"},
     }
 
 

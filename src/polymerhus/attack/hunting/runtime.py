@@ -123,9 +123,9 @@ def _require_runtime():
 
 def hunting_control_plane_available() -> bool:
     """True once the control plane's `polymerhus.app.runtime` has landed (the
-    hunting LOOP exists to schedule real runs). The API's fail-closed gate: a
+    hunting THREAT exists to schedule real runs). The API's fail-closed gate: a
     real orchestration pass (LLM turns) must never be smuggled onto the uvicorn
-    request loop by an in-process fallback, so the launch surface 503s until
+    request threat by an in-process fallback, so the launch surface 503s until
     the control plane is present."""
     return _app_runtime() is not None
 
@@ -549,8 +549,8 @@ async def _run_intake(
     async def _write_record_if_changed() -> None:
         """Persist the record only when a fixed key moved (S2 9.2).
 
-        The unit loop writes the record after every unit, but a RESUME can
-        advance the state without a single loop iteration: its adoption may
+        The unit threat writes the record after every unit, but a RESUME can
+        advance the state without a single threat iteration: its adoption may
         recompute the total, adopt a model sum, cross the halt, or find the
         intake already exhausted. Without this write the row would keep the
         pre-crash record for a run that has moved on."""
@@ -637,7 +637,7 @@ async def _run_intake(
                 run_id, run.crossing_unit, run.blocked_unit,
             )
             break
-    # The loop's last iteration already wrote the record; this covers the run
+    # The threat's last iteration already wrote the record; this covers the run
     # that never entered it (an intake already exhausted, or a resume that
     # halted on adoption) and any post-loop state change.
     await _write_record_if_changed()
@@ -737,7 +737,7 @@ def report_dispatch_gap(
     """Log and return the one-line reason a run that PRODUCED models dispatched
     nothing, or None when there is no gap.
 
-    A produced loop file dispatches to the per-loop hunter session (S2 8.4); a
+    A produced threat file dispatches to the per-threat hunter session (S2 8.4); a
     run that produced models but dispatched nothing names the reason so an
     operator never reads the run's `complete` as "the modeller found nothing to
     hunt".
@@ -771,38 +771,38 @@ def report_dispatch_gap(
         pending = False
     if pending:
         return None
-    loops = _produced_loop_count(threat_store, project_id, run_id)
-    if loops:
+    threats = _produced_threat_count(threat_store, project_id, run_id)
+    if threats:
         reason = (
             f"{len(completed)} unit model(s) produced and NOTHING is "
-            f"dispatchable: {loops} produced loop file(s) stayed undispatched "
+            f"dispatchable: {threats} produced threat file(s) stayed undispatched "
             "(a stopped role or a refused admission left them produced); this "
             "run dispatches zero hunts"
         )
     else:
         reason = (
             f"{len(completed)} unit model(s) produced and NOTHING is "
-            "dispatchable: no dispatchable loop file was produced, and every "
+            "dispatchable: no dispatchable threat file was produced, and every "
             "model is decided; this run dispatches zero hunts"
         )
     logger.warning("hunting run %s: %s", run_id, reason)
     return reason
 
 
-def _produced_loop_count(threat_store: Any, project_id: str, run_id: str) -> int:
-    """The run's produced loop files, for the dispatch-gap line. Best-effort (a
+def _produced_threat_count(threat_store: Any, project_id: str, run_id: str) -> int:
+    """The run's produced threat files, for the dispatch-gap line. Best-effort (a
     read failure counts zero): the terminal path must never raise."""
     if threat_store is None:
         return 0
     try:
         return sum(
-            len(entry.get("loops") or ())
-            for entry in threat_store.read_produced_loops(project_id)
+            len(entry.get("threats") or ())
+            for entry in threat_store.read_produced_threats(project_id)
             if entry.get("run_id") == run_id
         )
     except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
         logger.warning(
-            "hunting run %s: the produced-loop count degraded (%s); reporting "
+            "hunting run %s: the produced-threat count degraded (%s); reporting "
             "zero (fail-open)", run_id, exc,
         )
         return 0
@@ -824,9 +824,9 @@ async def launch_modeller(
     launches"): ONE modelling pass over the run's INTAKE and NOTHING else - no
     run-scoped surfer, no dispatch, no `hunting_runs` row. It is the same pass
     body the whole-pipeline bootstrap schedules: the frozen intake's units are
-    modelled in order to COMPLETED and their produced loop files land in the
+    modelled in order to COMPLETED and their produced threat files land in the
     per-project threat model store. The launch deliberately runs no surfer, so
-    it dispatches nothing; the per-loop dispatch itself is live (T6 #379) and
+    it dispatches nothing; the per-threat dispatch itself is live (T6 #379) and
     belongs to the run-scoped surfer. The control plane schedules THIS coroutine
     under the ADR Q13 modeller session id (`hunting:<run_id>:threat-modeller`),
     so the per-session verbs (hold/resume/cancel, ADR Q13/Q17) address it like
@@ -965,7 +965,7 @@ def _cancel_run_sessions(run_id: str) -> None:
 async def _await_session_outcome(outcome) -> None:
     """Await one session's outcome regardless of its kind: an asyncio task or
     future is awaited directly; a `concurrent.futures.Future` (the real
-    `RuntimeManager.schedule` return) is wrapped onto the loop. `None` (the
+    `RuntimeManager.schedule` return) is wrapped onto the threat. `None` (the
     session was not admitted) awaits to nothing."""
     if outcome is None:
         return
@@ -1031,7 +1031,7 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     project's live read-only graph view, the real Kali-container exec seam
     (the pod's `default_exec_fn`, reused verbatim), and the always-bound
     `query_lightrag` KB tool (binds inside; as of #197 the
-    `HUNTING_LIGHTRAG_TOOL` gate is REMOVED). The harness consumes the loop
+    `HUNTING_LIGHTRAG_TOOL` gate is REMOVED). The harness consumes the threat
     payload end to end (T6 #379). Returns `(dispatch_fn, registry)`; the caller
     reaps the registry at the session's end."""
     from polymerhus.attack.hunting.read_only_graph import ReadOnlyGraphView
@@ -1107,7 +1107,7 @@ async def start_hunting(
     the run's OWN intake.
 
     Schedules nothing itself - the control plane (or the marshalling harness)
-    drives it onto the hunting loop. Sets the hunting module context for its
+    drives it onto the hunting threat. Sets the hunting module context for its
     full duration, enforces ONE live hunting run per project (refused with a
     `None` return on a second concurrent run), opens the `hunting_runs` row
     (`running`), schedules TWO sessions on the shared control plane - the
@@ -1121,7 +1121,7 @@ async def start_hunting(
     progressive halt), writing each unit's threat model through the store and
     the run record onto the run row. `failed` persists when a session was not
     admitted or a collaborator degrades. The run-scoped surfer dispatches one
-    hunter per produced loop file (the loop payload materialised at dispatch
+    hunter per produced threat file (the threat payload materialised at dispatch
     time, S2 8.2) and one pod per `ratified` spec through the mover, and the hunt
     sessions idle-loop over their inboxes (verdict handling stubbed, ADR Q16) -
     the whole pipeline is observable through this coroutine. T4b (#387) retired
@@ -1129,7 +1129,7 @@ async def start_hunting(
 
     The INTERLEAVE (S1 7.3) in the `parallel` sync mode: the pass and the
     surfer are independent sessions, so the surfer moves and dispatches produced
-    loop files while the pass models the next unit.
+    threat files while the pass models the next unit.
     The default `batched` mode and `serial` deliberately close that interleave:
     the whole risk budget is modelled first, then the run's queue is worked one
     phase at a time (ADR `hunting-pipeline-sync-adr.md`, the mode is frozen on
@@ -1143,11 +1143,11 @@ async def start_hunting(
     `risk_total`, and never re-sorts or re-freezes the intake. A halted record
     resumes as halted, so a resumed halted run dispatches and models nothing.
 
-    T6 (#379): the per-loop dispatch (a produced loop file -> a hunter session)
-    is live end to end - the production hunter harness consumes the loop payload
-    (S2 8.2), writes its spec set under the loop dispatch id and the surfer
+    T6 (#379): the per-threat dispatch (a produced threat file -> a hunter session)
+    is live end to end - the production hunter harness consumes the threat payload
+    (S2 8.2), writes its spec set under the threat dispatch id and the surfer
     dispatches one pod per `ratified` spec. `report_dispatch_gap` still logs the
-    one-line reason when a completed model produced loops but nothing dispatched.
+    one-line reason when a completed model produced threats but nothing dispatched.
 
     Fail-open: a collaborator failure (PG row, default tools, a session's
     admission, the run itself) degrades to a terminal status - this coroutine
@@ -1362,7 +1362,7 @@ async def start_hunting(
 
         # The latest run record the sync gate reads its queue tie-break from
         # (the intake order): updated by every `_write_run_record` (same worker
-        # loop, no lock).
+        # threat, no lock).
         run_record_cell: dict = dict(resume_record or {})
 
         async def _write_run_record(record: dict) -> None:
@@ -1450,7 +1450,7 @@ async def start_hunting(
             surfer_id = surfer_session_id(hunting_run_id)
             # #317: the modeller pass is gated on the modeller role state. A
             # stopped role does not launch the pass (the run still runs its
-            # surfer, so already-produced loop files can dispatch).
+            # surfer, so already-produced threat files can dispatch).
             # A pass session REFUSED by admission is different: the pre-change
             # rule holds - the run fails and the surfer is NOT started (a
             # surfer with no pass is never spun up).

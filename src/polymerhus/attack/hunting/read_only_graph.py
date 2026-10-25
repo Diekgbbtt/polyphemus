@@ -3,7 +3,7 @@
 The hunt-orchestrator as an AGENT is retired: the threat modeller
 (`threat_modeller.py`) is the hunt's reasoning pass and the run bootstrap
 (`runtime.start_hunting`) drives it unit by unit. The config family and the
-dispatch outcome retired in T6 (#379) with the hunter's loop-payload rework;
+dispatch outcome retired in T6 (#379) with the hunter's threat-payload rework;
 T10 (#383) removed the last planner-era aliases.
 
 T10b (#397) renamed this module from `hunt_orchestrator` to `read_only_graph`,

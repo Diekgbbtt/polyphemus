@@ -34,7 +34,7 @@ from polymerhus.attack.hunting.mover import (
     SPEC_DISPATCH_STATUS,
     ProducedItem,
     TestSpecItem,
-    ThreatLoopItem,
+    ThreatItem,
     threat_modeller_session_id,
 )
 from polymerhus.attack.hunting.threat_model import RISK_WEIGHTS, Likelihood
@@ -44,7 +44,7 @@ from polymerhus.attack.hunting.threat_model import RISK_WEIGHTS, Likelihood
 # then breaks the tie deterministically.
 UNKNOWN_INTAKE_POSITION = 1_000_000
 
-# The rank fallback for a dispatch id whose loop id is not `loop-<n>` (a
+# The rank fallback for a dispatch id whose threat id is not `threat-<n>` (a
 # malformed or foreign key): it sorts after every ranked hunt and never crashes
 # the decision.
 UNRANKED = 1 << 30
@@ -113,7 +113,7 @@ class BatchState:
     `phase` is `hunt` while the unit's hunter batch is still running,
     `pod` once the batch is terminal (batched), `serial` for the strict cursor
     view, and `done` once every member is finished. `hunts` is the unit's hunt
-    order (by loop rank) and `cursor` the first hunt that is not fully done;
+    order (by threat rank) and `cursor` the first hunt that is not fully done;
     `pods`/`pod_cursor` are the cursor hunt's spec stems and the first stem
     without a durable export.
     """
@@ -169,7 +169,7 @@ class PipelineSyncState:
 
 
 def unit_of_dispatch(dispatch_id: str) -> str:
-    """The unit directory a dispatch id belongs to: `<unit_name>__<loop_id>` ->
+    """The unit directory a dispatch id belongs to: `<unit_name>__<threat_id>` ->
     `<unit_name>`. The dispatch id is the store's own join, so the last `__`
     split is the exact inverse; a key without the separator is returned as-is
     (a foreign key never crashes the queue)."""
@@ -178,10 +178,10 @@ def unit_of_dispatch(dispatch_id: str) -> str:
 
 
 def unit_of_item(item: ProducedItem) -> str | None:
-    """The unit a produced item belongs to (the queue key). A loop item carries
-    its unit name directly; a spec item's hunt key (the loop dispatch id) is one
+    """The unit a produced item belongs to (the queue key). A threat item carries
+    its unit name directly; a spec item's hunt key (the threat dispatch id) is one
     level down from the unit."""
-    if isinstance(item, ThreatLoopItem):
+    if isinstance(item, ThreatItem):
         return item.unit_name
     if isinstance(item, TestSpecItem):
         return unit_of_dispatch(item.hunt_key)
@@ -189,12 +189,12 @@ def unit_of_item(item: ProducedItem) -> str | None:
 
 
 def hunt_rank(dispatch_id: str) -> int:
-    """The loop rank of a dispatch id (`<unit>__loop-<n>` -> n); unranked keys
+    """The threat rank of a dispatch id (`<unit>__threat-<n>` -> n); unranked keys
     sort last."""
-    loop_id = dispatch_id.rpartition("__")[2]
-    if loop_id.startswith("loop-"):
+    threat_id = dispatch_id.rpartition("__")[2]
+    if threat_id.startswith("threat-"):
         try:
-            return int(loop_id[len("loop-"):])
+            return int(threat_id[len("threat-"):])
         except ValueError:
             return UNRANKED
     return UNRANKED
@@ -261,7 +261,7 @@ def decide(
     `parallel` admits every item. `batched`/`serial` hold everything while the
     modeller pass is live, then work the queue one unit at a time:
     `batched` admits the current unit's whole hunter batch, and its pods only
-    once no loop file and no mid-graph hunt remains; `serial` admits only the
+    once no threat file and no mid-graph hunt remains; `serial` admits only the
     cursor hunt (or, once it is terminal, its next pod in stem order), and only
     after every earlier hunt is fully done (terminal AND all its pods
     exported).
@@ -294,14 +294,14 @@ def batch_state(
     unit_items = [item for item in items if unit_of_item(item) == current]
     if mode is SyncMode.BATCHED:
         hunts_pending = (
-            any(isinstance(item, ThreatLoopItem) for item in unit_items)
+            any(isinstance(item, ThreatItem) for item in unit_items)
             or any(
                 unit_of_dispatch(hunt) == current
                 for hunt in facts.hunts_in_graph)
         )
         hunts = tuple(sorted(
             (item.dispatch_id for item in unit_items
-             if isinstance(item, ThreatLoopItem)),
+             if isinstance(item, ThreatItem)),
             key=hunt_rank,
         ))
         return BatchState(
@@ -310,9 +310,9 @@ def batch_state(
             hunts=hunts,
         )
 
-    loop_hunts = {
+    threat_hunts = {
         item.dispatch_id for item in unit_items
-        if isinstance(item, ThreatLoopItem)
+        if isinstance(item, ThreatItem)
     }
     spec_hunts = {
         item.hunt_key for item in unit_items if isinstance(item, TestSpecItem)
@@ -326,9 +326,9 @@ def batch_state(
         if unit_of_dispatch(hunt) == current
     }
     hunts = tuple(sorted(
-        loop_hunts | spec_hunts | graph_hunts | pod_hunts, key=hunt_rank))
+        threat_hunts | spec_hunts | graph_hunts | pod_hunts, key=hunt_rank))
     cursor = next(
-        (hunt for hunt in hunts if not _hunt_done(hunt, loop_hunts, facts)),
+        (hunt for hunt in hunts if not _hunt_done(hunt, threat_hunts, facts)),
         None,
     )
     if cursor is None:
@@ -368,7 +368,7 @@ def _decide_batched(
     if state.phase == "hunt":
         return frozenset(
             item.message_id for item in unit_items
-            if isinstance(item, ThreatLoopItem))
+            if isinstance(item, ThreatItem))
     return frozenset(
         item.message_id for item in unit_items
         if isinstance(item, TestSpecItem))
@@ -377,20 +377,20 @@ def _decide_batched(
 def _decide_serial(
     items: Sequence[ProducedItem], current: str, facts: SyncFacts,
 ) -> frozenset[str]:
-    """The cursor: the pending loop file of the cursor hunt is the hunter;
+    """The cursor: the pending threat file of the cursor hunt is the hunter;
     once that hunt is terminal, its next pod in stem order; a hunt still
     mid-graph admits nothing."""
     state = batch_state(SyncMode.SERIAL, current, items, facts)
     if state.cursor is None:
         return frozenset()
     cursor = state.cursor
-    loop_item = next(
+    threat_item = next(
         (item for item in items
-         if isinstance(item, ThreatLoopItem) and item.dispatch_id == cursor),
+         if isinstance(item, ThreatItem) and item.dispatch_id == cursor),
         None,
     )
-    if loop_item is not None:
-        return frozenset({loop_item.message_id})
+    if threat_item is not None:
+        return frozenset({threat_item.message_id})
     if cursor in facts.hunts_in_graph:
         # The hunt is still authoring its spec set: no pod yet.
         return frozenset()
@@ -410,13 +410,13 @@ def _decide_serial(
 
 
 def _hunt_done(
-    hunt: str, loop_hunts: set[str], facts: SyncFacts,
+    hunt: str, threat_hunts: set[str], facts: SyncFacts,
 ) -> bool:
-    """A hunt is fully done when it has no pending loop file, is not mid-graph,
+    """A hunt is fully done when it has no pending threat file, is not mid-graph,
     has no executing pod, and every one of its specs carries a terminal
     export. An empty spec set (a zero-spec hunt) is therefore done as soon as
     the hunt itself is terminal."""
-    if hunt in loop_hunts:
+    if hunt in threat_hunts:
         return False
     if hunt in facts.hunts_in_graph:
         return False
@@ -434,22 +434,22 @@ def _hunt_done(
     )
 
 
-def _loop_weight(loop: Any) -> int:
-    """One model loop's combined risk weight.
+def _threat_weight(threat: Any) -> int:
+    """One model threat's combined risk weight.
 
-    The persisted loop carries the store-computed `risk`; a legacy or foreign
+    The persisted threat carries the store-computed `risk`; a legacy or foreign
     model without it falls back to the likelihood weight. An unknown likelihood
     contributes nothing (never a crash - the queue still runs)."""
-    if not isinstance(loop, Mapping):
+    if not isinstance(threat, Mapping):
         return 0
-    raw = loop.get("risk")
+    raw = threat.get("risk")
     if raw is not None:
         try:
             return int(raw)
         except (TypeError, ValueError):
             return 0
     try:
-        return RISK_WEIGHTS[Likelihood(loop.get("likelihood"))]
+        return RISK_WEIGHTS[Likelihood(threat.get("likelihood"))]
     except (ValueError, KeyError):
         return 0
 
@@ -557,7 +557,7 @@ class RunSyncGate:
         self, items: Sequence[ProducedItem], facts: SyncFacts,
     ) -> tuple[UnitMeta, ...]:
         """The unit metas for the tick: the item units plus the units only
-        visible through a live pod or a mid-graph hunt (a consumed loop search
+        visible through a live pod or a mid-graph hunt (a consumed threat search
         finds no produced item for it). The per-unit metadata (risk) is cached
         for the run's lifetime - models freeze once the modeller settles - and
         a session-only unit's unit id is recovered from its stored spec body."""
@@ -608,7 +608,7 @@ class RunSyncGate:
 
     def _meta_for(self, item: ProducedItem, unit_name: str) -> UnitMeta:
         unit_id = (
-            item.unit_id if isinstance(item, ThreatLoopItem)
+            item.unit_id if isinstance(item, ThreatItem)
             else _spec_unit_id(item.spec)
         )
         cached = self.state.cached(unit_name)
@@ -622,7 +622,7 @@ class RunSyncGate:
         )
 
     def _risk(self, unit_id: str) -> int:
-        """The unit's risk contribution: the summed loop likelihood weights of
+        """The unit's risk contribution: the summed threat likelihood weights of
         its model document (the run record's `model_sum` figure). Fail-open:
         an unreadable or unknown model contributes zero."""
         if not unit_id or self.threat_store is None:
@@ -631,8 +631,8 @@ class RunSyncGate:
             model = self.threat_store.read_model(self.project_id, unit_id)
         except Exception:  # noqa: BLE001 - fail-open: the queue still runs
             return 0
-        loops = (model or {}).get("loops") or ()
-        return sum(_loop_weight(loop) for loop in loops)
+        threats = (model or {}).get("threats") or ()
+        return sum(_threat_weight(threat) for threat in threats)
 
     def _intake_position(self, unit_id: str) -> int:
         order = self.intake_order
@@ -722,7 +722,7 @@ class RunSyncGate:
         for item in items:
             if unit_of_item(item) != current:
                 continue
-            if isinstance(item, ThreatLoopItem):
+            if isinstance(item, ThreatItem):
                 hunts.add(item.dispatch_id)
             elif isinstance(item, TestSpecItem):
                 hunts.add(item.hunt_key)
@@ -867,7 +867,7 @@ def hunting_artifacts_terminal(
 
     Current-run attribution is explicit: a hunt belongs to the run when its
     terminal marker names the run, when one of its specs carries the run id, or
-    when a threat-model loop of the run names its dispatch key. Foreign-run and
+    when a threat-model threat of the run names its dispatch key. Foreign-run and
     legacy unattributed hunts are ignored, never treated as this run's work.
     """
     gate = RunSyncGate(
@@ -883,8 +883,8 @@ def hunting_artifacts_terminal(
 
     if threat_store is not None:
         for reader_name, side in (
-            ("read_produced_loops", "produced"),
-            ("read_consumed_loops", "consumed"),
+            ("read_produced_threats", "produced"),
+            ("read_consumed_threats", "consumed"),
         ):
             reader = getattr(threat_store, reader_name, None)
             if reader is None:
@@ -898,16 +898,16 @@ def hunting_artifacts_terminal(
                 if str(entry.get("run_id") or "") != run_id:
                     continue
                 unit_name = str(entry.get("unit_name") or "")
-                for malformed in entry.get("malformed_loops") or ():
-                    loop_id = str(malformed.get("loop_id") or "")
-                    if loop_id:
-                        current_hunts.add(f"{unit_name}__{loop_id}")
+                for malformed in entry.get("malformed_threats") or ():
+                    threat_id = str(malformed.get("threat_id") or "")
+                    if threat_id:
+                        current_hunts.add(f"{unit_name}__{threat_id}")
                         reasons.append(
-                            f"{unit_name}__{loop_id}: malformed loop body")
-                for loop in entry.get("loops") or ():
-                    loop_id = str(loop.get("loop_id") or "")
-                    if loop_id:
-                        current_hunts.add(f"{unit_name}__{loop_id}")
+                            f"{unit_name}__{threat_id}: malformed threat body")
+                for threat in entry.get("threats") or ():
+                    threat_id = str(threat.get("threat_id") or "")
+                    if threat_id:
+                        current_hunts.add(f"{unit_name}__{threat_id}")
 
     if hunter_store is None:
         return False, ("hunter store unavailable",)

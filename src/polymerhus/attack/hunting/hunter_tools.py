@@ -1,4 +1,4 @@
-"""The hunter's tool surface (S3 8.7, T6 #379): the loop-driven hunter's tools.
+"""The hunter's tool surface (S3 8.7, T6 #379): the threat-driven hunter's tools.
 
 The surface replicates the orchestrator's minimalised tool contract
 (`docs/design/hunting-orchestrator-candidates-rewrite-spec.md` 3.4): `hunts_store`
@@ -18,8 +18,8 @@ Contract + degradation (spec 5, spec 9):
   its `status` (`hypothesised | ratified | dropped`) and the ordered
   `discriminators`; the store derives `<class>__<value>__<value>`.
   A duplicate identity inside the set is the denoted `duplicate_spec` dedup
-  signal the model interprets. Both tools are BOUND to the hunt's OWN loop
-  dispatch id (`hunt_key` = `<unit_name>__<loop_id>`, S3 8.9 - never a request
+  signal the model interprets. Both tools are BOUND to the hunt's OWN threat
+  dispatch id (`hunt_key` = `<unit_name>__<threat_id>`, S3 8.9 - never a request
   field) with optional filters/projection on the read, never the whole
   surface. Reads degrade to an empty set on failure (O4); genuine write
   failures raise to the harness, which warns and keeps serving (O3).
@@ -156,9 +156,9 @@ ExecFn = Callable[[str, int], ExecResult]
 # --- the harness-bound hunt key (S3 8.9, supersedes the #298 config key) ------
 
 # The hunt's own memory identity is NOT a request field: it is BOUND at the
-# tool/handle construction (the harness holds the loop payload at dispatch) so
-# the hunter's store tools can only ever address the hunt's own loop. The key is
-# the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9). The model authors each
+# tool/handle construction (the harness holds the threat payload at dispatch) so
+# the hunter's store tools can only ever address the hunt's own threat. The key is
+# the threat dispatch id `<unit_name>__<threat_id>` (S3 8.9). The model authors each
 # spec's `discriminators` (the derived file-name identity instances) but never
 # the destination hunt key. A tool constructed without a bound
 # key degrades to a denoted invalid_args, never a silent degenerate path.
@@ -275,7 +275,7 @@ class SpecWrite(BaseModel):
                     "against it.")
     provenance: SpecProvenance = Field(
         default_factory=SpecProvenance,
-        description="Optional: the typed dispatch provenance (loop_id, unit_id, "
+        description="Optional: the typed dispatch provenance (threat_id, unit_id, "
                     "the two classes, baseline_ref, source_recon_refs, "
                     "assumption_ref, playbook).")
     merged_from: list[str] = Field(
@@ -418,9 +418,9 @@ class HuntsStoreArgs(BaseModel):
     hunt finalizes with no spec. A write after finalize is rejected.
 
     `read` filters by optional `statuses`/`attributes`, never the whole surface
-    (spec 5). The hunt's OWN loop dispatch id (`hunt_key`,
-    `<unit_name>__<loop_id>`, S3 8.9) is BOUND at the tool construction - it is
-    never a request field, so the hunter can only address its own loop.
+    (spec 5). The hunt's OWN threat dispatch id (`hunt_key`,
+    `<unit_name>__<threat_id>`, S3 8.9) is BOUND at the tool construction - it is
+    never a request field, so the hunter can only address its own threat.
 
     The authored spec body is the reduced D4 surface at every status (S3 8.6).
     Its `target_identity` is the target's identity object - `{"url": <base
@@ -578,7 +578,7 @@ class HuntsStoreTool(StoreToolBase):
         self._project_id = project_id
         self._hunt_key = hunt_key
         self._run_id = run_id
-        # The symbolic target identity: bound at dispatch from the loop payload
+        # The symbolic target identity: bound at dispatch from the threat payload
         # and the project's canonical origin, so the hunter never authors it.
         self._target_identity = target_identity
         self.description = append_conciseness_directive(self.description)
@@ -770,7 +770,7 @@ class HuntsStoreTool(StoreToolBase):
 
 
 _NOTES_DESCRIPTION = append_conciseness_directive((
-    "The hunt's notes seam, bound to THIS hunt's loop. Commands: read / "
+    "The hunt's notes seam, bound to THIS hunt's threat. Commands: read / "
     "write.\n"
     "write sets command=\"write\"; `action` is append | update | delete. "
     "Supply `note_name`, `kind` (hypothesis_refusal | "
@@ -786,7 +786,7 @@ class HunterMemoryNotesHandle:
     """The hunter seam's store handle for the shared `notes` tool.
 
     It owns the `notes.yaml` destination (via `HunterMemoryStore`) and the
-    hunt's OWN loop dispatch id, BOUND at construction (S3 8.9). The shared
+    hunt's OWN threat dispatch id, BOUND at construction (S3 8.9). The shared
     algorithm never sees a path or a store: the destination is derived from
     THIS handle, never a request field."""
 
@@ -881,7 +881,7 @@ def notes_tool_for(*, store: HunterMemoryStore | None = None,
                    hunt_key: str = "") -> StoreNotesTool:
     """The production builder for the hunter's bound `notes` tool: the shared
     `build_notes_tool` over the hunter's store handle. The `notes.yaml`
-    destination and the hunt's own loop dispatch id are derived from the
+    destination and the hunt's own threat dispatch id are derived from the
     handle, never a request field."""
     return build_notes_tool(
         **_hunter_notes_kwargs(HunterMemoryNotesHandle(store, project_id, hunt_key))
@@ -944,7 +944,7 @@ class KbQueryTool(BaseTool):
         return {
             "schema_version": "lightrag-answer/v2",
             "scenario_id": spec.scenario_id,
-            "summary": "kb_query degraded - grounded on the loop payload alone",
+            "summary": "kb_query degraded - grounded on the threat payload alone",
             "ontology_explanations": [],
             "provenance_references": [],
             "knowledge_gaps": [f"knowledge base unavailable ({reason})"],
@@ -1202,7 +1202,7 @@ def build_hunter_tools(
 
     `store` is the per-project `HunterMemoryStore` and `project_id` the hunt's
     project (both bound here - the tool surface is per-hunt); `hunt_key` is the
-    hunt's OWN loop dispatch id (`<unit_name>__<loop_id>`, S3 8.9), BOUND here
+    hunt's OWN threat dispatch id (`<unit_name>__<threat_id>`, S3 8.9), BOUND here
     (the harness holds it at dispatch, so it is never a request field);
     `graph_view_fn` / `kb_fn` / `exec_fn` are the injected seam bodies (each
     absent degrades fail-open). The suite pair (`skill_list` / `skill_load`,

@@ -3,7 +3,7 @@ pass (retired from the planner in T2b, #386).
 
 The coupled gap to the parsing-error fix: when turns keep returning a
 no-decision outcome, the pass used to fail-open each state and move on at full
-speed, so a poisoned actor thread became a hot loop. The breaker counts
+speed, so a poisoned actor thread became a hot threat. The breaker counts
 CONSECUTIVE no-decision turn outcomes (reset on any real gate write), applies a
 bounded exponential backoff, and aborts the pass with a typed,
 operator-visible failure after K - without ever fabricating a model below the
@@ -47,7 +47,7 @@ def _gate_writer(turn, store):
         notes.invoke({
             "cmd": "write", "option": "append",
             "note_name": "wellformedness", "kind": "wellformedness",
-            "body": "every loop checked",
+            "body": "every threat checked",
         })
         from polymerhus.attack.hunting.threat_model import ModelState
         return tool.invoke({

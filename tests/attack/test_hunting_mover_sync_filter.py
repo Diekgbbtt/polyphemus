@@ -67,11 +67,11 @@ def test_pre_filter_holding_every_item_leaves_it_produced(tmp_path):
     assert report.dispatched == 0
     assert report.moved == 0
     assert control.calls == []
-    # The loop file is still produced: the quiesce read still counts the work.
+    # The threat file is still produced: the quiesce read still counts the work.
     threat, _hunter = stores
     assert any(
         entry.get("run_id") == RUN
-        for entry in threat.read_produced_loops(PROJECT)
+        for entry in threat.read_produced_threats(PROJECT)
     )
 
 
@@ -97,16 +97,16 @@ def test_pre_filter_admitting_the_item_dispatches_and_moves_normally(tmp_path):
     assert len(control.calls) == 1
     assert not any(
         entry.get("run_id") == RUN
-        for entry in threat.read_produced_loops(PROJECT)
+        for entry in threat.read_produced_threats(PROJECT)
     )
 
 
 # --- batched: the low-tier sequencing must not order a batch ---------------------
 
 
-def _model_with_loops(threat, unit_id, loops):
+def _model_with_threats(threat, unit_id, threats):
     produce_model(
-        threat, project_id=PROJECT, unit_id=unit_id, run_id=RUN, loops=loops,
+        threat, project_id=PROJECT, unit_id=unit_id, run_id=RUN, threats=threats,
     )
 
 
@@ -122,28 +122,28 @@ def _ratified_spec(hunt: str) -> dict:
     }
 
 
-def test_batched_admits_a_low_loop_named_by_another_units_high_loop(tmp_path):
-    """The batch is the unit's WHOLE loop set (ADR, section 2, `batched`).
+def test_batched_admits_a_low_threat_named_by_another_units_high_threat(tmp_path):
+    """The batch is the unit's WHOLE threat set (ADR, section 2, `batched`).
 
-    The S2 8.3 low-tier sequencing is subsumed in `batched`: a high loop file
-    produced for a LATER unit must never hold the current unit's low loop. Held
-    forever, that low loop would also keep the batched gate from ever leaving
-    the hunt phase - and the run would wedge on a produced loop no unit could
+    The S2 8.3 low-tier sequencing is subsumed in `batched`: a high threat file
+    produced for a LATER unit must never hold the current unit's low threat. Held
+    forever, that low threat would also keep the batched gate from ever leaving
+    the hunt phase - and the run would wedge on a produced threat no unit could
     consume.
     """
     from polymerhus.attack.hunting.pipeline_sync import RunSyncGate, SyncMode
-    from tests.hunting_fixtures import loop_row
+    from tests.hunting_fixtures import threat_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    _model_with_loops(threat, UNIT, [
-        loop_row(likelihood="high"),
-        loop_row(likelihood="low"),
+    _model_with_threats(threat, UNIT, [
+        threat_row(likelihood="high"),
+        threat_row(likelihood="low"),
     ])
-    # A later unit with a high loop: risk 3 against the current unit's 4, so
-    # the current unit stays first and the later loop stays produced.
-    _model_with_loops(threat, "Service:later", [loop_row(likelihood="high")])
-    hunt = "Service-catalogue-and-discovery__loop-1"
+    # A later unit with a high threat: risk 3 against the current unit's 4, so
+    # the current unit stays first and the later threat stays produced.
+    _model_with_threats(threat, "Service:later", [threat_row(likelihood="high")])
+    hunt = "Service-catalogue-and-discovery__threat-1"
     hunter.write_specs(
         PROJECT, hunt,
         [{**_ratified_spec(hunt), "status": "hypothesised"}],
@@ -175,21 +175,21 @@ def test_batched_admits_a_low_loop_named_by_another_units_high_loop(tmp_path):
         )
 
     first = _tick_once()
-    # The WHOLE unit batch: the high loop AND the low loop dispatch together,
-    # even though the later unit's high loop is still produced.
+    # The WHOLE unit batch: the high threat AND the low threat dispatch together,
+    # even though the later unit's high threat is still produced.
     assert first.dispatched == 2
-    assert any(call.endswith("loop-1") for call in control.calls)
-    assert any(call.endswith("loop-2") for call in control.calls)
+    assert any(call.endswith("threat-1") for call in control.calls)
+    assert any(call.endswith("threat-2") for call in control.calls)
     # The pod phase waits for the batch: the spec stays produced.
     assert [call for call in control.calls if ":pod:" in call] == []
     assert hunter.read_spec(
         PROJECT, hunt, "spec__f__keep", side="produced") is not None
 
-    # Close both hunts so the F-022 consumed-loop recovery does not re-offer
+    # Close both hunts so the F-022 consumed-threat recovery does not re-offer
     # them; the batch is then done and the pod may start.
     hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
     hunter.finalize_specs(
-        PROJECT, "Service-catalogue-and-discovery__loop-2", run_id=RUN)
+        PROJECT, "Service-catalogue-and-discovery__threat-2", run_id=RUN)
 
     second = _tick_once()
     assert second.dispatched == 1
@@ -216,20 +216,20 @@ def test_tier_sequencing_applies_to_parallel_and_serial_only():
 def test_run_work_remaining_counts_a_held_low_when_sequencing_is_off(tmp_path):
     """`batched` quiesce reads the low as work: the tier filter must not hide it.
 
-    With the tier ordering on, a live higher-tier hunter holds the low loop and
+    With the tier ordering on, a live higher-tier hunter holds the low threat and
     the read reports no work; a batched run releases it, so its quiesce must
     keep counting it.
     """
     from polymerhus.attack.hunting.surfer import run_work_remaining
-    from tests.hunting_fixtures import loop_row
+    from tests.hunting_fixtures import threat_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    _model_with_loops(threat, UNIT, [loop_row(likelihood="low")])
+    _model_with_threats(threat, UNIT, [threat_row(likelihood="low")])
 
     kwargs = dict(
         threat_store=threat, hunter_store=hunter,
-        live_loop_likelihoods={"hunting:run-1:hunt:other__loop-1": "high"},
+        live_threat_buckets={"hunting:run-1:hunt:other__threat-1": "high"},
     )
     assert run_work_remaining(PROJECT, RUN, **kwargs) is False
     assert run_work_remaining(PROJECT, RUN, sequence_tiers=False, **kwargs) is True

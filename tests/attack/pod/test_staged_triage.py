@@ -30,7 +30,7 @@ SEMANTIC_SPEC = {
     "verification_symptoms": ["reflects the injected marker"],
     "assumptions": ["the session cookie is the only auth factor"],
     "rationale": "reflected XSS on the search field",
-    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+    "provenance": {"threat_id": "threat-1", "unit_id": "service:web:soupmarket",
                    "canonical_class": "XSS", "web_vulnerability_class": "xss"},
 }
 

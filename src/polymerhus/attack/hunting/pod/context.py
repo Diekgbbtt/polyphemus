@@ -59,7 +59,7 @@ def _skill_concretised_procedure_context(spec: dict) -> str:
     absent object is a RECORDED GAP: the diff has no material and no
     variant basis is derivable. An empty section is a SKIPPED class, not a
     coverage gap (T10 H1): there is no authored procedure to execute or cover,
-    so the diff passes over it and never loops on it."""
+    so the diff passes over it and never threats on it."""
     procedure = skill_concretised_procedure_from_spec(spec)
     header = "## Skill procedure (target-specific concretisation)"
     if procedure is None:

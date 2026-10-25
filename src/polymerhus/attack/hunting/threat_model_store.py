@@ -1,19 +1,19 @@
 """The per-project unit threat model store (S2 4, 5, and 10; T1 #374).
 
-One model document per discretely testable L1 unit, plus one loop file per
-dispatchable loop, under the project's threat-modeller bucket:
+One model document per discretely testable L1 unit, plus one threat file per
+dispatchable threat, under the project's threat-modeller bucket:
 
     data/<project_id>/hunting/threat_modeller/
       notes.yaml                       (bounded episodic notes)
       produced/<unit_name>/
         <unit_name>.yaml               (the model document; the commit marker)
-        loop-<rank>.yaml               (one per non-`none` loop, at COMPLETED)
+        threat-<rank>.yaml               (one per non-`none` threat, at COMPLETED)
       consumed/<unit_name>/            (the mover's target; at-least-once)
       abandoned/<unit_name>/           (a degraded or invalid model)
 
 `<unit_name>` sanitises `:` and `/` to `-`. The store OWNS every derived
-symbol (S2 10.2): the unit directory, the model file name, the loop file name,
-the loop id, the dispatch id `<unit_name>__<loop_id>`, and the note key prefix.
+symbol (S2 10.2): the unit directory, the model file name, the threat file name,
+the threat id, the dispatch id `<unit_name>__<threat_id>`, and the note key prefix.
 The model id is the unit id and stays authoritative.
 
 Write contract:
@@ -25,10 +25,10 @@ Write contract:
 - Every write parses the merged document as `PartialThreatModel`; an unknown
   field or a malformed section is rejected loudly. No semantic gate runs at an
   intermediate gate.
-- The COMPLETED write (S2 4.3, 5.6) normalises the loops, computes the
-  `risk_profile`, runs the non-blocking completion checker, writes the loop
+- The COMPLETED write (S2 4.3, 5.6) normalises the threats, computes the
+  `risk_profile`, runs the non-blocking completion checker, writes the threat
   files first, then commits the model document. A gate write below COMPLETED
-  deletes stale produced loop files (crash repair); the next COMPLETED write
+  deletes stale produced threat files (crash repair); the next COMPLETED write
   rewrites the whole set.
 - A move-aware write (S2 4.5): a write whose identity already lives in
   `consumed/` is a no-op success returning the consumed path. The store never
@@ -42,7 +42,7 @@ Write contract:
   never a suffix (which would fork one unit into two directories) and never a
   clobber (the identity is unknown).
 - The notes file uses the shared bounded whole-file primitive (`#341`); the
-  model and loop files are single-model files and are not bounded records.
+  model and threat files are single-model files and are not bounded records.
 - Every whole-file write routes through the shared atomic primitive (`#340`),
   so a killed write leaves the previous complete file.
 
@@ -83,13 +83,13 @@ from .threat_model import (
     UnitThreatModel,
     check_completion,
     compute_risk_profile,
-    normalise_loops,
+    normalise_threats,
     unit_kind_from_unit_id,
 )
 
 logger = logging.getLogger(__name__)
 
-# The model directories (S2 4.2). A loop file lives only in produced/ or
+# The model directories (S2 4.2). A threat file lives only in produced/ or
 # consumed/; abandoned/ holds the whole unit directory the harness archives.
 _FAMILIES = ("produced", "consumed", "abandoned")
 _READ_FAMILIES = ("produced", "consumed")
@@ -139,32 +139,32 @@ def collision_suffix(unit_id: str) -> str:
     return hashlib.sha256(unit_id.encode("utf-8")).hexdigest()[:8]
 
 
-def dispatch_id(unit_name: str, loop_id: str) -> str:
-    """The loop file's dispatch identity: `<unit_name>__<loop_id>` (S2 8.1)."""
-    return f"{unit_name}__{loop_id}"
+def dispatch_id(unit_name: str, threat_id: str) -> str:
+    """The threat file's dispatch identity: `<unit_name>__<threat_id>` (S2 8.1)."""
+    return f"{unit_name}__{threat_id}"
 
 
-def loop_file_name(loop_id: str) -> str:
-    """The loop file name: `loop-<rank>.yaml` (S2 4.2), derived from the id."""
-    return f"{loop_id}.yaml"
+def threat_file_name(threat_id: str) -> str:
+    """The threat file name: `threat-<rank>.yaml` (S2 4.2), derived from the id."""
+    return f"{threat_id}.yaml"
 
 
-# The store-owned loop id form; a caller-supplied key that is not one is a
+# The store-owned threat id form; a caller-supplied key that is not one is a
 # coded rejection (the derived-symbol discipline).
-_LOOP_ID_RE = re.compile(r"loop-\d+")
+_THREAT_ID_RE = re.compile(r"threat-\d+")
 
 
-def is_loop_id(value: Any) -> bool:
-    """True for a store-owned loop id (`loop-<rank>`, S2 10.2). The ONE form
+def is_threat_id(value: Any) -> bool:
+    """True for a store-owned threat id (`threat-<rank>`, S2 10.2). The ONE form
     check: the store's write keys and the mover's dispatch validity predicate
-    both read it, so a loop id cannot mean two things."""
-    return isinstance(value, str) and _LOOP_ID_RE.fullmatch(value) is not None
+    both read it, so a threat id cannot mean two things."""
+    return isinstance(value, str) and _THREAT_ID_RE.fullmatch(value) is not None
 
 
-def _loop_rank(stem: str) -> int:
-    """The numeric rank of a `loop-<rank>` file stem; a non-numeric stem sorts
-    first (it can never be a store-written loop file)."""
-    suffix = stem.removeprefix("loop-")
+def _threat_rank(stem: str) -> int:
+    """The numeric rank of a `threat-<rank>` file stem; a non-numeric stem sorts
+    first (it can never be a store-written threat file)."""
+    suffix = stem.removeprefix("threat-")
     return int(suffix) if suffix.isdigit() else 0
 
 
@@ -431,16 +431,16 @@ class ThreatModelStore(BoundedRecordStore):
         model = self.read_model(project_id, unit_id)
         return model.get(section) if model is not None else None
 
-    def read_loop_files(self, project_id: str, unit_id: str) -> list[dict]:
-        """The unit's loop files in rank order: produced/ first, then
+    def read_threat_files(self, project_id: str, unit_id: str) -> list[dict]:
+        """The unit's threat files in rank order: produced/ first, then
         consumed/. Returns [] unless the model is `COMPLETED` AND
-        `validation.valid` - S2 4.3: a loop file is never read for a model
-        whose state is not COMPLETED, so the crash window (loop files written,
+        `validation.valid` - S2 4.3: a threat file is never read for a model
+        whose state is not COMPLETED, so the crash window (threat files written,
         the model document not yet committed) never surfaces as work. The
         invalidity gate repeats the one consumability predicate (S2 10.5), so
         an invalid COMPLETED model's files are never dispatched. A missing unit
-        or a zero-loop model yields [] - a valid empty result, never a failure.
-        A malformed loop record is skipped fail-open (T4 owns the dispatch
+        or a zero-threat model yields [] - a valid empty result, never a failure.
+        A malformed threat record is skipped fail-open (T4 owns the dispatch
         refuse-and-log rule)."""
         with self._lock_for(project_id):
             for family in _READ_FAMILIES:
@@ -452,10 +452,10 @@ class ThreatModelStore(BoundedRecordStore):
                     return []
                 directory = path.parent
                 records: list[dict] = []
-                for loop_path in sorted(
-                    directory.glob("loop-*.yaml"), key=lambda item: _loop_rank(item.stem)
+                for threat_path in sorted(
+                    directory.glob("threat-*.yaml"), key=lambda item: _threat_rank(item.stem)
                 ):
-                    record = self._load_raw(loop_path)
+                    record = self._load_raw(threat_path)
                     if record is not None:
                         records.append(record)
                 return records
@@ -474,19 +474,19 @@ class ThreatModelStore(BoundedRecordStore):
             and validation.get("valid") is True
         )
 
-    def consume_loop(self, project_id: str, unit_id: str, loop_id: str) -> bool:
-        """Move one produced loop file to consumed/ - the single-owner
+    def consume_threat(self, project_id: str, unit_id: str, threat_id: str) -> bool:
+        """Move one produced threat file to consumed/ - the single-owner
         produced-to-consumed transition of the mover (S2 8.4). True when the
-        loop file now lives in consumed/ (moved now, or already moved by an
-        earlier tick - at-least-once). False when no such loop file exists in
-        either side. The model document moves with its LAST loop file: when no
-        produced loop file remains, a consumable model document is moved too.
+        threat file now lives in consumed/ (moved now, or already moved by an
+        earlier tick - at-least-once). False when no such threat file exists in
+        either side. The model document moves with its LAST threat file: when no
+        produced threat file remains, a consumable model document is moved too.
         The move refuses to clobber an existing consumed file (fail-open)."""
-        if not is_loop_id(loop_id):
+        if not is_threat_id(threat_id):
             raise ThreatModelIdentityError(
-                ["loop_id"],
-                f"threat model store: {loop_id!r} is not a loop id of the "
-                f"`loop-<rank>` form",
+                ["threat_id"],
+                f"threat model store: {threat_id!r} is not a threat id of the "
+                f"`threat-<rank>` form",
             )
         with self._lock_for(project_id):
             model_path = self._find_model_path(project_id, unit_id, "produced")
@@ -494,42 +494,49 @@ class ThreatModelStore(BoundedRecordStore):
                 consumed = self._find_model_path(project_id, unit_id, "consumed")
                 if consumed is None:
                     return False
-                return (consumed.parent / loop_file_name(loop_id)).exists()
+                return (consumed.parent / threat_file_name(threat_id)).exists()
             name = model_path.parent.name
-            produced_loop = model_path.parent / loop_file_name(loop_id)
-            consumed_loop = self._unit_dir(project_id, name, "consumed") / loop_file_name(loop_id)
-            if not produced_loop.exists():
-                return consumed_loop.exists()
-            if consumed_loop.exists():
+            produced_threat = model_path.parent / threat_file_name(threat_id)
+            consumed_threat = (
+                self._unit_dir(project_id, name, "consumed")
+                / threat_file_name(threat_id)
+            )
+            if not produced_threat.exists():
+                return consumed_threat.exists()
+            if consumed_threat.exists():
                 logger.warning(
                     "threat model store: both produced/ and consumed/ hold %s "
                     "for %s; refusing to clobber the consumed record (fail-open)",
-                    produced_loop.name, name,
+                    produced_threat.name, name,
                 )
                 return False
-            consumed_loop.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(produced_loop, consumed_loop)
-            if not any(model_path.parent.glob("loop-*.yaml")):
+            consumed_threat.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(produced_threat, consumed_threat)
+            if not any(model_path.parent.glob("threat-*.yaml")):
                 self._move_model_if_ready(project_id, name)
             return True
 
     def consume_model_if_done(
-        self, project_id: str, unit_id: str, *, refused_loops: Sequence[str] = (),
+        self,
+        project_id: str,
+        unit_id: str,
+        *,
+        refused_threats: Sequence[str] = (),
     ) -> bool:
         """Move the unit's model document to consumed/ when it is complete,
-        valid, and has no PENDING loop file left (S2 8.4). A zero-loop model is
-        consumed here without a dispatch; a model with produced loops stays until
-        its last loop file is consumed (by `consume_loop`). True when the model
+        valid, and has no PENDING threat file left (S2 8.4). A zero-threat model is
+        consumed here without a dispatch; a model with produced threats stays until
+        its last threat file is consumed (by `consume_threat`). True when the model
         now lives in consumed/ (moved now, or already moved).
 
-        `refused_loops` names the produced loop files the mover REFUSED (a
-        malformed body it can neither dispatch nor consume as a loop record,
-        S2 10.5). Those are not pending loops: counting them would leave the
+        `refused_threats` names the produced threat files the mover REFUSED (a
+        malformed body it can neither dispatch nor consume as a threat record,
+        S2 10.5). Those are not pending threats: counting them would leave the
         model in produced/ forever, so the run could never quiesce (T4a review
         F1). A refused file is left in place - it is debugging evidence, never
         silently deleted - and the model document moves as the ONE consumption
         marker."""
-        refused = frozenset(str(loop_id) for loop_id in refused_loops)
+        refused = frozenset(str(threat_id) for threat_id in refused_threats)
         with self._lock_for(project_id):
             model_path = self._find_model_path(project_id, unit_id, "produced")
             if model_path is None:
@@ -541,23 +548,23 @@ class ThreatModelStore(BoundedRecordStore):
             raw = self._load_document(model_path)
             if raw is None or not self._consumable(raw):
                 return False
-            if self._pending_loop_files(model_path.parent, refused):
+            if self._pending_threat_files(model_path.parent, refused):
                 return False
             return self._move_model_if_ready(project_id, model_path.parent.name)
 
     @staticmethod
-    def _pending_loop_files(directory: Path, refused: frozenset[str]) -> list[Path]:
-        """The produced `loop-*.yaml` files that are still PENDING work: every
+    def _pending_threat_files(directory: Path, refused: frozenset[str]) -> list[Path]:
+        """The produced `threat-*.yaml` files that are still PENDING work: every
         one except the mover-refused stems (S2 8.4/10.5)."""
         return [
-            path for path in directory.glob("loop-*.yaml")
+            path for path in directory.glob("threat-*.yaml")
             if path.stem not in refused
         ]
 
     def _move_model_if_ready(self, project_id: str, unit_name: str) -> bool:
         """Move one produced model document to consumed/ when it is consumable;
         the now-empty produced unit directory is removed best-effort. The
-        caller has already established that no produced loop file remains."""
+        caller has already established that no produced threat file remains."""
         model_path = self._model_path(project_id, unit_name, "produced")
         raw = self._load_document(model_path)
         if raw is None or not self._consumable(raw):
@@ -597,8 +604,8 @@ class ThreatModelStore(BoundedRecordStore):
                     found.add(unit_id)
             return sorted(found)
 
-    def _read_loop_file(self, path: Path) -> tuple[str, dict | None]:
-        """One loop file's state (T4a review F1): `("record", body)` when the
+    def _read_threat_file(self, path: Path) -> tuple[str, dict | None]:
+        """One threat file's state (T4a review F1): `("record", body)` when the
         file parses to a mapping, else `("unreadable" | "not-a-mapping", None)`.
 
         The read is QUIET (unlike `_load_raw`): the produced read reports the
@@ -613,21 +620,21 @@ class ThreatModelStore(BoundedRecordStore):
             return "not-a-mapping", None
         return "record", loaded
 
-    def _read_family_loops(self, project_id: str, family: str) -> list[dict]:
-        """One family's consumable units and their loop files.
+    def _read_family_threats(self, project_id: str, family: str) -> list[dict]:
+        """One family's consumable units and their threat files.
 
         The mover reads BOTH families (F-022): produced/ is the dispatch
-        inbox, and consumed/ is the recovery inbox. A consumed loop whose
+        inbox, and consumed/ is the recovery inbox. A consumed threat whose
         hunter wrote no terminal spec set is work again after a provider pause
         - the produced->consumed move is the admission marker, never the
         completion marker. The model document rides the entry so the recovery
         dispatch needs no second read and never re-models the unit.
 
         A malformed file is REPORTED, never dropped (T4a review F1): dropping
-        it would read as "the unit holds no loop file", the mover would consume
-        the model, and the store would refuse while the `loop-*.yaml` remains -
+        it would read as "the unit holds no threat file", the mover would consume
+        the model, and the store would refuse while the `threat-*.yaml` remains -
         the run would never quiesce (S2 10.5). The mover refuses it once and
-        never counts it as a pending loop.
+        never counts it as a pending threat.
         """
         with self._lock_for(project_id):
             root = self._family_dir(project_id, family)
@@ -639,8 +646,8 @@ class ThreatModelStore(BoundedRecordStore):
                     continue
                 raw = self._load_document(directory / f"{directory.name}.yaml")
                 if raw is None and family == "consumed":
-                    # The model moves with its LAST loop file (S2 8.4), so a
-                    # consumed loop from a multi-loop unit still has its model
+                    # The model moves with its LAST threat file (S2 8.4), so a
+                    # consumed threat from a multi-threat unit still has its model
                     # in produced/. Read that same original document: the
                     # recovery never re-models the unit.
                     raw = self._load_document(
@@ -650,63 +657,63 @@ class ThreatModelStore(BoundedRecordStore):
                 unit_id = raw.get("unit_id")
                 if not isinstance(unit_id, str) or not unit_id:
                     continue
-                loops: list[dict] = []
+                threats: list[dict] = []
                 malformed: list[dict] = []
-                for loop_path in sorted(
-                    directory.glob("loop-*.yaml"),
-                    key=lambda item: _loop_rank(item.stem),
+                for threat_path in sorted(
+                    directory.glob("threat-*.yaml"),
+                    key=lambda item: _threat_rank(item.stem),
                 ):
-                    state, record = self._read_loop_file(loop_path)
+                    state, record = self._read_threat_file(threat_path)
                     if state != "record":
                         malformed.append({
-                            "loop_id": loop_path.stem,
+                            "threat_id": threat_path.stem,
                             "reason": state,
                         })
                         continue
-                    loops.append({"loop_id": loop_path.stem, "record": record})
+                    threats.append({"threat_id": threat_path.stem, "record": record})
                 entries.append({
                     "unit_id": unit_id,
                     "unit_name": directory.name,
                     "run_id": raw.get("run_id") if isinstance(raw.get("run_id"), str) else "",
-                    "loops": loops,
-                    "malformed_loops": malformed,
+                    "threats": threats,
+                    "malformed_threats": malformed,
                     # the document this read already parsed: the mover's payload
                     # materialisation reads it (S2 8.2) without a second read
                     "model": raw,
                 })
             return entries
 
-    def read_produced_loops(self, project_id: str) -> list[dict]:
+    def read_produced_threats(self, project_id: str) -> list[dict]:
         """The mover's dispatch inbox read (S2 8.1/8.4, T4 #377): one entry per
-        PRODUCED, consumable unit - `{unit_id, unit_name, run_id, loops,
-        malformed_loops, model}` - with `loops` the unit's produced loop file
-        records in rank order, each as `{loop_id, record}` (the file stem plus the
+        PRODUCED, consumable unit - `{unit_id, unit_name, run_id, threats,
+        malformed_threats, model}` - with `threats` the unit's produced threat file
+        records in rank order, each as `{threat_id, record}` (the file stem plus the
         record verbatim, so the mover's validity predicate can check the two
-        agree), `malformed_loops` the file stems whose body is unreadable or not a
-        mapping, each as `{loop_id, reason}`, and `model` the document this read
-        already parsed (the mover's payload context, S2 8.2: the loop file does
+        agree), `malformed_threats` the file stems whose body is unreadable or not a
+        mapping, each as `{threat_id, reason}`, and `model` the document this read
+        already parsed (the mover's payload context, S2 8.2: the threat file does
         not duplicate the model).
 
-        A zero-loop consumable model IS an entry with no loops and no malformed
+        A zero-threat consumable model IS an entry with no threats and no malformed
         files - the mover consumes it without a dispatch. A model below
         COMPLETED or invalid is never dispatch input (S2 4.3, 5.7)."""
-        return self._read_family_loops(project_id, "produced")
+        return self._read_family_threats(project_id, "produced")
 
-    def read_consumed_loops(self, project_id: str) -> list[dict]:
+    def read_consumed_threats(self, project_id: str) -> list[dict]:
         """The mover's recovery inbox read (F-022): one entry per CONSUMED,
-        consumable unit, in the same shape as `read_produced_loops`.
+        consumable unit, in the same shape as `read_produced_threats`.
 
         The consumed family is not "decided and never re-dispatched": the
         produced->consumed move is admission, and the hunter's terminal spec
-        set is completion. After a provider pause a consumed loop can have no
+        set is completion. After a provider pause a consumed threat can have no
         terminal set, so the mover recovers it from here.
 
         The model dependency is the ORIGINAL model document, never a re-model.
-        The model moves to consumed/ with the unit's LAST loop file, so for a
-        multi-loop unit the consumed loop still finds its model in produced/;
-        the read falls back to it. A zero-loop consumed unit is not work and
-        carries no recovery entry (its loops list is empty)."""
-        return self._read_family_loops(project_id, "consumed")
+        The model moves to consumed/ with the unit's LAST threat file, so for a
+        multi-threat unit the consumed threat still finds its model in produced/;
+        the read falls back to it. A zero-threat consumed unit is not work and
+        carries no recovery entry (its threats list is empty)."""
+        return self._read_family_threats(project_id, "consumed")
 
     def read_produced_units(self, project_id: str) -> list[dict]:
         """Every produced model's `{unit_id, run_id, state}` (S2 9.3).
@@ -851,9 +858,9 @@ class ThreatModelStore(BoundedRecordStore):
         `state` selects the allowed `sections` keys (S2 5.4); a key outside the
         gate's set is a coded rejection. The state is monotonic: a lower-gate
         write updates content but leaves the persisted state unchanged. The
-        COMPLETED write normalises the loops, computes the risk profile, runs
-        the checker, emits the loop files, and commits the document last
-        (S2 4.3). A gate write below COMPLETED deletes stale produced loop
+        COMPLETED write normalises the threats, computes the risk profile, runs
+        the checker, emits the threat files, and commits the document last
+        (S2 4.3). A gate write below COMPLETED deletes stale produced threat
         files. A write whose identity already lives in consumed/ is a no-op
         success returning the consumed path (S2 4.5).
 
@@ -927,7 +934,7 @@ class ThreatModelStore(BoundedRecordStore):
         path: Path,
     ) -> PartialThreatModel:
         """The merged, parsed document: identity bound, sections applied, the
-        state kept monotonic, and - at COMPLETED - the loops normalised and
+        state kept monotonic, and - at COMPLETED - the threats normalised and
         the risk profile computed."""
         if existing is None:
             doc: dict = {
@@ -951,8 +958,8 @@ class ThreatModelStore(BoundedRecordStore):
             doc[key] = self._section_value(value)
         model = PartialThreatModel.model_validate(doc)
         if gate is ModelState.COMPLETED:
-            model.loops = normalise_loops(model.loops)
-            model.risk_profile = compute_risk_profile(model.loops)
+            model.threats = normalise_threats(model.threats)
+            model.risk_profile = compute_risk_profile(model.threats)
             model.validation = check_completion(
                 UnitThreatModel.model_validate(model.model_dump()),
                 class_names=self._class_names,
@@ -969,23 +976,23 @@ class ThreatModelStore(BoundedRecordStore):
     ) -> None:
         """Persist the document under the commit protocol (S2 4.3).
 
-        A COMPLETED gate write lands the loop files first (atomically,
+        A COMPLETED gate write lands the threat files first (atomically,
         replacing the whole set), then the model document as the commit
         marker. A gate write below COMPLETED whose EFFECTIVE state is also
-        below COMPLETED deletes the stale produced loop files (crash repair).
+        below COMPLETED deletes the stale produced threat files (crash repair).
         A late lower-gate write on an already COMPLETED model leaves the
-        committed loop set untouched: the state never regresses, so deleting
+        committed threat set untouched: the state never regresses, so deleting
         its dispatch files would corrupt a published model.
         """
         produced_dir = self._unit_dir(project_id, unit_name, "produced")
         model_path = self._model_path(project_id, unit_name, "produced")
         if gate is ModelState.COMPLETED:
-            self._write_loop_files(project_id, unit_name, model, now)
+            self._write_threat_files(project_id, unit_name, model, now)
         elif ModelState(model.state) is not ModelState.COMPLETED:
-            self._delete_loop_files(produced_dir)
+            self._delete_threat_files(produced_dir)
         self._dump_yaml_atomic(model_path, model.model_dump(mode="json"))
 
-    def _write_loop_files(
+    def _write_threat_files(
         self,
         project_id: str,
         unit_name: str,
@@ -994,43 +1001,43 @@ class ThreatModelStore(BoundedRecordStore):
     ) -> None:
         produced_dir = self._unit_dir(project_id, unit_name, "produced")
         written: set[str] = set()
-        for loop in model.loops:
-            # A loop with zero combined risk is stored in the model but never
+        for threat in model.threats:
+            # A threat with zero combined risk is stored in the model but never
             # dispatched: the impact axis can zero a high-likelihood direction.
-            if loop.risk <= 0:
+            if threat.risk <= 0:
                 continue
             record = {
-                "loop_id": loop.id,
+                "threat_id": threat.id,
                 "unit_id": model.unit_id,
                 "unit_kind": model.unit_kind.value,
                 "run_id": model.run_id,
-                "dispatch_id": dispatch_id(unit_name, loop.id),
-                "likelihood": loop.likelihood.value,
-                "loop": loop.model_dump(mode="json"),
+                "dispatch_id": dispatch_id(unit_name, threat.id),
+                "likelihood": threat.likelihood.value,
+                "threat": threat.model_dump(mode="json"),
                 "created_at": now,
             }
-            name = loop_file_name(loop.id)
+            name = threat_file_name(threat.id)
             written.add(name)
             self._dump_yaml_atomic(produced_dir / name, record)
-        for path in produced_dir.glob("loop-*.yaml"):
+        for path in produced_dir.glob("threat-*.yaml"):
             if path.name not in written:
                 try:
                     path.unlink()
                 except OSError as exc:
                     logger.warning(
-                        "threat model store: could not delete stale loop file %s (%s)",
+                        "threat model store: could not delete stale threat file %s (%s)",
                         path, exc,
                     )
 
-    def _delete_loop_files(self, produced_dir: Path) -> None:
+    def _delete_threat_files(self, produced_dir: Path) -> None:
         if not produced_dir.exists():
             return
-        for path in produced_dir.glob("loop-*.yaml"):
+        for path in produced_dir.glob("threat-*.yaml"):
             try:
                 path.unlink()
             except OSError as exc:
                 logger.warning(
-                    "threat model store: could not delete stale loop file %s (%s)",
+                    "threat model store: could not delete stale threat file %s (%s)",
                     path, exc,
                 )
 

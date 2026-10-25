@@ -1,13 +1,13 @@
 """The inbox-surfer mover: the produced->consumed at-least-once delivery
 protocol over the hunting memory topology (tracker #172; ADR #169 Q3/Q11/Q13;
-spec #169 "The inbox surfer semantics"; the per-loop dispatch is T4 #377, S2 8).
+spec #169 "The inbox surfer semantics"; the per-threat dispatch is T4 #377, S2 8).
 
 One module, two layers (CODING_STANDARD s3 - pure logic and impure
 orchestration in different functions, one file like the curators):
 
-- PURE - `ProducedItem` / `ThreatLoopItem` / `TestSpecItem` /
-  `DispatchFeedback` / `DeliveryPlan` / `ProducedInbox`, the loop validity
-  predicate (`threat_loop_item`), the dispatch sequencing (`sequence_dispatch`),
+- PURE - `ProducedItem` / `ThreatItem` / `TestSpecItem` /
+  `DispatchFeedback` / `DeliveryPlan` / `ProducedInbox`, the threat validity
+  predicate (`threat_item`), the dispatch sequencing (`sequence_dispatch`),
   `deduce_delivery` - the deduction `(produced set, session registry state,
   dispatch feedback) -> (to dispatch, to move, to retry)` - and the ADR Q13
   session-id builders (`threat_modeller_session_id` / `hunter_session_id` /
@@ -17,17 +17,17 @@ orchestration in different functions, one file like the curators):
   plane (the T2 shared `RuntimeManager.schedule` with the session-id-as-name
   rule - `RuntimeControlPlane`, injectable per s6), and applies the
   produced->consumed moves through the stores' single-owner primitives
-  (`ThreatModelStore.consume_loop` / `HunterMemoryStore.consume_spec`). It does
+  (`ThreatModelStore.consume_threat` / `HunterMemoryStore.consume_spec`). It does
   NO reasoning of its own - every decision is in the deduction.
 
-The dispatch grain is the LOOP FILE (S2 8.4): one produced loop file is one
-`ThreatLoopItem`, whose `message_id` IS the store-derived dispatch id
-`<unit_name>__<loop_id>` and whose session id is the per-loop hunter id
-(`hunting:<run_id>:hunt:<dispatch_id>`, S3 8.9). The loop file's move to
+The dispatch grain is the THREAT FILE (S2 8.4): one produced threat file is one
+`ThreatItem`, whose `message_id` IS the store-derived dispatch id
+`<unit_name>__<threat_id>` and whose session id is the per-threat hunter id
+(`hunting:<run_id>:hunt:<dispatch_id>`, S3 8.9). The threat file's move to
 `consumed/` IS the admission marker, and the store moves the unit's model
-document with its LAST loop file; a zero-loop produced COMPLETED valid model is
+document with its LAST threat file; a zero-threat produced COMPLETED valid model is
 consumed by the mover without a dispatch. The config family retired in T4b
-(#387): the mover reads produced loop files and produced specs, never a hunt
+(#387): the mover reads produced threat files and produced specs, never a hunt
 config.
 
 The at-least-once protocol (Q3):
@@ -38,7 +38,7 @@ The at-least-once protocol (Q3):
   move IS the at-least-once marker.
 - A refused dispatch (gate full -> `ModuleAdmissionRefused`, module paused /
   draining) - a `coro_for` that raised, or a `coro_for` that answered
-  `None` (the item is not dispatchable this tick - a stopped role, a loop file
+  `None` (the item is not dispatchable this tick - a stopped role, a threat file
   whose model cannot be read, a draft config/spec) - -> `to_retry`, REMAINING
   in produced for the next tick: at-least-once, never dropped, never moved.
 - An item whose session id is ALREADY LIVE in the registry is considered
@@ -48,7 +48,7 @@ The at-least-once protocol (Q3):
   extra markers (the registry state is the confirmation; the operator ruling
   Q3/R3 accepts the window as negligible, this just also completes it).
 
-The mover owns NO scheduling (the runtime owns the loop), NEVER gates
+The mover owns NO scheduling (the runtime owns the threat), NEVER gates
 admission (the shared gate is the control plane's, Q15), and knows no
 producer/consumer coroutine (those are injected per tick as `coro_for`,
 wired by the run bootstrap - `attack/hunting/surfer.py`).
@@ -72,7 +72,7 @@ from polymerhus.attack.hunting.threat_model import (
     impact_weight,
     risk_bucket,
 )
-from polymerhus.attack.hunting.threat_model_store import dispatch_id, is_loop_id
+from polymerhus.attack.hunting.threat_model_store import dispatch_id, is_threat_id
 from polymerhus.app.runtime import ModuleAdmissionRefused
 
 if TYPE_CHECKING:
@@ -115,9 +115,9 @@ def threat_modeller_session_id(run_id: str) -> str:
 
 def hunter_session_id(run_id: str, dispatch_id: str) -> str:
     """The ADR Q13 hunter session id: `hunting:<run_id>:hunt:<dispatch_id>`.
-    `dispatch_id` is the loop file's dispatch identity `<unit_name>__<loop_id>`
-    (S2 8.1, S3 8.9): the loop file IS the dispatch grain, so the session id
-    embeds the loop's own identity - never a config key."""
+    `dispatch_id` is the threat file's dispatch identity `<unit_name>__<threat_id>`
+    (S2 8.1, S3 8.9): the threat file IS the dispatch grain, so the session id
+    embeds the threat's own identity - never a config key."""
     _require_non_empty(run_id, "run_id")
     _require_non_empty(dispatch_id, "dispatch_id")
     return f"hunting:{run_id}:hunt:{dispatch_id}"
@@ -159,11 +159,11 @@ _refusal_log: dict[tuple[str, str], dict[str, None]] = {}
 _refusal_lock = threading.Lock()
 
 
-def loop_refusal_detail(kind: str, unit_name: str, loop_id: str) -> str:
-    """The refusal detail for one produced loop file: `<kind>:<unit>/<loop id>`.
+def threat_refusal_detail(kind: str, unit_name: str, threat_id: str) -> str:
+    """The refusal detail for one produced threat file: `<kind>:<unit>/<threat id>`.
     The ONE home of the detail shape, so the mover's read and the surfer's
     dispatch branch key the SAME refusal (it must log once, not once per seam)."""
-    return f"{kind}:{unit_name}/{loop_id}"
+    return f"{kind}:{unit_name}/{threat_id}"
 
 
 def log_refusal_once(
@@ -211,11 +211,11 @@ class ProducedItem:
 
 
 @dataclass(frozen=True)
-class ThreatLoopItem(ProducedItem):
-    """ONE produced loop file - the dispatch record (S2 8.1, S3 8.9). `message_id`
-    IS the loop file's `dispatch_id` (`<unit_name>__<loop_id>`, the store-owned
-    derived symbol) and the session id is the per-loop hunter id. `record` is the
-    loop file's body verbatim: the payload materialisation reads it at dispatch
+class ThreatItem(ProducedItem):
+    """ONE produced threat file - the dispatch record (S2 8.1, S3 8.9). `message_id`
+    IS the threat file's `dispatch_id` (`<unit_name>__<threat_id>`, the store-owned
+    derived symbol) and the session id is the per-threat hunter id. `record` is the
+    threat file's body verbatim: the payload materialisation reads it at dispatch
     time (S2 8.2), so the mover carries the dispatch record itself - never a
     config.
 
@@ -230,20 +230,20 @@ class ThreatLoopItem(ProducedItem):
     then reads the store itself.
 
     F-022: `recovered` is True when the item came from consumed/ because the
-    loop's hunter left no terminal spec set. The identity and dispatch are
+    threat's hunter left no terminal spec set. The identity and dispatch are
     identical; the produced->consumed move is already satisfied, so the
     deduction never asks for it again."""
 
     unit_id: str
     unit_name: str
-    loop_id: str
+    threat_id: str
     dispatch_id: str
     likelihood: str
     record: Mapping[str, Any]
     model: Mapping[str, Any] | None = None
     recovered: bool = False
     # The combined-risk dispatch bucket (ADR, 2026-10-25). The mover orders and
-    # holds loops by this bucket, never by the likelihood string.
+    # holds threats by this bucket, never by the likelihood string.
     risk: int = 0
     bucket: str = "low"
 
@@ -251,8 +251,8 @@ class ThreatLoopItem(ProducedItem):
 @dataclass(frozen=True)
 class TestSpecItem(ProducedItem):
     """A produced test-implementation spec (hunter -> pod dispatch). The hunt
-    key is the folder the spec lives under - the loop dispatch id
-    `<unit_name>__<loop_id>` (S3 8.9) - and `spec_file` the
+    key is the folder the spec lives under - the threat dispatch id
+    `<unit_name>__<threat_id>` (S3 8.9) - and `spec_file` the
     `<class>__<value>__<value>` file-name stem; the two together address the
     single-owner
     `HunterMemoryStore.consume_spec` move (and the pod session id, whose middle
@@ -285,13 +285,13 @@ class DispatchFeedback(Enum):
     REFUSED = "refused"
 
 
-# --- the loop dispatch record: the validity predicate + the sequencing ---------
+# --- the threat dispatch record: the validity predicate + the sequencing ---------
 
 # The sequencing's higher buckets (S2 8.3, amended 2026-10-25): a `low` bucket
-# loop file waits while one of these is produced or its hunter session is live.
+# threat file waits while one of these is produced or its hunter session is live.
 HIGHER_TIERS: tuple[str, ...] = ("critical", "high", "medium")
 
-# The likelihood values a loop FILE may carry: `none` has no file at all
+# The likelihood values a threat FILE may carry: `none` has no file at all
 # (S2 8.3), so a file carrying it is malformed, never work.
 _DISPATCHABLE_LIKELIHOODS = tuple(
     level.value for level in Likelihood if level is not Likelihood.NONE
@@ -299,19 +299,19 @@ _DISPATCHABLE_LIKELIHOODS = tuple(
 _UNIT_KINDS = tuple(kind.value for kind in UnitKind)
 
 
-def threat_loop_item(
+def threat_item(
     *,
     project_id: str,
     unit_id: str,
     unit_name: str,
-    loop_id: str,
+    threat_id: str,
     record: Any,
     run_id: str,
     model: Mapping[str, Any] | None = None,
     recovered: bool = False,
-) -> ThreatLoopItem | None:
-    """The ONE loop validity predicate (S2 8.1, 8.4; T4 #377): the dispatch
-    record for one loop file, or None when the file is refused.
+) -> ThreatItem | None:
+    """The ONE threat validity predicate (S2 8.1, 8.4; T4 #377): the dispatch
+    record for one threat file, or None when the file is refused.
 
     Both the run's work read (`run_work_remaining`) and its dispatch read
     (`build_run_dispatch`) build on this predicate through the ONE produced read
@@ -326,79 +326,81 @@ def threat_loop_item(
 
     - a body that is not a mapping;
     - `run_id` of another run (S2 8.3: the sequencing is run-scoped - another
-      run's loop file is left untouched, never dispatched by this run);
+      run's threat file is left untouched, never dispatched by this run);
     - a `unit_id`/`unit_kind` that disagrees with the unit the file lives under;
-    - a `loop_id` that is not the store-owned `loop-<rank>` form, does not match
-      the file's own stem, or disagrees with the nested loop record's `id`;
-    - a `dispatch_id` that is not the store-derived `<unit_name>__<loop_id>`
+    - a `threat_id` that is not the store-owned `threat-<rank>` form, does not match
+      the file's own stem, or disagrees with the nested threat record's `id`;
+    - a `dispatch_id` that is not the store-derived `<unit_name>__<threat_id>`
       (the session id derives from it, so an unverified one would address the
       wrong session);
     - a `likelihood` outside `{low, medium, high, critical}` (`none` has no
       file; anything else is a foreign or corrupt body);
-    - a nested `loop` record that is not a mapping, or carries no
+    - a nested `threat` record that is not a mapping, or carries no
       `fault_ref`/`vulnerability_ref` - the payload's anchors.
 
     A refusal is logged ONCE per file and per project: the mover retries the
     produced file every tick, so a per-tick log would flood the run log (and a
     project-scoped key keeps one project's refusal from silencing another's)."""
     if not isinstance(record, Mapping):
-        return _refuse_loop(project_id, run_id, unit_name, loop_id,
-                            "the body is not a mapping")
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
+            "the body is not a mapping",
+        )
     if record.get("run_id") != run_id:
-        return _refuse_loop(
-            project_id, run_id, unit_name, loop_id,
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
             f"it belongs to run {record.get('run_id')!r}",
         )
     if record.get("unit_id") != unit_id or not unit_id:
-        return _refuse_loop(
-            project_id, run_id, unit_name, loop_id,
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
             f"its unit_id {record.get('unit_id')!r} disagrees with the unit "
             f"directory's {unit_id!r}",
         )
     if record.get("unit_kind") not in _UNIT_KINDS:
-        return _refuse_loop(
-            project_id, run_id, unit_name, loop_id,
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
             f"unknown unit_kind {record.get('unit_kind')!r}",
         )
-    if not is_loop_id(loop_id) or record.get("loop_id") != loop_id:
-        return _refuse_loop(
-            project_id, run_id, unit_name, loop_id,
-            f"the loop id {record.get('loop_id')!r} is not the file's "
-            f"{loop_id!r} of the `loop-<rank>` form",
+    if not is_threat_id(threat_id) or record.get("threat_id") != threat_id:
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
+            f"the threat id {record.get('threat_id')!r} is not the file's "
+            f"{threat_id!r} of the `threat-<rank>` form",
         )
-    dispatch = dispatch_id(unit_name, loop_id)
+    dispatch = dispatch_id(unit_name, threat_id)
     if record.get("dispatch_id") != dispatch:
-        return _refuse_loop(
-            project_id, run_id, unit_name, loop_id,
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
             f"its dispatch_id {record.get('dispatch_id')!r} is not the "
             f"store-derived {dispatch!r}",
         )
     likelihood = record.get("likelihood")
     if likelihood not in _DISPATCHABLE_LIKELIHOODS:
-        return _refuse_loop(
-            project_id, run_id, unit_name, loop_id,
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
             f"unknown or undispatchable likelihood {likelihood!r}",
         )
-    loop = record.get("loop")
-    if not isinstance(loop, Mapping) or not loop.get("fault_ref") \
-            or not loop.get("vulnerability_ref") or loop.get("id") != loop_id:
-        return _refuse_loop(
-            project_id, run_id, unit_name, loop_id,
-            "its loop record is missing or carries no fault_ref/"
-            "vulnerability_ref/loop id",
+    threat = record.get("threat")
+    if not isinstance(threat, Mapping) or not threat.get("fault_ref") \
+            or not threat.get("vulnerability_ref") or threat.get("id") != threat_id:
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
+            "its threat record is missing or carries no fault_ref/"
+            "vulnerability_ref/threat id",
         )
     raw_risk = record.get("risk")
     if raw_risk is None:
-        # A loop file written before the combined score: fall back to the
+        # A threat file written before the combined score: fall back to the
         # likelihood tier. A file that carries an impact but no risk is
         # malformed and is refused by the risk computation below.
-        if "impact" in loop:
+        if "impact" in threat:
             try:
-                impact = Impact.model_validate(dict(loop.get("impact") or {}))
+                impact = Impact.model_validate(dict(threat.get("impact") or {}))
             except Exception:  # noqa: BLE001 - a malformed impact is a refusal
-                return _refuse_loop(
-                    project_id, run_id, unit_name, loop_id,
-                    "its loop impact is unparseable",
+                return _refuse_threat(
+                    project_id, run_id, unit_name, threat_id,
+                    "its threat impact is unparseable",
                 )
             risk = RISK_WEIGHTS[Likelihood(likelihood)] * impact_weight(impact)
         else:
@@ -407,22 +409,22 @@ def threat_loop_item(
         try:
             risk = int(raw_risk)
         except (TypeError, ValueError):
-            return _refuse_loop(
-                project_id, run_id, unit_name, loop_id,
+            return _refuse_threat(
+                project_id, run_id, unit_name, threat_id,
                 f"its risk {raw_risk!r} is not an integer",
             )
     bucket = risk_bucket(risk)
     if bucket == "none":
-        return _refuse_loop(
-            project_id, run_id, unit_name, loop_id,
-            "a zero-risk loop has no dispatchable work",
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
+            "a zero-risk threat has no dispatchable work",
         )
-    return ThreatLoopItem(
+    return ThreatItem(
         message_id=dispatch,
         session_id=hunter_session_id(run_id, dispatch),
         unit_id=unit_id,
         unit_name=unit_name,
-        loop_id=loop_id,
+        threat_id=threat_id,
         dispatch_id=dispatch,
         likelihood=str(likelihood),
         record=record,
@@ -433,16 +435,16 @@ def threat_loop_item(
     )
 
 
-def _refuse_loop(
-    project_id: str, run_id: str, unit_name: str, loop_id: str, why: str,
+def _refuse_threat(
+    project_id: str, run_id: str, unit_name: str, threat_id: str, why: str,
 ) -> None:
-    """Refuse ONE loop file (produced or recovered): never dispatched, never
+    """Refuse ONE threat file (produced or recovered): never dispatched, never
     counted as work, logged once per project + run + file (the mover re-reads
     every tick)."""
     log_refusal_once(
-        project_id, run_id, loop_refusal_detail("loop", unit_name, loop_id),
-        "mover: produced loop file %s/%s refused - %s; never dispatched and "
-        "not counted as work", unit_name, loop_id, why,
+        project_id, run_id, threat_refusal_detail("threat", unit_name, threat_id),
+        "mover: produced threat file %s/%s refused - %s; never dispatched and "
+        "not counted as work", unit_name, threat_id, why,
     )
     return None
 
@@ -452,30 +454,30 @@ def sequence_dispatch(
     live_likelihoods: Mapping[str, str] | Iterable[str] = (),
 ) -> tuple[ProducedItem, ...]:
     """The dispatch sequencing filter (S2 8.3, S1 7.6): a `critical`, `high` or
-    `medium` loop dispatches immediately; a `low` loop dispatches only when no
-    higher-tier loop file is produced (`items`) and no higher-tier hunter session
+    `medium` threat dispatches immediately; a `low` threat dispatches only when no
+    higher-tier threat file is produced (`items`) and no higher-tier hunter session
     is live (`live_likelihoods`, the run's own dispatch state keyed by dispatch
     id).
 
     Pure: equal inputs -> equal outputs; the produced order survives. The
-    sequencing ranks LOOPS only - every other produced item (the pod family's
+    sequencing ranks THREATS only - every other produced item (the pod family's
     specs, S3 8.7) passes through untouched.
 
-    `none` loops have no file at all, so they can never appear here. A session
-    is "live" while its hunter is still working the loop: an idle hunter authors
-    nothing more, so it cannot hold a later low loop (and holding quiesce on it
+    `none` threats have no file at all, so they can never appear here. A session
+    is "live" while its hunter is still working the threat: an idle hunter authors
+    nothing more, so it cannot hold a later low threat (and holding quiesce on it
     would deadlock the run terminal's settle, S2 8.4)."""
     buckets = set(
         live_likelihoods.values()
         if isinstance(live_likelihoods, Mapping) else live_likelihoods
     ) | {
-        item.bucket for item in items if isinstance(item, ThreatLoopItem)
+        item.bucket for item in items if isinstance(item, ThreatItem)
     }
     if not any(bucket in HIGHER_TIERS for bucket in buckets):
         return tuple(items)
     return tuple(
         item for item in items
-        if not (isinstance(item, ThreatLoopItem) and item.bucket == "low")
+        if not (isinstance(item, ThreatItem) and item.bucket == "low")
     )
 
 
@@ -514,7 +516,7 @@ def deduce_delivery(
       pending (so quiesce cannot pass) while its siblings keep dispatching.
     - otherwise -> `to_dispatch`.
 
-    F-022: a recovered consumed loop never lands in `to_move` - its
+    F-022: a recovered consumed threat never lands in `to_move` - its
     produced->consumed move is already satisfied. It dispatches, retries, or
     (when its session is live) waits, exactly like a produced item.
 
@@ -534,7 +536,7 @@ def deduce_delivery(
     to_retry: list[ProducedItem] = []
     for item in produced:
         already_moved = (
-            isinstance(item, ThreatLoopItem) and item.recovered
+            isinstance(item, ThreatItem) and item.recovered
         )
         if item.session_id in live_session_ids:
             if not already_moved:
@@ -566,10 +568,10 @@ class TickReport:
     counted. `dispatched` = this lap's delivery attempts (admitted + refused;
     a refused attempt - by control-plane admission or a missing dispatch
     coroutine - stays produced for the next tick); `paused` = the produced
-    items the sequencing filter held back this tick (a `low` loop file behind a
-    higher-tier loop, S2 8.3); `moved` = records renamed produced->consumed;
+    items the sequencing filter held back this tick (a `low` threat file behind a
+    higher-tier threat, S2 8.3); `moved` = records renamed produced->consumed;
     `models_consumed` = produced model documents renamed to consumed/ (the
-    zero-loop consume and the last-loop-file move, S2 8.4); `move_failed` =
+    zero-threat consume and the last-threat-file move, S2 8.4); `move_failed` =
     records the move could not complete (missing record or a storage failure -
     warned and counted, never aborting the tick); `deferred` = items held back
     by a child's transient-failure backoff (F-026), left pending and never
@@ -779,13 +781,13 @@ class RuntimeControlPlane:
 class ProducedInbox:
     """One tick's read of the produced families (the mover's inbox).
 
-    `items` are the dispatch candidates: this run's produced loop files (the
+    `items` are the dispatch candidates: this run's produced threat files (the
     dispatch grain, S2 8.4) and the pod family's produced specs. Each item already
     passed its own validity predicate, so nothing malformed and nothing from
-    another run is in here. `models_to_consume` maps a unit id to the loop file
-    stems the read REFUSED for it: a unit with no dispatchable loop left (no loop
+    another run is in here. `models_to_consume` maps a unit id to the threat file
+    stems the read REFUSED for it: a unit with no dispatchable threat left (no threat
     file at all, or only refused ones) is consumed as the no-dispatch model
-    (S2 8.4), with its refused files left in place - they are never pending loops,
+    (S2 8.4), with its refused files left in place - they are never pending threats,
     so they can never wedge the run (S2 10.5)."""
 
     items: tuple[ProducedItem, ...] = ()
@@ -801,7 +803,7 @@ def run_delivery_tick(
     pod_store: Any = None,
     control: DispatchControlPlane,
     coro_for: Callable[[ProducedItem], Any],
-    live_loop_likelihoods: Mapping[str, str] | Iterable[str] = (),
+    live_threat_buckets: Mapping[str, str] | Iterable[str] = (),
     deferred_session_ids: AbstractSet[str] = frozenset(),
     pre_filter: Callable[
         [Sequence[ProducedItem], AbstractSet[str]], Sequence[ProducedItem],
@@ -814,14 +816,14 @@ def run_delivery_tick(
     `deduce_delivery` / `sequence_dispatch`.
 
     Protocol per lap:
-    1. Read the produced inbox (the threat model store's loop files and the
+    1. Read the produced inbox (the threat model store's threat files and the
        hunter memory's test specs) plus the live registry session ids.
-    2. Apply the sequencing filter: a `low` loop file waits while a higher-tier
-       loop file is produced or a higher-tier hunter session is live (S2 8.3),
+    2. Apply the sequencing filter: a `low` threat file waits while a higher-tier
+       threat file is produced or a higher-tier hunter session is live (S2 8.3),
        then the run's sync pre-filter (`hunting_pipeline_sync`): a held item
        stays produced and counts as paused. `sequence_tiers=False` skips the
-       tier ordering: a `batched` run admits the unit's whole loop set, so the
-       tier filter must not hide a loop from the batch.
+       tier ordering: a `batched` run admits the unit's whole threat set, so the
+       tier filter must not hide a threat from the batch.
     3. Deduce with empty feedback -> the items `to_dispatch` this lap. An item
        whose child is backing off (F-026) is held pending and never dispatched;
        the run cannot quiesce while it remains.
@@ -833,13 +835,13 @@ def run_delivery_tick(
        registry-live items) and `to_retry` (refused - left in produced).
     6. Apply the moves through the stores' single-owner primitives, fail-open
        per record (a failed move warns and counts, never aborts the tick).
-    7. Consume the produced models whose loop files are all gone: a zero-loop
+    7. Consume the produced models whose threat files are all gone: a zero-threat
        produced COMPLETED valid model is consumed here without a dispatch, and
-       `consume_loop` has already moved a model whose LAST loop file was
-       admitted (S2 8.4 - the model document moves with its last loop).
+       `consume_threat` has already moved a model whose LAST threat file was
+       admitted (S2 8.4 - the model document moves with its last threat).
 
     Returns the `TickReport`. This function is synchronous: the runtime owns
-    the loop (Q11); the mover never awaits, the control plane schedules."""
+    the threat (Q11); the mover never awaits, the control plane schedules."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
@@ -847,13 +849,13 @@ def run_delivery_tick(
     produced = inbox.items
     live = control.live_session_ids()
     # S2 8.3 orders tiers only where the sync mode admits one item at a time
-    # (`parallel`, `serial`). A `batched` run dispatches the unit's WHOLE loop
+    # (`parallel`, `serial`). A `batched` run dispatches the unit's WHOLE threat
     # set: the low-tier sequencing is subsumed and must not order a batch (the
     # pipeline-sync ADR, section 2, `batched`), otherwise another unit's
-    # produced high loop would hold this unit's low loop for ever and pin the
+    # produced high threat would hold this unit's low threat for ever and pin the
     # batch in the hunt phase.
     dispatchable = (
-        sequence_dispatch(produced, live_loop_likelihoods)
+        sequence_dispatch(produced, live_threat_buckets)
         if sequence_tiers else tuple(produced)
     )
     if pre_filter is not None:
@@ -944,22 +946,22 @@ def _consume_finished_models(
     threat_store: Any,
     models_to_consume: Mapping[str, tuple[str, ...]],
 ) -> int:
-    """Consume the run's produced models that carry no PENDING loop file left
-    (S2 8.4): a zero-loop COMPLETED valid model is consumed on the mover's next
-    tick without a dispatch, a unit whose only loop files were refused is consumed
+    """Consume the run's produced models that carry no PENDING threat file left
+    (S2 8.4): a zero-threat COMPLETED valid model is consumed on the mover's next
+    tick without a dispatch, a unit whose only threat files were refused is consumed
     the same way (S2 10.5 - a malformed file can never wedge the run), and a model
-    whose last VALID loop file this tick admitted is consumed by `consume_loop`
+    whose last VALID threat file this tick admitted is consumed by `consume_threat`
     itself. Run-scoped: another run's produced model is left for that run's own
-    mover. The store re-checks consumability and the pending-loop condition, so a
-    model that gained a loop file between the read and the move is never consumed
+    mover. The store re-checks consumability and the pending-threat condition, so a
+    model that gained a threat file between the read and the move is never consumed
     early. Fail-open per model."""
     if threat_store is None:
         return 0
     consumed = 0
-    for unit_id, refused_loops in models_to_consume.items():
+    for unit_id, refused_threats in models_to_consume.items():
         try:
             done = threat_store.consume_model_if_done(
-                project_id, unit_id, refused_loops=refused_loops)
+                project_id, unit_id, refused_threats=refused_threats)
         except Exception as exc:  # noqa: BLE001 - fail-open per model
             logger.warning(
                 "mover: model consume of %s failed (%s); counted, tick continues",
@@ -978,7 +980,7 @@ def produced_spec_body(
     spec_file: str,
 ) -> dict | None:
     """The produced spec's persisted body, or None (fail-open: a missing record
-    or an unreadable one warns and degrades - O4). `hunt_key` is the loop
+    or an unreadable one warns and degrades - O4). `hunt_key` is the threat
     dispatch id folder the spec lives under (S3 8.9) and `spec_file` the
     derived `<fault>_<strategy>` stem; the ONE spec-body read: the produced
     read (the dispatch validity gate) and the surfer's dispatch branch both use
@@ -1027,14 +1029,14 @@ def read_produced_inbox(
 ) -> ProducedInbox:
     """The produced inbox set for one tick.
 
-    - The threat model store's produced loop files: ONE `ThreatLoopItem` per loop
-      file of THIS run (cross-unit - the surfer reads the run's produced loops,
+    - The threat model store's produced threat files: ONE `ThreatItem` per threat
+      file of THIS run (cross-unit - the surfer reads the run's produced threats,
       never only the current unit's; S2 8.3), plus the produced units whose
-      consumable model carries no DISPATCHABLE loop file left
-      (`models_to_consume`, the refused stems included). A loop file whose body
+      consumable model carries no DISPATCHABLE threat file left
+      (`models_to_consume`, the refused stems included). A threat file whose body
       fails the validity predicate, whose body the store could not parse, or
       whose model document is unreadable is refused here, so it is neither
-      dispatched nor counted as work. A loop-FREE model is still consumed as
+      dispatched nor counted as work. A threat-FREE model is still consumed as
       the no-dispatch model (R1: the modeller's "nothing to hunt here" outcome,
       S2 8.4).
     - The hunter memory's produced test specs (the pod family, S3 8.7).
@@ -1043,12 +1045,12 @@ def read_produced_inbox(
       spec to consumed/ before its pod finishes, so a provider pause can leave
       it consumed with no export; without this read the resume path would
       quiesce with the test never executed.
-    - F-022 loop recovery: a CONSUMED loop file of THIS run whose hunter left
+    - F-022 threat recovery: a CONSUMED threat file of THIS run whose hunter left
       no terminal spec set is recovered as dispatchable work. The move is the
       admission marker, never the completion marker; the terminal spec set is
       completion. The item carries the consumed model document, so the
       recovery dispatch reuses the original unit context and never re-models
-      the unit. A malformed consumed loop is refused once and never counted as
+      the unit. A malformed consumed threat is refused once and never counted as
       work.
 
     The config family retired in T4b (#387): there is no hunt-store read and no
@@ -1062,62 +1064,62 @@ def read_produced_inbox(
             hunter_store, project_id, run_id, pod_store=pod_store))
     models_to_consume: dict[str, tuple[str, ...]] = {}
     if threat_store is not None:
-        for entry in threat_store.read_produced_loops(project_id):
+        for entry in threat_store.read_produced_threats(project_id):
             unit_id = str(entry.get("unit_id") or "")
             unit_name = str(entry.get("unit_name") or "")
             if entry.get("run_id") != run_id:
                 continue  # another run's model: its own mover dispatches it
             model = _entry_model(entry, threat_store, project_id, unit_id)
             refused: list[str] = [
-                str(broken.get("loop_id") or "")
-                for broken in (entry.get("malformed_loops") or ())
+                str(broken.get("threat_id") or "")
+                for broken in (entry.get("malformed_threats") or ())
             ]
-            for loop_id in refused:
+            for threat_id in refused:
                 # the store could not hand the body over as a record: refuse it
                 # (once per project/run/file) - it is never dispatched and never
-                # a pending loop (S2 10.5)
+                # a pending threat (S2 10.5)
                 log_refusal_once(
                     project_id, run_id,
-                    loop_refusal_detail("loop-file", unit_name, loop_id),
-                    "mover: produced loop file %s/%s refused - its body is "
+                    threat_refusal_detail("threat-file", unit_name, threat_id),
+                    "mover: produced threat file %s/%s refused - its body is "
                     "unreadable; left in produced/, never dispatched and not "
-                    "counted as a pending loop", unit_name, loop_id,
+                    "counted as a pending threat", unit_name, threat_id,
                 )
             dispatchable = 0
             if model is None:
-                # The loop file does not duplicate the model (S2 8.1): without
+                # The threat file does not duplicate the model (S2 8.1): without
                 # the model there is no unit context to dispatch against. The
-                # loops are refused (once) and are NOT work, so an unreadable
+                # threats are refused (once) and are NOT work, so an unreadable
                 # model can neither hot-loop the mover nor wedge the quiesce;
                 # T3's intake owns the stale-produced disposition of the unit.
-                for loop_id in _entry_loop_ids(entry):
+                for threat_id in _entry_threat_ids(entry):
                     log_refusal_once(
                         project_id, run_id,
-                        loop_refusal_detail("loop-model", unit_name, loop_id),
-                        "mover: produced loop %s/%s refused - the model "
+                        threat_refusal_detail("threat-model", unit_name, threat_id),
+                        "mover: produced threat %s/%s refused - the model "
                         "document for %s is unreadable; not dispatched and not "
-                        "counted as work", unit_name, loop_id, unit_id,
+                        "counted as work", unit_name, threat_id, unit_id,
                     )
                 continue
-            for entry_loop in entry.get("loops") or ():
-                loop_id = str(entry_loop.get("loop_id") or "")
-                item = threat_loop_item(
+            for entry_threat in entry.get("threats") or ():
+                threat_id = str(entry_threat.get("threat_id") or "")
+                item = threat_item(
                     project_id=project_id, unit_id=unit_id, unit_name=unit_name,
-                    loop_id=loop_id, record=entry_loop.get("record"),
+                    threat_id=threat_id, record=entry_threat.get("record"),
                     run_id=run_id, model=model,
                 )
                 if item is not None:
                     dispatchable += 1
                     items.append(item)
                 else:
-                    refused.append(loop_id)
+                    refused.append(threat_id)
             if dispatchable == 0:
-                # No dispatchable loop left for this unit: the model document is
-                # the run's to consume (a zero-loop model, or a unit whose only
-                # loop files are refused). The refused files stay in produced/ -
-                # they are evidence, never pending loops.
+                # No dispatchable threat left for this unit: the model document is
+                # the run's to consume (a zero-threat model, or a unit whose only
+                # threat files are refused). The refused files stay in produced/ -
+                # they are evidence, never pending threats.
                 models_to_consume[unit_id] = tuple(sorted(set(refused)))
-        items.extend(_recoverable_loop_items(
+        items.extend(_recoverable_threat_items(
             project_id, run_id, threat_store=threat_store,
             hunter_store=hunter_store))
     return ProducedInbox(
@@ -1131,9 +1133,9 @@ def _spec_items(
     run_id: str,
 ) -> tuple[ProducedItem, ...]:
     """The produced items of the POD family: one `TestSpecItem` per produced
-    spec whose persisted status is the pod dispatch gate. The loop family is
+    spec whose persisted status is the pod dispatch gate. The threat family is
     added by `read_produced_inbox` itself (its read is run-scoped and its
-    validity predicate is the ONE loop predicate); the config family retired in
+    validity predicate is the ONE threat predicate); the config family retired in
     T4b (#387) and has no read here."""
     items: list[ProducedItem] = []
     for hunt_key in hunter_store.list_hunt_keys(project_id):
@@ -1261,74 +1263,74 @@ def _recoverable_spec_items(
     return tuple(recovered)
 
 
-def _recoverable_loop_items(
+def _recoverable_threat_items(
     project_id: str,
     run_id: str,
     *,
     threat_store: Any,
     hunter_store: HunterMemoryStore,
-) -> tuple[ThreatLoopItem, ...]:
-    """Consumed loop files of THIS run whose hunter left no terminal spec set.
+) -> tuple[ThreatItem, ...]:
+    """Consumed threat files of THIS run whose hunter left no terminal spec set.
 
     The produced->consumed move is the admission marker (S2 8.4); the hunter's
-    terminal spec set is the completion marker (F-022). A consumed loop with no
+    terminal spec set is the completion marker (F-022). A consumed threat with no
     CURRENT-RUN terminal set is recovered: after a provider pause the hunter
     may have been interrupted after admission and before finalize. The item
     carries the consumed model document, so the dispatch reuses the original
     unit context and the unit is never re-modelled.
 
-    A terminal set from another run does not settle this run's loop: the
-    marker is run-scoped, exactly like the loop body. A malformed consumed loop
-    is refused once and never counted as work; a consumed loop whose model is
+    A terminal set from another run does not settle this run's threat: the
+    marker is run-scoped, exactly like the threat body. A malformed consumed threat
+    is refused once and never counted as work; a consumed threat whose model is
     unreadable is refused once too (the consumed family moved the model with
-    its last loop, so a missing model is a storage failure, not a re-model
+    its last threat, so a missing model is a storage failure, not a re-model
     request)."""
-    reader = getattr(threat_store, "read_consumed_loops", None)
+    reader = getattr(threat_store, "read_consumed_threats", None)
     if reader is None:
         return ()
     try:
         entries = reader(project_id)
     except Exception as exc:  # noqa: BLE001 - fail-open read (O4)
         logger.warning(
-            "mover: consumed-loop read for %s degraded (%s); no loops "
+            "mover: consumed-threat read for %s degraded (%s); no threats "
             "recovered this tick", project_id, exc,
         )
         return ()
-    recovered: list[ThreatLoopItem] = []
+    recovered: list[ThreatItem] = []
     for entry in entries:
         unit_id = str(entry.get("unit_id") or "")
         unit_name = str(entry.get("unit_name") or "")
         if entry.get("run_id") != run_id:
-            continue  # another run's loop: its own mover recovers it
+            continue  # another run's threat: its own mover recovers it
         model = _entry_model(entry, threat_store, project_id, unit_id)
         if model is None:
-            for loop_id in _entry_loop_ids(entry):
+            for threat_id in _entry_threat_ids(entry):
                 log_refusal_once(
                     project_id, run_id,
-                    loop_refusal_detail("loop-model-recovered", unit_name, loop_id),
-                    "mover: consumed loop %s/%s refused - the consumed model "
+                    threat_refusal_detail("threat-model-recovered", unit_name, threat_id),
+                    "mover: consumed threat %s/%s refused - the consumed model "
                     "document for %s is unreadable; not dispatched and not "
-                    "counted as work", unit_name, loop_id, unit_id,
+                    "counted as work", unit_name, threat_id, unit_id,
                 )
             continue
-        for broken in entry.get("malformed_loops") or ():
-            loop_id = str(broken.get("loop_id") or "")
+        for broken in entry.get("malformed_threats") or ():
+            threat_id = str(broken.get("threat_id") or "")
             log_refusal_once(
                 project_id, run_id,
-                loop_refusal_detail("loop-file-recovered", unit_name, loop_id),
-                "mover: consumed loop file %s/%s refused - its body is "
+                threat_refusal_detail("threat-file-recovered", unit_name, threat_id),
+                "mover: consumed threat file %s/%s refused - its body is "
                 "unreadable; left in consumed/, never dispatched and not "
-                "counted as a pending loop", unit_name, loop_id,
+                "counted as a pending threat", unit_name, threat_id,
             )
-        for entry_loop in entry.get("loops") or ():
-            loop_id = str(entry_loop.get("loop_id") or "")
+        for entry_threat in entry.get("threats") or ():
+            threat_id = str(entry_threat.get("threat_id") or "")
             if _hunter_finalized(
-                hunter_store, project_id, dispatch_id(unit_name, loop_id), run_id,
+                hunter_store, project_id, dispatch_id(unit_name, threat_id), run_id,
             ):
                 continue
-            item = threat_loop_item(
+            item = threat_item(
                 project_id=project_id, unit_id=unit_id, unit_name=unit_name,
-                loop_id=loop_id, record=entry_loop.get("record"),
+                threat_id=threat_id, record=entry_threat.get("record"),
                 run_id=run_id, model=model, recovered=True,
             )
             if item is not None:
@@ -1344,10 +1346,10 @@ def _hunter_finalized(
 ) -> bool:
     """True when `hunt_key` has a terminal spec set written by THIS run.
 
-    The terminal set is the durable loop-completion marker (F-025/F-022). A
+    The terminal set is the durable threat-completion marker (F-025/F-022). A
     read failure recovers (fail-open at-least-once: re-hunting is safe and the
     next finalize overwrites the marker); a marker from another run does not
-    settle this run's loop."""
+    settle this run's threat."""
     reader = getattr(hunter_store, "read_terminal_set", None)
     if reader is None:
         return False
@@ -1357,21 +1359,21 @@ def _hunter_finalized(
         log_refusal_once(
             project_id, run_id, f"terminal-set-read:{hunt_key}",
             "mover: terminal spec-set read for %s failed (%s); recovering "
-            "the consumed loop (at-least-once)", hunt_key, exc,
+            "the consumed threat (at-least-once)", hunt_key, exc,
         )
         return False
     return isinstance(marker, Mapping) and marker.get("run_id") == run_id
 
 
-def _entry_loop_ids(entry: Mapping[str, Any]) -> tuple[str, ...]:
-    """Every loop file stem one produced entry reports: the records it could hand
+def _entry_threat_ids(entry: Mapping[str, Any]) -> tuple[str, ...]:
+    """Every threat file stem one produced entry reports: the records it could hand
     over plus the malformed ones it could not."""
     return tuple(
-        str(loop.get("loop_id") or "")
-        for loop in (entry.get("loops") or ())
+        str(threat.get("threat_id") or "")
+        for threat in (entry.get("threats") or ())
     ) + tuple(
-        str(broken.get("loop_id") or "")
-        for broken in (entry.get("malformed_loops") or ())
+        str(broken.get("threat_id") or "")
+        for broken in (entry.get("malformed_threats") or ())
     )
 
 
@@ -1382,7 +1384,7 @@ def _entry_model(
     entry carries the document it already parsed; a store that does not is read
     through `read_model` (produced first, then consumed - a consumed model is
     still a valid context source). None = the unit has no usable model: the
-    mover refuses its loops and never counts them as work (T4a review F2)."""
+    mover refuses its threats and never counts them as work (T4a review F2)."""
     model = entry.get("model")
     if isinstance(model, Mapping):
         return model
@@ -1390,7 +1392,7 @@ def _entry_model(
         return threat_store.read_model(project_id, unit_id)
     except Exception as exc:  # noqa: BLE001 - fail-open read (O4)
         logger.warning(
-            "mover: model read for %s degraded (%s); its loops are refused",
+            "mover: model read for %s degraded (%s); its threats are refused",
             unit_id, exc,
         )
         return None
@@ -1407,10 +1409,10 @@ def _apply_move(
     The ONLY caller of the move primitives (the single-owner rename, #172 AC):
     the impure shell applies what the deduction decided, nothing else renames
     produced->consumed."""
-    if isinstance(item, ThreatLoopItem):
-        # The loop file's move IS the admission marker (S2 8.4); the store also
-        # moves the model document when this was its last produced loop file.
-        return threat_store.consume_loop(project_id, item.unit_id, item.loop_id)
+    if isinstance(item, ThreatItem):
+        # The threat file's move IS the admission marker (S2 8.4); the store also
+        # moves the model document when this was its last produced threat file.
+        return threat_store.consume_threat(project_id, item.unit_id, item.threat_id)
     if isinstance(item, TestSpecItem):
         return hunter_store.consume_spec(project_id, item.hunt_key, item.spec_file)
     raise TypeError(
@@ -1428,18 +1430,18 @@ __all__ = [
     "ProducedItem",
     "RuntimeControlPlane",
     "TestSpecItem",
-    "ThreatLoopItem",
+    "ThreatItem",
     "TickReport",
     "clear_refusal_log",
     "deduce_delivery",
     "hunter_session_id",
     "log_refusal_once",
-    "loop_refusal_detail",
+    "threat_refusal_detail",
     "MODELLER_SESSION_SEGMENT",
     "threat_modeller_session_id",
     "pod_session_id",
     "read_produced_inbox",
     "run_delivery_tick",
     "sequence_dispatch",
-    "threat_loop_item",
+    "threat_item",
 ]

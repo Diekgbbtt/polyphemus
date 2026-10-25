@@ -107,7 +107,7 @@ class _FakePg:
 
 class _FakeControl:
     """The session-capable control-plane fake: RUNS the started sessions as
-    tasks on the current loop, mirrors the registry through the live-task set."""
+    tasks on the current threat, mirrors the registry through the live-task set."""
 
     def __init__(self, refuse: set[str] | None = None):
         self._refuse = set(refuse or ())
@@ -296,7 +296,7 @@ def test_a_launched_unit_writes_its_model_through_the_real_store(
         tmp_path, monkeypatch):
     """S1 6/9.1: the production path runs the REAL modeller pass - the launched
     unit's five gate writes land in the threat model store as a COMPLETED,
-    valid model with its produced loop file."""
+    valid model with its produced threat file."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     hunter, models = _stores(tmp_path)
@@ -314,8 +314,8 @@ def test_a_launched_unit_writes_its_model_through_the_real_store(
     model = models.read_model(PROJECT, UNIT_A)
     assert model["state"] == ModelState.COMPLETED.value
     assert model["validation"]["valid"] is True
-    assert [loop["loop_id"] for loop in models.read_loop_files(PROJECT, UNIT_A)] \
-        == ["loop-1"]
+    assert [threat["threat_id"] for threat in models.read_threat_files(PROJECT, UNIT_A)] \
+        == ["threat-1"]
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
 
 
@@ -648,7 +648,7 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
                 self._surface["notes"].invoke({
                     "cmd": "write", "option": "append",
                     "note_name": "wellformedness", "kind": "wellformedness",
-                    "body": "every loop checked",
+                    "body": "every threat checked",
                 })
                 self._surface["hunts_store"].invoke({
                     "cmd": "write", "state": ModelState.COMPLETED.value,

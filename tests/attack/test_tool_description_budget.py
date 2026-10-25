@@ -18,7 +18,7 @@ from polymerhus.attack.hunting.threat_modeller_tools import (
 
 def _surface():
     tools = build_hunter_tools(
-        store=None, project_id="p", hunt_key="u__loop-1", run_id="r",
+        store=None, project_id="p", hunt_key="u__threat-1", run_id="r",
         suite_classes=("idor",),
     )
     tools.append(build_auth_store_tool(project_id="p", read_only=True))

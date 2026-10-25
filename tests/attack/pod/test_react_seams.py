@@ -57,7 +57,7 @@ SPEC = {
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "assumptions": ["network egress allowed"],
     "rationale": "reachability",
-    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+    "provenance": {"threat_id": "threat-1", "unit_id": "service:web:soupmarket",
                    "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
@@ -189,7 +189,7 @@ def test_runner_turn_flags_an_empty_stretch_as_exhausted(tmp_path):
 
 def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
     """D84-16/27: the runner's ONE turn binds exec + note on the SAME
-    create_agent loop; the P3 note write is the runner's FINAL tool call
+    create_agent threat; the P3 note write is the runner's FINAL tool call
     (D84-17/19). The former `kb_retrieve` seam (surface B) is retired; the KB
     capability is the config-gated `query_lightrag` tool."""
     calls = []

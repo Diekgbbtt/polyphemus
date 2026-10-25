@@ -2,7 +2,7 @@
 
 The hunter's durable memory, replicating the hunt-config memory store patterns
 (`docs/design/hunting-memory-system-spec.md`, the pattern document) and adapted
-to the loop-driven hunter by the ratified redesign (S3 8.6-8.8). The store is
+to the threat-driven hunter by the ratified redesign (S3 8.6-8.8). The store is
 per-project (a folder keyed by `project_id`, created lazily at the first
 write), one YAML file per spec, produced/consumed directories, and a
 per-project notes file.
@@ -18,8 +18,8 @@ memory (`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
     <project_id>/hunting/hunter/test-specs/<hunt_key>/consumed/<spec_id>.yaml
     <project_id>/hunting/hunter/notes.yaml
 
-- `<hunt_key>` is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9): the
-  loop file IS the dispatch grain, so the spec folder is the loop's own
+- `<hunt_key>` is the threat dispatch id `<unit_name>__<threat_id>` (S3 8.9): the
+  threat file IS the dispatch grain, so the spec folder is the threat's own
   identity - never a config key or a `fault_key`. The key is bound at tool
   construction and is never a request field.
 - `<spec_id>` is the DERIVED file-name stem `<class>__<value>__<value>`
@@ -53,7 +53,7 @@ memory (`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
 - The notes file follows the SAME data contract as the spec body (G6):
   read/write, write options append/update/delete, grep-match read,
   read-latest. The hunter-only `phase_summary` kind is the interposed pass
-  exit (S4 14.8): the note name is `phase:<state>` and a loop re-iteration
+  exit (S4 14.8): the note name is `phase:<state>` and a threat re-iteration
   updates the same note. Notes keep their natural append order - no
   `_seq`/`_ref` bookkeeping.
 
@@ -229,8 +229,8 @@ class IncompleteSpecSetError(ValueError):
 class HunterMemoryStore(BoundedRecordStore):
     """The hunter-owned per-project spec-set store (S3 8.8/T6).
 
-    Per-project, per-`hunt_key` durable memory of the loop-driven hunter: the
-    `hunt_key` is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9). One
+    Per-project, per-`hunt_key` durable memory of the threat-driven hunter: the
+    `hunt_key` is the threat dispatch id `<unit_name>__<threat_id>` (S3 8.9). One
     YAML file per authored spec (the produced/ file carries the status
     lifecycle), produced/consumed directories, and a per-project notes file on
     the same data contract. A project folder is created lazily at the first
@@ -281,8 +281,8 @@ class HunterMemoryStore(BoundedRecordStore):
     def _validate_component(value: str, what: str) -> None:
         """Reject a `project_id`/`hunt_key` that is not one safe path component.
 
-        The loop dispatch id is used verbatim as the folder name, so `:` and
-        `-` are legal (they are identity chars of the unit name and loop id);
+        The threat dispatch id is used verbatim as the folder name, so `:` and
+        `-` are legal (they are identity chars of the unit name and threat id);
         only path separators, control chars, and dot-traversal forms are
         rejected."""
         if not isinstance(value, str) or not value:
@@ -300,10 +300,10 @@ class HunterMemoryStore(BoundedRecordStore):
     def _validate_hunt_key(hunt_key: str) -> None:
         """Reject a `hunt_key` that is not one safe folder component (S3 8.9).
 
-        The key is the loop dispatch id `<unit_name>__<loop_id>`; `__` is the
+        The key is the threat dispatch id `<unit_name>__<threat_id>`; `__` is the
         separator between its two store-owned parts. The store validates the
         PATH component only: the key is bound at tool construction from the
-        dispatched loop, never authored as a request field."""
+        dispatched threat, never authored as a request field."""
         HunterMemoryStore._validate_component(hunt_key, "hunt_key")
 
     @staticmethod
@@ -568,11 +568,11 @@ class HunterMemoryStore(BoundedRecordStore):
         (consumed specs are terminal by dispatch), then the store writes
         `test-specs/<hunt_key>/terminal.yaml` carrying the run id, the sorted
         terminal identities, and their statuses. A zero-spec hunt is a valid
-        terminal set: it still needs the record, or its consumed loop would be
+        terminal set: it still needs the record, or its consumed threat would be
         recovered forever.
 
         Idempotent for the same run. A different run may finalize the same
-        hunt key (the loop dispatch id is not globally unique across runs);
+        hunt key (the threat dispatch id is not globally unique across runs);
         its record replaces the stale one, and recovery compares the run id.
         """
         self._validate_hunt_key(hunt_key)
@@ -650,7 +650,7 @@ class HunterMemoryStore(BoundedRecordStore):
         """The durable terminal-set record for the hunt key, or None.
 
         A corrupt record raises (O4) rather than reading as absent: a false
-        absence would recover a completed loop."""
+        absence would recover a completed threat."""
         path = self._terminal_file(project_id, hunt_key)
         if not path.exists():
             return None
@@ -679,7 +679,7 @@ class HunterMemoryStore(BoundedRecordStore):
     ) -> dict | None:
         """The one spec file for `(hunt_key, spec_id)`.
 
-        `hunt_key` is the loop dispatch id (S3 8.9). `None` for a missing file
+        `hunt_key` is the threat dispatch id (S3 8.9). `None` for a missing file
         (a valid empty result, never a failure); a corrupt file raises (O4,
         the caller degrades to an empty set). With `attributes` given, the
         returned dict is projected onto them."""
@@ -725,7 +725,7 @@ class HunterMemoryStore(BoundedRecordStore):
     ) -> list[dict]:
         """All spec files under `test-specs/<hunt_key>/`, in file-name order.
 
-        `hunt_key` is the loop dispatch id (S3 8.9); the whole surface context
+        `hunt_key` is the threat dispatch id (S3 8.9); the whole surface context
         is never returned through this store. `sides` selects produced/consumed
         (default both); `statuses` filters on the persisted `status`;
         `attributes` projects each spec onto the given fields. A missing
@@ -746,7 +746,7 @@ class HunterMemoryStore(BoundedRecordStore):
 
     def list_hunt_keys(self, project_id: str) -> list[str]:
         """The `test-specs/` hunt-key folders in deterministic (sorted) order -
-        the loop dispatch ids the inbox surfer enumerates to read the produced
+        the threat dispatch ids the inbox surfer enumerates to read the produced
         spec surface (ADR #169 Q3/#172). A missing project contributes nothing
         (a valid empty result)."""
         tests_dir = self._project_dir(project_id) / "test-specs"
@@ -757,7 +757,7 @@ class HunterMemoryStore(BoundedRecordStore):
     def produced_spec_files(self, project_id: str, hunt_key: str) -> list[str]:
         """The PRODUCED-side spec file stems under one hunt key - the
         `<fault>_<strategy>` file names the inbox surfer operates on (ADR
-        #169 Q3/#172), in file-name order. `hunt_key` is the loop dispatch id
+        #169 Q3/#172), in file-name order. `hunt_key` is the threat dispatch id
         (S3 8.9). `consumed/` contributes nothing. A missing side contributes
         nothing (a valid empty result)."""
         side_dir = self._spec_dir(project_id, hunt_key) / "produced"
@@ -782,7 +782,7 @@ class HunterMemoryStore(BoundedRecordStore):
         (ADR #169 Q3/164 spec 6, tracker #172): ONLY the mover calls this
         (the single-owner rename, #172 AC). `spec_file` is the produced spec's
         file-name identity (the `<fault>_<strategy>` stem, G3) under
-        `test-specs/<hunt_key>/`; `hunt_key` is the loop dispatch id (S3 8.9).
+        `test-specs/<hunt_key>/`; `hunt_key` is the threat dispatch id (S3 8.9).
 
         True when the spec now lives in consumed/ - renamed NOW, or already
         moved by an earlier tick (at-least-once: the repeated invocation of a
@@ -827,7 +827,7 @@ class HunterMemoryStore(BoundedRecordStore):
     @staticmethod
     def note_key(hunt_key: str, note_name: str) -> str:
         """The hierarchy key of a note: `hunt_key:<note_name>` (G6), where
-        `hunt_key` is the loop dispatch id (S3 8.9)."""
+        `hunt_key` is the threat dispatch id (S3 8.9)."""
         return f"{hunt_key}:{note_name}"
 
     def write_note(
@@ -845,7 +845,7 @@ class HunterMemoryStore(BoundedRecordStore):
         """The `notes` body write over the per-project `notes.yaml` (G6).
 
         `append` adds a new note for the `(hunt_key, note_name)` key, where
-        `hunt_key` is the loop dispatch id (S3 8.9); `update` amends an
+        `hunt_key` is the threat dispatch id (S3 8.9); `update` amends an
         existing note (replacing its kind/body/evidence/provenance); `delete`
         removes it. Returns the note `key` (`hunt_key:<note_name>`); an
         update/delete on a missing key returns `None` (a denoted miss, never a
