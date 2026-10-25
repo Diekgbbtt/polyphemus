@@ -1,6 +1,6 @@
 # Impact-elicitation workstream: implementation result
 
-*Status: merged to `hunt-enhancement-trunk` at `11964f14` (feature branch based on `5c73ab82`, merged with the trunk at `55d10e65`). The A/B is pending the operator's protocol.*
+*Status: merged to `hunt-enhancement-trunk` (merge commit `11964f14`; docs follow-up `a975e9bf`). The feature branch is based on `5c73ab82` and merged with the trunk at `55d10e65`. The A/B is pending the operator's protocol.*
 
 ## What landed
 
@@ -86,6 +86,7 @@ The measurement reports; it does not gate the run.
 - `c98108d5` - the eval rename plus the breadth and spec-discrimination measurement.
 - `2396b3a3` - the current-documentation rename and the narrowing record.
 - `11964f14` - the merge with the hunt-enhancement trunk (suite name-regex search and the HTTP-history fixes).
+- `a975e9bf` - the final verification counts and merge record.
 
 ## Verification
 
