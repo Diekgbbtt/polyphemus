@@ -28,10 +28,17 @@ _EXECUTABLE_MARKERS = (
     re.compile(r"\brm\s+-[a-z]*r[a-z]*f", re.IGNORECASE),
 )
 _TOOL_REQUEST_MARKERS = (
+    # A real tool request is a protocol shape, not ordinary methodology prose.
+    # The old "use|run ... tool|function|command" scan rejected legitimate
+    # answers such as "use the function to compare the ids" - 18 of the 19
+    # white-jotter fallbacks were this false positive.
+    re.compile(r"\btool_call\b|\bfunction_call\b", re.IGNORECASE),
     re.compile(
-        r"\b(?:use|invoke|call|run|execute)\b.{0,32}\b(?:tool|function|command|agent)\b",
+        r'"name"\s*:\s*"(?:exec|replay|query_lightrag|notes|graph_view|'
+        r'load_skill)"',
         re.IGNORECASE,
     ),
+    re.compile(r"\b(?:call|invoke)\s+the\s+[\w-]+\s+tool\b", re.IGNORECASE),
     re.compile(r"stage\s*4", re.IGNORECASE),
     re.compile(r"\btool\s+request\b", re.IGNORECASE),
 )

@@ -31,7 +31,7 @@ from polymerhus.attack.hunting.pod.tools import (
 )
 from polymerhus.recon.domain.types import ExecResult
 
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 
 SPEC = {
@@ -95,7 +95,7 @@ def test_runner_binds_exec_note_kb_and_graph_view(tmp_path):
                                spec_id=SPEC_ID, log=ExperimentLog(),
                                variant_ref="v0")
     names = {t.name for t in tools}
-    assert {"exec", "note", "query_lightrag", "graph_view"} <= names
+    assert {"exec", "notes", "query_lightrag", "graph_view"} <= names
     assert "kb_retrieve" not in names
 
 
@@ -141,7 +141,7 @@ def test_runner_graph_view_rides_the_injected_seam(tmp_path):
 def test_triager_binds_note_kb_and_graph_view_no_exec(tmp_path):
     tools = triager_react_tools(PodMemoryStore(tmp_path), SPEC_ID)
     names = {t.name for t in tools}
-    assert {"note", "query_lightrag", "graph_view"} <= names
+    assert {"notes", "query_lightrag", "graph_view"} <= names
     assert "exec" not in names
     assert "kb_retrieve" not in names
 
@@ -334,8 +334,8 @@ def test_exec_tool_async_path_records_same_shape():
 def test_runner_tools_note_tool_rejects_a_storeless_instance(tmp_path):
     tools = runner_react_tools(_exec(), None, SPEC_ID,
                                ExperimentLog(), "v0")
-    note = next(t for t in tools if t.name == "note")
+    note = next(t for t in tools if t.name == "notes")
     assert isinstance(note, PodNoteTool)
-    out = note.invoke({"operation": "write", "order": 0, "note_name": "n",
+    out = note.invoke({"command": "write", "order": 0, "note_name": "n",
                        "kind": "freeform", "body": "x"})
-    assert out.startswith("NOTES_NO_STORE")
+    assert "NOTES_NO_STORE" in out

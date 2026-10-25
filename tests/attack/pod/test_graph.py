@@ -26,7 +26,7 @@ from polymerhus.recon.domain.types import ExecResult
 from polymerhus.attack.hunting.pod.pod_memory import spec_identifier
 
 # The #164 `<fault>_<strategy>` spec id (D84-34), the pod memory store key (T7).
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 
 def _terminate_space(spec, obs, messages, log):

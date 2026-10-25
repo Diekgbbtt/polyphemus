@@ -30,7 +30,10 @@ def test_the_hunter_tool_descriptions_stay_within_the_budget():
     """The 12 request descriptions are a fixed tax on every hunter call. The
     dense contract is bounded; the schemas remain the full machine surface."""
     total = sum(len(tool.description or "") for tool in _surface())
-    assert total <= 8500, total
+    # 8700 (was 8500): the shared auth contract now teaches the retired full
+    # view and the 12000-character read bound, the two changes that remove the
+    # run's 1.5M-character auth occupancy.
+    assert total <= 8700, total
 
 
 def test_every_hunter_tool_has_a_description():
@@ -68,13 +71,20 @@ def test_the_typed_spec_schema_still_describes_every_field():
 
     schema = HuntsStoreArgs.model_json_schema()
     spec = schema["$defs"]["SpecWrite"]["properties"]
-    for name in ("status", "fault_keyword", "strategy_keyword",
-                 "target_identity", "verification_symptoms", "assumptions",
-                 "rationale", "parent_spec_ref", "provenance", "skills"):
+    for name in ("status", "discriminators", "target_identity",
+                 "verification_symptoms", "assumptions", "rationale",
+                 "parent_spec_ref", "provenance", "skills",
+                 "skill_concretised_procedure", "merged_from"):
         assert spec[name].get("description"), name
     provenance = schema["$defs"]["SpecProvenance"]["properties"]
     assert provenance["run_id"].get("description")
-    assert provenance["skill_procedure"].get("description")
+    concretised = schema["$defs"]["SkillConcretisedProcedure"]["properties"]
+    for name in (
+            "recon_action", "bypass_technique", "advanced_technique",
+            "preliminary_chaining", "payload_vector",
+            "technology_misconfiguration", "technology_grounding",
+            "pro_tips", "interpretation_pitfalls"):
+        assert concretised[name].get("description"), name
 
 
 def _role_surfaces():

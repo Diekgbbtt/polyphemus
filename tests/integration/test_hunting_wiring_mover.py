@@ -83,7 +83,7 @@ UNIT_NAME = "Service-catalogue-and-discovery"
 DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 SPEC_KEYWORD = "sqli"
 STRATEGY = "blind"
-SPEC_FILE = f"{SPEC_KEYWORD}_{STRATEGY}"
+SPEC_FILE = f"idor__{SPEC_KEYWORD}__{STRATEGY}"
 
 
 # --- catalogue-inherited fixtures (id conventions) ------------------------------
@@ -101,12 +101,18 @@ def _produce(threat, *, run_id=RUN):
 
 def _spec(**overrides) -> dict:
     data = {
-        "status": "ratified",
-        "fault_keyword": SPEC_KEYWORD,
-        "strategy_keyword": STRATEGY,
+        "status": "hypothesised",
+        "discriminators": [
+            {"axis": "fault", "value": SPEC_KEYWORD},
+            {"axis": "technique", "value": STRATEGY},
+        ],
+        "provenance": {"web_vulnerability_class": "idor"},
         "verification_symptoms": ["a foreign item renders"],
     }
+    provenance = dict(data["provenance"])
+    provenance.update(overrides.pop("provenance", {}) or {})
     data.update(overrides)
+    data["provenance"] = provenance
     return data
 
 
@@ -119,10 +125,14 @@ def stores(tmp_path):
 
 def _write_spec(hunter, *, hunt_key=DISPATCH_ID, keyword=SPEC_KEYWORD,
                 strategy=STRATEGY, status="ratified") -> None:
-    hunter.write_specs(
-        PROJECT, hunt_key,
-        [_spec(status=status, fault_keyword=keyword, strategy_keyword=strategy)],
-    )
+    draft = _spec(discriminators=[
+        {"axis": "fault", "value": keyword},
+        {"axis": "technique", "value": strategy},
+    ])
+    hunter.write_specs(PROJECT, hunt_key, [draft])
+    if status != "hypothesised":
+        hunter.write_specs(
+            PROJECT, hunt_key, [{**draft, "status": status}])
 
 
 # --- the two permitted fakes ---------------------------------------------------
@@ -524,7 +534,7 @@ def test_C40_consumed_ratified_spec_without_export_is_redispatched(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     hunter.write_specs(
         PROJECT, DISPATCH_ID,
-        [_spec(provenance={"run_id": RUN})], side="consumed")
+        [{**_spec(provenance={"run_id": RUN}), "status": "ratified"}], side="consumed")
 
     inbox = read_produced_inbox(
         PROJECT, RUN, hunter_store=hunter, pod_store=pod_store)
@@ -553,7 +563,7 @@ def test_C41_consumed_spec_with_an_export_or_a_foreign_run_is_not_redispatched(
     hunter = HunterMemoryStore(tmp_path / "hunter")
     hunter.write_specs(
         PROJECT, DISPATCH_ID,
-        [_spec(provenance={"run_id": RUN})], side="consumed")
+        [{**_spec(provenance={"run_id": RUN}), "status": "ratified"}], side="consumed")
     pod_store.write_pod_export(SPEC_FILE, RUN, {
         "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence"})
     assert read_produced_inbox(
@@ -564,8 +574,10 @@ def test_C41_consumed_spec_with_an_export_or_a_foreign_run_is_not_redispatched(
     other = "run-other"
     hunter.write_specs(
         PROJECT, DISPATCH_ID,
-        [_spec(fault_keyword="other", strategy_keyword="probe",
-               provenance={"run_id": other})], side="consumed")
+        [_spec(discriminators=[
+            {"axis": "fault", "value": "other"},
+            {"axis": "technique", "value": "probe"},
+        ], provenance={"run_id": other})], side="consumed")
     inbox = read_produced_inbox(
         PROJECT, RUN, hunter_store=hunter, pod_store=pod_store)
     assert inbox.items == ()
@@ -679,9 +691,11 @@ def test_C39_the_real_store_body_reaches_the_real_init_gate_and_authors_a_probe(
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod_store = PodMemoryStore(root_dir=tmp_path / "pod", project_id=PROJECT)
     body = {
-        "status": "ratified",
-        "fault_keyword": SPEC_KEYWORD,
-        "strategy_keyword": STRATEGY,
+        "status": "hypothesised",
+        "discriminators": [
+            {"axis": "fault", "value": SPEC_KEYWORD},
+            {"axis": "technique", "value": STRATEGY},
+        ],
         "target_identity": {"url": "http://soupmarket.shop/",
                             "unit_id": "service:web:soupmarket"},
         "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
@@ -693,6 +707,8 @@ def test_C39_the_real_store_body_reaches_the_real_init_gate_and_authors_a_probe(
                        "web_vulnerability_class": "idor"},
     }
     hunter.write_specs(PROJECT, DISPATCH_ID, [body], side="produced")
+    hunter.write_specs(
+        PROJECT, DISPATCH_ID, [{**body, "status": "ratified"}], side="produced")
 
     inbox = read_produced_inbox(PROJECT, RUN, hunter_store=hunter)
     items = [item for item in inbox.items if isinstance(item, TestSpecItem)]
@@ -701,8 +717,10 @@ def test_C39_the_real_store_body_reaches_the_real_init_gate_and_authors_a_probe(
     # The store body on disk keeps the lifecycle + identity metadata.
     persisted = hunter.read_spec(PROJECT, DISPATCH_ID, SPEC_FILE)
     assert persisted["status"] == "ratified"
-    assert persisted["fault_keyword"] == SPEC_KEYWORD
-    assert persisted["strategy_keyword"] == STRATEGY
+    assert persisted["discriminators"] == [
+        {"axis": "fault", "value": SPEC_KEYWORD},
+        {"axis": "technique", "value": STRATEGY},
+    ]
 
     seen: dict = {}
 
@@ -734,8 +752,12 @@ def test_C39_the_real_store_body_reaches_the_real_init_gate_and_authors_a_probe(
 
     # The pod received the pure D4: the store metadata was projected away.
     received = seen["spec"]
-    for metadata in ("status", "fault_keyword", "strategy_keyword"):
+    for metadata in ("status",):
         assert metadata not in received
+    assert received["discriminators"] == [
+        {"axis": "fault", "value": SPEC_KEYWORD},
+        {"axis": "technique", "value": STRATEGY},
+    ]
     assert validate_spec(received) == []
 
     # The runner reached probe authoring: one authored curl of the target URL.

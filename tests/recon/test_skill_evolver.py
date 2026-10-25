@@ -940,3 +940,28 @@ def test_ensure_project_evolver_is_fail_open_when_admission_refuses() -> None:
 
     assert ensure_project_evolver(
         "p1", runtime=_Refusing(), controller_fn=controller) is None
+
+
+def test_the_default_turn_meters_the_pass_under_the_project(monkeypatch) -> None:
+    """The evolver's model spend belongs to the project ledger under its own
+    role, so the 7M cap and `/projects/{id}/usage` count it."""
+    from polymerhus.app.llm import checkpoints, session
+    from polymerhus.app.llm.evolver import _default_turn_fn
+
+    seen: dict = {}
+
+    async def fake_turn(role_id, thread_id, messages, **kwargs):
+        seen["role_id"] = role_id
+        seen["usage_scope"] = kwargs.get("usage_scope")
+        return {"messages": []}
+
+    monkeypatch.setattr(session, "arun_session_turn", fake_turn)
+    monkeypatch.setattr(checkpoints, "get_session_checkpointer", lambda: None)
+
+    asyncio.run(_default_turn_fn(
+        "t-1", "prompt", tools=[], middleware=[], system_prompt="s",
+        context=None, model_factory=None, usage_scope="proj-1",
+    ))
+
+    assert seen["role_id"] == EVOLVER_ROLE_ID
+    assert seen["usage_scope"] == "proj-1"

@@ -3,8 +3,8 @@
 On a variant decision the triager names ONE basis: a procedure gap, the
 failure-mode fallback, or an execution-trigger recovery. The ten literals below
 are the spec's table; the first seven are the procedure gaps and map one-to-one
-onto the typed `SkillProcedure` fields (`spec_contract.SKILL_PROCEDURE_FIELDS`,
-same order), so the diff can test each field's class in the table order and the
+onto the typed `SkillConcretisedProcedure` fields
+(`spec_contract.SKILL_CONCRETISED_PROCEDURE_FIELDS`, same order), so the diff can test each field's class in the table order and the
 first uncovered class is the basis.
 
 The diff helpers are PURE: they take the typed procedure, the triager's coverage
@@ -20,9 +20,9 @@ import json
 from typing import Collection, Iterable, Literal
 
 from polymerhus.attack.hunting.pod.types import VariantSpec
-from polymerhus.attack.hunting.spec_contract import SkillProcedure
+from polymerhus.attack.hunting.spec_contract import SkillConcretisedProcedure
 
-# --- the ten basis literals (S5 8.6, table order) -----------------------------
+# --- the twelve basis literals (S5 8.6, table order) -------------------------
 
 RECON_ACTION = "recon-action"
 BYPASS_TECHNIQUE = "bypass-technique"
@@ -30,6 +30,8 @@ TECHNOLOGY_GROUNDING = "technology-grounding"
 PRO_TIPS = "pro-tips"
 ADVANCED_TECHNIQUE = "advanced-technique"
 PRELIMINARY_CHAINING = "preliminary-chaining"
+PAYLOAD_VECTOR = "payload-vector"
+TECHNOLOGY_MISCONFIGURATION = "technology-misconfiguration"
 INTERPRETATION_PITFALL = "interpretation-pitfall"
 FAILURE_MODE = "failure-mode"
 RUNNER_FAILURE = "runner-failure"
@@ -42,6 +44,8 @@ VariantBasis = Literal[
     "pro-tips",
     "advanced-technique",
     "preliminary-chaining",
+    "payload-vector",
+    "technology-misconfiguration",
     "interpretation-pitfall",
     "failure-mode",
     "runner-failure",
@@ -50,7 +54,8 @@ VariantBasis = Literal[
 
 VARIANT_BASES: tuple[VariantBasis, ...] = (
     RECON_ACTION, BYPASS_TECHNIQUE, TECHNOLOGY_GROUNDING, PRO_TIPS,
-    ADVANCED_TECHNIQUE, PRELIMINARY_CHAINING, INTERPRETATION_PITFALL,
+    ADVANCED_TECHNIQUE, PRELIMINARY_CHAINING, PAYLOAD_VECTOR,
+    TECHNOLOGY_MISCONFIGURATION, INTERPRETATION_PITFALL,
     FAILURE_MODE, RUNNER_FAILURE, RUNNER_DIVERGENCE,
 )
 
@@ -61,16 +66,19 @@ PROCEDURE_GAP_FIELD: dict[VariantBasis, str] = {
     PRO_TIPS: "pro_tips",
     ADVANCED_TECHNIQUE: "advanced_technique",
     PRELIMINARY_CHAINING: "preliminary_chaining",
+    PAYLOAD_VECTOR: "payload_vector",
+    TECHNOLOGY_MISCONFIGURATION: "technology_misconfiguration",
     INTERPRETATION_PITFALL: "interpretation_pitfalls",
 }
-"""The seven procedure-gap bases, in table order, each naming its typed
-`SkillProcedure` field. The one-to-one mapping IS the diff's iteration order."""
+"""The nine procedure-gap bases, in table order, each naming its typed
+`SkillConcretisedProcedure` field. The one-to-one mapping IS the diff's
+iteration order."""
 
 PROCEDURE_GAP_BASES: tuple[VariantBasis, ...] = tuple(PROCEDURE_GAP_FIELD)
 
 
 def first_uncovered_gap(
-        procedure: SkillProcedure | None,
+        procedure: SkillConcretisedProcedure | None,
         covered: Collection[str]) -> VariantBasis | None:
     """The first procedure-gap class the executed procedure does not cover.
 
@@ -93,7 +101,7 @@ def first_uncovered_gap(
 
 def mint_variant_basis(
         *,
-        procedure: SkillProcedure | None,
+        procedure: SkillConcretisedProcedure | None,
         covered: Collection[str] | None,
         runner_failed: bool = False,
         runner_diverged: bool = False,

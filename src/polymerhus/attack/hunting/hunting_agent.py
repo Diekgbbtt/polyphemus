@@ -89,6 +89,7 @@ from polymerhus.attack.hunting.hunting_tracing import (
     flush_hunting_traces,
     trace_span,
 )
+from polymerhus.attack.hunting.spec_contract import TargetIdentity
 from polymerhus.app.llm.provider_failure import (
     ProviderUnavailableError,
     as_provider_error,
@@ -388,18 +389,23 @@ def _fold_persisted_specs(
         bodies = [one] if isinstance(one, Mapping) else []
     folded: list[dict] = []
     for body in bodies:
+        provenance = body.get("provenance")
+        provenance = provenance if isinstance(provenance, Mapping) else {}
+        discriminators = body.get("discriminators")
+        if not isinstance(discriminators, list):
+            discriminators = []
         try:
             spec_id = spec_identifier(
-                str(body.get("fault_keyword") or ""),
-                str(body.get("strategy_keyword") or ""),
+                str(provenance.get("web_vulnerability_class")
+                    or provenance.get("canonical_class") or ""),
+                discriminators,
             )
         except ValueError:
             continue
         folded.append({
             "spec_id": spec_id,
             "status": str(body.get("status") or ""),
-            "fault_keyword": str(body.get("fault_keyword") or ""),
-            "strategy_keyword": str(body.get("strategy_keyword") or ""),
+            "discriminators": list(discriminators),
             "spec_ref": paths.get(spec_id, ""),
             "verification_symptoms": list(body.get("verification_symptoms") or []),
             "summary": str(body.get("rationale") or "")[:200],
@@ -560,9 +566,23 @@ def build_hunting_agent(
             return _assemble({"state": "grounding", "specs": [], "trail": []},
                              feedback)
         compiled = build_hunter_graph().compile()
+        # The target identity is symbolic: the dispatch context carries the
+        # canonical target URL, and the store injects it into every spec write.
+        target_context = payload.get("target_context")
+        target_context = (
+            target_context if isinstance(target_context, dict) else {})
+        target_url = str(target_context.get("target_url") or "").strip()
+        target_identity = (
+            TargetIdentity(
+                url=target_url,
+                unit_id=str(payload.get("unit_id")
+                            or target_context.get("unit_id") or ""),
+            )
+            if target_url else None
+        )
         tools = build_hunter_tools(
             store=memory_store, project_id=project_id, hunt_key=hunt_key,
-            run_id=run_id,
+            run_id=run_id, target_identity=target_identity,
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
             http_search_fn=http_search_fn, http_get_fn=http_get_fn,
             suite_classes=suite_classes, suite_read_fn=suite_read_fn,

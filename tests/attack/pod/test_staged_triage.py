@@ -41,13 +41,14 @@ PROCEDURE = {
     "pro_tips": "compare the reflected encoding",
     "advanced_technique": "chain the stored form",
     "preliminary_chaining": "mint a low-privilege session first",
+    "payload_vector": "the search parameter in the query string, URL-encoded",
+    "technology_misconfiguration": "the template engine trusts the stored form",
     "interpretation_pitfalls": "a 404 is not proof the field is absent",
 }
 
 PROCEDURE_SPEC = {
     **SEMANTIC_SPEC,
-    "provenance": {**SEMANTIC_SPEC["provenance"],
-                   "skill_procedure": PROCEDURE},
+    "skill_concretised_procedure": PROCEDURE,
 }
 
 ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
@@ -224,8 +225,7 @@ def test_staged_all_empty_procedure_calls_the_terminal_not_the_miner():
     from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_FIELD
 
     empty = {field: "" for field in PROCEDURE_GAP_FIELD.values()}
-    spec = {**SEMANTIC_SPEC, "provenance": {
-        **SEMANTIC_SPEC["provenance"], "skill_procedure": empty}}
+    spec = {**SEMANTIC_SPEC, "skill_concretised_procedure": empty}
     calls = []
     env = _run(arun_pod(
         spec, exec_fn=_exec, runner_step_fn=symbolic_runner_step_fn,

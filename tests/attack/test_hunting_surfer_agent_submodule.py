@@ -39,7 +39,7 @@ UNIT_NAME = "Service-catalogue-and-discovery"
 LOOP_ID = "loop-1"
 DISPATCH_ID = f"{UNIT_NAME}__{LOOP_ID}"
 HUNTER_SESSION = mover_mod.hunter_session_id(RUN, DISPATCH_ID)
-SPEC_FILE = "sqli_blind"
+SPEC_FILE = "sqli__blind__boolean"
 
 
 def _produce(threat):
@@ -50,7 +50,12 @@ def _produce(threat):
 
 def _spec(**overrides):
     data = {
-        "status": "ratified", "fault_keyword": "sqli", "strategy_keyword": "blind",
+        "status": "hypothesised",
+        "discriminators": [
+            {"axis": "fault", "value": "blind"},
+            {"axis": "technique", "value": "boolean"},
+        ],
+        "provenance": {"web_vulnerability_class": "sqli"},
         "verification_symptoms": ["a foreign item renders"],
     }
     data.update(overrides)
@@ -128,7 +133,9 @@ def test_C10_down_hunter_role_refuses_loop_dispatch(stores):
 
 def test_C11_down_pod_role_refuses_spec_dispatch(stores):
     threat, hunter = stores
-    hunter.write_specs(PROJECT, DISPATCH_ID, [_spec()])
+    draft = _spec()
+    hunter.write_specs(PROJECT, DISPATCH_ID, [draft])
+    hunter.write_specs(PROJECT, DISPATCH_ID, [{**draft, "status": "ratified"}])
     control = _RecordingControl()
     report = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,

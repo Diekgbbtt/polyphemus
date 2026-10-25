@@ -101,13 +101,15 @@ def test_the_encoding_scheme_is_not_a_discrimination_variable():
 
 def test_the_spec_body_names_every_writable_field_and_nested_contract():
     """The human projection is complete: every writable `SpecWrite` field, every
-    `SpecProvenance` field, every `TargetIdentity` field, and every
-    `SkillProcedure` field appears. `run_id` is bound and `spec_id` is derived,
-    so neither is a model-authored field."""
+    `SpecProvenance` field, every `TargetIdentity` field, every `Discriminator`
+    field, and every `SkillConcretisedProcedure` field appears. `run_id` is
+    bound and `spec_id` is derived, so neither is a model-authored field."""
     from polymerhus.attack.hunting.hunter_tools import SpecWrite  # noqa: PLC0415
     from polymerhus.attack.hunting.spec_contract import (  # noqa: PLC0415
-        SKILL_PROCEDURE_FIELDS,
+        Discriminator,
+        SKILL_CONCRETISED_PROCEDURE_FIELDS,
         SPEC_PROVENANCE_FIELDS,
+        SkillConcretisedProcedure,
         TargetIdentity,
     )
 
@@ -119,13 +121,17 @@ def test_the_spec_body_names_every_writable_field_and_nested_contract():
         assert name in body, name
     for name in TargetIdentity.model_fields:
         assert name in body, name
+    for name in Discriminator.model_fields:
+        assert name in body, name
     for name in SPEC_PROVENANCE_FIELDS:
         assert name in body, name
-    for name in SKILL_PROCEDURE_FIELDS:
+    for name in SKILL_CONCRETISED_PROCEDURE_FIELDS:
+        assert name in body, name
+    for name in SkillConcretisedProcedure.model_fields:
         assert name in body, name
     assert "run_id" in body and "bound" in body.lower()
     assert "spec_id" in body and "derived" in body.lower()
-    assert "skills" in body and "pod runner" in body.lower()
+    assert "skills" in body and "pod" in body.lower()
 
 
 # --- the removals -------------------------------------------------------------
@@ -269,9 +275,9 @@ def test_the_prompt_carries_the_one_spec_write_and_the_three_statuses():
     assert "exactly one `spec` object" in prompt
     assert "command" in prompt and "`spec`" in prompt
     assert "`specs`" not in prompt
-    assert "`fault_keyword`" in prompt and "`strategy_keyword`" in prompt
+    assert "`discriminators`" in prompt
     assert "Never author `spec_id`" in prompt
-    assert "<fault_keyword>_<strategy_keyword>.yaml" in prompt
+    assert "<class>__<value>__<value>" in prompt
     for status in ("hypothesised", "ratified", "dropped"):
         assert status in prompt
     assert 'command: "finalize"' in prompt
@@ -279,17 +285,20 @@ def test_the_prompt_carries_the_one_spec_write_and_the_three_statuses():
 
 
 def test_the_prompt_carries_the_reduced_d4_spec_body():
-    """S3 8.6: target_identity, verification_symptoms, assumptions, rationale,
-    parent_spec_ref, provenance, and the typed seven-field skill_procedure."""
+    """S3 8.6: target_identity, discriminators, verification_symptoms,
+    assumptions, rationale, parent_spec_ref, provenance, and the typed
+    nine-field skill_concretised_procedure."""
     prompt = _prompt()
-    for field in ("`target_identity`", "`verification_symptoms`", "`assumptions`",
-                  "`rationale`", "`parent_spec_ref`", "`provenance`"):
+    for field in ("`target_identity`", "`discriminators`",
+                  "`verification_symptoms`", "`assumptions`",
+                  "`rationale`", "`parent_spec_ref`", "`provenance`",
+                  "`skill_concretised_procedure`"):
         assert field in prompt, field
     for field in ("`recon_action`", "`bypass_technique`", "`technology_grounding`",
                   "`pro_tips`", "`advanced_technique`", "`preliminary_chaining`",
+                  "`payload_vector`", "`technology_misconfiguration`",
                   "`interpretation_pitfalls`"):
         assert field in prompt, field
-    assert "4000 characters" in prompt
     assert "non-empty list" in prompt
     assert "symptom-absent" in prompt
     assert "It carries no failure-mode detail and no narrowed vector" in prompt
@@ -421,5 +430,9 @@ def test_the_phase_hint_wording_is_transition_only():
 
 
 def test_the_prompt_stays_within_a_reasonable_size():
-    """A stable system prompt, not a wall of text (the modeller prompt's bar)."""
-    assert len(_prompt().splitlines()) < 420
+    """A stable system prompt, not a wall of text (the modeller prompt's bar).
+
+    The bound grew from 420 to 460 with the realigned spec contract: the
+    generated table now expands the discriminator and the nine-field
+    concretisation so the hunter never has to infer either shape."""
+    assert len(_prompt().splitlines()) < 460

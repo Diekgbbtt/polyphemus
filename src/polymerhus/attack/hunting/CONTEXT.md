@@ -4,6 +4,17 @@
 
 Hunting configures and dispatches; a test-executor pod executes. Only the former is in scope.
 
+**Spec contract realignment (2026-10-25, built on `fix/hunt-spec-contract-realign`).**
+The spec identity is now `<class>__<value>__<value>[__...]`, derived from `provenance.web_vulnerability_class` and the ordered `discriminators` (two to four `{axis, value}` instances).
+`fault_keyword` and `strategy_keyword` are retired from the tool schema, the prompt, the store, and the state.
+The copied `provenance.skill_procedure` is retired; the spec carries a top-level `skill_concretised_procedure` with nine fields, and the runner may optionally load the declared skills.
+The target identity is bound by the symbolic layer from the run's canonical origin, so the hunter does not author the URL.
+A terminal `ratified` write must address an existing draft; a merge keeps the survivor identity and records `merged_from`.
+The pod's notes tool is the shared `notes` tool under the one name; the pod-only `note` name is retired.
+The auth read-only binding retires `view: full`.
+The lifecycle has a malformed fail-safe and a 45-minute per-session watchdog.
+The authoritative records are `docs/design/hunting-spec-identity-impact-map.md`, `docs/design/hunting-lifecycle-failsafe.md`, and `docs/design/hunting-run-feedback-fixes.md`.
+
 **Design change (2026-10-15; the rewrite LANDED in T1-T9, #375-#383).** The unit threat model design (`docs/design/unit-threat-model-workbench.md`) rewrote the hunt-orchestrator in place into the threat modeller; the runtime role key is `threat_modeller`. Terms marked `(2026-10-15, design)` below describe that design, not the built module.
 
 **New design terms (2026-10-18).** `WELL-FORMEDNESS` - the hunter pass that checks the spec set for no overlap and exhaustive coverage of the slice (the former AGGREGATE+CHECK). `phase_summary` - the note kind the hunter writes as a pass exit; the note name is `phase:<phase>`. `loop payload` - the per-dispatch rendering of one loop plus its unit context; it replaces the `HuntConfig` for the hunter. `unit threat model artifact` - the per-unit formal model document (one model per unit, ranked loops, evidences, confidence degrees). `pass sequence` - the hunter's eight-pass reasoning order (GROUNDING -> SLICE -> COLLECT -> DISCRIMINATE -> GENERATE -> WELL-FORMEDNESS -> VERIFY-CLAIMS -> COMPLETE); the retired `chain` name is not reused as an entity. `hunts_store` (per-role binding) - the modeller binds the threat-model store; the hunter binds the spec store.

@@ -61,7 +61,7 @@ SPEC = {
                    "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
 _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
@@ -198,7 +198,7 @@ def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
     spec_id = SPEC_ID
     replies = [
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "order": 0,
+            {"name": "notes", "args": {"command": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the consolidated summary"},
@@ -374,7 +374,7 @@ def test_stage_c_turn_keeps_the_full_tool_surface(tmp_path, monkeypatch):
 
     _run(_drive_stage(default_triager_fn, SPEC, hc, log))
 
-    assert {"note", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "exec" not in seen
 
 
@@ -508,7 +508,7 @@ def test_triager_turn_binds_its_react_tools_and_never_exec(tmp_path, monkeypatch
 
     # #236: the full skill surface rides the critic's turn (load_skill plus the
     # lesson sub-phase's record_skill_lesson); exec stays off it.
-    assert {"note", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "exec" not in seen  # the critic never touches the target
     assert "write_skill" not in seen
 
@@ -527,7 +527,7 @@ def test_runner_turn_binds_the_full_skill_surface(tmp_path):
 
     _run(_drive_runner(SPEC, hc))
 
-    assert {"exec", "note", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert {"exec", "notes", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "write_skill" not in seen
 
 
@@ -625,9 +625,9 @@ def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path)
 
     monkeypatch.setattr(graph_mod, "default_runner_step_fn", spy)
     env = _run(arun_pod(root_spec, exec_fn=_exec(_ABSENT), trace_fn=_no_trace,
-                        memory_store=PodMemoryStore(tmp_path), spec_id="sqli_blind"))
+                        memory_store=PodMemoryStore(tmp_path), spec_id="sqli__blind__boolean"))
     assert env["verdict"] == "unsuccessful"
     assert seen and seen[0] is not None
-    assert seen[0].spec_id == "sqli_blind"             # the #164 handoff keys memory
+    assert seen[0].spec_id == "sqli__blind__boolean"             # the #164 handoff keys memory
     assert seen[0].variant_ref == "v0"
     assert seen[0].log is not None

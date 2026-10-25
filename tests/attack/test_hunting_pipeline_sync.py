@@ -50,7 +50,7 @@ def _loop(unit_name: str = "u1", loop_id: str = "loop-1", *,
     )
 
 
-def _spec(hunt_key: str = "u1__loop-1", stem: str = "sqli_blind") -> TestSpecItem:
+def _spec(hunt_key: str = "u1__loop-1", stem: str = "sqli__blind__boolean") -> TestSpecItem:
     return TestSpecItem(
         message_id=f"{hunt_key}/{stem}",
         session_id=f"hunting:{RUN}:pod:{hunt_key}:{stem}",
@@ -174,7 +174,7 @@ def test_batched_skips_a_done_unit_in_the_queue():
 def test_serial_admits_one_hunter_and_holds_its_siblings():
     items = [_loop(loop_id="loop-1"), _loop(loop_id="loop-2")]
     facts = _facts(
-        spec_stems={"u1__loop-2": ("sqli_blind",)},
+        spec_stems={"u1__loop-2": ("sqli__blind__boolean",)},
         terminal_specs=frozenset(),
     )
     admitted = decide(SyncMode.SERIAL, items, [_unit("u1")], facts)
@@ -293,3 +293,16 @@ def test_pipeline_sync_state_caches_the_meta_and_the_intake_position():
     assert state.cached("u2") is meta
     assert state.meta_for("u1", "Service:u1", risk=0).intake_position == 1_000_000
     assert state.mode is SyncMode.SERIAL
+
+
+def test_the_gate_reads_the_live_target_identity_unit():
+    """The live spec carries `target_identity.unit_id`; the gate must find it
+    before the legacy `target.unit_id` and the provenance fallback."""
+    from polymerhus.attack.hunting.pipeline_sync import _spec_unit_id
+
+    assert _spec_unit_id(
+        {"target_identity": {"unit_id": "Service:u1"}}) == "Service:u1"
+    assert _spec_unit_id({"target": {"unit_id": "Service:u2"}}) == "Service:u2"
+    assert _spec_unit_id(
+        {"provenance": {"unit_id": "Service:u3"}}) == "Service:u3"
+    assert _spec_unit_id({}) == ""

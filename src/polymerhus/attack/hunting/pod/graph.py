@@ -117,7 +117,7 @@ from polymerhus.attack.hunting.pod.types import (
     SYMPTOM_CONFIRMED_CLASS,
     TECHNICAL_INFEASIBILITY,
     VariantSpec,
-    skill_procedure_from_spec,
+    skill_concretised_procedure_from_spec,
 )
 from polymerhus.attack.hunting.pod.variant_basis import (
     PROCEDURE_GAP_BASES,
@@ -125,7 +125,11 @@ from polymerhus.attack.hunting.pod.variant_basis import (
     is_duplicate_variant,
     mint_variant_basis,
 )
-from polymerhus.attack.hunting.pod.verification import validate_decision, validate_spec
+from polymerhus.attack.hunting.pod.verification import (
+    init_route,
+    validate_decision,
+    validate_spec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +215,7 @@ def _resolve_variant_decision(decision: dict, spec: dict,
     fallback. A claimed basis the triager supplied stands only when it stated
     no coverage assessment. A duplicate `(basis, detail)` is never re-minted:
     the decision degrades to an honest `no-symptom-evidence` terminal."""
-    procedure = skill_procedure_from_spec(spec)
+    procedure = skill_concretised_procedure_from_spec(spec)
     covered = _variant_coverage(decision)
     computed = mint_variant_basis(
         procedure=procedure,
@@ -527,8 +531,12 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         }
 
     def init_router(state: PodState) -> str:
-        # C1: a schema-malformed spec is rejected here with ZERO tool calls.
-        return "reject" if state.get("init_validation") else "runner"
+        # C1: a spec with no probe URL cannot run a single call, so it stops
+        # with a PodExport carrying its init_validation. Every other violation
+        # (an empty symptom list, a missing optional field) is recorded and the
+        # runner still attempts a probe: the malformed fail-safe must not turn
+        # a partial body into a queue halt.
+        return init_route(state.get("init_validation"))
 
     # --- the runner's stretch (production ReAct turn OR contract-tier loop) ----
 

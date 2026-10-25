@@ -40,7 +40,7 @@ def _loop(unit_name: str = "u1", loop_id: str = "loop-1", *,
     )
 
 
-def _spec(hunt_key: str = "u1__loop-1", stem: str = "sqli_blind",
+def _spec(hunt_key: str = "u1__loop-1", stem: str = "sqli__blind__boolean",
           unit_id: str = "Service:u1") -> TestSpecItem:
     return TestSpecItem(
         message_id=f"{hunt_key}/{stem}",
@@ -157,12 +157,12 @@ def test_gate_holds_the_next_unit_behind_a_live_pod():
     }
     pod_session = f"hunting:{RUN}:pod:u1__loop-1:sqli_blind"
     bodies = {
-        ("u1__loop-1", "sqli_blind"): {
+        ("u1__loop-1", "sqli__blind__boolean"): {
             "status": "ratified", "target": {"unit_id": "Service:u1"}},
     }
     gate = _gate(
         SyncMode.BATCHED, models=models,
-        consumed={"u1__loop-1": ["sqli_blind"]}, bodies=bodies,
+        consumed={"u1__loop-1": ["sqli__blind__boolean"]}, bodies=bodies,
     )
     admitted = gate.filter([_loop("u2")], live_session_ids={pod_session})
     assert admitted == ()

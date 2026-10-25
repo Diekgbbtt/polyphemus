@@ -104,6 +104,20 @@ def validate_spec(spec: dict | TestImplementationSpec) -> list[str]:
     return violations
 
 
+def init_route(violations: Sequence[str] | None) -> str:
+    """The pod INIT route: `reject` only when no probe URL exists.
+
+    Every other violation is recorded on the PodExport and the runner still
+    attempts a probe. This is the malformed fail-safe: a partial body must not
+    become a queue halt, and a consumed malformed spec must still land an
+    export. A spec without a URL cannot make a single call, so it stops.
+    """
+    for violation in violations or ():
+        if "target_identity.url" in str(violation):
+            return "reject"
+    return "runner"
+
+
 def validate_probe_chain(chain: ProbeChain | dict | None) -> list[str]:
     """The runner-output guard: a probe chain must carry at least one step, and
     exactly one core payload-carrying call. Returns the violations (empty =

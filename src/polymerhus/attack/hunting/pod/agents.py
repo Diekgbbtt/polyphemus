@@ -420,7 +420,7 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
                        kb_fn=None, kb_lookup=None, graph_view_fn=None,
                        capture_context=None, replay_fn=None, project_id=""):
     """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
-    `note` (pod memory write/read), the single `query_lightrag` KB tool from the
+    `notes` (pod memory write/read), the single `query_lightrag` KB tool from the
     lightrag branch (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate
     is REMOVED, fail-open to a degraded bundle), and the ONE shared `graph_view`
     read-only L0/L1 tool (#197) the runner uses to locate the target's surface.
@@ -483,7 +483,7 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
 
 def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
                         log=None, variant_ref="", graph_view_fn=None):
-    """The Triager's bound-tool set (D84-27): note read + the always-bound
+    """The Triager's bound-tool set (D84-27): notes read + the always-bound
     `query_lightrag` KB tool + the shared `graph_view` L0/L1 tool (#197) - NEVER
     exec (the critic never touches the target). The triager's KB reads are
     CONTEXT reads (D84-27), so `log`/`variant_ref` may be unbound - a logless KB

@@ -25,7 +25,7 @@ from polymerhus.attack.hunting.pod.llm import (
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.recon.domain.types import ExecResult
 
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
 

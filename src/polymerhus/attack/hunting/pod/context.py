@@ -25,7 +25,7 @@ from polymerhus.attack.hunting.pod.types import (
     KbObservation,
     RawObservation,
     VariantSpec,
-    skill_procedure_from_spec,
+    skill_concretised_procedure_from_spec,
 )
 from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_FIELD
 
@@ -40,31 +40,30 @@ _PROBE_SLICE = 200
 def _pod_spec_view(spec: dict) -> dict:
     """The context-only projection of one pod spec (CL-3).
 
-    The typed `SkillProcedure` is rendered ONCE by `_skill_procedure_context`;
-    the full spec JSON must not repeat the same procedure through
-    `provenance.skill_procedure`. The spec schema and the store are unchanged:
-    this is a view over a deep copy, used only by the two context renderers."""
+    The typed `SkillConcretisedProcedure` is rendered ONCE by
+    `_skill_concretised_procedure_context`; the full spec JSON must not repeat
+    the same procedure through `skill_concretised_procedure`. The spec schema
+    and the store are unchanged: this is a view over a deep copy, used only by
+    the two context renderers."""
     if not isinstance(spec, dict):
         return spec
     view = copy.deepcopy(spec)
-    provenance = view.get("provenance")
-    if isinstance(provenance, dict):
-        provenance.pop("skill_procedure", None)
+    view.pop("skill_concretised_procedure", None)
     return view
 
 
-def _skill_procedure_context(spec: dict) -> str:
-    """The bounded typed `SkillProcedure` excerpt the triager diffs (S5 8.6).
+def _skill_concretised_procedure_context(spec: dict) -> str:
+    """The bounded typed `SkillConcretisedProcedure` the triager diffs (S5 8.6).
 
-    Read from the spec provenance through the ONE typed read, never the store
-    envelope. An absent excerpt is a RECORDED GAP: the diff has no material and
-    the failure-mode fallback applies. An empty section is a SKIPPED class, not
-    a coverage gap (T10 H1): there is no authored procedure to execute or cover,
+    Read from the spec through the ONE typed read, never the store envelope. An
+    absent object is a RECORDED GAP: the diff has no material and the
+    failure-mode fallback applies. An empty section is a SKIPPED class, not a
+    coverage gap (T10 H1): there is no authored procedure to execute or cover,
     so the diff passes over it and never loops on it."""
-    procedure = skill_procedure_from_spec(spec)
-    header = "## Skill procedure (typed excerpt from the spec provenance)"
+    procedure = skill_concretised_procedure_from_spec(spec)
+    header = "## Skill procedure (target-specific concretisation)"
     if procedure is None:
-        return (f"{header}\n(no skill procedure excerpt recorded - a recorded gap; "
+        return (f"{header}\n(no skill concretisation recorded - a recorded gap; "
                 "the procedure diff has no material, so the failure-mode fallback applies)")
     lines = []
     for basis, field in PROCEDURE_GAP_FIELD.items():
@@ -301,7 +300,7 @@ class ExperimentLog:
         observation (body-capped), and every prior variant (so it does not
         re-mine one)."""
         parts = [f"## Current spec variant\n{json.dumps(_pod_spec_view(spec), indent=2)}",
-                 _skill_procedure_context(spec)]
+                 _skill_concretised_procedure_context(spec)]
         if observation is not None:
             obs = observation.model_dump()
             obs["body"] = (obs.get("body") or "")[:_BODY_SLICE]
@@ -415,7 +414,7 @@ def compose_triage_delta(log: ExperimentLog, spec: dict,
 def compose_divergence_delta(log: ExperimentLog, spec: dict,
                              observation: RawObservation | None, *, store,
                              spec_id: str, order: int) -> str:
-    """Stage B's delta: the compact triage delta plus the typed `SkillProcedure`
+    """Stage B's delta: the compact triage delta plus the typed `SkillConcretisedProcedure`
     excerpt and the executed probe trail.
 
     The typed excerpt is the procedure-diff material the spec renders; the
@@ -423,7 +422,7 @@ def compose_divergence_delta(log: ExperimentLog, spec: dict,
     divergence is a procedure comparison, not a duplicate check."""
     parts = [compose_triage_delta(log, spec, observation, store=store,
                                   spec_id=spec_id, order=order),
-             _skill_procedure_context(spec)]
+             _skill_concretised_procedure_context(spec)]
     probes = _executed_probe_lines(log.raw_observations)
     if probes:
         parts.append("## Probes executed (the D6 trail)\n" + "\n".join(probes))

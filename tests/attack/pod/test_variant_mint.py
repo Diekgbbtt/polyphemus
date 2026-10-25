@@ -26,6 +26,8 @@ PROCEDURE = {
     "pro_tips": "compare the owner id in the response body",
     "advanced_technique": "chain the export endpoint",
     "preliminary_chaining": "mint a low-privilege session first",
+    "payload_vector": "the order id in the path segment, no encoding",
+    "technology_misconfiguration": "the object store trusts the URL scope",
     "interpretation_pitfalls": "a 403 is not proof the object is absent",
 }
 ALL_GAPS = set(PROCEDURE_GAP_BASES)
@@ -33,12 +35,16 @@ ALL_GAPS = set(PROCEDURE_GAP_BASES)
 SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/",
                         "unit_id": "service:web:soupmarket"},
+    "discriminators": [
+        {"axis": "object", "value": "order-id"},
+        {"axis": "delivery-route", "value": "signed-url"},
+    ],
     "verification_symptoms": ["the response leaks another user's order id"],
     "assumptions": ["the session cookie is the only auth factor"],
     "rationale": "IDOR over the order endpoint",
+    "skill_concretised_procedure": PROCEDURE,
     "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
-                   "canonical_class": "IDOR", "web_vulnerability_class": "idor",
-                   "skill_procedure": PROCEDURE},
+                   "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
@@ -98,9 +104,8 @@ def test_an_empty_procedure_section_is_skipped_not_minted():
     # T10 H1: an empty section is a skipped class. Even when the triager claims
     # full coverage, the diff never loops on the empty pro-tips section; the
     # plausible failure mode is the only derivable variant.
-    spec = {**SPEC, "provenance": {
-        **SPEC["provenance"],
-        "skill_procedure": {**PROCEDURE, "pro_tips": ""}}}
+    spec = {**SPEC, "skill_concretised_procedure": {
+        **PROCEDURE, "pro_tips": ""}}
     derived = {**spec, "rationale": "test one more observable failure mode"}
     env = _drive([
         _variant(declined_attribute="pro-tips",
@@ -197,7 +202,8 @@ def test_the_variant_record_keeps_its_shape_and_carries_the_basis():
 
 
 def test_an_absent_excerpt_is_recorded_and_uses_the_failure_mode_fallback():
-    spec = {**SPEC, "provenance": {"loop_id": "loop-1"}}
+    spec = {**SPEC, "skill_concretised_procedure": None,
+            "provenance": {"loop_id": "loop-1"}}
     derived = {**spec, "rationale": "test an additional observable failure mode"}
     env = _drive([
         _variant(covered_gap_classes=[], failure_mode_plausible=True,

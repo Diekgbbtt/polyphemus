@@ -25,17 +25,20 @@ from polymerhus.attack.hunting.hunter_memory import (
 
 PROJECT = "proj-1"
 HUNT_KEY = "Service-account-registration__loop-1"
-SPEC_ID = "registration_probe"
+SPEC_ID = "spec__registration__probe"
 
 
 def _spec(*, status: str = "hypothesised", fault_keyword: str = "registration",
           strategy_keyword: str = "probe", **extra) -> dict:
-    """A reduced-D4 spec payload: the identity keywords + the status verbatim
-    plus the typed body the store persists unchanged."""
+    """A reduced-D4 spec payload with the two discriminating instances the
+    older tests named as `fault_keyword` / `strategy_keyword`, translated to
+    the new `{axis, value}` contract."""
     body = {
         "status": status,
-        "fault_keyword": fault_keyword,
-        "strategy_keyword": strategy_keyword,
+        "discriminators": [
+            {"axis": "fault", "value": fault_keyword},
+            {"axis": "technique", "value": strategy_keyword},
+        ],
         "target_identity": {"url": "http://target", "unit_id": "Service:a"},
         "verification_symptoms": ["a foreign item renders"],
         "assumptions": ["the ownership check is absent"],
@@ -68,9 +71,9 @@ def test_a_one_spec_promotion_does_not_require_the_whole_set(tmp_path):
     written = store.write_specs(
         PROJECT, HUNT_KEY, [_spec(status="ratified", fault_keyword="registration")],
         enforce_complete=False)
-    assert [spec_id for spec_id, _ in written] == ["registration_probe"]
-    assert store.read_spec(PROJECT, HUNT_KEY, "registration_probe")["status"] == "ratified"
-    assert store.read_spec(PROJECT, HUNT_KEY, "reset_probe")["status"] == "hypothesised"
+    assert [spec_id for spec_id, _ in written] == ["spec__registration__probe"]
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__registration__probe")["status"] == "ratified"
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__reset__probe")["status"] == "hypothesised"
 
 
 def test_finalize_requires_every_draft_to_be_decided(tmp_path):
@@ -84,7 +87,7 @@ def test_finalize_requires_every_draft_to_be_decided(tmp_path):
         enforce_complete=False)
     with pytest.raises(IncompleteSpecSetError) as raised:
         store.finalize_specs(PROJECT, HUNT_KEY, run_id="run-1")
-    assert raised.value.missing == ["reset_probe"]
+    assert raised.value.missing == ["spec__reset__probe"]
     assert store.read_terminal_set(PROJECT, HUNT_KEY) is None
 
 
@@ -102,9 +105,9 @@ def test_finalize_records_the_terminal_set_and_is_idempotent(tmp_path):
         enforce_complete=False)
     marker = store.finalize_specs(PROJECT, HUNT_KEY, run_id="run-1")
     assert marker["run_id"] == "run-1"
-    assert marker["spec_ids"] == ["registration_probe", "reset_probe"]
+    assert marker["spec_ids"] == ["spec__registration__probe", "spec__reset__probe"]
     assert marker["spec_statuses"] == {
-        "registration_probe": "ratified", "reset_probe": "dropped"}
+        "spec__registration__probe": "ratified", "spec__reset__probe": "dropped"}
     again = store.finalize_specs(PROJECT, HUNT_KEY, run_id="run-1")
     assert again["finalized_at"] == marker["finalized_at"]
     assert store.read_terminal_set(PROJECT, HUNT_KEY)["run_id"] == "run-1"
@@ -130,9 +133,9 @@ def test_a_batched_specs_write_creates_the_whole_set(tmp_path):
         _spec(fault_keyword="registration", strategy_keyword="probe"),
         _spec(fault_keyword="reset", strategy_keyword="replay"),
     ])
-    assert [spec_id for spec_id, _ in written] == ["registration_probe", "reset_replay"]
-    assert _spec_file(tmp_path, "produced", "registration_probe").is_file()
-    assert _spec_file(tmp_path, "produced", "reset_replay").is_file()
+    assert [spec_id for spec_id, _ in written] == ["spec__registration__probe", "spec__reset__replay"]
+    assert _spec_file(tmp_path, "produced", "spec__registration__probe").is_file()
+    assert _spec_file(tmp_path, "produced", "spec__reset__replay").is_file()
     assert store.read_specs(PROJECT, HUNT_KEY, sides=("produced",)) == [
         _spec(fault_keyword="registration", strategy_keyword="probe"),
         _spec(fault_keyword="reset", strategy_keyword="replay"),
@@ -155,9 +158,9 @@ def test_the_terminal_write_promotes_and_declasses_in_place(tmp_path):
     ])
     produced = _spec_file(tmp_path, "produced").parent
     assert sorted(path.name for path in produced.glob("*.yaml")) == [
-        "registration_probe.yaml", "reset_replay.yaml"]
-    assert store.read_spec(PROJECT, HUNT_KEY, "registration_probe")["status"] == "ratified"
-    dropped = store.read_spec(PROJECT, HUNT_KEY, "reset_replay")
+        "spec__registration__probe.yaml", "spec__reset__replay.yaml"]
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__registration__probe")["status"] == "ratified"
+    dropped = store.read_spec(PROJECT, HUNT_KEY, "spec__reset__replay")
     assert dropped["status"] == "dropped"
     # the body is the reduced D4 at every status: no FaultItem/spec_id residue
     assert dropped["verification_symptoms"] == []
@@ -180,11 +183,11 @@ def test_a_terminal_write_that_omits_a_hypothesised_spec_is_refused(tmp_path):
             _spec(status="ratified", fault_keyword="registration",
                   strategy_keyword="probe"),
         ])
-    assert "reset_replay" in str(caught.value)
+    assert "spec__reset__replay" in str(caught.value)
     # the refused write is atomic: the old produced set is untouched
-    assert store.read_spec(PROJECT, HUNT_KEY, "registration_probe")["status"] \
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__registration__probe")["status"] \
         == "hypothesised"
-    assert store.read_spec(PROJECT, HUNT_KEY, "reset_replay")["status"] \
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__reset__replay")["status"] \
         == "hypothesised"
 
 
@@ -202,9 +205,9 @@ def test_a_terminal_write_that_explicitly_drops_a_draft_is_allowed(tmp_path):
         _spec(status="dropped", fault_keyword="reset",
               strategy_keyword="replay"),
     ])
-    assert store.read_spec(PROJECT, HUNT_KEY, "registration_probe")["status"] \
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__registration__probe")["status"] \
         == "ratified"
-    assert store.read_spec(PROJECT, HUNT_KEY, "reset_replay")["status"] \
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__reset__replay")["status"] \
         == "dropped"
 
 
@@ -260,16 +263,19 @@ def test_a_mixed_hypothesised_and_terminal_set_is_refused(tmp_path):
         "ratified", "dropped"]
 
 
-def test_the_file_name_is_derived_from_the_sanitised_keywords(tmp_path):
-    """S3 8.6/G3: `<fault_keyword>_<strategy_keyword>.yaml`; `_` is the one
-    separator, so `_`/`:`/path separators/control chars are replaced with `-`."""
+def test_the_file_name_is_derived_from_the_class_and_values(tmp_path):
+    """S3 8.6/G3: `<class>__<value>__<value>.yaml`; the class is sanitised and
+    the values are already safe tokens. An unsafe value is a coded rejection."""
     store = HunterMemoryStore(root_dir=tmp_path)
     written = store.write_specs(PROJECT, HUNT_KEY, [
-        _spec(fault_keyword="fault/x:csrf", strategy_keyword="probe_1"),
+        _spec(fault_keyword="csrf", strategy_keyword="probe"),
     ])
-    assert written[0][0] == "fault-x-csrf_probe-1"
-    assert _spec_file(tmp_path, "produced", "fault-x-csrf_probe-1").is_file()
-    assert spec_identifier("fault/x:csrf", "probe_1") == "fault-x-csrf_probe-1"
+    assert written[0][0] == "spec__csrf__probe"
+    assert _spec_file(tmp_path, "produced", "spec__csrf__probe").is_file()
+    assert spec_identifier("spec", [
+        {"axis": "fault", "value": "csrf"},
+        {"axis": "technique", "value": "probe"},
+    ]) == "spec__csrf__probe"
     with pytest.raises(ValueError):
         store.write_specs(PROJECT, HUNT_KEY, [
             _spec(fault_keyword="..", strategy_keyword="probe")])
@@ -282,7 +288,7 @@ def test_the_store_key_is_the_hunt_key_folder(tmp_path):
     store.write_specs(PROJECT, HUNT_KEY, [_spec()])
     expected = (
         tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / HUNT_KEY
-        / "produced" / "registration_probe.yaml"
+        / "produced" / "spec__registration__probe.yaml"
     )
     assert expected.is_file()
     assert store.list_hunt_keys(PROJECT) == [HUNT_KEY]
@@ -387,29 +393,50 @@ def test_a_corrupt_spec_file_raises(tmp_path):
         store.read_specs(PROJECT, HUNT_KEY)
 
 
-# --- the typed skill-procedure provenance (S3 8.6, S5 8.6) --------------------
+# --- the typed skill-concretised procedure (S3 8.6, S5 8.6) -------------------
 
-def test_the_skill_procedure_provenance_round_trips(tmp_path):
-    from polymerhus.attack.hunting.spec_contract import SkillProcedure
+def test_the_skill_concretised_procedure_round_trips(tmp_path):
+    from polymerhus.attack.hunting.spec_contract import (
+        SkillConcretisedProcedure,
+    )
 
-    procedure = SkillProcedure(recon_action="mine the item id",
-                               bypass_technique="swap the id")
+    procedure = SkillConcretisedProcedure(
+        recon_action="mine the item id",
+        bypass_technique="swap the id",
+        payload_vector="the item id in the path, no encoding",
+        technology_misconfiguration="the store trusts the signed scope",
+    )
     store = HunterMemoryStore(root_dir=tmp_path)
     store.write_specs(PROJECT, HUNT_KEY, [
-        _spec(provenance={**_spec()["provenance"],
-                          "skill_procedure": procedure.model_dump()})])
+        _spec(skill_concretised_procedure=procedure.model_dump())])
     body = store.read_spec(PROJECT, HUNT_KEY, SPEC_ID)
-    assert body["provenance"]["skill_procedure"]["recon_action"] == "mine the item id"
+    assert body["skill_concretised_procedure"]["recon_action"] == \
+        "mine the item id"
+    assert body["skill_concretised_procedure"]["payload_vector"] == \
+        "the item id in the path, no encoding"
 
 
-def test_an_over_long_skill_procedure_is_a_coded_rejection(tmp_path):
-    from polymerhus.attack.hunting.spec_contract import SkillProcedure
+def test_an_over_long_skill_concretised_procedure_is_a_coded_rejection(tmp_path):
+    from polymerhus.attack.hunting.spec_contract import (
+        SKILL_CONCRETISED_PROCEDURE_MAX_CHARS,
+    )
 
     store = HunterMemoryStore(root_dir=tmp_path)
-    procedure = SkillProcedure(recon_action="z" * 4001)
-    with pytest.raises(ValueError, match="4000"):
+    procedure = {"recon_action": "z" * (SKILL_CONCRETISED_PROCEDURE_MAX_CHARS + 1)}
+    with pytest.raises(ValueError, match="exceeds"):
         store.write_specs(PROJECT, HUNT_KEY, [
-            _spec(provenance={"skill_procedure": procedure.model_dump()})])
+            _spec(skill_concretised_procedure=procedure)])
+
+
+def test_a_terminal_write_for_an_unknown_identity_is_refused(tmp_path):
+    """Identity stability: a changed discriminator value is a new sub-slice,
+    not a silent rename of an existing slot."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    store.write_specs(PROJECT, HUNT_KEY, [_spec()])
+    with pytest.raises(ValueError, match="no hypothesised spec"):
+        store.write_specs(PROJECT, HUNT_KEY, [
+            _spec(status="ratified", strategy_keyword="different")],
+            enforce_complete=False)
 
 
 # --- #340: notes.yaml is written atomically ----------------------------------

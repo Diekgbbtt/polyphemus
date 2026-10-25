@@ -14,9 +14,9 @@ seam) is what the harness binds per hunt - this module wires nothing into
 
 Contract + degradation (spec 5, spec 9):
 - `hunts_store` / `notes` - the spec-set write/read seam over
-  `HunterMemoryStore` (S3 8.6-8.7): `write` carries the WHOLE `specs` list,
-  each entry with its `status` (`hypothesised | ratified | dropped`) and the
-  file-name keywords; the store derives `<fault_keyword>_<strategy_keyword>`.
+  `HunterMemoryStore` (S3 8.6-8.7): `write` carries exactly one `spec`, with
+  its `status` (`hypothesised | ratified | dropped`) and the ordered
+  `discriminators`; the store derives `<class>__<value>__<value>`.
   A duplicate identity inside the set is the denoted `duplicate_spec` dedup
   signal the model interprets. Both tools are BOUND to the hunt's OWN loop
   dispatch id (`hunt_key` = `<unit_name>__<loop_id>`, S3 8.9 - never a request
@@ -80,10 +80,14 @@ from .http_history_contract import (
     SEARCH_HTTP_HISTORY_DESCRIPTION,
 )
 from .spec_contract import (
-    SKILL_PROCEDURE_FIELDS,
-    SkillProcedure,
+    MAX_DISCRIMINATORS,
+    MIN_DISCRIMINATORS,
+    SKILL_CONCRETISED_PROCEDURE_FIELDS,
+    Discriminator,
+    SkillConcretisedProcedure,
     SpecProvenance,
     TargetIdentity,
+    spec_identifier,
 )
 from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
@@ -155,8 +159,8 @@ ExecFn = Callable[[str, int], ExecResult]
 # tool/handle construction (the harness holds the loop payload at dispatch) so
 # the hunter's store tools can only ever address the hunt's own loop. The key is
 # the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9). The model authors each
-# spec's `fault_keyword` / `strategy_keyword` (the derived file-name identity
-# axes) but never the destination hunt key. A tool constructed without a bound
+# spec's `discriminators` (the derived file-name identity instances) but never
+# the destination hunt key. A tool constructed without a bound
 # key degrades to a denoted invalid_args, never a silent degenerate path.
 
 # --- the coded teaching rejection (#209, shared in tool_contract) --------------
@@ -218,29 +222,36 @@ class SpecWrite(BaseModel):
     """The `TestImplementationSpec` write payload (#236, F-015, F-025).
 
     The persisted shape is the pod's canonical `TestImplementationSpec`: the
-    nested `target_identity` and `provenance` are the SAME typed models the pod
-    reads, not open dictionaries. `extra="forbid"` makes an invented field a
-    coded rejection instead of a silently dropped value, so the tool schema and
-    the stored record cannot drift.
+    nested `target_identity`, `provenance`, and `skill_concretised_procedure`
+    are the SAME typed models the pod reads, not open dictionaries.
+    `extra="forbid"` makes an invented field a coded rejection instead of a
+    silently dropped value, so the tool schema and the stored record cannot
+    drift.
 
-    F-025: ONE spec per `hunts_store` write. `status`, the two file-name
-    keywords and `target_identity` are REQUIRED; `target_identity.url` must be
-    non-empty because the pod INIT-rejects it otherwise. The remaining fields
-    are optional and documented as such; the store still owns the coded
-    identity/status semantics.
+    F-025: ONE spec per `hunts_store` write. `status` and `discriminators` are
+    REQUIRED. `discriminators` is the ordered tuple of the instance values the
+    hunter separated this slot on; the store derives the identity
+    `<class>__<value>__<value>` from it. The target identity is BOUND by the
+    tool from the dispatch context; the hunter may author it only as a
+    degraded-path override. The remaining fields are optional.
     """
 
     status: str = Field(
         description="The lifecycle verbatim: 'hypothesised' | 'ratified' | "
                     "'dropped'. Required.")
-    fault_keyword: str = Field(
-        description="The fault half of the derived spec file name. Required.")
-    strategy_keyword: str = Field(
-        description="The strategy half of the derived spec file name. Required.")
-    target_identity: TargetIdentity = Field(
-        description="The target identity object {'url': <base url>, 'unit_id': "
-                    "<L1 service/system identity>}; `url` must be non-empty or "
-                    "the pod INIT-rejects the spec. Required.")
+    discriminators: list[Discriminator] = Field(
+        min_length=MIN_DISCRIMINATORS,
+        max_length=MAX_DISCRIMINATORS,
+        description="The ordered discrimination instances, most discriminating "
+                    "first: two to four {axis, value} entries in DISCRIMINATE "
+                    "order. The store derives the spec identity from the values "
+                    "and the class. Required on the first write.")
+    target_identity: TargetIdentity | None = Field(
+        default=None,
+        description="Optional: the target identity {'url', 'unit_id'}. The "
+                    "symbolic layer binds it from the dispatch context; author it "
+                    "only when the symbolic layer could not resolve a URL. The pod "
+                    "INIT-rejects an empty `url`.")
     verification_symptoms: list[str] = Field(
         default_factory=list,
         description="Optional: the observable symptoms that verify the fault.")
@@ -253,23 +264,33 @@ class SpecWrite(BaseModel):
         default=None,
         description="Optional: the parent spec id when this entry is a "
                     "triager-minted variant; null for an original spec.")
+    skills: list[str] = Field(
+        default_factory=list,
+        description="Optional: flat skill names the downstream pod should carry "
+                    "for this test spec. Never a path or a meta skill.")
+    skill_concretised_procedure: SkillConcretisedProcedure | None = Field(
+        default=None,
+        description="Optional: the target-specific concretisation of the loaded "
+                    "abstract procedure. The triager diffs the executed probe "
+                    "against it.")
     provenance: SpecProvenance = Field(
         default_factory=SpecProvenance,
         description="Optional: the typed dispatch provenance (loop_id, unit_id, "
                     "the two classes, baseline_ref, source_recon_refs, "
-                    "assumption_ref, playbook, skill_procedure).")
-    skills: list[str] = Field(
+                    "assumption_ref, playbook).")
+    merged_from: list[str] = Field(
         default_factory=list,
-        description="Optional: flat skill names the downstream POD RUNNER "
-                    "should carry for this test spec. Never a path or a meta "
-                    "skill.")
+        description="Optional: the derived identities this survivor absorbed in "
+                    "WELL-FORMEDNESS. The absorbed identities are dropped; the "
+                    "survivor's own discriminators stay unchanged.")
 
     @model_validator(mode="after")
-    def _require_a_probe_url(self):
-        if not self.target_identity.url.strip():
+    def _unique_discrimination_axes(self):
+        axes = [item.axis for item in self.discriminators]
+        if len(set(axes)) != len(axes):
             raise ValueError(
-                "target_identity.url is required and must be non-empty: the "
-                "pod probes that base URL and INIT-rejects an empty one")
+                f"duplicate discrimination axis in {axes!r}; each axis names "
+                "one separation dimension")
         return self
 
     model_config = ConfigDict(extra="forbid")
@@ -318,16 +339,21 @@ def render_spec_contract() -> str:
 
     The pydantic models are the single source. The prompt names every field,
     its type, its requiredness, and its own description; the request schema
-    remains the machine contract. `run_id` is bound by the tool and `spec_id`
-    is derived from the two keywords, so neither is model-authored.
+    remains the machine contract. `run_id` and `target_identity` are bound by
+    the tool and `spec_id` is derived from the class and the discriminator
+    values, so none is model-authored on the normal path.
     """
     lines = [
         "Write exactly one `spec` object per `hunts_store` call. The request "
         "schema is the machine contract; this table is its human projection.",
-        "`spec_id` is derived as `<fault_keyword>_<strategy_keyword>` and is "
-        "never authored. `run_id` is bound by the tool and is never authored.",
+        "`spec_id` is derived as `<class>__<value>__<value>` from "
+        "`provenance.web_vulnerability_class` and the ordered "
+        "`discriminators[].value` list; it is never authored. `run_id` and the "
+        "target identity are bound by the tool.",
         "",
-        "The nested `target_identity` and `provenance` objects are expanded below.",
+        "The nested `discriminators`, `target_identity`, "
+        "`skill_concretised_procedure`, and `provenance` objects are expanded "
+        "below.",
         "",
         "| field | type | required | meaning |",
         "|---|---|---|---|",
@@ -337,21 +363,39 @@ def render_spec_contract() -> str:
             lines.append("| `status` | `\"hypothesised\" / \"ratified\" / "
                          "\"dropped\"` | required | The lifecycle verbatim. |")
             continue
+        if name == "discriminators":
+            lines.append(
+                "| `discriminators` | `list[Discriminator]` | required | The "
+                "ordered 2-4 discrimination instances, most discriminating "
+                "first. |")
+            for dname, dfield in Discriminator.model_fields.items():
+                lines.append(_contract_row(dfield, f"discriminators[].{dname}"))
+            continue
+        if name == "target_identity":
+            lines.append(
+                "| `target_identity` | `TargetIdentity` | bound / optional | "
+                "Bound by the symbolic layer from the dispatch context. |")
+            for tname, tfield in TargetIdentity.model_fields.items():
+                lines.append(_contract_row(tfield, f"target_identity.{tname}"))
+            continue
+        if name == "skill_concretised_procedure":
+            lines.append(
+                "| `skill_concretised_procedure` | "
+                "`SkillConcretisedProcedure` | optional | The target-specific "
+                "concretisation of the loaded abstract procedure. |")
+            for sname, sfield in SkillConcretisedProcedure.model_fields.items():
+                lines.append(_contract_row(
+                    sfield, f"skill_concretised_procedure.{sname}"))
+            continue
         if name == "provenance":
+            lines.append(
+                "| `provenance` | `SpecProvenance` | optional | The typed "
+                "dispatch provenance. |")
             for pname, pfield in SpecProvenance.model_fields.items():
                 row = _contract_row(pfield, f"provenance.{pname}")
                 if pname == "run_id":
                     row = row.replace("| optional |", "| bound |")
-                if pname == "skill_procedure":
-                    row = ("| `provenance.skill_procedure` | `SkillProcedure` | "
-                           "optional | The typed seven-field excerpt: "
-                           + ", ".join(f"`{n}`" for n in SKILL_PROCEDURE_FIELDS)
-                           + ". |")
                 lines.append(row)
-            continue
-        if name == "target_identity":
-            for tname, tfield in TargetIdentity.model_fields.items():
-                lines.append(_contract_row(tfield, f"target_identity.{tname}"))
             continue
         lines.append(_contract_row(field, name))
     return "\n".join(lines)
@@ -362,13 +406,12 @@ class HuntsStoreArgs(BaseModel):
 
     F-025: the WRITE payload is exactly ONE `spec` object, never a batch. The
     spec carries its `status` (`hypothesised | ratified | dropped`) and the
-    file-name identity attributes `fault_keyword` / `strategy_keyword`; the
-    symbolic layer DERIVES `<fault_keyword>_<strategy_keyword>.yaml` from them,
-    so they are never separate request fields whose requiredness the surface
-    could omit. A payload missing a derivation input, a `spec_id`, or an empty
-    `target_identity.url` is a coded `hunts_store_write_rejected` naming the
-    field. The write upserts the identity in place; a re-author is not a
-    duplicate.
+    ordered `discriminators` (two to four `{axis, value}` instances); the
+    symbolic layer DERIVES `<class>__<value>__<value>.yaml` from them, so they
+    are never separate request fields whose requiredness the surface could
+    omit. A payload missing a derivation input, a `spec_id`, or a resolvable
+    target identity is a coded `hunts_store_write_rejected` naming the field.
+    The write upserts the identity in place; a re-author is not a duplicate.
 
     FINALIZE closes the set: it requires every produced spec to be `ratified`
     or `dropped`, then writes the durable terminal-set record. A zero-spec
@@ -400,11 +443,10 @@ class HuntsStoreArgs(BaseModel):
         default=None,
         description="Write payload: exactly ONE spec object. Required on "
                     "`write`; omit on `read` and `finalize`. The spec's "
-                    "`status`, `fault_keyword`, `strategy_keyword` and "
-                    "`target_identity.url` are required; all other SpecWrite "
-                    "fields are optional. The file name "
-                    "`<fault_keyword>_<strategy_keyword>.yaml` is DERIVED (do "
-                    "not author `spec_id`).")
+                    "`status` and `discriminators` are required; all other "
+                    "SpecWrite fields are optional. The file name "
+                    "`<class>__<value>__<value>.yaml` is DERIVED (do not author "
+                    "`spec_id`).")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -507,17 +549,16 @@ class HuntsStoreTool(StoreToolBase):
 
     name: str = "hunts_store"
     description: str = (
-        "The hunt's spec-set seam, bound to THIS hunt's loop. Commands: read / "
-        "write / finalize.\n"
-        "write carries exactly ONE spec object in `spec`, never a list. "
-        "`status`, `fault_keyword`, `strategy_keyword`, and "
-        "`target_identity.url` are required. The file name is derived from the "
-        "two keywords; never send `spec_id`. A missing required field is a "
-        "coded hunts_store_write_rejected naming it.\n"
-        "finalize requires every produced spec to be ratified or dropped, "
-        "then writes the terminal record. A write after finalize is rejected.\n"
-        "read takes optional statuses/attributes filters and returns this "
-        "loop's specs."
+        "The hunt's spec-set seam, bound to THIS hunt. Commands: read / write / "
+        "finalize.\n"
+        "write carries exactly ONE spec object. `status` and `discriminators` "
+        "(two to four ordered {axis, value} entries) are required on the first "
+        "write. The identity is derived as `<class>__<value>__<value>`; never "
+        "send `spec_id`. The target identity is bound; author it only when the "
+        "layer could not resolve a URL.\n"
+        "finalize requires every produced spec to be ratified or dropped, then "
+        "writes the terminal record. A write after finalize is rejected.\n"
+        "read takes optional statuses/attributes filters and returns its specs."
     )
     args_schema: type[BaseModel] = HuntsStoreArgs
     _discriminator: str = "command"
@@ -529,12 +570,17 @@ class HuntsStoreTool(StoreToolBase):
 
     def __init__(self, *, store: HunterMemoryStore | None = None,
                  project_id: str = "", hunt_key: str = "",
-                 run_id: str = "", **kwargs):
+                 run_id: str = "",
+                 target_identity: TargetIdentity | None = None,
+                 **kwargs):
         super().__init__(**kwargs)
         self._store = store
         self._project_id = project_id
         self._hunt_key = hunt_key
         self._run_id = run_id
+        # The symbolic target identity: bound at dispatch from the loop payload
+        # and the project's canonical origin, so the hunter never authors it.
+        self._target_identity = target_identity
         self.description = append_conciseness_directive(self.description)
 
     def _unavailable(self, args: HuntsStoreArgs) -> str:
@@ -605,8 +651,8 @@ class HuntsStoreTool(StoreToolBase):
                 ["spec"],
                 "write takes exactly ONE spec object in `spec` (never a "
                 "batch). A set is built by repeated one-spec writes, then "
-                "closed by command=finalize. Each spec requires status, "
-                "fault_keyword, strategy_keyword, and target_identity.url.")
+                "closed by command=finalize. Each spec requires status and "
+                "two to four ordered discriminators.")
         try:
             if self._store.has_terminal_set(self._project_id, self._hunt_key):
                 return json.dumps({
@@ -625,19 +671,30 @@ class HuntsStoreTool(StoreToolBase):
             return self._write_rejected(
                 ["spec_id"],
                 "`spec_id` is a DERIVED symbol (the "
-                "<fault_keyword>_<strategy_keyword> stem); remove it")
-        for field in ("fault_keyword", "strategy_keyword", "status"):
-            if not spec.get(field):
-                return self._write_rejected(
-                    [f"spec.{field}"],
-                    "the spec must carry status + fault_keyword + "
-                    "strategy_keyword; the identity "
-                    "<fault_keyword>_<strategy_keyword> is DERIVED from them")
+                "<class>__<value>__<value> stem); remove it")
+        if not spec.get("discriminators"):
+            return self._write_rejected(
+                ["spec.discriminators"],
+                "the spec must carry two to four ordered {axis, value} "
+                "discriminator entries; the identity is DERIVED from their "
+                "values and the class")
         if spec["status"] not in SPEC_STATUSES:
             return self._write_rejected(
                 ["spec.status"],
                 f"status must be one of {SPEC_STATUSES}; got "
                 f"{spec['status']!r}")
+        # The symbolic target identity: the bound value wins. The model may
+        # author one only as the degraded-path override when the harness could
+        # not resolve a URL.
+        if self._target_identity is not None:
+            spec["target_identity"] = self._target_identity.model_dump()
+        target = spec.get("target_identity")
+        if not isinstance(target, dict) or not str(target.get("url") or "").strip():
+            return self._write_rejected(
+                ["spec.target_identity.url"],
+                "no target URL is bound to this hunt and the spec authored "
+                "none; the symbolic layer must resolve the project origin before the "
+                "first write")
         # F-017: bind the current hunting run id into the spec's typed
         # provenance, so a consumed spec with no terminal PodExport can be
         # attributed to THIS run on resume. The model never authors it.
@@ -647,6 +704,16 @@ class HuntsStoreTool(StoreToolBase):
         if self._run_id:
             provenance.setdefault("run_id", self._run_id)
         spec["provenance"] = provenance
+        # Pre-validate the derived identity so a bad tuple is a teaching
+        # rejection naming the discriminators, not a bare store ValueError.
+        try:
+            spec_identifier(
+                str(provenance.get("web_vulnerability_class")
+                    or provenance.get("canonical_class") or ""),
+                spec.get("discriminators") or [],
+            )
+        except ValueError as exc:
+            return self._write_rejected(["spec.discriminators"], str(exc))
         try:
             written = self._store.write_specs(
                 self._project_id, self._hunt_key, [spec],
@@ -783,7 +850,10 @@ _HUNTER_NOTES_FIELD_MAP = NotesFieldMap(
     attributes="attributes",
     key_keyword="key_keyword",
     body_keyword="body_keyword",
-    passthrough=("note_name", "kind", "evidence", "provenance"),
+    note_name="note_name",
+    kind="kind",
+    evidence="evidence",
+    passthrough=("provenance",),
 )
 
 
@@ -1116,6 +1186,7 @@ def build_hunter_tools(
     project_id: str = "",
     hunt_key: str = "",
     run_id: str = "",
+    target_identity: TargetIdentity | None = None,
     graph_view_fn: GraphViewFn | None = None,
     kb_fn: KbQueryFn | None = None,
     exec_fn: ExecFn | None = None,
@@ -1160,7 +1231,7 @@ def build_hunter_tools(
 
     return [
         HuntsStoreTool(store=store, project_id=project_id, hunt_key=hunt_key,
-                       run_id=run_id),
+                       run_id=run_id, target_identity=target_identity),
         notes_tool_for(store=store, project_id=project_id, hunt_key=hunt_key),
         build_graph_view_tool(graph_view_fn),
         KbQueryTool(kb_fn=kb_fn),

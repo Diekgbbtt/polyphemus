@@ -185,13 +185,35 @@ def test_read_defaults_to_a_bounded_summary_without_secret_values(tmp_path):
     assert len(text) < 6000
 
 
-def test_read_full_view_is_explicit_and_stays_redacted(tmp_path):
+def test_the_readonly_full_view_is_retired_with_a_narrowing_hint(tmp_path):
+    """The 2026-10-24 run spent 1.5M characters on 23 full reads. The
+    read-only binding retires the view and teaches the narrow replacement."""
     tool = _readonly_tool(tmp_path)
     out = tool.invoke({"command": "read", "view": "full"})
-    assert out["view"] == "full"
-    record = out["value"]["accounts"]["alice-bootstrap"]
-    assert record["credentials"]["password"] == REDACTED
-    assert record["tokens"]["X-Auth-Token"]["value"] == REDACTED
+    assert out["ok"] is False
+    assert out["error"] == "auth_full_view_retired"
+    assert "fields" in out["detail"] and "accounts.<name>" in out["detail"]
+
+
+def test_the_readonly_summary_projects_the_overview_header(tmp_path):
+    tool = _readonly_tool(tmp_path)
+    out = tool.invoke({"command": "read"})
+    overview = out["value"]["overview"]
+    assert overview["login_endpoint"] == "https://t.example/login"
+    assert "required_headers" in overview
+    assert "mechanism" in overview
+    assert "notes" not in overview or len(overview["notes"]) <= 503
+
+
+def test_the_readonly_read_is_bounded(tmp_path):
+    """A projection over the cap returns its keys and a narrowing hint."""
+    store = _seeded_store(tmp_path)
+    store.write(PROJECT, "overview.notes", "z" * 20_000)
+    tool = _readonly_tool(tmp_path, store)
+    out = tool.invoke({"command": "read", "path": "overview"})
+    assert out["ok"] is True
+    assert out.get("truncated") is True
+    assert "keys" in out and "hint" in out
 
 
 def test_read_fields_projects_named_fields(tmp_path):

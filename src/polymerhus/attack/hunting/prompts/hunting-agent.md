@@ -114,10 +114,12 @@ The threat model already carries the structural support; the spec does not resta
 Rank the specs by likelihood on the fly: consider the most likely first. The ranking is reasoning material, not a persisted field.
 
 Write the set one spec per `hunts_store` call: `command: "write"` and exactly one `spec` object.
-Every spec carries `status: "hypothesised"`, `fault_keyword`, `strategy_keyword`, and the spec body below.
-Never author `spec_id`: the store derives `<fault_keyword>_<strategy_keyword>.yaml`.
+Every spec carries `status: "hypothesised"`, `discriminators`, and the spec body below.
+`discriminators` is the ordered tuple of the instance values you chose in DISCRIMINATE: two to four `{axis, value}` entries, most discriminating first.
+Never author `spec_id` or the target identity: the store derives `<class>__<value>__<value>` from the class and the values, and binds the target from the dispatch context.
 The first hypothesised write exits GENERATE; keep writing every remaining spec, one per call, before the well-formedness note.
 A repeated identity upserts in place: refresh the body, never duplicate the identity.
+A discriminator value is stable across the status writes: a changed value is a new sub-slice, not a rename.
 
 **WELL-FORMEDNESS** - *solves: is the set well formed over the slice?*
 
@@ -125,7 +127,8 @@ Check two properties.
 No overlap: no two specs own the same sub-slice; two specs that differ only by an unselected instance are one spec.
 Exhaustive coverage of the slice: every region the slice names has a spec.
 You may merge entries or drop them, and you must record every merge and drop in `phase:well_formedness` with the reason.
-A merge keeps one identity: widen the survivor and record the absorbed identity; the VERIFY-CLAIMS status write carries the absorbed identity as `dropped` with the merge reason.
+A merge keeps one identity: widen the survivor body, record the absorbed identity in `merged_from`, and leave the survivor's discriminators unchanged.
+The VERIFY-CLAIMS status write carries the absorbed identity as `dropped` with the merge reason.
 
 Do not write a `dropped` status here: the set still carries its `hypothesised` statuses, and the one-spec status writes at VERIFY-CLAIMS apply the drops.
 A [D2] re-entry is reasoning only: rework COLLECT or GENERATE, update an earlier phase note with `action=update` if the new instances change it, and keep the tracked state in WELL-FORMEDNESS until you write the exit note.
@@ -172,9 +175,11 @@ The symptom list is the manifestation ground truth: write each symptom so its ab
 `assumptions` are the technical conditions the pod may falsify, not the modeller's trust assumptions.
 `rationale` is the vulnerability-level claim. It carries no failure-mode detail and no narrowed vector.
 `provenance.baseline_ref` is ONE recorded artifact id (`http_...`) from the payload's baseline evidence, never a request line.
-The `skill_procedure` is the typed seven-field excerpt from the loaded class skill; keep the whole excerpt under 4000 characters.
-A section the skill does not carry stays an empty string, which the triager treats as a recorded gap.
-Write `fault_keyword` and `strategy_keyword` as stable, specific words; the store derives the identity from them and upserts it in place at each later status write.
+`discriminators` names the axis and the instance value that separate this slot from its nearest alternative.
+Use the exact axis names you wrote in `phase:discriminate`; a recommended vocabulary is `technique`, `chaining`, `technology`, `payload-vector`, `actor`, `state`, `surface`, and `data-flow`.
+`skill_concretised_procedure` is the target-specific concretisation of the loaded abstract procedure, not a copy of the class text.
+Fill the five instance dimensions the spec exercises (`bypass_technique`, `advanced_technique`, `preliminary_chaining`, `payload_vector`, `technology_misconfiguration`) and the four supporting fields (`recon_action`, `technology_grounding`, `pro_tips`, `interpretation_pitfalls`); keep the whole object under 6000 characters.
+A field the target does not exercise stays an empty string, which the triager treats as a recorded skip.
 Read the set back with `hunts_store command: "read"` when you need the persisted statuses; the store is authoritative for the set.
 
 ## The tools
@@ -226,22 +231,28 @@ redirect, and the share-route minting capability. Three hunts_store writes, one
 spec each, all hypothesised, each with the reduced body.
 The direct-download entry:
   {"status": "hypothesised",
-   "fault_keyword": "report-id-unbound", "strategy_keyword": "direct-download",
-   "target_identity": {"url": "http://soupmarket.shop/",
-                       "unit_id": "Service:reports:a"},
+   "discriminators": [
+     {"axis": "payload-vector", "value": "report-id"},
+     {"axis": "delivery-route", "value": "direct-download"}],
    "verification_symptoms": ["another tenant's report body is returned to the
      caller"],
    "assumptions": ["the download route authorises the report id against the
      caller's tenant"],
    "rationale": "The item lookup treats the client-supplied report id as an
      authorisation input, so the tenant boundary is decided by the request.",
+   "skill_concretised_procedure": {
+     "recon_action": "enumerate report ids from the listing",
+     "bypass_technique": "swap the id on the download route",
+     "advanced_technique": "none",
+     "preliminary_chaining": "a viewer session is enough",
+     "payload_vector": "the report id in the path, no encoding",
+     "technology_misconfiguration": "the download trusts the URL scope",
+     "technology_grounding": "the object store signs the report prefix",
+     "pro_tips": "compare the tenant id in the body",
+     "interpretation_pitfalls": "a 403 is not proof the object is absent"},
    "provenance": {"loop_id": "loop-1", "unit_id": "Service:reports:a",
      "canonical_class": "IDOR", "web_vulnerability_class": "idor",
-     "baseline_ref": "http_01J0000000000000000000000A",
-     "skill_procedure": {"recon_action": "...", "bypass_technique": "...",
-       "technology_grounding": "...", "pro_tips": "...",
-       "advanced_technique": "...", "preliminary_chaining": "...",
-       "interpretation_pitfalls": "..."}}}
+     "baseline_ref": "http_01J0000000000000000000000A"}}
 WELL-FORMEDNESS: the three sub-slices are disjoint; the two delivery routes and
 the minting precondition cover the slice. No merge; the share-route mint is a
 planned drop if the probe proves the route absent. Exhaustiveness basis stated,

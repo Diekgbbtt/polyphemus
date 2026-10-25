@@ -84,7 +84,7 @@ VALID_SPEC = {
 }
 
 # The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 # The fixed synthetic curl trailers (tools.py `parse_curl` reads the markers).
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
@@ -155,7 +155,7 @@ _REACT_KB_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="", tool_calls=[
         {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
     AIMessage(content="", tool_calls=[
-        {"name": "note", "args": {"operation": "write", "order": 0,
+        {"name": "notes", "args": {"command": "write", "order": 0,
                                   "note_name": "experiment",
                                   "kind": "experiment_summary",
                                   "body": "the default probe returned HTTP 404 "
@@ -173,7 +173,7 @@ _REACT_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="", tool_calls=[
         {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
     AIMessage(content="", tool_calls=[
-        {"name": "note", "args": {"operation": "write", "order": 0,
+        {"name": "notes", "args": {"command": "write", "order": 0,
                                   "note_name": "experiment",
                                   "kind": "experiment_summary",
                                   "body": "the default probe returned HTTP 404 "

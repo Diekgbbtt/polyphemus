@@ -25,6 +25,7 @@ read must be the name the census already reports.
 from __future__ import annotations
 
 import copy
+import json
 import logging
 from typing import Any
 
@@ -144,9 +145,12 @@ AUTH_STORE_READ_CONTRACT = (
     "Names, shapes, and statuses only: passwords, token values, and snapshot "
     "cookie/header/param values read as " + REDACTED + ". Never reconstruct or "
     "replay a secret.\n\n"
-    "An empty path returns `summary`; `view=\"full\"`, `\"overview\"`, or "
-    "`\"account\"` selects a view; `fields` projects dot-paths; a missing "
-    "dot-path is a valid empty (`{}`). Redaction precedes projection.\n\n"
+    "An empty path returns `summary`: the login header plus the account index. "
+    "`overview` or `account` selects one half; `fields` projects dot-paths; a "
+    "missing path is a valid empty (`{}`). `view=\"full\"` is retired here: use "
+    "`fields` or a narrow path. A read "
+    "over 12000 characters returns its keys and a narrowing hint. Redaction "
+    "precedes projection.\n\n"
     "No write: every command but `read` refuses with `auth_readonly`. A read "
     "failure returns `store_unavailable`."
 )
@@ -334,6 +338,50 @@ def redact_auth_state(state: Any) -> dict:
 # is explicit because it carries the whole redacted/full state.
 _READ_VIEWS = ("summary", "overview", "account", "full")
 
+# The summary overview projection: the login-mechanism header, not the whole
+# free-form bucket. The full overview stays reachable through `path="overview"`.
+_SUMMARY_OVERVIEW_FIELDS = (
+    "login_endpoint", "required_headers", "mechanism", "defences",
+)
+_SUMMARY_NOTES_MAX_CHARS = 500
+
+# The read response bound. A larger projection is a narrowing instruction, not
+# a payload: the agent gets the keys and a hint instead of a 70K blob.
+_AUTH_READ_MAX_CHARS = 12_000
+
+
+def _summary_overview(overview: Any) -> dict:
+    """The concise overview: the canonical login fields plus a bounded note."""
+    if not isinstance(overview, dict):
+        return {}
+    out = {
+        key: overview[key] for key in _SUMMARY_OVERVIEW_FIELDS if key in overview
+    }
+    notes = str(overview.get("notes") or "")
+    if notes:
+        out["notes"] = (
+            notes[:_SUMMARY_NOTES_MAX_CHARS]
+            + ("..." if len(notes) > _SUMMARY_NOTES_MAX_CHARS else ""))
+    return out
+
+
+def _bounded_read(result: dict) -> dict:
+    """Bound one read: a projection over the cap becomes a narrowing hint."""
+    if len(json.dumps(result, default=str)) <= _AUTH_READ_MAX_CHARS:
+        return result
+    value = result.get("value")
+    keys = sorted(value) if isinstance(value, dict) else []
+    return {
+        "ok": True,
+        "view": result.get("view"),
+        "truncated": True,
+        "keys": keys,
+        "hint": (
+            f"the read exceeds the {_AUTH_READ_MAX_CHARS}-character bound; "
+            "use fields=[...] for the exact paths, or a narrow path such as "
+            "accounts.<name>.tokens"),
+    }
+
 
 def _summary_tokens(tokens: Any) -> dict:
     """The token METADATA index: the token name plus its location, target, and
@@ -383,7 +431,7 @@ def _summary_accounts(state: Any) -> list[dict]:
 def _summary_state(state: Any) -> dict:
     overview = state.get("overview") if isinstance(state, dict) else None
     return {
-        "overview": overview if isinstance(overview, dict) else {},
+        "overview": _summary_overview(overview),
         "accounts": _summary_accounts(state),
     }
 
@@ -539,6 +587,16 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                                   f"{command!r} is not available - read the "
                                   f"store, never write it"}
             at = path or ""
+            if view == "full" and not at:
+                return {
+                    "ok": False,
+                    "error": "auth_full_view_retired",
+                    "detail": (
+                        "view=\"full\" is retired on the read-only binding: it "
+                        "returned the whole redacted bucket and dominated the "
+                        "session context. Use fields=[...] or a narrow path "
+                        "(overview, accounts.<name>, accounts.<name>.tokens)."),
+                }
             try:
                 # Redact the WHOLE state first, project second: the projection
                 # is the store's own (#247 name canonicalisation included), so
@@ -551,7 +609,7 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                     return {"ok": False, "error": projected["error"],
                             "detail": projected["detail"]}
                 return {"ok": True, "command": "read", "path": at,
-                        **projected}
+                        **_bounded_read(projected)}
             except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
                 return {"ok": False, "error": "store_unavailable",
                         "detail": f"store_unavailable: {exc}"}
@@ -578,7 +636,7 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                     return {"ok": False, "error": projected["error"],
                             "detail": projected["detail"]}
                 return {"ok": True, "command": "read", "path": at,
-                        **projected}
+                        **_bounded_read(projected)}
             except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
                 return {"ok": False, "error": "store_unavailable",
                         "detail": f"store_unavailable: {exc}"}

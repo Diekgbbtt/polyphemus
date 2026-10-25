@@ -121,15 +121,15 @@ def phase_note_name(state: HunterPass) -> str:
 class SpecItem(TypedDict):
     """One spec of the set the hunter tracks (S4 14.9).
 
-    `spec_id` is the spec's identity (the file-name stem
-    `<fault_keyword>_<strategy_keyword>`), `spec_ref` its authored file, and
-    `verification_symptoms` the concrete observable failure modes the pod
+    `spec_id` is the derived identity (the file-name stem
+    `<class>__<value>__<value>`), `discriminators` the ordered `{axis, value}`
+    instances the hunter separated the slot on, `spec_ref` its authored file,
+    and `verification_symptoms` the concrete observable failure modes the pod
     probes. The channel is last-write and carries the WHOLE set."""
 
     spec_id: str
     status: SpecStatus
-    fault_keyword: str
-    strategy_keyword: str
+    discriminators: list[dict]
     spec_ref: str
     verification_symptoms: list[str]
     summary: str

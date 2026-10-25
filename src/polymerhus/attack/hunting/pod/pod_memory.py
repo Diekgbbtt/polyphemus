@@ -14,9 +14,9 @@ variants and the per-order log slice live side by side, easily mappable):
       <spec_id>/experiment-log/<order>.yaml     (the per-order D6 log slice)
       notes.yaml                                (per-project notes)
 
-The spec identifier is the #164 hunter's `SpecItem.spec_id = "<fault>_<strategy>"`
-(D84-34) - the `_` separator + keyword sanitisation (`:`/`-` are poisoned) - and
-IS the per-spec directory name. The variant-ref (`v0`, `v1`, ...) and the order
+The spec identifier is the hunter's derived `SpecItem.spec_id`
+(`<class>__<value>__<value>`, `spec_contract.spec_identifier`) and IS the
+per-spec directory name. The variant-ref (`v0`, `v1`, ...) and the order
 number (`0`, `1`, ...) are the SAME ordinal in two spellings: `vN` <-> order N,
 so a minted variant and its log slice are trivially mappable (D84-34). Notes
 are keyed `<spec_id>:<order>:<note_name>` (D84-36), stored in the per-project
@@ -29,7 +29,7 @@ variant's `raw_observations`, `kb_observations` (T3/#179: each KB-retrieve
 response, first-class and distinct from an exec observation),
 `interpretations`, the `executed` dedup ledger
 for the stretch, AND the `experiment_summary` terminal record (D84-35) - the
-P3 consolidated summary the Runner writes via the `note` tool lands IN the
+P3 consolidated summary the Runner writes via the `notes` tool lands IN the
 slice, not in `notes.yaml`. The slice is a SINGLE dict, OVERWRITTEN idempotently
 on a re-run (D84-37: the deterministic path is the address); the notes file is
 append-only with read-latest. The minted variant (the `VariantSpec` wrapper)
@@ -57,6 +57,7 @@ import yaml
 
 from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import project_dir
+from polymerhus.attack.hunting.spec_contract import spec_identifier
 
 # The hunting module's data seam (D84-33): the `test-executor-pod/` bucket
 # under `DATA_ROOT/<project_id>/hunting/`, resolved through the ONE
@@ -72,34 +73,8 @@ from polymerhus.app.data_root import project_dir
 # its terminal record (D84-35).
 POD_NOTE_KINDS = ("experiment_summary", "kb_insight", "freeform")
 
-# The filename-keyword sanitisation banned set (D84-34, mirroring the #164
-# hunter's ruling): `_` is the spec-id separator, so a keyword may not contain
-# it; `:` is poisoned (it appears inside unit ids); `/`/`\` are path separators.
-# Each banned char (plus control/NUL chars) is replaced with `-`, a safe,
-# non-separator keyword char (`-` itself is never banned).
-_UNSAFE_KEYWORD_CHARS = frozenset("_:/\\")
-
-
-def _sanitise_keyword(keyword: str) -> str:
-    """Sanitise a `<fault>`/`<strategy>` spec-id keyword (D84-34, G3)."""
-    out = "".join(
-        "-" if ch in _UNSAFE_KEYWORD_CHARS or ord(ch) < 32 else ch
-        for ch in keyword
-    )
-    if not out or out in (".", ".."):
-        raise ValueError(
-            f"pod memory: keyword {keyword!r} sanitises to the unsafe "
-            f"spec-id component {out!r}"
-        )
-    return out
-
-
-def spec_identifier(fault_keyword: str, strategy_keyword: str) -> str:
-    """The #164 hunter's `SpecItem.spec_id = "<fault>_<strategy>"` (D84-34):
-    both keywords sanitised and joined by `_`, the one safe separator. This IS
-    the per-spec directory name. The `_` separator + keyword sanitisation
-    ruling applies (`:` and `-` are poisoned separators)."""
-    return f"{_sanitise_keyword(fault_keyword)}_{_sanitise_keyword(strategy_keyword)}"
+# The spec identifier is the SAME derived symbol the hunter store writes (ONE
+# home: `spec_contract.spec_identifier`), never a second copy of the join rule.
 
 
 def note_key(spec_id: str, order: int, note_name: str) -> str:
@@ -152,8 +127,8 @@ def order_of(ref: str | None) -> int:
 # The persistent SYSTEM-side block (D84-27, D84-36): the tool contract + kinds +
 # the two bodies + the typed read filters, re-presented in every lap opener and
 # triager delta.
-MEMORY_READ_GUIDANCE = """# Pod experiment memory (the note tool)
-Write or read pod experiment notes through the `note` tool, one operation per call.
+MEMORY_READ_GUIDANCE = """# Pod experiment memory (the `notes` tool)
+Write or read pod experiment notes through the `notes` tool, one command per call.
 The store's per-spec bodies, each addressable by a deterministic identifier:
 - <fault>_<strategy>/experiment-log/<order>.yaml - the per-variant experiment log
 - <fault>_<strategy>/variants/<variant>.yaml - the minted variant specs
@@ -170,7 +145,7 @@ Read filters (combinable or singular):
 - parent_key - the exact spec or variant prefix to range over (e.g. "<spec_id>:0")
 - key_keyword - a case-insensitive substring of the note key
 - body_keyword - a case-insensitive substring of the note body
-Read the EXPERIMENT-LOG body by its identifier: operation=read with kind=experiment_log
+Read the EXPERIMENT-LOG body by its identifier: command=read with kind=experiment_log
 and order=<N> returns the variant's persisted D6 slice (raw_observations, kb_observations,
 interpretations, executed) verbatim; kind=experiment_summary returns its consolidated summary.
 A read returns matching notes newest-first, with each note's full body verbatim."""
@@ -396,7 +371,7 @@ class PodMemoryStore:
         `<spec_id>:<order>:<note_name>` (D84-36); return its key. The notes file
         is append-only with read-latest. `kb_insight`/`freeform` accumulate
         here; `experiment_summary` is routed to the variant's log slice by the
-        `note` tool (D84-35) - this append remains available for the other kinds.
+        `notes` tool (D84-35) - this append remains available for the other kinds.
         A write failure raises - the caller degrades to a warning and keeps
         serving (O3)."""
         if kind not in POD_NOTE_KINDS:
@@ -477,7 +452,7 @@ class PodMemoryStore:
     def note_keys(self, spec_id: str) -> list[str]:
         """The spec's note KEYS in newest-first order - the prompt-embedded
         indexable list (D84-27), so the Runner/Triager can index into prior
-        notes and then call the `note` read tool for the relevant body."""
+        notes and then call the `notes` read tool for the relevant body."""
         return [str(r.get("key")) for r in self.read_notes(spec_id) if r.get("key")]
 
 
@@ -502,7 +477,7 @@ def compose_memory_guidance(store: PodMemoryStore | None, spec_id: str) -> str:
     the spec's notes on file PLUS the experiment-log identifiers (spec id + the
     orders present on file), plus the persistent reading guidance - embedded in
     the Runner's lap opener and the Triager's delta. NO deterministic retrieval
-    stage: the agent indexes the keys, then calls the `note` tool. Fail-open: a
+    stage: the agent indexes the keys, then calls the `notes` tool. Fail-open: a
     missing/raising store yields the guidance with an empty index, never a
     raise."""
     keys: list[str] = []

@@ -45,7 +45,10 @@ RETIRED_FIELDS = {
 
 def test_the_reduced_d4_round_trips():
     model = D4Spec.model_validate(VALID_SPEC)
-    assert model.model_dump() == {**VALID_SPEC, "parent_spec_ref": None, "skills": []}
+    assert model.model_dump() == {
+        **VALID_SPEC, "parent_spec_ref": None, "skills": [],
+        "discriminators": [], "skill_concretised_procedure": None,
+    }
 
 
 def test_the_retired_d4_fields_are_rejected_as_unknown():

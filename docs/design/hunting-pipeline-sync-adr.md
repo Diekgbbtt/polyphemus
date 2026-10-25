@@ -253,3 +253,23 @@ The `serial` fix is a product decision:
 
 Until that decision lands, do not run `serial` on a unit whose only remaining
 loops are `low` while a later unit still has produced medium/high loops.
+
+## The stall fail-safes (2026-10-25)
+
+The tier hold above is a sequencing defect.
+Two lifecycle fail-safes bound the OTHER stall classes:
+
+- **The per-session watchdog.** `RunDispatchState.session_timeout_s` (default
+  2700 seconds) wraps each hunter and pod graph.
+  A hunter past its window releases its registration and settles its drafts; a
+  pod past its window writes a `budget-timeout` PodExport.
+  The queue advances from storage, not from a transient registry fact.
+- **The malformed fail-safe.** A produced body the store cannot parse is
+  dispatched as a degraded pod, consumed, and closed by its PodExport.
+  It is never left produced to hold the queue.
+
+The comparison and the risk table are in
+`docs/design/hunting-lifecycle-failsafe.md`.
+The lower control plane's thread state was not used: it needs a second source
+of truth and a worker-thread-to-hunt mapping, while the watchdog is local to
+the dispatched coroutine and leaves a durable degraded record.

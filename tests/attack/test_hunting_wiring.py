@@ -57,7 +57,7 @@ UNIT_NAME = "Service-slug-a"
 DISPATCH_ID = f"{UNIT_NAME}__loop-1"
 RUN = "wiring-run-1"
 PROJECT = "wiring-proj-1"
-SPEC_FILE = "sqli_blind"
+SPEC_FILE = "spec__sqli__blind"
 
 SERVICE_A = UNIT
 
@@ -428,12 +428,14 @@ def test_n_loops_fan_out_but_the_gate_caps_concurrent_hunters(stores, monkeypatc
 
 def _write_ratified_spec(hunter, *, consume_me: str = "") -> None:
     """One produced `ratified` spec under the loop dispatch id (S3 8.7): the
-    pod family's dispatch gate."""
-    hunter.write_specs(
-        PROJECT, DISPATCH_ID,
-        [{"status": "ratified", "fault_keyword": "sqli",
-          "strategy_keyword": "blind", "consume_me": consume_me}],
-    )
+    pod family's dispatch gate. The draft lands first so the store's identity
+    stability rule holds."""
+    spec = {"status": "hypothesised",
+            "discriminators": [{"axis": "fault", "value": "sqli"},
+                              {"axis": "technique", "value": "blind"}],
+            "consume_me": consume_me}
+    hunter.write_specs(PROJECT, DISPATCH_ID, [spec])
+    hunter.write_specs(PROJECT, DISPATCH_ID, [{**spec, "status": "ratified"}])
 
 
 def test_ratified_spec_dispatches_one_pod_through_the_same_mover(stores, monkeypatch):
@@ -550,16 +552,21 @@ def test_a_transient_pod_failure_requeues_only_that_spec_and_keeps_the_sibling_l
 
     def two_spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(payload):
+            drafts = [
+                {"status": "hypothesised", "discriminators": [
+                    {"axis": "fault", "value": "sqli"},
+                    {"axis": "technique", "value": "blind"}],
+                 "provenance": {"run_id": run_id}},
+                {"status": "hypothesised", "discriminators": [
+                    {"axis": "fault", "value": "xss"},
+                    {"axis": "technique", "value": "reflected"}],
+                 "provenance": {"run_id": run_id}},
+            ]
+            hunter_store.write_specs(
+                project_id, payload["dispatch_id"], drafts)
             hunter_store.write_specs(
                 project_id, payload["dispatch_id"],
-                [
-                    {"status": "ratified", "fault_keyword": "sqli",
-                     "strategy_keyword": "blind",
-                     "provenance": {"run_id": run_id}},
-                    {"status": "ratified", "fault_keyword": "xss",
-                     "strategy_keyword": "reflected",
-                     "provenance": {"run_id": run_id}},
-                ])
+                [{**spec, "status": "ratified"} for spec in drafts])
             hunter_store.finalize_specs(
                 project_id, payload["dispatch_id"], run_id=run_id)
             return None
@@ -567,11 +574,11 @@ def test_a_transient_pod_failure_requeues_only_that_spec_and_keeps_the_sibling_l
 
     async def flaky_pods(spec, *, run_id, project_id, memory_store, spec_id, **_kw):
         attempts[spec_id] = attempts.get(spec_id, 0) + 1
-        if spec_id == "sqli_blind" and attempts[spec_id] == 1:
+        if spec_id == "spec__sqli__blind" and attempts[spec_id] == 1:
             raise ProviderUnavailableError(
                 "throttled", status_code=429, retry_after_s=0.01,
                 quota_exhausted=False)
-        if spec_id == "xss_reflected":
+        if spec_id == "spec__xss__reflected":
             await asyncio.sleep(0.05)
         export = {"verdict": "successful", "terminal_reason": "symptom-confirmed",
                   "evidence": {"trail": []}, "clean": True, "iterations": 1}
@@ -593,9 +600,9 @@ def test_a_transient_pod_failure_requeues_only_that_spec_and_keeps_the_sibling_l
 
     _, status, _stats = fake.stats_writes[-1]
     assert status == "complete"
-    assert attempts == {"sqli_blind": 2, "xss_reflected": 1}
-    assert pod.read_pod_export("sqli_blind", RUN)
-    assert pod.read_pod_export("xss_reflected", RUN)
+    assert attempts == {"spec__sqli__blind": 2, "spec__xss__reflected": 1}
+    assert pod.read_pod_export("spec__sqli__blind", RUN)
+    assert pod.read_pod_export("spec__xss__reflected", RUN)
 
 
 def test_a_loop_file_from_another_run_never_dispatches_or_blocks_quiesce(
@@ -638,9 +645,13 @@ def test_a_loop_file_from_another_run_never_dispatches_or_blocks_quiesce(
 # --- AC3: the idle loop consumes and records a delivered PodExport ----------
 
 def _write_spec(hunter, *, hunt_key=DISPATCH_ID, status: str = "ratified"):
-    return hunter.write_specs(
-        PROJECT, hunt_key,
-        [{"status": status, "fault_keyword": "sqli", "strategy_keyword": "blind"}])
+    spec = {"status": "hypothesised",
+            "discriminators": [{"axis": "fault", "value": "sqli"},
+                               {"axis": "technique", "value": "blind"}]}
+    written = hunter.write_specs(PROJECT, hunt_key, [spec])
+    if status == "hypothesised":
+        return written
+    return hunter.write_specs(PROJECT, hunt_key, [{**spec, "status": status}])
 
 
 def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypatch):
@@ -971,8 +982,8 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
     # consumed loop to recover and the test isolates the mover's own-status gate.
     hunter.write_specs(
         PROJECT, DISPATCH_ID,
-        [{"status": "hypothesised", "fault_keyword": "sqli",
-          "strategy_keyword": "blind"}])
+        [{"status": "hypothesised",
+          "discriminators": [{"axis": "fault", "value": "sqli"}, {"axis": "technique", "value": "blind"}]}])
 
     control = _FakeControl()
     asyncio.run(hunting_runtime.start_hunting(

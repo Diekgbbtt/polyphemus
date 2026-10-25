@@ -44,13 +44,14 @@ FAULT_KEY = "Service:account-registration_CWE-266_Privilege Escalation"
 _MODELLER_FIELD_MAP = NotesFieldMap(
     key=None, read_key="key", action="option", note="body",
     note_id="note_id", attributes="attributes",
-    passthrough=("note_name", "kind", "evidence"),
+    note_name="note_name", kind="kind", evidence="evidence",
 )
 _HUNTER_FIELD_MAP = NotesFieldMap(
     key=None, read_key=None, action="action", note="body",
     note_id=None, attributes="attributes", key_keyword="key_keyword",
     body_keyword="body_keyword",
-    passthrough=("note_name", "kind", "evidence", "provenance"),
+    note_name="note_name", kind="kind", evidence="evidence",
+    passthrough=("provenance",),
 )
 
 
