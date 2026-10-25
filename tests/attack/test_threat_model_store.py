@@ -162,6 +162,12 @@ def _loop(likelihood: str = "high") -> dict:
             "privileges_required": "none",
             "complexity": "low",
         },
+        "impact": {
+            "confidentiality": "low",
+            "integrity": "none",
+            "availability": "none",
+            "end_impact": "A caller reads another tenant's item.",
+        },
         "confidence": "INFERRED",
         "evidences": [_evidence()],
     }
@@ -377,6 +383,9 @@ def test_completed_ranks_loops_emits_one_file_per_non_none_loop(tmp_path):
     assert model["risk_profile"] == {
         "total": RISK_WEIGHTS["high"],
         "breakdown": {"none": 1, "low": 0, "medium": 0, "high": 1, "critical": 0},
+        "impact_breakdown": {
+            "none": 0, "low": 2, "medium": 0, "high": 0, "critical": 0,
+        },
     }
     assert model["validation"]["valid"] is True
     assert model["validation"]["missing"] == []
@@ -409,6 +418,9 @@ def test_a_zero_loop_model_emits_no_loop_files(tmp_path):
     assert model["risk_profile"] == {
         "total": 0,
         "breakdown": {"none": 0, "low": 0, "medium": 0, "high": 0, "critical": 0},
+        "impact_breakdown": {
+            "none": 0, "low": 0, "medium": 0, "high": 0, "critical": 0,
+        },
     }
     assert model["validation"]["valid"] is True
     assert store.read_loop_files(PROJECT, UNIT) == []
@@ -687,6 +699,73 @@ def test_check_completion_recomputes_the_risk_profile(tmp_path):
     assert validation.valid is False
     assert "risk_profile.total" in validation.missing
     assert "risk_profile.breakdown" in validation.missing
+
+
+def test_check_completion_recomputes_the_impact_breakdown(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    document["risk_profile"]["impact_breakdown"]["low"] = 9
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is False
+    assert "risk_profile.impact_breakdown" in validation.missing
+
+
+def test_check_completion_reports_a_tampered_loop_risk(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    document["loops"][0]["impact_weight"] = 0
+    document["loops"][0]["risk"] = 0
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is False
+    assert "loop:loop-1.impact_weight" in validation.missing
+    assert "loop:loop-1.risk" in validation.missing
+
+
+def test_check_completion_reports_a_missing_end_impact(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    document["loops"][0]["impact"]["end_impact"] = ""
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is False
+    assert "loop:loop-1.impact" in validation.missing
+
+
+def test_a_legacy_loop_without_impact_parses_and_contributes_zero(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    legacy = dict(_loop("high"))
+    legacy.pop("impact")
+
+    _write_to_completed(store, loops=[legacy])
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["risk_profile"]["total"] == 0
+    assert model["risk_profile"]["impact_breakdown"]["none"] == 1
+    assert "loop:loop-1.impact" in model["validation"]["missing"]
+
+
+def test_the_loop_file_carries_the_impact_and_the_risk(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store, loops=[_loop("high")])
+
+    record = store.read_loop_files(PROJECT, UNIT)[0]
+
+    assert record["loop"]["impact"] == {
+        "confidentiality": "low",
+        "integrity": "none",
+        "availability": "none",
+        "end_impact": "A caller reads another tenant's item.",
+    }
+    assert record["loop"]["impact_weight"] == 1
+    assert record["loop"]["risk"] == 3
 
 
 def test_check_completion_reports_a_broken_loop_order_and_ids(tmp_path):

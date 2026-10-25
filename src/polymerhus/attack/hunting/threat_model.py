@@ -72,6 +72,49 @@ RISK_WEIGHTS: dict[Likelihood, int] = {
 }
 
 
+class ImpactLevel(StrEnum):
+    """The CVSS 4.0-like value of one impact metric."""
+
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+# The ONE impact-weight table: the CVSS 4.0-like metric weights. The impact
+# sub-score is `1 - (1-VC)(1-VI)(1-VA)`, and the ordinal weight is derived from
+# the sub-score by the monotone thresholds below (ADR, 2026-10-25).
+IMPACT_METRIC_WEIGHTS: dict[ImpactLevel, float] = {
+    ImpactLevel.NONE: 0.00,
+    ImpactLevel.LOW: 0.22,
+    ImpactLevel.MEDIUM: 0.35,
+    ImpactLevel.HIGH: 0.56,
+}
+
+
+class ImpactSeverity(StrEnum):
+    """The ordinal severity of the impact sub-score, 0..4."""
+
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+IMPACT_SEVERITY_BY_WEIGHT: dict[int, ImpactSeverity] = {
+    0: ImpactSeverity.NONE,
+    1: ImpactSeverity.LOW,
+    2: ImpactSeverity.MEDIUM,
+    3: ImpactSeverity.HIGH,
+    4: ImpactSeverity.CRITICAL,
+}
+
+# The inclusive upper bounds of the ordinal classes 1..3; above the last bound
+# the class is 4 (critical). Zero is the only value that maps to class 0.
+IMPACT_WEIGHT_BOUNDS: tuple[float, float, float] = (0.25, 0.50, 0.75)
+
+
 class UnitKind(StrEnum):
     SERVICE = "service"
     SYSTEM = "system"
@@ -292,6 +335,57 @@ class RiskFactors(_Record):
     complexity: Complexity
 
 
+class Impact(_Record):
+    """The end impact of exploiting the loop's vulnerability.
+
+    The modeller authors the three CVSS 4.0-like metrics and the literal
+    end-impact statement. The store computes the sub-score, the ordinal weight,
+    the loop risk, and the profile; the modeller never authors a score.
+    """
+
+    confidentiality: ImpactLevel = ImpactLevel.NONE
+    integrity: ImpactLevel = ImpactLevel.NONE
+    availability: ImpactLevel = ImpactLevel.NONE
+    end_impact: str = ""
+
+    @classmethod
+    def none(cls) -> "Impact":
+        return cls()
+
+
+def compute_impact(impact: Impact) -> float:
+    """The CVSS 4.0-like impact sub-score, 0.0..1.0."""
+    remaining = 1.0
+    for level in (impact.confidentiality, impact.integrity, impact.availability):
+        remaining *= 1.0 - IMPACT_METRIC_WEIGHTS[level]
+    return 1.0 - remaining
+
+
+def impact_weight_from_sub_score(sub_score: float) -> int:
+    """The ordinal impact weight, 0..4, from the sub-score."""
+    if sub_score <= 0:
+        return 0
+    for weight, bound in enumerate(IMPACT_WEIGHT_BOUNDS, start=1):
+        if sub_score <= bound:
+            return weight
+    return 4
+
+
+def impact_weight(impact: Impact) -> int:
+    """The ordinal impact weight of one impact record."""
+    return impact_weight_from_sub_score(compute_impact(impact))
+
+
+def impact_severity(weight: int) -> ImpactSeverity:
+    """The named severity of an ordinal impact weight."""
+    return IMPACT_SEVERITY_BY_WEIGHT[weight]
+
+
+def loop_risk(likelihood: Likelihood, impact: Impact) -> int:
+    """The combined loop risk: likelihood weight times impact weight."""
+    return RISK_WEIGHTS[likelihood] * impact_weight(impact)
+
+
 class Loop(_Record):
     """One ranked research direction and the dispatch grain.
 
@@ -311,11 +405,17 @@ class Loop(_Record):
     risk_factors: RiskFactors
     confidence: Confidence
     evidences: list[Evidence]
+    impact: Impact = Field(default_factory=Impact)
+    # Derived at the COMPLETED normalisation. The write schema defaults them to
+    # zero; the store overwrites them and the checker regression-checks them.
+    impact_weight: int = 0
+    risk: int = 0
 
 
 class RiskProfile(_Record):
     total: int
     breakdown: dict[Likelihood, int]
+    impact_breakdown: dict[ImpactSeverity, int] = Field(default_factory=dict)
 
 
 class Validation(_Record):
@@ -391,30 +491,54 @@ def unit_kind_from_unit_id(unit_id: str) -> UnitKind:
 
 
 def compute_risk_profile(loops: list[Loop]) -> RiskProfile:
-    """The authoritative per-unit risk profile (S2 7.3).
+    """The authoritative per-unit risk profile (S2 7.3, amended 2026-10-25).
 
-    The total sums every loop's likelihood weight; the breakdown counts every
-    loop by likelihood, including `none`. The modeller never authors this.
+    The total sums every loop's combined risk (`likelihood_weight * impact_
+    weight`). The likelihood breakdown counts every loop by likelihood, and the
+    impact breakdown counts every loop by its ordinal impact severity. The
+    profile recomputes from the loop's authored impact; it never trusts the
+    loop's derived `risk` field. The modeller never authors the profile.
     """
     breakdown = {level: 0 for level in Likelihood}
+    impact_breakdown = {level: 0 for level in ImpactSeverity}
+    total = 0
     for loop in loops:
         breakdown[loop.likelihood] += 1
+        weight = impact_weight(loop.impact)
+        impact_breakdown[impact_severity(weight)] += 1
+        total += RISK_WEIGHTS[loop.likelihood] * weight
     return RiskProfile(
-        total=sum(RISK_WEIGHTS[loop.likelihood] for loop in loops),
+        total=total,
         breakdown=breakdown,
+        impact_breakdown=impact_breakdown,
     )
 
 
 def normalise_loops(loops: list[Loop]) -> list[Loop]:
-    """The ranked order and the derived loop ids (S2 5.6).
+    """The ranked order and the derived loop fields (S2 5.6, amended).
 
-    Stable sort by likelihood weight descending (ties keep the modeller's
-    write order), then renumber `loop-1..n` in that order. Rank 1 is the
-    highest likelihood.
+    Stable sort by combined risk descending, then impact weight descending,
+    then likelihood weight descending; ties keep the modeller's write order.
+    Renumber `loop-1..n` in that order and fill the derived `impact_weight` and
+    `risk` fields. Rank 1 is the highest risk.
     """
-    ordered = sorted(loops, key=lambda loop: RISK_WEIGHTS[loop.likelihood], reverse=True)
+    def key(loop: Loop) -> tuple[int, int, int]:
+        weight = impact_weight(loop.impact)
+        return (
+            RISK_WEIGHTS[loop.likelihood] * weight,
+            weight,
+            RISK_WEIGHTS[loop.likelihood],
+        )
+
+    ordered = sorted(loops, key=key, reverse=True)
     return [
-        loop.model_copy(update={"id": f"loop-{rank}"})
+        loop.model_copy(
+            update={
+                "id": f"loop-{rank}",
+                "impact_weight": impact_weight(loop.impact),
+                "risk": RISK_WEIGHTS[loop.likelihood] * impact_weight(loop.impact),
+            }
+        )
         for rank, loop in enumerate(ordered, start=1)
     ]
 
@@ -478,8 +602,16 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
             missing.append(f"loop:{loop.id}.likelihood_rationale")
         if not loop.evidences:
             missing.append(f"loop:{loop.id}.evidences")
-    weights = [RISK_WEIGHTS[loop.likelihood] for loop in model.loops]
-    if any(left < right for left, right in zip(weights, weights[1:])):
+        if not loop.impact.end_impact:
+            missing.append(f"loop:{loop.id}.impact")
+        expected_weight = impact_weight(loop.impact)
+        if loop.impact_weight != expected_weight:
+            missing.append(f"loop:{loop.id}.impact_weight")
+        if loop.risk != RISK_WEIGHTS[loop.likelihood] * expected_weight:
+            missing.append(f"loop:{loop.id}.risk")
+    keys = [(loop.risk, loop.impact_weight, RISK_WEIGHTS[loop.likelihood])
+            for loop in model.loops]
+    if any(left < right for left, right in zip(keys, keys[1:])):
         missing.append("loops.order")
     expected_ids = [f"loop-{rank}" for rank in range(1, len(model.loops) + 1)]
     if [loop.id for loop in model.loops] != expected_ids:
@@ -493,6 +625,8 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
                 missing.append("risk_profile.total")
             if model.risk_profile.breakdown != expected.breakdown:
                 missing.append("risk_profile.breakdown")
+            if model.risk_profile.impact_breakdown != expected.impact_breakdown:
+                missing.append("risk_profile.impact_breakdown")
     return missing
 
 
@@ -646,6 +780,10 @@ __all__ = [
     "Fault",
     "Feasibility",
     "GATE_SECTIONS",
+    "IMPACT_METRIC_WEIGHTS",
+    "Impact",
+    "ImpactLevel",
+    "ImpactSeverity",
     "Likelihood",
     "Loop",
     "ModelState",
@@ -667,7 +805,12 @@ __all__ = [
     "ViolationKind",
     "Vulnerability",
     "check_completion",
+    "compute_impact",
     "compute_risk_profile",
+    "impact_severity",
+    "impact_weight",
+    "impact_weight_from_sub_score",
+    "loop_risk",
     "normalise_loops",
     "unit_kind_from_unit_id",
 ]

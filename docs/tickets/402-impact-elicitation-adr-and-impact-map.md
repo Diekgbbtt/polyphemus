@@ -4,7 +4,7 @@
 
 **Blocked by:** None - can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** docs/design, docs/experiments/modeller-impact-quality
 
@@ -14,13 +14,13 @@ The impact map is already written at docs/design/threat-model-impact-elicitation
 
 ## Acceptance criteria
 
-- [ ] The ADR exists in the docs bank and records every decision in the plan.
-- [ ] The ADR records the failure-mode no-drop evidence and the reason for the removal.
-- [ ] The ADR records the impact formula, the metric weights, the ordinal thresholds, the loop risk, the ranking, the dispatch buckets, and the threshold.
-- [ ] The ADR records the four trust axes and the well-formedness pseudo-phase.
-- [ ] The ADR records the class-binding guard and the green-loop gate.
-- [ ] The impact map lists every dependent component and the convergence order.
-- [ ] The decisions match docs/experiments/modeller-impact-quality/PLAN.md.
+- [x] The ADR exists in the docs bank and records every decision in the plan.
+- [x] The ADR records the failure-mode no-drop evidence and the reason for the removal.
+- [x] The ADR records the impact formula, the metric weights, the ordinal thresholds, the loop risk, the ranking, the dispatch buckets, and the threshold.
+- [x] The ADR records the four trust axes and the well-formedness pseudo-phase.
+- [x] The ADR records the class-binding guard and the green-loop gate.
+- [x] The impact map lists every dependent component and the convergence order.
+- [x] The decisions match docs/experiments/modeller-impact-quality/PLAN.md.
 
 ## Verification
 

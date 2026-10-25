@@ -4,7 +4,7 @@
 
 **Blocked by:** 404
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/threat_model.py, attack/hunting/threat_model_store.py
 
@@ -14,12 +14,12 @@ The loop file is the dispatch record. It must carry the impact and the computed 
 
 ## Acceptance criteria
 
-- [ ] The vulnerability and the loop carry the impact in the write schema.
-- [ ] The store round-trips the impact in the model document.
-- [ ] The loop file carries the impact and the loop risk.
-- [ ] The completion checker records a missing impact as a non-blocking finding.
-- [ ] A model written before the impact model parses and contributes zero risk.
-- [ ] The gate sections remain valid during the expansion.
+- [x] The vulnerability and the loop carry the impact in the write schema.
+- [x] The store round-trips the impact in the model document.
+- [x] The loop file carries the impact and the loop risk.
+- [x] The completion checker records a missing impact as a non-blocking finding.
+- [x] A model written before the impact model parses and contributes zero risk.
+- [x] The gate sections remain valid during the expansion.
 
 ## Verification
 
