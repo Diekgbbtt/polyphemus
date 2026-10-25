@@ -77,7 +77,7 @@ def test_the_prompt_carries_the_required_material():
         "likelihood_enum": "`none / low / medium / high / critical`",
         "monotonic_weights": "`0 / 1 / 2 / 3 / 4`",
         "impact_metrics": "**Impact metrics.**",
-        "combined_risk": "**Combined risk.**",
+        "score_authority": "Never author a score.",
         "wellformedness": "Well-formedness: retrospective modelling",
         "class_guard": "Technique families are not vulnerability classes",
         "class_required": "never leave `web_vulnerability_class` empty",

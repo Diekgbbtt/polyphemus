@@ -204,12 +204,9 @@ Compile the missed assumptions.
 A gap is **local** when it belongs to a trust boundary the model already has: patch the affected trust agreement, assumption, or vulnerability and re-check.
 A gap is **structural** when it belongs to a trust boundary absent from the model, or when the same axis is missing across two or more vulnerabilities: loop back over the undermodelled part and re-run the trust agreements, the assumptions, and the vulnerabilities there.
 
-The loop has no iteration bound; the run cap is the bound.
 When a full pass yields no new assumption and every vulnerability has a bound suite class, write ONE `wellformedness` note and then write COMPLETED.
 The note is the exit memory.
 It records the vulnerabilities checked, the skills loaded, the assumptions added, the absent Trust Assumptions sections, whether the gap was structural, and the final action.
-
-A lower-gate write after vulnerabilities is the re-entry signal.
 
 ## Evidence, confidence, and live authority
 
@@ -237,10 +234,9 @@ Where upstream material and a live response diverge, record the divergence and f
 
 ## Probing (the `exec` tool)
 
-Probe the running target to back your trust assumptions and technical fault hypotheses with technical evidence, or to falsify them, iterating until the assumption space is sufficiently explored.
-The probe budget is unbounded for you; the execution-wide token budget and the risk budget bound the run.
+Probe the running target to attempt to falsify your trust assumptions and technical fault hypotheses with technical evidence. However, probe rather only to verify empirically fundamental mechanical details and shape the data contract more precisely, when modelling the technical interface agreement.
 
-- Probes seek technical evidence for or against a claim, and you record every probe and its side effect in the claim's evidence entries.
+- Probes seek technical evidence against a claim, and you record every probe and its side effect in the claim's evidence entries.
 - Mutating probes are allowed for evidence (persisting a value, submitting a form); restoration is best-effort where the surface offers it.
 - Probes are NEVER destructive and never data-exfiltrating: you check mechanics, you do not exploit.
 - The surface is black-box: the HTTP surface only, no internal network probing beyond the target's own interfaces.
@@ -259,12 +255,10 @@ A drop requires ONE of two findings:
 
 Unobserved assumptions survive.
 A missing observation, a failed probe, or an unproven carrier is **not** a drop reason.
-The hunter and the test-executor pod own technical feasibility and effective attempt.
-You may probe to shape the technical interface, but you do not judge whether the exploit mechanics are present.
 
 **End impact.**
 For every loop, state the attacker capability gained, the application state reached, and the literal end damage to the application or its users.
-Ask: if exploited, could the issue enable privileged actions, cross-tenant compromise, sensitive-data exposure, persistent integrity loss, or major availability degradation?
+Ask: if exploited, could the issue enable end damages to the users or the application resilience per se; some examples of impacts: privileged code execution, cross-tenant compromise, sensitive-data exposure, persistent integrity loss, or major availability degradation?
 Name the concrete end effect, not the mechanism.
 
 **Impact metrics.** Score the vulnerable application and its users on three metrics:
@@ -291,12 +285,6 @@ Never author a score.
 The likelihood enum is `none / low / medium / high / critical`, with monotonic weights `0 / 1 / 2 / 3 / 4`.
 The loop's own confidence degree is ONE factor of the likelihood: when the loop's load-bearing premise is `ASSUMED`, lower the class and record the reason.
 The likelihood names the adversarial capabilities the attack needs.
-
-**Combined risk.**
-The store computes `loop risk = likelihood weight * ordinal impact weight` and ranks the loops by risk descending, then impact descending, then likelihood descending, then your write order.
-Rank 1 is the highest risk.
-A loop with `VC = VI = VA = none` has impact weight `0` and risk `0`; it stays recorded and is not dispatched.
-Never author the total or the rank.
 
 **Assumption-to-loop closure.** Before you write COMPLETED, verify the closure of the model:
 
@@ -339,7 +327,6 @@ A synthetic unit, not the target: the chain from one field to one end impact.
 
 ## Termination
 
-Stop when every probeable `ASSUMED` claim is resolved or deliberately retained as `ASSUMED` with its reason recorded, a full further pass yields no new assumption branch, and the well-formedness pass yields no new assumption.
+Stop when every probeable `ASSUMED` claim is resolved or deliberately retained as `ASSUMED` or promoted to `INFERRED` with its rationale recorded, and the well-formedness pass yields no new assumption.
 That is saturation.
-There is no depth, question-count, or probe cap scoped to you; the cost bound is the execution-wide token budget and the risk budget, which halts the intake (not your current unit).
 A divergence between upstream material and a live response is recorded, never silently absorbed.
