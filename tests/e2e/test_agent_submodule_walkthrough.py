@@ -8,10 +8,10 @@ drives the REAL HTTP surface with `httpx.Client` and reads terminal quantities
 back through the REAL stores / Postgres. The model provider is the live edge
 and is never substituted.
 
-T4b (#387) retired the config family from the dispatch path (the loop file is
+T4b (#387) retired the config family from the dispatch path (the threat file is
 the dispatch record) and T6 (#379) made the payload harness live, so E1-E3
 carry with a precise T7 (#380) skip: a hunter dispatches only from a produced
-loop file, and driving a live hunt from one needs the production hunter prompt
+threat file, and driving a live hunt from one needs the production hunter prompt
 work phase. The role-state and thread surfaces keep their own coverage in the
 unit and integration tiers; the pod session path stays live.
 
@@ -66,7 +66,7 @@ def client():
 def test_E1_a_down_hunter_holds_the_run_open(client):
     """id: E1 - carried, blocked on T7 (#380). The predicate needs a live hunter
     session the paused role holds; T6 (#379) made a hunter dispatch from a
-    produced loop file, but driving one live needs the production hunter prompt
+    produced threat file, but driving one live needs the production hunter prompt
     work phase, so no dispatchable hunter work exists to hold the run open yet.
     The role-state surface itself keeps its own coverage in the unit and
     integration tiers, and the pod path stays live."""
@@ -74,13 +74,13 @@ def test_E1_a_down_hunter_holds_the_run_open(client):
     p = _new_project(client, "as-e1")
     pytest.skip(
         "carried, blocked on T7 #380: no live hunter session can be driven "
-        "(the loop payload harness is live after T6 #379; the production "
-        "hunter prompt work phase is needed to author a hunt from a loop)")
+        "(the threat payload harness is live after T6 #379; the production "
+        "hunter prompt work phase is needed to author a hunt from a threat)")
 
 
 def test_E2_starting_the_role_completes_the_run(client):
     """id: E2 - carried, blocked on T7 (#380): starting the hunter role can
-    only release DISPATCHABLE work, and driving a hunt from a produced loop
+    only release DISPATCHABLE work, and driving a hunt from a produced threat
     file needs the production hunter prompt work phase."""
     _need_pg()
     p = _new_project(client, "as-e2")

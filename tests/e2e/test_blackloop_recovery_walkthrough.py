@@ -15,7 +15,7 @@ condition compaction reads is per-step occupancy - both reproduced exactly by a
 scripted fake, while a live provider call adds only latency, never a different
 code path (the #95/#210 walkthrough discipline). Everything else is the real
 deployed wiring: `stateful_turn`, `run_session_turn`, the compaction middleware,
-and the `create_agent` loop.
+and the `create_agent` threat.
 
 Runs host-side with fakes + `InMemorySaver` (docker down); the in-network run is
 the sanctioned e2e runner.
@@ -196,7 +196,7 @@ class _PhantomUsageModel(BaseChatModel):
 def test_phantom_usage_thread_converges_under_budget_e2e(monkeypatch):
     """Shape B end-to-end: a persisted failed message with a giant phantom usage
     pins occupancy; the native compaction bounds it (T4 - usage stripped, reasoning
-    excerpted) and the thread CONVERGES under budget - the compaction-loop is
+    excerpted) and the thread CONVERGES under budget - the compaction-threat is
     eliminated through the real seam."""
     import polymerhus.app.llm.providers as P
     import polymerhus.app.llm.roles as R

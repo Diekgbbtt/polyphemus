@@ -287,8 +287,8 @@ def read_model(project_id: str, unit_id: str):
     return threat_model(project_id).read_model(project_id, unit_id)
 
 
-def read_loop_files(project_id: str, unit_id: str) -> list[dict]:
-    return threat_model(project_id).read_loop_files(project_id, unit_id)
+def read_threat_files(project_id: str, unit_id: str) -> list[dict]:
+    return threat_model(project_id).read_threat_files(project_id, unit_id)
 
 
 def read_completed_units(project_id: str) -> list[str]:

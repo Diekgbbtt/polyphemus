@@ -290,7 +290,7 @@ def test_pod_replay_lineage_end_to_end(live_kali):
         "assumptions": [],
         "rationale": "the recorded baseline replays with only the declared mutation",
         "provenance": {
-            "loop_id": f"loop-{project_id}",
+            "threat_id": f"threat-{project_id}",
             "unit_id": "service:web:http-e2e-target",
             "canonical_class": "replay-lineage",
             "web_vulnerability_class": "replay-lineage",

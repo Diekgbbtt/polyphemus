@@ -23,7 +23,7 @@ You are out-of-band scoring, isolated from the run.
 ## How to judge
 
 Read the ground truth with `python3 eval/gt.py <ground-truth-dir> --json`.
-Read the persisted evidence under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the unit threat models and their loop files under `<data_root>/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` (the model document and its `loop-<rank>.yaml` files), the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/` (the loop dispatch id `<unit_name>__<loop_id>`), and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
+Read the persisted evidence under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the unit threat models and their threat files under `<data_root>/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` (the model document and its `threat-<rank>.yaml` files), the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/` (the threat dispatch id `<unit_name>__<threat_id>`), and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
 Every one of those paths is parametrised on `<project_id>`, which you read from the `project_id` field of the trial record named in your launch command; `<data_root>` is the data root you were given.
 Apply the identification predicate: a vulnerability is `identified` only when a pod run landed `successful` with `terminal_reason = symptom-confirmed`, its web vulnerability class and its fault match the ground-truth type, its locus matches the ground-truth location, and its experiment log shows the confirming symptom.
 A symptom confirmed at the wrong locus or for the wrong web vulnerability class or fault is `partial` at most.
@@ -43,7 +43,7 @@ Write a YAML list, one row per ground-truth vulnerability:
   confidence: number
   matched: {unit, web_vulnerability_class, fault, symptom}
   evidence_chain:            # required for identified and partial
-    loop: path               # data-root-relative; begins with the `<project_id>/` segment
+    threat: path               # data-root-relative; begins with the `<project_id>/` segment
     spec_dir: path
     experiment_logs: [path]
     pod_export: path

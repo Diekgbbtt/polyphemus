@@ -1,7 +1,7 @@
 """The filesystem seam over the #234 app-owned data root (ticket #270).
 
 The trial reads the persisted-state predicates (the authn skill bundle, the
-pre-mined threat-model loops) and writes its own bootstrap state through one
+pre-mined threat-model threats) and writes its own bootstrap state through one
 `FileStore`. It is the injectable filesystem seam: tests pass a temp-rooted
 instance or a subclass that scripts the produced/consumed reads. The data-root
 helpers mirror the app's own `<data_root>` layout
@@ -19,8 +19,8 @@ import os
 import tempfile
 from pathlib import Path
 
-# The two threat-model sides. `consumed` is the dispatched-loop marker: the
-# store moves a loop file there when the mover admitted its dispatch.
+# The two threat-model sides. `consumed` is the dispatched-threat marker: the
+# store moves a threat file there when the mover admitted its dispatch.
 THREAT_MODEL_SIDES = ("produced", "consumed")
 # The two hunter test-spec sides; mirrors the hunter store's produced/consumed
 # inbox (the mover owns the produced -> consumed rename).
@@ -53,7 +53,7 @@ def threat_model_dir(data_root: str | Path, project_id: str, side: str) -> Path:
 
     The threat-model store owns this layout (`attack/hunting/
     threat_model_store.py`): one `<unit_name>/` directory per unit carrying the
-    model document and its `loop-<rank>.yaml` files. The eval mirrors the same
+    model document and its `threat-<rank>.yaml` files. The eval mirrors the same
     two sides the mover reads, never a bespoke path.
     """
     if side not in THREAT_MODEL_SIDES:
@@ -64,7 +64,7 @@ def threat_model_dir(data_root: str | Path, project_id: str, side: str) -> Path:
 def threat_model_unit_dir(
     data_root: str | Path, project_id: str, unit_name: str, side: str
 ) -> Path:
-    """`<threat_model_dir>/<unit_name>`: one unit's model and loop files."""
+    """`<threat_model_dir>/<unit_name>`: one unit's model and threat files."""
     return threat_model_dir(data_root, project_id, side) / unit_name
 
 
@@ -90,8 +90,8 @@ def retired_hunt_configs_dir(
 def hunter_test_specs_dir(data_root: str | Path, project_id: str) -> Path:
     """`<data_root>/<project_id>/hunting/hunter/test-specs`: the spec families.
 
-    Each child is a `<dispatch_id>/` folder (the loop dispatch id
-    `<unit_name>__<loop_id>`) holding the produced/consumed
+    Each child is a `<dispatch_id>/` folder (the threat dispatch id
+    `<unit_name>__<threat_id>`) holding the produced/consumed
     `TestImplementationSpec` files (mirrors `hunter_memory.py`, #234).
     """
     return project_dir(data_root, project_id) / "hunting" / "hunter" / "test-specs"

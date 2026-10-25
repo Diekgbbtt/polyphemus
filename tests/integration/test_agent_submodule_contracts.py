@@ -52,7 +52,7 @@ UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
 UNIT_NAME = "Service-catalogue-and-discovery"
-DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+DISPATCH_ID = f"{UNIT_NAME}__threat-1"
 SPEC_FILE = "sqli__blind__boolean"
 ROLES = ("threat_modeller", "hunter", "pod")
 
@@ -78,7 +78,7 @@ def _wait_until_flat(seq, timeout=5.0):
 
 
 def _produce(threat):
-    """One produced COMPLETED valid model with its loop file (S2 8.1)."""
+    """One produced COMPLETED valid model with its threat file (S2 8.1)."""
     return produce_model(threat, project_id="p", unit_id=UNIT, run_id=RUN)
 
 
@@ -301,9 +301,9 @@ def test_C10_a_down_hunter_denies_hunter_dispatch(tmp_path):
     )
     assert control.calls == []
     assert report.refused == 1 and report.moved == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops("p")[0]["loops"]] == ["loop-1"]
-    # S6/E1 lower tier: while the hunter role is down its refused loop file is
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats("p")[0]["threats"]] == ["threat-1"]
+    # S6/E1 lower tier: while the hunter role is down its refused threat file is
     # still DISPATCHABLE work, so the quiesce predicate stays False and the run
     # can never reach `complete` (the E1 "run stays running" claim, without
     # Docker).

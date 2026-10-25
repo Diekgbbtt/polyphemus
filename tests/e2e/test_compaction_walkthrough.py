@@ -4,7 +4,7 @@ Two consumers are wired (ADR D9): the hunting hunter's async actor lane
 (`HuntingHunterActor` -> `run_session_agent`) and the analysis mechanism-typist's
 CHAINED session lane (`stateful_invoke_fn` -> `stateful_turn` -> `run_session_turn`).
 This file drives BOTH through their REAL consumer entry points - no faked
-`stateful_turn`, no inlined middleware - against the real session loop and a
+`stateful_turn`, no inlined middleware - against the real session threat and a
 realistic model, asserting the observable outcome (a running-summary message on the
 thread / the manager's last report with reclaimed tokens).
 
@@ -14,7 +14,7 @@ usage metadata), not the model's text. A scripted ChatOpenAI-shaped fake emittin
 realistic usage metadata therefore reproduces the runtime condition exactly, while a
 live provider call adds only latency and a free-tier rate limit - never a different
 code path. Everything else is the real deployed wiring: the consumer entry points,
-the role middleware builder, and the `create_agent` loop.
+the role middleware builder, and the `create_agent` threat.
 
 The mechanism-typist lane is exercised the way the agent actually runs: the real
 3-call `type_mechanisms` chain (reflection -> systems extraction -> services

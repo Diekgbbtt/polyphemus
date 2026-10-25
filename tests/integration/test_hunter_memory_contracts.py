@@ -1,6 +1,6 @@
 """Integration tier: the hunter memory spec-set contract (S3 8.6-8.9, T6 #379).
 
-The contract predicates exercise the loop-driven memory system at its two
+The contract predicates exercise the threat-driven memory system at its two
 seams - the per-project `HunterMemoryStore` (the spec-set store) and the
 `hunts_store` / `notes` tool seams over it (`hunter_tools.py`) - never the
 ReAct host's internals. The real store on a tmp root and the real tools bound
@@ -8,7 +8,7 @@ to it; no model is involved in this tier. Every observable is the exact file,
 count, or JSON shape the contract promises.
 
 T6 re-pointed the old C1-C26 catalogue from the retired fault/config key and
-the four-value lifecycle onto the loop dispatch key, the batched `specs` set
+the four-value lifecycle onto the threat dispatch key, the batched `specs` set
 write and the `{hypothesised, ratified, dropped}` vocabulary.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _spec(*, class_name: str = "csrf", fault_keyword: str = "probe",
         "verification_symptoms": ["a foreign state change is accepted"],
         "assumptions": ["the token is not bound to the session"],
         "rationale": "r",
-        "provenance": {"loop_id": "loop-1",
+        "provenance": {"threat_id": "threat-1",
                        "web_vulnerability_class": class_name},
     }
     body.update(extra)
@@ -208,7 +208,7 @@ def test_C14_notes_read_grep_match_and_read_latest(tmp_path):
             store.read_notes(PROJECT, key_keyword="alph")] == ["alpha"]
     assert [n["note_name"] for n in
             store.read_notes(PROJECT, body_keyword="token")] == ["alpha"]
-    assert store.read_notes(PROJECT, parent_key="Service-other__loop-9") == []
+    assert store.read_notes(PROJECT, parent_key="Service-other__threat-9") == []
 
 
 def test_C15_hunt_and_note_share_the_identifier(tmp_path):

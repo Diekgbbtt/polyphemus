@@ -56,7 +56,7 @@ def _spec(status, fault, strategy, *, symptom, assumption, rationale):
         "assumptions": [assumption],
         "rationale": rationale,
         "provenance": {
-            "loop_id": "loop-1",
+            "threat_id": "threat-1",
             "unit_id": UNIT_ID,
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",

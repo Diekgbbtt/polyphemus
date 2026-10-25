@@ -79,7 +79,7 @@ VALID_SPEC = {
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "assumptions": ["network egress allowed"],
     "rationale": "reachability probe from H1",
-    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+    "provenance": {"threat_id": "threat-1", "unit_id": "service:web:soupmarket",
                    "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
@@ -126,7 +126,7 @@ def _factory(by_role):
     return make
 
 
-# --- the runner's ReAct scripts (one `create_agent` loop per stretch) ---------
+# --- the runner's ReAct scripts (one `create_agent` threat per stretch) ---------
 
 # P1 kb query (concretization, D84-16/26), P2 default probe, then conclude: the
 # KB tool binding is EXERCISED (a degraded/empty bundle -> degrade to the spec's

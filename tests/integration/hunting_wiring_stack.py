@@ -6,7 +6,7 @@ conditions against a live agent container (the "target"), with the live
 `hunting_runs` Postgres row (the target postgres is already up) and fixtures
 seeded through the REAL store APIs (`HunterMemoryStore`, `PodMemoryStore`;
 the retired hunt-config family has no read-back: the threat-model produced
-loop files are read physically to prove what the run actually dispatched).
+threat files are read physically to prove what the run actually dispatched).
 
 Two targets selectable via `WIRING_TARGET`:
 - `sibling` (default): a distinct agent container (`agent-hw`, built FROM THIS
@@ -217,7 +217,7 @@ def seed_test_spec(project_id: str, *, hunt_key: str, fault_keyword: str,
                    **overrides) -> str:
     """Write ONE test-implementation spec through
     `HunterMemoryStore.write_specs` (the real store API) into the produced
-    family; returns the spec file stem. `hunt_key` is the loop dispatch id.
+    family; returns the spec file stem. `hunt_key` is the threat dispatch id.
 
     The seeded body MUST pass the pod's REAL INIT gate
     (`verification.validate_spec`): a draft spec with an empty reduced D4 (no
@@ -301,41 +301,41 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
 def seed_threat_model_unit(project_id: str, *, unit_id: str,
                            run_id: str) -> str:
     """Drive a REAL `ThreatModelStore` to COMPLETED for `unit_id`, producing
-    the unit's model document and its loop files (T10b #397). The E1/E2
-    premise: a produced loop file IS the dispatch record (S2 8.4), so a
+    the unit's model document and its threat files (T10b #397). The E1/E2
+    premise: a produced threat file IS the dispatch record (S2 8.4), so a
     walkthrough that claims to seed one must actually write it.
 
-    `run_id` is REQUIRED and must be the run that will dispatch the loop: the
+    `run_id` is REQUIRED and must be the run that will dispatch the threat: the
     mover's produced read is run-scoped (S2 8.3), so a seed under any other id
     stays inert. E1 passes the launched run id; E2 passes the earlier run id it
     is modelling."""
     from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
-    from tests.hunting_fixtures import loop_row, produce_model
+    from tests.hunting_fixtures import produce_model, threat_row
 
     produce_model(
         ThreatModelStore(),
         project_id=project_id,
         unit_id=unit_id,
         run_id=run_id,
-        loops=[loop_row()],
+        threats=[threat_row()],
     )
     return unit_id
 
 
-def consume_seeded_loop(project_id: str, *, unit_id: str,
-                        loop_id: str = "loop-1") -> bool:
-    """Move the seeded unit's loop to consumed/ through the store primitive -
+def consume_seeded_threat(project_id: str, *, unit_id: str,
+                        threat_id: str = "threat-1") -> bool:
+    """Move the seeded unit's threat to consumed/ through the store primitive -
     the earlier-run parent E2 needs (no live parent session)."""
     from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 
-    return ThreatModelStore().consume_loop(project_id, unit_id, loop_id)
+    return ThreatModelStore().consume_threat(project_id, unit_id, threat_id)
 
 
-def produced_loop_files(project_id: str) -> list[str]:
-    """The threat-model store's produced loop files, read straight from the
-    physical layout (T10b #397: the loop file is the dispatch record, S2 8.4).
+def produced_threat_files(project_id: str) -> list[str]:
+    """The threat-model store's produced threat files, read straight from the
+    physical layout (T10b #397: the threat file is the dispatch record, S2 8.4).
 
-    The identity is `<unit_name>/<loop_id>`, so the same `loop-1` under two
+    The identity is `<unit_name>/<threat_id>`, so the same `threat-1` under two
     units stays distinguishable. A live assertion reads this to prove what the
     run actually produced; nothing about the retired config family is read."""
     from polymerhus.app.data_root import DATA_ROOT, project_dir
@@ -350,12 +350,12 @@ def produced_loop_files(project_id: str) -> list[str]:
         f"{unit_dir.name}/{path.stem}"
         for unit_dir in base.iterdir()
         if unit_dir.is_dir()
-        for path in unit_dir.glob("loop-*.yaml")
+        for path in unit_dir.glob("threat-*.yaml")
     )
 
 
-def consumed_loop_files(project_id: str) -> list[str]:
-    """The threat-model store's consumed loop files, read straight from the
+def consumed_threat_files(project_id: str) -> list[str]:
+    """The threat-model store's consumed threat files, read straight from the
     physical layout (the mover's at-least-once marker, S2 8.4)."""
     from polymerhus.app.data_root import DATA_ROOT, project_dir
 
@@ -369,7 +369,7 @@ def consumed_loop_files(project_id: str) -> list[str]:
         f"{unit_dir.name}/{path.stem}"
         for unit_dir in base.iterdir()
         if unit_dir.is_dir()
-        for path in unit_dir.glob("loop-*.yaml")
+        for path in unit_dir.glob("threat-*.yaml")
     )
 
 

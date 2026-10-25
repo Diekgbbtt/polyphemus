@@ -9,7 +9,7 @@ The sample is the weak/default-credentials chain on `Service:account-sign-in`:
 `POST /api/login` with `admin`/`123` returns `code:200`; a wrong password
 returns `code:400`. The local `http-e2e-target` serves that surface
 (`tests/e2e/http_e2e_target.py`), and this module seeds the matching real L1
-graph so the modeller's projection, the intake order, and the hunter's loop
+graph so the modeller's projection, the intake order, and the hunter's threat
 range over the ground-truth unit rather than a synthetic stand-in.
 
 The service contract and the edge/data vocabulary are copied from the ground

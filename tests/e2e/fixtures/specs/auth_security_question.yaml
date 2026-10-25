@@ -38,7 +38,7 @@ rationale: >-
   control (the wrong answer must fail), so the run discriminates "recovery
   abuse via weak question" from "no such exposure" cleanly.
 provenance:
-  loop_id: loop-1
+  threat_id: threat-1
   unit_id: "service:web:soupmarket"
   canonical_class: authentication
   web_vulnerability_class: broken-authentication

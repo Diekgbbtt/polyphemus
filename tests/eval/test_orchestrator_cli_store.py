@@ -41,8 +41,8 @@ def _write_setup(tmp_path, store_dir) -> str:
 def _make_data_root(root):
     unit_dir = root / "pid/hunting/threat_modeller/consumed/service-web-viewer"
     unit_dir.mkdir(parents=True)
-    (unit_dir / "loop-1.yaml").write_text("loop: 1\n", encoding="utf-8")
-    spec_dir = root / "pid/hunting/hunter/test-specs/service-web-viewer__loop-1"
+    (unit_dir / "threat-1.yaml").write_text("threat: 1\n", encoding="utf-8")
+    spec_dir = root / "pid/hunting/hunter/test-specs/service-web-viewer__threat-1"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.yaml").write_text("spec: a\n", encoding="utf-8")
     (root / "pid/hunting/test-executor-pod/spec-1/experiment-log").mkdir(parents=True)
@@ -71,8 +71,8 @@ def _make_trial(tmp_path, data_root) -> str:
                         "symptom": "s",
                     },
                     "evidence_chain": {
-                        "loop": "pid/hunting/threat_modeller/consumed/service-web-viewer/loop-1.yaml",
-                        "spec_dir": "pid/hunting/hunter/test-specs/service-web-viewer__loop-1",
+                        "threat": "pid/hunting/threat_modeller/consumed/service-web-viewer/threat-1.yaml",
+                        "spec_dir": "pid/hunting/hunter/test-specs/service-web-viewer__threat-1",
                         "experiment_logs": [
                             "pid/hunting/test-executor-pod/spec-1/experiment-log/order-0.yaml"
                         ],

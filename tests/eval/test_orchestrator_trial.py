@@ -908,7 +908,7 @@ def test_premined_artifacts_are_placed_in_produced_and_consumed_lazily(
         unit_dir = source / unit
         unit_dir.mkdir(parents=True)
         (unit_dir / f"{unit}.yaml").write_text(f"state: COMPLETED\n", encoding="utf-8")
-        (unit_dir / "loop-1.yaml").write_text(f"loop:\n  id: loop-1\n", encoding="utf-8")
+        (unit_dir / "threat-1.yaml").write_text(f"threat:\n  id: threat-1\n", encoding="utf-8")
 
     api_runner = FakeApi(
         {
@@ -935,7 +935,7 @@ def test_premined_artifacts_are_placed_in_produced_and_consumed_lazily(
     ]
     assert sorted(
         p.name for p in files.list_files(produced / "unit-web-sqli")
-    ) == ["loop-1.yaml", "unit-web-sqli.yaml"]
+    ) == ["threat-1.yaml", "unit-web-sqli.yaml"]
     # No bespoke read path: the trial never uploaded/fabricated a model through
     # the API - it wrote to the pipeline's own produced/ inbox.
     rendered = " ".join(c.display() for c in api_runner.calls)
@@ -949,13 +949,13 @@ UNIT_NAME = "Service-web-soupmarket"
 
 
 def _write_seed_unit(source: Path, *, run_id: str = "source-run") -> Path:
-    """One pre-mined unit tree: a consumable model document plus a valid loop."""
+    """One pre-mined unit tree: a consumable model document plus a valid threat."""
     unit_dir = source / UNIT_NAME
     unit_dir.mkdir(parents=True)
     (unit_dir / f"{UNIT_NAME}.yaml").write_text(
         yaml.safe_dump(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "unit_id": UNIT,
                 "unit_kind": "service",
                 "run_id": run_id,
@@ -966,17 +966,17 @@ def _write_seed_unit(source: Path, *, run_id: str = "source-run") -> Path:
         ),
         encoding="utf-8",
     )
-    (unit_dir / "loop-1.yaml").write_text(
+    (unit_dir / "threat-1.yaml").write_text(
         yaml.safe_dump(
             {
-                "loop_id": "loop-1",
+                "threat_id": "threat-1",
                 "unit_id": UNIT,
                 "unit_kind": "service",
                 "run_id": run_id,
-                "dispatch_id": f"{UNIT_NAME}__loop-1",
+                "dispatch_id": f"{UNIT_NAME}__threat-1",
                 "likelihood": "high",
-                "loop": {
-                    "id": "loop-1",
+                "threat": {
+                    "id": "threat-1",
                     "fault_ref": "fault-1",
                     "vulnerability_ref": "v-1",
                     "canonical_class": "IDOR",
@@ -994,15 +994,15 @@ def _write_seed_unit(source: Path, *, run_id: str = "source-run") -> Path:
     return unit_dir
 
 
-def test_a_premined_loop_is_rebound_to_the_launched_run_and_dispatches(tmp_path) -> None:
+def test_a_premined_threat_is_rebound_to_the_launched_run_and_dispatches(tmp_path) -> None:
     """The pre-mined model must be dispatchable by the run that launches.
 
     S2 8.3 scopes the mover's produced read by run id, so a pre-mined tree
     carrying the source's run id can never dispatch. The trial rebinds the
-    placed model AND its loop file to the launched id before polling; this pins
+    placed model AND its threat file to the launched id before polling; this pins
     both halves and the mover's validity predicate on the result.
     """
-    from polymerhus.attack.hunting.mover import threat_loop_item
+    from polymerhus.attack.hunting.mover import threat_item
     from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 
     source = tmp_path / "premined"
@@ -1026,33 +1026,33 @@ def test_a_premined_loop_is_rebound_to_the_launched_run_and_dispatches(tmp_path)
 
     produced = threat_model_dir(tmp_path / "data", "pid", "produced") / UNIT_NAME
     model = yaml.safe_load((produced / f"{UNIT_NAME}.yaml").read_text(encoding="utf-8"))
-    loop = yaml.safe_load((produced / "loop-1.yaml").read_text(encoding="utf-8"))
+    threat = yaml.safe_load((produced / "threat-1.yaml").read_text(encoding="utf-8"))
     assert model["run_id"] == "h1"
-    assert loop["run_id"] == "h1"
+    assert threat["run_id"] == "h1"
     assert model["validation"] == {"valid": True}
 
     store = ThreatModelStore(root_dir=tmp_path / "data")
-    entries = store.read_produced_loops("pid")
+    entries = store.read_produced_threats("pid")
     assert [entry["unit_id"] for entry in entries] == [UNIT]
     entry = entries[0]
     assert entry["run_id"] == "h1"
-    item = threat_loop_item(
+    item = threat_item(
         project_id="pid",
         unit_id=UNIT,
         unit_name=UNIT_NAME,
-        loop_id="loop-1",
-        record=entry["loops"][0]["record"],
+        threat_id="threat-1",
+        record=entry["threats"][0]["record"],
         run_id="h1",
         model=entry["model"],
     )
     assert item is not None
-    assert item.session_id == f"hunting:h1:hunt:{UNIT_NAME}__loop-1"
+    assert item.session_id == f"hunting:h1:hunt:{UNIT_NAME}__threat-1"
 
 
-def test_a_loop_from_another_run_is_still_refused(tmp_path) -> None:
-    """The run-scope guard survives the rebind: a different run's loop is not
+def test_a_threat_from_another_run_is_still_refused(tmp_path) -> None:
+    """The run-scope guard survives the rebind: a different run's threat is not
     dispatchable work."""
-    from polymerhus.attack.hunting.mover import threat_loop_item
+    from polymerhus.attack.hunting.mover import threat_item
 
     source = tmp_path / "premined"
     _write_seed_unit(source, run_id="another-run")
@@ -1076,21 +1076,21 @@ def test_a_loop_from_another_run_is_still_refused(tmp_path) -> None:
     # The trial rebinds what it placed, so the placed tree is this run's. A tree
     # written by ANOTHER run remains refused by the mover predicate.
     produced = threat_model_dir(tmp_path / "data", "pid", "produced") / UNIT_NAME
-    loop = yaml.safe_load((produced / "loop-1.yaml").read_text(encoding="utf-8"))
-    assert threat_loop_item(
+    threat = yaml.safe_load((produced / "threat-1.yaml").read_text(encoding="utf-8"))
+    assert threat_item(
         project_id="pid",
         unit_id=UNIT,
         unit_name=UNIT_NAME,
-        loop_id="loop-1",
-        record=loop,
+        threat_id="threat-1",
+        record=threat,
         run_id="h1",
     ) is not None
-    assert threat_loop_item(
+    assert threat_item(
         project_id="pid",
         unit_id=UNIT,
         unit_name=UNIT_NAME,
-        loop_id="loop-1",
-        record=loop,
+        threat_id="threat-1",
+        record=threat,
         run_id="another-run",
     ) is None
 
@@ -1111,7 +1111,7 @@ def test_premined_test_specs_land_under_their_dispatch_id(tmp_path) -> None:
     preloaded = setup.PreloadedArtifacts(
         test_specs=(
             setup.PreloadedTestSpec(
-                path=str(source), dispatch_id="unit-web-sqli__loop-1"
+                path=str(source), dispatch_id="unit-web-sqli__threat-1"
             ),
         )
     )
@@ -1126,7 +1126,7 @@ def test_premined_test_specs_land_under_their_dispatch_id(tmp_path) -> None:
     ).run()
 
     produced = hunter_test_specs_family_dir(
-        tmp_path / "data", "pid", "unit-web-sqli__loop-1", "produced"
+        tmp_path / "data", "pid", "unit-web-sqli__threat-1", "produced"
     )
     assert [p.name for p in files.list_files(produced)] == ["unit_CWE-89_sqli.yaml"]
     # No bespoke read path: the spec lands in the pipeline's own dispatch-id
@@ -1141,7 +1141,7 @@ def test_premined_plan_lists_both_inboxes_and_issues_no_calls(tmp_path) -> None:
         models="/mnt/models",
         test_specs=(
             setup.PreloadedTestSpec(
-                path="/mnt/a.yaml", dispatch_id="unit-web-sqli__loop-1"
+                path="/mnt/a.yaml", dispatch_id="unit-web-sqli__threat-1"
             ),
         ),
     )
@@ -1156,7 +1156,7 @@ def test_premined_plan_lists_both_inboxes_and_issues_no_calls(tmp_path) -> None:
     assert (
         str(
             hunter_test_specs_family_dir(
-                tmp_path / "data", "pid", "unit-web-sqli__loop-1", "produced"
+                tmp_path / "data", "pid", "unit-web-sqli__threat-1", "produced"
             )
         )
         in step.files

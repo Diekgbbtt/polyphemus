@@ -43,7 +43,7 @@ class PreloadedTestSpec:
     """One pre-mined hunter `TestImplementationSpec` and its dispatch identity.
 
     `path` is a host path (a spec file, or a directory of them); `dispatch_id`
-    is the loop dispatch id `<unit_name>__<loop_id>` whose `test-specs/`
+    is the threat dispatch id `<unit_name>__<threat_id>` whose `test-specs/`
     family produced/ inbox the pipeline's lazy read drains (S3 8.9).
     """
 
@@ -56,7 +56,7 @@ class PreloadedArtifacts:
     """Operator-supplied pre-mined hunting artifacts (#270 AC4; T10b #397).
 
     `models` is a host path to a threat-model unit directory (a model document
-    plus its loop files) or to a directory of unit directories, placed into the
+    plus its threat files) or to a directory of unit directories, placed into the
     threat-model store's `produced/` inbox. Each `test_specs` entry names one
     spec and its dispatch id, placed into that hunter family's `produced/`
     inbox. Both are the pipeline's own lazy-read locations, so the normal mover

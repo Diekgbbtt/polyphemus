@@ -29,7 +29,7 @@ FINGERPRINT = "fp-1"
 
 UNIT = "service:web:viewer"
 UNIT_NAME = "service-web-viewer"
-DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+DISPATCH_ID = f"{UNIT_NAME}__threat-1"
 
 
 def seed_chain(tmp_path, *, project: str = "pid"):
@@ -37,7 +37,7 @@ def seed_chain(tmp_path, *, project: str = "pid"):
     root = tmp_path / "data"
     unit_dir = threat_model_dir(root, project, "produced") / UNIT_NAME
     files.write_text(unit_dir / f"{UNIT_NAME}.yaml", "state: COMPLETED\n")
-    files.write_text(unit_dir / "loop-1.yaml", "loop:\n  id: loop-1\n")
+    files.write_text(unit_dir / "threat-1.yaml", "threat:\n  id: threat-1\n")
     spec_dir = hunter_test_specs_dir(root, project) / DISPATCH_ID
     files.write_text(spec_dir / "produced" / "sqli_error.yaml", "id: sqli_error\n")
     files.write_text(pod_experiment_logs_dir(root, project, "sqli_error") / "0.yaml", "o: 0\n")
@@ -47,7 +47,7 @@ def seed_chain(tmp_path, *, project: str = "pid"):
         evidence.EvidenceTarget(
             project_id=project,
             unit=UNIT,
-            loop_id="loop-1",
+            threat_id="threat-1",
             dispatch_id=DISPATCH_ID,
             spec_id="sqli_error",
             pod_export="run1",

@@ -5,7 +5,7 @@ The stack is the worktree's own `docker-compose.e2e.yml` agent (built from this
 tree) on the shared dev network, with the local `http-e2e-target`.
 
 E1 is the full production path: a real L1 unit from the white-jotter-001
-ground-truth sample, the real modeller (real LLM), the real loop, the real
+ground-truth sample, the real modeller (real LLM), the real threat, the real
 hunter, the real spec set, and the real test-executor pod. The target fixture
 serves the ground truth's sign-in surface (`admin`/`123` accepted, a wrong
 password rejected).
@@ -78,12 +78,12 @@ def test_E1_whole_pipeline(client, _live_llm):
     assert model["validation"]["valid"] is True, model["validation"]
     assert model["risk_profile"]["total"] >= 0
 
-    loops = stack.read_loop_files(project, UNIT)
-    assert loops, "the ground-truth unit produced no dispatchable loop"
-    dispatch_ids = [loop["dispatch_id"] for loop in loops]
-    assert all(did.startswith(f"{UNIT_NAME}__loop-") for did in dispatch_ids), dispatch_ids
+    threats = stack.read_threat_files(project, UNIT)
+    assert threats, "the ground-truth unit produced no dispatchable threat"
+    dispatch_ids = [threat["dispatch_id"] for threat in threats]
+    assert all(did.startswith(f"{UNIT_NAME}__threat-") for did in dispatch_ids), dispatch_ids
 
-    # The hunter's spec set is under the loop dispatch id; the terminal status
+    # The hunter's spec set is under the threat dispatch id; the terminal status
     # vocabulary is the reduced one.
     spec_stems: list[str] = []
     for dispatch_id in dispatch_ids:

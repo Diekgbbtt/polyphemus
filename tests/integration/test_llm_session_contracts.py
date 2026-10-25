@@ -10,7 +10,7 @@ that gap with the recording-transport pattern of
 langchain-openai (1.3.2) talking to an httpx MockTransport that records the
 request body, driven through the REAL `create_agent` path. No live provider, no
 gateway, no database (CODING_STANDARD sections 6, 10). Verifier-gated; not
-selected by the tdd unit loop.
+selected by the tdd unit threat.
 
 Proven end to end:
 

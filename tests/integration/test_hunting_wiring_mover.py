@@ -21,9 +21,9 @@ the way the code computes them.
 
 Predicate coverage (one `test_C<n>_...` each, id in the docstring line):
 
-- C30 produced loop file -> ONE hunter dispatch, produced->consumed,
+- C30 produced threat file -> ONE hunter dispatch, produced->consumed,
   byte-identical file, empty produced set.
-- C31 a produced loop refused (gate-full / not-yet-dispatchable) STAYS
+- C31 a produced threat refused (gate-full / not-yet-dispatchable) STAYS
   produced and is retried; the refused lap reports `refused == 1`,
   `moved == 0`.
 - C32 double-dispatch defense: a registry-live produced item assembles no
@@ -34,10 +34,10 @@ Predicate coverage (one `test_C<n>_...` each, id in the docstring line):
 - C34 never-disagree: a produced `ratified` spec is real work to
   `run_work_remaining` AND `build_run_dispatch._spec_dispatch` returns a
   coroutine for it - agree by construction on the same seed.
-- C35 a produced loop file from ANOTHER run, and a malformed loop file,
+- C35 a produced threat file from ANOTHER run, and a malformed threat file,
   contribute NOTHING to `run_work_remaining` (False), yield no dispatch
   coroutine (None), and never block quiesce (T4b re-pointed the retired
-  config-status predicate onto the ONE loop validity predicate).
+  config-status predicate onto the ONE threat validity predicate).
 - C36 pod completion persists the export envelope durably (`<spec_id>/<run_id>.yaml`
   via the real `PodMemoryStore`), EQUAL to the returned envelope; a second
   identical run_id overwrites ONE file (idempotent).
@@ -80,7 +80,7 @@ CLASS = "IDOR"
 OTHER_UNIT = "Service:other-bounded-context"
 OTHER_NAME = "Service-other-bounded-context"
 UNIT_NAME = "Service-catalogue-and-discovery"
-DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+DISPATCH_ID = f"{UNIT_NAME}__threat-1"
 SPEC_KEYWORD = "sqli"
 STRATEGY = "blind"
 SPEC_FILE = f"idor__{SPEC_KEYWORD}__{STRATEGY}"
@@ -88,13 +88,13 @@ SPEC_FILE = f"idor__{SPEC_KEYWORD}__{STRATEGY}"
 
 # --- catalogue-inherited fixtures (id conventions) ------------------------------
 #
-# The dispatch input is the produced LOOP file (S2 8.4): the real store's five
-# gates yield ONE hunter session per loop file. The retired config family is not
+# The dispatch input is the produced THREAT file (S2 8.4): the real store's five
+# gates yield ONE hunter session per threat file. The retired config family is not
 # dispatch input (T4b #387).
 
 
 def _produce(threat, *, run_id=RUN):
-    """One produced COMPLETED valid model with its loop file (S2 8.1)."""
+    """One produced COMPLETED valid model with its threat file (S2 8.1)."""
     return produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=run_id)
 
@@ -140,7 +140,7 @@ def _write_spec(hunter, *, hunt_key=DISPATCH_ID, keyword=SPEC_KEYWORD,
 # (a) A recording dispatch control plane implementing the DispatchControlPlane
 # protocol. `RunningControlPlane` additionally drives the dispatched session
 # coroutines to completion (the mover schedules asynchronously - the runtime
-# owns the loop), so the pod export / durable record / inbox delivery paths
+# owns the threat), so the pod export / durable record / inbox delivery paths
 # execute for real.
 
 
@@ -179,7 +179,7 @@ class RecordingControlPlane:
 
 class RunningControlPlane:
     """A `DispatchControlPlane` that runs every admitted session coroutine to
-    completion on the calling loop (scheduler semantics), so the session body
+    completion on the calling threat (scheduler semantics), so the session body
     (the pod export, the durable record, the inbox delivery) executes."""
 
     def __init__(self):
@@ -246,7 +246,7 @@ def _real_coro_for(threat, hunter, state=None, pod_store=None):
 
 
 def _drive_running_tick(threat, hunter, *, state=None, pod_store=None):
-    """Run one REAL `run_delivery_tick` under a running loop with the REAL
+    """Run one REAL `run_delivery_tick` under a running threat with the REAL
     `build_run_dispatch`, then settle the dispatched sessions (so the pod
     bodies execute). Returns the report + the plane."""
 
@@ -266,10 +266,10 @@ def _drive_running_tick(threat, hunter, *, state=None, pod_store=None):
 
 # --- C30 -----------------------------------------------------------------------
 
-def test_C30_produced_loop_dispatches_one_hunter_and_moves_produced_to_consumed(
+def test_C30_produced_threat_dispatches_one_hunter_and_moves_produced_to_consumed(
     tmp_path,
 ):
-    """id: C30 - a produced loop file dispatches ONE hunter and moves
+    """id: C30 - a produced threat file dispatches ONE hunter and moves
     produced->consumed via a REAL `run_delivery_tick` with `build_run_dispatch`;
     the consumed file is byte-identical to produced; produced set for that
     identity is empty."""
@@ -278,7 +278,7 @@ def test_C30_produced_loop_dispatches_one_hunter_and_moves_produced_to_consumed(
     _produce(threat)
 
     produced = (tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
-                / "produced" / UNIT_NAME / "loop-1.yaml")
+                / "produced" / UNIT_NAME / "threat-1.yaml")
     produced_bytes = produced.read_bytes()
 
     # C30 only asserts the DISPATCH decision + the move: the hunter session body
@@ -295,19 +295,19 @@ def test_C30_produced_loop_dispatches_one_hunter_and_moves_produced_to_consumed(
     assert report.dispatched == 1 and report.admitted == 1 and report.refused == 0
     assert report.moved == 1 and report.move_failed == 0
     # produced set for that identity is empty; the consumed file is byte-identical
-    assert threat.read_produced_loops(PROJECT) == []
+    assert threat.read_produced_threats(PROJECT) == []
     consumed = (tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
-                / "consumed" / UNIT_NAME / "loop-1.yaml")
+                / "consumed" / UNIT_NAME / "threat-1.yaml")
     assert consumed.exists()
     assert consumed.read_bytes() == produced_bytes
 
 
 # --- C31 -----------------------------------------------------------------------
 
-def test_C31_refused_loop_stays_produced_and_reports_refused_one_moved_zero(
+def test_C31_refused_threat_stays_produced_and_reports_refused_one_moved_zero(
     tmp_path,
 ):
-    """id: C31 - a produced loop file REFUSED (gate full / a not-yet-dispatchable
+    """id: C31 - a produced threat file REFUSED (gate full / a not-yet-dispatchable
     item) STAYS produced and is retried; the refused lap reports `refused == 1`,
     `moved == 0`."""
     threat = ThreatModelStore(tmp_path / "threat")
@@ -320,8 +320,8 @@ def test_C31_refused_loop_stays_produced_and_reports_refused_one_moved_zero(
         control=plane, coro_for=_real_coro_for(threat, hunter),
     )
     assert report.refused == 1 and report.moved == 0 and report.admitted == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops(PROJECT)[0]["loops"]] == ["loop-1"]
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats(PROJECT)[0]["threats"]] == ["threat-1"]
     # the SAME produced item is retried next tick and admitted then (recording
     # plane: only the dispatch decision + move are in scope, the hunter body is
     # not run)
@@ -330,7 +330,7 @@ def test_C31_refused_loop_stays_produced_and_reports_refused_one_moved_zero(
         control=RecordingControlPlane(), coro_for=_real_coro_for(threat, hunter),
     )
     assert report2.moved == 1 and report2.refused == 0
-    assert threat.read_produced_loops(PROJECT) == []
+    assert threat.read_produced_threats(PROJECT) == []
 
 
 # --- C32 -----------------------------------------------------------------------
@@ -352,7 +352,7 @@ def test_C32_live_registry_item_is_never_dispatched_twice_and_moves_once(
     assert plane.calls == []                # no re-dispatch for a live session
     assert report.dispatched == 0 and report.refused == 0 and report.admitted == 0
     assert report.moved == 1                # registry-confirmed: marker stamped once
-    assert threat.read_produced_loops(PROJECT) == []
+    assert threat.read_produced_threats(PROJECT) == []
     assert threat.read_completed_units(PROJECT) == [UNIT]
 
 
@@ -423,27 +423,27 @@ def test_C34_run_work_remaining_and_dispatch_agree_for_a_ratified_spec(
 
 # --- C35 -----------------------------------------------------------------------
 
-def test_C35_a_foreign_loop_and_a_draft_spec_contribute_nothing(tmp_path):
-    """id: C35 (part 1) - a produced loop file from ANOTHER run and a draft
+def test_C35_a_foreign_threat_and_a_draft_spec_contribute_nothing(tmp_path):
+    """id: C35 (part 1) - a produced threat file from ANOTHER run and a draft
     spec contribute NOTHING to `run_work_remaining` (False), never dispatch
     (`build_run_dispatch` returns None / `coro_for` refused), and never block
-    quiesce. T4b replaced the retired config-status predicate with the ONE loop
+    quiesce. T4b replaced the retired config-status predicate with the ONE threat
     validity predicate; the pod family's own status gate is asserted too."""
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    # a valid loop file belonging to ANOTHER run, under a DIFFERENT unit so it
+    # a valid threat file belonging to ANOTHER run, under a DIFFERENT unit so it
     # coexists with the current run's file (the previous same-unit overwrite
     # made the "another run" case unreachable)
     produce_model(threat, project_id=PROJECT, unit_id=OTHER_UNIT,
                   run_id="another-run")
-    # the current run's own zero-loop model: consumed as work, never dispatched
+    # the current run's own zero-threat model: consumed as work, never dispatched
     produce_model(threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN)
     path = (tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
-            / "produced" / UNIT_NAME / "loop-1.yaml")
+            / "produced" / UNIT_NAME / "threat-1.yaml")
     path.unlink()
     _write_spec(hunter, status="hypothesised")
 
-    # the current run's zero-loop model is consumable work; the foreign loop
+    # the current run's zero-threat model is consumable work; the foreign threat
     # and the draft spec contribute nothing.
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is True
@@ -452,32 +452,32 @@ def test_C35_a_foreign_loop_and_a_draft_spec_contribute_nothing(tmp_path):
         control=RecordingControlPlane(), coro_for=_real_coro_for(threat, hunter),
     )
     assert report.admitted == 0 and report.dispatched == 0
-    assert report.models_consumed == 1          # only the zero-loop model moved
+    assert report.models_consumed == 1          # only the zero-threat model moved
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
-    # the foreign loop stays on disk, never consumed, never blocking quiesce
-    assert (threat._family_dir(PROJECT, "produced") / OTHER_NAME / "loop-1.yaml").exists()  # noqa: SLF001
+    # the foreign threat stays on disk, never consumed, never blocking quiesce
+    assert (threat._family_dir(PROJECT, "produced") / OTHER_NAME / "threat-1.yaml").exists()  # noqa: SLF001
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == [SPEC_FILE]
 
 
-def test_C35b_a_malformed_loop_is_refused_and_never_blocks_quiesce(tmp_path):
-    """id: C35 (part 2) - a malformed loop file of THIS run is refused, never
-    dispatched, and never counted as a pending loop. Its consumable model is the
+def test_C35b_a_malformed_threat_is_refused_and_never_blocks_quiesce(tmp_path):
+    """id: C35 (part 2) - a malformed threat file of THIS run is refused, never
+    dispatched, and never counted as a pending threat. Its consumable model is the
     only work: the tick moves it and quiesce clears. The malformed file stays in
     `produced/` as evidence.
 
-    The previous version of this test mutated `body["loop"] = None`; the store
-    reads the loop record from the MODEL document, so that mutation was a no-op
+    The previous version of this test mutated `body["threat"] = None`; the store
+    reads the threat record from the MODEL document, so that mutation was a no-op
     and the malformed case was never exercised (T10 fix)."""
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     _produce(threat, run_id=RUN)
     path = (tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
-            / "produced" / UNIT_NAME / "loop-1.yaml")
+            / "produced" / UNIT_NAME / "threat-1.yaml")
     path.write_text("- not a mapping\n", encoding="utf-8")
     _write_spec(hunter, status="hypothesised")
 
-    # the malformed loop contributes no DISPATCH, but the model move is work
+    # the malformed threat contributes no DISPATCH, but the model move is work
     report = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
         control=RecordingControlPlane(), coro_for=_real_coro_for(threat, hunter),
@@ -486,7 +486,7 @@ def test_C35b_a_malformed_loop_is_refused_and_never_blocks_quiesce(tmp_path):
     assert report.models_consumed == 1
     # the malformed file stays in produced/ (evidence), never consumed
     assert path.exists()
-    assert threat.read_produced_loops(PROJECT) == []
+    assert threat.read_produced_threats(PROJECT) == []
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter) is False
 
@@ -528,7 +528,7 @@ def test_C36_pod_completion_persists_the_export_envelope_durably(tmp_path):
 def test_C40_consumed_ratified_spec_without_export_is_redispatched(tmp_path):
     """F-017 regression: a spec consumed at admission but with no terminal
     PodExport (the provider pause) is recovered as dispatchable work on resume.
-    The recovered item is the same loop/spec identity and the REAL dispatch
+    The recovered item is the same threat/spec identity and the REAL dispatch
     carries it to a pod."""
     pod_store = PodMemoryStore(root_dir=tmp_path / "pod", project_id=PROJECT)
     hunter = HunterMemoryStore(tmp_path / "hunter")
@@ -639,7 +639,7 @@ def test_C38_live_parent_inbox_receives_pod_export_before_settle_single_record(
     run_id = "run-id-9"
 
     async def _pod_session():
-        # run the pod session AND read the delivered feed on the SAME loop: the
+        # run the pod session AND read the delivered feed on the SAME threat: the
         # live parent inbox must hold the `pod_export` message by the time the
         # session returns/settles
         env = await run_pod_session(
@@ -701,7 +701,7 @@ def test_C39_the_real_store_body_reaches_the_real_init_gate_and_authors_a_probe(
         "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
         "assumptions": ["network egress allowed"],
         "rationale": "reachability",
-        "provenance": {"loop_id": "loop-1",
+        "provenance": {"threat_id": "threat-1",
                        "unit_id": "service:web:soupmarket",
                        "canonical_class": CLASS,
                        "web_vulnerability_class": "idor"},

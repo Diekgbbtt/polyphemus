@@ -213,4 +213,4 @@ def test_payload_fifo_queue_decoupling_quality_against_eval_target():
 
     # --- the decoupling itself (AST-DEC-09): push never waits on the LLM
     blocked = stats.get("advance_blocked_s_max", 0.0)
-    assert blocked < 5.0, f"push blocked the recon loop for {blocked}s: {stats}"
+    assert blocked < 5.0, f"push blocked the recon threat for {blocked}s: {stats}"

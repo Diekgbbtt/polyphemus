@@ -156,7 +156,7 @@ def score_n7_triager_reflection(variants: list[dict]) -> int:
 
 
 def score_n8_loop_seamless(env: dict, traces: dict | None) -> int:
-    """The spec-conformant loop: binary terminal within caps, no raise."""
+    """The spec-conformant threat: binary terminal within caps, no raise."""
     if env.get("verdict") not in ("successful", "unsuccessful"):
         return 0
     evidence = env.get("evidence") or {}
@@ -206,7 +206,7 @@ def _hermetic_e1_spec():
             "assumptions": ["network egress allowed"],
             "rationale": "reachability probe from H1",
             "provenance": {
-                "loop_id": "loop-1",
+                "threat_id": "threat-1",
                 "unit_id": "service:web:soupmarket",
                 "canonical_class": "discovery",
                 "web_vulnerability_class": "",

@@ -35,7 +35,7 @@ rationale: >-
   markers -> space-exhausted/no-symptom-evidence). It is the designed
   negative-control spec for the whole suite.
 provenance:
-  loop_id: loop-4
+  threat_id: threat-4
   unit_id: "service:web:soupmarket"
   canonical_class: defence
   web_vulnerability_class: ""

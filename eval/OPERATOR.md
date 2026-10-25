@@ -394,7 +394,7 @@ instances:
           models: /mnt/premined-model                 # a unit dir, or a dir of unit dirs
           test_specs:                             # each spec names its dispatch id
             - path: /mnt/premined-specs/unit_CWE-89_sqli.yaml
-              dispatch_id: unit_CWE-89_sqli__sqli__loop-1
+              dispatch_id: unit_CWE-89_sqli__sqli__threat-1
         target_config:        # per-trial data only; bring-up lives in eval/targets/<dataset>/<target>.yaml
           operator_kb: eval/data/webexploitbench/jetlinks/operator_kb.md
           # target_seed defaults to this run's synthetic Host; set it only to pin.
@@ -412,20 +412,20 @@ so the trial drops the operator's files exactly there before the run; there is
 no import/seed API and the trial never fabricates an artifact through the API.
 
 - `models`: a host path to a threat-model unit directory (the model document
-  plus its `loop-<rank>.yaml` files) or to a directory of unit directories.
+  plus its `threat-<rank>.yaml` files) or to a directory of unit directories.
   The tree lands under
   `data/<project_id>/hunting/threat_modeller/produced/<unit_name>/`, the inbox
   the mover's produced read drains.
 - `test_specs`: a list of `{path, dispatch_id}` entries. Each spec file (or
   directory of them) lands in
   `data/<project_id>/hunting/hunter/test-specs/<dispatch_id>/produced/`, the
-  inbox the hunter's normal mover drains; `dispatch_id` is the loop dispatch id
-  `<unit_name>__<loop_id>` (S3 8.9). A missing or path-unsafe `dispatch_id`
+  inbox the hunter's normal mover drains; `dispatch_id` is the threat dispatch id
+  `<unit_name>__<threat_id>` (S3 8.9). A missing or path-unsafe `dispatch_id`
   fails setup validation loud.
 
 A pre-mined hunt config cannot seed a run: the retired `configs` key and the
 legacy bare-string form are refused loudly by the setup parser (T4b #387,
-T10b #397), and the hunting gate counts only produced/consumed loop files and
+T10b #397), and the hunting gate counts only produced/consumed threat files and
 test specs. A setup that declares `preloaded_hunting_artifacts` does not enter
 hunting until at least one live artifact is present on disk: a stale
 `hunting/orchestration/hunt_configs/` tree blocks with the retirement named.
@@ -530,14 +530,14 @@ grows.
 #### The hunting trail on disk
 
 `data/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` -
-the unit's model document and its `loop-<rank>.yaml` dispatch records, plus the
+the unit's model document and its `threat-<rank>.yaml` dispatch records, plus the
 bounded notes at `data/<project_id>/hunting/threat_modeller/notes.yaml`;
 siblings `hunter/` (test specs + notes) and `test-executor-pod/`.
 
 #### Langfuse (the trajectory layer)
 
 Configured via `LANGFUSE_*` in `.env` (the stack traces by default). One trace
-per agent session, spans per loop iteration. Session ids are semantic:
+per agent session, spans per threat iteration. Session ids are semantic:
 `hunting:<run_id>:threat-modeller`, `hunting:<run_id>:hunt:<dispatch_id>`,
 `hunting:<run_id>:pod:<dispatch_id>:<spec_id>` - searchable when a verdict
 needs a closer look.
@@ -568,13 +568,13 @@ Read the FULL NL content of the bundle, never filenames alone:
 
 - The minted `TestImplementationSpec` variants: `target_identity`,
   `verification_symptoms`, `assumptions`, `rationale`, `parent_spec_ref`, and
-  the `provenance` (loop id, unit id, canonical and web-vulnerability class,
+  the `provenance` (threat id, unit id, canonical and web-vulnerability class,
   baseline ref, recon refs, assumption ref, playbook, skill procedure).
 - The experiment-log slices: `raw_observations` (request, status, body, output),
   `interpretations` (classification + note), the `executed` ledger, and the
   `experiment_summary` terminal record.
 - The threat-model trail (`threat_model_store/`): the per-unit model
-  documents, their `loop-<rank>.yaml` dispatch records, and notes.yaml.
+  documents, their `threat-<rank>.yaml` dispatch records, and notes.yaml.
 - The per-project memory (`project_memory/`): the hunter spec set
   (`test-specs/<dispatch_id>/{produced,consumed}/`) + notes.yaml.
 - The graph (`graph.json`): L1 Services/Systems/DataItems, the cross-layer
@@ -619,7 +619,7 @@ mis-match explained.
 #### 2.2.3 The degraded trail
 
 When the bundle has NO pod artifacts (no `ratified` spec reached the pod), grade
-on the threat-model store + hunter spec set + graph: a loop whose web
+on the threat-model store + hunter spec set + graph: a threat whose web
 vulnerability class and fault map to `T` AND whose unit covers `L` AND a
 corroborating note/observation that the pipeline reasoned about that
 (unit, fault) pair. `identified` requires the
@@ -699,7 +699,7 @@ breakdowns.
 - The oracle is you: your parsing discipline and your verdict honesty are the
   measurement. When the evidence is genuinely ambiguous, prefer `partial` over
   `identified` and say why.
-- Langfuse traces (one per pod run, spans per loop iteration) are the trajectory
+- Langfuse traces (one per pod run, spans per threat iteration) are the trajectory
   layer: cite trace ids in `notes` when they help.
 - The setup pipeline web API, CAGE integration, a deterministic oracle, and a
   dashboard are deliberately absent from this harness. The evidence bundles are
@@ -950,7 +950,7 @@ The orchestrator decider (prompt `eval/prompts/surfer.md`) returns exactly one
 decision: `terminate` (stop the in-flight run(s) cleanly through the REST stop
 verbs), `destroy` (tear the instance down via `instances.down`), `fix` (a bounded
 configuration/data-layer repair, then restart and resume), or `escalate`. The
-loop applies only the three bounded actions; an unknown decision kind, or a `fix`
+threat applies only the three bounded actions; an unknown decision kind, or a `fix`
 naming a repair outside the enumerated set, is escalated and never applied - a
 code change is structurally impossible.
 
@@ -976,7 +976,7 @@ surfer loop itself never reverts anything.
 
 A trigger is acted on exactly once: its deterministic identity (instance +
 target + project + run kind/id + resume phase + trigger kind) is recorded in the
-alignment state, so a long-running loop skips a trigger it already handled rather
+alignment state, so a long-running threat skips a trigger it already handled rather
 than re-applying terminate/destroy/fix every interval. A new record - a new run
 or a new phase - is a new identity and prompts afresh. The handled record
 survives a loop restart (it is in the state file), and an unresolved trigger
@@ -997,7 +997,7 @@ resolve the hold, or restore the file from a backup.
 
 | Primitive | Contract |
 |---|---|
-| `PYTHONPATH=eval python3 -m orchestrator surfer <setup.yaml> [--interval-s <s>] [--once] [--dry-run]` | Run the surfer loop. `--once` performs exactly one poll-assert-decide cycle (the testable unit); the default loops at the interval. `--dry-run` asserts the state and prints it, dispatching nothing and mutating nothing (no decider, no runner, no hold). The hold state lives at `--state` (`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`). The app-state source is `--api` (`PH_API`) with the `--dsn` (`EVAL_PG_DSN`) fallback; the trial records are read under `--runs-root`. |
+| `PYTHONPATH=eval python3 -m orchestrator surfer <setup.yaml> [--interval-s <s>] [--once] [--dry-run]` | Run the surfer loop. `--once` performs exactly one poll-assert-decide cycle (the testable unit); the default loop runs at the interval. `--dry-run` asserts the state and prints it, dispatching nothing and mutating nothing (no decider, no runner, no hold). The hold state lives at `--state` (`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`). The app-state source is `--api` (`PH_API`) with the `--dsn` (`EVAL_PG_DSN`) fallback; the trial records are read under `--runs-root`. |
 
 Configure the surfer agent command once, as `EVAL_SURFER_COMMAND` (or `--command`
 per invocation). It is a shell line whose placeholders the orchestrator

@@ -216,16 +216,16 @@ def hunting_entry(
             blocks.append("pre-mined hunting artifacts configured but no data root is set")
         else:
             # Presence counts both live artifact families: the threat-model
-            # loop files and each dispatch id's hunter test specs (a setup may
-            # pre-mine either). A loop file is the dispatch record (S2 8.4), so
+            # threat files and each dispatch id's hunter test specs (a setup may
+            # pre-mine either). A threat file is the dispatch record (S2 8.4), so
             # a model document alone is not dispatchable work and does not
-            # count. The rule is the store-owned `loop-<rank>.yaml` name.
+            # count. The rule is the store-owned `threat-<rank>.yaml` name.
             present = 0
             for side in ("produced", "consumed"):
                 for unit_dir in files.list_dirs(
                     threat_model_dir(state.data_root, state.project_id, side)
                 ):
-                    present += len(files.glob(unit_dir, "loop-*.yaml"))
+                    present += len(files.glob(unit_dir, "threat-*.yaml"))
             specs_root = hunter_test_specs_dir(state.data_root, state.project_id)
             for dispatch_dir in files.list_dirs(specs_root):
                 for side in ("produced", "consumed"):

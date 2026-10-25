@@ -369,7 +369,7 @@ def unit_metrics(index: dict, unit_spec: dict) -> dict:
 
 def load_models(store: Path) -> tuple[list[dict], list[dict]]:
     models: list[dict] = []
-    loops: list[dict] = []
+    threats: list[dict] = []
     for family in ("produced", "consumed", "abandoned"):
         family_dir = store / family
         if not family_dir.is_dir():
@@ -382,14 +382,14 @@ def load_models(store: Path) -> tuple[list[dict], list[dict]]:
                 model["_family"] = family
                 model["_unit_name"] = unit_dir.name
                 models.append(model)
-            for loop_path in sorted(unit_dir.glob("loop-*.yaml")):
-                record = load_mapping(loop_path)
+            for threat_path in sorted(unit_dir.glob("threat-*.yaml")):
+                record = load_mapping(threat_path)
                 if record:
-                    record["_path"] = str(loop_path)
+                    record["_path"] = str(threat_path)
                     record["_family"] = family
                     record["_unit_name"] = unit_dir.name
-                    loops.append(record)
-    return models, loops
+                    threats.append(record)
+    return models, threats
 
 
 def resolve_model_text(model: dict) -> str:
@@ -403,20 +403,107 @@ def resolve_model_text(model: dict) -> str:
     return text_of(parts)
 
 
-def loop_text(loop_record: dict, model: dict) -> str:
-    loop = as_dict(loop_record.get("loop"))
+# --- breadth and downstream discrimination -----------------------------------
+
+
+def suite_index(root: Path) -> dict[str, int]:
+    """Map each suite class parent or leaf to its direct variant count.
+
+    A class directory with at least one direct child directory carrying a
+    `SKILL.md` is a parent (a broad class with variants); a class directory
+    with no such child is a leaf. A missing suite root yields an empty index,
+    so every breadth answer degrades to unknown instead of guessing.
+    """
+    index: dict[str, int] = {}
+    if not root.is_dir():
+        return index
+    for skill_md in sorted(root.rglob("SKILL.md")):
+        skill = skill_md.parent
+        index[skill.name] = sum(
+            1
+            for child in skill.iterdir()
+            if child.is_dir() and (child / "SKILL.md").is_file()
+        )
+    return index
+
+
+def is_broad_class(class_name: Any, index: dict[str, int]) -> bool | None:
+    """True when the bound class is a suite parent, False for a leaf, None
+    when the class is empty or absent from the index."""
+    name = norm(class_name)
+    if not name or name not in index:
+        return None
+    return index[name] > 0
+
+
+def _primary_axis(spec: dict) -> str:
+    discriminators = as_list(spec.get("discriminators"))
+    for discriminator in discriminators:
+        axis = str(as_dict(discriminator).get("axis") or "").strip()
+        if axis:
+            return axis
+    return ""
+
+
+def discrimination_summary(spec_rows: list[dict]) -> dict:
+    """The deterministic substrate for "substantial and well-formed".
+
+    Substantial means at least three specs. Well-formed means every spec
+    carries a discriminator and the primary discrimination axes do not overlap
+    (two specs separated on the same primary axis are one dimension, not two).
+    The measurement subagent judges the semantics; this function only records
+    the structural facts.
+    """
+    specs = [as_dict(spec) for spec in spec_rows]
+    primary_axes = [_primary_axis(spec) for spec in specs]
+    missing = sum(1 for axis in primary_axes if not axis)
+    present_axes = [axis for axis in primary_axes if axis]
+    overlap = len(set(present_axes)) != len(present_axes)
+    substantial = len(specs) >= 3
+    return {
+        "spec_count": len(specs),
+        "substantial": substantial,
+        "primary_axes": primary_axes,
+        "axes_overlap": overlap,
+        "missing_discriminators": missing,
+        "well_formed": bool(
+            substantial and missing == 0 and present_axes and not overlap
+        ),
+    }
+
+
+def threat_downstream(threat: dict, spec_rows: list[dict]) -> dict:
+    """The spec set a threat dispatched, linked by provenance threat id.
+
+    The dispatch-id fallback covers a spec whose provenance omits the threat id
+    but whose folder is the threat's own dispatch id.
+    """
+    threat_id = str(as_dict(threat).get("threat_id") or "")
+    dispatch = str(as_dict(threat).get("dispatch_id") or "")
+    linked = [
+        as_dict(spec)
+        for spec in spec_rows
+        if (threat_id and str(as_dict(spec).get("threat_id") or "") == threat_id)
+        or (not as_dict(spec).get("threat_id") and dispatch
+            and str(as_dict(spec).get("dispatch") or "") == dispatch)
+    ]
+    return discrimination_summary(linked)
+
+
+def threat_text(threat_record: dict, model: dict) -> str:
+    threat = as_dict(threat_record.get("threat"))
     return text_of([
-        loop_record.get("unit_id"),
-        loop_record.get("likelihood"),
-        loop,
+        threat_record.get("unit_id"),
+        threat_record.get("likelihood"),
+        threat,
         resolve_model_text(model),
     ])
 
 
-def model_for_loop(loop_record: dict, models: list[dict]) -> dict:
-    unit_id = str(loop_record.get("unit_id") or "")
-    family = str(loop_record.get("_family") or "")
-    unit_name = str(loop_record.get("_unit_name") or "")
+def model_for_threat(threat_record: dict, models: list[dict]) -> dict:
+    unit_id = str(threat_record.get("unit_id") or "")
+    family = str(threat_record.get("_family") or "")
+    unit_name = str(threat_record.get("_unit_name") or "")
     for model in models:
         if str(model.get("unit_id") or "") != unit_id:
             continue
@@ -470,7 +557,7 @@ def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
         provenance.get("canonical_class"),
         provenance.get("web_vulnerability_class"),
         provenance.get("fault"),
-        provenance.get("loop_id"),
+        provenance.get("threat_id"),
         spec.get("rationale"),
         spec.get("assumptions"),
         spec.get("verification_symptoms"),
@@ -499,6 +586,11 @@ def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
         "family": spec.get("_family"),
         "status": spec.get("status"),
         "unit_id": unit_id,
+        "threat_id": str(provenance.get("threat_id") or ""),
+        "web_vulnerability_class": str(provenance.get("web_vulnerability_class") or ""),
+        "canonical_class": str(provenance.get("canonical_class") or ""),
+        "discriminators": as_list(spec.get("discriminators")),
+        "primary_axis": _primary_axis(spec),
         "unit_match": unit_match,
         "class_match": class_match,
         "candidate": bool(unit_match and class_match),
@@ -611,6 +703,11 @@ def main() -> int:
     parser.add_argument("--api", default=os.environ.get("PH_API", "http://localhost:8080"))
     parser.add_argument("--graph", help="optional graph JSON path; otherwise read the API")
     parser.add_argument("--out", help="output path; default <trial>/metrics.yaml")
+    parser.add_argument(
+        "--skills-root",
+        default=str(Path(__file__).resolve().parents[1] / "skills" / "web-vulnerability-testing"),
+        help="the web-vulnerability suite root (class parents and variant leaves)",
+    )
     args = parser.parse_args()
 
     trial_dir = Path(args.trial)
@@ -624,6 +721,7 @@ def main() -> int:
         return 2
 
     ground_truth = load_challenge(Path(args.ground_truth))
+    class_index = suite_index(Path(args.skills_root))
     corpus_target = Path(args.corpus) / args.target
     verdicts = load_verdicts(trial_dir / "verdicts.yaml")
     diagnoses = load_verdicts(trial_dir / "diagnoses.yaml")
@@ -632,7 +730,7 @@ def main() -> int:
     index = graph_index(as_dict(graph))
 
     project_root = Path(args.data_root) / project_id / "hunting"
-    models, loops = load_models(project_root / "threat_modeller")
+    models, threats = load_models(project_root / "threat_modeller")
     specs = load_specs(project_root / "hunter" / "test-specs")
     pods = load_pods(project_root / "test-executor-pod")
 
@@ -645,33 +743,38 @@ def main() -> int:
             "location": vuln.get("location", ""),
         }
         graph_metrics = unit_metrics(index, unit_spec) if unit_spec else {}
-        loop_rows = []
-        for loop_record in loops:
-            model = model_for_loop(loop_record, models)
-            candidate_text = loop_text(loop_record, model)
-            unit_match = unit_match_text(text_of(loop_record.get("unit_id")), identity)
+        threat_rows = []
+        for threat_record in threats:
+            model = model_for_threat(threat_record, models)
+            candidate_text = threat_text(threat_record, model)
+            unit_match = unit_match_text(text_of(threat_record.get("unit_id")), identity)
             class_match = class_matches(candidate_text, vuln.get("type", ""), identity.get("fault_class", ""))
             # Keep a class-level row even when the model bound a different L1
             # unit: the artifact exists and the class is the benchmark's, so
             # zeroing it hides real work behind a unit-identity miss.
             if unit_match or class_match:
-                loop_rows.append({
-                    "path": loop_record.get("_path"),
-                    "unit_id": loop_record.get("unit_id"),
-                    "dispatch_id": loop_record.get("dispatch_id"),
-                    "likelihood": loop_record.get("likelihood"),
+                threat_rows.append({
+                    "path": threat_record.get("_path"),
+                    "unit_id": threat_record.get("unit_id"),
+                    "threat_id": threat_record.get("threat_id"),
+                    "dispatch_id": threat_record.get("dispatch_id"),
+                    "likelihood": threat_record.get("likelihood"),
                     "unit_match": unit_match,
                     "class_match": class_match,
                     "candidate": bool(unit_match and class_match),
                     "class_candidate": class_match,
-                    "web_vulnerability_class": as_dict(loop_record.get("loop")).get("web_vulnerability_class"),
-                    "canonical_class": as_dict(loop_record.get("loop")).get("canonical_class"),
+                    "web_vulnerability_class": as_dict(threat_record.get("threat")).get("web_vulnerability_class"),
+                    "canonical_class": as_dict(threat_record.get("threat")).get("canonical_class"),
                 })
         spec_rows = []
         for spec in specs:
             row = spec_metrics(spec, vuln, identity)
             if row["unit_match"] or row.get("class_match"):
                 spec_rows.append(row)
+        for row in threat_rows:
+            row["bound_class_is_parent"] = is_broad_class(
+                row.get("web_vulnerability_class"), class_index)
+            row["downstream"] = threat_downstream(row, spec_rows)
         pod_rows = []
         for pod in pods:
             spec_dir = str(pod.get("spec_dir") or "")
@@ -693,10 +796,10 @@ def main() -> int:
             "unit_expected": identity.get("expected_id"),
             "fault_class": identity.get("fault_class"),
             "graph": graph_metrics,
-            "loops": loop_rows,
-            "loop_candidate": any(row["candidate"] for row in loop_rows),
-            "loop_unit_candidate": any(row["unit_match"] for row in loop_rows),
-            "loop_class_candidate": any(row.get("class_candidate") for row in loop_rows),
+            "threats": threat_rows,
+            "threat_candidate": any(row["candidate"] for row in threat_rows),
+            "threat_unit_candidate": any(row["unit_match"] for row in threat_rows),
+            "threat_class_candidate": any(row.get("class_candidate") for row in threat_rows),
             "specs": spec_rows,
             "spec_candidate": any(row["candidate"] for row in spec_rows),
             "spec_unit_candidate": any(row["unit_match"] for row in spec_rows),
@@ -721,7 +824,7 @@ def main() -> int:
         1 for v in per_vuln
         if all(bool(as_dict(v.get("graph")).get(key)) for key in ("unit_present", "l0_present", "link_present"))
     )
-    loops_all = [row for v in per_vuln for row in as_list(v.get("loops"))]
+    threats_all = [row for v in per_vuln for row in as_list(v.get("threats"))]
     specs_all = [row for v in per_vuln for row in as_list(v.get("specs"))]
     pods_all = [row for v in per_vuln for row in as_list(v.get("pods"))]
     mapped_spec_ids = {
@@ -730,6 +833,18 @@ def main() -> int:
         for row in as_list(v.get("specs"))
         if row.get("candidate")
     }
+    narrow_without_well_formed = sum(
+        1
+        for row in threats_all
+        if row.get("bound_class_is_parent") is False
+        and not as_dict(row.get("downstream")).get("well_formed")
+    )
+    broad_without_well_formed = sum(
+        1
+        for row in threats_all
+        if row.get("bound_class_is_parent") is True
+        and not as_dict(row.get("downstream")).get("well_formed")
+    )
     confirmed_pods = [p for p in pods if int(p.get("confirmed") or 0) > 0]
     confirmed_non_gt = sum(
         1 for pod in confirmed_pods
@@ -754,9 +869,9 @@ def main() -> int:
             "identified": identified,
             "partial": partial,
             "missed": missed,
-            "loop_candidates": sum(1 for v in per_vuln if v.get("loop_candidate")),
-            "loop_unit_candidates": sum(1 for v in per_vuln if v.get("loop_unit_candidate")),
-            "loop_class_candidates": sum(1 for v in per_vuln if v.get("loop_class_candidate")),
+            "threat_candidates": sum(1 for v in per_vuln if v.get("threat_candidate")),
+            "threat_unit_candidates": sum(1 for v in per_vuln if v.get("threat_unit_candidate")),
+            "threat_class_candidates": sum(1 for v in per_vuln if v.get("threat_class_candidate")),
             "spec_candidates": sum(1 for v in per_vuln if v.get("spec_candidate")),
             "spec_unit_candidates": sum(1 for v in per_vuln if v.get("spec_unit_candidate")),
             "spec_class_candidates": sum(1 for v in per_vuln if v.get("spec_class_candidate")),
@@ -765,20 +880,51 @@ def main() -> int:
             "confirmed_non_gt": confirmed_non_gt,
             "core_floor": core_floor,
             "full_core": full_core,
-            "loops_total": len(loops),
+            "threats_total": len(threats),
             "specs_total": len(specs),
             "pods_total": len(pods),
-            "loop_rows_matched": len(loops_all),
+            "threat_rows_matched": len(threats_all),
             "spec_rows_matched": len(specs_all),
             "pod_rows_matched": len(pods_all),
+            "threats_broad": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is True),
+            "threats_narrow": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is False),
+            "threats_breadth_unknown": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is None),
+            "threats_substantial_specs": sum(
+                1 for row in threats_all
+                if as_dict(row.get("downstream")).get("substantial")),
+            "threats_well_formed_specs": sum(
+                1 for row in threats_all
+                if as_dict(row.get("downstream")).get("well_formed")),
+            "threats_narrow_without_well_formed": narrow_without_well_formed,
+            "threats_broad_without_well_formed": broad_without_well_formed,
         },
         "rates": {
             "identification_rate": round(identified / gt_total, 4) if gt_total else None,
             "partial_or_identified_rate": round((identified + partial) / gt_total, 4) if gt_total else None,
-            "loop_candidate_recall": round(sum(1 for v in per_vuln if v.get("loop_candidate")) / gt_total, 4) if gt_total else None,
+            "threat_candidate_recall": round(sum(1 for v in per_vuln if v.get("threat_candidate")) / gt_total, 4) if gt_total else None,
             "spec_candidate_recall": round(sum(1 for v in per_vuln if v.get("spec_candidate")) / gt_total, 4) if gt_total else None,
             "core_floor_rate": round(core_floor / gt_total, 4) if gt_total else None,
             "full_core_rate": round(full_core / gt_total, 4) if gt_total else None,
+        },
+        "narrowing": {
+            "threats_total": len(threats_all),
+            "broad": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is True),
+            "narrow": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is False),
+            "breadth_unknown": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is None),
+            "substantial_specs": sum(
+                1 for row in threats_all
+                if as_dict(row.get("downstream")).get("substantial")),
+            "well_formed_specs": sum(
+                1 for row in threats_all
+                if as_dict(row.get("downstream")).get("well_formed")),
+            "narrow_without_well_formed": narrow_without_well_formed,
+            "broad_without_well_formed": broad_without_well_formed,
         },
         "tokens": token_summary(trial),
         "per_vuln": per_vuln,
@@ -789,12 +935,12 @@ def main() -> int:
                     "state": m.get("state"),
                     "family": m.get("_family"),
                     "path": m.get("_path"),
-                    "loops": len(as_list(m.get("loops"))),
+                    "threats": len(as_list(m.get("threats"))),
                     "validation": as_dict(m.get("validation")),
                 }
                 for m in models
             ],
-            "loops": len(loops),
+            "threats": len(threats),
             "specs": len(specs),
             "pods": len(pods),
         },

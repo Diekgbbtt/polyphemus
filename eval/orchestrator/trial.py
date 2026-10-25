@@ -1114,7 +1114,7 @@ def _place_model_tree(files: FileStore, source: Path, destination: Path) -> None
     """Copy a threat-model unit tree byte-for-byte into `destination`.
 
     The store layout is `<unit_name>/<unit_name>.yaml` plus
-    `<unit_name>/loop-<rank>.yaml`, so the copy preserves relative paths and
+    `<unit_name>/threat-<rank>.yaml`, so the copy preserves relative paths and
     lands exactly where the mover's produced read looks.
     """
     if files.is_file(source):
@@ -1128,7 +1128,7 @@ def _place_model_tree(files: FileStore, source: Path, destination: Path) -> None
 def _model_units(files: FileStore, source: str) -> list[tuple[Path, str]]:
     """The `(source path, unit name)` pairs a `models` source contributes.
 
-    A source is either one unit directory (its model document and loops sit
+    A source is either one unit directory (its model document and threats sit
     directly under it), a directory of unit directories (each child is a unit),
     or a single file (its parent directory names the unit).
     """
@@ -1156,12 +1156,12 @@ def retarget_premined(
 ) -> None:
     """Bind the placed pre-mined models to the run that will dispatch them.
 
-    The mover's produced read is run-scoped (S2 8.3): a model and its loop
-    files carry the run id they were authored for, and another run's loop file
+    The mover's produced read is run-scoped (S2 8.3): a model and its threat
+    files carry the run id they were authored for, and another run's threat file
     is never dispatched. A pre-mined tree therefore has to be rebound to the
     run id the launch actually minted, after the launch returns and before the
     run's first mover tick. Both the model document (the produced-read filter)
-    and every loop file (the dispatch validity predicate) carry `run_id`.
+    and every threat file (the dispatch validity predicate) carry `run_id`.
     """
     if preloaded.models is None or not run_id:
         return
@@ -1171,7 +1171,7 @@ def retarget_premined(
     for _source, unit_name in _model_units(files, preloaded.models):
         unit_dir = produced / unit_name
         paths = [unit_dir / f"{unit_name}.yaml"]
-        paths.extend(files.glob(unit_dir, "loop-*.yaml"))
+        paths.extend(files.glob(unit_dir, "threat-*.yaml"))
         for path in paths:
             if not files.is_file(path):
                 continue

@@ -11,7 +11,7 @@ langchain-openai (1.3.2) talking to an httpx MockTransport that records the
 request body, driven by `invoke_role`'s real escalating wrapper against the
 real model. No live provider, no gateway, no database (CODING_STANDARD
 sections 6, 10): the capability profile is injected and the transport is
-canned. Verifier-gated; not selected by the tdd unit loop.
+canned. Verifier-gated; not selected by the tdd unit threat.
 
 Proven end to end:
 

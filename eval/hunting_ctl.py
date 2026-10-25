@@ -7,7 +7,7 @@ the orchestrator's pass vacuous (O1) or reasons over hollow evidence.
 
 This client does NOT select or fabricate anything. It controls and monitors
 through the API REST surface alone, and its only active feature is stopping the
-run at a dispatched-loop threshold by watching the threat-model store tail.
+run at a dispatched-threat threshold by watching the threat-model store tail.
 
 Control (API):
   - POST /projects/{id}/hunting                      launch (the run's input is
@@ -20,9 +20,9 @@ Control (API):
   - per-session + module lifecycle verbs             (not used by this client)
 
 Monitoring (the threat-model tail):
-  - The dispatched-loop count is read from the project's threat-model store on
+  - The dispatched-threat count is read from the project's threat-model store on
     the HOST path (the #234 app-owned data root), never docker exec:
-    data/<project>/hunting/threat_modeller/ produced + consumed. A loop file is
+    data/<project>/hunting/threat_modeller/ produced + consumed. A threat file is
     the dispatch record (S2 8.4); the model document is NOT counted. Stop is
     issued via the API when the count reaches the threshold, or when the run
     reaches terminal on its own.
@@ -83,16 +83,16 @@ def _api(method: str, path: str, body=None, timeout: int = 30):
         return 0, {"detail": f"request failed: {exc}"}
 
 
-def _dispatched_loop_count(project_id: str) -> int:
-    """The threat-model tail: loop files in the store's produced+consumed
-    families (the consumed move is the at-least-once marker, so a loop may
+def _dispatched_threat_count(project_id: str) -> int:
+    """The threat-model tail: threat files in the store's produced+consumed
+    families (the consumed move is the at-least-once marker, so a threat may
     appear once per side - dedupe by unit dir + file stem)."""
     base = resolve() / project_id / "hunting" / "threat_modeller"
     seen: set[str] = set()
     for side in ("produced", "consumed"):
         side_dir = base / side
         if side_dir.exists():
-            for f in side_dir.glob("*/loop-*.yaml"):
+            for f in side_dir.glob("*/threat-*.yaml"):
                 seen.add(f"{f.parent.name}/{f.stem}")
     return len(seen)
 
@@ -115,7 +115,7 @@ def cmd_status(args):
     d = body or {}
     print(json.dumps({k: d.get(k) for k in (
         "hunting_run_id", "status", "started_at", "finished_at")}, default=str))
-    print(f"threat-model tail (dispatched loops): {_dispatched_loop_count(args.project_id)}")
+    print(f"threat-model tail (dispatched threats): {_dispatched_threat_count(args.project_id)}")
 
 
 def cmd_stop(args):
@@ -136,12 +136,12 @@ def _capped_tokens(project_id: str) -> int | None:
 
 def cmd_monitor(args):
     """Poll the API status + the orchestrator tail until terminal, the
-    dispatched-loop threshold, the token cap, or a stall (no new loop files for
+    dispatched-threat threshold, the token cap, or a stall (no new threat files for
     `--stall-min`). Stop is issued through the API when a bound is reached.
 
     The TOKEN CAP is the eval trial budget, enforced on the project's cumulative
     `capped_tokens` - the same axis `eval/orchestrator/trial.py` uses - so a run
-    can never spend past it even when the loop tail still looks healthy. A
+    can never spend past it even when the threat tail still looks healthy. A
     `--token-baseline` makes the cap a delta over spend already recorded before
     the monitor started; zero means "absolute project total".
     """
@@ -150,9 +150,9 @@ def cmd_monitor(args):
     while True:
         code, body = _api("GET", f"/projects/{args.project_id}/hunting/{args.run_id}")
         status = (body or {}).get("status") if code == 200 else "unreachable"
-        count = _dispatched_loop_count(args.project_id)
+        count = _dispatched_threat_count(args.project_id)
         capped = _capped_tokens(args.project_id) if args.token_cap else None
-        log.info("status=%s dispatched_loops=%d capped_tokens=%s",
+        log.info("status=%s dispatched_threats=%d capped_tokens=%s",
                  status, count, capped)
         if status in HUNTING_TERMINAL:
             log.info("run terminal (%s); nothing to stop", status)
@@ -164,7 +164,7 @@ def cmd_monitor(args):
             cmd_stop(args)
             return
         if args.stop_after and count >= args.stop_after:
-            log.info("dispatched loops %d >= stop-after %d; stopping via the API",
+            log.info("dispatched threats %d >= stop-after %d; stopping via the API",
                      count, args.stop_after)
             cmd_stop(args)
             return
@@ -174,7 +174,7 @@ def cmd_monitor(args):
                     stalled_since = time.time()
                 elif time.time() - stalled_since > (args.stall_min * 60):
                     log.warning(
-                        "stall watchdog: no new loop files for %d min; stopping",
+                        "stall watchdog: no new threat files for %d min; stopping",
                         args.stall_min)
                     cmd_stop(args)
                     return
@@ -209,8 +209,8 @@ def main():
     m.add_argument("--poll-s", type=int, default=60)
     m.add_argument(
         "--stall-min", type=int, default=0,
-        help="stop when no new loop files land for N minutes; 0 disables it "
-             "(batched mode authors no loop files while its hunters run)")
+        help="stop when no new threat files land for N minutes; 0 disables it "
+             "(batched mode authors no threat files while its hunters run)")
     m.add_argument(
         "--token-cap", type=int, default=0,
         help="stop at this many capped tokens on the project's cumulative "

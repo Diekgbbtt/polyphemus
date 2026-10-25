@@ -97,13 +97,20 @@ Report the full-core result.
 
 ### Threat model
 
-`loop_candidate` is the existence of a loop for the expected unit and a compatible fault/class.
+`threat_candidate` is the existence of a threat for the expected unit and a compatible fault/class.
 Score `sharpness` 0 to 3 from the plan.
-Read the loop and its parent model.
-Check the trust assumption, the failure-mode slice, the evidence, the confidence, the risk factors, and the uniqueness of the direction.
+Read the threat and its parent model.
+Check the trust assumption, the evidence, the confidence, the risk factors, and the uniqueness of the direction.
 A generic statement that could be written for any unit is at most 1.
 A direction that names the concrete interface, state transition, or data flow, and that a hunter can walk, is at least 2.
 A direction that also carries a falsification condition and a concrete probe shape is 3.
+
+**Breadth.**
+The narrowing risk starts at the threat: a threat that binds a leaf class is already a specific variant, so the downstream hunter has little room to discriminate.
+The deterministic `bound_class_is_parent` is the strongest signal: true means the bound `web_vulnerability_class` is a suite parent with at least one variant leaf; false means it is a leaf; null means the class is absent from the suite index.
+A parent class is broad only when the artifact actually keeps more than one variant reachable.
+Record `breadth` as `broad`, `narrow`, or `unknown`, and quote the bound class and the metric in `breadth_notes`.
+The semantic judgement may override the metric only with quoted evidence from the threat or the suite tree.
 
 ### Hunter
 
@@ -111,6 +118,17 @@ Use `spec_candidate`, `required_present`, `procedure_fields`, `generic_symptoms`
 Score `sharpness` 0 to 3.
 Check the reduced D4, the skill procedure, the L1/L0/KB grounding, the negative control or differential, the collection span, and the verify-claims drop reasons.
 A retired field is a contract defect, not a style issue.
+
+**Discrimination.**
+The second narrowing signal is the spec set the threat actually produced.
+Read the threat's `downstream` object in `metrics.yaml`.
+`spec_count` is the number of specs linked to the threat by `provenance.threat_id`, with the dispatch-id fallback.
+`substantial` is true at three or more specs.
+`primary_axes` is the first discriminator axis of each spec; `axes_overlap` is true when two specs share a primary axis.
+`well_formed` is true only for a substantial set where every spec carries a discriminator and the primary axes do not overlap: two specs separated on the same primary axis are one dimension, not two.
+The metric is structural. Judge whether the values genuinely separate the specs, and override only with quoted evidence.
+Record `discrimination` as `substantial_and_well_formed`, `substantial_but_overlapping`, `insufficient`, or `unknown`.
+A narrow threat with fewer than three specs or overlapping axes is the bias signal this experiment measures; report it, never smooth it.
 
 ### Pod
 
@@ -131,7 +149,7 @@ Check:
 - prompt sections and old vocabulary;
 - bound tool surface versus the calls made;
 - structured-output failures;
-- loop-to-spec-to-pod identity and path coupling;
+- threat-to-spec-to-pod identity and path coupling;
 - artifact and notes schemas;
 - skill-usage lesson records and skill/auth-context loads;
 - episodic memory writes.
@@ -166,6 +184,16 @@ official:
   partial: int
   missed: int
   identification_rate: number
+narrowing:
+  threats_total: int
+  broad: int
+  narrow: int
+  breadth_unknown: int
+  substantial_specs: int
+  well_formed_specs: int
+  narrow_without_well_formed: int
+  broad_without_well_formed: int
+  notes: string
 per_vuln:
   - vuln_id: string
     type: string
@@ -180,15 +208,24 @@ per_vuln:
       notes: string
       evidence: [string]
     threat_model:
-      loop_candidate: bool
+      threat_candidate: bool
       sharpness: 0 | 1 | 2 | 3
+      bound_class: string
+      bound_class_is_parent: bool | null
+      breadth: broad | narrow | unknown
+      breadth_notes: string
       direction_diversity: string
-      failure_mode_coverage: string
       notes: string
       evidence: [string]
     hunter:
       spec_candidate: bool
       sharpness: 0 | 1 | 2 | 3
+      spec_count: int
+      substantial: bool | null
+      primary_axes: [string]
+      axes_overlap: bool | null
+      well_formed: bool | null
+      discrimination: substantial_and_well_formed | substantial_but_overlapping | insufficient | unknown
       completeness: string
       procedure_grounding: string
       symptom_discrimination: string
@@ -276,6 +313,7 @@ Include:
 - the trial summary and identity;
 - the official discovery result;
 - the quality results by the six criteria;
+- the narrowing table: threat breadth, the spec count per threat, the primary axes, and whether the set is substantial and well-formed;
 - the token tax;
 - the workflow and contract findings;
 - the benchmark-scope-tightness rows;

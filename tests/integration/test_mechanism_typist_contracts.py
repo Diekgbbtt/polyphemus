@@ -6,7 +6,7 @@ Mechanises N1-N11 of the build spec (§10). Replaces the retired A.1a catalogue
 
 Injected `invoke_fn(messages, *, schema)` + injected reads: no live LLM/graph
 (mirrors `test_assigner_contracts`). Expected values come from the spec, never
-recomputed the way the code computes them. Verifier-gated; not selected by the tdd loop.
+recomputed the way the code computes them. Verifier-gated; not selected by the tdd threat.
 """
 import inspect
 

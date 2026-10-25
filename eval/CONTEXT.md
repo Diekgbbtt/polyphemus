@@ -195,7 +195,7 @@ _Avoid_: budget, phase cap
 
 **Pre-mined hunting artifacts**:
 Operator-supplied threat-model units and hunter test specs placed before the project run starts, consumed by the pipeline's normal lazy read.
-A unit (its model document plus `loop-<rank>.yaml` files) lands under `<data_root>/<project_id>/hunting/threat_modeller/produced/<unit_name>/`; each test spec carries its loop dispatch id `<unit_name>__<loop_id>` and lands in `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/produced/`.
+A unit (its model document plus `threat-<rank>.yaml` files) lands under `<data_root>/<project_id>/hunting/threat_modeller/produced/<unit_name>/`; each test spec carries its threat dispatch id `<unit_name>__<threat_id>` and lands in `<data_root>/<project_id>/hunting/hunter/test-specs/<dispatch_id>/produced/`.
 The retired hunt-config form (`configs`, or a bare path) is refused loudly and cannot satisfy the hunting prerequisite: nothing reads the config family (T4b #387, T10b #397).
 _Avoid_: seeds, preload
 
@@ -222,7 +222,7 @@ An `interrupted` execution (a provider-paused hunt, #331) is likewise deferred, 
 The tick is a pure plan engine (`orchestrator monitor`): it emits, as JSON, each trial's state and the next action, and never dispatches.
 The plugin performs each action as an awaited, bounded native opencode child session (D57, superseding D52's detached launch) and reports the terminal back, so the assessor and the diagnoser run synchronously within one tool call and a fatal provider error yields a non-zero terminal, never a hang.
 The node's output file is the completion signal; a node that never writes it is re-dispatched within the bounded count and budget and then escalated with a named failure, and a node that dies on the provider's own quota backs off for the longer provider window instead of hot-looping.
-_Avoid_: monitor loop, watcher, scheduler
+_Avoid_: monitor threat, watcher, scheduler
 
 **Dispatch log**:
 The per-launch output sink `<destination>.dispatch.log` beside an assessment or diagnosis node's destination file, written by the synchronous `LocalRunner` when a manual `assess`/`diagnose` dispatch runs (the monitor's native child dispatch has no such log).
@@ -258,10 +258,17 @@ The read-only branch the eval environment runs; fast-forwarded from `dev` by the
 _Avoid_: eval mirror, deploy branch
 
 **Evidence chain**:
-The per-verdict set of hunting artifacts (the threat-model loop file, the `TestImplementationSpec`, the experiment logs, the `PodExport`) plus phase-mapped observability reasoning references that support a positive verdict.
-The loop file is the parent dispatch artifact; the spec family is keyed by its dispatch id `<unit_name>__<loop_id>`.
+The per-verdict set of hunting artifacts (the threat-model threat file, the `TestImplementationSpec`, the experiment logs, the `PodExport`) plus phase-mapped observability reasoning references that support a positive verdict.
+The threat file is the parent dispatch artifact; the spec family is keyed by its dispatch id `<unit_name>__<threat_id>`.
 The reasoning references are optional and currently unproduced (designed-not-built, CODING_STANDARD section 12): the resolver's `ReasoningSource` seam is injected but no production source is wired, so a verdict's file chain alone satisfies N13. A trace id may still be supplied via `--trace-id`/`EVAL_TRACE_ID` and is carried in the trial record.
 _Avoid_: proof, references
+
+**Narrowing measurement**:
+The per-threat assessment of whether the sharper trust boundaries starve the hunter's discrimination space.
+It has two attributes: the bound `web_vulnerability_class` is a suite parent with variants (broad) or a leaf (narrow), and the linked spec set is substantial (at least three specs) and well-formed (the primary discrimination axes do not overlap).
+The deterministic substrate is `eval/measure_utm.py`; the rubric is `eval/prompts/measure.md`.
+It reports, it does not gate the run.
+_Avoid_: breadth score, bias score
 
 **Diagnosis**:
 The per-un-found-vuln root-cause record in `diagnoses.yaml` (paired with `verdicts.yaml`) produced by the diagnoser subagent.
@@ -274,9 +281,9 @@ The classification of why a vulnerability was not identified (e.g. `pod_notsuffi
 `cap_hit` is historical: the hunting cap retired on 2026-10-05, so a new diagnosis names the token-budget stop instead.
 _Avoid_: error, reason
 
-**Surfer loop**:
-The background loop that monitors instance state and prompts the orchestrator to assert it and decide: terminate, destroy, or fix (configuration/data layer only) and restart; a jump or repair it cannot bound is escalated into a hold.
-Each acted-on trigger is recorded by its deterministic identity in the eval state, so the loop acts once per distinct trigger and skips one it already handled.
+**Surfer threat**:
+The background threat that monitors instance state and prompts the orchestrator to assert it and decide: terminate, destroy, or fix (configuration/data layer only) and restart; a jump or repair it cannot bound is escalated into a hold.
+Each acted-on trigger is recorded by its deterministic identity in the eval state, so the threat acts once per distinct trigger and skips one it already handled.
 _Avoid_: monitor, watchdog
 
 **Delivery plane**:
