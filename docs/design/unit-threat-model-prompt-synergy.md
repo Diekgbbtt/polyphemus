@@ -6,11 +6,11 @@ The threat-model impact-elicitation workstream supersedes the likelihood-only ri
 The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
 Where this document and the amendment disagree, the amendment wins.
 
-- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
-- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 
@@ -35,7 +35,7 @@ The judgment follows the integration rule: the unit threat model is authoritativ
 | `load_skill` and `record_skill_lesson` tool lines | `prompts/pod-runner.md`, `prompts/pod-triager.md` | The pod roles consume the D4 `skills` declaration and write usage lessons; the lines are still accurate. | Ported. The D4 pod field remains. |
 | `SKILL_LOAD_CONTRACT` phase-gating rule | `app/llm/skills.py` tool description | Load at phase entry, once per thread, never speculatively mid-reasoning. It fits the new pass sequence and the optional assumption check. | Kept in the tool description; the new prompts do not re-spell it. |
 | Artifact-declared skills contract | `CONTEXT.md`, `actors.py`, `hunter_tools.py` | The hunter-to-pod half survives: the hunter writes `skills` on the D4 spec. The orchestrator-to-hunter half dies with `HuntConfig`. | Partially ported. The orchestrator declarer is retired. |
-| `HuntConfig` skill declaration | old orchestrator surface | The unit threat model has no config and no loop-payload `skills` field. | Retired. |
+| `HuntConfig` skill declaration | old orchestrator surface | The unit threat model has no config and no threat-payload `skills` field. | Retired. |
 | `payload_vector_space`, `testing_pattern`, `interpretation_guidance` | old hunter prompt and D4 | These fields are retired by the reduced D4 and the procedure-diff variant minting. | Not ported. |
 | "A variant is a mutation of one flexible attribute" | old hunter prompt | The new variant basis is the first uncovered procedure gap, a failure mode, or a runner recovery. | Not ported. |
 | `SkillProcedure` typed excerpt | `spec_contract.py` | It carries the class procedure from the hunter to the pod; the D4 `skills` declaration arms the pod's read surface. The two are complementary. | Kept. |
@@ -67,14 +67,14 @@ The suite gives the threat modeller a concrete assumption-check vocabulary.
 The modeller can list all leaves, load a class or variant, and test whether a trust assumption is the root cause of a named class.
 The same suite gives the hunter a class procedure and the pod a declared skill set.
 The D4 `skills` field and the `SkillProcedure` excerpt cover different needs: selection and procedure.
-The pod's `record_skill_lesson` closes the loop into the app-level SkillEvolver.
+The pod's `record_skill_lesson` closes the threat into the app-level SkillEvolver.
 The cortex names the procedural layer those lessons improve.
 
 The optional actions added in this merge are:
 
 - Threat modeller: list and load suite leaves before the saturation check, only to generate or sharpen a trust assumption, never to reverse the abduction chain.
-- Hunter: list and load a sibling leaf when the class skill is silent on a slice assumption; keep the loop's class and slice.
+- Hunter: list and load a sibling leaf when the class skill is silent on a slice assumption; keep the threat's class and slice.
 - Pod runner: load a declared suite leaf when the procedure excerpt is silent on a load-bearing assumption; do not re-classify the spec.
 
 All three actions are optional.
-None writes a skill or a loop-payload field.
+None writes a skill or a threat-payload field.

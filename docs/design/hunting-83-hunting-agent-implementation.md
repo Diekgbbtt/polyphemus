@@ -1,5 +1,7 @@
 # Hunting agent implementation spec (#83) - cognitive architecture, verbatims, verdict semantics
 
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+
 *Historical record (superseded).*
 This document describes the pre-redesign hunt-orchestrator and its artifacts.
 The live contract is the unit threat model (`docs/design/unit-threat-model-workbench.md`, S1-S5).

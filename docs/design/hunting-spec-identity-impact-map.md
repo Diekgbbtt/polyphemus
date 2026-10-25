@@ -32,7 +32,7 @@ The live identity is `<class>__<value>__<value>[__...]`.
 | `attack/hunting/hunter_tools.py` | `SpecWrite.fault_keyword`, `.strategy_keyword`, required `target_identity`, `render_spec_contract` | `SpecWrite.discriminators`, optional bound `target_identity`, `skill_concretised_procedure`, `merged_from`; generated table updated |
 | `attack/hunting/hunter_state.py` | `SpecItem.fault_keyword`, `.strategy_keyword` | `SpecItem.discriminators` |
 | `attack/hunting/hunting_agent.py` | Re-derived the id from the two keywords; built tools without a target | Derives from the class and the discriminators; binds `TargetIdentity` from the payload |
-| `attack/hunting/surfer.py` | Materialised the loop payload | Adds `target_context.target_url` from the run's canonical origin |
+| `attack/hunting/surfer.py` | Materialised the threat payload | Adds `target_context.target_url` from the run's canonical origin |
 | `attack/hunting/mover.py` | Dropped `status`, `fault_keyword`, `strategy_keyword` at the pod boundary | Drops only `status`; the discriminators and concretisation reach the pod |
 | `attack/hunting/pipeline_sync.py` | Reads `status` and the file stem | No code change; the stem is opaque and the status is unchanged |
 | `attack/hunting/pod/types.py` | `SkillProcedure` read from provenance | `SkillConcretisedProcedure` read from the spec; `discriminators` added |

@@ -6,17 +6,17 @@ The threat-model impact-elicitation workstream supersedes the likelihood-only ri
 The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
 Where this document and the amendment disagree, the amendment wins.
 
-- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
-- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 
-**Scope:** system "the unit threat model redesign: the threat modeller and the loop-driven hunter" - issue [#373](https://github.com/Diekgbbtt/polyphemus/issues/373).
+**Scope:** system "the unit threat model redesign: the threat modeller and the threat-driven hunter" - issue [#373](https://github.com/Diekgbbtt/polyphemus/issues/373).
 **Source:** S1 `hunting-67-threat-modeller-spec.md`, S2 `hunting-67-threat-model-artifact-spec.md`, S3 section 8, S4 section 14, S5 section 8; the implemented code on `feat/unit-threat-model`.
-**Seams under assertion:** the threat model schema and store; the modeller gate tool and passive tracker; the run intake, accumulator, halt, and resume; the mover and loop dispatch predicate; the surfer and hunter payload; the hunter pass tracker, graph, and spec-set store; the pod reduced D4, INIT gate, runner, and triager; the REST perimeter and Postgres run rows; the eval translation; the retired-surface guards.
+**Seams under assertion:** the threat model schema and store; the modeller gate tool and passive tracker; the run intake, accumulator, halt, and resume; the mover and threat dispatch predicate; the surfer and hunter payload; the hunter pass tracker, graph, and spec-set store; the pod reduced D4, INIT gate, runner, and triager; the REST perimeter and Postgres run rows; the eval translation; the retired-surface guards.
 
 The integration predicates attach at the typed component seams.
 The walkthroughs attach at the REST entry seam and read the terminal quantities from the real stores and the Postgres row.
@@ -32,11 +32,11 @@ Input: `state=UNIT_TECHNICAL_SHARP`, `sections={technical_sharpening: ...}` for 
 Observable: one model document in `produced/Service-slug-a/`; `state == UNIT_TECHNICAL_SHARP`; the section reads back; a later `TRUST_MODELLED` write advances the state and keeps the earlier section.
 Yields: `tests/attack/test_threat_model_store.py`.
 
-**C2 - Zero-loop completion is valid.** Seam: the COMPLETED commit -> the checker and the mover.
+**C2 - Zero-threat completion is valid.** Seam: the COMPLETED commit -> the checker and the mover.
 Semantic: empty-but-valid.
-Input: a COMPLETED model with `loops=[]` and every necessary attribute present.
-Observable: `validation.valid is True`; zero loop files; `read_loop_files == []`; `read_completed_units` contains the unit; the mover consumes the model with zero dispatches.
-Yields: `tests/attack/test_threat_model_store.py`, `tests/attack/test_hunting_loop_dispatch.py`.
+Input: a COMPLETED model with `threats=[]` and every necessary attribute present.
+Observable: `validation.valid is True`; zero threat files; `read_threat_files == []`; `read_completed_units` contains the unit; the mover consumes the model with zero dispatches.
+Yields: `tests/attack/test_threat_model_store.py`, `tests/attack/test_hunting_threat_dispatch.py`.
 
 **C3 - Malformed write is rejected, not persisted.** Seam: `write_sections` -> the coded schema rejection.
 Semantic: malformed.
@@ -52,25 +52,25 @@ Yields: `tests/attack/test_threat_model_store.py`.
 
 **C5 - Referential integrity is a completion finding.** Seam: `check_completion` -> the validation finding lists.
 Semantic: malformed/out-of-contract.
-Input: a loop referencing a missing vulnerability; a trust agreement referencing a missing endpoint; a violation with an unresolved `transition_ref`.
+Input: a threat referencing a missing vulnerability; a trust agreement referencing a missing endpoint; a violation with an unresolved `transition_ref`.
 Observable: `referential_errors` names each broken reference; `valid is False`; the store still commits the document (non-blocking checker).
-Yields: `tests/attack/test_threat_model_store.py`, `tests/attack/test_hunting_loop_dispatch.py` for the transition ref.
+Yields: `tests/attack/test_threat_model_store.py`, `tests/attack/test_hunting_threat_dispatch.py` for the transition ref.
 
-**C6 - Assumption-to-loop closure.** Seam: `check_completion` -> `unclosed`.
-Semantic: outlier (an assumption with no loop path).
-Input: a model with an assumption and no loop that consumes it.
+**C6 - Assumption-to-threat closure.** Seam: `check_completion` -> `unclosed`.
+Semantic: outlier (an assumption with no threat path).
+Input: a model with an assumption and no threat that consumes it.
 Observable: `unclosed` names the assumption; `valid is False`.
 Yields: `tests/attack/test_threat_model_store.py`.
 
-**C7 - Loop order and identity.** Seam: the COMPLETED normaliser -> the loop files.
+**C7 - Threat order and identity.** Seam: the COMPLETED normaliser -> the threat files.
 Semantic: ordering.
-Input: loops supplied out of rank order, with duplicate and non-canonical ids.
-Observable: loop ids are `loop-1..n` in rank order; one file per non-`none` loop; the model's `risk_profile` uses the same order.
+Input: threats supplied out of rank order, with duplicate and non-canonical ids.
+Observable: threat ids are `threat-1..n` in rank order; one file per non-`none` threat; the model's `risk_profile` uses the same order.
 Yields: `tests/attack/test_threat_model_store.py`.
 
 **C8 - Risk profile is store-computed, checker-recomputed.** Seam: the COMPLETED writer -> the risk profile.
 Semantic: success and tamper detection.
-Input: loops with likelihoods `none/low/medium/high/critical` and a model-authored total of 99.
+Input: threats with likelihoods `none/low/medium/high/critical` and a model-authored total of 99.
 Observable: the store writes `risk_profile.total = 0/1/2/3/4` summed; the checker reports the 99 as a recompute finding; weights and threshold are the exported constants.
 Yields: `tests/attack/test_threat_model_store.py`, `tests/attack/test_run_lifecycle.py`.
 
@@ -80,22 +80,22 @@ Input: two unit ids that sanitise to `Service-slug-a`.
 Observable: the first keeps the name; the second gets `Service-slug-a-<8 hex>`; both documents read back under their own ids; no overwrite.
 Yields: `tests/attack/test_threat_model_store.py`.
 
-**C10 - Commit protocol and crash window.** Seam: the COMPLETED commit -> loop files then model.
-Semantic: degradation (a failing model write after the loops).
-Input: a write seam that raises after the loop files land.
-Observable: the previous model state survives; the loop files are present or cleaned on the next lower-gate write; no half-committed model is consumable.
+**C10 - Commit protocol and crash window.** Seam: the COMPLETED commit -> threat files then model.
+Semantic: degradation (a failing model write after the threats).
+Input: a write seam that raises after the threat files land.
+Observable: the previous model state survives; the threat files are present or cleaned on the next lower-gate write; no half-committed model is consumable.
 Yields: `tests/attack/test_threat_model_store.py`.
 
-**C11 - Move-aware consume and consumed-identity no-op.** Seam: `consume_loop` / `consume_model_if_done` -> the mover.
+**C11 - Move-aware consume and consumed-identity no-op.** Seam: `consume_threat` / `consume_model_if_done` -> the mover.
 Semantic: duplicate-idempotent.
-Input: consume the last loop twice; then write the same unit identity again.
+Input: consume the last threat twice; then write the same unit identity again.
 Observable: the model moves to `consumed/`; the second consume is a no-op; a write after the move returns the consumed path and does not recreate a produced document.
-Yields: `tests/attack/test_threat_model_store.py`, `tests/attack/test_hunting_loop_dispatch.py`.
+Yields: `tests/attack/test_threat_model_store.py`, `tests/attack/test_hunting_threat_dispatch.py`.
 
 **C12 - Invalid or degraded model archived.** Seam: `archive_unit` -> `abandoned/`.
 Semantic: degradation.
 Input: a COMPLETED model with `validation.valid is False`; a non-COMPLETED pass.
-Observable: the unit directory moves to `abandoned/`; `read_abandoned_units` lists it; `read_completed_units` does not; no loop dispatches.
+Observable: the unit directory moves to `abandoned/`; `read_abandoned_units` lists it; `read_completed_units` does not; no threat dispatches.
 Yields: `tests/attack/test_threat_model_store.py`, `tests/attack/test_threat_modeller.py`.
 
 **C13 - Bounded notes.** Seam: the notes store -> the shared bound.
@@ -177,7 +177,7 @@ Yields: `tests/attack/test_hunting_run_lifecycle.py`.
 **C25 - Resume and halted-resume.** Seam: `resume_run`/`_run_intake` -> the run row.
 Semantic: duplicate-idempotent and ordering.
 Input: a stored run record at position `k`; a halted record; a re-launch with the same run id.
-Observable: the run re-enters at `k`, does not re-freeze or re-sort; a halted record models nothing and dispatches only; the same run's loops dispatch; a foreign run's do not.
+Observable: the run re-enters at `k`, does not re-freeze or re-sort; a halted record models nothing and dispatches only; the same run's threats dispatch; a foreign run's do not.
 Yields: `tests/attack/test_run_lifecycle.py`, `tests/attack/test_hunting_resume.py`.
 
 **C26 - Resume decision table.** Seam: `resume_decision` -> the resume endpoint.
@@ -192,43 +192,43 @@ Input: two concurrent resumes; a resume while another run is live; an admission 
 Observable: one 202 and one 409; the claim clears the pause keys and `finished_at`; an admission failure restores the prior status and pause keys; no `running` orphan remains.
 Yields: `tests/project_management/test_hunting_api.py`, `tests/app/test_hunting_runs.py`.
 
-### D. Loop dispatch, mover, and surfer
+### D. Threat dispatch, mover, and surfer
 
-**C28 - Loop validity predicate.** Seam: `read_produced_inbox`/`threat_loop_item` -> the mover and the work read.
+**C28 - Threat validity predicate.** Seam: `read_produced_inbox`/`threat_item` -> the mover and the work read.
 Semantic: success, malformed, and cross-run.
-Input: a valid loop; a malformed stem; a missing field; a foreign run id; an archived unit; a unit with an unreadable model.
-Observable: one item per valid loop; the malformed/foreign/archived cases yield no item and are refused once; the work read and the dispatch read return the same decision; the model is not consumed for a looping unit.
-Yields: `tests/attack/test_hunting_mover.py`, `tests/attack/test_hunting_loop_dispatch.py`.
+Input: a valid threat; a malformed stem; a missing field; a foreign run id; an archived unit; a unit with an unreadable model.
+Observable: one item per valid threat; the malformed/foreign/archived cases yield no item and are refused once; the work read and the dispatch read return the same decision; the model is not consumed for a looping unit.
+Yields: `tests/attack/test_hunting_mover.py`, `tests/attack/test_hunting_threat_dispatch.py`.
 
-**C29 - One loop, one hunter, one session id.** Seam: `surfer._loop_dispatch` -> the control plane.
+**C29 - One threat, one hunter, one session id.** Seam: `surfer._threat_dispatch` -> the control plane.
 Semantic: success and count.
-Input: one produced loop; two produced loops.
-Observable: exactly one hunter session per loop with id `hunting:<run_id>:hunt:<dispatch_id>`; the payload is materialised at dispatch; the loop moves on admission; the model moves with the last loop.
-Yields: `tests/attack/test_hunting_loop_dispatch.py`, `tests/attack/test_hunting_surfer_tick.py`.
+Input: one produced threat; two produced threats.
+Observable: exactly one hunter session per threat with id `hunting:<run_id>:hunt:<dispatch_id>`; the payload is materialised at dispatch; the threat moves on admission; the model moves with the last threat.
+Yields: `tests/attack/test_hunting_threat_dispatch.py`, `tests/attack/test_hunting_surfer_tick.py`.
 
-**C30 - Sequencing and the low-loop pause.** Seam: `sequence_dispatch`/`ProducedInbox` -> the dispatch set.
+**C30 - Sequencing and the low-threat pause.** Seam: `sequence_dispatch`/`ProducedInbox` -> the dispatch set.
 Semantic: ordering and restart.
-Input: a critical/high/medium loop plus a low loop; the high one live; a fresh state after a restart.
-Observable: the higher loop dispatches immediately; the low loop stays produced while the higher is produced or live; the pause is per tick; a restart with the higher file still produced holds the low; releasing the higher releases the low; a later high does not preempt admitted work.
-Yields: `tests/attack/test_hunting_mover.py`, `tests/attack/test_hunting_loop_dispatch.py`.
+Input: a critical/high/medium threat plus a low threat; the high one live; a fresh state after a restart.
+Observable: the higher threat dispatches immediately; the low threat stays produced while the higher is produced or live; the pause is per tick; a restart with the higher file still produced holds the low; releasing the higher releases the low; a later high does not preempt admitted work.
+Yields: `tests/attack/test_hunting_mover.py`, `tests/attack/test_hunting_threat_dispatch.py`.
 
-**C31 - Malformed-loop non-wedge and zero-loop consume.** Seam: the produced read -> the consume and quiesce.
-Semantic: outlier (an unreadable loop file; a model with no loops).
-Input: a unit whose only loop is unreadable; a unit with no loops.
-Observable: the unreadable file is refused once, stays produced, the model is consumed as the no-dispatch case, `run_work_remaining` is false and `is_run_quiesced` true; the zero-loop model is consumed with zero dispatches.
-Yields: `tests/attack/test_hunting_loop_dispatch.py`.
+**C31 - Malformed-threat non-wedge and zero-threat consume.** Seam: the produced read -> the consume and quiesce.
+Semantic: outlier (an unreadable threat file; a model with no threats).
+Input: a unit whose only threat is unreadable; a unit with no threats.
+Observable: the unreadable file is refused once, stays produced, the model is consumed as the no-dispatch case, `run_work_remaining` is false and `is_run_quiesced` true; the zero-threat model is consumed with zero dispatches.
+Yields: `tests/attack/test_hunting_threat_dispatch.py`.
 
 **C32 - Quiesce and role gate.** Seam: `is_run_quiesced` -> the run terminal.
 Semantic: boundary.
-Input: a settled pass with no produced dispatchable loop and no live session; a stopped role gate; a foreign-run loop; a live higher session.
-Observable: quiesce true only when the three clauses hold; the stopped gate pauses dispatch but not quiesce; a foreign loop does not hold quiesce; a live higher session holds it.
+Input: a settled pass with no produced dispatchable threat and no live session; a stopped role gate; a foreign-run threat; a live higher session.
+Observable: quiesce true only when the three clauses hold; the stopped gate pauses dispatch but not quiesce; a foreign threat does not hold quiesce; a live higher session holds it.
 Yields: `tests/attack/test_hunting_surfer_tick.py`, `tests/attack/test_hunting_mover.py`.
 
 **C33 - Hunter payload field set.** Seam: `materialise_hunter_payload` -> the hunter launch.
 Semantic: shape and absences.
 Input: a COMPLETED unit with a trust agreement, a fault, a vulnerability, both class fields, evidence with an HTTP artifact, a likelihood, and a confidence.
 Observable: exactly the S2 8.2 fields; no failure modes, no narrowed vector, no `HuntConfig`, no pre-authored vector space; `baseline_ref` is an artifact id.
-Yields: `tests/attack/test_hunting_loop_dispatch.py`, `tests/attack/test_hunting_agent_prompt.py`.
+Yields: `tests/attack/test_hunting_threat_dispatch.py`, `tests/attack/test_hunting_agent_prompt.py`.
 
 **C34 - Refusal log scope.** Seam: `log_refusal_once` -> the run.
 Semantic: concurrency and duplicate-idempotent.
@@ -323,7 +323,7 @@ Yields: `tests/project_management/test_hunting_api.py`.
 **C48 - Modeller-only launch and the retired hunt enqueue.** Seam: `POST /hunting/modeller`; `POST /hunting/hunt`.
 Semantic: success and permanent-gone.
 Input: a known project; a stale hunt-config body.
-Observable: 202 `{component: "threat_modeller", ...}`; the hunt enqueue is 410 naming the loop replacement; no `hunt_configs` write.
+Observable: 202 `{component: "threat_modeller", ...}`; the hunt enqueue is 410 naming the threat replacement; no `hunt_configs` write.
 Yields: `tests/project_management/test_hunting_api.py`, `tests/integration/test_hunting_wiring_rest.py`.
 
 **C49 - Resume endpoint error modes.** Seam: `POST /hunting/{run}/resume` -> the row.
@@ -361,13 +361,13 @@ Yields: `tests/eval/test_orchestrator_setup.py`, `tests/eval/test_orchestrator_p
 **C54 - Pre-mined retarget.** Seam: `place_premined`/`retarget_premined` -> the run.
 Semantic: success and cross-run.
 Input: a placed threat-model unit under a synthetic source run id; a launched run id; a foreign model; a consumed artifact.
-Observable: the placed model and every loop are rebound to the launched run id; the foreign model is untouched; the consumed artifact is untouched; the same-run loop dispatches; a different run id does not.
+Observable: the placed model and every threat are rebound to the launched run id; the foreign model is untouched; the consumed artifact is untouched; the same-run threat dispatches; a different run id does not.
 Yields: `tests/eval/test_orchestrator_trial.py`, `tests/attack/test_hunting_resume.py`.
 
 **C55 - Eval predicate and evidence shape.** Seam: the eval predicate/evidence store -> the trial.
 Semantic: success and retired.
-Input: a produced loop file and a test spec; a stale `hunt_configs/` tree; a verdict row; a diagnosis row.
-Observable: the gate counts loops/specs; a stale config tree blocks with the RETIRED message; a model alone does not satisfy; `web_vulnerability_class` + `fault` and the `loop` chain key; no `fault_class`.
+Input: a produced threat file and a test spec; a stale `hunt_configs/` tree; a verdict row; a diagnosis row.
+Observable: the gate counts threats/specs; a stale config tree blocks with the RETIRED message; a model alone does not satisfy; `web_vulnerability_class` + `fault` and the `threat` chain key; no `fault_class`.
 Yields: `tests/eval/test_orchestrator_premined_guard.py`, `tests/eval/test_orchestrator_verdicts.py`.
 
 ## Walkthrough predicates (end-to-end)
@@ -377,11 +377,11 @@ Yields: `tests/eval/test_orchestrator_premined_guard.py`, `tests/eval/test_orche
 **id:** E1.
 **grounds:** S1 US1-4, 6-7, 14, 18, 21, 24; S3 US1-4, 8, 19, 25; S5 US1-8, 10.
 **entry seam:** `POST /projects/{project_id}/hunting`.
-**input:** a fresh project with one live L1 Service `Service:slug:a` (two endpoints on the target's host), the target reachable from Kali, a threshold above the unit's sum, and the real provider keys. The unit's model is authored by the real modeller; the loop is the real loop; the spec set is the real hunter's; the pod is the real `arun_pod`.
+**input:** a fresh project with one live L1 Service `Service:slug:a` (two endpoints on the target's host), the target reachable from Kali, a threshold above the unit's sum, and the real provider keys. The unit's model is authored by the real modeller; the threat is the real threat; the spec set is the real hunter's; the pod is the real `arun_pod`.
 **live edge:** the LLM provider (the real gateway) and the `http-e2e-target` container at `172.28.0.20:80`; nothing inside this edge is substituted.
-**path:** the API opens a `running` row; `start_hunting` freezes the intake (one unit); the modeller pass grounds on the projection, writes the five gates, and completes the model with one high loop; the surfer reads the loop, materialises the payload, dispatches one hunter; the hunter runs the pass sequence, writes the spec set, and ratifies the surviving spec; the surfer dispatches one pod; the pod passes the INIT gate, authors a probe, runs it against the target, and lands a real terminal; the run quiesces `complete`.
-**terminal:** one `produced/Service-slug-a/Service-slug-a.yaml` with `state=COMPLETED`, `validation.valid=true`, one `risk_profile.total`; one loop consumed; one `test-specs/Service-slug-a__loop-1/` folder with the terminal spec set; one pod export; the run row `complete` with the fixed record keys; zero `abandoned/`.
-**observed:** the REST launch/GET responses; the threat model store read-back; the loop files in produced/consumed; the hunter spec folder; the pod export; the `hunting_runs` row.
+**path:** the API opens a `running` row; `start_hunting` freezes the intake (one unit); the modeller pass grounds on the projection, writes the five gates, and completes the model with one high threat; the surfer reads the threat, materialises the payload, dispatches one hunter; the hunter runs the pass sequence, writes the spec set, and ratifies the surviving spec; the surfer dispatches one pod; the pod passes the INIT gate, authors a probe, runs it against the target, and lands a real terminal; the run quiesces `complete`.
+**terminal:** one `produced/Service-slug-a/Service-slug-a.yaml` with `state=COMPLETED`, `validation.valid=true`, one `risk_profile.total`; one threat consumed; one `test-specs/Service-slug-a__threat-1/` folder with the terminal spec set; one pod export; the run row `complete` with the fixed record keys; zero `abandoned/`.
+**observed:** the REST launch/GET responses; the threat model store read-back; the threat files in produced/consumed; the hunter spec folder; the pod export; the `hunting_runs` row.
 **yields:** `tests/e2e/test_unit_threat_model_walkthrough.py::test_E1_whole_pipeline`.
 **live status (2026-10-20):** the worktree stack, the white-jotter-001 L1, and the target loaded; the run froze the four-unit intake in the expected order and failed at the first modeller turn because OpenCode Go rejects the main `.env` `API_KEY_OPENCODE_GO` with `api_key_expired`. The e2e scaffold now forces that key into the shared `polymerhus_gateway` store, recreates the app-minted virtual key, and preflights the Go session route; the E1 test skips on the rejected key instead of failing the stack.
 
@@ -392,8 +392,8 @@ Yields: `tests/eval/test_orchestrator_premined_guard.py`, `tests/eval/test_orche
 **entry seam:** `POST /projects/{project_id}/hunting`.
 **input:** a fresh project with three L1 units ordered by live edges; the first two sums below the threshold and the second crosses it; the threshold and weights are stamped in the run.
 **live edge:** the LLM provider and the target fixture.
-**path:** the modeller models the first unit; the second crosses the inclusive threshold; the second completes and its loop dispatches; the third is never modelled; the run halts and quiesces.
-**terminal:** two COMPLETED models (the crossing one valid); the third unit absent from `produced/`; the run record `halt=true`, `crossing_unit=<second>`, `blocked_unit=<third>`, `risk_total==threshold`, the weights and threshold; the crossing loop dispatched.
+**path:** the modeller models the first unit; the second crosses the inclusive threshold; the second completes and its threat dispatches; the third is never modelled; the run halts and quiesces.
+**terminal:** two COMPLETED models (the crossing one valid); the third unit absent from `produced/`; the run record `halt=true`, `crossing_unit=<second>`, `blocked_unit=<third>`, `risk_total==threshold`, the weights and threshold; the crossing threat dispatched.
 **observed:** the run record; the store; the dispatched session ids.
 **yields:** `tests/e2e/test_unit_threat_model_walkthrough.py::test_E2_halt`.
 
@@ -402,30 +402,30 @@ Yields: `tests/eval/test_orchestrator_premined_guard.py`, `tests/eval/test_orche
 **id:** E3.
 **grounds:** S1 US20; T11.
 **entry seam:** `POST /projects/{project_id}/hunting/{run_id}/resume`.
-**input:** a project with a run row `stopped` and a persisted intake record at position `k`, a produced in-flight model for the current unit, and one foreign-run loop file.
+**input:** a project with a run row `stopped` and a persisted intake record at position `k`, a produced in-flight model for the current unit, and one foreign-run threat file.
 **live edge:** the LLM provider and the target fixture, for the resumed dispatch.
-**path:** the operator resumes; the claim sets `running` and clears the pause keys; the run re-enters at `k`, adopts the model, recomputes the total, and dispatches the same-run loop; the foreign loop stays produced; the run quiesces.
-**terminal:** the row `complete`; the same-run model consumed; the foreign loop still produced; the intake order unchanged; the total recomputed; no re-freeze.
+**path:** the operator resumes; the claim sets `running` and clears the pause keys; the run re-enters at `k`, adopts the model, recomputes the total, and dispatches the same-run threat; the foreign threat stays produced; the run quiesces.
+**terminal:** the row `complete`; the same-run model consumed; the foreign threat still produced; the intake order unchanged; the total recomputed; no re-freeze.
 **observed:** the resume 202; the run row; the store; the mover's produced/consumed read.
 **yields:** `tests/e2e/test_unit_threat_model_walkthrough.py::test_E3_resume`.
 
-### E4 - Low-loop pause and the model move
+### E4 - Low-threat pause and the model move
 
 **id:** E4.
 **grounds:** S1 7.6; S2 8.3-8.4.
-**entry seam:** a produced COMPLETED model with a low and a high loop, then `POST /hunting`.
-**input:** a model with `loop-1` high and `loop-2` low for the launched run; the high loop's hunter session live for a tick; a fresh state after a restart.
+**entry seam:** a produced COMPLETED model with a low and a high threat, then `POST /hunting`.
+**input:** a model with `threat-1` high and `threat-2` low for the launched run; the high threat's hunter session live for a tick; a fresh state after a restart.
 **live edge:** the LLM provider for the two hunter sessions; the target fixture.
-**path:** the surfer dispatches the high loop; the low stays produced while the high is produced/live; after the high settles, the low dispatches; the model moves with the last loop.
-**terminal:** the high loop consumed first; the low loop consumed second; the model in `consumed/`; no dispatch for the low before the high settles; a restart with the high file still produced holds the low.
-**observed:** the session ids and their order; the produced/consumed loop files; the model path.
+**path:** the surfer dispatches the high threat; the low stays produced while the high is produced/live; after the high settles, the low dispatches; the model moves with the last threat.
+**terminal:** the high threat consumed first; the low threat consumed second; the model in `consumed/`; no dispatch for the low before the high settles; a restart with the high file still produced holds the low.
+**observed:** the session ids and their order; the produced/consumed threat files; the model path.
 **yields:** `tests/e2e/test_unit_threat_model_walkthrough.py::test_E4_low_pause`.
 
 ### E5 - Pod INIT rejection and the no-probe terminal
 
 **id:** E5.
 **grounds:** S5 US8-11, 25-26.
-**entry seam:** `POST /hunting` with a produced spec under the loop dispatch id, or the pod-only resume path.
+**entry seam:** `POST /hunting` with a produced spec under the threat dispatch id, or the pod-only resume path.
 **input:** a spec with an empty `target_identity.url` and one blank symptom; a well-formed spec with no derivable probe.
 **live edge:** none for the rejection (the real pod gate); the target fixture for the no-probe case if a probe is derivable.
 **path:** the surfer dispatches one pod; the INIT gate collects both violations and rejects with zero tool calls; a separately well-formed spec with no derivable probe reaches the runner and lands the no-probe terminal.
@@ -463,7 +463,7 @@ Yields: `tests/eval/test_orchestrator_premined_guard.py`, `tests/eval/test_orche
   C1-C13: the store and checker.
   C14-C19: the modeller.
   C20-C27: the run lifecycle and resume.
-  C28-C34: the loop dispatch and surfer.
+  C28-C34: the threat dispatch and surfer.
   C35-C41: the hunter and spec set.
   C42-C46: the pod and triager.
   C47-C52: the REST/PG and retired surface.
@@ -486,9 +486,9 @@ They do not change the C1-C55 predicates or the E1-E7 walkthrough terminals.
   The optional assumption check may load a class parent or a variant leaf.
 - The threat modeller has an optional skill-assisted assumption check before saturation.
   The check is assumption-first: a leaf may suggest a trust assumption, but it never supplies the programming fault.
-  The threat modeller writes no skill and no loop-payload skill field.
-- The hunter may load a sibling leaf when the loop's class skill is silent on a slice assumption.
-  The hunter keeps the loop's class and failure-mode slice.
+  The threat modeller writes no skill and no threat-payload skill field.
+- The hunter may load a sibling leaf when the threat's class skill is silent on a slice assumption.
+  The hunter keeps the threat's class and failure-mode slice.
 - The pod runner may load a declared suite leaf when the D4 procedure excerpt is silent on a load-bearing assumption.
   The D4 `skills` field remains the pod runner's artifact-declared configuration.
 - The dev Q4 application Overview remains on the hunter's first turn.

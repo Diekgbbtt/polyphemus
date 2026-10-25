@@ -1,5 +1,7 @@
 # ADR: the threat modeller binds live-evidence tools (HTTP-history reads, exec probes, skills)
 
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+
 ## Status
 Accepted (design phase, 2026-10-15).
 Bound to the unit threat model grilling (`docs/design/unit-threat-model-workbench.md`, R1-5 and the Q10-Q17 answers).

@@ -6,11 +6,11 @@ The threat-model impact-elicitation workstream supersedes the likelihood-only ri
 The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
 Where this document and the amendment disagree, the amendment wins.
 
-- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
-- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 
@@ -46,17 +46,17 @@ There is one model per discretely testable L1 unit.
 The model id is the unit id.
 The model is stored under the project's threat-model store.
 It is produced at the five workflow gates and completed at the fifth.
-It is consumed per loop, not per model.
+It is consumed per threat, not per model.
 
-### 2.2 The loop is the dispatch grain
+### 2.2 The threat is the dispatch grain
 
-The ranked rows are **loops**.
-A loop is `fault -> web vulnerability class -> failure-mode assessment -> likelihood`.
-Loop ids are assigned at COMPLETED in ranked order.
-The highest likelihood is `loop-1`.
-One loop file is emitted per dispatchable loop.
-The surfer dispatches one hunter per loop file.
-Low loops stay dispatchable and are paused until the higher ranks are executed.
+The ranked rows are **threats**.
+A threat is `fault -> web vulnerability class -> failure-mode assessment -> likelihood`.
+Threat ids are assigned at COMPLETED in ranked order.
+The highest likelihood is `threat-1`.
+One threat file is emitted per dispatchable threat.
+The surfer dispatches one hunter per threat file.
+Low threats stay dispatchable and are paused until the higher ranks are executed.
 
 ### 2.3 Evidence and confidence
 
@@ -72,7 +72,7 @@ No probe-plan artifact exists.
 
 The drop rule is retention-first.
 A falsified vector lowers the likelihood.
-A loop with no feasible failure mode is retained with likelihood `none`.
+A threat with no feasible failure mode is retained with likelihood `none`.
 It contributes zero to the risk sum and is not dispatched.
 Only a fundamental technical-infeasibility finding drops a vulnerability.
 A drop is a backward correction of the agreements it was mapped from.
@@ -81,41 +81,41 @@ The failure mode stays in the model for debugging and is never fed forward.
 ## 3. User stories
 
 1. As an operator, I want one model per unit with the unit id as its id, so that the artifact identity is unambiguous.
-2. As an operator, I want the model to carry the technical sharpening, the trust model, the assumptions, the vulnerabilities, the failure modes, and the loops, so that one document explains one unit end to end.
+2. As an operator, I want the model to carry the technical sharpening, the trust model, the assumptions, the vulnerabilities, the failure modes, and the threats, so that one document explains one unit end to end.
 3. As an operator, I want every record to carry a confidence degree, so that the unprobed claims are visible.
 4. As an operator, I want every record to carry evidence entries, so that a reviewer can reconstruct the grounding.
 5. As an operator, I want the evidence list to be repeatable, so that a claim can cite several probes or request records.
 6. As an operator, I want no citations block and no probe plans, so that the model does not carry a second, stale evidence form.
-7. As an operator, I want the loop to carry the fault, the vulnerability class, the suite class, the failure-mode refs, the likelihood, the rationale, the four risk factors, and the confidence, so that the dispatch payload is derivable from one record.
-8. As an operator, I want the loop's failure modes kept out of the hunter payload, so that the hunter is not narrowed to one engineered procedure.
-9. As an operator, I want a `none` loop retained but not dispatched, so that a falsified vector never erases a direction.
+7. As an operator, I want the threat to carry the fault, the vulnerability class, the suite class, the failure-mode refs, the likelihood, the rationale, the four risk factors, and the confidence, so that the dispatch payload is derivable from one record.
+8. As an operator, I want the threat's failure modes kept out of the hunter payload, so that the hunter is not narrowed to one engineered procedure.
+9. As an operator, I want a `none` threat retained but not dispatched, so that a falsified vector never erases a direction.
 10. As an operator, I want a dropped vulnerability to record the infeasibility proof and the discriminating probe shape, so that the drop is auditable.
 11. As an operator, I want the drop to correct the agreements it was mapped from, so that the trust model stays honest.
 12. As an operator, I want the suite class to equal a skills-suite directory name, so that the hunter can load the class skill.
 13. As an operator, I want a suite gap flagged when no class covers the named vulnerability, so that the gap is visible.
-14. As an operator, I want the risk factors recorded per loop, so that the likelihood class is auditable against the CVSS-inspired ontology.
-15. As an operator, I want the harness to compute the per-unit sum from the loop likelihoods, so that the model cannot inflate its own budget total.
+14. As an operator, I want the risk factors recorded per threat, so that the likelihood class is auditable against the CVSS-inspired ontology.
+15. As an operator, I want the harness to compute the per-unit sum from the threat likelihoods, so that the model cannot inflate its own budget total.
 16. As an operator, I want the per-level breakdown recorded, so that the budget arithmetic is inspectable.
-17. As an operator, I want the model document to commit after its loop files, so that a crash cannot leave a COMPLETED model with missing loop files.
-18. As an operator, I want the loop files to be the dispatch items, so that consumption grain equals dispatch grain.
-19. As an operator, I want the model document to move with its last loop file, so that the produced and consumed directories always tell the truth.
-20. As an operator, I want a zero-loop unit consumed at completion, so that a fully dropped model does not wedge the quiesce.
-21. As an operator, I want the low loops paused until the higher ranks are executed, so that cheap high-yield directions run first.
-22. As an operator, I want the low loops to survive a restart as filesystem state, so that the pause is not lost.
+17. As an operator, I want the model document to commit after its threat files, so that a crash cannot leave a COMPLETED model with missing threat files.
+18. As an operator, I want the threat files to be the dispatch items, so that consumption grain equals dispatch grain.
+19. As an operator, I want the model document to move with its last threat file, so that the produced and consumed directories always tell the truth.
+20. As an operator, I want a zero-threat unit consumed at completion, so that a fully dropped model does not wedge the quiesce.
+21. As an operator, I want the low threats paused until the higher ranks are executed, so that cheap high-yield directions run first.
+22. As an operator, I want the low threats to survive a restart as filesystem state, so that the pause is not lost.
 23. As an operator, I want a completed model excluded from a later run, so that the pipeline never re-models a decided unit.
 24. As an operator, I want an in-flight produced model skipped and recorded, so that two writers cannot race on one unit.
-25. As an operator, I want a new run to refuse another run's produced loops, so that the risk accounting stays run-scoped.
+25. As an operator, I want a new run to refuse another run's produced threats, so that the risk accounting stays run-scoped.
 26. As an operator, I want the model schema versioned, so that a later change can migrate without guessing.
 27. As an operator, I want the completion checker to record missing attributes and unclosed assumptions without blocking publication, so that the model is still usable.
-28. As an operator, I want the loop file to carry the loop record and the run identity, so that the dispatch is traceable.
+28. As an operator, I want the threat file to carry the threat record and the run identity, so that the dispatch is traceable.
 29. As the threat modeller, I want to extend the model at each gate without re-authoring the whole document, so that the context cost stays bounded.
 30. As the threat modeller, I want the store to own the file names and the ids, so that I never compose a symbol.
-31. As the surfer, I want one loop file per dispatchable loop, so that one move dispatches one hunter.
-32. As the surfer, I want a loop file's likelihood, so that I can sequence the dispatch.
-33. As the surfer, I want the model document available while a loop file is dispatched, so that I can materialise the hunter payload.
-34. As a hunter, I want the loop payload to carry the relevant trust agreement or dynamic-state transition, so that I ground on the technical failure modes of the agreement.
-35. As a hunter, I want the loop payload to carry the evidence pointers, so that I can ground on the recorded traffic.
-36. As a hunter, I want the loop payload to carry the suite class, so that I can load the class skill.
+31. As the surfer, I want one threat file per dispatchable threat, so that one move dispatches one hunter.
+32. As the surfer, I want a threat file's likelihood, so that I can sequence the dispatch.
+33. As the surfer, I want the model document available while a threat file is dispatched, so that I can materialise the hunter payload.
+34. As a hunter, I want the threat payload to carry the relevant trust agreement or dynamic-state transition, so that I ground on the technical failure modes of the agreement.
+35. As a hunter, I want the threat payload to carry the evidence pointers, so that I can ground on the recorded traffic.
+36. As a hunter, I want the threat payload to carry the suite class, so that I can load the class skill.
 37. As a reviewer, I want the validation outcome persisted in the model, so that a thin model is visible after the fact.
 38. As a reviewer, I want the model to record its run id and timestamps, so that the artifact is traceable to the run.
 39. As a reviewer, I want the model's state to be monotonic, so that a late earlier-gate write cannot regress it.
@@ -143,28 +143,28 @@ The store root is `data/<project_id>/hunting/threat_modeller/`.
 produced/
   <unit_name>/
     <unit_name>.yaml
-    loop-<rank>.yaml
+    threat-<rank>.yaml
 consumed/
   <unit_name>/
     <unit_name>.yaml
-    loop-<rank>.yaml
+    threat-<rank>.yaml
 abandoned/
   <unit_name>/
     <unit_name>.yaml
-    loop-<rank>.yaml
+    threat-<rank>.yaml
 ```
 
 `<unit_name>` sanitises `:` and `/` to `-`.
 If two distinct unit ids sanitise to the same name, the store appends `-<first 8 hex of sha256(unit_id)>` to the later name.
 The store checks the existing directory's model `unit_id` before it writes; a mismatch triggers the suffix.
 The model document is `<unit_name>.yaml`.
-The loop file is `loop-<rank>.yaml`.
-The unit directory groups one model and its loop files.
+The threat file is `threat-<rank>.yaml`.
+The unit directory groups one model and its threat files.
 
 The model document is written at every gate.
-The loop files are written only at `COMPLETED`.
-A model with at least one dispatchable loop stays in `produced/` until its last loop file is consumed.
-A model with zero dispatchable loops is written to `produced/` at `COMPLETED`.
+The threat files are written only at `COMPLETED`.
+A model with at least one dispatchable threat stays in `produced/` until its last threat file is consumed.
+A model with zero dispatchable threats is written to `produced/` at `COMPLETED`.
 The mover consumes it on its next tick without dispatching a hunter and records zero dispatches.
 This keeps the move as the single consumption marker.
 `abandoned/` holds a degraded or invalid model; the intake and the mover ignore it.
@@ -172,11 +172,11 @@ This keeps the move as the single consumption marker.
 ### 4.3 Commit protocol
 
 The model document is the commit marker.
-At `COMPLETED`, the store writes the loop files first, atomically, then the model document with `state: COMPLETED`.
-If a crash happens after the loop files and before the model document, the model remains at the previous state, and the next write repairs the set.
-A gate write below COMPLETED deletes the stale loop files before it merges its section.
-A loop file is never read for a model whose state is not `COMPLETED`.
-A loop file written for a model that later fails the completion write is overwritten by the repair.
+At `COMPLETED`, the store writes the threat files first, atomically, then the model document with `state: COMPLETED`.
+If a crash happens after the threat files and before the model document, the model remains at the previous state, and the next write repairs the set.
+A gate write below COMPLETED deletes the stale threat files before it merges its section.
+A threat file is never read for a model whose state is not `COMPLETED`.
+A threat file written for a model that later fails the completion write is overwritten by the repair.
 
 ### 4.4 Atomicity and bounds
 
@@ -184,7 +184,7 @@ Every whole-file write uses the shared atomic-write primitive: same-directory te
 
 The notes store uses the shared bounded whole-file primitive.
 The bounds protect the durable prior-insight records.
-The model document and the loop files are single-model files; they are not bounded records.
+The model document and the threat files are single-model files; they are not bounded records.
 
 ### 4.5 Move-aware write
 
@@ -307,7 +307,7 @@ RiskFactors:
   privileges_required: none | low | high
   complexity: low | high
 
-Loop:
+Threat:
   id: str
   fault_ref: str
   vulnerability_ref: str
@@ -346,7 +346,7 @@ UnitThreatModel:
   assumptions: list[Assumption] = []
   vulnerabilities: list[Vulnerability] = []
   failure_modes: list[FailureMode] = []
-  loops: list[Loop] = []
+  threats: list[Threat] = []
   risk_profile: RiskProfile | null = null
   validation: Validation | null = null
 ```
@@ -393,14 +393,14 @@ The `state` selects the allowed section names:
 | `TRUST_MODELLED` | `trust_model` |
 | `TRUST_ASSUMPTIONS_WRITTEN` | `assumptions` |
 | `VULNERABILITIES_WRITTEN` | `vulnerabilities` |
-| `COMPLETED` | `failure_modes`, `loops` |
+| `COMPLETED` | `failure_modes`, `threats` |
 
 A gate write merges its sections into the document.
 A gate write never replaces the whole document.
 The COMPLETED write does not carry `risk_profile`; the store computes it after the merge and before the commit.
 The write payload never carries `unit_id`, a file name, a model id, or a storage path; the unit identity is bound at tool construction.
-A gate write below COMPLETED deletes any stale loop files in the unit directory.
-The next COMPLETED write writes the whole loop set.
+A gate write below COMPLETED deletes any stale threat files in the unit directory.
+The next COMPLETED write writes the whole threat set.
 
 ### 5.5 Failure modes and drops
 
@@ -410,27 +410,27 @@ A vulnerability that is dropped carries `dropped: true`, `drop_reason`, and `dro
 The drop corrects the interface or trust agreements it was mapped from; the correction is recorded in those agreements' evidence entries and confidence.
 
 The vulnerability's failure modes stay in `failure_modes` with `dropped: true` and the same reason.
-A dropped vulnerability has no loop.
+A dropped vulnerability has no threat.
 
-A retained vulnerability whose feasibility fails carries a failure mode with `feasibility: infeasible` and a loop with `likelihood: none`.
+A retained vulnerability whose feasibility fails carries a failure mode with `feasibility: infeasible` and a threat with `likelihood: none`.
 It is not a drop.
 
-### 5.6 Loops
+### 5.6 Threats
 
-The modeller writes the surviving loops in any order.
+The modeller writes the surviving threats in any order.
 The store normalises the order at the COMPLETED write:
 
 1. Stable sort by likelihood weight descending.
 2. Ties preserve the modeller's write order.
-3. Renumber the ids `loop-1`, `loop-2`, ... in that order.
+3. Renumber the ids `threat-1`, `threat-2`, ... in that order.
 
 The list order is the rank order.
 Rank 1 is the highest likelihood weight.
-The loop references its fault, its vulnerability, and at least one failure mode.
-The loop's `canonical_class` and `web_vulnerability_class` repeat the vulnerability's values for dispatch convenience; the checker verifies they agree.
-The loop's `confidence` grades the load-bearing premise.
-The loop's `evidences` cite the grounding for the likelihood.
-A loop whose likelihood is `none` carries the retention rationale and is not dispatched.
+The threat references its fault, its vulnerability, and at least one failure mode.
+The threat's `canonical_class` and `web_vulnerability_class` repeat the vulnerability's values for dispatch convenience; the checker verifies they agree.
+The threat's `confidence` grades the load-bearing premise.
+The threat's `evidences` cite the grounding for the likelihood.
+A threat whose likelihood is `none` carries the retention rationale and is not dispatched.
 
 ### 5.7 Completion checker
 
@@ -456,9 +456,9 @@ It checks the necessary attributes:
 - Each vulnerability has a non-empty `canonical_class` and a `web_vulnerability_class` or a suite gap.
 - `failure_modes` non-empty.
 - Every vulnerability has at least one failure mode, unless the vulnerability is dropped.
-- `loops` is present; it may be empty only when every vulnerability is dropped.
-- Every loop has a non-empty rationale, valid risk factors, and at least one evidence entry.
-- The loop order is non-increasing by weight and the ids are `loop-1..n`.
+- `threats` is present; it may be empty only when every vulnerability is dropped.
+- Every threat has a non-empty rationale, valid risk factors, and at least one evidence entry.
+- The threat order is non-increasing by weight and the ids are `threat-1..n`.
 - The risk profile equals the harness-computed total and breakdown.
 
 It checks referential integrity:
@@ -472,15 +472,15 @@ It checks referential integrity:
 - Every `interface_agreement_refs` entry resolves to an interface agreement.
 - Every transition `source` and `target` resolves to a dynamic state.
 
-It checks the assumption-to-loop closure:
+It checks the assumption-to-threat closure:
 
 - Every assumption closes to at least one vulnerability.
-- Every non-dropped vulnerability closes to at least one non-dropped failure mode and at least one loop.
-- Every loop refs a non-dropped vulnerability and non-dropped failure modes.
+- Every non-dropped vulnerability closes to at least one non-dropped failure mode and at least one threat.
+- Every threat refs a non-dropped vulnerability and non-dropped failure modes.
 - A dropped vulnerability has a drop reason and a drop probe.
 - An unclosed assumption is recorded in `unclosed`.
 
-The checker recomputes the risk profile from the stored loops.
+The checker recomputes the risk profile from the stored threats.
 It compares the result to the stored `risk_profile`.
 The store wrote the stored profile; the comparison is therefore a regression check against a store bug, not a trust of the modeller.
 
@@ -506,24 +506,24 @@ The migration owner is the change that bumps the version.
 The migration reads the old document, writes the new shape, and records the migration in the model's `validation` record.
 No silent migration runs on a read.
 
-## 6. The loop entity and the spec-set lifecycle
+## 6. The threat entity and the spec-set lifecycle
 
-### 6.1 The loop
+### 6.1 The threat
 
-The loop is the research direction and the dispatch grain.
+The threat is the research direction and the dispatch grain.
 It is not a `HuntConfig`.
 It carries no precondition or observed-defence fields.
-Those are replaced by the trust agreement, the dynamic-state transition, and the loop rationale.
+Those are replaced by the trust agreement, the dynamic-state transition, and the threat rationale.
 
-The loop is not statused.
-The model is the artifact; the loops are its surviving ranked rows.
-A `none` loop is retained with zero weight.
-A dropped vulnerability has no loop.
+The threat is not statused.
+The model is the artifact; the threats are its surviving ranked rows.
+A `none` threat is retained with zero weight.
+A dropped vulnerability has no threat.
 
 ### 6.2 State vocabulary
 
 The hunting state values are exactly `{hypothesised, ratified, dropped}`.
-The modeller's loops do not use this vocabulary; the model state uses the five gates.
+The modeller's threats do not use this vocabulary; the model state uses the five gates.
 The hunter's spec set uses the three values:
 
 - `hypothesised`: the spec written at GENERATE.
@@ -557,14 +557,14 @@ The score is likelihood only.
 
 ### 7.2 The scoring factors
 
-The modeller reasons over four CVSS-inspired factors per loop:
+The modeller reasons over four CVSS-inspired factors per threat:
 
 - **Attack vector**: network, adjacent, local, physical.
 - **Attack requirements**: none, present.
 - **Privileges required**: none, low, high.
 - **Complexity**: low, high.
 
-The factor values are recorded in the loop's `risk_factors`.
+The factor values are recorded in the threat's `risk_factors`.
 The factor value sets are the CVSS v4.0 value sets for the four metrics.
 The modeller uses the factor values to assign the likelihood class.
 The class assignment is LLM-judged.
@@ -574,7 +574,7 @@ No user-interaction factor is used.
 No impact factor is used.
 
 The likelihood grounds in the unit's technical characteristics, the technical feasibility, the observed defences as mitigators, and training priors on high-yield bugs for the surface and service kind.
-The loop's confidence degree is a factor of the class assignment.
+The threat's confidence degree is a factor of the class assignment.
 The modeller lowers the class when the load-bearing premise is `ASSUMED` and records the reason in the rationale.
 The harness weights only the class; the confidence is not an independent summand.
 A brief ontology of the four factors is injected into the risk-scoring phase of the prompt.
@@ -587,18 +587,18 @@ CVSS-derived wording carries attribution.
 The harness computes:
 
 ```
-unit_total = sum(RISK_WEIGHTS[loop.likelihood] for loop in loops)
+unit_total = sum(RISK_WEIGHTS[threat.likelihood] for threat in threats)
 ```
 
-The per-level breakdown counts every loop by likelihood, including `none`.
+The per-level breakdown counts every threat by likelihood, including `none`.
 The harness writes the total and the breakdown into the model's `risk_profile`.
 The model's own total is not trusted; the harness value is authoritative.
 
 Breadth coupling is accepted.
-The total sums every loop.
+The total sums every threat.
 There is no normalisation and no per-level cap.
 Breadth is a feature of the phase.
-A unit with many low loops can consume budget like a unit with a few high loops.
+A unit with many low threats can consume budget like a unit with a few high threats.
 The calibration can revisit this choice.
 
 ### 7.4 The run accumulator and the threshold
@@ -622,7 +622,7 @@ The calibration procedure is:
 3. Choose the halt behaviour the operator wants.
 4. Record the chosen threshold with the calibration set.
 
-The T2 trial model (one high, five medium, three low loops) sums to 16 under the weights.
+The T2 trial model (one high, five medium, three low threats) sums to 16 under the weights.
 It crosses the default 12 in one unit.
 This is a recorded sanity check, not a calibration result.
 
@@ -648,37 +648,37 @@ The deterministic/LLM split is fixed: the LLM assigns the class and factors; the
 
 ## 8. Consumption and the hunter payload
 
-### 8.1 The loop file
+### 8.1 The threat file
 
-A loop file carries:
+A threat file carries:
 
 ```
-loop_id: loop-<rank>
+threat_id: threat-<rank>
 unit_id: str
 unit_kind: service | system
 run_id: str
-dispatch_id: <unit_name>__<loop_id>
+dispatch_id: <unit_name>__<threat_id>
 likelihood: Likelihood
-loop: Loop
+threat: Threat
 created_at: datetime
 ```
 
-The loop file does not duplicate the model.
+The threat file does not duplicate the model.
 The surfer reads the model document for the unit context.
-The model document remains in `produced/` until its last loop file is consumed.
+The model document remains in `produced/` until its last threat file is consumed.
 
 ### 8.2 The hunter payload
 
 The surfer materialises the payload at dispatch time.
 The payload carries:
 
-- The loop record.
+- The threat record.
 - The unit id and unit kind.
 - The relevant technical sharpening: the interface agreements referenced by the trust agreement or the transition, plus the control-flow and data-flow overview.
 - The relevant trust agreement, or the dynamic-state transition and its trust-transition violation.
 - The programming fault.
 - The `canonical_class` and the `web_vulnerability_class`.
-- The evidence pointers from the loop, including any recorded HTTP-history artifact ids, so the hunter can choose a baseline.
+- The evidence pointers from the threat, including any recorded HTTP-history artifact ids, so the hunter can choose a baseline.
 - The likelihood and the vulnerability-level rationale.
 - The confidence degree.
 - The target context needed to author the spec's target identity.
@@ -695,35 +695,35 @@ The hunter keeps the room to engineer its own procedure.
 
 ### 8.3 Dispatch sequencing
 
-`critical`, `high`, and `medium` loop files dispatch immediately.
-`low` loop files wait until no critical, high, or medium loop file is produced and no critical, high, or medium hunter session is live.
-`none` loops have no file.
+`critical`, `high`, and `medium` threat files dispatch immediately.
+`low` threat files wait until no critical, high, or medium threat file is produced and no critical, high, or medium hunter session is live.
+`none` threats have no file.
 
 The sequencing is cross-unit and run-scoped.
-A loop file from another run is not dispatched by this run.
+A threat file from another run is not dispatched by this run.
 
 ### 8.4 Consumption and quiesce
 
-The mover's dispatch grain is the loop file.
+The mover's dispatch grain is the threat file.
 The move to `consumed/` happens on dispatch admission.
-The model document moves when its last loop file is consumed.
-A zero-loop model is consumed by the mover on its next tick without a dispatch.
+The model document moves when its last threat file is consumed.
+A zero-threat model is consumed by the mover on its next tick without a dispatch.
 
-The work read includes a produced `COMPLETED` model with `validation.valid` true and no loop files; the mover consumes it without a dispatch.
-The quiesce predicate is the existing `run_work_remaining` / `is_run_quiesced` seam, updated to the loop files:
+The work read includes a produced `COMPLETED` model with `validation.valid` true and no threat files; the mover consumes it without a dispatch.
+The quiesce predicate is the existing `run_work_remaining` / `is_run_quiesced` seam, updated to the threat files:
 
 - The modeller pass has settled.
-- No produced loop file is dispatchable now.
+- No produced threat file is dispatchable now.
 - No hunter or pod session is live.
 
 The work read and the dispatch read share the one validity predicate.
 A stopped role gate pauses dispatch; it does not change the quiesce predicate.
-The low-loop pause is a per-tick condition: a low loop is released when no known higher-ranked loop file is produced and no higher-ranked session is live.
-A later unit's high loop can therefore arrive after an earlier low loop has been dispatched.
-This is accepted: the run is streaming and a later high loop cannot preempt work already admitted.
+The low-threat pause is a per-tick condition: a low threat is released when no known higher-ranked threat file is produced and no higher-ranked session is live.
+A later unit's high threat can therefore arrive after an earlier low threat has been dispatched.
+This is accepted: the run is streaming and a later high threat cannot preempt work already admitted.
 
-A low loop is dispatchable now only when no higher-ranked session is live.
-A produced loop file from another run does not hold this run's quiesce.
+A low threat is dispatchable now only when no higher-ranked session is live.
+A produced threat file from another run does not hold this run's quiesce.
 
 ## 9. Run record and cross-run semantics
 
@@ -774,7 +774,7 @@ It survives a restart.
 A unit is excluded when a completed model exists in `consumed/`.
 A unit is skipped when a model is in flight in `produced/` and its producing run is live or resumable.
 The in-flight skip prevents a second writer on one unit.
-The earlier run must be resumed to drain its produced loops.
+The earlier run must be resumed to drain its produced threats.
 A model in `abandoned/` is ignored; the unit is retried.
 When the producing run is terminal and not resumable, the new run's intake moves the stale produced directory to `abandoned/` and retries the unit.
 
@@ -789,7 +789,7 @@ The halt never re-ranks the intake.
 ### 10.1 The store class
 
 The store is `ThreatModelStore`.
-It owns the project root, the produced and consumed directories, the model documents, the loop files, and the notes.
+It owns the project root, the produced and consumed directories, the model documents, the threat files, and the notes.
 
 It reuses these established patterns:
 
@@ -808,15 +808,15 @@ The store owns:
 
 - The unit directory name.
 - The model document name.
-- The loop file name.
-- The loop id.
+- The threat file name.
+- The threat id.
 - The dispatch id.
 - The note key prefix.
 
 The harness binds the unit id; the modeller never authors it.
 The modeller owns:
 - The model values.
-- The loop likelihood and rationale.
+- The threat likelihood and rationale.
 - The evidence entries.
 
 A write payload never carries a derived symbol.
@@ -835,22 +835,22 @@ A read with no `unit_id` reads the bound unit.
 A read with a `unit_id` reads that unit's model for prior-model inspection.
 A read with a `section` returns only that section.
 
-### 10.4 The loop files
+### 10.4 The threat files
 
-The store emits one loop file per loop with `likelihood != none`.
-The loop file is written atomically.
-The loop file's `dispatch_id` is `<unit_name>__<loop_id>`.
-The file name is `loop-<rank>.yaml`.
+The store emits one threat file per threat with `likelihood != none`.
+The threat file is written atomically.
+The threat file's `dispatch_id` is `<unit_name>__<threat_id>`.
+The file name is `threat-<rank>.yaml`.
 
 ### 10.5 The convergence
 
 The store and the surfer share one validity predicate:
 
-- A loop file is dispatchable work when its likelihood is not `none`, its model state is `COMPLETED`, its model `validation.valid` is true, and its run id matches the current run.
+- A threat file is dispatchable work when its likelihood is not `none`, its model state is `COMPLETED`, its model `validation.valid` is true, and its run id matches the current run.
 - A model document is complete and consumable when its state is `COMPLETED` and its `validation.valid` is true.
 
 The predicate is used by both the work read and the dispatch read.
-A malformed loop file is refused, stays produced, is logged once, and cannot hot-loop the mover or wedge the quiesce.
+A malformed threat file is refused, stays produced, is logged once, and cannot hot-loop the mover or wedge the quiesce.
 
 ## 11. Testing decisions
 
@@ -858,7 +858,7 @@ A malformed loop file is refused, stays produced, is logged once, and cannot hot
 
 Test the persisted files and the public store API.
 Use a temporary project root.
-Assert the model document, the loop files, the risk profile, and the validation record.
+Assert the model document, the threat files, the risk profile, and the validation record.
 Do not assert private methods.
 Keep every write atomic and every failure fail-open.
 
@@ -867,9 +867,9 @@ Keep every write atomic and every failure fail-open.
 - The model schema: parse, reject unknown fields, reject a non-monotonic state write.
 - The gate merge: each section extends the model without replacing the others.
 - The completion checker: missing attributes, referential integrity, closure, ordering.
-- The commit protocol: loop files first, model document last; a crash between them leaves the previous state.
-- The loop emission: one file per non-`none` loop; no file for `none`.
-- The move: model document with the last loop; zero-loop model consumed at completion.
+- The commit protocol: threat files first, model document last; a crash between them leaves the previous state.
+- The threat emission: one file per non-`none` threat; no file for `none`.
+- The move: model document with the last threat; zero-threat model consumed at completion.
 - The risk profile: harness total and breakdown.
 - The validity predicate: work and dispatch agree.
 - The intake exclusion: completed, in-flight.
@@ -906,5 +906,5 @@ The impact map carries the supersession ledger.
 The model schema is versioned.
 A later schema change must migrate the version.
 The model document is the commit marker.
-The loop file is the dispatch grain.
+The threat file is the dispatch grain.
 The model never evolves.

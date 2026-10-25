@@ -78,7 +78,7 @@ TargetRun
   target_run_id: <id> | null              # artifact store middle level; default instance id
   preloaded_hunting_artifacts:
     models: <host path> | null            # threat-model units -> threat_modeller/produced/<unit_name>/
-    test_specs: [{path: <host path>, dispatch_id: <loop dispatch id>}]  # -> test-specs/<dispatch_id>/produced/
+    test_specs: [{path: <host path>, dispatch_id: <threat dispatch id>}]  # -> test-specs/<dispatch_id>/produced/
 
 TargetConfig
   lifecycle: TargetLifecycle     # strategy: targetctl | image | compose
@@ -124,7 +124,7 @@ Verified against the code; each item is a place the current architecture breaks 
 
 **6.4 Hunting control.**
 - No cap on config production or consumption exists anywhere; the only bounds are concurrency gates and per-agent step budgets.
-- There is no import/seed API for hunting artifacts; the only seam is the implicit file-drop into `data/<pid>/hunting/threat_modeller/produced/<unit_name>/` (the model and its loop files) and `<pid>/hunting/hunter/test-specs/<dispatch_id>/produced/*.yaml`, read lazily.
+- There is no import/seed API for hunting artifacts; the only seam is the implicit file-drop into `data/<pid>/hunting/threat_modeller/produced/<unit_name>/` (the model and its threat files) and `<pid>/hunting/hunter/test-specs/<dispatch_id>/produced/*.yaml`, read lazily.
 - T10b (#397): the retired hunt-config preload form is refused loudly; a pre-mined config cannot satisfy the hunting prerequisite.
 
 **6.5 Auth bootstrap.**

@@ -6,11 +6,11 @@ The threat-model impact-elicitation workstream supersedes the likelihood-only ri
 The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
 Where this document and the amendment disagree, the amendment wins.
 
-- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
-- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 
@@ -20,7 +20,7 @@ This document disambiguates the test-executor pod from the combined spec: everyt
 
 *T10b (#397) note.*
 The pre-redesign E2 full-chain walkthrough (candidate set -> `HuntConfig` -> hunting agents) is historical.
-The live chain is a produced loop file -> the hunter spec set -> the pod; the pod's D4 contract below is current.
+The live chain is a produced threat file -> the hunter spec set -> the pod; the pod's D4 contract below is current.
 
 *Status: spec (contract), being re-specified by the #84 regrounding.
 Implementation decisions from the 2026-08-21 grilling live in `docs/design/hunting-84-regrounding-decisions.md` (D84-1..D84-25) and are authoritative over this document where they clash; this document is corrected so no clash remains.
@@ -134,7 +134,7 @@ Langfuse is fail-open and never a gate (C12).
   the `validate_decision` binary guard, and the degradation then mis-records a confirmed symptom as
   `unsuccessful`.
 - The fixed caps (D67-09): `MAX_POD_ITERS = 3`, `EXEC_TIMEOUT_S = 300`, `HUNT_POD_MAX_TOOL_CALLS = 200`, `HUNT_POD_MAX_ITERS = 8`; all env-overridable, all pod-internal, never spec fields.
-- **SUPERSEDED by 8.4 (2026-10-18).** The testing pattern is an OPEN NL pattern inside the typed envelope (D67-07): the engine treats it as guidance over the generic loop.
+- **SUPERSEDED by 8.4 (2026-10-18).** The testing pattern is an OPEN NL pattern inside the typed envelope (D67-07): the engine treats it as guidance over the generic threat.
   The closed-enum pattern engine is deferred to [#81](https://github.com/Diekgbbtt/polyphemus/issues/81).
 - **SUPERSEDED by 8.6 (2026-10-18).** Variants (D67-08): a declined/refined attribute yields a derived variant spec instance, recorded with provenance; the exported evidence is the full experiment log (variant specs, raw observations, interpretations).
 - INIT validation is a hard gate: a spec failing the typed base schema or the environment contract is rejected and lands `unsuccessful` with the validation evidence in the trail.
@@ -193,7 +193,7 @@ O7 - Duplicate probe: an identical variant + payload is executed once and record
 O8 - Unclassifiable output: treated as noise with the raw output preserved; the loop continues.
 O9 - Langfuse stub failure: the run completes unaffected (fail-open).
 O10 - Memory stub failure: the run completes unaffected.
-O11 - Variant count blow-up: bounded by the pod's internal caps (D67-09); the loop always lands a binary end.
+O11 - Variant count blow-up: bounded by the pod's internal caps (D67-09); the threat always lands a binary end.
 O12 - **SUPERSEDED by 8.5 (2026-10-18).** Empty payload vector: the Runner's first ReAct turn still probes once; if no probe is derivable, `space-exhausted` with the log.
 O13 - KB query failure (`query_lightrag` raising or empty): fail-open - the Runner degrades to the spec's own primitives. The empty/degraded bundle is RECORDED as a `KbObservation` (T3/#179) when a log is bound, marked `degraded=true` (#304). A degraded KB is UNAVAILABLE evidence: it can never license a clean `space-exhausted` (the graph downgrades to `no-symptom-evidence`/`clean=false`, #304) - only a real answer returning the same set as init confirms exhaustion (D84-16).
 O14 - A tool-call with wrong parameters: the tool REJECTS it with an error message + code (tool contract semantics, D84-22); the ReAct loop sees the rejection as a tool result and adjusts.
@@ -347,7 +347,7 @@ TestImplementationSpec:
 
 SpecProvenance:
   run_id: str
-  loop_id: str
+  threat_id: str
   unit_id: str
   canonical_class: str
   web_vulnerability_class: str
@@ -371,7 +371,7 @@ The semantics are:
 - `rationale` is the vulnerability-level rationale.
   It carries no failure-mode detail and no narrowed vector.
 - `parent_spec_ref` is the variant lineage.
-- `provenance` carries `run_id` (bound by the store, never authored), `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded `skill_procedure`.
+- `provenance` carries `run_id` (bound by the store, never authored), `threat_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded `skill_procedure`.
 - `skills` is the optional flat pod-runner skill list.
   Each name is a skill the runner may carry.
   It is never a path and never a meta-skill.

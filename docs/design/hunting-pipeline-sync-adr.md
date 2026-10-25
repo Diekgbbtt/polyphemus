@@ -6,11 +6,11 @@ The threat-model impact-elicitation workstream supersedes the likelihood-only ri
 The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
 Where this document and the amendment disagree, the amendment wins.
 
-- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
-- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 
@@ -22,9 +22,9 @@ Where this document and the amendment disagree, the amendment wins.
 
 The pipeline wiring T4 interleaves the hunting phases: `start_hunting` schedules the
 threat-modeller pass and the run-scoped surfer as two independent sessions, and the surfer
-dispatches one hunter per produced loop file while the pass models the next unit (S1 7.3).
+dispatches one hunter per produced threat file while the pass models the next unit (S1 7.3).
 There is no phase barrier anywhere.
-A deployed run therefore fans out hunters over every loop the modeller has already produced,
+A deployed run therefore fans out hunters over every threat the modeller has already produced,
 and every hunter fans out pods over every `ratified` spec, regardless of what the other
 phases are doing.
 The operator wants the phases synchronisable per project: controllable burst shape, bounded
@@ -82,16 +82,16 @@ The policy implementation is a no-op.
    ties broken by intake position ASCENDING.
    The halt never influences the queue order beyond freezing the pass (the halt never
    re-sorts, S1 7.4).
-3. Per unit, in queue order: ONE BATCH of hunters, one hunter per produced loop file of that
+3. Per unit, in queue order: ONE BATCH of hunters, one hunter per produced threat file of that
    unit, dispatched CONCURRENTLY (each still bounded by the shared `HUNTING_DISPATCH_GATE_WIDTH`
    gate).
-   The batch is the unit's whole loop set; the low-tier sequencing (S2 8.3) is subsumed and
+   The batch is the unit's whole threat set; the low-tier sequencing (S2 8.3) is subsumed and
    does not order a batch.
 4. The batch advances only when every hunt of the batch is terminal (signals in section 3).
 5. Then the unit's pods: one pod per `ratified` spec of the batch, dispatched CONCURRENTLY
    (same gate bound).
    The pod phase advances only when every pod is terminal.
-6. The queue cursor moves to the next unit and the batch loop repeats, until the queue is
+6. The queue cursor moves to the next unit and the batch threat repeats, until the queue is
    exhausted and the run quiesces as today (`is_run_quiesced`, unchanged).
 
 **`serial`** - the same queue, strictly one agent at a time:
@@ -116,10 +116,10 @@ storage-backed or registry-backed; no new artifact kind is introduced.
 - Modeller phase end: the modeller pass session is settled in the registry (its
   `threat-modeller` session id is gone), which covers both the halt and intake exhaustion.
 - Hunter terminal: the hunt session has left its ReAct graph (`hunters_in_graph` no longer
-  holds it) AND its consumed-loop recovery is settled. On this trunk the produced->consumed
-  move is only ADMISSION: F-022 recovers a consumed loop whose hunter left no current-run
+  holds it) AND its consumed-threat recovery is settled. On this trunk the produced->consumed
+  move is only ADMISSION: F-022 recovers a consumed threat whose hunter left no current-run
   `terminal.yaml` set, so a hunt that ends without finalizing (a builder failure, a
-  non-provider harness degrade, or a transiently failed child) reappears as a pending loop
+  non-provider harness degrade, or a transiently failed child) reappears as a pending threat
   item. The gate therefore keeps that hunt in the hunt phase (batched) or at the cursor
   (serial) and the item re-dispatches; F-026 defers a transient provider failure per child
   until its backoff elapses, and the batch/cursor holds meanwhile. A normal completion
@@ -135,7 +135,7 @@ storage-backed or registry-backed; no new artifact kind is introduced.
   A pod still executing keeps its unit current; a transiently failed pod has no export, so
   F-017 recovers its spec and the mover re-dispatches it after the per-child backoff - the
   pod cursor holds meanwhile.
-- A batch (or the serial cursor) with an EMPTY member set advances immediately: a zero-loop
+- A batch (or the serial cursor) with an EMPTY member set advances immediately: a zero-threat
   unit skips hunting, a hunt with zero `ratified` specs skips the pod phase.
 - Empty-unit cases therefore never wedge the queue; a degraded hunt holds its unit until a
   retry finalizes, which is the trunk's existing at-least-once resilience, not a new hold.
@@ -164,7 +164,7 @@ settle hook declasses any produced `hypothesised` spec to `dropped` and writes t
 marker; an undecided draft can therefore not wedge a completed hunt. The surfer's quiesce
 audit (`hunting_artifacts_terminal`) blocks `complete` while any current-run malformed,
 stale, pending, or export-less artifact remains, even when the mover has no dispatchable
-item. The upstream write-time validation, structured draft loop, consumed-transition
+item. The upstream write-time validation, structured draft threat, consumed-transition
 ownership, and run-record blocked state are ticket #401; the gate-side hold is a safety
 net, not the repair.
 
@@ -180,7 +180,7 @@ One new module, `attack/hunting/pipeline_sync.py`, clean separation of concerns:
   batched/serial rule bodies.
 - `PipelineSyncState` - the run-local ledger: the frozen mode, the intake-order source, and
   the per-unit metadata cache. It is in-memory and run-scoped, living beside
-  `RunDispatchState`; the single worker loop stands, so no lock.
+  `RunDispatchState`; the single worker thread stands, so no lock.
 - `RunSyncGate` - the impure adapter (`make_sync_gate`, None for `parallel`) that gathers the
   facts from the stores and the session registry and applies `decide`.
 
@@ -188,12 +188,12 @@ Wiring: the ledger is consulted at the TWO existing dispatch seams only.
 
 - `build_run_dispatch`'s `coro_for` asks the policy before it builds a hunter or pod
   coroutine; a policy refusal answers `None` (the mover's `None`-means-refused rule), which
-  leaves the loop file / spec in produced for the next tick (at-least-once, never dropped).
+  leaves the threat file / spec in produced for the next tick (at-least-once, never dropped).
 - `sequence_dispatch` (or the equivalent pre-deduction filter) is extended so the quiesce
   read and the dispatch decision can still never disagree: a held item is produced work, and
   `run_work_remaining` keeps counting it until dispatch or quiesce - the existing contract.
 
-The surfer worker loop keeps ticking unchanged; the mover protocol, the stores, the quiesce
+The surfer keeps ticking unchanged; the mover protocol, the stores, the quiesce
 predicate, and the at-least-once ring are untouched.
 No new session is scheduled; the ledger is not a runtime entity, it is state the existing
 surfer and builders read.
@@ -202,7 +202,7 @@ A handful of small state classes (`BatchState`, the phase cursors) ride the modu
 ### 5. Resume and interruption
 
 The ledger holds NO durable state.
-Every gate decision re-derives from stored facts (the produced/consumed loop files and model
+Every gate decision re-derives from stored facts (the produced/consumed threat files and model
 documents, the spec statuses, the durable PodExport records) plus registry liveness.
 A resumed run therefore rebuilds the queue and applies its cursor to already-terminal work:
 modelled units that never dispatched (the provider-pause case), completed batches, and
@@ -213,7 +213,7 @@ resume verb T11 #398).
 ## Explicitly unchanged
 
 - The completion signals themselves (the hunt's graph exit, the terminal spec-set statuses,
-  the PodExport records) and the F-017 consumed-spec / F-022 consumed-loop recovery with the
+  the PodExport records) and the F-017 consumed-spec / F-022 consumed-threat recovery with the
   F-026 per-child transient retry. The gate reads those signals; it never changes them.
 - The agent sub-module role gates (#317) and the module dispatch gate width (Q15): the
   policy refusals layer ON TOP, and a stopped role still refuses before the policy is asked.
@@ -238,7 +238,7 @@ resume verb T11 #398).
 
 ## Consequences
 
-- In `batched`/`serial`, produced loop files accumulate while the modeller pass runs; every
+- In `batched`/`serial`, produced threat files accumulate while the modeller pass runs; every
   tick the held items count as `paused` on the `TickReport` (they stay produced, never
   dropped), and logs are bounded by the existing log-once discipline.
 - A long silent stretch between run start and the first hunter dispatch is EXPECTED in
@@ -248,25 +248,25 @@ resume verb T11 #398).
 
 ## Known issue: cross-unit tier hold in `serial`
 
-The S2 8.3 tier ordering is global over the run's produced loop files, and
+The S2 8.3 tier ordering is global over the run's produced threat files, and
 `serial` still applies it.
-The queue admits only the current unit, so a `low` loop of the current unit is
-held while ANY unit's higher-tier loop is produced.
-Those higher-tier loops cannot consume until their own unit is current, which is
+The queue admits only the current unit, so a `low` threat of the current unit is
+held while ANY unit's higher-tier threat is produced.
+Those higher-tier threats cannot consume until their own unit is current, which is
 after the current unit finishes.
-A current unit whose only remaining loops are `low` therefore cannot progress,
+A current unit whose only remaining threats are `low` therefore cannot progress,
 and the run wedges on produced work.
 
 `batched` is unaffected: the tier ordering is subsumed and does not order a
 batch (section 2).
 The `serial` fix is a product decision:
 
-- scope the tier check to the current unit's loop set (the natural reading under
+- scope the tier check to the current unit's threat set (the natural reading under
   a unit-serialising queue), or
 - drop the tier ordering in `serial` as well and let the cursor own the order.
 
 Until that decision lands, do not run `serial` on a unit whose only remaining
-loops are `low` while a later unit still has produced medium/high loops.
+threats are `low` while a later unit still has produced medium/high threats.
 
 ## The stall fail-safes (2026-10-25)
 

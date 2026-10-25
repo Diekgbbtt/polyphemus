@@ -1,6 +1,6 @@
 # Hunting memory-system spec (per-project hunt-config + notes store)
 
-**AMENDED (unit threat model; carried by T10 #383).** The hunter's per-config memory layout is superseded for the hunter: the hunter store is keyed by the loop dispatch id (S3 8.7, S2 4.2), and the spec set replaces the per-config spec family. The atomic-write, bounded-store, and fail-open patterns in this document stand.
+**AMENDED (unit threat model; carried by T10 #383).** The hunter's per-config memory layout is superseded for the hunter: the hunter store is keyed by the threat dispatch id (S3 8.7, S2 4.2), and the spec set replaces the per-config spec family. The atomic-write, bounded-store, and fail-open patterns in this document stand.
 
 
 *Status: spec (contract), NOT implementation.* The 2026-08-23 operator-locked design for the hunt-orchestrator's

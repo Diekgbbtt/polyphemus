@@ -7,6 +7,8 @@ status: baseline-measured
 
 # Experiment Results: Threat-modeller impact quality baseline
 
+**Vocabulary note (2026-10-25).** This baseline measured the artifact then called a **loop**. The module and the current documentation now call it a **threat**. The baseline tables and the historical survey script keep their original filenames; a "loop" in this report means the same artifact as a threat in the current schema.
+
 ## Summary
 
 | Attribute | Value |
@@ -19,13 +21,13 @@ status: baseline-measured
 | **Run** | `a5f487fb-8329-431c-b95d-207799a038f9` |
 | **Artifact root** | `/opt/polymerhus-dev/eval/instances/data/eval-server-1/0c8cb6e6-7e91-4a01-880e-408896c0ce4a/hunting/threat_modeller` |
 | **Models** | 17 unit models: 13 produced, 1 consumed, 3 abandoned |
-| **Loops** | 113 |
-| **Primary metric** | Share of loops in low-yield impact families |
+| **Threats** | 113 |
+| **Primary metric** | Share of threats in low-yield impact families |
 | **Design** | Full census, not an A/B test |
 
 This document records the baseline defect that the impact-first elicitation workstream must fix.
 It is a census of one completed run, so counts are exact for that run and no inferential test applies.
-The unit of analysis is the loop, because the loop is the dispatch grain and the artifact the modeller publishes.
+The unit of analysis is the threat, because the threat is the dispatch grain and the artifact the modeller publishes.
 
 ## Measurement question
 
@@ -45,16 +47,16 @@ It does not test a prompt change, because no change has landed.
 ### Population
 
 The survey reads every unit model under `threat_modeller/produced`, `threat_modeller/consumed`, and `threat_modeller/abandoned`.
-It reads the loop records from the model document, not from the separate `loop-N.yaml` files, so the ranked order and the model's own classes are preserved.
-It resolves each loop's fault, assumption, trust agreement, vulnerability, and failure mode by id.
+It reads the threat records from the model document, not from the separate `threat-N.yaml` files, so the ranked order and the model's own classes are preserved.
+It resolves each threat's fault, assumption, trust agreement, vulnerability, and failure mode by id.
 
-The run emitted 17 models and 113 loops.
-Of those, 10 loops were dispatched to the hunter (`hunter/test-specs/Service-sign-in__loop-1..10`).
-The other 103 loops were never dispatched before the 7,000,932 capped-token budget stopped the run.
+The run emitted 17 models and 113 threats.
+Of those, 10 threats were dispatched to the hunter (`hunter/test-specs/Service-sign-in__threat-1..10`).
+The other 103 threats were never dispatched before the 7,000,932 capped-token budget stopped the run.
 
 ### Impact tier rubric
 
-The tier is the impact if the loop's stated mechanism holds.
+The tier is the impact if the threat's stated mechanism holds.
 It is not the likelihood and not the model's own `likelihood` value.
 
 - **severe**: a plausible path to code execution, cross-user or cross-tenant data access or action, privilege escalation, authentication or session compromise, XSS, SSRF, arbitrary file read or write, or a business-logic effect that changes another principal's state.
@@ -69,7 +71,7 @@ A session weakness that needs a second session first is low, because the end eff
 
 ### Boundary-shape tags
 
-Each loop receives one primary boundary shape.
+Each threat receives one primary boundary shape.
 The tag records what crosses the trust boundary.
 
 - `artifact->decision`: an attacker-influenced artifact crosses into a security decision. This is the sharp shape.
@@ -94,16 +96,16 @@ A name outside the tree is a fabricated class.
 The project `usage.yaml` records 8 agents and 7,000,932 capped tokens.
 The modeller records 429 calls, 99,254,895 total tokens, and 2,179,055 capped tokens.
 Capped tokens are uncached input plus generated output.
-The per-loop figures are output-efficiency ratios, not per-loop billing, because the modeller bills per model and per call.
+The per-threat figures are output-efficiency ratios, not per-threat billing, because the modeller bills per model and per call.
 
 ## Primary result
 
-The low-yield share is 70 of 113 loops, or 61.9%.
+The low-yield share is 70 of 113 threats, or 61.9%.
 The severe share is 25 of 113, or 22.1%.
 The conditional share is 18 of 113, or 15.9%.
 Low and conditional together are 88 of 113, or 77.9%.
 
-| Tier | Loops | Share |
+| Tier | Threats | Share |
 |---|---:|---:|
 | severe | 25 | 22.1% |
 | conditional | 18 | 15.9% |
@@ -118,7 +120,7 @@ The measured mass is two thirds low-yield.
 
 ### Impact families
 
-| Family | Loops | Share | Severe | Conditional | Low |
+| Family | Threats | Share | Severe | Conditional | Low |
 |---|---:|---:|---:|---:|---:|
 | contract-integrity | 41 | 36.3% | 0 | 0 | 41 |
 | information-disclosure | 16 | 14.2% | 0 | 2 | 14 |
@@ -134,13 +136,13 @@ The measured mass is two thirds low-yield.
 | rate limit | 1 | 0.9% | 0 | 0 | 1 |
 | SSRF | 1 | 0.9% | 0 | 1 | 0 |
 
-Contract integrity alone is 36.3% of the corpus and contributes zero severe loops.
-Information disclosure and enumeration together are 25 loops, or 22.1%, and contribute zero severe loops.
-The severe mass is concentrated in authentication-session, access-control, and XSS: 23 of the 25 severe loops.
+Contract integrity alone is 36.3% of the corpus and contributes zero severe threats.
+Information disclosure and enumeration together are 25 threats, or 22.1%, and contribute zero severe threats.
+The severe mass is concentrated in authentication-session, access-control, and XSS: 23 of the 25 severe threats.
 
 ### Boundary shape
 
-| Shape | Loops | Share |
+| Shape | Threats | Share |
 |---|---:|---:|
 | artifact->decision | 32 | 28.3% |
 | contract->consumer | 24 | 21.2% |
@@ -151,13 +153,13 @@ The severe mass is concentrated in authentication-session, access-control, and X
 | principal->authority | 7 | 6.2% |
 | client->server | 2 | 1.8% |
 
-Only 28.3% of loops carry the sharp shape.
+Only 28.3% of threats carry the sharp shape.
 The remaining 71.7% model a contract, an observation, a state, or a component disagreement.
 This is the structural signature of the reported defect: the trust model is a software-contract conformance model, not an attacker-capability model.
 
 ### Likelihood and impact
 
-| Likelihood | All loops | Severe | Low |
+| Likelihood | All threats | Severe | Low |
 |---|---:|---:|---:|
 | critical | 1 | 1 | 0 |
 | high | 14 | 7 | 6 |
@@ -165,9 +167,9 @@ This is the structural signature of the reported defect: the trust model is a so
 | low | 67 | 6 | 50 |
 | none | 2 | 0 | 2 |
 
-Six severe loops are ranked `low`, and eleven are ranked `medium`.
-Eighteen of the 25 severe loops sit below `high`.
-The ranking is impact-blind by construction, so these loops are demoted behind higher-likelihood low-yield directions.
+Six severe threats are ranked `low`, and eleven are ranked `medium`.
+Eighteen of the 25 severe threats sit below `high`.
+The ranking is impact-blind by construction, so these threats are demoted behind higher-likelihood low-yield directions.
 
 The clearest case is `Service:sign-in`.
 Its ranked order is rate-limit, account enumeration, cleartext session hijacking, session fixation, CSRF forced sign-out, published default administrator credential, session id in URL, and pre-authentication deserialization.
@@ -176,7 +178,7 @@ The RCE-capable deserialization surface is rank 8.
 
 ### Class integrity
 
-| Class status | Loops | Share |
+| Class status | Threats | Share |
 |---|---:|---:|
 | class parent | 39 | 34.5% |
 | class leaf | 22 | 19.5% |
@@ -186,10 +188,10 @@ The RCE-capable deserialization surface is rank 8.
 
 The five technique-family uses are four `defence-bypass` and one `proxy-techniques`.
 The two fabricated names are `unrestricted-file-upload` for `insecure-file-uploads` and `ssrf-blind-callback-confirmation` for `ssrf`.
-Seven of the 68 loops with a non-empty class, or 10.3%, use a technique family or a non-suite name.
+Seven of the 68 threats with a non-empty class, or 10.3%, use a technique family or a non-suite name.
 
-The suite gap is concentrated in the low tier: 41 of the 70 low loops have no class.
-Only 2 of the 25 severe loops have no class.
+The suite gap is concentrated in the low tier: 41 of the 70 low threats have no class.
+Only 2 of the 25 severe threats have no class.
 Those two are both XSS: `Per-View Encoding Policy Divergence` and `Client-Computed Representation Accepted as Authoritative`.
 The modeller found the stored-markup sink but classified it as a contract issue, so the hunter would not receive the XSS class.
 
@@ -202,18 +204,18 @@ The modeller found the stored-markup sink but classified it as a contract issue,
 | Modeller share of cap | 31.1% |
 | Modeller calls | 429 |
 | Modeller total tokens | 99,254,895 |
-| Capped per emitted loop | 19,284 |
-| Total tokens per emitted loop | 878,362 |
-| Capped per severe loop | 87,162 |
-| Loops dispatched | 10 of 113 |
+| Capped per emitted threat | 19,284 |
+| Total tokens per emitted threat | 878,362 |
+| Capped per severe threat | 87,162 |
+| Threats dispatched | 10 of 113 |
 | Dispatch coverage | 8.8% |
 | Hunter capped spend | 1,254,212 |
 | Hunter capped per dispatched spec set | 125,421 |
 
-The modeller consumed 31.1% of the cap and produced 113 loops, of which 10 reached the hunter.
+The modeller consumed 31.1% of the cap and produced 113 threats, of which 10 reached the hunter.
 The pro-rata low-yield share of modeller capped spend is 1,348,835, or 61.9%.
 The pro-rata severe share is 481,571, or 22.1%.
-The pro-rata figure assumes a uniform cost per loop; the true cost is per model and per call, so treat it as an order-of-magnitude estimate.
+The pro-rata figure assumes a uniform cost per threat; the true cost is per model and per call, so treat it as an order-of-magnitude estimate.
 
 The token conclusion is not that the modeller is too expensive in absolute terms.
 The conclusion is that the run buys 113 directions and can afford to hunt 10.
@@ -223,7 +225,7 @@ At that ratio, the quality of each direction dominates the economics, and 70 low
 
 ### By artifact bucket
 
-| Bucket | Loops | Severe | Conditional | Low | Low share |
+| Bucket | Threats | Severe | Conditional | Low | Low share |
 |---|---:|---:|---:|---:|---:|
 | produced | 86 | 17 | 16 | 53 | 61.6% |
 | consumed | 10 | 5 | 0 | 5 | 50.0% |
@@ -234,7 +236,7 @@ Its 50% severe share is higher than the produced average, but its ranking still 
 
 ### By unit kind
 
-| Kind | Loops | Severe | Severe share | Low | Low share |
+| Kind | Threats | Severe | Severe share | Low | Low share |
 |---|---:|---:|---:|---:|---:|
 | service | 42 | 8 | 19.0% | 28 | 66.7% |
 | system | 71 | 17 | 23.9% | 42 | 59.2% |
@@ -244,7 +246,7 @@ The service units carry more low-yield contract integrity.
 
 ### By unit
 
-| Unit | Loops | Severe | Conditional | Low | Low share |
+| Unit | Threats | Severe | Conditional | Low | Low share |
 |---|---:|---:|---:|---:|---:|
 | IdentificationSystem | 6 | 0 | 0 | 6 | 100.0% |
 | Service:library-catalog | 7 | 0 | 1 | 6 | 85.7% |
@@ -267,16 +269,16 @@ The service units carry more low-yield contract integrity.
 The read-only presentation and catalogue units produce the highest low-yield shares.
 `IdentificationSystem` is 100% low.
 `Service:library-catalog` is 85.7% low.
-`RESTApi:api`, the API surface, produces no severe loop at all: three conditional and four low.
+`RESTApi:api`, the API surface, produces no severe threat at all: three conditional and four low.
 The units with a clear authority or data boundary produce the severe mass: `AuthorizationSystem` at 37.5% low, `IntegrationSystem:cross-origin-policy` at 33.3% low, and `AuthenticationMechanism` at 42.9% low.
 
 This is the linear degradation the operator described.
 The sharpening and the interface agreements are strong on every unit.
-The assumptions and faults on units without an obvious attacker-controlled artifact drift into contract integrity, and the downstream loops inherit that drift.
+The assumptions and faults on units without an obvious attacker-controlled artifact drift into contract integrity, and the downstream threats inherit that drift.
 
 ## Shape of the low-yield families
 
-### Contract integrity: 41 loops, zero severe
+### Contract integrity: 41 threats, zero severe
 
 This is the largest family and the clearest defect.
 Representative trust boundaries are:
@@ -298,33 +300,33 @@ The harm is to a consumer's reasoning, to an operator's diagnosis, or to a clien
 The evidence is usually a direct probe of the divergence, so the confidence is `OBSERVED`.
 The complexity is `low` because no precondition is needed to observe the divergence.
 The likelihood therefore lands at `medium` even when the end impact is explicitly zero.
-The `Service:navigation-menu` V-2 loop is the canonical case.
+The `Service:navigation-menu` V-2 threat is the canonical case.
 
-### Information disclosure: 16 loops, 14 low
+### Information disclosure: 16 threats, 14 low
 
 The boundaries are `edge -> client fingerprint`, `stored data -> response`, `server metadata -> caller`, `third-party fetch -> referrer`, and `content type -> browser`.
 The faults are a version token, a republished stored URL, a framework error page, and a missing content-type assertion.
 The assumption type is that disclosure of non-secret metadata is an end impact.
-Two loops are conditional because the disclosure can reach a live credential: the refusal-redirect session id and the per-principal cache.
+Two threats are conditional because the disclosure can reach a live credential: the refusal-redirect session id and the per-principal cache.
 The other fourteen are low.
 
-### Enumeration: 9 loops, all low
+### Enumeration: 9 threats, all low
 
 The boundaries are `login outcome -> knowledge of the identity space`, `gate verdict -> caller and observer`, `refusal producer -> caller inference`, and `menu grants -> permission grants`.
 The faults are distinct failure text, an empty-200 denial, per-layer refusal shapes, and a route-existence differential.
 The assumption type is that reconnaissance is the impact.
 The model itself calls the effect `the reconnaissance step a credential attack consumes`, but it does not model the credential attack as the end impact.
-The loop is therefore recorded as the vulnerability rather than as an enabler.
+The threat is therefore recorded as the vulnerability rather than as an enabler.
 
-### Rate limit: 1 loop, low
+### Rate limit: 1 threat, low
 
 The boundary is `credential verifier -> attempt accounting`.
 The fault is a missing attempt counter.
-The loop is observed at high likelihood because repetition is admitted at request throughput.
-The end impact is the brute-force attack that the loop enables, but the model records the missing counter, not the account takeover.
+The threat is observed at high likelihood because repetition is admitted at request throughput.
+The end impact is the brute-force attack that the threat enables, but the model records the missing counter, not the account takeover.
 This is the operator's low-yield family in its purest form: a real weakness, but a prerequisite for the severe effect.
 
-### Technique families as classes: 5 loops
+### Technique families as classes: 5 threats
 
 `defence-bypass` is used for a path-filter bypass, an origin-verdict coverage gap, an authorization-map guard, and an identity normalization mismatch.
 `proxy-techniques` is used for an unpinned third-party stylesheet.
@@ -332,10 +334,10 @@ The class name describes how the defence is bypassed, not what the vulnerability
 The underlying classes are broken function-level authorization, path traversal, cache deception, and parser differential.
 The hunter binds the class skill, so a technique family gives the hunter a technique procedure instead of the class procedure.
 
-Two further loops use names that do not exist in the suite.
+Two further threats use names that do not exist in the suite.
 `unrestricted-file-upload` should be `insecure-file-uploads`.
-`ssrf-blind-callback-confirmation` should be `ssrf`, and the loop is not even server-side SSRF: it is a stored URL that drives a reader's browser fetch.
-The store validator checks that the loop copies the vulnerability's class, but it does not check that the name exists in the suite, so both errors persist.
+`ssrf-blind-callback-confirmation` should be `ssrf`, and the threat is not even server-side SSRF: it is a stored URL that drives a reader's browser fetch.
+The store validator checks that the threat copies the vulnerability's class, but it does not check that the name exists in the suite, so both errors persist.
 
 ## Evidence of the defect
 
@@ -347,33 +349,33 @@ Its characterisation says:
 > The consequence is not a leak but an inability to reason.
 
 The failure mode says the console renders an empty navigation for a denial exactly as it would for an account that was never granted anything.
-The loop is ranked `medium` and carries `OBSERVED` confidence.
+The threat is ranked `medium` and carries `OBSERVED` confidence.
 The end impact is explicitly zero for an attacker.
-This is not an isolated miss: it is the archetype of the 41-loop contract-integrity family.
+This is not an isolated miss: it is the archetype of the 41-threat contract-integrity family.
 
 ### Explicit no-impact language
 
-Eight loops state in their own characterisation or rationale that the effect is not an attacker effect.
+Eight threats state in their own characterisation or rationale that the effect is not an attacker effect.
 The phrases are:
 
-- `the consequence is an inability to verify rather than an exposure` (`IdentificationSystem` loop-5);
-- `No attacker effect is reachable ... the failure is operator-side blindness` (`IdentificationSystem` loop-6);
-- `the effect is cost and payload, not access` (`WebPresentation:jotter-reading::reading-pages` loop-5);
-- `confined: the server refuses the value, so the retained credential grants nothing` (`AuthenticationMechanism` loop-6);
-- `The consequence is not access but diagnosis` (`RESTApi:api` loop-7);
-- `no attacker effect is reachable through it` (`Service:article-management` loop-6);
-- `the effect is confined to what a caller can conclude about the category space` (`Service:library-catalog` loop-7);
-- `not a leak but an inability to reason` (`Service:navigation-menu` loop-2).
+- `the consequence is an inability to verify rather than an exposure` (`IdentificationSystem` threat-5);
+- `No attacker effect is reachable ... the failure is operator-side blindness` (`IdentificationSystem` threat-6);
+- `the effect is cost and payload, not access` (`WebPresentation:jotter-reading::reading-pages` threat-5);
+- `confined: the server refuses the value, so the retained credential grants nothing` (`AuthenticationMechanism` threat-6);
+- `The consequence is not access but diagnosis` (`RESTApi:api` threat-7);
+- `no attacker effect is reachable through it` (`Service:article-management` threat-6);
+- `the effect is confined to what a caller can conclude about the category space` (`Service:library-catalog` threat-7);
+- `not a leak but an inability to reason` (`Service:navigation-menu` threat-2).
 
 These are not inference errors by the reviewer.
-The modeller records the absence of impact and still emits the loop at `medium` or `low` likelihood.
+The modeller records the absence of impact and still emits the threat at `medium` or `low` likelihood.
 
-### Misclassified severe loops
+### Misclassified severe threats
 
-Two severe loops have no suite class because the modeller framed them as contract issues:
+Two severe threats have no suite class because the modeller framed them as contract issues:
 
-- `WebPresentation:jotter-reading::reading-pages` loop-4, `Per-View Encoding Policy Divergence`, is the same stored-XSS sink as loop-1, but it is recorded without the XSS class.
-- `WebPresentation:article-management::console-pages` loop-1, `Client-Computed Representation Accepted as Authoritative`, stores the browser-rendered HTML that every reader executes, but it is recorded without the XSS class.
+- `WebPresentation:jotter-reading::reading-pages` threat-4, `Per-View Encoding Policy Divergence`, is the same stored-XSS sink as threat-1, but it is recorded without the XSS class.
+- `WebPresentation:article-management::console-pages` threat-1, `Client-Computed Representation Accepted as Authoritative`, stores the browser-rendered HTML that every reader executes, but it is recorded without the XSS class.
 
 The defect is therefore both omission and misclassification.
 The modeller can find the severe mechanism and then file it under a contract label, which removes it from the class-bound hunter path.
@@ -388,32 +390,32 @@ This is the impact-blind ranking in production, not a hypothetical.
 ## Learnings
 
 1. **The trust model is a contract-conformance model.**
-   Only 28.3% of loops carry an attacker-artifact-to-security-decision boundary.
+   Only 28.3% of threats carry an attacker-artifact-to-security-decision boundary.
    71.7% model a contract, an observation, a state, or a component disagreement.
    The trust agreements are precise about what each component promises, but they do not consistently name the attacker-controlled field and the security-sensitive variable it reaches.
 
 2. **The low-yield mass is structural, not incidental.**
-   Contract integrity is 36.3% of the corpus and contributes zero severe loops.
+   Contract integrity is 36.3% of the corpus and contributes zero severe threats.
    Information disclosure and enumeration add another 22.1% and also contribute zero.
    The severe mass is concentrated in three families: authentication-session, access-control, and XSS.
 
 3. **Observed divergence is mistaken for impact.**
    A contract mismatch is directly observable, so it earns `OBSERVED` confidence and `low` complexity.
-   The likelihood model then ranks it above a severe loop whose exploit path needs a precondition.
+   The likelihood model then ranks it above a severe threat whose exploit path needs a precondition.
    The likelihood score is doing what it was designed to do; the missing impact axis is what lets the divergence win.
 
 4. **The class vocabulary is technique-first.**
-   Five loops use a technique family as the class, and two use a name outside the suite.
+   Five threats use a technique family as the class, and two use a name outside the suite.
    The modeller follows the suite tree, but the tree contains technique families at the same level as vulnerability classes, and the prompt does not forbid their use as classes.
 
 5. **The impact-blind ranking demotes severe work.**
-   Six severe loops are `low`, eleven are `medium`, and eighteen of twenty-five sit below `high`.
+   Six severe threats are `low`, eleven are `medium`, and eighteen of twenty-five sit below `high`.
    The `Service:sign-in` order is the concrete case: rate-limit and enumeration before session fixation and deserialization.
 
 6. **The token economics invert the quality signal.**
-   The modeller spends 31.1% of the capped budget and produces 113 loops.
-   Ten loops reach the hunter.
-   At 19,284 capped tokens per emitted loop and 87,162 per severe loop, the run cannot afford to be wrong about which directions matter.
+   The modeller spends 31.1% of the capped budget and produces 113 threats.
+   Ten threats reach the hunter.
+   At 19,284 capped tokens per emitted threat and 87,162 per severe threat, the run cannot afford to be wrong about which directions matter.
 
 7. **The severe mechanisms are present but mislabeled.**
    The stored-XSS sink appears in three units.
@@ -425,10 +427,10 @@ This is the impact-blind ranking in production, not a hypothetical.
 
 - The consumed model has the highest severe share (50%), so the defect is not that the modeller cannot find severe issues in the unit it hunts.
   The defect is the tail it produces around them and the order it assigns.
-- `RESTApi:api` produces no severe loop despite being the API surface.
-  Its seven loops are four contract issues and three conditional cross-origin or parameter issues.
-- The suite gap is almost entirely a low-tier phenomenon: 41 of 45 gaps are low loops.
-  The modeller correctly recognizes that contract issues have no suite class, but it does not treat that recognition as a signal that the loop is not a vulnerability.
+- `RESTApi:api` produces no severe threat despite being the API surface.
+  Its seven threats are four contract issues and three conditional cross-origin or parameter issues.
+- The suite gap is almost entirely a low-tier phenomenon: 41 of 45 gaps are low threats.
+  The modeller correctly recognizes that contract issues have no suite class, but it does not treat that recognition as a signal that the threat is not a vulnerability.
 
 ### What we still do not know
 
@@ -455,10 +457,10 @@ The workstream should implement the following changes and re-measure on the same
    Require the artifact and field inventory, the component and data state model, and the data-plane and control-plane wiring before the assumptions are written.
 
 3. **End-impact scoring.**
-   Add the CVSS 4.0 impact metrics and a qualitative severity to the vulnerability and the loop, and make the risk score and the loop ranking use the impact axis.
+   Add the CVSS 4.0 impact metrics and a qualitative severity to the vulnerability and the threat, and make the risk score and the threat ranking use the impact axis.
 
 4. **Defence-in-depth complexity.**
-   Require the modeller to name the assumed security layers between the exploit and the impact, and to ratify the loop as feasible even when a preliminary capability is required.
+   Require the modeller to name the assumed security layers between the exploit and the impact, and to ratify the threat as feasible even when a preliminary capability is required.
 
 5. **Mandatory retrospective coverage.**
    Once the vulnerabilities are defined, load the relevant class skills and countercheck the model against their Attack Surface, Reconnaissance, Trust Assumptions, and Key Vulnerabilities sections.
@@ -483,13 +485,13 @@ These targets are proposals for operator approval, not measured results.
 | Sharp boundary share | 28.3% | at least 60% |
 | Technique-family or non-suite class | 7 | 0 |
 | Suite gap | 39.8% | at most 20% |
-| Severe loops below `high` likelihood | 18 | at most 8 |
-| Capped tokens per severe loop | 87,162 | at most 60,000 |
-| Severe loops lost | 0 | 0 |
+| Severe threats below `high` likelihood | 18 | at most 8 |
+| Capped tokens per severe threat | 87,162 | at most 60,000 |
+| Severe threats lost | 0 | 0 |
 
 The re-measurement should use the same 17 units, the same target instance, and a fresh state.
 It should model only, without hunting, so the comparison isolates elicitation quality from dispatch and pod behaviour.
-A second phase can then hunt the improved loops and compare confirmed symptoms per capped token.
+A second phase can then hunt the improved threats and compare confirmed symptoms per capped token.
 
 ## Next steps
 
@@ -506,9 +508,9 @@ A second phase can then hunt the improved loops and compare confirmed symptoms p
 
 ### Artifacts
 
-- `survey_modeller_loops.py`: the read-only survey script.
-- `loop-classification.csv`: the per-loop tier, family, boundary shape, and note.
-- `loops.jsonl`: the per-loop structural record, emitted by the script.
+- `survey_modeller_loops.py`: the historical read-only survey script (the "loop" in the name is the earlier vocabulary).
+- `loop-classification.csv`: the historical per-loop tier, family, boundary shape, and note (the column is `loop`).
+- `loops.jsonl`: the historical per-loop structural record, emitted by the script.
 - `loops.csv`: the same record as CSV.
 - `aggregates.json`: the aggregate counts.
 
@@ -528,11 +530,11 @@ python docs/experiments/modeller-impact-quality/survey_modeller_loops.py \
   The rubric is documented, and a second reviewer should re-tier a sample before the re-measurement.
 - The tier scores the impact if the stated mechanism holds, not the probability that it holds.
   The likelihood is a separate axis and is recorded as the model wrote it.
-- The pro-rata token attribution assumes a uniform cost per loop.
-  The modeller bills per model and per call, so the per-loop figures are ratios, not invoices.
+- The pro-rata token attribution assumes a uniform cost per threat.
+  The modeller bills per model and per call, so the per-threat figures are ratios, not invoices.
 - The run is one target with a deliberately vulnerable application.
   The distribution may not generalize to a different target or a different unit mix.
-- The 10 dispatched loops belong to one unit.
+- The 10 dispatched threats belong to one unit.
   The dispatch coverage of 8.8% is a run-level fact, not a per-unit dispatch rate.
 - The `class parent` and `class leaf` status is read from the suite tree at measurement time.
   A suite rename would change the counts without changing the model.

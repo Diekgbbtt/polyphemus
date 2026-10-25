@@ -628,7 +628,7 @@ The tool surface stays, with `skill_list` and `skill_load` added.
 
 **T5 (#378) disposition of this scope.**
 Landed: the fault lifecycle, its detector and push functions, the four push nodes, the fault lists, `current_fault`, the old phase channel, `derive_verdict`, `SpecItem.experiment_ref`, and the five old hint constants are removed.
-T6 (#379) landed the store side: the spec-set store writes the batched `specs` set under the loop dispatch key with the `{hypothesised, ratified, dropped}` vocabulary, and the mover's pod-dispatch gate is `ratified`.
+T6 (#379) landed the store side: the spec-set store writes the batched `specs` set under the threat dispatch key with the `{hypothesised, ratified, dropped}` vocabulary, and the mover's pod-dispatch gate is `ratified`.
 
 ### 14.12 Implementation decisions
 

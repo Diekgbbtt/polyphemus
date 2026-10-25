@@ -1,7 +1,7 @@
 # Eval Harness Design: polymerhus Vulnerability-Discovery Evaluation against WebExploitBench
 
 **AMENDED (T10b #397, the eval translation; EXECUTED).**
-References to hunt configs in this design are translated to the loop vocabulary: loop payload in place of a config, `ratified` in place of `specified`, threat model store in place of the hunt store, loop dispatch id in place of `hunt_id`, and the web-vulnerability class plus fault in place of `fault_class`.
+References to hunt configs in this design are translated to the threat vocabulary: threat payload in place of a config, `ratified` in place of `specified`, threat model store in place of the hunt store, threat dispatch id in place of `hunt_id`, and the web-vulnerability class plus fault in place of `fault_class`.
 The loop rationale and the trust-model overview replace `rationale` / `research_direction` (S1 9.5).
 The eval's hypothesis-verdict derivation is REPLACED: the assessment reads the pod envelope (`verdict`, `terminal_reason`, `clean`) and the spec set directly.
 The verdict-consumption workflow stays out of scope.
@@ -47,8 +47,8 @@ The pod lives on branch `feat/hunting-84-test-executor-pod` (worktree `.claude/w
 
 ### 2.2 The threat model store and the control plane (main)
 
-- `data/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` - the per-unit model document and its `loop-<rank>.yaml` dispatch records, with `notes.yaml` beside them.
-- `data/<project_id>/hunting/hunter/test-specs/<dispatch_id>/{produced,consumed}/` - the hunter's spec set, keyed by the loop dispatch id. (The pre-redesign hunt store trail retired with T4b #387.)
+- `data/<project_id>/hunting/threat_modeller/{produced,consumed}/<unit_name>/` - the per-unit model document and its `threat-<rank>.yaml` dispatch records, with `notes.yaml` beside them.
+- `data/<project_id>/hunting/hunter/test-specs/<dispatch_id>/{produced,consumed}/` - the hunter's spec set, keyed by the threat dispatch id. (The pre-redesign hunt store trail retired with T4b #387.)
 - `hunting_runs` status table; API seams `POST /projects/{id}/hunting`, `POST .../hunting/{hunting_run_id}/stop`, `GET .../hunting/{hunting_run_id}` (`project_management/api.py:270+`).
 - **Wiring caveat**: `start_hunting` does NOT yet inject `dispatch_fn` (scoped by #110 "Dispatch placement"), so a production hunting run today yields orchestration-pass records (candidates, configs, notes) but no dispatched pod runs. The oracle must therefore grade on the full evidence set, using the PodExport path when present and the degraded trail otherwise.
 

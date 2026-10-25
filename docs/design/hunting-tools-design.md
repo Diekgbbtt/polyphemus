@@ -2,7 +2,7 @@
 
 *Status: DRAFT - not operator-locked.*
 *T10b (#397) note: the orchestrator/`HuntConfig` references below are historical.*
-The modeller writes the unit threat model; the hunter spec set is keyed by the loop dispatch id.
+The modeller writes the unit threat model; the hunter spec set is keyed by the threat dispatch id.
 This document captures the design of the hunting module's agent tool surfaces.
 It covers the shared `graph_view` tool, the store/notes contracts, the KB tool, and the 2026-10-23 description-budget policy.
 The per-agent surfaces are authoritative in `docs/design/hunting-67-hunting-agent-spec.md` §8.7, `docs/design/hunting-67-threat-modeller-spec.md` §5.5, and `docs/design/hunting-67-test-executor-pod-spec.md` §1.4 and §8.12.
@@ -68,13 +68,13 @@ The runner and triager receive the same 3,229 shared text cut and the same auth-
 `replay` is bound only when the runner has a replay seam.
 Its description fell from 2,161 to 1,718 chars, a 443-char cut.
 
-The loop tool surface is removed.
+The threat tool surface is removed.
 The first human message carries the application and loop context, not a second tool catalog.
 The compaction pin keeps that context through a fold.
 
 The cache accounting is in `docs/design/session-cache-measurement-348-adr.md`.
 Removing cached fixed text lowers occupancy but can raise the miss share.
-The hunter is the exception because the loop surface was uncached.
+The hunter is the exception because the threat surface was uncached.
 
 The decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
 The impact map is `docs/design/hunting-context-dedup-impact-map.md`.

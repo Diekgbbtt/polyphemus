@@ -32,7 +32,7 @@ The audit covers:
 - `render_spec_contract()`;
 - every hunter, pod, modeller, and analysis tool description;
 - the phase hints in `hunter_state.py`;
-- the loop payload projection in `hunting_agent.py`;
+- the threat payload projection in `hunting_agent.py`;
 - the pod context renderers.
 
 **A2. Stale-field matrix.**

@@ -1,16 +1,16 @@
 # Threat-model impact elicitation: impact map
 
-*Status: pre-grilling dependency map. This document lists every component that reads the threat-model loop or the failure-mode artifact, the change each component needs, and the order that keeps the tree green. It is not the final spec; the grilling round settles the scoring algorithm and the phase boundaries.*
+*Status: settled 2026-10-25, built 2026-10-25. The artifact is now called a threat; a historical "loop" in the baseline means the same artifact. This document lists every component that reads the threat-model threat artifact or the failure-mode artifact, the change each component needs, and the order that keeps the tree green. It is not the final spec; the grilling round settles the scoring algorithm and the phase boundaries.*
 
 ## 1. End state
 
 Five changes land together:
 
-1. **Impact-first elicitation.** The modeller scores every loop with a CVSS 4.0-like impact judgement over the application and its users: vulnerable confidentiality, integrity, and availability. The modeller reasons in adversarial capabilities and vulnerability chains, not in single-system failure.
-2. **Combined risk score.** The loop risk is a multiplication of the likelihood weight and the impact weight. The unit profile sums the loop risks. The dispatch order and the intake halt use the combined score.
+1. **Impact-first elicitation.** The modeller scores every threat with a CVSS 4.0-like impact judgement over the application and its users: vulnerable confidentiality, integrity, and availability. The modeller reasons in adversarial capabilities and vulnerability chains, not in single-system failure.
+2. **Combined risk score.** The threat risk is a multiplication of the likelihood weight and the impact weight. The unit profile sums the threat risks. The dispatch order and the intake halt use the combined score.
 3. **Failure modes removed.** The `failure_modes` artifact, the `failure_mode_refs` link, the prompt phase, and every reader and writer of that artifact go away. The pod `failure-mode` variant basis goes away. The hunter's failure-mode vocabulary is replaced by attack primitives and exploit chains. Feasibility moves to the hunter and the pod.
-4. **Iterative trust modelling.** The linear `trust_model -> assumptions -> vulnerabilities` stretch becomes a loop. A well-formedness pseudo-phase sits between `VULNERABILITIES_WRITTEN` and `COMPLETED`. It loads the class skill for each loop, counterchecks the trust assumptions, and either patches the model or loops back over the undermodelled part. The model enters the phase by reasoning, patches by writing a lower gate (`trust_model`, `assumptions`, or `vulnerabilities`) after vulnerabilities, and exits by writing one `wellformedness` note and then `COMPLETED`. The passive tracker already records the lower-gate write as `lower_gate`, which is the re-entry signal. The note is the exit memory, written once. The loop has no iteration bound; the run cap is the bound.
-5. **Class binding guard.** Every loop carries a suite class. Technique families (`defence-bypass`, `proxy-techniques`, `two-principal-authz`) and non-suite names are prompt-forbidden and recorded as non-blocking completion findings, never as symbolic rejections.
+4. **Iterative trust modelling.** The linear `trust_model -> assumptions -> vulnerabilities` stretch becomes a phase. A well-formedness pseudo-phase sits between `VULNERABILITIES_WRITTEN` and `COMPLETED`. It loads the class skill for each vulnerability whose class will bound a threat, counterchecks the trust assumptions, and either patches the model or returns to the undermodelled part. The model enters the phase by reasoning, patches by writing a lower gate (`trust_model`, `assumptions`, or `vulnerabilities`) after vulnerabilities, and exits by writing one `wellformedness` note and then `COMPLETED`. The passive tracker already records the lower-gate write as `lower_gate`, which is the re-entry signal. The note is the exit memory, written once. The phase has no iteration bound; the run cap is the bound.
+5. **Class binding guard.** Every threat carries a suite class. Technique families (`defence-bypass`, `proxy-techniques`, `two-principal-authz`) and non-suite names are prompt-forbidden and recorded as non-blocking completion findings, never as symbolic rejections.
 
 ## 2. Scoring model
 
@@ -33,8 +33,8 @@ impact_weight = 0 if impact == 0
               = 2 if impact <= 0.50
               = 3 if impact <= 0.75
               = 4 otherwise
-loop_risk = likelihood_weight * impact_weight
-unit_total = sum(loop_risk)
+threat_risk = likelihood_weight * impact_weight
+unit_total = sum(threat_risk)
 run_total = sum(unit_total)
 crossed = run_total >= threshold
 ```
@@ -46,7 +46,7 @@ The A/B sets the threshold per arm.
 The run record stores the likelihood weights, the impact weights, the impact breakdown, and the risk breakdown.
 The modeller authors the three metrics and a literal end-impact statement; the store computes every score.
 
-The ordinal impact weight is what the run record stores. The raw metrics stay on the vulnerability and the loop for audit.
+The ordinal impact weight is what the run record stores. The raw metrics stay on the vulnerability and the threat for audit.
 
 ## 2.1 Trust characterization axes
 
@@ -131,25 +131,25 @@ It shows the four trust axes, the TOCTOU assumption, the impact metrics, the wel
 - The end impact is a read of the cloud metadata endpoint and internal admin services from the application's network position. The attacker gains internal reach and can chain the metadata credential into the cloud account.
 
 **Well-formedness check.**
-- Loop `loop-1` binds `ssrf`.
+- Threat `threat-1` binds `ssrf`.
 - Load `ssrf`. The Trust Assumptions section says the destination must be revalidated at fetch and the resolved address constrained.
 - The model missed the redirect target. The gap is local: the spatial boundary exists, and the temporal and controls assumptions are incomplete. Add `A-2` "the redirect target is not revalidated" and `F-2`, then re-check.
 - No structural gap. Write the well-formedness note. Complete.
 
 **Low-yield contrast.**
-- A soft-404 contract divergence is recorded as an assumption, not a loop.
-- Its `VC=VI=VA=N`, so the impact weight is `0` and the loop risk is `0`.
-- It does not dilute the green-loop share.
+- A soft-404 contract divergence is recorded as an assumption, not a threat.
+- Its `VC=VI=VA=N`, so the impact weight is `0` and the threat risk is `0`.
+- It does not dilute the green-threat share.
 
 ## 2.3 Well-formedness note (exit only)
 
 The note is written once, when the modeller judges every assumption well-formed.
-If the modeller re-enters the loop, it writes a lower gate first, and the tracker records `lower_gate`.
+If the modeller re-enters the phase, it writes a lower gate first, and the tracker records `lower_gate`.
 No note is written for an intermediate iteration.
 
 ```
 kind: wellformedness
-loops_checked: [loop-1, loop-2]
+threats_checked: [threat-1, threat-2]
 skills_loaded: [ssrf, broken-function-level-authorization]
 assumptions_added:
   - boundary_ref: TA-1
@@ -169,25 +169,25 @@ The trail records the lower-gate writes, so the iteration count is derived, not 
 | Component | Reads or writes | Change | Convergence step |
 |---|---|---|---|
 | `attack/hunting/threat_model.py` `FailureMode` | schema | Delete the class | Expand: add impact first; contract: delete after no reader remains |
-| `threat_model.py` `Loop.failure_mode_refs` | schema | Delete the field | Same |
+| `threat_model.py` `Threat.failure_mode_refs` | schema | Delete the field | Same |
 | `threat_model.py` `ModelSections.failure_modes` | write schema | Delete the field | Same |
-| `threat_model.py` `GATE_SECTIONS[COMPLETED]` | gate table | Replace `failure_modes` with the impact-bearing loops section | Expand: accept both during migration; contract: one section |
-| `threat_model.py` `Vulnerability` | schema | Add `impact` (VC, VI, VA, end-impact statement, ordinal weight) | Add before the loop projection |
-| `threat_model.py` `Loop` | schema | Add `impact` and `risk` (copied or computed) | Add before the ranking change |
+| `threat_model.py` `GATE_SECTIONS[COMPLETED]` | gate table | Replace `failure_modes` with the impact-bearing threats section | Expand: accept both during migration; contract: one section |
+| `threat_model.py` `Vulnerability` | schema | Add `impact` (VC, VI, VA, end-impact statement, ordinal weight) | Add before the threat projection |
+| `threat_model.py` `Threat` | schema | Add `impact` and `risk` (copied or computed) | Add before the ranking change |
 | `threat_model.py` `RISK_WEIGHTS` | score table | Add `IMPACT_WEIGHTS`; keep `RISK_WEIGHTS` for likelihood | Add beside the existing table |
 | `threat_model.py` `compute_risk_profile` | pure | Sum `likelihood_weight * impact_weight`; add the impact breakdown | New tests first |
-| `threat_model.py` `normalise_loops` | pure | Sort by combined score, ties by impact then likelihood | New tests first |
+| `threat_model.py` `normalise_threats` | pure | Sort by combined score, ties by impact then likelihood | New tests first |
 | `threat_model.py` `check_completion` | pure | Remove failure-mode checks; add impact completeness and class-binding findings | New tests first |
 | `threat_model_store.py` `MODEL_SECTIONS` | store | Remove `failure_modes`; add the impact section if separate | Expand then contract |
 | `threat_model_store.py` `write_sections` | store | Accept the new gate shape; stop emitting failure modes | Expand then contract |
-| `threat_model_store.py` loop files | store | Carry impact and risk in each loop file | Add before the mover reads it |
+| `threat_model_store.py` threat files | store | Carry impact and risk in each threat file | Add before the mover reads it |
 | `threat_model_store.py` `is_consumable` | store | Unchanged semantics; a valid COMPLETED model is consumable | Regression test |
 
 ### 3.2 Modeller prompt, tools, and turn input
 
 | Component | Reads or writes | Change | Convergence step |
 |---|---|---|---|
-| `prompts/threat-modeller.md` | prompt | Rebalance Branch A; add the condensed trust axes; add field and state elicitation; add impact elicitation; remove failure-mode deduction and the encoding floor; add the well-formedness loop; add the class guard; add the composite example | Rewrite in one reviewed pass after the schema settles |
+| `prompts/threat-modeller.md` | prompt | Rebalance Branch A; add the condensed trust axes; add field and state elicitation; add impact elicitation; remove failure-mode deduction and the encoding floor; add the well-formedness phase; add the class guard; add the composite example | Rewrite in one reviewed pass after the schema settles |
 | `threat_modeller_tools.py` `ModellerHuntsStoreArgs` | tool schema | Remove `failure_modes`; add impact | Follow the schema |
 | `threat_modeller_tools.py` `hunts_store` description | tool description | Update the gate list, the reference table, and the class copy rule | Prompt review |
 | `threat_modeller_tools.py` `skill_list` / `skill_load` | tool | Expose the class and leaf index for the non-blocking class finding | Add a pure lookup seam |
@@ -203,15 +203,15 @@ The trail records the lower-gate writes, so the iteration count is derived, not 
 
 | Component | Reads or writes | Change | Convergence step |
 |---|---|---|---|
-| `run_lifecycle.py` `model_sum` | pure | Sum the combined loop risk; add the impact breakdown | New tests first |
+| `run_lifecycle.py` `model_sum` | pure | Sum the combined threat risk; add the impact breakdown | New tests first |
 | `run_lifecycle.py` `RiskAccumulator` | pure | Carry the combined total and both breakdowns | New tests first |
 | `run_lifecycle.py` `risk_weights` | config | Return the likelihood and impact weight tables | Run-record compatibility |
 | `run_lifecycle.py` resume | pure | Recompute the combined total from `model_sums` and the models | Regression test |
 | `runtime.py` threshold and record | runtime | Log and persist the combined total; keep the threshold basis | Integration test |
-| `pipeline_sync.py` `_loop_weight` / `_risk` | pure | Use the combined loop risk | Unit test |
-| `mover.py` `ThreatLoopItem` | pure | Carry the risk score and the priority tier, not only likelihood | Expand: keep likelihood; contract: drop it from the sequencing |
+| `pipeline_sync.py` `_threat_weight` / `_risk` | pure | Use the combined threat risk | Unit test |
+| `mover.py` `ThreatItem` | pure | Carry the risk score and the priority tier, not only likelihood | Expand: keep likelihood; contract: drop it from the sequencing |
 | `mover.py` `sequence_dispatch` | pure | Gate on the risk priority, not the likelihood tier | New tests first |
-| `surfer.py` live-loop map | runtime | Carry the risk priority instead of the likelihood | Follow the mover |
+| `surfer.py` live-threat map | runtime | Carry the risk priority instead of the likelihood | Follow the mover |
 | `hunting_status.py` | status | Render the combined breakdown | Integration test |
 | `run_lifecycle.py` `RISK_LEVELS` | config | Keep the likelihood levels; add the impact levels | Compatibility |
 
@@ -233,8 +233,8 @@ The trail records the lower-gate writes, so the iteration count is derived, not 
 | Document | Change |
 |---|---|
 | `docs/design/hunting-67-threat-modeller-spec.md` | Problem statement, phases, risk scoring, prompt material, out-of-scope |
-| `docs/design/hunting-67-threat-model-artifact-spec.md` | Schema, loop fields, failure-mode removal, risk profile |
-| `docs/design/unit-threat-model-workflow.md` | Five phases plus the well-formedness loop; gate shapes |
+| `docs/design/hunting-67-threat-model-artifact-spec.md` | Schema, threat fields, failure-mode removal, risk profile |
+| `docs/design/unit-threat-model-workflow.md` | Five phases plus the well-formedness phase; gate shapes |
 | `docs/design/unit-threat-model-workbench.md` | Q14, Q33, Q38, R3-1, R3-2, R8-4 decisions superseded |
 | `docs/design/unit-threat-model-assertions.md` | Assertions for impact, risk, class binding, well-formedness |
 | `docs/design/unit-threat-model-spec-impact-map.md` | Component impact list |
@@ -246,7 +246,7 @@ The trail records the lower-gate writes, so the iteration count is derived, not 
 | `docs/design/hunting-67-test-executor-pod-spec.md` | Remove the failure-mode variant basis |
 | `docs/design/hunting-pipeline-sync-adr.md` | Dispatch priority uses the combined risk |
 | `src/polymerhus/attack/hunting/CONTEXT.md` | Vocabulary and contracts |
-| New ADR `docs/design/threat-model-impact-elicitation-adr.md` | Record the failure-mode removal, the impact scoring, the well-formedness loop, and the class guard |
+| New ADR `docs/design/threat-model-impact-elicitation-adr.md` | Record the failure-mode removal, the impact scoring, the well-formedness phase, and the class guard |
 
 ### 3.6 Tests and fixtures
 
@@ -254,7 +254,7 @@ The trail records the lower-gate writes, so the iteration count is derived, not 
 |---|---|
 | Threat model | `test_threat_model_store.py`, `test_threat_modeller.py`, `test_threat_modeller_prompt.py` |
 | Modeller wiring | `test_hunting_modeller_wiring.py` |
-| Risk and dispatch | `test_run_lifecycle.py`, `test_hunting_mover.py`, `test_hunting_loop_dispatch.py`, `test_hunting_pipeline_sync.py`, `test_hunting_pipeline_sync_gate.py`, `test_hunting_mover_sync_filter.py`, `test_hunting_surfer_sync_wiring.py` |
+| Risk and dispatch | `test_run_lifecycle.py`, `test_hunting_mover.py`, `test_hunting_threat_dispatch.py`, `test_hunting_pipeline_sync.py`, `test_hunting_pipeline_sync_gate.py`, `test_hunting_mover_sync_filter.py`, `test_hunting_surfer_sync_wiring.py` |
 | Hunter payload and prompt | `test_hunting_agent.py`, `test_hunting_agent_prompt.py`, `test_hunter_state.py`, `test_artifact_skill_config.py`, `test_hunting_review_fixes.py` |
 | Pod variant basis | `pod/test_variant_basis.py`, `pod/test_variant_mint.py`, `pod/test_prompts.py`, `pod/test_spec_reads.py`, `pod/test_prompt_memory.py` |
 | Fixtures | `tests/hunting_fixtures.py` |
@@ -274,10 +274,10 @@ The failure-mode removal is a wide refactor. Use expand-contract so every commit
 
 ### Phase 1: Impact schema and combined score (expand)
 
-- Add `Impact` to `Vulnerability` and `Loop`.
+- Add `Impact` to `Vulnerability` and `Threat`.
 - Add `IMPACT_WEIGHTS` and the combined `compute_risk_profile`.
 - Keep `failure_modes` optional and unused by the new score.
-- Add the impact to the loop file and the hunter payload.
+- Add the impact to the threat file and the hunter payload.
 - Add tests for the metrics, the weight mapping, the profile, and the ranking.
 - The old models still parse because the new fields are optional or defaulted.
 
@@ -290,7 +290,7 @@ The failure-mode removal is a wide refactor. Use expand-contract so every commit
 
 ### Phase 3: Prompt rewrite
 
-- Rewrite the modeller prompt: trust axes, field and state elicitation, impact elicitation, well-formedness loop, class guard, composite example.
+- Rewrite the modeller prompt: trust axes, field and state elicitation, impact elicitation, well-formedness phase, class guard, composite example.
 - Remove the failure-mode phase and the encoding floor.
 - Update the hunter prompt vocabulary.
 - Update the pod triager prompt and remove the failure-mode basis.
@@ -313,26 +313,28 @@ The failure-mode removal is a wide refactor. Use expand-contract so every commit
 - Run the focused suites, then `tests/attack`, then the pod integration and e2e suites.
 - Run `compileall`.
 - Run the A/B on the fresh instance with the 7M budget per the operator's later protocol.
-- Measure against the baseline: the high-yield share of prioritised loops, the sharp-boundary share, the class-binding rate, the severe-below-high count, and the capped tokens per severe loop.
+- Measure against the baseline: the high-yield share of prioritised threats, the sharp-boundary share, the class-binding rate, the severe-below-high count, and the capped tokens per severe threat.
+- Measure the narrowing risk: the bound class parent share, the spec count per threat, and the substantial-and-well-formed share. The substrate is `eval/measure_utm.py`; the rubric is `eval/prompts/measure.md`.
 
 ## 5. Settled decisions and the remaining frontier
 
 Settled on 2026-10-25:
 
 1. The impact metrics are `VC`, `VI`, `VA` only. No subsequent-system metrics and no `max`.
-2. The impact formula, metric weights, ordinal mapping, loop risk, ranking, dispatch buckets, and provisional threshold are fixed in section 2.
+2. The impact formula, metric weights, ordinal mapping, threat risk, ranking, dispatch buckets, and provisional threshold are fixed in section 2.
 3. The trust axes are `identity`, `spatial`, `temporal`, and `controls_semantics`, with the definitions in section 2.1.
-4. The well-formedness phase is a pass-level pseudo-phase, not a new `ModelState`. The model enters it by reasoning after `VULNERABILITIES_WRITTEN`. A lower-gate write is the re-entry signal; the tracker already records it as `lower_gate`. The exit is one `wellformedness` note followed by the `COMPLETED` write. The note is the exit memory only, never a per-iteration note. The loop has no iteration bound.
+4. The well-formedness phase is a pass-level pseudo-phase, not a new `ModelState`. The model enters it by reasoning after `VULNERABILITIES_WRITTEN`. A lower-gate write is the re-entry signal; the tracker already records it as `lower_gate`. The exit is one `wellformedness` note followed by the `COMPLETED` write. The note is the exit memory only, never a per-iteration note. The phase has no iteration bound.
 5. The drop rule has two clauses: the data is not attacker-influenced, or the trust agreement is misspecified. Unobserved assumptions survive. A missing observation or a failed probe is not a drop reason. The modeller still judges exploitability through the likelihood score, because the likelihood names the adversarial capabilities the attack needs. The hunter and the pod own technical feasibility and effective attempt.
-6. The 90% metric is the green-loop share over all stored loops. A green loop is a loop whose `web_vulnerability_class` is in the strict high-yield set plus CSRF and clickjacking. The set is the one ratified before this workstream.
+6. The 90% metric is the green-threat share over all stored threats. A green threat is a threat whose `web_vulnerability_class` is in the strict high-yield set plus CSRF and clickjacking. The set is the one ratified before this workstream.
 7. The hunter loses every reference to the failure-mode attribute. It does not gain a replacement vocabulary. Its reasoning stays over the existing axes: vulnerability variants, manifestation, testing technique, framework or protocol misconfiguration, and payload vector class.
-8. The class binding requires a suite class parent or leaf on every loop. `suite_gap` is removed. A novel class binds its nearest parent and keeps the novel name in `canonical_class`. Technique families stay in the characterisation prose. The non-blocking finding covers an empty class, a technique family, and a name outside the suite.
+8. The next trial measures narrowing: the bound class is a parent (broad) or a leaf (narrow), and the linked spec set is substantial (at least three) and well-formed (the primary discrimination axes do not overlap). The measurement reports; it does not gate.
+9. The class binding requires a suite class parent or leaf on every threat. `suite_gap` is removed. A novel class binds its nearest parent and keeps the novel name in `canonical_class`. Technique families stay in the characterisation prose. The non-blocking finding covers an empty class, a technique family, and a name outside the suite.
 
 Remaining frontier:
 
 1. **The composite example.** The operator chose SSRF with TOCTOU: a parameter concatenated in URL construction, a temporal check, and a controls-semantics check that may happen at initialization, which yields a TOCTOU equality assumption and SSRF. The example must show the full workflow, the impact metrics, and the well-formedness check.
-2. **The well-formedness note content.** The exact fields the note carries at the exit: loops checked, skills loaded, assumptions found, structural versus local, and the final action.
-3. **The hunter prompt cleanup.** The exact list of failure-mode references to remove: the loop ontology, `[D1]`, the grounding target, the slice pass, the exhaustiveness sentence, and the example.
+2. **The well-formedness note content.** The exact fields the note carries at the exit: vulnerabilities checked, skills loaded, assumptions found, absent Trust Assumptions sections, structural versus local, and the final action.
+3. **The hunter prompt cleanup.** The exact list of failure-mode references to remove: the threat ontology, `[D1]`, the grounding target, the slice pass, the exhaustiveness sentence, and the example.
 4. **The A/B protocol.** The 7M budget per arm or total, the unit set, the fresh-instance reset, and the measurement window. The operator will specify the eval details after implementation.
 5. **The threshold per arm.** The default is `360`; the A/B sets it per arm. The arms must not differ in the threshold or the comparison is not fair.
 6. **The scoring calibration.** The baseline impact tiers are not the new metrics. The `360` default is provisional until the first re-model writes real `VC/VI/VA` values.

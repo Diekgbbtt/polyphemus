@@ -1,5 +1,7 @@
 # Unit threat model - implementation plan and dependency map
 
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+
 *Status: implementation plan (2026-10-18). The specification is issue [#373](https://github.com/Diekgbbtt/polyphemus/issues/373). The contract set is S1-S5 in `docs/design/`. This plan maps the data and logic dependencies, cuts the workflow tickets, and fixes the TDD and review loop. It is the input to `/to-tickets` and `/subagent-driven-development`.*
 
 ## 1. Delivery strategy

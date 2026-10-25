@@ -2,8 +2,8 @@
 
 *Status: spec (contract). Resolved by the 2026-08-23/24 grilling (`hunting-pipeline-wiring-adr.md`), published as spec #169 with wiring tickets #170-#175. Operates on the ratified memory topology (`hunting-memory-system-spec.md`, tickets #165-#168) and the 164 state-graph hunter (#164). Sequencing per Q18-A / ADR: implementation is held off until the produced/consumed topology lands. AMENDED 2026-08-25 by the identity-based surfer refactor: config_key canonical identity, own-status dispatch gate, durable parent-keyed export record, and the pod-only launch resume-by-coroutine-id ruling.*
 
-**AMENDED 2026-10-18.** The dispatch grain is the loop file.
-The per-config dispatch and the `specified` gate are replaced by the per-loop dispatch and the `ratified` gate.
+**AMENDED 2026-10-18.** The dispatch grain is the threat file.
+The per-config dispatch and the `specified` gate are replaced by the per-threat dispatch and the `ratified` gate.
 The surfer and mover mechanics are unchanged.
 See `docs/design/hunting-67-threat-model-artifact-spec.md` section 8 and `docs/design/hunting-164-state-graph-spec.md` section 14.
 

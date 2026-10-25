@@ -94,7 +94,7 @@ The per-project data root is `<codebase_root>/data/`, module-scoped per project:
 │       ├── scripts/
 │       └── assets/
 ├── hunting/                # the hunting module owns this
-│   ├── threat_modeller/    # ThreatModelStore (model documents, loop files, notes.yaml)
+│   ├── threat_modeller/    # ThreatModelStore (model documents, threat files, notes.yaml)
 │   ├── hunter/             # HunterMemoryStore (test-specs/<dispatch_id>/, notes.yaml)
 │   └── test-executor-pod/  # PodMemoryStore
 └── ...                     # recon/, analysis/ and later modules, same one-dir-per-module rule

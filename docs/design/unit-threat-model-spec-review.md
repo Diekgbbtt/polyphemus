@@ -1,5 +1,7 @@
 # Unit threat model specification - adversarial review
 
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+
 *Historical review snapshot (2026-10-18).*
 It records the design review at `HEAD 454233c0`; the planner-era module names it cites were renamed by T10b #397.
 

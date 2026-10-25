@@ -2,20 +2,20 @@
 
 ## Goal
 
-Shift the threat modeller's loop mass from low-yield contract findings to high-yield, technically sharp vulnerabilities.
-Make end impact a first-class, numerically scored property of every loop.
+Shift the threat modeller's threat mass from low-yield contract findings to high-yield, technically sharp vulnerabilities.
+Make end impact a first-class, numerically scored property of every threat.
 Remove the failure-mode artifact and move technical feasibility to the hunter and the pod.
-Turn the trust-model stretch into a well-formedness loop that reads the class skills.
+Turn the trust-model stretch into a well-formedness phase that reads the class skills.
 Keep the run deterministic, auditable, and within the token budget.
 
 ## Experiment score
 
-The success gate is the green-loop share over all stored loops.
+The success gate is the green-threat share over all stored threats.
 
-- A loop is green when its `web_vulnerability_class` is in the ratified high-yield set plus CSRF and clickjacking.
+- A threat is green when its `web_vulnerability_class` is in the ratified high-yield set plus CSRF and clickjacking.
 - A variant leaf rolls up to its class parent before the check.
-- The target is more than 90% green loops.
-- Secondary metrics: severe share, sharp-boundary share, class-binding rate, severe loops below the medium risk bucket, capped tokens per green loop.
+- The target is more than 90% green threats.
+- Secondary metrics: severe share, sharp-boundary share, class-binding rate, severe threats below the medium risk bucket, capped tokens per green threat.
 - The A/B uses a 7M capped budget per the operator's protocol.
 
 ## Decisions
@@ -24,7 +24,7 @@ The success gate is the green-loop share over all stored loops.
 - The metric weights are `N = 0.00`, `L = 0.22`, `M = 0.35`, `H = 0.56`.
 - `impact = 1 - (1 - VC)(1 - VI)(1 - VA)`.
 - The ordinal impact weight is `0`, `1`, `2`, `3`, `4` with the thresholds in the impact map.
-- `loop_risk = likelihood_weight * impact_weight`.
+- `threat_risk = likelihood_weight * impact_weight`.
 - The ranking is risk, then impact, then likelihood, then write order.
 - The dispatch buckets are critical `>= 12`, high `8..11`, medium `4..7`, low `1..3`, none `0`.
 - The provisional threshold is `360`.
@@ -32,7 +32,7 @@ The success gate is the green-loop share over all stored loops.
 - The well-formedness phase is a pass-level pseudo-phase, not a new `ModelState`.
 - The exit is one `wellformedness` note plus the `COMPLETED` write.
 - A lower-gate write after vulnerabilities is the re-entry signal.
-- The loop has no iteration bound.
+- The phase has no iteration bound.
 - The drop rule has two clauses: the data is not attacker-influenced, or the trust agreement is misspecified.
 - Unobserved assumptions survive. A missing observation or a failed probe is not a drop reason.
 - The modeller judges exploitability through the likelihood score. The hunter and the pod own technical feasibility and effective attempt.
@@ -41,7 +41,7 @@ The success gate is the green-loop share over all stored loops.
 - The class binding requires a suite class parent or leaf. `suite_gap` is removed.
 - Technique families are never the class. They stay in the characterisation prose.
 - The non-blocking finding covers an empty class, a technique family, and a name outside the suite.
-- The low-yield loops stay stored. Their risk is low or zero, so they do not enter the priority dispatch.
+- The low-yield threats stay stored. Their risk is low or zero, so they do not enter the priority dispatch.
 
 ## Non-goals
 
@@ -55,15 +55,15 @@ The success gate is the green-loop share over all stored loops.
 
 ## Seams under test
 
-- `threat_model.Impact`, `compute_impact`, `impact_weight`, `loop_risk`, `compute_risk_profile`, `normalise_loops`, `check_completion`.
+- `threat_model.Impact`, `compute_impact`, `impact_weight`, `threat_risk`, `compute_risk_profile`, `normalise_threats`, `check_completion`.
 - `threat_model_store.write_sections`, `ThreatModelStore._merged_document`, `_commit`.
 - `threat_modeller_tools.ModellerHuntsStoreArgs`, `ModellerNotesHandle`, `build_modeller_notes_tool`, `build_vulnerability_suite_tools`.
 - `threat_modeller.arun_modeller_pass`, `ModellerTurnInput`, `STATE_INSTRUCTIONS`, `PassiveGateTracker`.
 - `run_lifecycle.model_sum`, `RiskAccumulator`, `risk_weights`, the resume recompute.
 - `runtime` threshold and run-record writes.
-- `pipeline_sync._loop_weight`, `_risk`, `hunt_rank`.
-- `mover.ThreatLoopItem`, `sequence_dispatch`, `threat_loop_item`.
-- `surfer` live-loop priority map.
+- `pipeline_sync._threat_weight`, `_risk`, `hunt_rank`.
+- `mover.ThreatItem`, `sequence_dispatch`, `threat_item`.
+- `surfer` live-threat priority map.
 - `hunter_payload.materialise_hunter_payload`.
 - `hunting_agent._compose_first_step`, `prompts/hunting-agent.md`.
 - `hunter_state.phase_note_name`, the grounding note.
@@ -72,15 +72,15 @@ The success gate is the green-loop share over all stored loops.
 
 ## Acceptance criteria
 
-- `impact` exists on the vulnerability and the loop, with `VC`, `VI`, `VA`, the end-impact statement, and the ordinal weight.
+- `impact` exists on the vulnerability and the threat, with `VC`, `VI`, `VA`, the end-impact statement, and the ordinal weight.
 - `compute_impact` returns the formula value and the ordinal weight for every metric combination in the table test.
 - `compute_risk_profile` sums `likelihood_weight * impact_weight`.
-- `normalise_loops` ranks by risk, then impact, then likelihood, then write order.
-- The loop file and the hunter payload carry the impact and the risk.
+- `normalise_threats` ranks by risk, then impact, then likelihood, then write order.
+- The threat file and the hunter payload carry the impact and the risk.
 - The run record carries the likelihood weights, the impact weights, the impact breakdown, and the risk breakdown.
 - The resume recomputes the combined total from the model sums and the models.
-- The mover gates low-bucket loops behind higher buckets.
-- The modeller prompt carries the four trust axes, the field and state elicitation, the impact elicitation, the well-formedness loop, the class guard, and the composite example.
+- The mover gates low-bucket threats behind higher buckets.
+- The modeller prompt carries the four trust axes, the field and state elicitation, the impact elicitation, the well-formedness phase, the class guard, and the composite example.
 - The modeller prompt carries no failure-mode phase and no encoding floor.
 - The pass asks the well-formedness turn after vulnerabilities and after a lower-gate write.
 - The `wellformedness` note is written once at the exit.
@@ -93,7 +93,7 @@ The success gate is the green-loop share over all stored loops.
 - The focused suites pass, then `tests/attack`, then the pod integration and e2e suites.
 - `compileall` is clean and `git diff --check` is clean.
 - The A/B runs on a fresh instance with the same threshold per arm.
-- The green-loop share is measured over all stored loops.
+- The green-threat share is measured over all stored threats.
 
 ## Tickets
 
@@ -112,8 +112,8 @@ The failure-mode removal is expand-contract: the impact lands first, the readers
 
 | # | Ticket | Blocked by | Delivers |
 |---|---|---|---|
-| 404 | Add the impact model to the threat-model schema | 402 | `Impact`, `compute_impact`, `impact_weight`, `loop_risk`, the combined profile, the ranking, and the table tests |
-| 405 | Persist the impact through the store and the model sections | 404 | The write/read round-trip, the old-model tolerance, and the loop-file impact |
+| 404 | Add the impact model to the threat-model schema | 402 | `Impact`, `compute_impact`, `impact_weight`, `threat_risk`, the combined profile, the ranking, and the table tests |
+| 405 | Persist the impact through the store and the model sections | 404 | The write/read round-trip, the old-model tolerance, and the threat-file impact |
 | 406 | Carry the impact and risk in the hunter payload | 405 | The payload fields and the tests |
 | 407 | Move the run risk accumulator to the combined score | 406 | `model_sum`, `RiskAccumulator`, `risk_weights`, the resume recompute, and the run-record fields |
 | 408 | Move the dispatch priority to the combined score | 407 | `pipeline_sync`, `mover`, `surfer`, the low-bucket gating, and the tests |
@@ -145,7 +145,7 @@ The failure-mode removal is expand-contract: the impact lands first, the readers
 |---|---|---|---|
 | 420 | Update the design specs, CONTEXT, and the ADR | 419 | The full docs pass |
 | 421 | Run the full verification suite | 420 | The focused suites, `tests/attack`, the pod integration and e2e, `compileall`, and `git diff --check` |
-| 422 | Run the A/B and measure the green-loop share | 421 | The A/B report and the ship/iterate decision |
+| 422 | Run the A/B and measure the green-threat share | 421 | The A/B report and the ship/iterate decision |
 
 ## Status
 
@@ -154,8 +154,10 @@ The failure-mode removal is expand-contract: the impact lands first, the readers
 - Phase 2 is complete. The prompt, well-formedness pass, class guard, and example are at `8a5bf072`.
 - Phase 3 is complete. The failure-mode contraction and the hunter/pod cleanup are at `de9cb2c5` and `2e2037a5`.
 - Phase 4 is complete for the docs. The implementation result is `docs/experiments/modeller-impact-quality/IMPLEMENTATION.md`.
-- The procedural verification is complete: `tests/attack` 1094 passed, pod contracts and e2e 27 passed, project management plus settings 8 passed and 2 skipped, eval trial 68 passed, `compileall` clean, `git diff --check` clean.
+- Phase 5 is complete. The artifact is renamed from loop to threat across the module, the store, the prompts, the eval tooling, and the current documentation; the model schema is version 2. The next-trial narrowing measurement is built into `eval/measure_utm.py` and `eval/prompts/measure.md`.
+- The procedural verification is complete: `tests/attack` 1097 passed, `tests/eval` 831 passed, focused integration and e2e 89 passed, project management plus settings 50 passed and 2 skipped, `compileall` clean, `git diff --check` clean.
 - The A/B is pending the operator's protocol. It is an experimentation item, not a tracked ticket.
+- The A/B also reports the narrowing metrics: the bound-class parent share, the spec count per threat, and the substantial-and-well-formed share.
 
 ## Tight feedback loops
 

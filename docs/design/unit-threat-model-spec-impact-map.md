@@ -6,11 +6,11 @@ The threat-model impact-elicitation workstream supersedes the likelihood-only ri
 The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
 Where this document and the amendment disagree, the amendment wins.
 
-- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
-- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 
@@ -35,8 +35,8 @@ No item in this map reopens a decided question. The specs make implementation-le
 | ID | Document | Action | Contract it owns |
 |---|---|---|---|
 | S1 | `docs/design/hunting-67-threat-modeller-spec.md` | NEW | The threat modeller agent: identity, goal, workflow states and gates, tools, context, prompt material, termination, probing, run lifecycle, observability, honour clauses, failure handling. |
-| S2 | `docs/design/hunting-67-threat-model-artifact-spec.md` | NEW | The formal unit threat model artifact: entity shapes, evidence and confidence model, loop entity, risk scoring, store layout, consumption, dispatch payload, validation, cross-run semantics. |
-| S3 | `docs/design/hunting-67-hunting-agent-spec.md` | EXTEND, section 8 | The hunter workflow redesign: loop payload input, pass sequence, prompt tree integration, spec-set lifecycle, typed surface, removals. |
+| S2 | `docs/design/hunting-67-threat-model-artifact-spec.md` | NEW | The formal unit threat model artifact: entity shapes, evidence and confidence model, threat entity, risk scoring, store layout, consumption, dispatch payload, validation, cross-run semantics. |
+| S3 | `docs/design/hunting-67-hunting-agent-spec.md` | EXTEND, section 8 | The hunter workflow redesign: threat payload input, pass sequence, prompt tree integration, spec-set lifecycle, typed surface, removals. |
 | S4 | `docs/design/hunting-164-state-graph-spec.md` | EXTEND, section 14 | The passive hunter harness: new pass FSM, proxy-signal matrix, signal acceptance, hints, phase-summary notes, state channels, removals. |
 | S5 | `docs/design/hunting-67-test-executor-pod-spec.md` | EXTEND, section 8 | The test-executor pod contract: D4 delta, INIT gate, probe authoring without the retired vector, triager variant minting, prompt context. |
 
@@ -90,9 +90,9 @@ Each decision below must appear in the named spec section. The adversarial revie
 | R1-4: intake and ordering | S1 7.2 |
 | R1-5: tool surface and capabilities | S1 5 |
 | R2-1 / R2-10: artifact contract, one model per unit, evidences, no probe plans | S2 4, 5 |
-| R2-2: loop entity, 1:n failure modes, ids in ranked order | S2 5.6, 6 |
-| R2-3: hunter data contract delta (one loop record per dispatch) | S3 8.2; S2 8.2 |
-| R2-4: no `HuntConfig`; the per-loop payload is materialised at dispatch | S2 8; S3 8.2 |
+| R2-2: threat entity, 1:n failure modes, ids in ranked order | S2 5.6, 6 |
+| R2-3: hunter data contract delta (one threat record per dispatch) | S3 8.2; S2 8.2 |
+| R2-4: no `HuntConfig`; the per-threat payload is materialised at dispatch | S2 8; S3 8.2 |
 | R2-5: progressive risk budget | S1 7.4; S2 7.4 |
 | R2-6: dispatch interleave (the `parallel` sync mode; `batched`/`serial` add the phase gate) | S1 7.3; S2 8.4; ADR `hunting-pipeline-sync-adr.md` |
 | R2-7: KB disposal | S1 5.6; S3 8.8 |
@@ -100,7 +100,7 @@ Each decision below must appear in the named spec section. The adversarial revie
 | R2-11: one generic store-write surface; passive trajectory keeping | S1 5.1; S2 10.3 |
 | R2-12: notes documents removed; material embedded in prompts | S1 6.2, 8 |
 | R2-13: per-state inputs and acquisition cost | S1 4.6, 6.2, 6.3 |
-| R2-14 / Q20: low-ranked loops stay dispatchable; sequencing high and medium first | S1 7.6; S2 8.3 |
+| R2-14 / Q20: low-ranked threats stay dispatchable; sequencing high and medium first | S1 7.6; S2 8.3 |
 | R2-15: L1 application-surface overview entity | S1 4.6, 6.2 |
 | R2-16: hunter-side materialisation retired fully | S1 5.6; S3 8.8 |
 | R2-17: gate cadence is prompt-level; telemetried | S1 4.5, 6.1 |
@@ -119,7 +119,7 @@ Each decision below must appear in the named spec section. The adversarial revie
 | R4-3 / R8-4 / Q43: KILL accepted; two disciplines adopted; no boundary-record adoption | S1 6.4, 6.5 |
 | R4-4: alpha-omega deferred | S1 11 |
 | R4-5: surface recovery out of scope | S1 4.3, 11 |
-| R5-1 / Q34: design B, per-unit directory, per-loop files | S2 4.2, 8.1 |
+| R5-1 / Q34: design B, per-unit directory, per-threat files | S2 4.2, 8.1 |
 | R5-2 / Q35: validation seam | S1 6.6; S2 5.7 |
 | R6-1 / Q35: confidence degree, falsification lifecycle | S1 6.3; S2 2.3, 5.2, 7.2 |
 | R6-2 / Q36: hunter feed-forward contract | S3 8.2, 8.6; S2 8.2 |
@@ -138,7 +138,7 @@ Each decision below must appear in the named spec section. The adversarial revie
 | Enum `none / low / medium / high / critical` | S2 7.1 |
 | Monotonic weights | S2 7.1 |
 | No impact term | S2 7.2 |
-| `none` loops are retained but not dispatched | S2 5.6, 8.3 |
+| `none` threats are retained but not dispatched | S2 5.6, 8.3 |
 | Threshold constant in harness configuration; calibration basis recorded | S2 7.4; S1 7.4; S2 9.2 |
 | Four reasoning factors: attack vector, attack requirements, privileges required, complexity | S2 7.2 |
 | Per-level breakdown recorded | S2 7.3, 7.4 |
@@ -206,15 +206,15 @@ The action column names the phase that performs the change: **spec** means this 
 | `docs/design/hunting-164-assertion-catalogue.md` | Lifecycle and FSM assertions superseded | hygiene | build |
 | `docs/design/hunting-83-hunting-agent-implementation.md` | Workflow and typed-surface clauses superseded | hygiene | build |
 | `docs/design/hunting-orchestrator-candidates-rewrite-spec.md` | Modeller predecessor; superseded in full for the modeller | hygiene | build |
-| `docs/design/hunting-pipeline-wiring-adr.md` | Per-config dispatch and `specified` gate updated to per-loop and `ratified` | build | build |
+| `docs/design/hunting-pipeline-wiring-adr.md` | Per-config dispatch and `specified` gate updated to per-threat and `ratified` | build | build |
 | `docs/design/hunting-pipeline-wiring-spec.md` | Same as above | build | build |
-| `docs/design/eval-harness-design.md` | Hunt-config references translated to threat-model and loop references | build | build |
+| `docs/design/eval-harness-design.md` | Hunt-config references translated to threat-model and threat references | build | build |
 | `docs/design/vuln-testing-remediation-map.md` | D4 field list updated | build | build |
 | `docs/design/typesafe-system-one-evaluation.md` | D4 field list updated | build | build |
 | `docs/design/http-proxy-history-design.md` | `payload_vector_space.request_ref` reference updated to the replay runtime path | build | build |
 | `docs/design/domain-model.md` | Add the unit threat model bounded context and entities | build | build |
 | `docs/design/evolution-paradigm.md` | Minimal citation only, per Q60 | build | build |
-| `src/polymerhus/attack/hunting/CONTEXT.md` | Stale `TestImplementationSpec` term updated; `WELL-FORMEDNESS`, `phase_summary`, loop payload, artifact terms added or sharpened | build | build |
+| `src/polymerhus/attack/hunting/CONTEXT.md` | Stale `TestImplementationSpec` term updated; `WELL-FORMEDNESS`, `phase_summary`, threat payload, artifact terms added or sharpened | build | build |
 | `src/polymerhus/attack/hunting/prompts/hunt-orchestrator.md` | Rewritten as the threat modeller prompt | build | build |
 | `src/polymerhus/attack/hunting/prompts/hunting-agent.md` | Rewritten in the prompt work phase | build | prompt work phase |
 | `src/polymerhus/attack/hunting/prompts/pod-triager.md` | Mining section and decision output rewritten | build | build |
@@ -239,10 +239,10 @@ The implementation plan cuts these into the workflow tickets.
 
 | Surface | Impact | Action | Owner |
 |---|---|---|---|
-| `ThreatModelStore` and the model schema module (new) | The artifact, layout, commit protocol, checker, loop files | build | modeller ticket |
+| `ThreatModelStore` and the model schema module (new) | The artifact, layout, commit protocol, checker, threat files | build | modeller ticket |
 | `read_only_graph` (renamed from `hunt_orchestrator` by T10b #397), `orchestrator_graph`, `actors`, `runtime` | Planner pass replaced by the modeller pass; role and session rename; run record; the residual graph view renamed to its responsibility | build | modeller ticket; T10b done |
-| `hunt_store`, `hunter_memory` | The modeller config store retires; the hunter memory moves to the loop key | build | modeller and hunter tickets |
-| `surfer`, `mover` | Per-loop dispatch, the validity predicate, the pause, the quiesce, the zero-loop consume | build | wiring ticket |
+| `hunt_store`, `hunter_memory` | The modeller config store retires; the hunter memory moves to the threat key | build | modeller and hunter tickets |
+| `surfer`, `mover` | Per-threat dispatch, the validity predicate, the pause, the quiesce, the zero-threat consume | build | wiring ticket |
 | `hunter_state`, `hunter_graph`, `hunter_tools`, `hunting_agent` | Pass FSM, spec set, set write, note kind, skill tools, removals | build | hunter harness ticket |
 | `prompts/hunting-agent.md`, `prompts/examples.md` | Prompt redesign and examples | build | prompt work phase |
 | `prompts/hunt-orchestrator.md` | Rewritten as the threat modeller prompt | build | modeller ticket |
@@ -255,8 +255,8 @@ The implementation plan cuts these into the workflow tickets.
 | `tests/attack/test_hunter_state.py`, `test_hunting_agent.py`, `test_hunt_store.py`, `test_hunter_memory.py`, `test_hunting_wiring.py`, `test_hunting_surfer_tick.py` | FSM, set write, store key, dispatch | build | respective tickets |
 | `tests/attack/pod/test_verification.py`, `test_graph.py`, `test_prompt_memory.py`, `test_request_ref.py`, `test_react_seams.py`, `test_compaction_seam.py` | INIT gate, variant basis, baseline ref | build | pod ticket |
 | `tests/integration/test_test_executor_pod_contracts.py`, `test_hunting_wiring_mover.py`, `hunting_wiring_stack.py` | D4, dispatch, quiesce | build | respective tickets |
-| `tests/e2e/test_test_executor_pod_walkthrough.py`, `tests/e2e/harness/driver.py`, `tests/e2e/fixtures/specs/*.yaml` | Reduced D4 fixtures, per-loop dispatch | build | eval ticket |
-| The eval fixtures, trial records, assessor and diagnoser prompts, challenge-location mapping | Hunt-config vocabulary translated to loops; `derive_verdict` disabled or replaced | build | eval ticket |
+| `tests/e2e/test_test_executor_pod_walkthrough.py`, `tests/e2e/harness/driver.py`, `tests/e2e/fixtures/specs/*.yaml` | Reduced D4 fixtures, per-threat dispatch | build | eval ticket |
+| The eval fixtures, trial records, assessor and diagnoser prompts, challenge-location mapping | Hunt-config vocabulary translated to threats; `derive_verdict` disabled or replaced | build | eval ticket |
 | `src/polymerhus/project_management` references to `specified` | Status vocabulary update where the hunting artifacts are read | build | build |
 | `data/hunting/fault-kb.yaml` | Keep only if a documented consumer remains; otherwise retire with the old selection path | build | modeller ticket |
 
@@ -283,7 +283,7 @@ This register lists the stale claims a reader or an implementation could still t
 | `hunting-67-per-agent-specs-spec.md` 4, 5, 7 | Planner and old hunter contracts; D4 fields | S1, S3, S5 | fixed; header marker |
 | `hunting-67-per-agent-specs-decisions.md` | D67-03, D67-07, D67-10 as live | Supersession note to S3/S5 | build |
 | `hunting-store-write-decisions.md` 10 | Hunter spec status `specified`; FaultItem draft body | S2 6.2; S3 8.6 | fixed |
-| `hunting-memory-system-spec.md` hunter sections | Per-config hunter folder and `fault_key` | S2 4.2 and S3 8.7 per-loop key | build |
+| `hunting-memory-system-spec.md` hunter sections | Per-config hunter folder and `fault_key` | S2 4.2 and S3 8.7 per-threat key | build |
 | `hunting-67-test-executor-pod-spec.md` 2 | Testing pattern is the open NL pattern | Retired; the skill procedure carries the procedural knowledge | fixed; section marker |
 | `hunting-67-test-executor-pod-spec.md` O12/C11 | Empty payload vector still probes once | No probe derivable lands `no-symptom-evidence`, `clean=false` | fixed; section marker |
 | `hunting-67-test-executor-pod-spec.md` 2 variants | Declining a spec attribute yields a variant | The seven procedure-gap bases plus the failure-mode and runner triggers | fixed; section marker |
@@ -296,14 +296,14 @@ This register lists the stale claims a reader or an implementation could still t
 | `CONTEXT.md` `TestImplementationSpec` term | Testing pattern, payload vector space, interpretation guidance | The reduced D4 surface; three fields retired | fixed |
 | `CONTEXT.md` `persisted artifact schema` | Spec terminal `specified` | Terminal `ratified`; `verified` retired | fixed |
 | `CONTEXT.md` `config status lifecycle` | The hunter spec and config use different vocabularies | One vocabulary `{hypothesised, ratified, dropped}` | fixed |
-| `CONTEXT.md` `hunting agent` term | The per-config hunter, `derive_verdict`, and the old tool surface as current | The redesign note names the per-loop hunter and the removals | fixed |
+| `CONTEXT.md` `hunting agent` term | The per-config hunter, `derive_verdict`, and the old tool surface as current | The redesign note names the per-threat hunter and the removals | fixed |
 | `prompts/hunting-agent.md` | The old tree with EVALUATE, CONCLUDE, [G], and the fault lifecycle | The S3 pass sequence | build; prompt work phase |
 | `prompts/pod-triager.md` | Variant mining from a declined spec attribute | The procedure-diff basis | build |
 | `prompts/pod-runner.md` | `payload_vector_space.request_ref` | `provenance.baseline_ref` | build |
 | `prompts/examples.md` | Old examples with retired fields | New pass and surface examples | build; prompt work phase |
 | `prompts/hunt-orchestrator.md` | The planner prompt | The threat modeller prompt | build |
 | `eval-harness-design.md` | `derive_verdict` and the old D4 fields | The hunt-config translation and the disabled or replaced verdict derivation | build |
-| `eval/OPERATOR.md` | The oracle's D4 list and hunt-config vocabulary | The reduced D4 and loop vocabulary | build |
+| `eval/OPERATOR.md` | The oracle's D4 list and hunt-config vocabulary | The reduced D4 and threat vocabulary | build |
 | `data/hunting/fault-kb.yaml` and `fault_kb.py` / `fault_source.py` / `symptom_kb.py` | The old selection and materialisation path | Retire the consumers and record the data file disposition | build |
 
 ## 6. Naming and identity decisions
@@ -318,12 +318,12 @@ These names are fixed by this spec set. Implementation must not invent alternati
 - Threat-model store root: `data/<project_id>/hunting/threat_modeller/` with `produced/`, `consumed/`, and `abandoned/`.
 - Unit directory: `<unit_name>/`, where `<unit_name>` sanitises `:` and `/` to `-`; a sanitised-name collision appends `-<first 8 hex of sha256(unit_id)>`.
 - Model document: `<unit_name>.yaml` inside the unit directory.
-- Loop file: `loop-<rank>.yaml` inside the unit directory.
-- Loop id: `loop-<rank>`; rank 1 is the highest likelihood.
-- Loop dispatch id: `<unit_name>__<loop_id>`.
-- Hunter session id: `hunting:<run_id>:hunt:<unit_name>__<loop_id>`.
-- Pod session id: `hunting:<run_id>:pod:<unit_name>__<loop_id>:<spec_id>`.
-- Hunter store key: the loop dispatch id.
+- Threat file: `threat-<rank>.yaml` inside the unit directory.
+- Threat id: `threat-<rank>`; rank 1 is the highest likelihood.
+- Threat dispatch id: `<unit_name>__<threat_id>`.
+- Hunter session id: `hunting:<run_id>:hunt:<unit_name>__<threat_id>`.
+- Pod session id: `hunting:<run_id>:pod:<unit_name>__<threat_id>:<spec_id>`.
+- Hunter store key: the threat dispatch id.
 - Hunter spec file name: `<fault_keyword>_<strategy_keyword>.yaml`, unchanged.
 - Hunter state literals: `grounding`, `slice`, `collect`, `discriminate`, `generate`, `well_formedness`, `verify_claims`, `complete`.
 - Phase-summary note kind: `phase_summary`.

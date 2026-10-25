@@ -1,15 +1,22 @@
 # Impact-elicitation workstream: implementation result
 
-*Status: implemented on `feat/threat-model-impact-elicitation`, based on `hunt-enhancement-trunk` at `5c73ab82`. The A/B is pending the operator's protocol.*
+*Status: implemented on `feat/threat-model-impact-elicitation`, based on `hunt-enhancement-trunk` at `5c73ab82`; ready to merge. The A/B is pending the operator's protocol.*
 
 ## What landed
 
+### Threat vocabulary
+
+- The ranked research artifact is a **threat**: the model field is `threats`, the ids are `threat-1..n`, the files are `threat-<rank>.yaml`, and the spec provenance field is `threat_id`.
+- The public seams are `Threat`, `normalise_threats`, `compute_risk_profile`, `read_threat_files`, `consume_threat`, `ThreatItem`, and `threat_item`.
+- The model schema is version 2. A schema-1 document carries the old `loops` key and is refused, never migrated; the A/B uses fresh models.
+- The historical baseline and its survey tool keep the earlier "loop" vocabulary; the vocabulary note in `BASELINE.md` maps the two names.
+
 ### Scoring
 
-- Every loop carries `impact` with `VC`, `VI`, `VA`, each `none/low/medium/high`, and a literal `end_impact`.
-- The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight `0..4`, and `loop risk = likelihood_weight * impact_weight`.
+- Every threat carries `impact` with `VC`, `VI`, `VA`, each `none/low/medium/high`, and a literal `end_impact`.
+- The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight `0..4`, and `threat risk = likelihood_weight * impact_weight`.
 - The ordinal bands are `1` at `(0, 0.25]`, `2` at `(0.25, 0.50]`, `3` at `(0.50, 0.75]`, `4` above `0.75`.
-- The ranking is risk, impact, likelihood, write order. A loop with zero risk is stored and never dispatched.
+- The ranking is risk, impact, likelihood, write order. A threat with zero risk is stored and never dispatched.
 - The run record carries `risk_weights`, `impact_weights`, `risk_total`, `risk_breakdown`, `impact_breakdown`, and the per-unit sums.
 - The provisional threshold is `360`; the A/B sets it per arm.
 
@@ -22,17 +29,17 @@
 - Controls semantics characterizes the invariant checks, their placement across stages, their effective representation downstream, and the gap between syntactic validity and semantic safety.
 - Each trust agreement names the artifact, the controlling principal, the security-sensitive decision, and the worst-case end impact.
 
-### Well-formedness loop
+### Well-formedness phase
 
 - Between `VULNERABILITIES_WRITTEN` and `COMPLETED`, the modeller loads each bound class skill, reads the title, the Trust Assumptions section, and the closing summary, and adds the missed assumptions.
 - A local gap patches the affected agreement, assumption, or vulnerability and re-checks.
-- A structural gap loops back over the undermodelled part. There is no iteration bound; the run cap is the bound.
+- A structural gap returns to the undermodelled part. There is no iteration bound; the run cap is the bound.
 - The exit is one `wellformedness` note plus the `COMPLETED` write. A lower-gate write is the re-entry signal; the passive tracker already records it as `lower_gate`.
 - The note records the vulnerabilities checked, the skills loaded, the assumptions added, the absent Trust Assumptions sections, the structural finding, and the final action.
 
 ### Failure modes removed
 
-- The `failure_modes` section, `Loop.failure_mode_refs`, the prompt phase, the encoding floor, the pod `failure-mode` variant basis, and the hunter failure-mode vocabulary are removed.
+- The `failure_modes` section, `Threat.failure_mode_refs`, the prompt phase, the encoding floor, the pod `failure-mode` variant basis, and the hunter failure-mode vocabulary are removed.
 - The drop rule has two clauses: the data is not attacker-influenced, or the trust agreement is misspecified because the artifact does not reach a security-sensitive decision. Unobserved assumptions survive. A missing observation or a failed probe is not a drop reason.
 - The modeller still judges exploitability through the likelihood, which names the adversarial capabilities the attack needs. The hunter and the pod own technical feasibility and effective attempt.
 
@@ -54,6 +61,18 @@ The prompt carries one synthetic SSRF/TOCTOU example:
 - the SSRF skill's Trust Assumptions countercheck and a local patch;
 - a soft-404 contrast that stays stored with impact zero and no priority dispatch.
 
+### Narrowing measurement
+
+The next trial measures whether the sharper trust boundaries starve the hunter's discrimination space.
+`eval/measure_utm.py` now loads the threat files and the suite tree, and attaches two facts to every threat row:
+
+- `bound_class_is_parent`: true when the bound `web_vulnerability_class` is a suite parent with at least one variant leaf, false for a leaf, null for an absent class.
+- `downstream`: `spec_count` (specs linked by `provenance.threat_id`, with the dispatch-id fallback), `substantial` (at least three), `primary_axes`, `axes_overlap`, `missing_discriminators`, and `well_formed` (substantial, every spec carries a discriminator, and the primary axes do not overlap).
+
+The metrics carry a top-level `narrowing` aggregate and per-threat fields.
+`eval/prompts/measure.md` adds `breadth`, `discrimination`, the spec-set fields, and the `narrowing` output block.
+The measurement reports; it does not gate the run.
+
 ## Commits
 
 - `9eb66a0a` - baseline measurement.
@@ -63,29 +82,33 @@ The prompt carries one synthetic SSRF/TOCTOU example:
 - `de9cb2c5` - failure-mode schema removal (416, pulled forward).
 - `8a5bf072` - modeller prompt rewrite, well-formedness pass, class guard, example (410-414).
 - `2e2037a5` - pod basis removal, hunter vocabulary cleanup, docs (415, 417-420).
+- `156c549d` - the loop -> threat rename across the module, the tests, and the API (schema 2).
+- `c98108d5` - the eval rename plus the breadth and spec-discrimination measurement.
 
 ## Verification
 
 | Suite | Result |
 |---|---|
-| `tests/attack` | 1094 passed |
-| pod contracts and e2e walkthrough | 27 passed |
-| project management plus settings deep merge | 8 passed, 2 skipped |
-| eval orchestrator trial | 68 passed |
+| `tests/attack` | 1097 passed |
+| `tests/eval` | 831 passed |
+| focused integration and e2e | 89 passed |
+| project management plus settings deep merge | 50 passed, 2 skipped |
+
 | `compileall` on the hunting module | clean |
 | `git diff --check` | clean |
 
 ## A/B plan
 
-- The success gate is more than 90% green loops over all stored loops.
-- A green loop is a loop whose `web_vulnerability_class` is in the ratified high-yield set plus CSRF and clickjacking, rolled up to its class parent.
-- Secondary metrics: severe share, sharp-boundary share, class-binding rate, severe loops below the medium risk bucket, capped tokens per green loop.
+- The success gate is more than 90% green threats over all stored threats.
+- A green threat is a threat whose `web_vulnerability_class` is in the ratified high-yield set plus CSRF and clickjacking, rolled up to its class parent.
+- Secondary metrics: severe share, sharp-boundary share, class-binding rate, severe threats below the medium risk bucket, capped tokens per green threat.
+- The narrowing metrics: the parent-class share, the spec count per threat, and the substantial-and-well-formed share.
 - The operator will specify the 7M budget split, the unit set, the fresh-instance reset, and the measurement window after implementation.
 - Both arms must use the same threshold, or the comparison is not fair.
 
 ## Follow-ups
 
-- The eval measurement prompt still uses the phrase "failure-mode slice" in its checklist. That is the eval measurement vocabulary, outside the hunting module. Update it when the eval measurement workstream next runs.
 - The tool surface binds the suite class index to the store when it is built, so the non-suite finding runs in the production path. A caller that constructs the store directly can pass `class_names` or call `set_class_names`.
 - The `360` threshold is provisional until the first re-model writes real `VC/VI/VA` values. The A/B sets it per arm.
+- The narrowing measurement is recorded in `eval/measure_utm.py` and `eval/prompts/measure.md`; the next trial reports it. It is not a gate.
 - The A/B is the remaining step; it is an experimentation item, not a tracked ticket.

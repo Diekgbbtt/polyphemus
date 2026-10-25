@@ -25,8 +25,8 @@ The resolved mode is stamped on every run-record write (`hunting_runs.stats.pipe
 - `parallel` - the historical behaviour: the modeller pass and the surfer interleave, the surfer dispatches every produced item as it appears, and the S2 8.3 low-tier sequencing bounds the order. No gate is built.
 - `batched` - phase barriers between phases, concurrency inside a phase:
   1. the modeller pass consumes the whole risk budget first (halt or intake exhaustion);
-  2. the queue: the run's units sorted by model risk contribution (`model_sum`-equivalent loop weights) descending, ties by intake position ascending, then unit name;
-  3. per unit: the whole hunter batch concurrently (one hunter per produced loop file, bounded by `HUNTING_DISPATCH_GATE_WIDTH`);
+  2. the queue: the run's units sorted by model risk contribution (`model_sum`-equivalent threat weights) descending, ties by intake position ascending, then unit name;
+  3. per unit: the whole hunter batch concurrently (one hunter per produced threat file, bounded by `HUNTING_DISPATCH_GATE_WIDTH`);
   4. the batch advances when every hunt of the unit is terminal (see the gate signals);
   5. then the unit's pods concurrently, one per `ratified` spec;
   6. the next unit starts only when the current unit's pods are all terminal;
@@ -39,7 +39,7 @@ The resolved mode is stamped on every run-record write (`hunting_runs.stats.pipe
 ## The gate signals
 
 - Modeller phase end: the `hunting:<run>:threat-modeller` session is settled (halt or exhausted).
-- Hunter terminal: the hunt left its ReAct graph (`hunters_in_graph` no longer holds it) AND its consumed-loop recovery is settled. The move is only admission: F-022 recovers a consumed loop whose hunter left no current-run `terminal.yaml`, so a hunt that ended without finalizing (a degrade or a transiently failed child) reappears as a pending loop item and the phase holds while it re-dispatches; F-026 defers a transient provider failure per child until its backoff. A normal completion finalizes the set (zero-spec is valid) and is done.
+- Hunter terminal: the hunt left its ReAct graph (`hunters_in_graph` no longer holds it) AND its consumed-threat recovery is settled. The move is only admission: F-022 recovers a consumed threat whose hunter left no current-run `terminal.yaml`, so a hunt that ended without finalizing (a degrade or a transiently failed child) reappears as a pending threat item and the phase holds while it re-dispatches; F-026 defers a transient provider failure per child until its backoff. A normal completion finalizes the set (zero-spec is valid) and is done.
 - Pod terminal: the durable `PodExport` record exists for the spec (`pod_store.read_pod_export(stem, run_id)` truthy) - any verdict, or the degraded export. A transiently failed pod has no export, so F-017 recovers its spec and the cursor holds until the retry exports.
 - A pod still executing (`hunting:<run>:pod:<hunt>:<spec>` live) keeps its unit current.
 - Every signal is storage- or registry-backed, so the gate re-derives on resume with no persisted ledger.

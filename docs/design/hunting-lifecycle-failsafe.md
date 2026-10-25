@@ -5,7 +5,7 @@
 ## The problem
 
 A serial or batched run can stall on one item.
-The 2026-10-24 run stalled for 78 minutes on a consumed loop whose hunter never
+The 2026-10-24 run stalled for 78 minutes on a consumed threat whose hunter never
 reached its terminal marker.
 A single wedged session or malformed body then held every later unit.
 

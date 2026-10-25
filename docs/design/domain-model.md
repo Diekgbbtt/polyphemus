@@ -443,11 +443,11 @@ Its primitives are:
 - an **assumption**: a claim that must hold for the unit's safety, each named by an induced programming fault;
 - a **web-vulnerability class**: the freely named taxonomy class plus its skills-suite mapping (a `suite_gap` when the suite does not cover it);
 - a **failure mode** mapped back from the cited classes, with the evidence that would falsify it;
-- a **loop**: a flat, likelihood-ranked testable prediction (`loop-<rank>`) carrying observable symptoms, its dispatchable payload, and the loop's provenance and typed skill procedure.
+- a **threat**: a flat, risk-ranked testable prediction (`threat-<rank>`) carrying observable symptoms, its dispatchable payload, and the threat's provenance and typed skill procedure.
 
 The model's state is structural, not a separate status row: the five gates (`UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `COMPLETED`) are the written sections, and a model is consumable once it reaches `COMPLETED` with its loops.
 The store moves the model `produced -> consumed` and archives a degraded unit's partial model to `abandoned/`; the model never evolves (a re-model is a new run).
-The **hunter** is dispatched per loop, not per config: the loop payload (the loop plus its unit context) is materialised at dispatch and the loop's dispatch id is the hunter store key (`docs/design/hunting-67-hunting-agent-spec.md`, `docs/design/hunting-164-state-graph-spec.md` section 14).
+The **hunter** is dispatched per threat, not per config: the threat payload (the threat plus its unit context) is materialised at dispatch and the threat's dispatch id is the hunter store key (`docs/design/hunting-67-hunting-agent-spec.md`, `docs/design/hunting-164-state-graph-spec.md` section 14).
 
 ---
 

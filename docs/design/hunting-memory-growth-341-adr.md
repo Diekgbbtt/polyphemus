@@ -1,7 +1,7 @@
 # ADR: bounded retention for the whole-file hunting memory stores
 
 *Historical note (T10b #397).*
-The `hunt_configs/` store named below is RETIRED (T4b #387); the live hunter spec set is keyed by the loop dispatch id
+The `hunt_configs/` store named below is RETIRED (T4b #387); the live hunter spec set is keyed by the threat dispatch id
 and the threat-model model/loop documents are bounded single files.
 
 ## Status

@@ -1,5 +1,7 @@
 # Unit threat model - abduction research (TBSAM/TBSG)
 
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+
 *Status: research note, 2026-10-18. Operator-assigned investigation (workbench R4-3, Q38): identify an abduction reasoning model that the threat modeller may adopt for the step "trust agreement -> trust assumptions on boundaries", covering interface trust agreements and state-transition trust. Primary sources with URLs; access limits are in section 9. Nothing here is built, and this note is the only file written.*
 
 ## 1. Context

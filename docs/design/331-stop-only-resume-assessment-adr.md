@@ -136,7 +136,7 @@ An `interrupted` producer with no classification available (a degraded run read)
 
 The resumed run re-enters `start_hunting` with the EXISTING run id.
 It re-enters at the recorded `intake_position`, adopts the committed models, recomputes `risk_total`, and never re-freezes or re-sorts the intake; a halted run resumes dispatch only.
-The dispatch stays run-scoped: the run's own produced loops dispatch, a foreign run's stay produced, and a produced item whose hunter or pod session is already live is adopted (moved produced->consumed), never dispatched twice.
+The dispatch stays run-scoped: the run's own produced threats dispatch, a foreign run's stay produced, and a produced item whose hunter or pod session is already live is adopted (moved produced->consumed), never dispatched twice.
 
 ### The orphaned-run disposition
 
@@ -168,7 +168,7 @@ The follow-up consumes `resume_decision` and `DEFAULT_RESUME_BACKOFF_S`; the ope
 
 The stop-only handler above is run-global: it cancels every component session of the run.
 On the 2026-10-20 white-jotter retest, ONE child hit a provider 429 and the handler stopped the whole run.
-13 consumed loops were lost with it, and their model dependencies had to be restored by hand.
+13 consumed threats were lost with it, and their model dependencies had to be restored by hand.
 The stop policy was too broad: a single child's transient throttle is not evidence that the run cannot continue.
 
 ### Decision
