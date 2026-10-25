@@ -50,7 +50,7 @@ def _loop(unit_name: str = "u1", loop_id: str = "loop-1", *,
     )
 
 
-def _spec(hunt_key: str = "u1__loop-1", stem: str = "sqli_blind") -> TestSpecItem:
+def _spec(hunt_key: str = "u1__loop-1", stem: str = "sqli__blind__boolean") -> TestSpecItem:
     return TestSpecItem(
         message_id=f"{hunt_key}/{stem}",
         session_id=f"hunting:{RUN}:pod:{hunt_key}:{stem}",
@@ -174,7 +174,7 @@ def test_batched_skips_a_done_unit_in_the_queue():
 def test_serial_admits_one_hunter_and_holds_its_siblings():
     items = [_loop(loop_id="loop-1"), _loop(loop_id="loop-2")]
     facts = _facts(
-        spec_stems={"u1__loop-2": ("sqli_blind",)},
+        spec_stems={"u1__loop-2": ("sqli__blind__boolean",)},
         terminal_specs=frozenset(),
     )
     admitted = decide(SyncMode.SERIAL, items, [_unit("u1")], facts)

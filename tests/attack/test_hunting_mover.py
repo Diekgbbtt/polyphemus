@@ -361,7 +361,7 @@ def test_family_items_mix_in_one_deduction():
         message_id="Service-a__loop-1/sqli_blind",
         session_id="hunting:run-1:pod:Service-a__loop-1:sqli_blind",
         hunt_key="Service-a__loop-1",
-        spec_file="sqli_blind",
+        spec_file="sqli__blind__boolean",
     )
     plan = deduce_delivery([loop, spec], feedback={
         loop.message_id: DispatchFeedback.ADMITTED,
@@ -392,8 +392,8 @@ def test_hunter_session_id_is_the_adr_shape():
 
 
 def test_pod_session_id_embeds_config_and_spec():
-    assert pod_session_id("r-9", "Service:a_CWE-639_IDOR", "sqli_blind") == \
-        "hunting:r-9:pod:Service:a_CWE-639_IDOR:sqli_blind"
+    assert pod_session_id("r-9", "Service:a_CWE-639_IDOR", "sqli__blind__boolean") == \
+        "hunting:r-9:pod:Service:a_CWE-639_IDOR:sqli__blind__boolean"
 
 
 def test_session_ids_reject_empty_segments():
@@ -412,8 +412,10 @@ def test_d4_spec_body_drops_only_the_store_metadata():
     authority on the retired names."""
     body = {
         "status": "ratified",
-        "fault_keyword": "sqli",
-        "strategy_keyword": "blind",
+        "discriminators": [
+            {"axis": "fault", "value": "sqli"},
+            {"axis": "technique", "value": "blind"},
+        ],
         "target_identity": {"url": "http://target.example/"},
         "verification_symptoms": ["reflects the marker"],
         "assumptions": [],
@@ -424,7 +426,7 @@ def test_d4_spec_body_drops_only_the_store_metadata():
     projected = d4_spec_body(body)
     assert projected == {
         key: value for key, value in body.items()
-        if key not in ("status", "fault_keyword", "strategy_keyword")
+        if key not in ("status",)
     }
     assert "testing_pattern" in d4_spec_body({**body, "testing_pattern": "x"})
     assert d4_spec_body(None) == {}

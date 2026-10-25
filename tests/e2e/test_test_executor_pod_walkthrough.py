@@ -84,7 +84,7 @@ VALID_SPEC = {
 }
 
 # The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 # The fixed synthetic curl trailers (tools.py `parse_curl` reads the markers).
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"

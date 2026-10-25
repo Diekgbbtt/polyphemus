@@ -402,12 +402,16 @@ def _zero_loop_turns():
 
 def _write_ratified_spec(hunter) -> None:
     """One produced `ratified` test spec (the pod family's dispatch gate) -
-    the surviving dispatchable produced family (S3 8.7)."""
+    the surviving dispatchable produced family (S3 8.7). The draft lands first
+    so the store's identity-stability rule holds."""
+    spec = {"status": "hypothesised", "discriminators": [
+        {"axis": "fault", "value": "sqli"},
+        {"axis": "technique", "value": "blind"}]}
+    hunter.write_specs(
+        PROJECT, "Service-catalogue-and-discovery__loop-1", [spec])
     hunter.write_specs(
         PROJECT, "Service-catalogue-and-discovery__loop-1",
-        [{"status": "ratified", "fault_keyword": "sqli",
-          "strategy_keyword": "blind"}],
-    )
+        [{**spec, "status": "ratified"}])
 
 
 def _produce_one_loop_model(store, *, run_id: str, unit_id: str = UNIT):

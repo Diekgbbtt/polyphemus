@@ -26,7 +26,7 @@ from polymerhus.attack.hunting.pod.types import (
     NO_SYMPTOM_EVIDENCE,
     SYMPTOM_CONFIRMED,
     SYMPTOM_CONFIRMED_CLASS,
-    skill_procedure_from_spec,
+    skill_concretised_procedure_from_spec,
 )
 from polymerhus.attack.hunting.pod.variant_basis import PROCEDURE_GAP_FIELD
 
@@ -57,7 +57,7 @@ def has_populated_procedure(spec: dict) -> bool:
     skipped and the terminal stage decides. This is the deterministic gate the
     staged tree promises: the full miner is paid only when a variant could be
     derived."""
-    procedure = skill_procedure_from_spec(spec)
+    procedure = skill_concretised_procedure_from_spec(spec)
     if procedure is None:
         return False
     return any(str(getattr(procedure, field) or "").strip()

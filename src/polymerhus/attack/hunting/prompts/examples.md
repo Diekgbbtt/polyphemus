@@ -87,7 +87,7 @@ DISCRIMINATE: the collected routes separate the specs; the narrow/broad
 trade-off is stated. phase:discriminate.
 GENERATE: two specs, all hypothesised, each rationale stays vulnerability-level;
 the absent class skill was recorded as a gap in phase:grounding, and the
-skill_procedure excerpt is empty per field - also a recorded gap, not a
+skill_concretised_procedure is empty per field - also a recorded gap, not a
 failure.
 WELL-FORMEDNESS: coverage is partial over the technology-specific region the
 KB would have named. Record the residual gap and the coverage basis; the set

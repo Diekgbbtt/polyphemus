@@ -120,7 +120,7 @@ def test_runner_prompt_names_the_baseline_not_the_retired_vector():
 
 def test_runner_prompt_names_the_reduced_spec_surface():
     for token in ("target_identity", "verification_symptoms", "assumptions",
-                  "rationale", "provenance", "skill_procedure", "skills"):
+                  "rationale", "provenance", "skill_concretised_procedure", "skills"):
         assert token in POD_RUNNER_SYSTEM, token
 
 
@@ -204,6 +204,8 @@ VARIANT_BASES = (
     "pro-tips",
     "advanced-technique",
     "preliminary-chaining",
+    "payload-vector",
+    "technology-misconfiguration",
     "interpretation-pitfall",
     "failure-mode",
     "runner-failure",
@@ -211,7 +213,7 @@ VARIANT_BASES = (
 )
 
 
-def test_triager_prompt_names_all_ten_variant_bases():
+def test_triager_prompt_names_all_twelve_variant_bases():
     for basis in VARIANT_BASES:
         assert basis in POD_TRIAGER_SYSTEM, basis
 
@@ -220,14 +222,13 @@ def test_triager_prompt_carries_the_first_uncovered_order():
     lc = POD_TRIAGER_SYSTEM.lower()
     assert "first uncovered" in lc
     assert "table order" in lc
-    positions = [POD_TRIAGER_SYSTEM.index(b) for b in VARIANT_BASES[:7]]
+    positions = [POD_TRIAGER_SYSTEM.index(b) for b in VARIANT_BASES[:9]]
     assert positions == sorted(positions)
 
 
-def test_triager_prompt_reads_the_typed_procedure_from_the_provenance():
-    assert "provenance" in POD_TRIAGER_SYSTEM
-    assert "skill_procedure" in POD_TRIAGER_SYSTEM
-    assert "SkillProcedure" in POD_TRIAGER_SYSTEM
+def test_triager_prompt_reads_the_typed_concretisation_from_the_spec():
+    assert "skill_concretised_procedure" in POD_TRIAGER_SYSTEM
+    assert "SkillConcretisedProcedure" in POD_TRIAGER_SYSTEM
 
 
 def test_triager_prompt_states_the_skipped_section_and_absent_excerpt_rules():

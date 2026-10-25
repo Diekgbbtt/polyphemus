@@ -20,9 +20,10 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.spec_contract import (
-    SkillProcedure,
+    Discriminator,
+    SkillConcretisedProcedure,
     TargetIdentity,
-    skill_procedure_from,
+    skill_concretised_procedure_from,
 )
 
 # --- The Q3-amended terminal_reason vocabulary (D5) ----------------------------
@@ -46,28 +47,31 @@ INFEASIBILITY_SIGNAL_CLASS = "infeasibility-signal"
 
 
 class TestImplementationSpec(BaseModel):
-    """The REDUCED D4 handoff (S5 8.4, S3 8.6): target identity, the concrete
-    observable verification symptoms, the technical assumptions the pod may
-    falsify, the vulnerability-level rationale, the variant lineage, and the
-    dispatch provenance.
+    """The REDUCED D4 handoff (S5 8.4, S3 8.6): target identity, the ordered
+    discrimination instances, the concrete observable verification symptoms,
+    the technical assumptions the pod may falsify, the vulnerability-level
+    rationale, the target-specific procedure concretisation, the variant
+    lineage, and the dispatch provenance.
 
-    The RETIRED `testing_pattern`, `payload_vector_space`, and
-    `interpretation_guidance` are rejected as unknown by `extra="forbid"`
-    instead of being silently dropped from a stale hunter's fields.
-    The declared fields default lenient so an INIT rejection collects the
-    mandatory URL/symptom violations instead of
-    raising; `verification.validate_spec` is the gate.
+    The RETIRED `testing_pattern`, `payload_vector_space`,
+    `interpretation_guidance`, `fault_keyword`, `strategy_keyword`, and the
+    copied `provenance.skill_procedure` are rejected as unknown by
+    `extra="forbid"` instead of being silently dropped from a stale hunter's
+    fields. The declared fields default lenient so an INIT rejection collects
+    the mandatory URL/symptom violations instead of raising;
+    `verification.validate_spec` is the gate.
 
     `provenance` carries `loop_id`, `unit_id`, `canonical_class` (the freely
     named taxonomy class), `web_vulnerability_class` (the suite directory
     name; empty when the class is a `suite_gap`), `baseline_ref` (optional),
-    `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded typed
-    `skill_procedure` read by the triager (S3 8.6)."""
+    `source_recon_refs`, `assumption_ref`, and `playbook`."""
 
     target_identity: TargetIdentity = Field(default_factory=TargetIdentity)
+    discriminators: list[Discriminator] = Field(default_factory=list)
     verification_symptoms: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     rationale: str = ""
+    skill_concretised_procedure: SkillConcretisedProcedure | None = None
     # Variant lineage (D67-08): a derived variant records its parent + why.
     parent_spec_ref: str | None = None
     provenance: dict = Field(default_factory=dict)
@@ -101,14 +105,17 @@ def baseline_ref_from_spec(spec: dict | TestImplementationSpec | None) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def skill_procedure_from_spec(
-        spec: dict | TestImplementationSpec | None) -> SkillProcedure | None:
-    """The typed seven-field `SkillProcedure` carried by the spec provenance.
+def skill_concretised_procedure_from_spec(
+        spec: dict | TestImplementationSpec | None,
+) -> SkillConcretisedProcedure | None:
+    """The typed `SkillConcretisedProcedure` carried by the spec.
 
-    The type has ONE home (`spec_contract.SkillProcedure`); this is the pod's
-    read. A missing or malformed excerpt is None - the triager records the gap
-    and falls back to the failure-mode basis (S5 8.6)."""
-    return skill_procedure_from(spec_provenance(spec))
+    The type has ONE home (`spec_contract.SkillConcretisedProcedure`); this is
+    the pod's read. A missing or malformed object is None - the triager records
+    the gap and falls back to the failure-mode basis (S5 8.6)."""
+    if isinstance(spec, TestImplementationSpec):
+        return spec.skill_concretised_procedure
+    return skill_concretised_procedure_from(spec)
 
 
 class ProbeStep(BaseModel):

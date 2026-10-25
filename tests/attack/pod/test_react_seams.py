@@ -61,7 +61,7 @@ SPEC = {
                    "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
 _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
@@ -625,9 +625,9 @@ def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path)
 
     monkeypatch.setattr(graph_mod, "default_runner_step_fn", spy)
     env = _run(arun_pod(root_spec, exec_fn=_exec(_ABSENT), trace_fn=_no_trace,
-                        memory_store=PodMemoryStore(tmp_path), spec_id="sqli_blind"))
+                        memory_store=PodMemoryStore(tmp_path), spec_id="sqli__blind__boolean"))
     assert env["verdict"] == "unsuccessful"
     assert seen and seen[0] is not None
-    assert seen[0].spec_id == "sqli_blind"             # the #164 handoff keys memory
+    assert seen[0].spec_id == "sqli__blind__boolean"             # the #164 handoff keys memory
     assert seen[0].variant_ref == "v0"
     assert seen[0].log is not None

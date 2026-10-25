@@ -593,13 +593,19 @@ def test_a_resumed_run_never_redispatches_a_live_pod(tmp_path, monkeypatch):
     is adopted (moved to consumed), never dispatched a second time."""
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    hunter.write_specs(PROJECT, LOOP_A_DISPATCH, [{
-        "status": "ratified",
-        "fault_keyword": "sqli",
-        "strategy_keyword": "blind",
+    spec = {
+        "status": "hypothesised",
+        "discriminators": [
+            {"axis": "fault", "value": "sqli"},
+            {"axis": "technique", "value": "blind"},
+        ],
+        "provenance": {"web_vulnerability_class": "sqli"},
         "verification_symptoms": ["a foreign item renders"],
-    }])
-    session_id = pod_session_id(RUN, LOOP_A_DISPATCH, "sqli_blind")
+    }
+    hunter.write_specs(PROJECT, LOOP_A_DISPATCH, [spec])
+    hunter.write_specs(
+        PROJECT, LOOP_A_DISPATCH, [{**spec, "status": "ratified"}])
+    session_id = pod_session_id(RUN, LOOP_A_DISPATCH, "sqli__blind__boolean")
     control = _ResumeControl(live_extra=lambda: (
         {session_id}
         if hunter.produced_spec_files(PROJECT, LOOP_A_DISPATCH) else set()))

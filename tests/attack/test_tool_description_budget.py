@@ -68,13 +68,20 @@ def test_the_typed_spec_schema_still_describes_every_field():
 
     schema = HuntsStoreArgs.model_json_schema()
     spec = schema["$defs"]["SpecWrite"]["properties"]
-    for name in ("status", "fault_keyword", "strategy_keyword",
-                 "target_identity", "verification_symptoms", "assumptions",
-                 "rationale", "parent_spec_ref", "provenance", "skills"):
+    for name in ("status", "discriminators", "target_identity",
+                 "verification_symptoms", "assumptions", "rationale",
+                 "parent_spec_ref", "provenance", "skills",
+                 "skill_concretised_procedure", "merged_from"):
         assert spec[name].get("description"), name
     provenance = schema["$defs"]["SpecProvenance"]["properties"]
     assert provenance["run_id"].get("description")
-    assert provenance["skill_procedure"].get("description")
+    concretised = schema["$defs"]["SkillConcretisedProcedure"]["properties"]
+    for name in (
+            "recon_action", "bypass_technique", "advanced_technique",
+            "preliminary_chaining", "payload_vector",
+            "technology_misconfiguration", "technology_grounding",
+            "pro_tips", "interpretation_pitfalls"):
+        assert concretised[name].get("description"), name
 
 
 def _role_surfaces():

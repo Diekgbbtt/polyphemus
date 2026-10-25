@@ -73,12 +73,17 @@ DISPATCH_ID = f"{UNIT_NAME}__{LOOP_ID}"
 HUNTER_SESSION = hunter_session_id(RUN, DISPATCH_ID)
 
 
-def _spec(**overrides) -> dict:
+def _spec(*, class_name: str = "sqli",
+          values: tuple[str, str] = ("blind", "boolean"),
+          **overrides) -> dict:
     data = {
-        "status": "ratified",
-        "fault_keyword": "sqli",
-        "strategy_keyword": "blind",
+        "status": "hypothesised",
+        "discriminators": [
+            {"axis": "fault", "value": values[0]},
+            {"axis": "technique", "value": values[1]},
+        ],
         "verification_symptoms": ["a foreign item renders"],
+        "provenance": {"web_vulnerability_class": class_name},
     }
     data.update(overrides)
     return data
@@ -139,9 +144,13 @@ def _produce(stores, *, loops=None, run_id=RUN):
 
 def _write_spec(hunter, *, hunt_key=DISPATCH_ID, keyword="sqli", strategy="blind",
                 status="ratified"):
+    draft = _spec(class_name=keyword, values=(strategy, "boolean"))
+    written = hunter.write_specs(PROJECT, hunt_key, [draft])
+    if status == "hypothesised":
+        return written
     return hunter.write_specs(
-        PROJECT, hunt_key, [_spec(status=status, fault_keyword=keyword,
-                                  strategy_keyword=strategy)])
+        PROJECT, hunt_key, [_spec(status=status, class_name=keyword,
+                                  values=(strategy, "boolean"))])
 
 
 # --- the REAL run-dispatch builder (agent-seam fakes only) ----------------------
@@ -257,7 +266,7 @@ def test_admitted_spec_dispatches_a_pod_session_and_moves(stores):
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
         control=control, coro_for=_real_coro_for(threat, hunter),
     )
-    assert control.calls == [pod_session_id(RUN, DISPATCH_ID, "sqli_blind")]
+    assert control.calls == [pod_session_id(RUN, DISPATCH_ID, "sqli__blind__boolean")]
     assert report.moved == 1 and report.admitted == 1 and report.refused == 0
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []
     assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
@@ -281,7 +290,7 @@ def test_a_ratified_spec_without_a_parent_inbox_still_dispatches_a_pod(stores):
     # the pod session dispatched AND moved produced -> consumed: the REAL
     # `build_run_dispatch` answered a coroutine (no None-refusal for a missing
     # parent), the control plane admitted it, the at-least-once marker landed.
-    assert control.calls == [pod_session_id(RUN, DISPATCH_ID, "sqli_blind")]
+    assert control.calls == [pod_session_id(RUN, DISPATCH_ID, "sqli__blind__boolean")]
     assert report.admitted == 1 and report.moved == 1 and report.refused == 0
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []
     assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
@@ -322,7 +331,7 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores, tmp_path):
 
     pod = PodMemoryStore(tmp_path / "pod")
     pod.write_pod_export(
-        "sqli_blind", RUN,
+        "sqli__blind__boolean", RUN,
         {"verdict": "successful",
          "evidence": {"terminal_reason": "symptom-confirmed"}},
     )
@@ -483,7 +492,7 @@ def test_undispatchable_statuses_are_not_work(stores):
     # the drafted spec is not even an ITEM - the produced read applies the same
     # own-status gate - so nothing is attempted at all
     assert report.produced == 0 and report.dispatched == 0 and report.moved == 0
-    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == ["sqli_blind"]
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == ["sqli__blind__boolean"]
 
 
 # --- the shell: refusal is at-least-once, never dropped -------------------------
@@ -513,14 +522,14 @@ def test_refused_loop_stays_produced_and_is_retried_next_tick(stores):
 def test_refused_spec_stays_produced_and_is_retried_next_tick(stores):
     threat, hunter = stores
     _write_spec(hunter)
-    session = pod_session_id(RUN, DISPATCH_ID, "sqli_blind")
+    session = pod_session_id(RUN, DISPATCH_ID, "sqli__blind__boolean")
     denied = RecordingControlPlane(refused={session})
     report = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
         control=denied, coro_for=_real_coro_for(threat, hunter),
     )
     assert report.refused == 1 and report.moved == 0
-    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == ["sqli_blind"]
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == ["sqli__blind__boolean"]
     report2 = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
         control=RecordingControlPlane(), coro_for=_real_coro_for(threat, hunter),
@@ -535,7 +544,7 @@ def test_a_fully_refused_tick_moves_nothing_for_either_family(stores):
     _write_spec(hunter)
     denied = RecordingControlPlane(refused={
         HUNTER_SESSION,
-        pod_session_id(RUN, DISPATCH_ID, "sqli_blind"),
+        pod_session_id(RUN, DISPATCH_ID, "sqli__blind__boolean"),
     })
     report = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
@@ -544,7 +553,7 @@ def test_a_fully_refused_tick_moves_nothing_for_either_family(stores):
     assert report.refused == 2 and report.moved == 0 and report.admitted == 0
     assert [entry["loop_id"] for entry in
             threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
-    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == ["sqli_blind"]
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == ["sqli__blind__boolean"]
 
 
 # --- the shell: the live registry is the double-dispatch defense ----------------
@@ -607,10 +616,10 @@ def test_move_failure_is_counted_and_never_aborts_the_tick(stores, monkeypatch):
 def test_consume_spec_moves_and_is_at_least_once_idempotent(tmp_path):
     hunter = HunterMemoryStore(tmp_path)
     _write_spec(hunter)
-    assert hunter.consume_spec(PROJECT, DISPATCH_ID, "sqli_blind") is True
+    assert hunter.consume_spec(PROJECT, DISPATCH_ID, "sqli__blind__boolean") is True
     assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == []
     assert len(hunter.read_specs(PROJECT, DISPATCH_ID, sides=("consumed",))) == 1
-    assert hunter.consume_spec(PROJECT, DISPATCH_ID, "sqli_blind") is True
+    assert hunter.consume_spec(PROJECT, DISPATCH_ID, "sqli__blind__boolean") is True
     assert hunter.consume_spec(PROJECT, DISPATCH_ID, "missing") is False
 
 
@@ -627,21 +636,20 @@ def test_consume_spec_requires_a_safe_hunt_key(tmp_path):
     hunter = HunterMemoryStore(tmp_path)
     _write_spec(hunter)
     with pytest.raises(ValueError):
-        hunter.consume_spec(PROJECT, "../escape", "sqli_blind")
+        hunter.consume_spec(PROJECT, "../escape", "sqli__blind__boolean")
     with pytest.raises(ValueError):
         hunter.write_specs(PROJECT, "../escape", [_spec()])
 
 
 def test_list_hunt_keys_and_produced_spec_files_are_deterministic(tmp_path):
     hunter = HunterMemoryStore(tmp_path)
-    hunter.write_specs(PROJECT, DISPATCH_ID, [
-        _spec(status="ratified", fault_keyword="sqli", strategy_keyword="blind"),
-        _spec(status="ratified", fault_keyword="xss", strategy_keyword="reflected"),
-    ])
+    _write_spec(hunter)
+    _write_spec(hunter, keyword="xss", strategy="reflected")
     other = "Service-b__loop-2"                 # a distinct loop dispatch id
     _write_spec(hunter, hunt_key=other, keyword="sqli", strategy="blind")
     assert hunter.list_hunt_keys(PROJECT) == [other, DISPATCH_ID]  # lexical order
-    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == ["sqli_blind", "xss_reflected"]
+    assert hunter.produced_spec_files(PROJECT, DISPATCH_ID) == [
+        "sqli__blind__boolean", "xss__reflected__boolean"]
     assert hunter.produced_spec_files(PROJECT, "Service-zzz__loop-9") == []
 
 

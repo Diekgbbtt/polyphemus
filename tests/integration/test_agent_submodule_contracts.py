@@ -53,7 +53,7 @@ CWE = "CWE-639"
 CLASS = "IDOR"
 UNIT_NAME = "Service-catalogue-and-discovery"
 DISPATCH_ID = f"{UNIT_NAME}__loop-1"
-SPEC_FILE = "sqli_blind"
+SPEC_FILE = "sqli__blind__boolean"
 ROLES = ("threat_modeller", "hunter", "pod")
 
 
@@ -84,7 +84,12 @@ def _produce(threat):
 
 def _spec(**overrides):
     data = {
-        "status": "ratified", "fault_keyword": "sqli", "strategy_keyword": "blind",
+        "status": "hypothesised",
+        "discriminators": [
+            {"axis": "fault", "value": "blind"},
+            {"axis": "technique", "value": "boolean"},
+        ],
+        "provenance": {"web_vulnerability_class": "sqli"},
         "verification_symptoms": ["a foreign item renders"],
     }
     data.update(overrides)
@@ -312,7 +317,9 @@ def test_C10_a_down_hunter_denies_hunter_dispatch(tmp_path):
 def test_C11_a_down_pod_denies_pod_dispatch(tmp_path):
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    hunter.write_specs("p", DISPATCH_ID, [_spec()])
+    draft = _spec()
+    hunter.write_specs("p", DISPATCH_ID, [draft])
+    hunter.write_specs("p", DISPATCH_ID, [{**draft, "status": "ratified"}])
     control = _RecordingControl()
     report = run_delivery_tick(
         "p", RUN, threat_store=threat, hunter_store=hunter, control=control,

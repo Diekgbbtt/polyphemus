@@ -113,8 +113,10 @@ def _model_with_loops(threat, unit_id, loops):
 def _ratified_spec(hunt: str) -> dict:
     return {
         "status": "ratified",
-        "fault_keyword": "f",
-        "strategy_keyword": "keep",
+        "discriminators": [
+            {"axis": "fault", "value": "f"},
+            {"axis": "technique", "value": "keep"},
+        ],
         "target": {"unit_id": UNIT},
         "provenance": {"run_id": RUN},
     }
@@ -142,6 +144,10 @@ def test_batched_admits_a_low_loop_named_by_another_units_high_loop(tmp_path):
     # the current unit stays first and the later loop stays produced.
     _model_with_loops(threat, "Service:later", [loop_row(likelihood="high")])
     hunt = "Service-catalogue-and-discovery__loop-1"
+    hunter.write_specs(
+        PROJECT, hunt,
+        [{**_ratified_spec(hunt), "status": "hypothesised"}],
+        enforce_complete=False)
     hunter.write_specs(
         PROJECT, hunt, [_ratified_spec(hunt)], enforce_complete=False)
     hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
@@ -177,7 +183,7 @@ def test_batched_admits_a_low_loop_named_by_another_units_high_loop(tmp_path):
     # The pod phase waits for the batch: the spec stays produced.
     assert [call for call in control.calls if ":pod:" in call] == []
     assert hunter.read_spec(
-        PROJECT, hunt, "f_keep", side="produced") is not None
+        PROJECT, hunt, "spec__f__keep", side="produced") is not None
 
     # Close both hunts so the F-022 consumed-loop recovery does not re-offer
     # them; the batch is then done and the pod may start.

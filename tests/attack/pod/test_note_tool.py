@@ -39,7 +39,7 @@ SPEC = {
     "rationale": "reachability",
 }
 
-SPEC_ID = "sqli_blind"  # the #164 `<fault>_<strategy>` memory key
+SPEC_ID = "sqli__blind__boolean"  # the #164 `<fault>_<strategy>` memory key
 
 
 @pytest.fixture

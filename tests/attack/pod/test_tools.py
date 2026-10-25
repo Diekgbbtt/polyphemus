@@ -31,7 +31,7 @@ from polymerhus.attack.hunting.pod.tools import (
 )
 from polymerhus.recon.domain.types import ExecResult
 
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 
 SPEC = {

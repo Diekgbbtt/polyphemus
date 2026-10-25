@@ -241,8 +241,9 @@ class ThreatLoopItem(ProducedItem):
 class TestSpecItem(ProducedItem):
     """A produced test-implementation spec (hunter -> pod dispatch). The hunt
     key is the folder the spec lives under - the loop dispatch id
-    `<unit_name>__<loop_id>` (S3 8.9) - and `spec_file` the `<fault>_<strategy>`
-    file-name stem; the two together address the single-owner
+    `<unit_name>__<loop_id>` (S3 8.9) - and `spec_file` the
+    `<class>__<value>__<value>` file-name stem; the two together address the
+    single-owner
     `HunterMemoryStore.consume_spec` move (and the pod session id, whose middle
     segment IS the spec's own hunt key). `spec` is the persisted body the
     produced read already fetched (the dispatch validity gate), so the pod
@@ -947,11 +948,10 @@ def produced_spec_body(
 SPEC_DISPATCH_STATUS = "ratified"
 
 # The hunter store's OWN metadata (S3 8.6/8.7): persisted beside the D4 body -
-# `status` is the lifecycle, the two keywords derive the file-name identity.
-# None of it is part of the pod contract, so the dispatch boundary drops it.
-STORE_SPEC_METADATA: tuple[str, ...] = (
-    "status", "fault_keyword", "strategy_keyword",
-)
+# `status` is the lifecycle. The file-name identity is the FILE STEM, so the
+# discriminators and the concretised procedure are spec content and reach the
+# pod. None of the store metadata is part of the pod contract.
+STORE_SPEC_METADATA: tuple[str, ...] = ("status",)
 
 
 def d4_spec_body(spec: Mapping[str, Any]) -> dict:

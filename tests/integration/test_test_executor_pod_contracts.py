@@ -62,7 +62,7 @@ VALID_SPEC = {
 }
 
 # The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 # A spec whose symptom the symbolic recogniser cannot decide, so the Critic runs.
 SEMANTIC_SPEC = {**VALID_SPEC, "verification_symptoms": ["reflects the injected marker"]}

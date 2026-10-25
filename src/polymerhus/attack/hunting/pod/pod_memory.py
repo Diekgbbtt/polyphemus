@@ -14,9 +14,9 @@ variants and the per-order log slice live side by side, easily mappable):
       <spec_id>/experiment-log/<order>.yaml     (the per-order D6 log slice)
       notes.yaml                                (per-project notes)
 
-The spec identifier is the #164 hunter's `SpecItem.spec_id = "<fault>_<strategy>"`
-(D84-34) - the `_` separator + keyword sanitisation (`:`/`-` are poisoned) - and
-IS the per-spec directory name. The variant-ref (`v0`, `v1`, ...) and the order
+The spec identifier is the hunter's derived `SpecItem.spec_id`
+(`<class>__<value>__<value>`, `spec_contract.spec_identifier`) and IS the
+per-spec directory name. The variant-ref (`v0`, `v1`, ...) and the order
 number (`0`, `1`, ...) are the SAME ordinal in two spellings: `vN` <-> order N,
 so a minted variant and its log slice are trivially mappable (D84-34). Notes
 are keyed `<spec_id>:<order>:<note_name>` (D84-36), stored in the per-project
@@ -57,6 +57,7 @@ import yaml
 
 from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import project_dir
+from polymerhus.attack.hunting.spec_contract import spec_identifier
 
 # The hunting module's data seam (D84-33): the `test-executor-pod/` bucket
 # under `DATA_ROOT/<project_id>/hunting/`, resolved through the ONE
@@ -72,34 +73,8 @@ from polymerhus.app.data_root import project_dir
 # its terminal record (D84-35).
 POD_NOTE_KINDS = ("experiment_summary", "kb_insight", "freeform")
 
-# The filename-keyword sanitisation banned set (D84-34, mirroring the #164
-# hunter's ruling): `_` is the spec-id separator, so a keyword may not contain
-# it; `:` is poisoned (it appears inside unit ids); `/`/`\` are path separators.
-# Each banned char (plus control/NUL chars) is replaced with `-`, a safe,
-# non-separator keyword char (`-` itself is never banned).
-_UNSAFE_KEYWORD_CHARS = frozenset("_:/\\")
-
-
-def _sanitise_keyword(keyword: str) -> str:
-    """Sanitise a `<fault>`/`<strategy>` spec-id keyword (D84-34, G3)."""
-    out = "".join(
-        "-" if ch in _UNSAFE_KEYWORD_CHARS or ord(ch) < 32 else ch
-        for ch in keyword
-    )
-    if not out or out in (".", ".."):
-        raise ValueError(
-            f"pod memory: keyword {keyword!r} sanitises to the unsafe "
-            f"spec-id component {out!r}"
-        )
-    return out
-
-
-def spec_identifier(fault_keyword: str, strategy_keyword: str) -> str:
-    """The #164 hunter's `SpecItem.spec_id = "<fault>_<strategy>"` (D84-34):
-    both keywords sanitised and joined by `_`, the one safe separator. This IS
-    the per-spec directory name. The `_` separator + keyword sanitisation
-    ruling applies (`:` and `-` are poisoned separators)."""
-    return f"{_sanitise_keyword(fault_keyword)}_{_sanitise_keyword(strategy_keyword)}"
+# The spec identifier is the SAME derived symbol the hunter store writes (ONE
+# home: `spec_contract.spec_identifier`), never a second copy of the join rule.
 
 
 def note_key(spec_id: str, order: int, note_name: str) -> str:

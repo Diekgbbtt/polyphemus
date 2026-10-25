@@ -26,9 +26,15 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     spec_identifier,
 )
 
-# The #164 `<fault>_<strategy>` spec id (D84-34), used as the memory key.
-SPEC_ID = spec_identifier("sqli", "blind")
-OTHER_ID = spec_identifier("xss", "reflected")
+# The derived `<class>__<value>__<value>` spec id, used as the memory key.
+SPEC_ID = spec_identifier("sqli", [
+    {"axis": "technique", "value": "blind"},
+    {"axis": "payload-vector", "value": "boolean"},
+])
+OTHER_ID = spec_identifier("xss", [
+    {"axis": "technique", "value": "reflected"},
+    {"axis": "payload-vector", "value": "html"},
+])
 
 
 @pytest.fixture
@@ -36,20 +42,30 @@ def store(tmp_path):
     return PodMemoryStore(tmp_path)
 
 
-# --- the spec identifier: <fault>_<strategy> (D84-34) -------------------------
+# --- the spec identifier: <class>__<value>__<value> --------------------------
 
-def test_spec_identifier_joins_sanitised_fault_and_strategy():
-    assert spec_identifier("sqli", "blind") == "sqli_blind"
-    # `_` is the separator, so a keyword may not carry it; `:` is poisoned.
-    assert spec_identifier("sqli", "blind_boolean") == "sqli_blind-boolean"
-    assert spec_identifier("open:redirect", "sql") == "open-redirect_sql"
+def test_spec_identifier_joins_the_class_and_the_ordered_values():
+    assert SPEC_ID == "sqli__blind__boolean"
+    # `-` is safe inside a value; `__` is the one separator.
+    assert spec_identifier("sqli", [
+        {"axis": "technique", "value": "blind-boolean"},
+        {"axis": "payload-vector", "value": "json-body"},
+    ]) == "sqli__blind-boolean__json-body"
+    # `:` is sanitised out of the class.
+    assert spec_identifier("open:redirect", [
+        {"axis": "technique", "value": "sql"},
+        {"axis": "state", "value": "post-delete"},
+    ]) == "open-redirect__sql__post-delete"
 
 
-def test_spec_identifier_rejects_a_pathological_keyword():
+def test_spec_identifier_requires_two_values_and_sanitises_a_pathological_class():
     with pytest.raises(ValueError):
-        spec_identifier("", "x")
-    with pytest.raises(ValueError):
-        spec_identifier(".", "x")
+        spec_identifier("sqli", [{"axis": "technique", "value": "blind"}])
+    # `.` is not a traversal risk once the values follow; the class falls back.
+    assert spec_identifier(".", [
+        {"axis": "technique", "value": "x"},
+        {"axis": "state", "value": "y"},
+    ]) == "spec__x__y"
 
 
 def test_spec_id_is_the_semantic_key_never_a_content_hash():
@@ -60,7 +76,7 @@ def test_spec_id_is_the_semantic_key_never_a_content_hash():
     # sha256 spec digest was 64 hex chars), so SPEC_ID != hash holds without
     # a hash ever being computed (the function is gone from the identity
     # path).
-    assert SPEC_ID == "sqli_blind"
+    assert SPEC_ID == "sqli__blind__boolean"
     assert len(SPEC_ID) != 64                       # never the sha256 digest shape
     assert "_" in SPEC_ID                           # the semantic pair separator
 

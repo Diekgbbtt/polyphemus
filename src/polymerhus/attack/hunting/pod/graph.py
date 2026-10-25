@@ -117,7 +117,7 @@ from polymerhus.attack.hunting.pod.types import (
     SYMPTOM_CONFIRMED_CLASS,
     TECHNICAL_INFEASIBILITY,
     VariantSpec,
-    skill_procedure_from_spec,
+    skill_concretised_procedure_from_spec,
 )
 from polymerhus.attack.hunting.pod.variant_basis import (
     PROCEDURE_GAP_BASES,
@@ -211,7 +211,7 @@ def _resolve_variant_decision(decision: dict, spec: dict,
     fallback. A claimed basis the triager supplied stands only when it stated
     no coverage assessment. A duplicate `(basis, detail)` is never re-minted:
     the decision degrades to an honest `no-symptom-evidence` terminal."""
-    procedure = skill_procedure_from_spec(spec)
+    procedure = skill_concretised_procedure_from_spec(spec)
     covered = _variant_coverage(decision)
     computed = mint_variant_basis(
         procedure=procedure,

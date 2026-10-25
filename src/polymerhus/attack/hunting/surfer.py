@@ -558,6 +558,28 @@ def build_run_dispatch(
         )
         return None
 
+    _target_url_cache: list[str | None] = [None]
+
+    def _target_url() -> str:
+        """The run's canonical target origin, resolved once at the first hunter
+        dispatch. The symbolic layer binds the spec's target identity from it,
+        so the hunter never authors a URL. Fail-open: an unreadable settings row
+        leaves it empty and the hunter keeps the degraded override."""
+        if _target_url_cache[0] is None:
+            try:
+                from polymerhus.app.clients import pg  # noqa: PLC0415
+                from polymerhus.recon.control.scope import (  # noqa: PLC0415
+                    target_origin,
+                )
+                _target_url_cache[0] = target_origin(
+                    pg.load_settings(project_id)) or ""
+            except Exception as exc:  # noqa: BLE001 - fail-open identity
+                logger.warning(
+                    "surfer: target origin read for %s failed (%s); the hunter "
+                    "keeps the target-identity override", project_id, exc)
+                _target_url_cache[0] = ""
+        return _target_url_cache[0]
+
     def _loop_dispatch(item: ThreatLoopItem) -> Any:
         """ONE hunter session for ONE produced loop file (S2 8.4): the payload is
         materialised at dispatch time from the unit's model document and the
@@ -590,6 +612,9 @@ def build_run_dispatch(
             return None
         payload = materialise_hunter_payload(
             model, item.record, dispatch_id=item.dispatch_id)
+        target_context = payload.get("target_context")
+        if isinstance(target_context, dict):
+            target_context["target_url"] = _target_url()
         return run_hunter_session(
             payload=payload,
             project_id=project_id,

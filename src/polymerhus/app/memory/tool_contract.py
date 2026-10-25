@@ -219,6 +219,31 @@ def coded_teaching_rejection(
             "error": f"{tool_name}_args_rejected",
             "detail": f"{field} must be one of: {', '.join(choices)}",
         }
+
+    # A length or pattern constraint is a taught contract, not a bare pydantic
+    # rejection: name the field and the rule so the model corrects in one pass.
+    constrained = [
+        e for e in errors
+        if e.get("type") in (
+            "too_short", "too_long", "string_pattern_mismatch",
+            "string_too_short", "string_too_long",
+        )
+    ]
+    if constrained:
+        fields = [_field_path(list(e.get("loc") or ())) for e in constrained]
+        detail = "; ".join(
+            f"{_field_path(list(e.get('loc') or ()))}: {e.get('msg', '')}"
+            for e in constrained
+        )
+        return {
+            "ok": False,
+            "error": f"{tool_name}_args_rejected",
+            "fields": fields,
+            "detail": (
+                "constraint violation: " + detail
+                + ". Correct the named field(s) and retry."
+            ),
+        }
     return None
 
 

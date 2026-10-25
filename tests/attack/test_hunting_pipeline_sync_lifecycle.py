@@ -49,11 +49,23 @@ def _spec(fault: str, strategy: str, status: str,
           unit: str = "Service:u1") -> dict:
     return {
         "status": status,
-        "fault_keyword": fault,
-        "strategy_keyword": strategy,
+        "discriminators": [
+            {"axis": "fault", "value": fault},
+            {"axis": "technique", "value": strategy},
+        ],
         "target": {"unit_id": unit},
         "provenance": {"run_id": RUN},
     }
+
+
+def _write_set(hunter: HunterMemoryStore, hunt: str, specs: list[dict]):
+    """Write the test's terminal set through the real lifecycle: draft first,
+    then the terminal statuses, so the store's identity-stability rule holds."""
+    drafts = [{**spec, "status": "hypothesised"} for spec in specs
+              if spec.get("status") != "hypothesised"]
+    if drafts:
+        hunter.write_specs(PROJECT, hunt, drafts, enforce_complete=False)
+    return hunter.write_specs(PROJECT, hunt, specs, enforce_complete=False)
 
 
 def _gate(hunter: HunterMemoryStore, pod: PodMemoryStore) -> RunSyncGate:
@@ -71,15 +83,12 @@ def test_real_store_terminal_and_export_advance_the_queue(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     hunt = "u1__loop-1"
-    hunter.write_specs(
-        PROJECT, hunt,
-        [_spec("f", "drop", "dropped"), _spec("f", "keep", "ratified")],
-        enforce_complete=False,
-    )
+    _write_set(hunter, hunt, [
+        _spec("f", "drop", "dropped"), _spec("f", "keep", "ratified")])
     hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
-    assert hunter.consume_spec(PROJECT, hunt, "f_keep") is True
+    assert hunter.consume_spec(PROJECT, hunt, "spec__f__keep") is True
     pod.write_pod_export(
-        "f_keep", RUN,
+        "spec__f__keep", RUN,
         {"verdict": "successful", "evidence": {
             "terminal_reason": "symptom-confirmed"}},
     )
@@ -109,13 +118,10 @@ def test_real_store_unreadable_spec_fails_closed(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     hunt = "u1__loop-1"
-    hunter.write_specs(
-        PROJECT, hunt, [_spec("f", "keep", "ratified")],
-        enforce_complete=False,
-    )
+    _write_set(hunter, hunt, [_spec("f", "keep", "ratified")])
     path = (
         tmp_path / "hunter" / PROJECT / "hunting" / "hunter"
-        / "test-specs" / hunt / "produced" / "f_keep.yaml"
+        / "test-specs" / hunt / "produced" / "spec__f__keep.yaml"
     )
     assert path.exists()
     path.write_text("not: [a: valid: yaml", encoding="utf-8")
@@ -138,8 +144,10 @@ def test_surfer_degraded_pod_export_is_durable(tmp_path):
     hunt = "u1__loop-1"
     spec = {
         "status": "ratified",
-        "fault_keyword": "f",
-        "strategy_keyword": "keep",
+        "discriminators": [
+            {"axis": "fault", "value": "f"},
+            {"axis": "technique", "value": "keep"},
+        ],
         "target": {"unit_id": "Service:u1"},
         "provenance": {"run_id": RUN},
     }
@@ -149,12 +157,12 @@ def test_surfer_degraded_pod_export_is_durable(tmp_path):
 
     export = asyncio.run(run_pod_session(
         spec=spec, project_id=PROJECT, run_id=RUN, hunt_key=hunt,
-        spec_id="f_keep", inbox=None, hunter_store=hunter, gate=None,
+        spec_id="spec__f__keep", inbox=None, hunter_store=hunter, gate=None,
         pod_builder=_raising_builder, pod_store=pod,
     ))
 
     assert export["terminal_reason"] == "surfer-dispatch-degraded"
-    stored = pod.read_pod_export("f_keep", RUN)
+    stored = pod.read_pod_export("spec__f__keep", RUN)
     assert stored["terminal_reason"] == "surfer-dispatch-degraded"
     assert stored["verdict"] == "unsuccessful"
 
@@ -167,17 +175,13 @@ def test_hunter_complete_declasses_leftover_hypothesised(tmp_path):
         [_spec("f", "draft", "hypothesised")],
         enforce_complete=False,
     )
-    hunter.write_specs(
-        PROJECT, hunt,
-        [_spec("f", "keep", "ratified")],
-        enforce_complete=False,
-    )
+    _write_set(hunter, hunt, [_spec("f", "keep", "ratified")])
 
     marker = hunter.settle_hypothesised(PROJECT, hunt, run_id=RUN)
 
     assert marker["spec_statuses"] == {
-        "f_draft": "dropped", "f_keep": "ratified"}
-    body = hunter.read_spec(PROJECT, hunt, "f_draft", side="produced")
+        "spec__f__draft": "dropped", "spec__f__keep": "ratified"}
+    body = hunter.read_spec(PROJECT, hunt, "spec__f__draft", side="produced")
     assert body["status"] == "dropped"
     assert body["declassified"] == "hunter-complete"
 
@@ -207,12 +211,12 @@ def test_run_hunter_session_settles_at_graph_complete(tmp_path, monkeypatch):
         gate=None, hunter_builder=_builder,
     ))
 
-    body = hunter.read_spec(PROJECT, hunt, "f_draft", side="produced")
+    body = hunter.read_spec(PROJECT, hunt, "spec__f__draft", side="produced")
     assert body["status"] == "dropped"
     marker = hunter.read_terminal_set(PROJECT, hunt)
     assert marker is not None
     assert marker["run_id"] == RUN
-    assert marker["spec_statuses"] == {"f_draft": "dropped"}
+    assert marker["spec_statuses"] == {"spec__f__draft": "dropped"}
 
 
 def test_artifacts_terminal_blocks_a_hypothesised_current_run_spec(tmp_path):
@@ -234,12 +238,9 @@ def test_artifacts_terminal_requires_a_pod_export(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     hunt = "u1__loop-1"
-    hunter.write_specs(
-        PROJECT, hunt, [_spec("f", "keep", "ratified")],
-        enforce_complete=False,
-    )
+    _write_set(hunter, hunt, [_spec("f", "keep", "ratified")])
     hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
-    hunter.consume_spec(PROJECT, hunt, "f_keep")
+    hunter.consume_spec(PROJECT, hunt, "spec__f__keep")
 
     complete, reasons = hunting_artifacts_terminal(
         PROJECT, RUN, hunter_store=hunter, pod_store=pod,
@@ -248,7 +249,7 @@ def test_artifacts_terminal_requires_a_pod_export(tmp_path):
     assert any("no PodExport" in reason for reason in reasons)
 
     pod.write_pod_export(
-        "f_keep", RUN,
+        "spec__f__keep", RUN,
         {"verdict": "unsuccessful", "evidence": {
             "terminal_reason": "surfer-dispatch-degraded"}},
     )
@@ -264,7 +265,7 @@ def test_artifacts_terminal_ignores_a_foreign_run_spec(tmp_path):
     hunt = "u1__loop-1"
     foreign = _spec("f", "keep", "ratified")
     foreign["provenance"] = {"run_id": "another-run"}
-    hunter.write_specs(PROJECT, hunt, [foreign], enforce_complete=False)
+    _write_set(hunter, hunt, [foreign])
 
     complete, reasons = hunting_artifacts_terminal(
         PROJECT, RUN, hunter_store=hunter, pod_store=pod,
@@ -276,14 +277,11 @@ def test_artifacts_terminal_blocks_a_malformed_current_run_spec(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     hunt = "u1__loop-1"
-    hunter.write_specs(
-        PROJECT, hunt, [_spec("f", "keep", "ratified")],
-        enforce_complete=False,
-    )
+    _write_set(hunter, hunt, [_spec("f", "keep", "ratified")])
     hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
     path = (
         tmp_path / "hunter" / PROJECT / "hunting" / "hunter"
-        / "test-specs" / hunt / "produced" / "f_keep.yaml"
+        / "test-specs" / hunt / "produced" / "spec__f__keep.yaml"
     )
     path.write_text("not: [a: valid: yaml", encoding="utf-8")
 
@@ -378,8 +376,8 @@ def test_run_hunter_session_settles_when_the_graph_degrades(tmp_path, monkeypatc
         gate=None, hunter_builder=_builder,
     ))
 
-    body = hunter.read_spec(PROJECT, hunt, "f_draft", side="produced")
+    body = hunter.read_spec(PROJECT, hunt, "spec__f__draft", side="produced")
     assert body["status"] == "dropped"
     marker = hunter.read_terminal_set(PROJECT, hunt)
     assert marker is not None
-    assert marker["spec_statuses"] == {"f_draft": "dropped"}
+    assert marker["spec_statuses"] == {"spec__f__draft": "dropped"}

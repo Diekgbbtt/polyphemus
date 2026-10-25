@@ -124,24 +124,28 @@ def test_runner_context_lists_executed_signatures():
 def _spec_with_typed_procedure() -> dict:
     return {
         "target_identity": {"url": "http://svc/", "unit_id": "svc"},
-        "provenance": {
-            "loop_id": "loop-1",
-            "skill_procedure": {
-                "recon_action": "the role check trusts the session",
-                "bypass_technique": "swap the role cookie",
-                "pro_tips": "confirm the authenticated landing",
-            },
+        "discriminators": [
+            {"axis": "actor", "value": "viewer"},
+            {"axis": "state", "value": "post-delete"},
+        ],
+        "skill_concretised_procedure": {
+            "recon_action": "the role check trusts the session",
+            "bypass_technique": "swap the role cookie",
+            "payload_vector": "the role cookie name, no encoding",
+            "technology_misconfiguration": "the gateway trusts the client role",
+            "pro_tips": "confirm the authenticated landing",
         },
+        "provenance": {"loop_id": "loop-1"},
     }
 
 
 def test_triager_context_renders_the_typed_procedure_once():
-    """CL-3 context-only dedup: the typed excerpt is the one rendering; the
-    full spec JSON no longer repeats `provenance.skill_procedure`."""
+    """CL-3 context-only dedup: the typed concretisation is the one rendering;
+    the full spec JSON no longer repeats `skill_concretised_procedure`."""
     log = ExperimentLog()
     ctx = log.triager_context(_spec_with_typed_procedure(), None)
     assert ctx.count("## Skill procedure") == 1
-    assert "skill_procedure" not in ctx
+    assert "skill_concretised_procedure" not in ctx
     assert "the role check trusts the session" in ctx
 
 
@@ -149,7 +153,7 @@ def test_runner_context_projects_the_typed_procedure_out_of_the_spec_json():
     log = ExperimentLog()
     ctx = log.runner_context(_spec_with_typed_procedure(), feedback="", iteration=1,
                              budget=3)
-    assert "skill_procedure" not in ctx
+    assert "skill_concretised_procedure" not in ctx
     assert "the role check trusts the session" not in ctx
 
 
@@ -157,7 +161,7 @@ def test_runner_context_projects_the_typed_procedure_out_of_the_spec_json():
 
 def _staged_log_and_spec(tmp_path):
     store = PodMemoryStore(tmp_path)
-    spec_id = spec_identifier("sqli", "blind")
+    spec_id = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
     store.write_experiment_log(spec_id, 1, {"order": 1, "variant_ref": "v1",
                                             "raw_observations": [],
                                             "kb_observations": [],
@@ -252,7 +256,7 @@ def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):
     (a budget/triager terminate mid-stretch at a higher order cannot leak the
     old order's summary to the Triager)."""
     store = PodMemoryStore(tmp_path)
-    spec_id = spec_identifier("sqli", "blind")
+    spec_id = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
     store.write_experiment_log(spec_id, 0, {"order": 0, "variant_ref": "v0",
                                             "raw_observations": [], "kb_observations": [],
                                             "interpretations": [], "executed": []})
@@ -278,7 +282,7 @@ def test_pod_session_address_derives_a_per_spec_hunt_session():
     the address."""
     from polymerhus.attack.hunting.pod.pod import _pod_session_address
 
-    spec_id = spec_identifier("sqli", "blind")
+    spec_id = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
     addr = _pod_session_address("run-1", "hunt-A", spec_id, "pod_runner")
 
     assert addr.role_id == "pod_runner"
@@ -289,7 +293,7 @@ def test_pod_session_address_derives_a_per_spec_hunt_session():
     # The semantic spec id discriminates the thread: two specs on one hunt
     # diverge (per concurrent pod instance - Q13).
     other = _pod_session_address("run-1", "hunt-A",
-                                 spec_identifier("xss", "reflected"),
+                                 spec_identifier("xss", [{"axis": "technique", "value": "reflected"}, {"axis": "payload-vector", "value": "html"}]),
                                  "pod_runner")
     assert addr.thread_id != other.thread_id
     # A missing hunt_id never shifts the address (empty discriminators are dropped).
