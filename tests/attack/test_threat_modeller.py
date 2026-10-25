@@ -85,7 +85,6 @@ def test_a_scripted_pass_writes_all_five_gates_to_the_real_store(tmp_path):
     assert model["trust_model"]["trust_agreements"]
     assert model["assumptions"]
     assert model["vulnerabilities"]
-    assert model["failure_modes"]
     assert model["risk_profile"]["total"] == 3
     assert model["validation"]["valid"] is True
     # the loop file landed for the non-`none` loop
@@ -152,7 +151,7 @@ def test_each_gate_write_response_carries_the_next_state_hint(tmp_path):
     assert (GATE_HINTS[ModelState.TRUST_ASSUMPTIONS_WRITTEN]
             .startswith("Proceed to vulnerability citation"))
     assert (GATE_HINTS[ModelState.VULNERABILITIES_WRITTEN]
-            .startswith("Proceed to failure-mode deduction"))
+            .startswith("Proceed to the ranked loops"))
 
 
 def test_a_pass_that_never_completes_reports_a_degraded_unit(tmp_path):
@@ -300,14 +299,12 @@ def test_an_invalid_completed_model_is_archived_and_reported_degraded(tmp_path):
     store = ThreatModelStore(root_dir=tmp_path)
     payloads = {
         ModelState.COMPLETED: {
-            "failure_modes": [],
             "loops": [{
                 "fault_ref": "fault-not-in-the-model",
                 "vulnerability_ref": "v-missing",
-                "failure_mode_refs": [],
                 "canonical_class": "IDOR",
                 "likelihood": "none",
-                "likelihood_rationale": "no feasible failure mode",
+                "likelihood_rationale": "the loop is deliberately unclosed",
                 "risk_factors": {
                     "attack_vector": "network", "attack_requirements": "none",
                     "privileges_required": "none", "complexity": "low"},

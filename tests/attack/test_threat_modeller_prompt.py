@@ -51,7 +51,6 @@ def test_the_prompt_carries_the_required_material():
         "section_trust_model": "trust_model",
         "section_assumptions": "assumptions",
         "section_vulnerabilities": "vulnerabilities",
-        "section_failure_modes": "failure_modes",
         "section_loops": "loops",
         "two_branch_method": "Branch A - trust agreements",
         "dynamic_state_branch": "dynamic-state trust",
@@ -140,10 +139,8 @@ def test_the_prompt_reference_table_matches_the_typed_paths():
         "trust_model.dynamic_state_trust.transitions[].target",
         "trust_model.dynamic_state_trust.violations[].maps_to_fault",
         "trust_model.dynamic_state_trust.violations[].transition_ref",
-        "failure_modes[].vulnerability_ref",
         "loops[].fault_ref",
         "loops[].vulnerability_ref",
-        "loops[].failure_mode_refs[]",
     ):
         assert path in prompt, path
 
@@ -322,7 +319,7 @@ def test_the_modeller_prompt_teaches_the_reference_id_contract():
     assert "maps_to_fault" in prompt
     assert "never control flows (`CF-*`) or data flows (`DF-*`)" in prompt
     assert "never prose" in prompt
-    for token in ("`F-*`", "`V-*`", "`FM-*`", "`IA-*`", "`TA-*`", "`TR-*`"):
+    for token in ("`F-*`", "`V-*`", "`IA-*`", "`TA-*`", "`TR-*`"):
         assert token in prompt
 
 

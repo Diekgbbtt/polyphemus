@@ -323,7 +323,7 @@ def test_the_trajectory_entry_records_the_signal_states_and_skipped_gates():
     entry = trajectory_entry("Service:a", TrailEntry(
         kind="gate", state="COMPLETED", previous_state="TRUST_MODELLED",
         skipped=["TRUST_ASSUMPTIONS_WRITTEN", "VULNERABILITIES_WRITTEN"],
-        sections=["failure_modes", "loops"],
+        sections=["loops"],
         at=datetime(2026, 10, 19, 9, 30, tzinfo=timezone.utc),
     ))
 

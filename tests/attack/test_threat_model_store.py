@@ -18,7 +18,9 @@ import yaml
 
 from polymerhus.attack.hunting.threat_model import (
     DEFAULT_RISK_THRESHOLD,
+    GATE_SECTIONS,
     RISK_WEIGHTS,
+    ModelState,
     UnitThreatModel,
     check_completion,
 )
@@ -134,7 +136,9 @@ def _vulnerabilities() -> list[dict]:
     }]
 
 
-def _failure_modes() -> list[dict]:
+def _legacy_failure_modes() -> list[dict]:
+    """A pre-contraction section payload: the strict schema and the store must
+    reject it, never merge it."""
     return [{
         "id": "fm-1",
         "vulnerability_ref": "v-1",
@@ -151,7 +155,6 @@ def _loop(likelihood: str = "high") -> dict:
         "id": "modeller-1",
         "fault_ref": "fault-1",
         "vulnerability_ref": "v-1",
-        "failure_mode_refs": ["fm-1"],
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
         "likelihood": likelihood,
@@ -183,10 +186,7 @@ def _sections_below_completed() -> list[tuple[str, dict]]:
 
 
 def _completed_sections(loops: list[dict] | None = None) -> dict:
-    return {
-        "failure_modes": _failure_modes(),
-        "loops": [_loop()] if loops is None else loops,
-    }
+    return {"loops": [_loop()] if loops is None else loops}
 
 
 def _write_to_completed(store: ThreatModelStore, *, loops: list[dict] | None = None) -> None:
@@ -204,14 +204,6 @@ def _dropped_vulnerabilities() -> list[dict]:
     }]
 
 
-def _dropped_failure_modes() -> list[dict]:
-    return [{
-        **_failure_modes()[0],
-        "dropped": True,
-        "drop_reason": "The lookup binds the id to the tenant.",
-    }]
-
-
 def _write_zero_loop_completed(store: ThreatModelStore) -> None:
     for state, sections in _sections_below_completed()[:-1]:
         store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
@@ -220,8 +212,7 @@ def _write_zero_loop_completed(store: ThreatModelStore) -> None:
         {"vulnerabilities": _dropped_vulnerabilities()}, run_id=RUN,
     )
     store.write_sections(
-        PROJECT, UNIT, "COMPLETED",
-        {"failure_modes": _dropped_failure_modes(), "loops": []}, run_id=RUN,
+        PROJECT, UNIT, "COMPLETED", {"loops": []}, run_id=RUN,
     )
 
 
@@ -269,7 +260,7 @@ def test_gate_writes_merge_sections_into_one_document(tmp_path):
     assert model["trust_model"]["trust_agreements"][0]["id"] == "ta-1"
     assert model["assumptions"][0]["fault"]["id"] == "fault-1"
     assert model["vulnerabilities"][0]["canonical_class"] == "IDOR"
-    assert model["failure_modes"] == []
+    assert "failure_modes" not in model
     assert model["loops"] == []
 
 
@@ -320,6 +311,59 @@ def test_a_section_outside_the_gates_set_is_a_coded_rejection(tmp_path):
 
     assert raised.value.fields == ["assumptions"]
     assert store.read_model(PROJECT, UNIT) is None
+
+
+def test_the_completed_gate_accepts_only_the_loops_section(tmp_path):
+    """The failure-mode contraction (ADR 2026-10-25): the COMPLETED gate carries
+    the loops alone, so a `failure_modes` section is a coded rejection and
+    nothing is persisted."""
+    store = ThreatModelStore(tmp_path)
+    for state, sections in _sections_below_completed():
+        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+
+    with pytest.raises(ThreatModelIdentityError) as raised:
+        store.write_sections(
+            PROJECT, UNIT, "COMPLETED",
+            {"failure_modes": _legacy_failure_modes(), "loops": [_loop()]}, run_id=RUN,
+        )
+
+    assert raised.value.fields == ["failure_modes"]
+    assert GATE_SECTIONS[ModelState.COMPLETED] == ("loops",)
+    assert store.read_model(PROJECT, UNIT)["state"] == "VULNERABILITIES_WRITTEN"
+
+
+def test_the_stored_model_carries_no_failure_mode_key(tmp_path):
+    """The section and the loop link are gone from the persisted document, the
+    model and the loop file alike (the contract half of the expand-contract)."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+
+    model = store.read_model(PROJECT, UNIT)
+
+    assert "failure_modes" not in model
+    assert "failure_mode_refs" not in model["loops"][0]
+    loop_file = store.read_loop_files(PROJECT, UNIT)[0]
+    assert "failure_mode_refs" not in loop_file["loop"]
+
+
+def test_a_model_with_a_failure_modes_key_is_rejected_by_the_strict_schema(tmp_path):
+    """The contraction removes the section without a `schema_version` bump: a
+    legacy document that still carries `failure_modes` no longer parses, so the
+    store refuses to merge it rather than silently dropping the section (the
+    migration note in `threat_model` records the decision)."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    document["failure_modes"] = _legacy_failure_modes()
+
+    with pytest.raises(ValueError):
+        UnitThreatModel.model_validate(document)
+
+    # the loop link went with the section: a legacy loop carrying it is rejected
+    document.pop("failure_modes")
+    document["loops"][0]["failure_mode_refs"] = ["fm-1"]
+    with pytest.raises(ValueError):
+        UnitThreatModel.model_validate(document)
 
 
 def test_an_unknown_schema_version_refuses_to_load_and_never_migrates(tmp_path):
@@ -565,7 +609,6 @@ def test_completion_reports_missing_necessary_attributes(tmp_path):
 def test_write_sections_accepts_typed_section_objects(tmp_path):
     # T2 may bind either plain payloads or the schema's typed section objects
     from polymerhus.attack.hunting.threat_model import (
-        FailureMode,
         Loop,
         TechnicalSharpening,
         TrustModel,
@@ -593,10 +636,7 @@ def test_write_sections_accepts_typed_section_objects(tmp_path):
 
     store.write_sections(
         PROJECT, UNIT, "COMPLETED",
-        {
-            "failure_modes": [FailureMode.model_validate(mode) for mode in _failure_modes()],
-            "loops": [Loop.model_validate(_loop("high"))],
-        },
+        {"loops": [Loop.model_validate(_loop("high"))]},
         run_id=RUN,
     )
 
@@ -828,16 +868,6 @@ def test_completion_reports_the_trust_model_referential_rules(tmp_path):
     assert "transition:tr-1.state_ref='ds-missing'" in errors
     assert "violation:vi-1.maps_to_fault='fault-missing'" in errors
     assert "assumption:as-1.boundary_ref='ta-missing'" in errors
-
-
-def test_completion_reports_an_unresolved_loop_failure_mode_ref(tmp_path):
-    store = ThreatModelStore(tmp_path)
-    loops = [{**_loop("high"), "failure_mode_refs": ["fm-missing"]}]
-
-    _write_to_completed(store, loops=loops)
-
-    validation = store.read_model(PROJECT, UNIT)["validation"]
-    assert "loop:loop-1.failure_mode_refs='fm-missing'" in validation["referential_errors"]
 
 
 def test_completed_keeps_the_write_order_on_a_likelihood_tie(tmp_path):

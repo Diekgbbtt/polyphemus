@@ -379,19 +379,9 @@ def modeller_gate_payloads() -> dict:
             }],
         },
         ModelState.COMPLETED: {
-            "failure_modes": [{
-                "id": "fm-1",
-                "vulnerability_ref": "v-1",
-                "mode": "read of another tenant's item",
-                "feasibility": "feasible",
-                "feasibility_rationale": "The id is caller-supplied.",
-                "confidence": "INFERRED",
-                "evidences": [_evidence()],
-            }],
             "loops": [{
                 "fault_ref": "fault-1",
                 "vulnerability_ref": "v-1",
-                "failure_mode_refs": ["fm-1"],
                 "canonical_class": "IDOR",
                 "web_vulnerability_class": "idor",
                 "likelihood": "high",
@@ -449,12 +439,11 @@ def produce_model(
 
 def loop_row(**overrides) -> dict:
     """One COMPLETED-write loop row (the shared worked example): one `high`
-    loop over fault-1 / v-1 / fm-1. `overrides` carry the sequencing fixtures'
+    loop over fault-1 / v-1. `overrides` carry the sequencing fixtures'
     likelihood (or a distinct loop's rows)."""
     row = {
         "fault_ref": "fault-1",
         "vulnerability_ref": "v-1",
-        "failure_mode_refs": ["fm-1"],
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
         "likelihood": "high",

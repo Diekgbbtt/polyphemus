@@ -74,12 +74,7 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
         "drop_reason": "the lookup binds the id to the tenant; the mechanics are absent",
         "drop_probe": "a second tenant's item id returning that item",
     }]}
-    failed = payloads[ModelState.COMPLETED]["failure_modes"][0]
-    payloads[ModelState.COMPLETED] = {
-        "failure_modes": [{**failed, "dropped": True,
-                           "drop_reason": "the lookup binds the id to the tenant"}],
-        "loops": [],
-    }
+    payloads[ModelState.COMPLETED] = {"loops": []}
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         hid = asyncio.run(hunting_runtime.start_hunting(
@@ -391,12 +386,7 @@ def _zero_loop_turns():
         "drop_reason": "the mechanics are absent",
         "drop_probe": "a second tenant's item id returning that item",
     }]}
-    failed = payloads[ModelState.COMPLETED]["failure_modes"][0]
-    payloads[ModelState.COMPLETED] = {
-        "failure_modes": [{**failed, "dropped": True,
-                           "drop_reason": "the mechanics are absent"}],
-        "loops": [],
-    }
+    payloads[ModelState.COMPLETED] = {"loops": []}
     return ScriptedModellerTurns(payloads=payloads)
 
 

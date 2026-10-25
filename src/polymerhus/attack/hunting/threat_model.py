@@ -8,7 +8,7 @@ level, so a typo can never silently persist.
 
 The entity names are the artifact contract's (`UnitThreatModel`,
 `TechnicalSharpening`, `TrustModel`, `TrustAgreement`, `DynamicStateTrust`,
-`Assumption`, `Fault`, `Vulnerability`, `FailureMode`, `Loop`, `Evidence`,
+`Assumption`, `Fault`, `Vulnerability`, `Loop`, `Evidence`,
 `Confidence`, `Likelihood`, `RiskFactors`, `RiskProfile`, `Validation`).
 
 Rules this module owns:
@@ -36,6 +36,13 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 SCHEMA_VERSION = 1
+
+# Migration note (2026-10-25): the failure-mode contraction removed the
+# `failure_modes` section and the `Loop.failure_mode_refs` link WITHOUT a
+# version bump - the A/B uses fresh models and no legacy model is migrated.
+# A legacy document that still carries either key no longer parses here
+# (`extra="forbid"`), so the store refuses to merge it instead of silently
+# dropping the section.
 
 # The progressive risk budget's default halt (S2 7.4). The canary's first unit
 # reached risk_total=44, so the operator raised the documented default to 250;
@@ -143,7 +150,7 @@ GATE_SECTIONS: dict[ModelState, tuple[str, ...]] = {
     ModelState.TRUST_MODELLED: ("trust_model",),
     ModelState.TRUST_ASSUMPTIONS_WRITTEN: ("assumptions",),
     ModelState.VULNERABILITIES_WRITTEN: ("vulnerabilities",),
-    ModelState.COMPLETED: ("failure_modes", "loops"),
+    ModelState.COMPLETED: ("loops",),
 }
 
 
@@ -162,12 +169,6 @@ class ViolationKind(StrEnum):
     STATE_CONSISTENCY = "state-consistency"
     FORCED_TRANSITION = "forced-transition"
     OTHER = "other"
-
-
-class Feasibility(StrEnum):
-    FEASIBLE = "feasible"
-    CONDITIONALLY_FEASIBLE = "conditionally-feasible"
-    INFEASIBLE = "infeasible"
 
 
 class AttackVector(StrEnum):
@@ -315,19 +316,6 @@ class Vulnerability(_Record):
     evidences: list[Evidence]
 
 
-class FailureMode(_Record):
-    id: str
-    vulnerability_ref: str
-    mode: str
-    feasibility: Feasibility
-    feasibility_rationale: str
-    dropped: bool = False
-    drop_reason: str = ""
-    drop_probe: str = ""
-    confidence: Confidence
-    evidences: list[Evidence]
-
-
 class RiskFactors(_Record):
     attack_vector: AttackVector
     attack_requirements: AttackRequirements
@@ -414,7 +402,6 @@ class Loop(_Record):
     id: str = ""
     fault_ref: str
     vulnerability_ref: str
-    failure_mode_refs: list[str]
     canonical_class: str
     web_vulnerability_class: str = ""
     suite_gap: bool = False
@@ -457,7 +444,6 @@ class ModelSections(BaseModel):
     trust_model: TrustModel | None = None
     assumptions: list[Assumption] | None = None
     vulnerabilities: list[Vulnerability] | None = None
-    failure_modes: list[FailureMode] | None = None
     loops: list[Loop] | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -482,7 +468,6 @@ class UnitThreatModel(_Record):
     trust_model: TrustModel = Field(default_factory=TrustModel)
     assumptions: list[Assumption] = Field(default_factory=list)
     vulnerabilities: list[Vulnerability] = Field(default_factory=list)
-    failure_modes: list[FailureMode] = Field(default_factory=list)
     loops: list[Loop] = Field(default_factory=list)
     risk_profile: RiskProfile | None = None
     validation: Validation | None = None
@@ -600,16 +585,6 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
             missing.append(f"vulnerability:{vulnerability.id}.canonical_class")
         if not vulnerability.web_vulnerability_class and not vulnerability.suite_gap:
             missing.append(f"vulnerability:{vulnerability.id}.web_vulnerability_class")
-    if not model.failure_modes:
-        missing.append("failure_modes")
-    for vulnerability in model.vulnerabilities:
-        if vulnerability.dropped:
-            continue
-        if not any(
-            failure_mode.vulnerability_ref == vulnerability.id
-            for failure_mode in model.failure_modes
-        ):
-            missing.append(f"vulnerability:{vulnerability.id}.failure_modes")
     every_vulnerability_dropped = bool(model.vulnerabilities) and all(
         vulnerability.dropped for vulnerability in model.vulnerabilities
     )
@@ -656,7 +631,6 @@ def _check_references(model: UnitThreatModel) -> list[str]:
     fault_ids = {assumption.fault.id for assumption in model.assumptions}
     vulnerability_ids = {vulnerability.id for vulnerability in model.vulnerabilities}
     vulnerability_index = {vulnerability.id: vulnerability for vulnerability in model.vulnerabilities}
-    failure_mode_ids = {failure_mode.id for failure_mode in model.failure_modes}
     agreement_ids = {agreement.id for agreement in sharpening.interface_agreements}
     trust_agreement_ids = {
         agreement.id for agreement in model.trust_model.trust_agreements
@@ -687,20 +661,11 @@ def _check_references(model: UnitThreatModel) -> list[str]:
         if violation.transition_ref and violation.transition_ref not in transition_ids:
             unresolved(f"violation:{violation.id}", "transition_ref",
                        violation.transition_ref)
-    for failure_mode in model.failure_modes:
-        if failure_mode.vulnerability_ref not in vulnerability_ids:
-            unresolved(
-                f"failure_mode:{failure_mode.id}", "vulnerability_ref",
-                failure_mode.vulnerability_ref,
-            )
     for loop in model.loops:
         if loop.fault_ref not in fault_ids:
             unresolved(f"loop:{loop.id}", "fault_ref", loop.fault_ref)
         if loop.vulnerability_ref not in vulnerability_ids:
             unresolved(f"loop:{loop.id}", "vulnerability_ref", loop.vulnerability_ref)
-        for ref in loop.failure_mode_refs:
-            if ref not in failure_mode_ids:
-                unresolved(f"loop:{loop.id}", "failure_mode_refs", ref)
         vulnerability = vulnerability_index.get(loop.vulnerability_ref)
         if vulnerability is not None:
             if loop.canonical_class != vulnerability.canonical_class:
@@ -719,7 +684,6 @@ def _check_closure(model: UnitThreatModel) -> list[str]:
     """The assumption-to-loop closure findings (S2 5.7), as dotted paths."""
     unclosed: list[str] = []
     vulnerability_index = {vulnerability.id: vulnerability for vulnerability in model.vulnerabilities}
-    failure_mode_index = {failure_mode.id: failure_mode for failure_mode in model.failure_modes}
     for assumption in model.assumptions:
         if not any(
             vulnerability.fault_ref == assumption.fault.id
@@ -733,23 +697,12 @@ def _check_closure(model: UnitThreatModel) -> list[str]:
             if not vulnerability.drop_probe:
                 unclosed.append(f"vulnerability:{vulnerability.id}.drop_probe")
             continue
-        if not any(
-            failure_mode.vulnerability_ref == vulnerability.id and not failure_mode.dropped
-            for failure_mode in model.failure_modes
-        ):
-            unclosed.append(f"vulnerability:{vulnerability.id}.failure_modes")
         if not any(loop.vulnerability_ref == vulnerability.id for loop in model.loops):
             unclosed.append(f"vulnerability:{vulnerability.id}.loops")
     for loop in model.loops:
-        if not loop.failure_mode_refs:
-            unclosed.append(f"loop:{loop.id}.failure_mode_refs")
         vulnerability = vulnerability_index.get(loop.vulnerability_ref)
         if vulnerability is not None and vulnerability.dropped:
             unclosed.append(f"loop:{loop.id}.vulnerability_ref")
-        for ref in loop.failure_mode_refs:
-            failure_mode = failure_mode_index.get(ref)
-            if failure_mode is not None and failure_mode.dropped:
-                unclosed.append(f"loop:{loop.id}.failure_mode_refs")
     return unclosed
 
 
@@ -794,9 +747,7 @@ __all__ = [
     "DynamicStateTrust",
     "Evidence",
     "EvidenceKind",
-    "FailureMode",
     "Fault",
-    "Feasibility",
     "GATE_SECTIONS",
     "IMPACT_METRIC_WEIGHTS",
     "Impact",

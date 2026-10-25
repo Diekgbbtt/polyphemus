@@ -764,7 +764,6 @@ def _loop_file_record(**overrides) -> dict:
             "id": "loop-1",
             "fault_ref": "fault-1",
             "vulnerability_ref": "v-1",
-            "failure_mode_refs": ["fm-1"],
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",
             "likelihood": "high",
@@ -1084,12 +1083,7 @@ def _zero_loop_turns():
         "drop_reason": "the mechanics are absent",
         "drop_probe": "a second tenant's item id returning that item",
     }]}
-    failed = payloads[ModelState.COMPLETED]["failure_modes"][0]
-    payloads[ModelState.COMPLETED] = {
-        "failure_modes": [{**failed, "dropped": True,
-                           "drop_reason": "the mechanics are absent"}],
-        "loops": [],
-    }
+    payloads[ModelState.COMPLETED] = {"loops": []}
     return ScriptedModellerTurns(payloads=payloads)
 
 
@@ -1107,12 +1101,7 @@ def _produce_zero_loop_model(store, *, unit_id=UNIT):
         "drop_reason": "the mechanics are absent",
         "drop_probe": "a second tenant's item id returning that item",
     }]}
-    failed = payloads[ModelState.COMPLETED]["failure_modes"][0]
-    payloads[ModelState.COMPLETED] = {
-        "failure_modes": [{**failed, "dropped": True,
-                           "drop_reason": "the mechanics are absent"}],
-        "loops": [],
-    }
+    payloads[ModelState.COMPLETED] = {"loops": []}
     for state in ModelState:
         store.write_sections(PROJECT, unit_id, state, payloads[state], run_id=RUN)
     return unit_id

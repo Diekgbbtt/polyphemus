@@ -50,7 +50,6 @@ def loop(*, likelihood=Likelihood.MEDIUM, impact_value=None,
     return Loop(
         fault_ref="F-1",
         vulnerability_ref="V-1",
-        failure_mode_refs=["FM-1"],
         canonical_class=canonical,
         web_vulnerability_class=web,
         likelihood=likelihood,

@@ -12,7 +12,7 @@ gate writes (S1 6.1):
     TRUST_MODELLED            trust_model
     TRUST_ASSUMPTIONS_WRITTEN assumptions
     VULNERABILITIES_WRITTEN   vulnerabilities
-    COMPLETED                 failure_modes, loops
+    COMPLETED                 loops
 
 Three rules govern the harness side:
 
@@ -117,10 +117,9 @@ GATE_HINTS: dict[ModelState, str] = {
         "with a hunts_store write for state VULNERABILITIES_WRITTEN."
     ),
     ModelState.VULNERABILITIES_WRITTEN: (
-        "Proceed to failure-mode deduction and the ranked loops: map each "
-        "not-dropped vulnerability back to one or more runtime failure modes, "
-        "apply the retention-first drop rule, rank the surviving loops by "
-        "likelihood and write them with a hunts_store write for state COMPLETED."
+        "Proceed to the ranked loops: apply the retention-first drop rule, "
+        "rank the surviving loops by likelihood and write them with a "
+        "hunts_store write for state COMPLETED."
     ),
 }
 
@@ -159,11 +158,9 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "vulnerabilities section."
     ),
     ModelState.COMPLETED: (
-        "Deduce the failure modes: map each not-dropped vulnerability back to "
-        "one or more runtime execution failure modes grounded in the technical "
-        "sharpening. Apply the retention-first drop rule, score each feasible "
-        "loop's likelihood from the four risk factors, and write ONLY the "
-        "failure_modes and loops sections. Copy each loop's canonical_class and "
+        "Rank the loops: apply the retention-first drop rule, score each "
+        "surviving loop's likelihood from the four risk factors, and write "
+        "ONLY the loops section. Copy each loop's canonical_class and "
         "web_vulnerability_class verbatim from its vulnerability. The store "
         "computes the risk profile and runs the completion checker after your "
         "write; if validation.valid is false, fix every finding and write "

@@ -979,7 +979,6 @@ def _write_seed_unit(source: Path, *, run_id: str = "source-run") -> Path:
                     "id": "loop-1",
                     "fault_ref": "fault-1",
                     "vulnerability_ref": "v-1",
-                    "failure_mode_refs": ["fm-1"],
                     "canonical_class": "IDOR",
                     "web_vulnerability_class": "idor",
                     "likelihood": "high",
