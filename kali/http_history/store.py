@@ -30,6 +30,30 @@ _PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 ALLOWED_SIDES = frozenset({"request", "response", "connection", "context", "timing"})
 ALLOWED_NAMESPACES = frozenset({"core", "header", "cookie", "query", "form", "body", "tls"})
 ALLOWED_OPS = frozenset({"eq", "contains", "prefix", "gte", "lte", "absent"})
+# The reader-side guard for the `core` namespace. It mirrors the keys
+# `kali/http_history/index.py` writes, per side. A key on the wrong side (for
+# example `response/core/url`) otherwise matches nothing and reads as "no such
+# traffic", which is a false negative: the caller gets `invalid_filter` instead.
+CORE_KEYS_BY_SIDE = {
+    "request": frozenset({"http_version", "method", "url"}),
+    "response": frozenset({"http_version", "status", "reason"}),
+    "connection": frozenset({"client_address", "server_address",
+                             "protocol", "error_type"}),
+    "context": frozenset({"session_id", "run_id", "spec_id",
+                          "variant_ref", "exec_id"}),
+    "timing": frozenset({"total_ms"}),
+}
+# Attribute keys the index writes with a `numeric_value` and NO `text_value`.
+# `eq` on one of them with a numeric STRING (JSON often sends "200") would
+# compare `text_value`, which is NULL, and return an empty page that reads as
+# "no such traffic". Coerce the string; a non-numeric string stays a text
+# compare, because `response/core/status` is text `none` when no response was
+# recorded, and `eq "none"` is a real control-group query.
+NUMERIC_ATTRIBUTE_KEYS = frozenset({
+    ("core", "status"),
+    ("core", "total_ms"),
+    ("body", "size"),
+})
 MIN_LIMIT, MAX_LIMIT = 1, 200
 
 _SCHEMA = """
@@ -370,8 +394,31 @@ class HttpHistoryStore:
                 raise ValueError(f"unknown namespace {namespace!r}")
             if op not in ALLOWED_OPS:
                 raise ValueError(f"unknown op {op!r}")
-            if namespace == "header":
+            # The `core` namespace is a CLOSED key set per side (the keys
+            # `index.py` writes). A key on the wrong side would otherwise
+            # return an empty page, which the caller cannot tell from genuinely
+            # absent traffic. This ValueError is the `invalid_filter` the MCP
+            # seam already maps, so no new error path is added.
+            if namespace == "core" and key not in CORE_KEYS_BY_SIDE[side]:
+                allowed = ", ".join(sorted(CORE_KEYS_BY_SIDE[side]))
+                raise ValueError(
+                    f"core key {key!r} is not valid on side {side!r}; "
+                    f"allowed: {allowed}"
+                )
+            if namespace in {"header", "cookie"}:
                 key = key.lower()
+            # The index writes header names lowercased, so `a.key = ?` uses the
+            # covering index. It writes cookie names as recorded (`JSESSIONID`),
+            # and existing projects already hold those rows, so the cookie key
+            # alone is folded in SQL. Cookie rows are a handful per flow, so the
+            # expression scan stays small, unlike the header namespace.
+            key_ref = "LOWER(a.key)" if namespace == "cookie" else "a.key"
+            if op == "eq" and (namespace, key) in NUMERIC_ATTRIBUTE_KEYS \
+                    and isinstance(value, str):
+                try:
+                    value = float(value)
+                except ValueError:
+                    pass
             # A semi-join (`IN (SELECT ...)`) is chosen over a correlated
             # `EXISTS`/`NOT EXISTS` subquery on purpose. The correlated form makes
             # SQLite re-scan every attribute row sharing `(side, namespace, key)`
@@ -387,14 +434,15 @@ class HttpHistoryStore:
             if op == "absent":
                 clauses.append(
                     "f.artifact_id NOT IN (SELECT a.artifact_id FROM attributes a "
-                    "WHERE a.side = ? AND a.namespace = ? AND a.key = ?)"
+                    f"WHERE a.side = ? AND a.namespace = ? AND {key_ref} = ?)"
                 )
                 params.extend([side, namespace, key])
                 continue
             clause, clause_params = _op_sql(op, value)
             clauses.append(
                 "f.artifact_id IN (SELECT a.artifact_id FROM attributes a "
-                "WHERE a.side = ? AND a.namespace = ? AND a.key = ? AND " + clause + ")"
+                f"WHERE a.side = ? AND a.namespace = ? AND {key_ref} = ? AND "
+                + clause + ")"
             )
             params.extend([side, namespace, key, *clause_params])
         where = (" AND " + " AND ".join(clauses)) if clauses else ""

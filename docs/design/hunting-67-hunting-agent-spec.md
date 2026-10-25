@@ -582,6 +582,8 @@ The hunter's tool surface is:
 - `exec`: the Kali exec tool, unbounded at the harness level.
   - The target-front availability directive applies.
 - `skill_list` / `skill_load`: the web-vulnerability suite.
+  - `skill_list` requires a case-insensitive name regex.
+  - A parent match includes its class leaves; a leaf match includes its class parent.
   - The threat's suite class selects the class skill.
 - `search_http_history` / `get_http_artifact`: the project's recorded HTTP traffic.
   - Search returns sanitized candidate rows.

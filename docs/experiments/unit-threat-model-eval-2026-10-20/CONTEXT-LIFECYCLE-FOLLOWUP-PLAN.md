@@ -1,5 +1,9 @@
 # Context lifecycle follow-up implementation plan
 
+> **Correction (2026-10-23):** the "Evidence corrections" section below reverses the two payloads.
+> The 74,649-character modeller payload is `auth_store`; the modeller's 50-row HTTP page is 22,302 characters.
+> See `TOOL-RESPONSE-OCCUPANCY-ASSESSMENT.md` for the corrected evidence and the new ranking.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Correct the white-jotter context report, implement the approved local context fixes, and quantify the context components and the n-turn offload experiment with the same quality at lower occupancy.

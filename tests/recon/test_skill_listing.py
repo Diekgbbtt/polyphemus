@@ -134,3 +134,25 @@ def test_the_tool_carries_the_one_contract(catalogue) -> None:
     tool = skills.build_load_skill_tool()
     assert skills.SKILL_LOAD_CONTRACT in tool.description
     assert "LISTING MODE" in tool.description
+
+
+def test_suite_parents_maps_every_leaf_to_its_class(tmp_path) -> None:
+    """The suite parent map is derived from the mounted tree, so an
+    abbreviated leaf such as `bfla-*` resolves to its class without a
+    hand-written index."""
+    root = tmp_path / "cat"
+    _skill(root, "web-vulnerability-testing/alpha", "Alpha class.")
+    _skill(root, "web-vulnerability-testing/alpha/alpha-variant", "Variant.")
+    _skill(root, "web-vulnerability-testing/bfla", "Bfla class.")
+    _skill(root, "web-vulnerability-testing/bfla/abbreviated-leaf", "Leaf.")
+    catalogue = skills.SkillCatalogue(root)
+
+    parents = catalogue.suite_parents()
+
+    assert parents == {
+        "alpha": "alpha",
+        "alpha-variant": "alpha",
+        "bfla": "bfla",
+        "abbreviated-leaf": "bfla",
+    }
+    assert skills.list_suite_parents(catalogue) == parents

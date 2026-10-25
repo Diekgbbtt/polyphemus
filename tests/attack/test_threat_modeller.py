@@ -305,7 +305,10 @@ def test_the_suite_pair_binds_and_degrades_the_class_mapping():
     assert {"skill_list", "skill_load"} <= set(TOOL_SURFACE)
     listing = surface["skill_list"].invoke({})
     load = surface["skill_load"].invoke({"name": "idor"})
-    assert listing["skills"] == [] and listing["suite_gap"] is True
+    filtered = surface["skill_list"].invoke({"filter": "idor"})
+    assert listing["error"] == "skill_filter_required"
+    assert listing["skills"] == []
+    assert filtered["skills"] == [] and filtered["suite_gap"] is True
     assert load["error"] == "suite_unavailable" and load["suite_gap"] is True
     seam = suite_seam_from_tools(list(surface.values()))
     assert seam is not None and seam.gaps
@@ -323,13 +326,132 @@ def test_the_suite_pair_lists_the_frontmatter_and_loads_a_class_body():
         classes=("idor", "xss"), read_fn=lambda name: bodies[name])
     surface = {tool.name: tool for tool in tools}
 
-    listing = surface["skill_list"].invoke({})
+    listing = surface["skill_list"].invoke({"filter": "idor|xss"})
     load = surface["skill_load"].invoke({"name": "idor"})
 
     assert [entry["name"] for entry in listing["skills"]] == ["idor", "xss"]
     assert listing["skills"][0]["description"] == "object-level authorisation failures"
     assert load == {"ok": True, "name": "idor", "body": bodies["idor"],
                     "suite_gap": False}
+
+
+def test_the_suite_listing_cascades_a_parent_to_its_leaves():
+    """A parent regex returns the class parent plus every leaf of that class,
+    even when a leaf name does not repeat the parent name (`bfla-*`)."""
+    bodies = {
+        "broken-function-level-authorization":
+            "---\ndescription: bfla\n---\nbody",
+        "bfla-alternate-path": "---\ndescription: alternate\n---\nbody",
+        "bfla-client-identity-trust": "---\ndescription: client\n---\nbody",
+        "idor": "---\ndescription: idor\n---\nbody",
+    }
+    parents = {
+        "broken-function-level-authorization":
+            "broken-function-level-authorization",
+        "bfla-alternate-path": "broken-function-level-authorization",
+        "bfla-client-identity-trust": "broken-function-level-authorization",
+        "idor": "idor",
+    }
+    tools = build_vulnerability_suite_tools(
+        classes=tuple(bodies), read_fn=bodies.__getitem__, parents=parents)
+    surface = {tool.name: tool for tool in tools}
+
+    listing = surface["skill_list"].invoke(
+        {"filter": "broken-function-level-authorization"})
+
+    assert [entry["name"] for entry in listing["skills"]] == [
+        "broken-function-level-authorization",
+        "bfla-alternate-path",
+        "bfla-client-identity-trust",
+    ]
+    assert listing["skills"][0]["kind"] == "parent"
+    assert listing["skills"][1]["parent"] == (
+        "broken-function-level-authorization")
+    assert listing["filter"] == "broken-function-level-authorization"
+
+
+def test_the_suite_listing_returns_the_parent_for_a_leaf_match():
+    """A leaf regex returns the leaf and its class parent; the match is
+    case-insensitive."""
+    bodies = {
+        "information-disclosure": "---\ndescription: disclosure\n---\nbody",
+        "information-disclosure-excessive-data-exposure":
+            "---\ndescription: excessive\n---\nbody",
+    }
+    parents = {
+        "information-disclosure": "information-disclosure",
+        "information-disclosure-excessive-data-exposure":
+            "information-disclosure",
+    }
+    surface = {
+        tool.name: tool
+        for tool in build_vulnerability_suite_tools(
+            classes=tuple(bodies), read_fn=bodies.__getitem__, parents=parents)
+    }
+
+    listing = surface["skill_list"].invoke(
+        {"filter": "INFORMATION-DISCLOSURE-EXCESSIVE-DATA-EXPOSURE"})
+
+    assert [entry["name"] for entry in listing["skills"]] == [
+        "information-disclosure",
+        "information-disclosure-excessive-data-exposure",
+    ]
+    assert listing["skills"][1]["kind"] == "leaf"
+
+
+def test_the_suite_listing_requires_a_filter_and_accepts_a_no_match():
+    """A missing filter is a coded error with no listing; a no-match regex is
+    an empty listing, not an error."""
+    bodies = {"idor": "---\ndescription: idor\n---\nbody"}
+    surface = {
+        tool.name: tool
+        for tool in build_vulnerability_suite_tools(
+            classes=tuple(bodies), read_fn=bodies.__getitem__)
+    }
+
+    missing = surface["skill_list"].invoke({})
+    no_match = surface["skill_list"].invoke({"filter": "no-such-class"})
+
+    assert missing["error"] == "skill_filter_required"
+    assert missing["skills"] == []
+    assert no_match["skills"] == []
+    assert no_match["filter"] == "no-such-class"
+    assert "error" not in no_match
+
+
+def test_the_suite_listing_rejects_an_invalid_regex_without_raising():
+    bodies = {"idor": "---\ndescription: idor\n---\nbody"}
+    surface = {
+        tool.name: tool
+        for tool in build_vulnerability_suite_tools(
+            classes=tuple(bodies), read_fn=bodies.__getitem__)
+    }
+
+    invalid = surface["skill_list"].invoke({"filter": "["})
+
+    assert invalid["error"] == "skill_filter_invalid"
+    assert invalid["skills"] == []
+    assert invalid["filter"] == "["
+
+
+def test_the_suite_listing_caps_a_broad_cascade_and_reports_omitted():
+    bodies = {"cap-parent": "---\ndescription: parent\n---\nbody"}
+    parents = {"cap-parent": "cap-parent"}
+    for index in range(25):
+        leaf = f"cap-leaf-{index:02d}"
+        bodies[leaf] = f"---\ndescription: {leaf}\n---\nbody"
+        parents[leaf] = "cap-parent"
+    surface = {
+        tool.name: tool
+        for tool in build_vulnerability_suite_tools(
+            classes=tuple(bodies), read_fn=bodies.__getitem__, parents=parents)
+    }
+
+    listing = surface["skill_list"].invoke({"filter": "cap-parent"})
+
+    assert len(listing["skills"]) == 20
+    assert listing["omitted"] == 6
+    assert listing["skills"][0]["name"] == "cap-parent"
 
 
 def test_notes_are_keyed_by_the_bound_unit_and_refuse_phase_summary(tmp_path):

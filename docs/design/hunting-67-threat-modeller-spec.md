@@ -298,6 +298,10 @@ The skill-usage lesson recorder is bound through `record_skill_lesson`.
 The web-vulnerability skills suite is bound through `skill_list` and `skill_load`.
 The suite class is the stored `web_vulnerability_class` of a vulnerability.
 The class name must equal a skills-suite directory name.
+`skill_list` requires a case-insensitive regex over skill names.
+A missing filter is `skill_filter_required`; an invalid regex is `skill_filter_invalid`; a no-match regex returns an empty `skills` list.
+A parent match returns the class parent plus its variant leaves; a leaf match returns the leaf plus its class parent, so an abbreviated leaf (`bfla-*`) still yields `broken-function-level-authorization`.
+The listing is capped at 20 entries and reports the omitted count.
 If the suite lands with different tool names, an adapter maps the assumed `skill_list` / `skill_load` names to the built tools.
 The role is enabled only when the suite contract test passes.
 The control plan binds that skill to the hunter prompts.

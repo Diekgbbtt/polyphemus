@@ -160,10 +160,10 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
     ModelState.VULNERABILITIES_WRITTEN: (
         "Switch to the abduction world: for each programming fault, name the web "
         "vulnerability classes freely from the canonical taxonomy first, then "
-        "bind each named class to a suite class parent or leaf (skill_list and "
-        "skill_load). Technique families are not classes; bind the nearest "
-        "parent for a novel class and never leave the class empty. Then run the "
-        "well-formedness phase."
+        "bind each named class to a suite class parent or leaf (search the "
+        "suite with skill_list and a name regex, then skill_load). Technique "
+        "families are not classes; bind the nearest parent for a novel class "
+        "and never leave the class empty. Then run the well-formedness phase."
     ),
     ModelState.COMPLETED: (
         "Rank the threats: apply the two-clause drop rule, write each surviving "

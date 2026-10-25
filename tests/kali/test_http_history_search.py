@@ -112,6 +112,82 @@ def test_search_ops_eq_contains_prefix_gte_lte(tmp_path):
     assert len(lte.artifacts) == 2
 
 
+def test_a_numeric_string_status_filter_matches(tmp_path):
+    """JSON often carries a number as a string. `status` is indexed numeric
+    only, so `eq "404"` used to compare `text_value` (NULL) and return an
+    empty page that read as "no such traffic"."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    page = store.search([
+        {"side": "response", "namespace": "core", "key": "status",
+         "op": "eq", "value": "404"},
+    ])
+    assert [a.artifact_id for a in page.artifacts] == [
+        "http_01J0000000000000000000001A"]
+
+
+def test_a_numeric_string_size_filter_matches(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    page = store.search([
+        {"side": "response", "namespace": "body", "key": "size",
+         "op": "eq", "value": "8"},
+    ])
+    assert len(page.artifacts) == 3
+
+
+def test_a_non_numeric_status_value_stays_a_text_match(tmp_path):
+    """A response-less artifact indexes `status` with the text `none`, and
+    `eq "none"` is a real control-group query. Coercion must not eat it."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    artifact, bodies = _artifact(
+        "http_01J0000000000000000000007A", created_at=5000.0)
+    store.record(artifact.model_copy(update={"response": None}), bodies=bodies)
+    page = store.search([
+        {"side": "response", "namespace": "core", "key": "status",
+         "op": "eq", "value": "none"},
+    ])
+    assert [a.artifact_id for a in page.artifacts] == [
+        "http_01J0000000000000000000007A"]
+
+
+def test_a_cookie_key_matches_regardless_of_case(tmp_path):
+    """Cookie names are recorded as the application sends them (`JSESSIONID`).
+    The row carries no cookies, so the model cannot learn the case; matching
+    folds it instead of returning an empty page."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    artifact, bodies = _artifact(
+        "http_01J0000000000000000000008A", created_at=1000.0,
+        cookies=[NameValue(name="JSESSIONID", value="abc")])
+    store.record(artifact, bodies=bodies)
+
+    for key in ("jsessionid", "JSESSIONID", "JsEsSiOnId"):
+        page = store.search([
+            {"side": "request", "namespace": "cookie", "key": key,
+             "op": "eq", "value": "abc"},
+        ])
+        assert [a.artifact_id for a in page.artifacts] == [
+            "http_01J0000000000000000000008A"], key
+
+
+def test_cookie_absent_uses_the_same_case_folding(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    with_cookie, bodies = _artifact(
+        "http_01J0000000000000000000008A", created_at=1000.0,
+        cookies=[NameValue(name="JSESSIONID", value="abc")])
+    without_cookie, bodies2 = _artifact(
+        "http_01J0000000000000000000009A", created_at=2000.0, cookies=[])
+    store.record(with_cookie, bodies=bodies)
+    store.record(without_cookie, bodies=bodies2)
+
+    page = store.search([
+        {"side": "request", "namespace": "cookie", "key": "jsessionid",
+         "op": "absent"},
+    ])
+    assert [a.artifact_id for a in page.artifacts] == [
+        "http_01J0000000000000000000009A"]
+
+
 def test_search_filters_are_conjunctive(tmp_path):
     store = HttpHistoryStore(tmp_path, "proj-1")
     _seed(store)
@@ -150,6 +226,47 @@ def test_search_rejects_unknown_vocabulary(tmp_path):
         store.search([{"side": "request", "namespace": "core", "key": "method", "op": "regex", "value": "x"}])
     with pytest.raises(ValueError):
         store.search([{"side": "body", "namespace": "core", "key": "method", "op": "eq", "value": "x"}])
+
+
+def test_a_core_key_is_bound_to_its_side(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    with pytest.raises(ValueError, match="not valid on side 'request'"):
+        store.search([{"side": "request", "namespace": "core",
+                       "key": "host", "op": "eq", "value": "target.example"}])
+    with pytest.raises(ValueError, match="not valid on side 'response'"):
+        store.search([{"side": "response", "namespace": "core",
+                       "key": "url", "op": "contains", "value": "/login"}])
+
+
+def test_the_core_key_error_names_the_allowed_keys(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    with pytest.raises(ValueError) as raised:
+        store.search([{"side": "request", "namespace": "core",
+                       "key": "host", "op": "eq", "value": "target.example"}])
+    assert "http_version" in str(raised.value)
+    assert "method" in str(raised.value)
+    assert "url" in str(raised.value)
+
+
+def test_every_valid_core_key_still_searches(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    matched = (
+        ("request", "url", "contains", "/login"),
+        ("response", "status", "eq", 200),
+        ("timing", "total_ms", "gte", 25.0),
+    )
+    for side, key, op, value in matched:
+        page = store.search([{"side": side, "namespace": "core",
+                              "key": key, "op": op, "value": value}])
+        assert page.artifacts, (side, key)
+    for side, key, op, value in (
+        ("context", "run_id", "eq", "r1"),
+        ("connection", "protocol", "eq", "http"),
+    ):
+        store.search([{"side": side, "namespace": "core",
+                       "key": key, "op": op, "value": value}])
 
 
 def test_search_never_leaves_the_project(tmp_path):

@@ -180,7 +180,7 @@ An assumption that names no fault is unclosed, and the completion check reports 
 Switch to the symmetric world and abduct: for each mapped programming fault, cite the web vulnerability classes that could characterise the application if the fault were effectively implemented.
 A fault may yield several vulnerabilities.
 
-Name the classes freely from the canonical taxonomy FIRST (unrestricted induction), then consult the web-vulnerability suite with `skill_list` and `skill_load`, and bind each named class to the suite class parent or variant leaf that covers it.
+Name the classes freely from the canonical taxonomy FIRST (unrestricted induction), then search the web-vulnerability suite with `skill_list` (a required case-insensitive name regex) and `skill_load`, and bind each named class to the suite class parent or variant leaf that covers it.
 The stored `canonical_class` is your free name; the stored `web_vulnerability_class` MUST be a suite class parent or leaf, because the control plan binds that skill to the hunter.
 
 **Technique families are not vulnerability classes.**
@@ -235,6 +235,12 @@ Where upstream material and a live response diverge, record the divergence and f
 ## Probing (the `exec` tool)
 
 Probe the running target to attempt to falsify your trust assumptions and technical fault hypotheses with technical evidence. However, probe rather only to verify empirically fundamental mechanical details and shape the data contract more precisely, when modelling the technical interface agreement.
+
+**Optional skill-assisted assumption check.** Before you decide the assumption space is sufficiently explored, you may search the web-vulnerability suite with `skill_list` (a required case-insensitive name regex; a parent match includes its leaves and a leaf match includes its parent) and load any class parent or variant leaf with `skill_load`.
+Use a leaf only to generate or sharpen a trust assumption that names a programming fault: read its procedure for a trust-boundary, state, or data-flow pattern the model may have missed.
+Do NOT reverse the abduction chain: a vulnerability class is cited AFTER a fault, and a skill leaf never supplies the fault by itself.
+If a leaf suggests a new assumption, add it to `assumptions`, probe it, and record the evidence; if it adds nothing, record that the check was made and continue.
+This check is optional, and it is never a skill write and never a lesson.
 
 - Probes seek technical evidence against a claim, and you record every probe and its side effect in the claim's evidence entries.
 - Mutating probes are allowed for evidence (persisting a value, submitting a form); restoration is best-effort where the surface offers it.
@@ -305,7 +311,7 @@ An unclosed assumption is recorded as a validation finding - close it before the
 - `notes` - the episodic notes, keyed `<unit_name>:<note_name>`. Write ONE note per reasoning phase: the decision nodes and the rationales of the branches you took. The `wellformedness` note is the exit memory. Available kinds: `hypothesis_refusal`, `implicit_test_primitive`, `wellformedness`, `freeform` (`phase_summary` is the hunter's kind and is not accepted here).
 - `search_http_history` / `get_http_artifact` - the recorded request traffic for the unit's endpoints. Search returns candidate summary rows; get inspects one artifact and its capture state. Their ids and request records are your evidence entries. You never replay: replay belongs to the test-executor pod.
 - `exec` - the live probe against the Kali surface, for the mechanics and the evidence above.
-- `skill_list` / `skill_load` - the web-vulnerability suite: list the suite skills (class parents and variant leaves, each with its frontmatter description) and load the one that covers a named class. A degraded answer is a coded gap: record it.
+- `skill_list` / `skill_load` - the web-vulnerability suite: search it by a required case-insensitive name regex, then load the one that covers a named class. A parent match returns its leaves and a leaf match returns its parent, so an abbreviated leaf still names its class. Each entry carries its frontmatter description. A degraded answer is a coded gap: record it.
 - `load_skill` / `record_skill_lesson` - the project skill loader and the skill-usage lesson recorder: load the skill named in your context before the phase whose discipline it bears on, and record one reusable lesson when a skill materially shaped a decision.
 - `auth_store` - the project's read-only authentication context: read it before you reason about identity or authorization boundaries. Never write it.
 
