@@ -153,8 +153,9 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
     ModelState.VULNERABILITIES_WRITTEN: (
         "Switch to the abduction world: for each programming fault, name the web "
         "vulnerability classes freely from the canonical taxonomy first, then "
-        "map each named class onto the suite class that covers it (skill_list "
-        "and skill_load). Where no suite class covers a name, keep the canonical "
+        "map each named class onto the suite class that covers it (search the "
+        "suite with skill_list and a name regex, then skill_load). Where no "
+        "suite class covers a name, keep the canonical "
         "name, leave web_vulnerability_class empty, and set suite_gap. Write the "
         "vulnerabilities section."
     ),
