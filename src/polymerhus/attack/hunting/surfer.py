@@ -210,6 +210,14 @@ def is_pod_session_id(session_id: str) -> bool:
 MAX_CONSECUTIVE_CHILD_FAILURES = 3
 DEFAULT_CHILD_RETRY_BACKOFF_S = 30.0
 
+# The per-dispatched-session watchdog (the serial/batched degraded fix). A
+# hunter or pod graph that does not finish inside this window is classed
+# degraded: the hunter's registration is released and its drafts are settled,
+# and a pod writes a degraded PodExport. The queue moves on instead of waiting
+# forever on a wedged session. The value is a ceiling, not a target: a healthy
+# 7M-capped run's sessions finish well inside it.
+DEFAULT_DISPATCH_TIMEOUT_S = 2700.0
+
 
 @dataclass
 class ChildFailure:
@@ -257,6 +265,10 @@ class RunDispatchState:
     loop_likelihoods: dict[str, str] = field(default_factory=dict)
     child_failures: dict[str, ChildFailure] = field(default_factory=dict)
     provider_failure: ProviderUnavailableError | None = None
+    # The watchdog ceiling for one dispatched hunter or pod session. A session
+    # that exceeds it is classed degraded and the queue moves on; the run state
+    # carries the value so a trial can tighten it without a code change.
+    session_timeout_s: float = DEFAULT_DISPATCH_TIMEOUT_S
     # The run's pipeline sync gate (`hunting_pipeline_sync`, ADR 2026-10-22):
     # None in `parallel` (the historical behaviour), a `RunSyncGate` in
     # `batched`/`serial`. Consulted once per surfer tick; held items stay
@@ -626,6 +638,7 @@ def build_run_dispatch(
             gate=gate,
             role_gate=_role_gate("hunter"),
             hunter_builder=hunter_builder,
+            session_timeout_s=state.session_timeout_s,
         )
 
     def _spec_dispatch(item: TestSpecItem) -> Any:
@@ -634,7 +647,25 @@ def build_run_dispatch(
         # for a directly constructed item.
         body = item.spec if item.spec is not None else produced_spec_body(
             hunter_store, project_id, item.hunt_key, item.spec_file)
-        if not body or body.get("status") != SPEC_DISPATCH_STATUS:
+        if item.malformed or not body:
+            # The malformed fail-safe: dispatch a degraded pod with what the
+            # symbolic layer knows (the bound target identity), so the pod
+            # renders what it can and writes a PodExport. Never leave the file
+            # produced to halt every later unit.
+            body = {
+                "target_identity": {
+                    "url": _target_url(), "unit_id": "",
+                },
+                "verification_symptoms": [],
+                "assumptions": [],
+                "rationale": "the spec body is malformed; dispatched fail-safe "
+                             "so the pod can record a PodExport",
+                "provenance": {
+                    "_malformed": True,
+                    "_parse_error": item.parse_error,
+                },
+            }
+        elif body.get("status") != SPEC_DISPATCH_STATUS:
             return None
         # #317: a stopped pod role refuses new pod dispatch (at-least-once).
         if not _role_running("pod"):
@@ -661,6 +692,7 @@ def build_run_dispatch(
             pod_builder=pod_builder,
             pod_store=pod_store,
             state=state,
+            session_timeout_s=state.session_timeout_s,
         )
 
     return coro_for
@@ -678,6 +710,7 @@ async def run_hunter_session(
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
     role_gate: Any = None,
+    session_timeout_s: float = DEFAULT_DISPATCH_TIMEOUT_S,
 ) -> None:
     """ONE hunter session (ADR Q13 hunter id `hunting:<run_id>:hunt:<hunt_key>`,
     S3 8.9): the build-to-END ReAct graph on the hunt's own thread - handed
@@ -735,7 +768,8 @@ async def run_hunter_session(
     try:
         async with _gate_or_null(gate):
             async with _gate_or_null(role_gate):
-                await dispatch_fn(payload)
+                await asyncio.wait_for(
+                    dispatch_fn(payload), timeout=session_timeout_s)
         graph_completed = True
     except asyncio.CancelledError:
         raise
@@ -752,6 +786,13 @@ async def run_hunter_session(
             else "requeued after backoff, siblings stay live",
         )
         paused_on_provider_failure = True
+    except asyncio.TimeoutError:
+        # The per-session watchdog: a wedged graph is degraded, not waited on.
+        # The registration is released below and `settle_hypothesised` closes
+        # the spec set, so the serial/batched cursor moves to the next entity.
+        logger.warning(
+            "surfer: hunt %s exceeded the %.0fs session window; degraded and "
+            "settled", hunt_key, session_timeout_s)
     except Exception as exc:  # noqa: BLE001 - the harness is fail-open; degrade and idle anyway
         logger.warning("surfer: hunt graph degraded for %s (%s)", hunt_key, exc)
     finally:
@@ -924,6 +965,7 @@ async def run_pod_session(
     pod_store: Any,
     state: RunDispatchState | None = None,
     role_gate: Any = None,
+    session_timeout_s: float = DEFAULT_DISPATCH_TIMEOUT_S,
 ) -> dict | None:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
     injected builder; `arun_pod` in production), then record the completed
@@ -989,12 +1031,25 @@ async def run_pod_session(
             return {
                 "verdict": "unsuccessful",
                 "terminal_reason": "surfer-dispatch-degraded",
+                "clean": False,
                 "error": str(exc),
             }
 
     async with _gate_or_null(gate):
         async with _gate_or_null(role_gate):
-            export = await _run()
+            try:
+                export = await asyncio.wait_for(
+                    _run(), timeout=session_timeout_s)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "surfer: pod %s exceeded the %.0fs session window; writing "
+                    "a degraded export", spec_id, session_timeout_s)
+                export = {
+                    "verdict": "unsuccessful",
+                    "terminal_reason": "budget-timeout",
+                    "clean": False,
+                    "error": "the pod session exceeded its watchdog window",
+                }
 
     if export is None:
         return None

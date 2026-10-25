@@ -769,6 +769,13 @@ class RunSyncGate:
         for side in ("produced", "consumed"):
             for stem in self._side_stems(hunt_key, side):
                 status = self._spec_status(hunt_key, stem, side)
+                if side == "consumed" and status == "malformed":
+                    # The malformed fail-safe: a consumed unreadable body is
+                    # terminal once the pod wrote its export. Without one it is
+                    # a real stall and stays an anomaly.
+                    if self._export_exists(stem):
+                        continue
+                    return True
                 if status not in ("ratified", "dropped"):
                     return True
                 if side == "consumed" and status == "dropped":
@@ -776,13 +783,16 @@ class RunSyncGate:
         return False
 
     def _ratified_stems(self, hunt_key: str, side: str) -> tuple[str, ...]:
-        """The ratified stems on one side. A malformed/non-ratified body is
-        not dispatchable and not completion; the lifecycle facts mark the hunt
-        blocked instead of silently skipping it."""
+        """The dispatchable stems on one side.
+
+        A produced `ratified` body is dispatchable, and so is a MALFORMED body:
+        the malformed fail-safe dispatches it so the pod renders what it can and
+        writes a PodExport, instead of leaving it produced to halt the queue. A
+        non-ratified parseable body is a draft and is not dispatchable."""
         stems: list[str] = []
         for stem in self._side_stems(hunt_key, side):
             status = self._spec_status(hunt_key, stem, side)
-            if status == SPEC_DISPATCH_STATUS:
+            if status in (SPEC_DISPATCH_STATUS, "malformed"):
                 stems.append(stem)
         return tuple(stems)
 
@@ -920,6 +930,13 @@ def hunting_artifacts_terminal(
                 reasons.append(f"{hunt}/{stem}: produced {status} spec")
         for stem in gate._side_stems(hunt, "consumed"):
             status = gate._spec_status(hunt, stem, "consumed")
+            if status == "malformed":
+                # The malformed fail-safe: the export is the only completion
+                # fact an unreadable consumed body can offer.
+                if not gate._export_exists(stem):
+                    reasons.append(
+                        f"{hunt}/{stem}: consumed malformed spec has no PodExport")
+                continue
             if status != "ratified":
                 reasons.append(f"{hunt}/{stem}: consumed {status} spec")
                 continue

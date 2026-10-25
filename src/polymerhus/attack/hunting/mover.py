@@ -256,6 +256,11 @@ class TestSpecItem(ProducedItem):
     # pod left no terminal export (a provider pause). The identity and dispatch
     # are identical; the move is already satisfied.
     recovered: bool = False
+    # The malformed fail-safe: an unparsable body is still dispatched, so the
+    # pod can render what is parsable and write a PodExport. The mover never
+    # leaves it produced to wedge the queue.
+    malformed: bool = False
+    parse_error: str = ""
 
 
 class DispatchFeedback(Enum):
@@ -1090,8 +1095,22 @@ def _spec_items(
     items: list[ProducedItem] = []
     for hunt_key in hunter_store.list_hunt_keys(project_id):
         for spec_file in hunter_store.produced_spec_files(project_id, hunt_key):
-            body = produced_spec_body(hunter_store, project_id, hunt_key, spec_file)
-            if not body or body.get("status") != SPEC_DISPATCH_STATUS:
+            body, error = _lenient_spec_body(
+                hunter_store, project_id, hunt_key, spec_file)
+            if body is None:
+                # The malformed fail-safe: dispatch a degraded pod rather than
+                # leave the file produced and halt every later unit.
+                items.append(TestSpecItem(
+                    message_id=f"{hunt_key}/{spec_file}",
+                    session_id=pod_session_id(run_id, hunt_key, spec_file),
+                    hunt_key=hunt_key,
+                    spec_file=spec_file,
+                    spec=None,
+                    malformed=True,
+                    parse_error=error,
+                ))
+                continue
+            if body.get("status") != SPEC_DISPATCH_STATUS:
                 continue
             items.append(TestSpecItem(
                 message_id=f"{hunt_key}/{spec_file}",
@@ -1101,6 +1120,27 @@ def _spec_items(
                 spec=body,
             ))
     return tuple(items)
+
+
+def _lenient_spec_body(
+    hunter_store: Any, project_id: str, hunt_key: str, spec_file: str,
+    *, side: str = "produced",
+) -> tuple[dict | None, str]:
+    """The spec body, or `(None, error)` for a malformed one.
+
+    Prefers the store's lenient read; a store seam that predates it degrades to
+    the strict read and treats a raise as malformed."""
+    reader = getattr(hunter_store, "read_spec_lenient", None)
+    if reader is not None:
+        return reader(project_id, hunt_key, spec_file, side=side)
+    try:
+        body = hunter_store.read_spec(
+            project_id, hunt_key, spec_file, side=side)
+    except Exception as exc:  # noqa: BLE001 - the anomaly is the result
+        return None, str(exc)
+    if body is None:
+        return None, "unreadable spec body"
+    return body, ""
 
 
 def _recoverable_spec_items(
@@ -1130,24 +1170,8 @@ def _recoverable_spec_items(
     recovered: list[TestSpecItem] = []
     for hunt_key in hunter_store.list_hunt_keys(project_id):
         for spec_file in hunter_store.consumed_spec_files(project_id, hunt_key):
-            try:
-                body = hunter_store.read_spec(
-                    project_id, hunt_key, spec_file, side="consumed")
-            except Exception as exc:  # noqa: BLE001 - fail-open per record
-                logger.warning(
-                    "mover: consumed spec %s/%s unreadable (%s); not recovered",
-                    hunt_key, spec_file, exc,
-                )
-                continue
-            if not body or body.get("status") != SPEC_DISPATCH_STATUS:
-                continue
-            provenance = body.get("provenance")
-            provenance_run = (
-                provenance.get("run_id")
-                if isinstance(provenance, Mapping) else ""
-            )
-            if str(provenance_run or "") != run_id:
-                continue
+            body, error = _lenient_spec_body(
+                hunter_store, project_id, hunt_key, spec_file, side="consumed")
             try:
                 export = pod_store.read_pod_export(spec_file, run_id)
             except Exception as exc:  # noqa: BLE001 - fail-open per record
@@ -1157,6 +1181,31 @@ def _recoverable_spec_items(
                 )
                 continue
             if export:
+                continue
+            if body is None:
+                # The malformed fail-safe: a consumed but unreadable spec with
+                # no export is recovered as a degraded pod, never left to block
+                # the quiesce. Its run id is unreadable, so the export absence
+                # is the only completion fact available.
+                recovered.append(TestSpecItem(
+                    message_id=f"{hunt_key}/{spec_file}",
+                    session_id=pod_session_id(run_id, hunt_key, spec_file),
+                    hunt_key=hunt_key,
+                    spec_file=spec_file,
+                    spec=None,
+                    recovered=True,
+                    malformed=True,
+                    parse_error=error,
+                ))
+                continue
+            if body.get("status") != SPEC_DISPATCH_STATUS:
+                continue
+            provenance = body.get("provenance")
+            provenance_run = (
+                provenance.get("run_id")
+                if isinstance(provenance, Mapping) else ""
+            )
+            if str(provenance_run or "") != run_id:
                 continue
             recovered.append(TestSpecItem(
                 message_id=f"{hunt_key}/{spec_file}",

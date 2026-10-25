@@ -125,7 +125,11 @@ from polymerhus.attack.hunting.pod.variant_basis import (
     is_duplicate_variant,
     mint_variant_basis,
 )
-from polymerhus.attack.hunting.pod.verification import validate_decision, validate_spec
+from polymerhus.attack.hunting.pod.verification import (
+    init_route,
+    validate_decision,
+    validate_spec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -527,8 +531,12 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         }
 
     def init_router(state: PodState) -> str:
-        # C1: a schema-malformed spec is rejected here with ZERO tool calls.
-        return "reject" if state.get("init_validation") else "runner"
+        # C1: a spec with no probe URL cannot run a single call, so it stops
+        # with a PodExport carrying its init_validation. Every other violation
+        # (an empty symptom list, a missing optional field) is recorded and the
+        # runner still attempts a probe: the malformed fail-safe must not turn
+        # a partial body into a queue halt.
+        return init_route(state.get("init_validation"))
 
     # --- the runner's stretch (production ReAct turn OR contract-tier loop) ----
 

@@ -687,6 +687,32 @@ class HunterMemoryStore(BoundedRecordStore):
             return None
         return self._project(self._read_spec_file(path), attributes)
 
+    def read_spec_lenient(
+        self,
+        project_id: str,
+        hunt_key: str,
+        spec_id: str,
+        *,
+        side: Literal["produced", "consumed"] = "produced",
+    ) -> tuple[dict | None, str]:
+        """The one spec file, with a parse error instead of a raise.
+
+        The malformed fail-safe needs the mover to ADDRESS a spec whose body it
+        cannot parse, so the pod can render what is parsable and still write a
+        PodExport. A missing file is `(None, "no spec file")`; a corrupt file
+        is `(None, <error>)`. The caller records the anomaly and dispatches a
+        degraded pod instead of halting the queue."""
+        try:
+            body = self.read_spec(
+                project_id, hunt_key, spec_id, side=side)
+        except Exception as exc:  # noqa: BLE001 - the anomaly is the result
+            return None, str(exc)
+        if body is None:
+            return None, "no spec file"
+        if not isinstance(body, dict):
+            return None, f"the spec body is {type(body).__name__}, not a mapping"
+        return body, ""
+
     def read_specs(
         self,
         project_id: str,

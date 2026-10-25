@@ -137,9 +137,20 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                 "fabricating a domain verdict", exc)
             raise failure from exc
         logger.warning("pod run degraded to unsuccessful (%s)", exc)
+        # The degrade path still reports the structural violations, so a
+        # malformed field is visible on the PodExport even when the runner could
+        # not start. The schema never fabricates a domain verdict here.
+        from polymerhus.attack.hunting.pod.verification import (  # noqa: PLC0415
+            validate_spec,
+        )
+        try:
+            init_v = validate_spec(dict(spec or {}))
+        except Exception:  # noqa: BLE001 - the degrade path never raises
+            init_v = []
         export = PodExport(
             verdict="unsuccessful", terminal_reason=TECHNICAL_INFEASIBILITY,
-            iterations=0, clean=False, error=str(exc)).to_envelope()
+            iterations=0, clean=False, error=str(exc),
+            init_validation=init_v).to_envelope()
         # T7 (#183): the degrade path is a REAL terminal result - persist it too
         # (idempotent overwrite, GP1). The fail-closed spec_id gate is respected:
         # no spec_id means no export is persisted (the graph's init already
