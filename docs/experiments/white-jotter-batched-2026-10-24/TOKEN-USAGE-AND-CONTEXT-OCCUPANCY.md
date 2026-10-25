@@ -514,6 +514,20 @@ This is a real leak in the budget guard: the cap read 7,000,932 while about 1.07
     The evolver's usage is unscoped, so about 1.07M capped tokens bypassed the 7M cap.
     Meter the evolver and keep the output.
 
+12. **The auth full view is the single largest removable auth payload.**
+    Twenty-three reads produced 81.8% of the auth response characters.
+    The read-only binding retires `view: full`, projects the summary overview, and bounds a read at 12,000 characters.
+    The canonical minimal set is the overview login header plus one account's credentials or token metadata.
+
+13. **The LightRAG fallback was a validator false positive.**
+    Eighteen of the 19 fallbacks were ordinary methodology prose rejected by an over-broad "tool request" marker.
+    The provider answered; the admission rejected it.
+    The marker is now a protocol shape, and the one `not_json` case remains a generation-format miss.
+
+14. **The pod note tool is now the shared notes tool.**
+    The pod-only `note` name and `operation` verb are retired.
+    The 128,813-character read was an unfiltered read of every note body; the unified read keeps the verbatim body but scopes it to the bound spec.
+
 ## 10. Caveats and reproduction
 
 The Langfuse input is truncated near 261k characters on the latest turns; the decomposition uses the character share against the provider input anchor, not a second tokenizer.

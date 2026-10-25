@@ -14,9 +14,9 @@ seam) is what the harness binds per hunt - this module wires nothing into
 
 Contract + degradation (spec 5, spec 9):
 - `hunts_store` / `notes` - the spec-set write/read seam over
-  `HunterMemoryStore` (S3 8.6-8.7): `write` carries the WHOLE `specs` list,
-  each entry with its `status` (`hypothesised | ratified | dropped`) and the
-  file-name keywords; the store derives `<fault_keyword>_<strategy_keyword>`.
+  `HunterMemoryStore` (S3 8.6-8.7): `write` carries exactly one `spec`, with
+  its `status` (`hypothesised | ratified | dropped`) and the ordered
+  `discriminators`; the store derives `<class>__<value>__<value>`.
   A duplicate identity inside the set is the denoted `duplicate_spec` dedup
   signal the model interprets. Both tools are BOUND to the hunt's OWN loop
   dispatch id (`hunt_key` = `<unit_name>__<loop_id>`, S3 8.9 - never a request
@@ -159,8 +159,8 @@ ExecFn = Callable[[str, int], ExecResult]
 # tool/handle construction (the harness holds the loop payload at dispatch) so
 # the hunter's store tools can only ever address the hunt's own loop. The key is
 # the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9). The model authors each
-# spec's `fault_keyword` / `strategy_keyword` (the derived file-name identity
-# axes) but never the destination hunt key. A tool constructed without a bound
+# spec's `discriminators` (the derived file-name identity instances) but never
+# the destination hunt key. A tool constructed without a bound
 # key degrades to a denoted invalid_args, never a silent degenerate path.
 
 # --- the coded teaching rejection (#209, shared in tool_contract) --------------

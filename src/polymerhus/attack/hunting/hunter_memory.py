@@ -22,11 +22,11 @@ memory (`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
   loop file IS the dispatch grain, so the spec folder is the loop's own
   identity - never a config key or a `fault_key`. The key is bound at tool
   construction and is never a request field.
-- `<spec_id>` is the DERIVED file-name stem `<fault_keyword>_<strategy_keyword>`
-  (S3 8.6): the payload carries no `spec_id`, and the store derives it from the
-  sanitised keywords. `_` is the one safe separator, so `_`, `:`, path
-  separators and control chars are replaced with `-` in a keyword (a keyword
-  that sanitises to an unsafe/empty component is rejected, never mangled).
+- `<spec_id>` is the DERIVED file-name stem `<class>__<value>__<value>`
+  (S3 8.6): the payload carries no `spec_id`, and the store derives it from
+  `provenance.web_vulnerability_class` and the ordered `discriminators`. `__` is
+  the dimension separator and is absent from the value alphabet, so the join is
+  unambiguous; the class is sanitised and an unsafe value is rejected.
 - The spec body is the reduced D4 at EVERY status (S3 8.6/8.9); there is no
   `FaultItem` draft body and no `specified` body distinction. The file carries
   the spec's `status` verbatim: `hypothesised` is the GENERATE draft set,
@@ -386,10 +386,10 @@ class HunterMemoryStore(BoundedRecordStore):
         """Write the spec set under `test-specs/<hunt_key>/<side>/`.
 
         `specs` is the batch the caller holds: every entry carries a `status`
-        in `hunter_state.SPEC_STATUSES` and the two file-name identity
-        attributes `fault_keyword` / `strategy_keyword`. The store DERIVES each
-        `spec_id` (and therefore the file name) from the keywords and persists
-        the body verbatim - the reduced D4 at every status (S3 8.6).
+        in `hunter_state.SPEC_STATUSES` and the ordered `discriminators`.
+        The store DERIVES each `spec_id` (and therefore the file name) from the
+        class and the values and persists the body verbatim - the reduced D4 at
+        every status (S3 8.6).
 
         The GENERATE write is all-`hypothesised` and creates the set; the
         terminal write carries the whole set with the survivors `ratified` and
@@ -447,8 +447,8 @@ class HunterMemoryStore(BoundedRecordStore):
             if spec.get("spec_id"):
                 raise ValueError(
                     "hunter store: `spec_id` is a DERIVED symbol (the "
-                    "<fault_keyword>_<strategy_keyword> stem); the payload must "
-                    "not author it"
+                    "<class>__<value>__<value> stem); the payload must not "
+                    "author it"
                 )
             status = spec.get("status")
             if status not in SPEC_STATUSES:
