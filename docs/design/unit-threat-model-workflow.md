@@ -102,7 +102,7 @@ Two analysis branches, executed sequentially, so that the service contract failu
 
 - Switch to world 2 (the symmetric world), with an abduction reasoning model: the modeller does a runtime state adversarial analysis.
 - In function of the mapped classes of programming faults, the modeller cites the web vulnerability classes that could characterise the application if those programming faults were effectively implemented.
-- Fundamental entities: the web-vulnerability skills of the unspurious suite (`/Users/diekgbbtt/polymerhus/.claude/worktrees/feat-skills-suite/skills-unspurious/`, about to merge into `dev`), consumed through the bound `skill_load` and `skill_list` (which lists each skill's frontmatter) surface; the suite is added to all hunter agents and the threat modeller (delivered by the suite workstream; the client components are written here against the assumed names and contracts).
+- Fundamental entities: the web-vulnerability skills of the unspurious suite (`/Users/diekgbbtt/polymerhus/.claude/worktrees/feat-skills-suite/skills-unspurious/`, about to merge into `dev`), consumed through the bound `skill_load` and `skill_list` (a filtered listing: a required name regex, a parent/leaf cascade, and each entry's frontmatter) surface; the suite is added to all hunter agents and the threat modeller (delivered by the suite workstream; the client components are written here against the assumed names and contracts).
 - Naming rule (Q14): name the vulnerability classes freely from the canonical taxonomy first (unrestricted induction); only then consult the suite and map each named class to the suite class that covers it.
   The stored `web vulnerability class` value must equal a skills-suite class directory name; the control plan binds that skill to the downstream hunter prompts.
   Where no suite class covers a named class, the canonical name is kept and the gap flagged.
@@ -146,6 +146,7 @@ The model becomes consumable once it features the loops (Q28).
   - `docs/design/modelling-trust-boundaries-notes.md`: steps 1-2 and the request-handling stack layers for grounding; the trust-modelling steps (not the assumption-making ones) for the trust-agreement branch; the adversarial steps for the assumption state.
   - `docs/design/modelling-dynamic-states-trust-notes.md`: until stage 4 for the dynamic-state branch; the later stages bear on the assumption and deduction states.
 - The unspurious web-vulnerability skills suite: the classification material for the vulnerability state, via the bound `skill_list` / `skill_load` surface.
+  `skill_list` is searched by a required name regex; a parent match includes its leaves and a leaf match includes its parent.
 - HTTP-history records, the L1 unit projection, the L1 application-surface overview, and live probes: the evidence material for grounding and for the trust-agreement and dynamic-state branches; the probes are amended in the grounding state.
 - Note: HTTP-history reads and probes are actions, not documents; where no store exists (fresh project), the evidence is the probe record and the notes alone.
 

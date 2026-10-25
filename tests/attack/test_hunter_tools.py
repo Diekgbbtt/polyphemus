@@ -377,9 +377,12 @@ def test_build_hunter_tools_binds_the_skill_pair(tmp_path):
     names = [tool.name for tool in tools]
     assert "skill_list" in names and "skill_load" in names
     assert names.index("skill_list") < names.index("skill_load")
-    # the always-bound fail-open pair still answers a coded gap, never a raise
-    skill_list = tools[names.index("skill_list")].invoke({})
-    assert skill_list["suite_gap"] is True
+    # the always-bound fail-open pair answers a coded gap, never a raise
+    skill_list = tools[names.index("skill_list")]
+    missing = skill_list.invoke({})
+    filtered = skill_list.invoke({"filter": "idor"})
+    assert missing["error"] == "skill_filter_required"
+    assert filtered["suite_gap"] is True
 
 
 # --- #292: the conciseness directive in the hunter tool descriptions -----------

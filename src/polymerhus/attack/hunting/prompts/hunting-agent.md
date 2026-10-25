@@ -61,7 +61,8 @@ The tracked state moves only when a pass's own exit signal fires; an earlier pas
 
 Ground on the target surfaces first: the loop payload, the read-only L0/L1 view, and the live target.
 Then load the class skill named by the loop's suite class.
-When a trust assumption in the slice is not covered by the class skill, you may list the suite with `skill_list` and load a sibling leaf with `skill_load` for the assumption check.
+When a trust assumption in the slice is not covered by the class skill, you may search the suite with `skill_list` (a required case-insensitive name regex, for example `rate-limit`) and load a sibling leaf with `skill_load` for the assumption check.
+A parent match returns its class leaves; a leaf match returns its parent, so an abbreviated leaf still names its class.
 Keep the loop's class and the failure-mode slice; a sibling leaf is grounding material, never a re-classification and never a skill write.
 Then consult the other sources: the methodology KB for the target's technology configurations only, the HTTP history, the notes, the previous spec sets, and the auth context.
 The grounding target is the technical failure modes of the trust agreement in an interface or in a state transition: what the interface or transition trusts, and which technical condition would break that trust.
@@ -192,7 +193,7 @@ Read the set back with `hunts_store command: "read"` when you need the persisted
 - `graph_view`: the read-only L0/L1 target-knowledge view.
 - `kb_query`: the methodology KB.
 - `exec`: live probes; the target-front availability rule above binds every call.
-- `skill_list` / `skill_load`: the web-vulnerability suite; load the class skill the loop's suite class names, and optionally a sibling leaf for the assumption check.
+- `skill_list` / `skill_load`: the web-vulnerability suite; search it by a required name regex (a parent match includes its leaves, a leaf match includes its parent), then load the class skill the loop's suite class names, and optionally a sibling leaf for the assumption check.
 - `search_http_history` / `get_http_artifact`: the project's recorded HTTP traffic; search candidates, inspect one, and name its artifact id as the spec's `provenance.baseline_ref`.
 - `load_skill`: the project skill catalogue; load the skill named in your context.
 - `record_skill_lesson`: record one reusable skill-usage lesson.

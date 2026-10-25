@@ -365,6 +365,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
                               observe: bool = True,
                               http_search_fn=None, http_get_fn=None,
                               suite_classes=None, suite_read_fn=None,
+                              suite_parents=None,
                               overview_fn=None):
     """Compose the production hunting-agent dispatch seam (as of #164 W5).
 
@@ -383,14 +384,18 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
     from polymerhus.attack.hunting.actors import HuntingActorRegistry  # noqa: PLC0415
     from polymerhus.attack.hunting.hunting_agent import build_hunting_agent  # noqa: PLC0415
 
-    if suite_classes is None or suite_read_fn is None:
+    if suite_classes is None or suite_read_fn is None or suite_parents is None:
         from polymerhus.app.llm.skills import (  # noqa: PLC0415
             list_suite_leaves,
+            list_suite_parents,
             read_suite_raw,
         )
 
         suite_classes = list_suite_leaves() if suite_classes is None else suite_classes
         suite_read_fn = read_suite_raw if suite_read_fn is None else suite_read_fn
+        suite_parents = (
+            list_suite_parents() if suite_parents is None else suite_parents
+        )
     registry = HuntingActorRegistry(run_id, checkpointer=checkpointer,
                                     model_factory=model_factory, observe=observe,
                                     project_id=project_id)
@@ -400,6 +405,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
         graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
         http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         suite_classes=suite_classes, suite_read_fn=suite_read_fn,
+        suite_parents=suite_parents,
         overview_fn=overview_fn,
         checkpointer=checkpointer, model_factory=model_factory, observe=observe,
     )

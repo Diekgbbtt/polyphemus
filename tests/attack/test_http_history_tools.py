@@ -56,6 +56,18 @@ def test_descriptions_teach_the_chain():
     assert "lineage" in tools["exec"].description
 
 
+def test_the_search_contract_names_the_verbatim_row():
+    """The row is verbatim by operator decision: the model must not assume a
+    redaction boundary that `get_http_artifact` still enforces."""
+    description = {
+        t.name: t for t in build_hunter_tools()
+    }["search_http_history"].description
+
+    assert "`url` (raw)" in description
+    assert "(verbatim)" in description
+    assert "`capture_state` is on `get_http_artifact`" in description
+
+
 def _pod_tools():
     return {
         tool.name: tool

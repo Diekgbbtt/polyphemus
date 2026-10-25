@@ -67,7 +67,11 @@ def test_search_returns_sanitized_summaries(tmp_path):
     assert len(page["summaries"]) == 1
     summary = page["summaries"][0]
     assert summary["artifact_id"] == "http_01J0000000000000000000000A"
-    assert "supersecret" not in str(page)
+    # The row is verbatim: the triage header and the URL, including its query
+    # value (operator decision 2026-10-25). The body never appears.
+    assert summary["request_headers"]["authorization"] == ["Bearer supersecret"]
+    assert summary["url"].endswith("token=supersecret")
+    assert "welcome" not in str(page)
 
 
 def test_search_limit_bounds_are_enforced(tmp_path):
