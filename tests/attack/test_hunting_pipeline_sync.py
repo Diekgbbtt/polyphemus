@@ -293,3 +293,16 @@ def test_pipeline_sync_state_caches_the_meta_and_the_intake_position():
     assert state.cached("u2") is meta
     assert state.meta_for("u1", "Service:u1", risk=0).intake_position == 1_000_000
     assert state.mode is SyncMode.SERIAL
+
+
+def test_the_gate_reads_the_live_target_identity_unit():
+    """The live spec carries `target_identity.unit_id`; the gate must find it
+    before the legacy `target.unit_id` and the provenance fallback."""
+    from polymerhus.attack.hunting.pipeline_sync import _spec_unit_id
+
+    assert _spec_unit_id(
+        {"target_identity": {"unit_id": "Service:u1"}}) == "Service:u1"
+    assert _spec_unit_id({"target": {"unit_id": "Service:u2"}}) == "Service:u2"
+    assert _spec_unit_id(
+        {"provenance": {"unit_id": "Service:u3"}}) == "Service:u3"
+    assert _spec_unit_id({}) == ""

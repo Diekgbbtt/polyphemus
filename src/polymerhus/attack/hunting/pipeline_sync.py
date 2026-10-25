@@ -445,13 +445,17 @@ def _loop_weight(loop: Any) -> int:
 
 
 def _spec_unit_id(body: Any) -> str:
-    """The unit identity a stored spec body names (`target.unit_id`, falling
-    back to `provenance.unit_id`); empty for an absent or untyped body."""
+    """The unit identity a stored spec body names.
+
+    The live body carries `target_identity.unit_id`; the legacy/gate fixtures
+    use `target.unit_id`; `provenance.unit_id` is the last fallback. Empty for
+    an absent or untyped body."""
     if not isinstance(body, Mapping):
         return ""
-    target = body.get("target")
-    if isinstance(target, Mapping) and target.get("unit_id"):
-        return str(target["unit_id"])
+    for key in ("target_identity", "target"):
+        target = body.get(key)
+        if isinstance(target, Mapping) and target.get("unit_id"):
+            return str(target["unit_id"])
     provenance = body.get("provenance")
     if isinstance(provenance, Mapping) and provenance.get("unit_id"):
         return str(provenance["unit_id"])
