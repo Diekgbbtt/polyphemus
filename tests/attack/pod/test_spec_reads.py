@@ -4,7 +4,7 @@ The typed `SkillConcretisedProcedure` has ONE home
 (`attack/hunting/spec_contract.py`); the pod reads it from the top-level
 `skill_concretised_procedure` and reads the optional recorded baseline from
 `spec["provenance"]["baseline_ref"]`. A missing or malformed object is a
-recorded gap (None), never a raise: the triager falls back to the failure-mode
+recorded gap (None), never a raise: no variant basis is derivable
 basis (S5 8.6).
 """
 from polymerhus.attack.hunting.pod.context import ExperimentLog
@@ -117,7 +117,7 @@ def test_the_triager_context_marks_an_absent_procedure_as_a_recorded_gap():
     ctx = ExperimentLog().triager_context(
         {**SPEC, "skill_concretised_procedure": None}, None)
     assert "recorded gap" in ctx.lower()
-    assert "failure-mode" in ctx.lower()
+    assert "no variant basis" in ctx.lower()
 
 
 def test_the_triager_context_marks_an_empty_section_as_a_skipped_class():

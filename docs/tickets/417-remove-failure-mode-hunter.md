@@ -4,7 +4,7 @@
 
 **Blocked by:** 416
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/prompts/hunting-agent.md, attack/hunting/hunting_agent.py, attack/hunting/hunter_payload.py, attack/hunting/hunter_state.py, attack/hunting/spec_contract.py
 
@@ -14,12 +14,12 @@ The hunter's loop ontology, [D1] check, grounding target, slice pass, exhaustive
 
 ## Acceptance criteria
 
-- [ ] No failure-mode reference remains in the hunter prompt.
-- [ ] No failure-mode reference remains in the hunter module.
-- [ ] The prompt uses the existing axes and invents no new reasoning variable.
-- [ ] The hunter's passes, tools, and spec contract are otherwise unchanged.
-- [ ] The prompt tests assert the removals.
-- [ ] The hunter payload tests pass.
+- [x] No failure-mode reference remains in the hunter prompt.
+- [x] No failure-mode reference remains in the hunter module.
+- [x] The prompt uses the existing axes and invents no new reasoning variable.
+- [x] The hunter's passes, tools, and spec contract are otherwise unchanged.
+- [x] The prompt tests assert the removals.
+- [x] The hunter payload tests pass.
 
 ## Verification
 

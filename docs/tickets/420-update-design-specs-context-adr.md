@@ -4,7 +4,7 @@
 
 **Blocked by:** 419
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** docs/design, attack/hunting/CONTEXT.md
 
@@ -14,11 +14,11 @@ The docs must describe the code as it is, not the plan. The workbench decisions 
 
 ## Acceptance criteria
 
-- [ ] Every design spec in the impact map is updated or marked superseded.
-- [ ] CONTEXT.md carries the new terms and no removed term.
-- [ ] The ADR records the final decisions and the evidence.
-- [ ] No doc describes failure modes as a current artifact.
-- [ ] The docs match the code and the tests.
+- [x] Every design spec in the impact map is updated or marked superseded.
+- [x] CONTEXT.md carries the new terms and no removed term.
+- [x] The ADR records the final decisions and the evidence.
+- [x] No doc describes failure modes as a current artifact.
+- [x] The docs match the code and the tests.
 
 ## Verification
 

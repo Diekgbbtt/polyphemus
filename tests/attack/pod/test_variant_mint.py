@@ -2,8 +2,7 @@
 
 Drives `arun_pod` with a scripted triager decision and a scripted experiment
 log. The graph resolves the variant basis against the typed `SkillProcedure` in
-the spec provenance: the first uncovered gap class wins, the failure-mode
-fallback covers a fully covered procedure, the execution triggers mint the
+the spec provenance: the first uncovered gap class wins, the execution triggers mint the
 recovery bases, and a duplicate basis plus detail is not re-minted. The
 `VariantSpec` record keeps its four-field shape; `declined_attribute` carries the
 basis.
@@ -102,18 +101,19 @@ def test_the_graph_mints_the_first_uncovered_gap_as_the_basis():
 
 def test_an_empty_procedure_section_is_skipped_not_minted():
     # T10 H1: an empty section is a skipped class. Even when the triager claims
-    # full coverage, the diff never loops on the empty pro-tips section; the
-    # plausible failure mode is the only derivable variant.
+    # full coverage, the diff never loops on the empty pro-tips section, and no
+    # variant basis is derivable.
     spec = {**SPEC, "skill_concretised_procedure": {
         **PROCEDURE, "pro_tips": ""}}
     derived = {**spec, "rationale": "test one more observable failure mode"}
     env = _drive([
         _variant(declined_attribute="pro-tips",
                  covered_gap_classes=sorted(ALL_GAPS),
-                 failure_mode_plausible=True, variant_spec=derived),
+                 variant_spec=derived),
         TERMINATE,
     ], spec=spec)
-    assert env["evidence"]["variant_specs"][1]["declined_attribute"] == "failure-mode"
+    assert [v["ref"] for v in env["evidence"]["variant_specs"]] == ["v0"]
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
 
 
 def test_an_unknown_coverage_token_invalidates_the_assessment():
@@ -135,8 +135,8 @@ def test_a_derived_spec_keeps_the_base_provenance():
     # material.
     omitting = {"rationale": "test one more observable failure mode"}
     env = _drive([
-        _variant(covered_gap_classes=sorted(ALL_GAPS),
-                 failure_mode_plausible=True, variant_spec=omitting),
+        _variant(covered_gap_classes=["recon-action"],
+                 variant_spec=omitting),
         TERMINATE,
     ])
     record = env["evidence"]["variant_specs"][1]
@@ -144,14 +144,14 @@ def test_a_derived_spec_keeps_the_base_provenance():
     assert record["spec"]["rationale"] == omitting["rationale"]
 
 
-def test_a_fully_covered_procedure_mints_a_failure_mode_variant():
+def test_a_fully_covered_procedure_mints_no_variant():
     derived = {**SPEC, "rationale": "test one more observable failure mode"}
     env = _drive([
-        _variant(covered_gap_classes=sorted(ALL_GAPS),
-                 failure_mode_plausible=True, variant_spec=derived),
+        _variant(covered_gap_classes=sorted(ALL_GAPS), variant_spec=derived),
         TERMINATE,
     ])
-    assert env["evidence"]["variant_specs"][1]["declined_attribute"] == "failure-mode"
+    assert [v["ref"] for v in env["evidence"]["variant_specs"]] == ["v0"]
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
 
 
 def test_a_runner_failure_mints_the_recovery_basis():
@@ -201,16 +201,15 @@ def test_the_variant_record_keeps_its_shape_and_carries_the_basis():
     assert record["spec"] == {**derived, "skills": []}
 
 
-def test_an_absent_excerpt_is_recorded_and_uses_the_failure_mode_fallback():
+def test_an_absent_excerpt_is_recorded_and_mints_no_variant():
     spec = {**SPEC, "skill_concretised_procedure": None,
             "provenance": {"loop_id": "loop-1"}}
     derived = {**spec, "rationale": "test an additional observable failure mode"}
     env = _drive([
-        _variant(covered_gap_classes=[], failure_mode_plausible=True,
-                 variant_spec=derived),
+        _variant(covered_gap_classes=[], variant_spec=derived),
         TERMINATE,
     ], spec=spec)
-    assert env["evidence"]["variant_specs"][1]["declined_attribute"] == "failure-mode"
+    assert [v["ref"] for v in env["evidence"]["variant_specs"]] == ["v0"]
     notes = " ".join(i["note"] for i in env["evidence"]["interpretations"])
     assert "recorded gap" in notes.lower()
 
@@ -223,8 +222,7 @@ def test_a_variant_without_a_derivable_basis_degrades_to_a_terminal():
 
 
 def test_a_fully_covered_procedure_cannot_mint_a_claimed_gap_basis():
-    """When the triager states full coverage and no failure mode is plausible,
-    no variant exists: its claimed gap basis must not override the diff."""
+    """When the triager states full coverage, no variant exists: its claimed gap basis must not override the diff."""
     env = _drive([
         _variant(declined_attribute="bypass-technique",
                  covered_gap_classes=sorted(ALL_GAPS),
@@ -236,7 +234,7 @@ def test_a_fully_covered_procedure_cannot_mint_a_claimed_gap_basis():
 
 
 def test_the_terminal_vocabulary_is_unchanged():
-    # The ten bases are a DECISION vocabulary; the terminal_reason vocabulary
+    # The eleven bases are a DECISION vocabulary; the terminal_reason vocabulary
     # stays the six Q3-amended literals and never absorbs a basis.
     assert set(VARIANT_BASES) & set(TERMINAL_REASONS) == set()
     assert TERMINAL_REASONS == {
@@ -249,11 +247,9 @@ def test_the_triager_decision_carries_the_coverage_assessment():
     # deterministic diff needs; an omitted coverage assessment stays None.
     decision = TriagerDecision()
     assert decision.covered_gap_classes is None
-    assert decision.failure_mode_plausible is False
     assert decision.runner_failed is False
     assert decision.runner_diverged is False
-    filled = TriagerDecision(covered_gap_classes=["recon-action"],
-                             failure_mode_plausible=True)
+    filled = TriagerDecision(covered_gap_classes=["recon-action"])
     assert filled.model_dump()["covered_gap_classes"] == ["recon-action"]
 
 

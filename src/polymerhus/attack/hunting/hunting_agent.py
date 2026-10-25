@@ -291,7 +291,7 @@ def _compose_grounding(payload: Mapping[str, Any]) -> str:
     the programming fault, the two classes), the technical sharpening, the
     evidence the hunter may choose a baseline from, the likelihood/confidence
     and the target context. The rationale stays vulnerability-level - the
-    payload carries no failure modes, no narrowed vector and no pre-authored
+    payload carries no narrowed vector and no pre-authored
     payload vector space, so the hunter keeps the room to engineer its
     procedure."""
     unit_id = str(payload.get("unit_id") or "(unknown unit)")

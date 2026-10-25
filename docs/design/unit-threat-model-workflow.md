@@ -1,5 +1,19 @@
 # Unit threat model - modeller workflow (design record)
 
+## Amendment 2026-10-25: impact-first elicitation
+
+The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
+The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
+- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
+- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
+
+
 *Status: design decision record (2026-10-15), from the unit threat model grilling (workbench: `docs/design/unit-threat-model-workbench.md`). It records the operator's decisions and the specified workflow as given. Open points are marked. Nothing here is built. The workbench carries the question numbering; this document carries the workflow contract. Extended the same day with the Q10-Q17 answers (consumption at COMPLETED, the evidence and drop rules, the loop entity, the grounding inputs, the material disposal). Extended 2026-10-16 with the Q18-Q32 answers (drop semantics reframed to retention-first, the hunter loop payload, the store home, dispatch sequencing in scope, no schema gate - per-step verbatims). Extended 2026-10-17 with the Q33-Q36 answers (the CVSS-inspired 5-level risk scoring with the four-attribute ontology; the confidence-degree rename and its falsification-nature lifecycle; design B, the per-unit directory with per-loop files; the validation seam; the hunter feed-forward contract). Extended 2026-10-18 with the Q37-Q40 answers and the production hunter prompt redesign decisions (workbench Rounds 7 and 8).*
 
 ## 1. Model identity and consumption

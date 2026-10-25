@@ -1,5 +1,19 @@
 # Hunting pipeline phase synchronisation - ADR
 
+## Amendment 2026-10-25: impact-first elicitation
+
+The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
+The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
+- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
+- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
+
+
 *Status: decided (2026-10-22), built (2026-10-23). Spec: `docs/design/hunting-pipeline-sync-spec.md`; assertions: `docs/design/hunting-pipeline-sync-assertions.md`.*
 *Extends: `hunting-pipeline-wiring-adr.md` (the run-scoped inbox surfer, ADR #169/T4), `unit-threat-model-ordering-halt-adr.md` (the risk budget and the halt).*
 *Decision owner: operator. Grilled and settled 2026-10-22; every decision below is operator-ratified.*

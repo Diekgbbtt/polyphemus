@@ -124,7 +124,7 @@ class SpecItem(TypedDict):
     `spec_id` is the derived identity (the file-name stem
     `<class>__<value>__<value>`), `discriminators` the ordered `{axis, value}`
     instances the hunter separated the slot on, `spec_ref` its authored file,
-    and `verification_symptoms` the concrete observable failure modes the pod
+    and `verification_symptoms` the concrete observable manifestations the pod
     probes. The channel is last-write and carries the WHOLE set."""
 
     spec_id: str
@@ -361,7 +361,7 @@ def detect_signal(state: HuntState, signal: PhaseSignal | None) -> SignalOutcome
 # --- the injection constants (S4 14.7) ----------------------------------------
 
 GROUNDING_HINT = (
-    "The grounding summary is persisted. Define the failure-mode slice the "
+    "The grounding summary is persisted. Define the variant and manifestation space the "
     "loop opens."
 )
 """Injected when the grounding exit fires: define the slice."""

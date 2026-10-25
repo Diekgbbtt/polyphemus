@@ -20,9 +20,8 @@ persistent experiment-memory store (`PodMemoryStore`, D84-20/28) with the
 prompt-memory pattern (D84-27); the harness middleware owns G1/G4/O7 (D84-22)
 and the `tool_exec` graph node is retired from the production lane (D84-29).
 As of T9 (#382) the triager mints a variant from the procedure diff against the
-typed `skill_concretised_procedure`: the twelve basis literals, the first-uncovered
-order, the failure-mode fallback, the runner triggers, and the duplicate guard
-(`variant_basis.py`).
+typed `skill_concretised_procedure`: the eleven basis literals, the first-uncovered
+order, the runner triggers, and the duplicate guard (`variant_basis.py`).
 """
 from __future__ import annotations
 

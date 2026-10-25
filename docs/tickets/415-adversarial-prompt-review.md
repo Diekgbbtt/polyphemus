@@ -4,7 +4,7 @@
 
 **Blocked by:** 414
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/prompts/threat-modeller.md, docs/experiments/modeller-impact-quality
 
@@ -14,11 +14,11 @@ The review checks that the prompt does not repeat the tool contracts, does not r
 
 ## Acceptance criteria
 
-- [ ] A review report records the findings per axis.
-- [ ] Every finding is fixed or explicitly rejected with a reason.
-- [ ] The prompt stays within the line budget.
-- [ ] The prompt tests pass.
-- [ ] The report is committed under docs/experiments/modeller-impact-quality/.
+- [x] A review report records the findings per axis.
+- [x] Every finding is fixed or explicitly rejected with a reason.
+- [x] The prompt stays within the line budget.
+- [x] The prompt tests pass.
+- [x] The report is committed under docs/experiments/modeller-impact-quality/.
 
 ## Verification
 

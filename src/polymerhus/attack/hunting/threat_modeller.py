@@ -119,12 +119,13 @@ GATE_HINTS: dict[ModelState, str] = {
         "state VULNERABILITIES_WRITTEN."
     ),
     ModelState.VULNERABILITIES_WRITTEN: (
-        "Proceed to the well-formedness phase: load the class skill for each "
-        "loop, read its title, overview, Trust Assumptions section, and closing "
-        "summary, and add the missed assumptions. Patch a local gap or loop "
-        "back over the undermodelled part for a structural gap. When the pass "
-        "yields no new assumption, write the wellformedness note and then the "
-        "COMPLETED write with the loops and their end impacts."
+        "Proceed to the well-formedness phase: for every vulnerability whose "
+        "class will bound a loop, load the class skill, read its title, "
+        "overview, Trust Assumptions section, and closing summary, and add the "
+        "missed assumptions. Patch a local gap or loop back over the "
+        "undermodelled part for a structural gap. When the pass yields no new "
+        "assumption, write the wellformedness note and then the COMPLETED write "
+        "with the loops and their end impacts."
     ),
 }
 
@@ -183,13 +184,13 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
 WELLFORMEDNESS = "WELLFORMEDNESS"
 
 WELLFORMEDNESS_INSTRUCTION = (
-    "Run the well-formedness phase: for every loop, load the class skill, "
-    "read its title and overview, its Trust Assumptions section, and its "
-    "closing summary, and add the missed assumptions. Patch a local gap or "
-    "loop back over the undermodelled part for a structural gap. When the pass "
-    "yields no new assumption and every loop has a bound class, write ONE "
-    "wellformedness note and then the COMPLETED write with the loops and their "
-    "end impacts."
+    "Run the well-formedness phase: for every vulnerability whose class will "
+    "bound a loop, load the class skill, read its title and overview, its "
+    "Trust Assumptions section, and its closing summary, and add the missed "
+    "assumptions. Patch a local gap or loop back over the undermodelled part "
+    "for a structural gap. When the pass yields no new assumption and every "
+    "vulnerability has a bound suite class, write ONE wellformedness note and "
+    "then the COMPLETED write with the loops and their end impacts."
 )
 
 # The last gate carries no hint: the model is published (S1 9.3).

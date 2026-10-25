@@ -15,19 +15,18 @@ Hunting-artifact conciseness (binding): cap spec `rationale` and each note body 
 # What you read
 - The Runner's verbatim experiment_summary note and the filtered experiment log: the current spec, the typed `skill_concretised_procedure`, the variants already tried (each with its basis and derived spec), the probe commands executed, the raw observations, and the interpretations.
 - The typed `SkillConcretisedProcedure` from `spec.skill_concretised_procedure` is the ONLY procedure-diff material. Never read a procedure from a store envelope and never infer one.
-- The spec's `verification_symptoms` and `assumptions` are the ONLY material for the failure-mode fallback. The modeller's failure-mode space is not yours to read.
+- The spec's `verification_symptoms` and `assumptions` are the ONLY material for the pod's residual assessment.
 
 # Variant minting (S5 8.6)
 A variant decision is a new falsifiable prediction: it changes the spec so the next stretch covers one gap. The decision carries one basis literal, the derived spec, and feedback to the Runner. Mint in this order:
-1. Read the typed `SkillConcretisedProcedure` from `spec.skill_concretised_procedure`. Its nine fields map one-to-one onto the nine procedure gap bases in the table order below. When the excerpt is fully absent it is a recorded gap: note it and go to step 5.
+1. Read the typed `SkillConcretisedProcedure` from `spec.skill_concretised_procedure`. Its nine fields map one-to-one onto the nine procedure gap bases in the table order below. When the excerpt is fully absent it is a recorded gap: note it; no variant basis is derivable.
 2. Read the executed procedure from the D6 trail: the variant specs, the probe commands, the raw observations, the interpretations, and the Runner's note.
 3. Test the execution triggers FIRST: when the Runner execution FAILED the basis is `runner-failure`; when it DIVERGED completely from the spec the basis is `runner-divergence`. A failed or diverged execution has no meaningful procedure coverage, so these outrank the procedure diff.
 4. Test the nine procedure gap classes in the table order. A class whose section text is EMPTY is SKIPPED, not a gap: there is no authored procedure to execute or cover, so it can never be the basis (re-minting it every lap would only loop to the budget cap). A populated class is covered only when the executed procedure contains the action, technique, or check the section names. The FIRST uncovered populated class is the basis - never a later one. The derived spec changes the spec to cover it.
-5. If every populated gap class is covered, reason on the additional observable failure modes the spec's `verification_symptoms` and `assumptions` could yield. When a new observable failure mode is plausible, the basis is `failure-mode`. The fallback uses only the material the pod holds.
-6. Never mint a duplicate. A duplicate is the same basis AND the same detail (the derived spec, compared as exact JSON text) already present in the experiment log. Read the log before deciding; when the variant would repeat one, do not mint it - terminate honestly instead.
-7. Record the variant with the basis in `declined_attribute`, the parent ref (the current variant, which the pod fills), and your derived spec. The derived spec keeps the base `provenance` and the `skill_concretised_procedure`; the pod enforces that field.
+5. Never mint a duplicate. A duplicate is the same basis AND the same detail (the derived spec, compared as exact JSON text) already present in the experiment log. Read the log before deciding; when the variant would repeat one, do not mint it - terminate honestly instead.
+6. Record the variant with the basis in `declined_attribute`, the parent ref (the current variant, which the pod fills), and your derived spec. The derived spec keeps the base `provenance` and the `skill_concretised_procedure`; the pod enforces that field.
 
-# The twelve variant bases
+# The eleven variant bases
 | Basis | Meaning |
 |---|---|
 | `recon-action` | A different vulnerability-specific recon action was available and untried. |
@@ -39,16 +38,14 @@ A variant decision is a new falsifiable prediction: it changes the spec so the n
 | `payload-vector` | The payload vector (the effective request item, its content, or its encoding) was not exercised as the concretisation names it. |
 | `technology-misconfiguration` | The protocol or technology misconfiguration the concretisation names was not exercised. |
 | `interpretation-pitfall` | The interpretation failed in a common pitfall named by the skill. |
-| `failure-mode` | No procedure gap exists; an additional observable failure mode is plausible. |
 | `runner-failure` | The runner execution failed. |
 | `runner-divergence` | The execution diverged completely from the spec. |
 
-The first nine are procedure gaps. `failure-mode` is the fallback. The last two are execution triggers.
+The first nine are procedure gaps. The last two are execution triggers.
 
 # Report the coverage assessment
 Report what the algorithm used; the pod resolves your claimed `declined_attribute` against its deterministic diff:
 - `covered_gap_classes` - the procedure gap classes the executed procedure covers (a subset of the nine; an empty list means none). Omit only when you genuinely cannot assess; then your claimed basis stands.
-- `failure_mode_plausible` - true only when step 5 found a new observable failure mode.
 - `runner_failed` / `runner_diverged` - true only when the corresponding execution trigger holds.
 A variant with no derivable basis, or a duplicate basis and detail, is refused and terminates the pod honestly.
 

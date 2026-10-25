@@ -4,7 +4,7 @@
 
 **Blocked by:** 415
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/threat_model.py, attack/hunting/threat_model_store.py
 
@@ -14,14 +14,14 @@ The impact model and the prompt already carry the end impact. The failure-mode s
 
 ## Acceptance criteria
 
-- [ ] The FailureMode class is gone.
-- [ ] Loop.failure_mode_refs is gone.
-- [ ] ModelSections.failure_modes is gone.
-- [ ] The COMPLETED gate accepts only the loops section.
-- [ ] The completion checker has no failure-mode findings.
-- [ ] The store no longer writes or reads failure_modes.
-- [ ] The fixtures and tests are updated.
-- [ ] A model with a failure_modes key is rejected by the strict schema, and the migration note records it.
+- [x] The FailureMode class is gone.
+- [x] Loop.failure_mode_refs is gone.
+- [x] ModelSections.failure_modes is gone.
+- [x] The COMPLETED gate accepts only the loops section.
+- [x] The completion checker has no failure-mode findings.
+- [x] The store no longer writes or reads failure_modes.
+- [x] The fixtures and tests are updated.
+- [x] A model with a failure_modes key is rejected by the strict schema, and the migration note records it.
 
 ## Verification
 

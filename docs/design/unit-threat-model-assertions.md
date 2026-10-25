@@ -1,5 +1,19 @@
 # Assertions - unit threat model redesign
 
+## Amendment 2026-10-25: impact-first elicitation
+
+The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
+The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
+- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
+- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
+
+
 **Scope:** system "the unit threat model redesign: the threat modeller and the loop-driven hunter" - issue [#373](https://github.com/Diekgbbtt/polyphemus/issues/373).
 **Source:** S1 `hunting-67-threat-modeller-spec.md`, S2 `hunting-67-threat-model-artifact-spec.md`, S3 section 8, S4 section 14, S5 section 8; the implemented code on `feat/unit-threat-model`.
 **Seams under assertion:** the threat model schema and store; the modeller gate tool and passive tracker; the run intake, accumulator, halt, and resume; the mover and loop dispatch predicate; the surfer and hunter payload; the hunter pass tracker, graph, and spec-set store; the pod reduced D4, INIT gate, runner, and triager; the REST perimeter and Postgres run rows; the eval translation; the retired-surface guards.

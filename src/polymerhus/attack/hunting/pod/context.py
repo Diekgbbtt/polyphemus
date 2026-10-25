@@ -56,15 +56,15 @@ def _skill_concretised_procedure_context(spec: dict) -> str:
     """The bounded typed `SkillConcretisedProcedure` the triager diffs (S5 8.6).
 
     Read from the spec through the ONE typed read, never the store envelope. An
-    absent object is a RECORDED GAP: the diff has no material and the
-    failure-mode fallback applies. An empty section is a SKIPPED class, not a
+    absent object is a RECORDED GAP: the diff has no material and no
+    variant basis is derivable. An empty section is a SKIPPED class, not a
     coverage gap (T10 H1): there is no authored procedure to execute or cover,
     so the diff passes over it and never loops on it."""
     procedure = skill_concretised_procedure_from_spec(spec)
     header = "## Skill procedure (target-specific concretisation)"
     if procedure is None:
         return (f"{header}\n(no skill concretisation recorded - a recorded gap; "
-                "the procedure diff has no material, so the failure-mode fallback applies)")
+                "the procedure diff has no material, so no variant basis is derivable)")
     lines = []
     for basis, field in PROCEDURE_GAP_FIELD.items():
         text = str(getattr(procedure, field) or "").strip()

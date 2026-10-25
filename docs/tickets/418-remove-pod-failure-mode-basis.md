@@ -4,7 +4,7 @@
 
 **Blocked by:** 417
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/pod/variant_basis.py, attack/hunting/pod/agents.py, attack/hunting/pod/graph.py, attack/hunting/pod/context.py, attack/hunting/prompts/pod-triager.md
 
@@ -14,13 +14,13 @@ The pod keeps the other eleven bases: the nine procedure gaps and the two execut
 
 ## Acceptance criteria
 
-- [ ] The FAILURE_MODE literal is gone.
-- [ ] VARIANT_BASES has eleven entries.
-- [ ] mint_variant_basis has no failure_mode_plausible parameter and returns None when no gap remains.
-- [ ] The TriagerDecision schema has no failure_mode_plausible field.
-- [ ] The pod triager prompt has no step 5, table row, or field description.
-- [ ] The pod context no longer mentions the failure-mode fallback.
-- [ ] The tests are updated and the pod suite passes.
+- [x] The FAILURE_MODE literal is gone.
+- [x] VARIANT_BASES has eleven entries.
+- [x] mint_variant_basis has no failure_mode_plausible parameter and returns None when no gap remains.
+- [x] The TriagerDecision schema has no failure_mode_plausible field.
+- [x] The pod triager prompt has no step 5, table row, or field description.
+- [x] The pod context no longer mentions the failure-mode fallback.
+- [x] The tests are updated and the pod suite passes.
 
 ## Verification
 

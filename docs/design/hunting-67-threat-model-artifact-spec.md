@@ -1,5 +1,19 @@
 # Threat model spec: the formal unit threat model artifact
 
+## Amendment 2026-10-25: impact-first elicitation
+
+The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
+The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- A loop carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `loop risk = likelihood_weight * impact_weight`.
+- The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
+- The `failure_modes` artifact, `Loop.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
+- The well-formedness loop runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
+
+
 *Status: spec (contract), NOT implementation. Tracker: [#373](https://github.com/Diekgbbtt/polyphemus/issues/373). This document is the artifact contract for the unit threat model redesign. It is synthesised from the grilling record (`docs/design/unit-threat-model-workbench.md`), the workflow contract (`docs/design/unit-threat-model-workflow.md`), the risk-scoring research (`docs/design/unit-threat-model-risk-scoring-research.md`), and the two accepted ADRs. The agent contract is `docs/design/hunting-67-threat-modeller-spec.md`; the impact map is `docs/design/unit-threat-model-spec-impact-map.md`.*
 
 ## 1. Problem statement

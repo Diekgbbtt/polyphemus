@@ -79,11 +79,11 @@ def test_the_well_formedness_reentry_never_moves_the_tracked_state():
 
 def test_the_prompt_carries_the_four_collection_axes():
     """S3 8.5 COLLECT: advanced techniques, chaining, technology-specific
-    failure modes, payload-vector classes."""
+    framework or protocol misconfigurations, payload-vector classes."""
     prompt = _prompt()
     collect = prompt[prompt.index("**COLLECT**"):prompt.index("**DISCRIMINATE**")]
     for axis in ("Advanced techniques", "Chaining with other low-hanging vulnerabilities",
-                 "Technology-specific failure modes", "Payload-vector classes"):
+                 "Framework or protocol misconfigurations", "Payload-vector classes"):
         assert axis in collect, axis
     assert "effective request item" in collect
     assert "communication protocol" in collect
@@ -173,11 +173,11 @@ def test_grounding_starts_on_the_target_then_the_skill_then_the_sources():
         "Then load the class skill") < grounding.index("methodology KB")
 
 
-def test_the_grounding_target_is_the_trust_agreements_failure_modes():
-    """S3 8.5: ground on the technical failure modes of the trust agreements in
+def test_the_grounding_target_is_the_trust_agreements_technical_conditions():
+    """S3 8.5: ground on the technical conditions of the trust agreements in
     an interface or a state transition - not on a class fault inventory."""
     prompt = _prompt()
-    assert "technical failure modes of the trust agreement in an interface or in a state transition" in prompt
+    assert "technical conditions of the trust agreement in an interface or in a state transition" in prompt
     assert "explore/exploit" in prompt
     assert "retrieval-gap rider" in prompt
     assert "not a transition" in prompt
@@ -224,7 +224,7 @@ def test_the_role_framing_names_the_hunting_process_only():
 def test_the_prompt_carries_the_loop_ontology():
     """S3 8.5: one paragraph with the unit and its technical sharpening, the
     trust model, the abduction chain, the confidence degree, the
-    failure-modes-space slice, and the reasoning from the loop to attacks."""
+    variant and manifestation space, and the reasoning from the loop to attacks."""
     prompt = _prompt()
     start = prompt.index("## The loop ontology")
     ontology = prompt[start:prompt.index("\n## ", start)]
@@ -234,7 +234,7 @@ def test_the_prompt_carries_the_loop_ontology():
         "dynamic-state transition",
         "the abduction chain: the programming fault and the vulnerability",
         "the confidence degree",
-        "the failure-modes-space slice",
+        "the variant and manifestation space",
         "The reasoning from the loop to engineered attacks",
     ):
         assert clause in ontology, clause
@@ -301,7 +301,7 @@ def test_the_prompt_carries_the_reduced_d4_spec_body():
         assert field in prompt, field
     assert "non-empty list" in prompt
     assert "symptom-absent" in prompt
-    assert "It carries no failure-mode detail and no narrowed vector" in prompt
+    assert "It carries no variant detail and no narrowed vector" in prompt
 
 
 def test_the_baseline_example_is_an_artifact_pointer_not_a_request_line():
@@ -350,7 +350,7 @@ def test_well_formedness_records_drops_and_never_writes_dropped_statuses():
 def test_the_worked_rationale_does_not_restate_the_symptom():
     """S3 8.6: the rationale is vulnerability-level. The worked example is a
     literal contract sample, so its rationale must not restate the symptom or
-    carry a failure-mode detail (the defect this predicate pins: a rationale
+    carry a variant detail (the defect this predicate pins: a rationale
     that duplicated the `verification_symptoms` phrase verbatim)."""
     prompt = _prompt()
     worked = prompt[prompt.index("## Worked example 1"):]
@@ -367,7 +367,7 @@ def test_the_worked_rationale_does_not_restate_the_symptom():
     symptom_words = words(symptom_text)
     rationale_words = words(rationale_text)
     # no four-word run of the symptom may reappear in the rationale: a
-    # restated failure mode is exactly such a run ("another tenant's report
+    # restated manifestation is exactly such a run ("another tenant's report
     # body" was the regression), while a vulnerability-level rationale may
     # still share a noun or two.
     symptom_runs = {tuple(symptom_words[index:index + 4])

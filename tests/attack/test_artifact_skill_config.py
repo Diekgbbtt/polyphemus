@@ -220,8 +220,8 @@ def _variant_triager(variant_spec: dict):
         if laps["n"] == 1:
             return {
                 "classification": "symptom-absent", "action": "variant",
-                "declined_attribute": "failure-mode",
-                "failure_mode_plausible": True,
+                "declined_attribute": "recon-action",
+                "covered_gap_classes": None,
                 "variant_spec": variant_spec,
                 "feedback": "try the derived variant",
             }

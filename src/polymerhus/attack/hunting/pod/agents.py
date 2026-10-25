@@ -53,9 +53,9 @@ class TriagerDecision(BaseModel):
 
     The variant fields carry the S5 8.6 material the graph resolves the basis
     from: `covered_gap_classes` is the triager's coverage assessment of the
-    executed D6 trail against the seven typed `SkillProcedure` fields (None =
-    no assessment stated), `failure_mode_plausible` is the fallback condition,
-    and the two trigger flags name a failed or diverged runner execution.
+    executed D6 trail against the nine typed `SkillProcedure` fields (None =
+    no assessment stated), and the two trigger flags name a failed or diverged
+    runner execution.
     `declined_attribute` is the triager's claimed basis; the graph reconciles it
     with the first-uncovered diff and records the RESOLVED basis."""
 
@@ -69,7 +69,6 @@ class TriagerDecision(BaseModel):
     variant_spec: dict = Field(default_factory=dict)
     feedback: str = ""
     covered_gap_classes: list[str] | None = None
-    failure_mode_plausible: bool = False
     runner_failed: bool = False
     runner_diverged: bool = False
 

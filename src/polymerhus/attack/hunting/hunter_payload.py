@@ -21,7 +21,7 @@ The payload carries (S2 8.2):
 - the target context the spec's target identity is authored from (the unit
   identity, and the request/http-history refs the loop grounds on).
 
-It does NOT carry (S2 8.2): the failure modes, any narrowed vector or payload, a
+It does NOT carry (S2 8.2): any narrowed vector or payload, a
 `HuntConfig`, or a pre-authored payload vector space. The rationale stays
 vulnerability-level, so the hunter keeps the room to engineer its own procedure.
 The key set is exactly the list above (T4a review F4): the importing assumption

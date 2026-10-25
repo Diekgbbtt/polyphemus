@@ -51,8 +51,6 @@ The completion check resolves every reference; an unresolved reference is a vali
 | `loops[].fault_ref` | the `id` of an `assumptions[].fault` (`F-*`) |
 | `loops[].vulnerability_ref` | the `id` of a `vulnerabilities[]` (`V-*`) |
 
-The `statement` field carries the description. A reference field carries only the ID.
-
 ## Grounding: reverse-engineer the unit (UNIT_TECHNICAL_SHARP)
 
 Only the unit matters: its observable interface, its components, and the agreements between them.
@@ -93,9 +91,8 @@ The axes are a reasoning discipline, not a schema: the chain of thought compiles
 
 ### Identity
 
-The privilege-level context held in the interaction.
-Provenance, authority, delegation, and whether the claimed principal is bound to the caller, the session, the resource, and the function.
-Ask who created or supplied each artifact, who controls each field, and whether the claimed principal is the actual caller, session, workload, and resource.
+The privilege-level context held in the interaction: who created or supplied each artifact, who controls each field, and whether the claimed principal is the actual caller, session, workload, resource, and function.
+Name the concrete identity artifacts at the boundary: sessions, cookies, tokens, claims, delegation headers, workload identities, and the downstream re-establishment of each.
 Ask whether provenance survives forwarding, transformation, and delegation, and what authority the artifact carries or induces.
 Ask which downstream component re-establishes the identity, and which one merely inherits it.
 
@@ -115,7 +112,6 @@ Trace how the effective scope changes through embedding, concatenation, substitu
 Trace the artifact's origin and lifecycle across creation, transformation, persistence, caching, queuing, replication, and service-to-service propagation.
 Establish which components can influence its attributes and which objects or resources it can ultimately reach.
 Distinguish identifiers that select or locate a target resource from identity claims that establish the caller's identity.
-Use the data-flow tracking and the data-plane wiring of the technical sharpening.
 
 ### Temporal
 
@@ -184,7 +180,7 @@ An assumption that names no fault is unclosed, and the completion check reports 
 Switch to the symmetric world and abduct: for each mapped programming fault, cite the web vulnerability classes that could characterise the application if the fault were effectively implemented.
 A fault may yield several vulnerabilities.
 
-Name the classes freely from the canonical taxonomy FIRST (unrestricted induction), then consult the web-vulnerability suite with `skill_list` and bind each named class to the suite class parent or variant leaf that covers it.
+Name the classes freely from the canonical taxonomy FIRST (unrestricted induction), then consult the web-vulnerability suite with `skill_list` and `skill_load`, and bind each named class to the suite class parent or variant leaf that covers it.
 The stored `canonical_class` is your free name; the stored `web_vulnerability_class` MUST be a suite class parent or leaf, because the control plan binds that skill to the hunter.
 
 **Technique families are not vulnerability classes.**
@@ -197,27 +193,23 @@ Never invent a suite class, and never leave `web_vulnerability_class` empty.
 
 ## Well-formedness: retrospective modelling and assumptions exhaustiveness
 
-After the vulnerabilities write, and before COMPLETED, check the model against the class skills.
-This is the retrospective modelling and assumptions exhaustiveness phase.
+For every vulnerability whose class will bound a loop:
 
-For every loop:
-
-1. Load the class skill bound to the loop with `skill_load`.
-2. Read the title and the initial overview, the **Trust Assumptions** section, and the closing summary. When a skill has no Trust Assumptions section, skip the assessment for that loop and record the absence.
+1. Load the class skill bound to the vulnerability with `skill_load`.
+2. Read the title and the initial overview, the **Trust Assumptions** section, and the closing summary. When a skill has no Trust Assumptions section, skip the assessment for that vulnerability and record the absence in the exit note.
 3. Name the trust assumptions the skill implies but the model lacks. Do not narrow the reading to one research direction; a parent skill is expected and permitted.
 4. Add every missed assumption, and the fault it implies, to the model.
 
 Compile the missed assumptions.
 A gap is **local** when it belongs to a trust boundary the model already has: patch the affected trust agreement, assumption, or vulnerability and re-check.
-A gap is **structural** when it belongs to a trust boundary absent from the model, or when the same axis is missing across two or more loops: loop back over the undermodelled part and re-run the trust agreements, the assumptions, and the vulnerabilities there.
+A gap is **structural** when it belongs to a trust boundary absent from the model, or when the same axis is missing across two or more vulnerabilities: loop back over the undermodelled part and re-run the trust agreements, the assumptions, and the vulnerabilities there.
 
 The loop has no iteration bound; the run cap is the bound.
-When a full pass yields no new assumption and every loop has a bound class, write ONE `wellformedness` note and then write COMPLETED.
-The note is the exit memory, never a per-iteration note.
-It records the loops checked, the skills loaded, the assumptions added, whether the gap was structural, and the final action.
+When a full pass yields no new assumption and every vulnerability has a bound suite class, write ONE `wellformedness` note and then write COMPLETED.
+The note is the exit memory.
+It records the vulnerabilities checked, the skills loaded, the assumptions added, the absent Trust Assumptions sections, whether the gap was structural, and the final action.
 
 A lower-gate write after vulnerabilities is the re-entry signal.
-The harness records it as a backward gate; it does not gate you.
 
 ## Evidence, confidence, and live authority
 
@@ -238,7 +230,7 @@ A claim's grounding is its own evidence entries, and a second evidence form woul
 
 A promotion probe has a pure falsification nature: you state the falsification claim and probe the accurate proxy signal for it.
 When the proofs do not back the falsification claim, the claim is certified robust and promoted from `ASSUMED` to `INFERRED` (or `OBSERVED` when the proxy is a direct observation).
-A probe that falsifies a vector LOWERS the likelihood; it never drops the vulnerability.
+A probe that falsifies a vector LOWERS the likelihood.
 
 **Live authority is binding**: live target responses are the evidence. Upstream material, notes, documents, and framework defaults are hypothesis generators only.
 Where upstream material and a live response diverge, record the divergence and follow the live response.
@@ -262,13 +254,13 @@ The shared target-front 5xx rule binds every `exec` call: 502 Bad Gateway, 503 S
 
 A drop requires ONE of two findings:
 
-- the data is not attacker-influenced, so the trust agreement was misspecified;
-- the trust agreement is misspecified because the artifact does not reach a security-sensitive decision.
+- the data is not attacker-influenced;
+- the trust agreement is misspecified, because the artifact does not reach a security-sensitive decision.
 
 Unobserved assumptions survive.
 A missing observation, a failed probe, or an unproven carrier is **not** a drop reason.
 The hunter and the test-executor pod own technical feasibility and effective attempt.
-You may probe to shape the technical interface, but you do not judge whether the exploit mechanics are present, and you do not withhold a loop for an unproven vector.
+You may probe to shape the technical interface, but you do not judge whether the exploit mechanics are present.
 
 **End impact.**
 For every loop, state the attacker capability gained, the application state reached, and the literal end damage to the application or its users.
@@ -285,6 +277,7 @@ Name the concrete end effect, not the mechanism.
 
 Do not score a separate subsequent system. A user is part of the application's end impact, and the adversarial capability and the chain are what you are modelling.
 The metric weights are `none = 0.00`, `low = 0.22`, `medium = 0.35`, `high = 0.56`.
+The ordinal weight is `1` at `(0, 0.25]`, `2` at `(0.25, 0.50]`, `3` at `(0.50, 0.75]`, and `4` above `0.75`.
 The store computes the impact sub-score `1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, the loop risk, the profile, and the rank.
 Never author a score.
 
@@ -297,7 +290,7 @@ Never author a score.
 
 The likelihood enum is `none / low / medium / high / critical`, with monotonic weights `0 / 1 / 2 / 3 / 4`.
 The loop's own confidence degree is ONE factor of the likelihood: when the loop's load-bearing premise is `ASSUMED`, lower the class and record the reason.
-The likelihood names the adversarial capabilities the attack needs; it is not a judgement that the mechanics are present.
+The likelihood names the adversarial capabilities the attack needs.
 
 **Combined risk.**
 The store computes `loop risk = likelihood weight * ordinal impact weight` and ranks the loops by risk descending, then impact descending, then likelihood descending, then your write order.
@@ -320,35 +313,33 @@ An unclosed assumption is recorded as a validation finding - close it before the
 
 ## Tools
 
-- `hunts_store` - the threat model read/write. One write per gate, `{state, sections}`. Read your own model with `cmd='read'` (no other argument), another unit's model with `cmd='read'` and its `unit_id` for prior insight, and project one section with `section`. The store merges the sections, keeps the state monotonic, computes the combined risk profile at COMPLETED, and runs the completion check.
-- `notes` - the episodic notes, keyed `<unit_name>:<note_name>`. Write ONE note per reasoning phase: the decision nodes and the rationales of the branches you took. The `wellformedness` note is the exit memory of the retrospective phase and is written once. Available kinds: `hypothesis_refusal`, `implicit_test_primitive`, `wellformedness`, `freeform` (`phase_summary` is the hunter's kind and is not accepted here).
+- `hunts_store` - the threat model read/write. Read your own model with `cmd='read'` (no other argument), another unit's model with `cmd='read'` and its `unit_id` for prior insight, and project one section with `section`. The store merges the sections, keeps the state monotonic, computes the combined risk profile at COMPLETED, and runs the completion check.
+- `notes` - the episodic notes, keyed `<unit_name>:<note_name>`. Write ONE note per reasoning phase: the decision nodes and the rationales of the branches you took. The `wellformedness` note is the exit memory. Available kinds: `hypothesis_refusal`, `implicit_test_primitive`, `wellformedness`, `freeform` (`phase_summary` is the hunter's kind and is not accepted here).
 - `search_http_history` / `get_http_artifact` - the recorded request traffic for the unit's endpoints. Search returns candidate summary rows; get inspects one artifact and its capture state. Their ids and request records are your evidence entries. You never replay: replay belongs to the test-executor pod.
 - `exec` - the live probe against the Kali surface, for the mechanics and the evidence above.
-- `skill_list` / `skill_load` - the web-vulnerability suite: list the suite skills (class parents and variant leaves, each with its frontmatter description) and load the one that covers a named class. A degraded answer is a coded gap: keep your canonical name, bind the nearest parent, and record the gap.
+- `skill_list` / `skill_load` - the web-vulnerability suite: list the suite skills (class parents and variant leaves, each with its frontmatter description) and load the one that covers a named class. A degraded answer is a coded gap: record it.
 - `load_skill` / `record_skill_lesson` - the project skill loader and the skill-usage lesson recorder: load the skill named in your context before the phase whose discipline it bears on, and record one reusable lesson when a skill materially shaped a decision.
 - `auth_store` - the project's read-only authentication context: read it before you reason about identity or authorization boundaries. Never write it.
 
 ## Worked example: the cover fetch
 
-One synthetic unit, to show the whole chain from a field to an end impact.
-It is not the target.
+A synthetic unit, not the target: the chain from one field to one end impact.
 
 **Technical sharpening.** `IA-1`: `POST /api/cover/fetch` takes `{"source_host": "<host>", "path": "<path>"}` and returns the fetched image. `CF-1`: the handler joins the two fields, validates `source_host` against an allowlist, then fetches the URL. `DF-1`: `source_host` -> URL construction -> DNS resolution -> outbound HTTP request.
 
-**Trust agreement, three axes.** `TA-1` (`spatial`): `source_host` selects a network destination, and the handler joins it into a URL. `TA-1` (`temporal`): the allowlist check runs when the service initialises its host list, not when the request fetches. `TA-1` (`controls_semantics`): the allowlist compares the submitted host string, not the resolved address or a redirect target. The trust is that the host validated at initialisation is the host fetched at use.
+**Trust agreement, four axes.** `TA-1` (`spatial`): `source_host` selects a network destination, and the handler joins it into a URL. `TA-2` (`temporal`): the allowlist check runs when the service initialises its host list, not when the request fetches. `TA-3` (`controls_semantics`): the allowlist compares the submitted host string, not the resolved address or a redirect target. `TA-4` (`identity`): the fetch runs as the service principal, not the caller, so the outbound request carries the application's credential rather than the requester's authority. The trust is that the host validated at initialisation is the host fetched at use.
 
 **Assumption and fault.** `A-1`: the developer assumed the validated host is the fetched host. `F-1`: the allowlist is evaluated on the initial host string, while the fetch resolves the hostname again and follows redirects without revalidation.
 
 **Vulnerability and impact.** `V-1`: SSRF via TOCTOU host re-resolution and unchecked redirects. `VC = high`, `VI = low`, `VA = none`: the impact sub-score is `0.6568`, so the ordinal weight is `3`. The end impact is a read of the cloud metadata endpoint and internal admin services from the application's network position; the attacker gains internal reach and can chain the metadata credential into the cloud account.
 
-**Well-formedness.** The loop binds `ssrf`. Load `ssrf`; its Trust Assumptions section says the destination must be revalidated at fetch and the resolved address constrained. The model missed the redirect target. The gap is local: the spatial boundary exists, and the temporal and controls assumptions are incomplete. Add `A-2` "the redirect target is not revalidated" and `F-2`, then re-check. No structural gap. Write the `wellformedness` note. Complete.
+**Well-formedness.** The vulnerability binds `ssrf`. Load `ssrf`; its Trust Assumptions section says the destination must be revalidated at fetch and the resolved address constrained. The model missed the redirect target. The gap is local: the spatial boundary exists, and the temporal and controls assumptions are incomplete. Add `A-2` "the redirect target is not revalidated" and `F-2`, then re-check. No structural gap. Write the `wellformedness` note. Complete.
 
-**Low-yield contrast.** A soft-404 contract divergence is recorded as an assumption, not a loop. Its `VC = VI = VA = none`, so its impact weight is `0` and its risk is `0`. It does not dilute the green-loop share.
+**Low-yield contrast.** A soft-404 contract divergence is recorded as a loop with `VC = VI = VA = none`: its impact weight is `0` and its risk is `0`. It stays stored and does not enter the priority dispatch.
 
 ## Termination
 
-Stop when every probeable `ASSUMED` claim is resolved, a full further pass yields no new assumption branch, and the well-formedness pass yields no new assumption.
+Stop when every probeable `ASSUMED` claim is resolved or deliberately retained as `ASSUMED` with its reason recorded, a full further pass yields no new assumption branch, and the well-formedness pass yields no new assumption.
 That is saturation.
-The well-formedness pass is mandatory; it is not a second optional check.
 There is no depth, question-count, or probe cap scoped to you; the cost bound is the execution-wide token budget and the risk budget, which halts the intake (not your current unit).
 A divergence between upstream material and a live response is recorded, never silently absorbed.

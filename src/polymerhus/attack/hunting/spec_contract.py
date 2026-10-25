@@ -322,8 +322,8 @@ def skill_concretised_procedure_from(
     """The typed `SkillConcretisedProcedure` carried by a spec, or None.
 
     Accepts a stored mapping (or an already-built model). A malformed value is
-    None: the reader (the triager) records the gap and uses the failure-mode
-    fallback, never a raise."""
+    None: the reader (the triager) records the gap and no variant basis is
+    derivable, never a raise."""
     if isinstance(spec, SkillConcretisedProcedure):
         return spec
     if not isinstance(spec, Mapping):

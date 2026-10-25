@@ -399,7 +399,6 @@ def resolve_model_text(model: dict) -> str:
         model.get("trust_model"),
         model.get("assumptions"),
         model.get("vulnerabilities"),
-        model.get("failure_modes"),
     ]
     return text_of(parts)
 

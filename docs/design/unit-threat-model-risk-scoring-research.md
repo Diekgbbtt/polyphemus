@@ -1,5 +1,8 @@
 # Unit threat model - risk scoring research
 
+> **Superseded 2026-10-25.** The likelihood-only risk score (Q33, R3-1) and the failure-mode artifact are amended by `docs/design/threat-model-impact-elicitation-adr.md`. The impact is now first-class (`VC/VI/VA`), the risk is `likelihood_weight * impact_weight`, and the failure modes are removed.
+
+
 *Status: research note, 2026-10-16. Operator-assigned investigation of five candidate likelihood-scoring schemes for the unit threat model loops. Primary sources only; access limits are listed in section 7. Nothing here is built, and this note is the only file written.*
 
 ## 1. Context

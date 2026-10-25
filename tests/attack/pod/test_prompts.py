@@ -207,13 +207,12 @@ VARIANT_BASES = (
     "payload-vector",
     "technology-misconfiguration",
     "interpretation-pitfall",
-    "failure-mode",
     "runner-failure",
     "runner-divergence",
 )
 
 
-def test_triager_prompt_names_all_twelve_variant_bases():
+def test_triager_prompt_names_all_eleven_variant_bases():
     for basis in VARIANT_BASES:
         assert basis in POD_TRIAGER_SYSTEM, basis
 
@@ -238,12 +237,12 @@ def test_triager_prompt_states_the_skipped_section_and_absent_excerpt_rules():
     assert "recorded gap" in lc
 
 
-def test_triager_prompt_states_the_failure_mode_fallback():
+def test_triager_prompt_has_no_failure_mode_fallback():
     lc = POD_TRIAGER_SYSTEM.lower()
-    assert "failure-mode" in lc
+    assert "failure-mode" not in lc
+    assert "no variant basis is derivable" in lc
     assert "verification_symptoms" in POD_TRIAGER_SYSTEM
     assert "assumptions" in POD_TRIAGER_SYSTEM
-    assert "fallback" in lc
 
 
 def test_triager_prompt_states_the_execution_triggers():
@@ -261,8 +260,8 @@ def test_triager_prompt_states_the_duplicate_guard():
 def test_triager_prompt_names_the_coverage_assessment_fields():
     # The production tool schema carries the material the graph's deterministic
     # diff needs, so the prompt must name every field.
-    for field in ("covered_gap_classes", "failure_mode_plausible",
-                  "runner_failed", "runner_diverged", "declined_attribute"):
+    for field in ("covered_gap_classes", "runner_failed", "runner_diverged",
+                  "declined_attribute"):
         assert field in POD_TRIAGER_SYSTEM, field
 
 

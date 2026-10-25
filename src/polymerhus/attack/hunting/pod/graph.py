@@ -221,8 +221,7 @@ def _resolve_variant_decision(decision: dict, spec: dict,
         procedure=procedure,
         covered=covered,
         runner_failed=bool(decision.get("runner_failed")),
-        runner_diverged=bool(decision.get("runner_diverged")),
-        failure_mode_plausible=bool(decision.get("failure_mode_plausible")))
+        runner_diverged=bool(decision.get("runner_diverged")))
     claimed = str(decision.get("declined_attribute") or "")
     # A stated coverage assessment makes the deterministic diff authoritative;
     # without one, the triager's claimed basis stands (never invented from a

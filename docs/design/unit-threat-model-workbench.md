@@ -1,5 +1,8 @@
 # Unit threat model - grilling workbench
 
+> **Superseded 2026-10-25.** The likelihood-only risk score (Q33, R3-1) and the failure-mode artifact are amended by `docs/design/threat-model-impact-elicitation-adr.md`. The impact is now first-class (`VC/VI/VA`), the risk is `likelihood_weight * impact_weight`, and the failure modes are removed.
+
+
 - Change: the hunt-orchestrator (fault-space breadth explorer) is rewritten in place into the threat modeller, which publishes a formal unit threat model per discretely testable unit.
 - Branch: `design/unit-threat-model`.
 - Worktree: `/Users/diekgbbtt/.claude/worktrees/unit-threat-model`.

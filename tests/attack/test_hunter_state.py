@@ -280,7 +280,7 @@ def test_the_seven_transition_hints_are_the_ratified_literals():
     test can disagree with the code."""
     assert S.TRANSITION_HINTS == {
         "grounding": (
-            "The grounding summary is persisted. Define the failure-mode slice "
+            "The grounding summary is persisted. Define the variant and manifestation space "
             "the loop opens."
         ),
         "slice": (

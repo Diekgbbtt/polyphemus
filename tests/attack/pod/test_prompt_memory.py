@@ -126,7 +126,7 @@ def test_triager_delta_carries_the_typed_skill_concretisation(log, store, spec_i
 
     absent = compose_triager_delta(log, SPEC, None, store=store, spec_id=spec_id, order=0)
     assert "recorded gap" in absent.lower()
-    assert "failure-mode" in absent.lower()
+    assert "no variant basis" in absent.lower()
 
 
 # --- the shared memory-guidance surface ----------------------------------------

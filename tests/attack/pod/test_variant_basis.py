@@ -1,11 +1,11 @@
 """Unit tier: the variant-basis vocabulary and the procedure diff (T9, S5 8.6).
 
-The twelve basis literals are the spec's table; the first nine are the procedure
+The eleven basis literals are the spec's table; the first nine are the procedure
 gaps and map one-to-one onto the typed `SkillConcretisedProcedure` fields in
 table order.
 The diff tests the gap classes in that order and the first uncovered class wins.
-The failure-mode fallback and the two execution triggers complete the minting
-vocabulary; the duplicate guard compares a basis plus its detail.
+The two execution triggers complete the minting vocabulary; the duplicate guard
+compares a basis plus its detail.
 """
 from polymerhus.attack.hunting.pod.variant_basis import (
     PROCEDURE_GAP_BASES,
@@ -32,13 +32,12 @@ EXPECTED_BASES = (
     "payload-vector",
     "technology-misconfiguration",
     "interpretation-pitfall",
-    "failure-mode",
     "runner-failure",
     "runner-divergence",
 )
 
 
-def test_the_twelve_basis_literals_are_the_spec_vocabulary():
+def test_the_eleven_basis_literals_are_the_spec_vocabulary():
     assert VARIANT_BASES == EXPECTED_BASES
     assert PROCEDURE_GAP_BASES == EXPECTED_BASES[:9]
 
@@ -82,20 +81,13 @@ def test_an_empty_procedure_field_is_a_skipped_class_not_a_gap():
 
 def test_an_absent_procedure_excerpt_is_a_recorded_gap_not_a_diff():
     # S5 8.6 step 1: when the excerpt is absent, record the gap and go to the
-    # failure-mode fallback - the diff does not invent a procedure gap.
+    # no variant basis is derivable - the diff does not invent a procedure gap.
     assert first_uncovered_gap(None, set()) is None
 
 
-def test_a_fully_covered_procedure_mints_the_failure_mode_fallback():
-    all_seven = set(EXPECTED_BASES[:9])
-    assert mint_variant_basis(procedure=PROCEDURE, covered=all_seven,
-                              failure_mode_plausible=True) == "failure-mode"
-
-
-def test_the_fallback_is_not_minted_when_no_failure_mode_is_plausible():
-    all_seven = set(EXPECTED_BASES[:9])
-    assert mint_variant_basis(procedure=PROCEDURE, covered=all_seven,
-                              failure_mode_plausible=False) is None
+def test_a_fully_covered_procedure_mints_no_basis():
+    all_nine = set(EXPECTED_BASES[:9])
+    assert mint_variant_basis(procedure=PROCEDURE, covered=all_nine) is None
 
 
 def test_each_procedure_gap_basis_is_minted_from_its_own_condition():
@@ -104,11 +96,8 @@ def test_each_procedure_gap_basis_is_minted_from_its_own_condition():
         assert mint_variant_basis(procedure=PROCEDURE, covered=covered) == basis
 
 
-def test_an_absent_excerpt_goes_straight_to_the_failure_mode_fallback():
-    assert mint_variant_basis(procedure=None, covered=[],
-                              failure_mode_plausible=True) == "failure-mode"
-    assert mint_variant_basis(procedure=None, covered=[],
-                              failure_mode_plausible=False) is None
+def test_an_absent_excerpt_mints_no_basis():
+    assert mint_variant_basis(procedure=None, covered=[]) is None
 
 
 def test_a_runner_failure_mints_the_recovery_basis():

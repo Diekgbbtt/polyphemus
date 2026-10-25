@@ -112,7 +112,7 @@ def skill_concretised_procedure_from_spec(
 
     The type has ONE home (`spec_contract.SkillConcretisedProcedure`); this is
     the pod's read. A missing or malformed object is None - the triager records
-    the gap and falls back to the failure-mode basis (S5 8.6)."""
+    the gap and no variant basis is derivable (S5 8.6)."""
     if isinstance(spec, TestImplementationSpec):
         return spec.skill_concretised_procedure
     return skill_concretised_procedure_from(spec)
