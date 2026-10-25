@@ -626,7 +626,7 @@ search_http_history({
 })
 ```
 
-The response returns sanitized summary rows, each carrying an `artifact_id` and a `next_cursor`.
+The response returns sanitized summary rows, each carrying an `artifact_id`, `method`, `url`, `status`, the sizes, the triage `request_headers`/`response_headers`, and a `next_cursor`.
 Inspect one recorded transaction:
 
 ```json

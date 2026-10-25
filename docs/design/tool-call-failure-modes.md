@@ -64,6 +64,10 @@ Count: 12.
 
 Example input: `{"filters":[{"side":"core","namespace":"request","key":"url","op":"contains","value":".map"}]}` - `side` must be one of request|response|connection|context|timing, never a namespace.
 
+A fourth class surfaced in the 2026-10-22 white-jotter trace: a core key on the wrong side (`response/core/url`) or a host used as a core key (`request/core/host`) matched nothing, and the empty page read as "no such traffic".
+The store now validates every `core` key against `CORE_KEYS_BY_SIDE` and raises, so the existing FM-C mapping returns `invalid_filter` with the allowed keys.
+The search contract names the side-bound header families for the same reason: the model must know which side owns `set-cookie` and which owns `cookie`.
+
 Missing semantics: `SEARCH_HTTP_HISTORY_DESCRIPTION` (`src/polymerhus/attack/hunting/http_history_contract.py:51`) already lists both enums, but does not separate the two axes or forbid invented ops.
 The agent conflates `side` with `namespace`, which are listed on adjacent lines.
 

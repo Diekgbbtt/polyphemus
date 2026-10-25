@@ -623,5 +623,33 @@ Follow-ups, in order:
 3. `exec` output discipline.
 4. A controlled n-turn stub experiment, only if the new trial still shows large repeated HTTP lists.
 5. Core-key filter validation or a `present` op, only if the same filter errors recur.
+   The core-key half is done (2026-10-23); the `present` op is still deferred.
 
 The implementation plan is in `TOOL-RESPONSE-MINIMIZATION-PLAN.md`.
+
+## 10. Row extension and dependency alignment (2026-10-23)
+
+The lean row was extended with the triage headers, by operator decision.
+The row now carries `request_headers` and `response_headers` when the transaction holds them: lowercased names, duplicates as a list, a 256-character value cap, and verbatim values.
+`content-length` stays out because the size fields already carry it.
+`location` is in the response set.
+
+The first-class filter enhancement stays closed.
+Section 3 records the three evidences: the selectors are already used in 57 of 59 calls, payload is driven by breadth and `limit`, and a `key:value` header grammar is lossy.
+The one real defect - a wrong-side or unknown core key returning an empty page - is fixed with a side-bound core-key check and the existing `invalid_filter` mapping.
+
+Cost of the header extension, projected from the 38 `get_http_artifact` payloads of the same project and trial window:
+
+| Item | Value |
+|---|---|
+| Selected headers before the extension, with redaction | about 155 characters per row |
+| Selected headers after the extension, verbatim and capped | about 155 to 260 characters per row |
+| Row total after the extension | about 337k to 386k characters, or 22% to 32% below the 492,911 baseline |
+
+The upper bound is an estimate.
+The source search rows do not carry headers, so the only header sample is the 38 inspected artifacts.
+The cached crawl was lost with the temporary directory, so the verbatim cost is not re-measured here.
+A new trial is the right way to measure it.
+
+The header taxonomy, the row shape, and the core-key rule are documented in `docs/design/http-proxy-history-design.md` section 2.5 and `docs/design/http-history-search-filter-plan-adr.md` section 6.
+The dependency map and the execution plan are in `HTTP-HEADER-AND-DEPENDENCY-ALIGNMENT-PLAN.md`.

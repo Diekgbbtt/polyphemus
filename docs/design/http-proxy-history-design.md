@@ -186,7 +186,23 @@ request/header/user-agent contains Firefox          by client
 body/body/marker         contains marker=            by marker in the body
 ```
 
-### 2.5 The contracts
+### 2.5 The search row
+
+The search row is a candidate menu, not a record.
+It carries `artifact_id`, `method`, `url`, `status`, `request_size` and `response_size` when non-zero, `request_headers` and `response_headers` when the transaction has triage headers, and non-null `derived_from`, `replay_kind`, and `error`.
+The header maps are lowercased, keep only the triage keys, keep every duplicate value as a list in recorded order, cap a value at 256 characters, and render the value verbatim.
+
+| Side | Triage keys |
+|---|---|
+| request | authorization, content-type, cookie, origin, referer, x-forwarded-for, x-forwarded-host, x-forwarded-proto, x-forwarded-protocol, x-real-ip |
+| response | access-control-allow-credentials, access-control-allow-headers, access-control-allow-methods, access-control-allow-origin, access-control-expose-headers, access-control-max-age, content-security-policy, content-security-policy-report-only, content-type, location, server, set-cookie, www-authenticate, x-cache, x-cache-lookup, x-frame-options, x-powered-by |
+
+`content-length` is omitted because `request_size` and `response_size` already carry it.
+The summary row renders `Authorization`, `Cookie`, and `Set-Cookie` verbatim by operator decision (2026-10-23); the full view (`get_http_artifact`) still redacts them.
+A `core` key is side-bound: `request` has `http_version|method|url`, `response` has `http_version|status|reason`, `connection` has `client_address|server_address|protocol|error_type`, `context` has `session_id|run_id|spec_id|variant_ref|exec_id`, and `timing` has `total_ms`.
+An unknown core key, or a core key on the wrong side, is `invalid_filter`, never an empty page.
+
+### 2.6 The contracts
 
 | Seam | Essential signature |
 |---|---|
