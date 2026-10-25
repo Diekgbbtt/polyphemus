@@ -149,10 +149,13 @@ The failure-mode removal is expand-contract: the impact lands first, the readers
 
 ## Status
 
-- Phase 0 is in progress.
-- The baseline report is committed at `9eb66a0a`.
-- The impact map is written and pending the ticket filing.
-- The ADR is pending.
+- Phase 0 is complete. The baseline report is committed at `9eb66a0a`; the impact map, plan, and tickets are at `e7fc64b1`.
+- Phase 1 is complete. The impact model and combined risk are at `9b5f97c6` and `6f4b5385`.
+- Phase 2 is complete. The prompt, well-formedness pass, class guard, and example are at `8a5bf072`.
+- Phase 3 is complete. The failure-mode contraction and the hunter/pod cleanup are at `de9cb2c5` and `2e2037a5`.
+- Phase 4 is complete for the docs. The implementation result is `docs/experiments/modeller-impact-quality/IMPLEMENTATION.md`.
+- The procedural verification is complete: `tests/attack` 1094 passed, pod contracts and e2e 27 passed, project management plus settings 8 passed and 2 skipped, eval trial 68 passed, `compileall` clean, `git diff --check` clean.
+- The A/B is pending the operator's protocol. It is an experimentation item, not a tracked ticket.
 
 ## Tight feedback loops
 
