@@ -28,9 +28,13 @@ def _surface():
 
 def test_the_hunter_tool_descriptions_stay_within_the_budget():
     """The 12 request descriptions are a fixed tax on every hunter call. The
-    dense contract is bounded; the schemas remain the full machine surface."""
+    dense contract is bounded; the schemas remain the full machine surface.
+
+    The cap moved from 8,500 to 8,800 when the HTTP search contract gained the
+    side-bound header families and the core-key rule. That is new contract
+    content, not duplication."""
     total = sum(len(tool.description or "") for tool in _surface())
-    assert total <= 8500, total
+    assert total <= 8800, total
 
 
 def test_every_hunter_tool_has_a_description():

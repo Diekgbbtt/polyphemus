@@ -1,4 +1,4 @@
-"""Model-facing views must never carry raw secrets or bodies."""
+"""Model-facing views: no bodies, redacted secrets, and the one summary exception."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,11 @@ from kali.http_history.models import (
     RequestRecord,
     ResponseRecord,
 )
-from kali.http_history.sanitize import sanitize_artifact, sanitize_summary
+from kali.http_history.sanitize import (
+    SUMMARY_HEADER_VALUE_MAX,
+    sanitize_artifact,
+    sanitize_summary,
+)
 
 _SECRET = "sup3r-s3cr3t-value"
 
@@ -55,6 +59,7 @@ def test_sanitized_summary_is_the_lean_candidate_projection():
     summary = sanitize_summary(_artifact())
     assert set(summary) == {
         "artifact_id", "method", "url", "status", "request_size", "response_size",
+        "request_headers", "response_headers",
     }
     assert summary["artifact_id"] == "http_01J0000000000000000000000A"
     assert summary["method"] == "POST"
@@ -64,7 +69,89 @@ def test_sanitized_summary_is_the_lean_candidate_projection():
     assert summary["response_size"] == 5
     assert "capture_state" not in summary
     assert "project_id" not in summary
-    assert _SECRET not in json.dumps(summary)
+
+
+def test_the_summary_headers_are_lowercased_and_side_bound():
+    summary = sanitize_summary(_artifact())
+
+    assert summary["request_headers"] == {
+        "authorization": [f"Bearer {_SECRET}"],
+    }
+    assert summary["response_headers"] == {
+        "set-cookie": [f"sid={_SECRET}; Path=/"],
+    }
+    assert "accept" not in summary["request_headers"]
+
+
+def test_the_summary_headers_keep_duplicates_in_recorded_order():
+    artifact = _artifact().model_copy(update={
+        "response": ResponseRecord(status=200, headers=[
+            ["Set-Cookie", "a=1; Path=/"],
+            ["set-cookie", "b=2; Path=/"],
+            ["Content-Type", "text/html"],
+        ]),
+    })
+
+    headers = sanitize_summary(artifact)["response_headers"]
+
+    assert headers["set-cookie"] == ["a=1; Path=/", "b=2; Path=/"]
+    assert headers["content-type"] == ["text/html"]
+
+
+def test_the_summary_omits_headers_that_are_not_triage_keys():
+    artifact = _artifact().model_copy(update={
+        "request": RequestRecord(method="GET", url="https://target.example/", headers=[
+            ["Vary", "Accept-Encoding"],
+            ["Content-Length", "12"],
+            ["Date", "Wed, 21 Oct 2026 23:57:19 GMT"],
+            ["User-Agent", "polymerhus-recon/jsluice"],
+        ]),
+        "response": ResponseRecord(status=204, headers=[["Vary", "Origin"]]),
+    })
+
+    summary = sanitize_summary(artifact)
+
+    assert "request_headers" not in summary
+    assert "response_headers" not in summary
+
+
+def test_the_summary_keeps_location_and_the_cors_family():
+    artifact = _artifact().model_copy(update={
+        "response": ResponseRecord(status=302, headers=[
+            ["Location", "https://target.example/after"],
+            ["Access-Control-Allow-Origin", "https://app.example"],
+            ["Content-Security-Policy", "default-src 'self'; script-src 'self'"],
+        ]),
+    })
+
+    headers = sanitize_summary(artifact)["response_headers"]
+
+    assert headers["location"] == ["https://target.example/after"]
+    assert headers["access-control-allow-origin"] == ["https://app.example"]
+    assert headers["content-security-policy"] == [
+        "default-src 'self'; script-src 'self'"]
+
+
+def test_the_summary_truncates_a_long_header_value_to_the_cap():
+    value = "x" * (SUMMARY_HEADER_VALUE_MAX + 40)
+    artifact = _artifact().model_copy(update={
+        "response": ResponseRecord(status=200, headers=[["Server", value]]),
+    })
+
+    rendered = sanitize_summary(artifact)["response_headers"]["server"][0]
+
+    assert len(rendered) == SUMMARY_HEADER_VALUE_MAX
+    assert rendered.endswith("...")
+
+
+def test_the_summary_renders_secret_headers_verbatim():
+    """The operator decision: the summary row is not a redacting boundary.
+    The full view still redacts, which the earlier test pins."""
+    summary = sanitize_summary(_artifact())
+    assert _SECRET in summary["request_headers"]["authorization"][0]
+    assert _SECRET in summary["response_headers"]["set-cookie"][0]
+    assert "[redacted]" not in json.dumps(
+        summary["request_headers"]) + json.dumps(summary["response_headers"])
 
 
 def test_sanitized_summary_carries_only_sparse_lineage_and_error():

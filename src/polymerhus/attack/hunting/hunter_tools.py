@@ -1022,7 +1022,18 @@ class HttpHistorySearchArgs(BaseModel):
     recorded transactions of the hunter's project. Raw bodies are never
     returned - the rows are sanitized summaries."""
 
-    filters: list[dict] = Field(default_factory=list)
+    filters: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Conjunctive {side, namespace, key, op, value} predicates. The "
+            "`core` namespace is side-bound: request has http_version, method, "
+            "url; response has http_version, status, reason; connection has "
+            "the addresses, protocol, error_type; context has the run, spec, "
+            "variant, exec and session ids; timing has total_ms. A core key on "
+            "the wrong side, or an unknown core key, is `invalid_filter`. Only "
+            "present header keys are rendered; duplicate values are a list."
+        ),
+    )
     cursor: str | None = None
     limit: int = 50
     text: str | None = None

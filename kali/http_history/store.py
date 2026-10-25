@@ -30,6 +30,19 @@ _PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 ALLOWED_SIDES = frozenset({"request", "response", "connection", "context", "timing"})
 ALLOWED_NAMESPACES = frozenset({"core", "header", "cookie", "query", "form", "body", "tls"})
 ALLOWED_OPS = frozenset({"eq", "contains", "prefix", "gte", "lte", "absent"})
+# The reader-side guard for the `core` namespace. It mirrors the keys
+# `kali/http_history/index.py` writes, per side. A key on the wrong side (for
+# example `response/core/url`) otherwise matches nothing and reads as "no such
+# traffic", which is a false negative: the caller gets `invalid_filter` instead.
+CORE_KEYS_BY_SIDE = {
+    "request": frozenset({"http_version", "method", "url"}),
+    "response": frozenset({"http_version", "status", "reason"}),
+    "connection": frozenset({"client_address", "server_address",
+                             "protocol", "error_type"}),
+    "context": frozenset({"session_id", "run_id", "spec_id",
+                          "variant_ref", "exec_id"}),
+    "timing": frozenset({"total_ms"}),
+}
 MIN_LIMIT, MAX_LIMIT = 1, 200
 
 _SCHEMA = """
@@ -370,6 +383,17 @@ class HttpHistoryStore:
                 raise ValueError(f"unknown namespace {namespace!r}")
             if op not in ALLOWED_OPS:
                 raise ValueError(f"unknown op {op!r}")
+            # The `core` namespace is a CLOSED key set per side (the keys
+            # `index.py` writes). A key on the wrong side would otherwise
+            # return an empty page, which the caller cannot tell from genuinely
+            # absent traffic. This ValueError is the `invalid_filter` the MCP
+            # seam already maps, so no new error path is added.
+            if namespace == "core" and key not in CORE_KEYS_BY_SIDE[side]:
+                allowed = ", ".join(sorted(CORE_KEYS_BY_SIDE[side]))
+                raise ValueError(
+                    f"core key {key!r} is not valid on side {side!r}; "
+                    f"allowed: {allowed}"
+                )
             if namespace == "header":
                 key = key.lower()
             # A semi-join (`IN (SELECT ...)`) is chosen over a correlated

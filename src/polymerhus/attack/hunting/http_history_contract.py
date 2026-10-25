@@ -47,25 +47,44 @@ _ARTIFACT_MODEL: str = (
     "no body content, secrets `[redacted]`, `source_ip` excluded."
 )
 
+# The triage header families the summary row renders, per side. They mirror
+# `kali/http_history/sanitize.py` (a separate deployment unit); the parity test
+# `tests/kali/test_http_history_summary_headers.py` pins the two sets together.
+SEARCH_REQUEST_HEADERS: tuple[str, ...] = (
+    "authorization", "content-type", "cookie", "origin", "referer",
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+    "x-forwarded-protocol", "x-real-ip",
+)
+SEARCH_RESPONSE_HEADERS: tuple[str, ...] = (
+    "access-control-allow-credentials", "access-control-allow-headers",
+    "access-control-allow-methods", "access-control-allow-origin",
+    "access-control-expose-headers", "access-control-max-age",
+    "content-security-policy", "content-security-policy-report-only",
+    "content-type", "location", "server", "set-cookie",
+    "www-authenticate", "x-cache", "x-cache-lookup", "x-frame-options",
+    "x-powered-by",
+)
+
 SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
-    "Search this project's recorded HTTP history. Filters are conjunctive "
-    "{side, namespace, key, op, value}. side: request|response|connection|"
-    "context|timing. namespace: core|header|cookie|query|form|body|tls. op: "
-    "eq|contains|prefix|gte|lte|absent; `absent` means the transaction lacks "
-    "the key, which builds the control group. `text` matches the URL and "
-    "textual body markers. `side` and `namespace` are TWO DIFFERENT AXES; "
-    "never put a namespace value in `side`. There is no `present` op; exclude "
-    "`absent` instead. `value` is a string or number; `eq` does not accept "
-    "booleans. A misspelled op, side, or namespace is `invalid_filter`, not an "
-    "empty result. `limit` is 1..200; paging is deterministic on "
-    "(created_at, artifact_id): pass `next_cursor` back. Inspect one with "
-    "`get_http_artifact` and record its artifact_id in "
-    "`provenance.baseline_ref`.\n"
+    "Search recorded HTTP via conjunctive {side, namespace, key, op, value} "
+    "filters. side: request|response|connection|context|timing; namespace: "
+    "core|header|cookie|query|form|body|tls. op: eq|contains|prefix|gte|lte|"
+    "absent (`absent` builds the control group). `text` matches URL/body "
+    "markers. `side` and `namespace` are TWO DIFFERENT AXES. There is no "
+    "`present` op; exclude `absent` instead. `value` is a string or number; "
+    "`eq` does not accept booleans. `limit` is 1..200; paging is deterministic; "
+    "pass `next_cursor` back. Header keys are side-bound: request has "
+    "authorization, cookie, referer, origin, x-forwarded-*, x-real-ip; response "
+    "has set-cookie, location, access-control-*, content-security-policy, "
+    "x-frame-options, www-authenticate, server, x-powered-by, "
+    "x-cache{,-lookup}; content-type is on both. A misspelled op/side/namespace "
+    "or a bad core key is `invalid_filter`, not an empty result. Inspect with "
+    "`get_http_artifact`; cite its id in `provenance.baseline_ref`.\n"
     "Failures are in-band: `invalid_filter`, `not_found`, `corrupt_artifact`, "
-    "`unavailable` or `http_history_failed` (missing evidence, never proof of an "
-    "empty surface). Rows are candidate summaries: `artifact_id`, `method`, "
-    "`url`, `status`, `request_size`, `response_size`, and non-null "
-    "`derived_from`/`replay_kind`/`error`; `capture_state` is on "
+    "`unavailable` or `http_history_failed` (missing evidence, never proof of "
+    "an empty surface). Rows are candidate summaries: `artifact_id`, `method`, "
+    "`url`, `status`, sizes, `request_headers`/`response_headers` (verbatim), "
+    "and non-null `derived_from`/`replay_kind`/`error`; `capture_state` is on "
     "`get_http_artifact`."
 )
 
@@ -108,4 +127,6 @@ __all__ = [
     "GET_HTTP_ARTIFACT_DESCRIPTION",
     "REPLAY_HTTP_REQUEST_DESCRIPTION",
     "SEARCH_HTTP_HISTORY_DESCRIPTION",
+    "SEARCH_REQUEST_HEADERS",
+    "SEARCH_RESPONSE_HEADERS",
 ]

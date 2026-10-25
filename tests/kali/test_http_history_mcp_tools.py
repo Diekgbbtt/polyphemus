@@ -163,6 +163,23 @@ def test_search_get_and_status_tools(tmp_path, monkeypatch):
     assert status["namespaces"]["pool_size"] == 4
 
 
+def test_a_wrong_side_core_key_is_a_coded_invalid_filter(tmp_path, monkeypatch):
+    """The tool layer returns the concise coded error, not an empty page."""
+    runner = _capturing_runner(tmp_path)
+    service = _service(tmp_path, CapturingManager(runner), runner)
+    monkeypatch.setattr(mcp_server, "_SERVICE", service)
+    asyncio.run(mcp_server.execute_command("probe", "s1", project_id="proj-1"))
+
+    result = asyncio.run(mcp_server.search_http_history("proj-1", filters=[
+        {"side": "request", "namespace": "core", "key": "host", "op": "eq",
+         "value": "target.example"},
+    ]))
+
+    assert result["error"] == "invalid_filter"
+    assert "not valid on side 'request'" in result["detail"]
+    assert "url" in result["detail"]
+
+
 def test_error_payload_carries_a_category_per_failure_mode():
     """FM-C: every failure is a denoted error with a category, never a raw
     exception string - the category tells the model what to do."""

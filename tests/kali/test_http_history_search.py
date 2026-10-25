@@ -152,6 +152,47 @@ def test_search_rejects_unknown_vocabulary(tmp_path):
         store.search([{"side": "body", "namespace": "core", "key": "method", "op": "eq", "value": "x"}])
 
 
+def test_a_core_key_is_bound_to_its_side(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    with pytest.raises(ValueError, match="not valid on side 'request'"):
+        store.search([{"side": "request", "namespace": "core",
+                       "key": "host", "op": "eq", "value": "target.example"}])
+    with pytest.raises(ValueError, match="not valid on side 'response'"):
+        store.search([{"side": "response", "namespace": "core",
+                       "key": "url", "op": "contains", "value": "/login"}])
+
+
+def test_the_core_key_error_names_the_allowed_keys(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    with pytest.raises(ValueError) as raised:
+        store.search([{"side": "request", "namespace": "core",
+                       "key": "host", "op": "eq", "value": "target.example"}])
+    assert "http_version" in str(raised.value)
+    assert "method" in str(raised.value)
+    assert "url" in str(raised.value)
+
+
+def test_every_valid_core_key_still_searches(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    matched = (
+        ("request", "url", "contains", "/login"),
+        ("response", "status", "eq", 200),
+        ("timing", "total_ms", "gte", 25.0),
+    )
+    for side, key, op, value in matched:
+        page = store.search([{"side": side, "namespace": "core",
+                              "key": key, "op": op, "value": value}])
+        assert page.artifacts, (side, key)
+    for side, key, op, value in (
+        ("context", "run_id", "eq", "r1"),
+        ("connection", "protocol", "eq", "http"),
+    ):
+        store.search([{"side": side, "namespace": "core",
+                       "key": key, "op": op, "value": value}])
+
+
 def test_search_never_leaves_the_project(tmp_path):
     store = HttpHistoryStore(tmp_path, "proj-1")
     _seed(store)
