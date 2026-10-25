@@ -264,6 +264,14 @@ class ThreatModelStore(BoundedRecordStore):
         self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
         self._class_names = frozenset(class_names) if class_names is not None else None
 
+    def set_class_names(self, class_names: AbstractSet[str] | None) -> None:
+        """Bind the suite class index after construction.
+
+        The runtime builds the store before the per-unit suite seam exists, so
+        the tool surface calls this once the suite classes are known. The
+        findings stay non-blocking."""
+        self._class_names = frozenset(class_names) if class_names else None
+
     # --- path helpers ----------------------------------------------------------
 
     def _project_dir(self, project_id: str) -> Path:

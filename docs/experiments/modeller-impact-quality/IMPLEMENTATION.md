@@ -86,6 +86,6 @@ The prompt carries one synthetic SSRF/TOCTOU example:
 ## Follow-ups
 
 - The eval measurement prompt still uses the phrase "failure-mode slice" in its checklist. That is the eval measurement vocabulary, outside the hunting module. Update it when the eval measurement workstream next runs.
-- The production store does not yet pass a suite class index to `check_completion`, so the non-suite finding runs only where a caller supplies `class_names`. The empty and technique-family findings run always.
+- The tool surface binds the suite class index to the store when it is built, so the non-suite finding runs in the production path. A caller that constructs the store directly can pass `class_names` or call `set_class_names`.
 - The `360` threshold is provisional until the first re-model writes real `VC/VI/VA` values. The A/B sets it per arm.
 - The A/B is the remaining step; it is an experimentation item, not a tracked ticket.

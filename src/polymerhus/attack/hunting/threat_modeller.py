@@ -436,6 +436,12 @@ class TrackingThreatModelStore:
     def tracker(self) -> PassiveGateTracker:
         return self._tracker
 
+    def set_class_names(self, class_names) -> None:
+        """Delegate the suite class index to the wrapped store."""
+        setter = getattr(self._inner, "set_class_names", None)
+        if setter is not None:
+            setter(class_names)
+
     def write_sections(self, project_id: str, unit_id: str, state, sections,
                        *, run_id: str):
         try:

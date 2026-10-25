@@ -762,6 +762,35 @@ def test_the_store_records_the_non_suite_class_finding(tmp_path):
                for finding in validation["class_findings"])
 
 
+def test_the_modeller_surface_wires_the_suite_class_index(tmp_path):
+    from polymerhus.attack.hunting.threat_modeller_tools import (
+        ModellerTools,
+        build_modeller_tool_surface,
+    )
+
+    store = ThreatModelStore(tmp_path)
+    tools = ModellerTools(
+        threat_store=store, project_id=PROJECT, run_id=RUN,
+        suite_classes=("idor",))
+    build_modeller_tool_surface(PROJECT, UNIT, tools)
+
+    for state, payload in _sections_below_completed():
+        if state == "VULNERABILITIES_WRITTEN":
+            payload = {"vulnerabilities": [{
+                **_vulnerabilities()[0],
+                "web_vulnerability_class": "made-up-class",
+            }]}
+        store.write_sections(PROJECT, UNIT, state, payload, run_id=RUN)
+    loops = [{**_loop("high"), "web_vulnerability_class": "made-up-class"}]
+    store.write_sections(
+        PROJECT, UNIT, "COMPLETED", _completed_sections(loops), run_id=RUN)
+
+    validation = store.read_model(PROJECT, UNIT)["validation"]
+
+    assert any("not in the suite" in finding
+               for finding in validation["class_findings"])
+
+
 def test_the_completion_records_a_technique_family_as_a_class_finding(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)

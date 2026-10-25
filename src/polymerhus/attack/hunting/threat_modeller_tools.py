@@ -716,4 +716,8 @@ def build_modeller_tool_surface(
                 classes=tuple(tools.suite_classes),
                 read_fn=tools.suite_read_fn)
         surface.extend(build_vulnerability_suite_tools(suite=tools.suite))
+    if tools.suite is not None:
+        setter = getattr(tools.threat_store, "set_class_names", None)
+        if setter is not None:
+            setter(tools.suite.classes)
     return {tool.name: tool for tool in surface}
