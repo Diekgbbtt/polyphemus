@@ -199,7 +199,11 @@ class TrialConfig:
     # the L1 scaffold, asserts the project and its L1, and enters at hunting.
     existing_project_id: str | None = None
     # D32: the version identity stamped into the trial record and the verdicts.
+    # `eval_sha` is the commit HEAD points to in the instance worktree (the code
+    # the stack binds); `worktree_dirty` says whether the loaded bytes are that
+    # commit (a tracked edit means they are not).
     eval_sha: str | None = None
+    worktree_dirty: bool | None = None
     stack_fingerprint: str | None = None
     # The trace id this trial ran under, when one was recorded; the
     # assessment/diagnoser dispatches substitute it into `{trace_id}`. No
@@ -208,6 +212,11 @@ class TrialConfig:
     # #275: a surfer intervention note stamped into the record when this trial
     # resumes a failed one at its recorded phase.
     intervention: str | None = None
+    # D32: identity notes the starter derived while resolving the record (for
+    # example a declared `--eval-sha` that disagrees with the loaded HEAD). They
+    # ride the record's own `notes`, so an identity disagreement is visible in
+    # `trial.yaml` instead of being swallowed.
+    identity_notes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -357,7 +366,11 @@ class TrialRecord:
     # is `project_id` itself. Additive, defaults False, so older records load.
     seeded: bool = False
     # D32/D37: the version identity the trial ran on, and the assessment state.
+    # `worktree_dirty` is True when the instance worktree carried tracked edits
+    # at trial start: `eval_sha` then names the BASE commit, and the stack
+    # fingerprint is the content identity that covers the edit.
     eval_sha: str | None = None
+    worktree_dirty: bool | None = None
     stack_fingerprint: str | None = None
     # The trial's trace id, when one was recorded; the assessment and
     # diagnosis requests substitute it into `{trace_id}`.
@@ -1042,9 +1055,12 @@ class Trial:
         trial_id = cfg.trial_id or _default_trial_id(cfg, self._now)
         trial_dir = Path(cfg.runs_root) / cfg.target_id / trial_id
         intervention = [cfg.intervention] if cfg.intervention else []
-        aggregated = intervention + list(notes) + [
-            note for phase in phases for note in phase.notes
-        ]
+        aggregated = (
+            list(cfg.identity_notes)
+            + intervention
+            + list(notes)
+            + [note for phase in phases for note in phase.notes]
+        )
         spent, overshoot, by_agent, usage = self._terminal_spend(project_id)
         # #349: the per-agent token spectrum is a flat projection of the SAME
         # `by_agent` read the spend used - a budget stop or the terminal usage
@@ -1075,6 +1091,7 @@ class Trial:
             target_run_id=cfg.target_run_id or cfg.instance_id,
             seeded=cfg.existing_project_id is not None,
             eval_sha=cfg.eval_sha,
+            worktree_dirty=cfg.worktree_dirty,
             stack_fingerprint=cfg.stack_fingerprint,
             trace_id=cfg.trace_id,
         )

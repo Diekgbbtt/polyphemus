@@ -513,7 +513,7 @@ grows.
 | File | What it tells you |
 |---|---|
 | `verdicts.yaml` | The oracle's per-vuln rows: `identified / partial / missed`, confidence, evidence refs with quoted passages |
-| `trial.yaml` | The trial record (#270): `trial_id`, `instance_id`/`target_id`/`target_run_id`, `start_phase`, `terminal`, the per-phase rows (`entered`, `status`, `run_id`, `blocks`, `notes`, `failure`), timings, the token accounting (`spent_tokens`, `spend_overshoot`, `spend_baseline`, `spend_by_agent`, the `usage` snapshot, and the `token_spectrum`), the aggregated `notes`, the version identity (`eval_sha`/`stack_fingerprint`/`trace_id`), and the `assessment`/`diagnosis` state |
+| `trial.yaml` | The trial record (#270): `trial_id`, `instance_id`/`target_id`/`target_run_id`, `start_phase`, `terminal`, the per-phase rows (`entered`, `status`, `run_id`, `blocks`, `notes`, `failure`), timings, the token accounting (`spent_tokens`, `spend_overshoot`, `spend_baseline`, `spend_by_agent`, the `usage` snapshot, and the `token_spectrum`), the aggregated `notes`, the version identity (`eval_sha` = the instance worktree HEAD the starter read, `worktree_dirty` when tracked edits differ from it, `stack_fingerprint`, `trace_id`), and the `assessment`/`diagnosis` state |
 | `manifest.json` | What `ev.py` collected and what was absent (per-store `present` flags, statuses, KB files) |
 | `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `eval/data/webexploitbench/<target>/`), and the reverse-engineering source ledger |
 | `surface-map.md` (in `eval/data/webexploitbench/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |
@@ -786,7 +786,7 @@ trial record - never invented.
 
 | Primitive | Contract |
 |---|---|
-| `PYTHONPATH=eval python3 -m orchestrator trial <setup.yaml> <instance> <target> [--eval-sha S] [--stack-fingerprint F] [--trace-id T]` | Run one trial; the SHA and fingerprint are stamped into `trial.yaml` (D32/D37), as is the Langfuse trace id when given, so the assessment can copy them and substitute `{trace_id}`. |
+| `PYTHONPATH=eval python3 -m orchestrator trial <setup.yaml> <instance> <target> [--stack-fingerprint F] [--trace-id T]` | Run one trial. The starter reads the instance worktree HEAD and stamps it as `eval_sha`, with `worktree_dirty` beside it (D32), so a trial always names the code its stack loads; `--eval-sha` is a cross-check only (a mismatch is noted, never written). The fingerprint (D37) and the Langfuse trace id are stamped too, so the assessment can copy them and substitute `{trace_id}`. |
 | `PYTHONPATH=eval python3 -m orchestrator assess <setup.yaml> --trial <trial-dir>` | Run the configured assessment command once for one trial through the bounded synchronous runner (D6, #350). `--dry-run` prints the rendered command. |
 | `PYTHONPATH=eval python3 -m orchestrator close-verify <setup.yaml>` | The eval-close phase (D15): check `verdicts.yaml` presence and schema for every trial under the runs root; re-dispatch missing/invalid trials twice, then micro-diagnose - a bounded configuration-layer re-dispatch (D28) or a named escalation. `--dry-run` lists the trials. |
 

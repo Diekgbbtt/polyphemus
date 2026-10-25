@@ -257,6 +257,16 @@ _Avoid_: retry, poll
 The read-only branch the eval environment runs; fast-forwarded from `dev` by the external operator only when no eval is executing.
 _Avoid_: eval mirror, deploy branch
 
+**Version identity**:
+The pair a trial record names so its run is reproducible: `eval_sha` and `stack_fingerprint`.
+`eval_sha` is the commit HEAD points to in the **Instance worktree**, read by the trial starter at trial start - never an operator-entered value.
+The stack bind-mounts that worktree's `src/`, `lightrag/`, `db/`, `skills/`, and `gateway/`, so its HEAD IS the code the instance loads.
+`worktree_dirty` rides beside it: true when a tracked path differs from HEAD, because the SHA then names the base commit only.
+`stack_fingerprint` is the operator-owned content identity over the running tree, so it covers a patched tree the commit cannot.
+A declared `--eval-sha`/`EVAL_SHA` is a cross-check, not a source: a disagreement is ignored and recorded as a trial note.
+The starter fails loud when the worktree HEAD is unreadable, and `store materialize` refuses a record with an incomplete identity (`identity_missing`); every verdict and diagnosis row copies the pair from the record.
+_Avoid_: commit, revision (the two-value pair is the identity; the SHA alone is not)
+
 **Evidence chain**:
 The per-verdict set of hunting artifacts (the threat-model threat file, the `TestImplementationSpec`, the experiment logs, the `PodExport`) plus phase-mapped observability reasoning references that support a positive verdict.
 The threat file is the parent dispatch artifact; the spec family is keyed by its dispatch id `<unit_name>__<threat_id>`.
