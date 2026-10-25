@@ -43,6 +43,17 @@ CORE_KEYS_BY_SIDE = {
                           "variant_ref", "exec_id"}),
     "timing": frozenset({"total_ms"}),
 }
+# Attribute keys the index writes with a `numeric_value` and NO `text_value`.
+# `eq` on one of them with a numeric STRING (JSON often sends "200") would
+# compare `text_value`, which is NULL, and return an empty page that reads as
+# "no such traffic". Coerce the string; a non-numeric string stays a text
+# compare, because `response/core/status` is text `none` when no response was
+# recorded, and `eq "none"` is a real control-group query.
+NUMERIC_ATTRIBUTE_KEYS = frozenset({
+    ("core", "status"),
+    ("core", "total_ms"),
+    ("body", "size"),
+})
 MIN_LIMIT, MAX_LIMIT = 1, 200
 
 _SCHEMA = """
@@ -394,8 +405,20 @@ class HttpHistoryStore:
                     f"core key {key!r} is not valid on side {side!r}; "
                     f"allowed: {allowed}"
                 )
-            if namespace == "header":
+            if namespace in {"header", "cookie"}:
                 key = key.lower()
+            # The index writes header names lowercased, so `a.key = ?` uses the
+            # covering index. It writes cookie names as recorded (`JSESSIONID`),
+            # and existing projects already hold those rows, so the cookie key
+            # alone is folded in SQL. Cookie rows are a handful per flow, so the
+            # expression scan stays small, unlike the header namespace.
+            key_ref = "LOWER(a.key)" if namespace == "cookie" else "a.key"
+            if op == "eq" and (namespace, key) in NUMERIC_ATTRIBUTE_KEYS \
+                    and isinstance(value, str):
+                try:
+                    value = float(value)
+                except ValueError:
+                    pass
             # A semi-join (`IN (SELECT ...)`) is chosen over a correlated
             # `EXISTS`/`NOT EXISTS` subquery on purpose. The correlated form makes
             # SQLite re-scan every attribute row sharing `(side, namespace, key)`
@@ -411,14 +434,15 @@ class HttpHistoryStore:
             if op == "absent":
                 clauses.append(
                     "f.artifact_id NOT IN (SELECT a.artifact_id FROM attributes a "
-                    "WHERE a.side = ? AND a.namespace = ? AND a.key = ?)"
+                    f"WHERE a.side = ? AND a.namespace = ? AND {key_ref} = ?)"
                 )
                 params.extend([side, namespace, key])
                 continue
             clause, clause_params = _op_sql(op, value)
             clauses.append(
                 "f.artifact_id IN (SELECT a.artifact_id FROM attributes a "
-                "WHERE a.side = ? AND a.namespace = ? AND a.key = ? AND " + clause + ")"
+                f"WHERE a.side = ? AND a.namespace = ? AND {key_ref} = ? AND "
+                + clause + ")"
             )
             params.extend([side, namespace, key, *clause_params])
         where = (" AND " + " AND ".join(clauses)) if clauses else ""

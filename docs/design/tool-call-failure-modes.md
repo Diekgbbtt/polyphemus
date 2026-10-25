@@ -68,6 +68,19 @@ A fourth class surfaced in the 2026-10-22 white-jotter trace: a core key on the 
 The store now validates every `core` key against `CORE_KEYS_BY_SIDE` and raises, so the existing FM-C mapping returns `invalid_filter` with the allowed keys.
 The search contract names the side-bound header families for the same reason: the model must know which side owns `set-cookie` and which owns `cookie`.
 
+A second review (2026-10-25) found three more silent-empty paths.
+The first two are filter classes; the third was a row-display defect.
+
+| class | cause | fix |
+| --- | --- | --- |
+| a numeric string on a numeric key | `eq "404"` compared `text_value`, NULL for `status`, `total_ms`, and `body/size` | `eq` coerces a numeric string; a non-numeric string stays a text compare (`status: none`) |
+| a cookie key in the wrong case | cookie names are indexed as recorded, and only header keys were lowercased | the cookie key folds case, and `LOWER(a.key)` also matches rows written before the change |
+| a sanitized URL beside a raw-URL predicate | the row rendered `sanitize_url(...)`, the index matched the raw URL | the summary carries the recorded URL; `sanitize_artifact` keeps redacting |
+
+The first two add no vocabulary: no field, operator, or namespace changed.
+The third corrects the display contract: the row now shows the string it was selected by.
+`sanitize_artifact` still drops userinfo and replaces sensitive query values, and it percent-decodes query escapes, so the full view is not byte-identical to the row.
+
 Missing semantics: `SEARCH_HTTP_HISTORY_DESCRIPTION` (`src/polymerhus/attack/hunting/http_history_contract.py:51`) already lists both enums, but does not separate the two axes or forbid invented ops.
 The agent conflates `side` with `namespace`, which are listed on adjacent lines.
 

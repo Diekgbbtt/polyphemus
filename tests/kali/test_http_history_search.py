@@ -112,6 +112,82 @@ def test_search_ops_eq_contains_prefix_gte_lte(tmp_path):
     assert len(lte.artifacts) == 2
 
 
+def test_a_numeric_string_status_filter_matches(tmp_path):
+    """JSON often carries a number as a string. `status` is indexed numeric
+    only, so `eq "404"` used to compare `text_value` (NULL) and return an
+    empty page that read as "no such traffic"."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    page = store.search([
+        {"side": "response", "namespace": "core", "key": "status",
+         "op": "eq", "value": "404"},
+    ])
+    assert [a.artifact_id for a in page.artifacts] == [
+        "http_01J0000000000000000000001A"]
+
+
+def test_a_numeric_string_size_filter_matches(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    page = store.search([
+        {"side": "response", "namespace": "body", "key": "size",
+         "op": "eq", "value": "8"},
+    ])
+    assert len(page.artifacts) == 3
+
+
+def test_a_non_numeric_status_value_stays_a_text_match(tmp_path):
+    """A response-less artifact indexes `status` with the text `none`, and
+    `eq "none"` is a real control-group query. Coercion must not eat it."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    artifact, bodies = _artifact(
+        "http_01J0000000000000000000007A", created_at=5000.0)
+    store.record(artifact.model_copy(update={"response": None}), bodies=bodies)
+    page = store.search([
+        {"side": "response", "namespace": "core", "key": "status",
+         "op": "eq", "value": "none"},
+    ])
+    assert [a.artifact_id for a in page.artifacts] == [
+        "http_01J0000000000000000000007A"]
+
+
+def test_a_cookie_key_matches_regardless_of_case(tmp_path):
+    """Cookie names are recorded as the application sends them (`JSESSIONID`).
+    The row carries no cookies, so the model cannot learn the case; matching
+    folds it instead of returning an empty page."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    artifact, bodies = _artifact(
+        "http_01J0000000000000000000008A", created_at=1000.0,
+        cookies=[NameValue(name="JSESSIONID", value="abc")])
+    store.record(artifact, bodies=bodies)
+
+    for key in ("jsessionid", "JSESSIONID", "JsEsSiOnId"):
+        page = store.search([
+            {"side": "request", "namespace": "cookie", "key": key,
+             "op": "eq", "value": "abc"},
+        ])
+        assert [a.artifact_id for a in page.artifacts] == [
+            "http_01J0000000000000000000008A"], key
+
+
+def test_cookie_absent_uses_the_same_case_folding(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    with_cookie, bodies = _artifact(
+        "http_01J0000000000000000000008A", created_at=1000.0,
+        cookies=[NameValue(name="JSESSIONID", value="abc")])
+    without_cookie, bodies2 = _artifact(
+        "http_01J0000000000000000000009A", created_at=2000.0, cookies=[])
+    store.record(with_cookie, bodies=bodies)
+    store.record(without_cookie, bodies=bodies2)
+
+    page = store.search([
+        {"side": "request", "namespace": "cookie", "key": "jsessionid",
+         "op": "absent"},
+    ])
+    assert [a.artifact_id for a in page.artifacts] == [
+        "http_01J0000000000000000000009A"]
+
+
 def test_search_filters_are_conjunctive(tmp_path):
     store = HttpHistoryStore(tmp_path, "proj-1")
     _seed(store)

@@ -4,10 +4,12 @@ Raw material (authorization headers, cookies, query/form values, body content)
 stays in the store so a deterministic runtime can replay it. Anything an LLM or
 a Langfuse span can see goes through here first.
 
-The ONE exception is the search summary (`sanitize_summary`): its selected
-request and response headers are rendered VERBATIM, by operator decision
-(2026-10-23), so a candidate row shows the real `Authorization`, `Cookie`, and
-`Set-Cookie` values. The full view (`sanitize_artifact`) keeps redacting.
+The ONE exception is the search summary (`sanitize_summary`): its `url` and its
+selected request and response headers are rendered VERBATIM, by operator
+decision (2026-10-23 / 2026-10-25). A row shows the real `Authorization`,
+`Cookie`, and `Set-Cookie` values and the raw URL, including userinfo and
+sensitive query values, because the row must be the string the filter matched
+on. The full view (`sanitize_artifact`) keeps redacting.
 """
 from __future__ import annotations
 
@@ -177,14 +179,16 @@ def sanitize_summary(artifact: HttpArtifact) -> dict:
     `sanitize_artifact`, which carries `capture_state`, timings, and the
     connection record. Do not add a field here unless the search decision
     needs it on every row. `request_headers` and `response_headers` carry only
-    the triage keys, and their values are verbatim.
+    the triage keys, and their values are verbatim. `url` is the recorded
+    string, not `sanitize_url` output: a predicate matched the raw URL, so the
+    row must display the same string.
     """
     response = artifact.response
     status = response.status if response is not None else None
     summary = {
         "artifact_id": artifact.artifact_id,
         "method": artifact.request.method,
-        "url": sanitize_url(artifact.request.url),
+        "url": artifact.request.url,
         "status": status,
     }
     if artifact.request.body_size:

@@ -83,9 +83,9 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
     "Failures are in-band: `invalid_filter`, `not_found`, `corrupt_artifact`, "
     "`unavailable` or `http_history_failed` (missing evidence, never proof of "
     "an empty surface). Rows are candidate summaries: `artifact_id`, `method`, "
-    "`url`, `status`, sizes, `request_headers`/`response_headers` (verbatim), "
-    "and non-null `derived_from`/`replay_kind`/`error`; `capture_state` is on "
-    "`get_http_artifact`."
+    "`url` (raw), `status`, sizes, `request_headers`/`response_headers` "
+    "(verbatim), and non-null `derived_from`/`replay_kind`/`error`; "
+    "`capture_state` is on `get_http_artifact`."
 )
 
 GET_HTTP_ARTIFACT_DESCRIPTION: str = (

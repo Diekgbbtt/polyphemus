@@ -180,6 +180,22 @@ def test_a_wrong_side_core_key_is_a_coded_invalid_filter(tmp_path, monkeypatch):
     assert "url" in result["detail"]
 
 
+def test_a_numeric_string_status_filter_is_accepted(tmp_path, monkeypatch):
+    """JSON often carries `status` as a string; the MCP path must not turn that
+    into an empty page."""
+    runner = _capturing_runner(tmp_path)
+    service = _service(tmp_path, CapturingManager(runner), runner)
+    monkeypatch.setattr(mcp_server, "_SERVICE", service)
+    asyncio.run(mcp_server.execute_command("probe", "s1", project_id="proj-1"))
+
+    page = asyncio.run(mcp_server.search_http_history("proj-1", filters=[
+        {"side": "response", "namespace": "core", "key": "status",
+         "op": "eq", "value": "200"},
+    ]))
+
+    assert [row["status"] for row in page["summaries"]] == [200]
+
+
 def test_error_payload_carries_a_category_per_failure_mode():
     """FM-C: every failure is a denoted error with a category, never a raw
     exception string - the category tells the model what to do."""

@@ -653,3 +653,28 @@ A new trial is the right way to measure it.
 
 The header taxonomy, the row shape, and the core-key rule are documented in `docs/design/http-proxy-history-design.md` section 2.5 and `docs/design/http-history-search-filter-plan-adr.md` section 6.
 The dependency map and the execution plan are in `HTTP-HEADER-AND-DEPENDENCY-ALIGNMENT-PLAN.md`.
+
+### 10.1 Three filter traps closed (2026-10-25)
+
+A code review of the row against the query compiler found three ways to get an empty page that reads as "no such traffic".
+All three are fixed in the store; no filter field, operator, or namespace was added.
+
+| Trap | Cause in code | Fix |
+|---|---|---|
+| a numeric string on a numeric key | `status`, `total_ms`, and `body/size` are indexed with `numeric_value` and no `text_value`; `eq "404"` compared `text_value` and matched nothing | `eq` coerces a numeric string; a non-numeric string stays a text compare, so `status eq "none"` still finds a response-less artifact |
+| a cookie key in the wrong case | cookie names are indexed as recorded (`JSESSIONID`) and only header keys were lowercased, so `jsessionid` matched nothing; the row carries no cookies to reveal the case | the cookie key folds case on both sides, and `LOWER(a.key)` also matches rows written before the change |
+| a sanitized URL beside a raw-URL predicate | the index matches `artifact.request.url`; the row rendered `sanitize_url(...)` | the summary carries the recorded URL verbatim |
+
+The third trap decides the URL question the operator asked: because the sanitization exists to redact sensitive data, it is removed from the summary row.
+`sanitize_artifact` keeps it, and the full view cuts or changes these URL parts:
+
+| URL part | Full view |
+|---|---|
+| userinfo (`user:password@`) | dropped entirely |
+| a query value whose name looks sensitive | replaced with `[redacted]` |
+| percent-escapes in query names and values | decoded (`a%20b` becomes `a b`) |
+| a bare query parameter | gains `=` (`?flag` becomes `?flag=`) |
+| scheme case | lowercased by `urlsplit` |
+
+The host, port, path, `;params`, query order, duplicate query keys, and fragment are preserved.
+The row now matches the indexed string byte for byte, so a filter value is always visible in the row that matched it.

@@ -198,9 +198,24 @@ The header maps are lowercased, keep only the triage keys, keep every duplicate 
 | response | access-control-allow-credentials, access-control-allow-headers, access-control-allow-methods, access-control-allow-origin, access-control-expose-headers, access-control-max-age, content-security-policy, content-security-policy-report-only, content-type, location, server, set-cookie, www-authenticate, x-cache, x-cache-lookup, x-frame-options, x-powered-by |
 
 `content-length` is omitted because `request_size` and `response_size` already carry it.
-The summary row renders `Authorization`, `Cookie`, and `Set-Cookie` verbatim by operator decision (2026-10-23); the full view (`get_http_artifact`) still redacts them.
+The summary row renders `Authorization`, `Cookie`, and `Set-Cookie` verbatim by operator decision (2026-10-23), and the `url` is the recorded string (2026-10-25); the full view (`get_http_artifact`) still redacts both.
+The raw `url` matters because the predicate matches the indexed URL: a sanitized row would not display the string it was selected by.
 A `core` key is side-bound: `request` has `http_version|method|url`, `response` has `http_version|status|reason`, `connection` has `client_address|server_address|protocol|error_type`, `context` has `session_id|run_id|spec_id|variant_ref|exec_id`, and `timing` has `total_ms`.
 An unknown core key, or a core key on the wrong side, is `invalid_filter`, never an empty page.
+`status`, `total_ms`, and `body/size` are numeric: `eq` accepts a number or a numeric string, and a non-numeric string stays a text compare (a response-less artifact indexes `status` as the text `none`).
+Cookie keys match case-insensitively because the row carries no cookies; header names are already lowercased at write; cookie values stay exact.
+
+What `sanitize_artifact` still removes or changes, and therefore what the full view does NOT show identically:
+
+| URL part | Full view |
+|---|---|
+| userinfo (`user:password@`) | dropped entirely |
+| a query value whose name looks sensitive | replaced with `[redacted]` |
+| percent-escapes in query names and values | decoded (`a%20b` becomes `a b`) |
+| a bare query parameter | gains `=` (`?flag` becomes `?flag=`) |
+| scheme case | lowercased by `urlsplit` |
+
+The host, port, path, `;params`, query order, duplicate query keys, and fragment are preserved.
 
 ### 2.6 The contracts
 

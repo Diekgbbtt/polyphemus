@@ -386,7 +386,7 @@ The 38 `get_http_artifact` payloads are the only header sample from the same pro
 
 Record anything found but not fixed here.
 
-- The summary row now renders `authorization`, `cookie`, and `set-cookie` verbatim by operator decision.
+- The summary row now renders `authorization`, `cookie`, `set-cookie`, and the raw `url` verbatim by operator decision.
   That is a deliberate exception to the module's model-boundary rule.
   Revisit if the trace is shared outside the operator's control.
 - `kali/**` changes need a Kali image rebuild and `docker restart kali` on rollout.

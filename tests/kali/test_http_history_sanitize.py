@@ -43,6 +43,36 @@ def _artifact() -> HttpArtifact:
     )
 
 
+_RAW_URL = ("https://user:pass@target.example/login?token=" + _SECRET
+            + "&q=a%20b&flag#frag")
+
+
+def _artifact_with_raw_url() -> HttpArtifact:
+    artifact = _artifact()
+    return artifact.model_copy(update={
+        "request": artifact.request.model_copy(update={"url": _RAW_URL}),
+    })
+
+
+def test_the_summary_url_is_the_recorded_url_verbatim():
+    """The row is the string the filter matched on. `sanitize_url` redacts,
+    so it must not run on the summary: a model that filters on a query value
+    would otherwise get rows that do not display it."""
+    summary = sanitize_summary(_artifact_with_raw_url())
+
+    assert summary["url"] == _RAW_URL
+    assert _SECRET in summary["url"]
+    assert "user:pass@" in summary["url"]
+
+
+def test_the_full_view_still_strips_userinfo_and_redacts_the_query():
+    url = sanitize_artifact(_artifact_with_raw_url())["request"]["url"]
+
+    assert "user:pass@" not in url
+    assert "token=[redacted]" in url
+    assert _SECRET not in url
+
+
 def test_sanitized_artifact_has_no_secret():
     blob = json.dumps(sanitize_artifact(_artifact()))
     assert _SECRET not in blob
