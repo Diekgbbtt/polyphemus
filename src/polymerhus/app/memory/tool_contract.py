@@ -339,16 +339,28 @@ class NotesFieldMap:
     key: str | None = None
     read_key: str | None = None
     note_id: str | None = None
+    note_name: str | None = None
+    evidence: str | None = None
     attributes: str | None = "attributes"
     key_keyword: str | None = None
     body_keyword: str | None = None
+    kind: str | None = None
+    order: str | None = None
+    classification: str | None = None
+    symptom_status: str | None = None
+    parent_key: str | None = None
+    kb_primitives_used: str | None = None
+    exhaustion_evidence: str | None = None
     passthrough: tuple[str, ...] = ()
 
     def declared_fields(self) -> tuple[str, ...]:
         named = [self.action, self.note]
-        named += [n for n in (self.key, self.read_key, self.note_id,
-                              self.attributes, self.key_keyword,
-                              self.body_keyword) if n]
+        named += [n for n in (
+            self.key, self.read_key, self.note_id, self.note_name,
+            self.evidence, self.attributes, self.key_keyword,
+            self.body_keyword, self.kind, self.order,
+            self.classification, self.symptom_status, self.parent_key,
+            self.kb_primitives_used, self.exhaustion_evidence) if n]
         return tuple(named) + tuple(self.passthrough)
 
 
@@ -374,6 +386,11 @@ class NotesRead:
     attributes: tuple[str, ...] = ()
     key_keyword: str = ""
     body_keyword: str = ""
+    kind: str | None = None
+    order: int | None = None
+    classification: str | None = None
+    symptom_status: str | None = None
+    parent_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -392,6 +409,11 @@ class NoteWrite:
     kind: str = "freeform"
     evidence: str | None = None
     provenance: dict | None = None
+    order: int | None = None
+    classification: str | None = None
+    symptom_status: str | None = None
+    kb_primitives_used: tuple[str, ...] = ()
+    exhaustion_evidence: str = ""
 
 
 class NotesStoreHandle(Protocol):
@@ -467,6 +489,11 @@ class StoreNotesTool(StoreToolBase):
             attributes=tuple(attributes or ()),
             key_keyword=self._value(args, fm.key_keyword),
             body_keyword=self._value(args, fm.body_keyword),
+            kind=self._value(args, fm.kind, None) or None,
+            order=self._value(args, fm.order, None),
+            classification=self._value(args, fm.classification, None) or None,
+            symptom_status=self._value(args, fm.symptom_status, None) or None,
+            parent_key=self._value(args, fm.parent_key, None) or None,
         )
         try:
             result = (self._handle.read(query) if self._handle is not None
@@ -492,13 +519,17 @@ class StoreNotesTool(StoreToolBase):
             key=self._value(args, fm.key),
             body=self._value(args, fm.note, None),
             note_id=self._value(args, fm.note_id),
-            note_name=(self._value(args, "note_name")
-                       if "note_name" in fm.passthrough else ""),
-            kind=(self._value(args, "kind") or "freeform"
-                  if "kind" in fm.passthrough else "freeform"),
-            evidence=(self._value(args, "evidence", None)
-                      if "evidence" in fm.passthrough else None),
+            note_name=self._value(args, fm.note_name),
+            kind=self._value(args, fm.kind) or "freeform",
+            evidence=self._value(args, fm.evidence, None),
             provenance=provenance,
+            order=self._value(args, fm.order, None),
+            classification=self._value(args, fm.classification, None) or None,
+            symptom_status=self._value(args, fm.symptom_status, None) or None,
+            kb_primitives_used=tuple(
+                self._value(args, fm.kb_primitives_used, ()) or ()),
+            exhaustion_evidence=self._value(
+                args, fm.exhaustion_evidence, "") or "",
         )
         try:
             result = (self._handle.write(request) if self._handle is not None

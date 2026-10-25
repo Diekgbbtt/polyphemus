@@ -850,7 +850,10 @@ _HUNTER_NOTES_FIELD_MAP = NotesFieldMap(
     attributes="attributes",
     key_keyword="key_keyword",
     body_keyword="body_keyword",
-    passthrough=("note_name", "kind", "evidence", "provenance"),
+    note_name="note_name",
+    kind="kind",
+    evidence="evidence",
+    passthrough=("provenance",),
 )
 
 

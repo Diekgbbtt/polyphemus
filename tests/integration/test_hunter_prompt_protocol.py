@@ -15,7 +15,9 @@ phase-note rewrite that stays trail material.
 """
 from __future__ import annotations
 
-from polymerhus.attack.hunting.spec_contract import SKILL_PROCEDURE_FIELDS
+from polymerhus.attack.hunting.spec_contract import (
+    SKILL_CONCRETISED_PROCEDURE_FIELDS,
+)
 from tests.hunting_fixtures import (
     HUNT_KEY,
     PROJECT,
@@ -45,8 +47,10 @@ def _spec(status, fault, strategy, *, symptom, assumption, rationale):
     skill-procedure excerpt."""
     return {
         "status": status,
-        "fault_keyword": fault,
-        "strategy_keyword": strategy,
+        "discriminators": [
+            {"axis": "fault", "value": fault.replace("_", "-")},
+            {"axis": "technique", "value": strategy.replace("_", "-")},
+        ],
         "target_identity": {"url": URL, "unit_id": UNIT_ID},
         "verification_symptoms": [symptom],
         "assumptions": [assumption],
@@ -57,10 +61,10 @@ def _spec(status, fault, strategy, *, symptom, assumption, rationale):
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",
             "baseline_ref": "http_01J0000000000000000000000A",
-            "skill_procedure": {
-                field: f"the class skill's {field} excerpt"
-                for field in SKILL_PROCEDURE_FIELDS
-            },
+        },
+        "skill_concretised_procedure": {
+            field: f"the class skill's {field} excerpt"
+            for field in SKILL_CONCRETISED_PROCEDURE_FIELDS
         },
     }
 
@@ -144,29 +148,29 @@ def test_the_dry_run_produces_a_well_formed_persisted_spec_set(tmp_path):
 
     assert result["state"] == "complete"
     assert "state: complete" in result["feedback"]
-    assert "ratified: id-unbound_direct-read" in result["feedback"]
+    assert "ratified: idor__id-unbound__direct-read" in result["feedback"]
 
     produced = (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs"
                 / HUNT_KEY / "produced")
     # the derived identities are the file-name stems; the set is disjoint
     names = {path.stem for path in produced.glob("*.yaml")}
     assert names == {
-        "id-unbound_direct-read", "id-unbound_signed-url",
-        "share-route_mint-url"}
+        "idor__id-unbound__direct-read", "idor__id-unbound__signed-url",
+        "idor__share-route__mint-url"}
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "id-unbound_direct-read")["status"] == "ratified"
+                           "idor__id-unbound__direct-read")["status"] == "ratified"
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "id-unbound_signed-url")["status"] == "ratified"
+                           "idor__id-unbound__signed-url")["status"] == "ratified"
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "share-route_mint-url")["status"] == "dropped"
+                           "idor__share-route__mint-url")["status"] == "dropped"
 
     # every persisted body is the reduced D4 at its status
     for spec in store.read_specs(PROJECT, HUNT_KEY):
         assert spec["target_identity"] == {"url": URL, "unit_id": UNIT_ID}
         assert spec["verification_symptoms"]
         assert spec["assumptions"] and spec["rationale"]
-        assert set(spec["provenance"]["skill_procedure"]) == set(
-            SKILL_PROCEDURE_FIELDS)
+        assert set(spec["skill_concretised_procedure"]) == set(
+            SKILL_CONCRETISED_PROCEDURE_FIELDS)
         for retired in ("payload_vector_space", "interpretation_guidance",
                         "testing_pattern", "spec_id"):
             assert retired not in spec
@@ -215,9 +219,9 @@ def test_a_partial_terminal_set_is_refused_until_finalize(tmp_path):
     store, result = _run(tmp_path / "second", correct)
     assert result["state"] == "complete"
     assert {name: store.read_spec(PROJECT, HUNT_KEY, name)["status"]
-            for name in ("id-unbound_direct-read", "id-unbound_signed-url")} == {
-        "id-unbound_direct-read": "ratified",
-        "id-unbound_signed-url": "dropped",
+            for name in ("idor__id-unbound__direct-read", "idor__id-unbound__signed-url")} == {
+        "idor__id-unbound__direct-read": "ratified",
+        "idor__id-unbound__signed-url": "dropped",
     }
     assert store.read_terminal_set(PROJECT, HUNT_KEY) is not None
 
@@ -291,21 +295,21 @@ def test_a_merge_widens_the_survivor_and_declasses_the_absorbed_identity(tmp_pat
     produced = (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs"
                 / HUNT_KEY / "produced")
     assert {path.stem for path in produced.glob("*.yaml")} == {
-        "id-unbound_direct-read", "id-unbound_signed-url",
-        "export-route_export-read"}
+        "idor__id-unbound__direct-read", "idor__id-unbound__signed-url",
+        "idor__export-route__export-read"}
     # the whole set is terminal: the widened survivor is ratified, the signed
     # sibling survives, and the absorbed identity is declassed - no identity is
     # left in the draft state
     assert {spec["status"] for spec in store.read_specs(PROJECT, HUNT_KEY)} == {
         "ratified", "dropped"}
-    survivor = store.read_spec(PROJECT, HUNT_KEY, "id-unbound_direct-read")
+    survivor = store.read_spec(PROJECT, HUNT_KEY, "idor__id-unbound__direct-read")
     assert survivor["status"] == "ratified"
     assert len(survivor["verification_symptoms"]) == 2
     assert len(survivor["assumptions"]) == 2
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "id-unbound_signed-url")["status"] == "ratified"
+                           "idor__id-unbound__signed-url")["status"] == "ratified"
     assert store.read_spec(PROJECT, HUNT_KEY,
-                           "export-route_export-read")["status"] == "dropped"
+                           "idor__export-route__export-read")["status"] == "dropped"
     merge_note = [note for note in store.read_notes(PROJECT)
                   if note["note_name"] == "phase:well_formedness"]
     assert len(merge_note) == 1

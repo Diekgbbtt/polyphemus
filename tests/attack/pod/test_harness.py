@@ -217,13 +217,13 @@ def test_harness_is_a_pass_through_for_non_exec_tools():
     tools = [PodNoteTool(store=store, spec_id="h")]
     result = _run_loop([
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "read", "variant_ref": "v0",
+            {"name": "notes", "args": {"command": "read", "variant_ref": "v0",
                                        "note_name": "n"}, "id": "c1"}]),
         AIMessage(content="done"),
     ], tools, [harness])
     texts = " ".join(str(getattr(m, "content", "")) for m in result["messages"])
     assert harness.calls == 1
-    assert "note_args_rejected" in texts
+    assert "notes_args_rejected" in texts
     assert "variant_ref" in texts
 
 def test_harness_dedupes_a_repeated_baseline_replay():

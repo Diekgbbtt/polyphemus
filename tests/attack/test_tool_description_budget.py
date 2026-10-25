@@ -30,7 +30,10 @@ def test_the_hunter_tool_descriptions_stay_within_the_budget():
     """The 12 request descriptions are a fixed tax on every hunter call. The
     dense contract is bounded; the schemas remain the full machine surface."""
     total = sum(len(tool.description or "") for tool in _surface())
-    assert total <= 8500, total
+    # 8700 (was 8500): the shared auth contract now teaches the retired full
+    # view and the 12000-character read bound, the two changes that remove the
+    # run's 1.5M-character auth occupancy.
+    assert total <= 8700, total
 
 
 def test_every_hunter_tool_has_a_description():

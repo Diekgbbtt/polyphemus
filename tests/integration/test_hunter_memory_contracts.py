@@ -25,24 +25,28 @@ from polymerhus.attack.hunting.hunter_tools import HuntsStoreTool, NotesTool
 from tests.hunting_fixtures import HUNT_KEY, PROJECT, build_memory_store
 
 
-def _spec(**extra) -> dict:
-    """A reduced-D4 spec entry: the status + the file-name identity keywords
-    plus the typed body the store persists unchanged."""
+def _spec(*, class_name: str = "csrf", fault_keyword: str = "probe",
+          strategy_keyword: str = "form", **extra) -> dict:
+    """A reduced-D4 spec entry: the status + the ordered discriminators plus
+    the typed body the store persists unchanged."""
     body = {
         "status": "hypothesised",
-        "fault_keyword": "csrf",
-        "strategy_keyword": "probe",
+        "discriminators": [
+            {"axis": "fault", "value": fault_keyword},
+            {"axis": "technique", "value": strategy_keyword},
+        ],
         "target_identity": {"url": "http://t/", "unit_id": "Service:a"},
         "verification_symptoms": ["a foreign state change is accepted"],
         "assumptions": ["the token is not bound to the session"],
         "rationale": "r",
-        "provenance": {"loop_id": "loop-1"},
+        "provenance": {"loop_id": "loop-1",
+                       "web_vulnerability_class": class_name},
     }
     body.update(extra)
     return body
 
 
-def _produced(tmp_path, spec_id="csrf_probe"):
+def _produced(tmp_path, spec_id="csrf__probe__form"):
     return (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / HUNT_KEY
             / "produced" / f"{spec_id}.yaml")
 
@@ -53,7 +57,7 @@ def _produced(tmp_path, spec_id="csrf_probe"):
 def test_C1_produced_topology_and_lazy_project_dir(tmp_path):
     store = build_memory_store(tmp_path)
     written = store.write_specs(PROJECT, HUNT_KEY, [_spec()])
-    assert written[0] == ("csrf_probe", _produced(tmp_path))
+    assert written[0] == ("csrf__probe__form", _produced(tmp_path))
     assert _produced(tmp_path).is_file()
     # the project dir is created only at the first write - no eager tree
     empty = build_memory_store(tmp_path / "empty")
@@ -64,17 +68,18 @@ def test_C1_produced_topology_and_lazy_project_dir(tmp_path):
 def test_C2_read_round_trips_by_derived_identity(tmp_path):
     store = build_memory_store(tmp_path)
     store.write_specs(PROJECT, HUNT_KEY, [_spec()])
-    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe") == _spec()
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form") == _spec()
     # the read is a function of the identity - the consumed side is a miss
-    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe",
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form",
                            side="consumed") is None
 
 
 def test_C3_keyword_sanitisation_poisons_separator_chars(tmp_path):
     store = build_memory_store(tmp_path)
     (spec_id, path) = store.write_specs(PROJECT, HUNT_KEY, [
-        _spec(fault_keyword="fault/x:csrf", strategy_keyword="probe_1")])[0]
-    assert spec_id == "fault-x-csrf_probe-1"
+        _spec(class_name="fault/x:csrf", fault_keyword="probe",
+              strategy_keyword="one")])[0]
+    assert spec_id == "fault-x-csrf__probe__one"
     assert path.is_file()
     # a keyword that sanitises to a dot component is pathological -> rejected
     with pytest.raises(ValueError):
@@ -88,11 +93,11 @@ def test_C4_status_lifecycle_rides_one_produced_file(tmp_path):
     store.write_specs(PROJECT, HUNT_KEY, [_spec(status="ratified")])
     files = sorted(_produced(tmp_path).parent.glob("*.yaml"))
     assert len(files) == 1
-    assert files[0].name == "csrf_probe.yaml"
-    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")["status"] == "ratified"
+    assert files[0].name == "csrf__probe__form.yaml"
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form")["status"] == "ratified"
     # the terminal declass rewrites the same file statused `dropped`
     store.write_specs(PROJECT, HUNT_KEY, [_spec(status="dropped")])
-    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")["status"] == "dropped"
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form")["status"] == "dropped"
     assert len(sorted(_produced(tmp_path).parent.glob("*.yaml"))) == 1
 
 
@@ -106,7 +111,7 @@ def test_C5_duplicate_identity_inside_the_set_fails(tmp_path):
     store.write_specs(PROJECT, HUNT_KEY, [
         _spec(strategy_keyword="other")])
     assert sorted(p.name for p in _produced(tmp_path).parent.glob("*.yaml")) == [
-        "csrf_other.yaml"]
+        "csrf__probe__other.yaml"]
 
 
 def test_C6_reauthor_upserts_in_place(tmp_path):
@@ -114,7 +119,7 @@ def test_C6_reauthor_upserts_in_place(tmp_path):
     store.write_specs(PROJECT, HUNT_KEY, [_spec()])
     store.write_specs(PROJECT, HUNT_KEY, [
         _spec(rationale="amended", verification_symptoms=["changed"])])
-    body = store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")
+    body = store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form")
     assert body["rationale"] == "amended"
     assert body["verification_symptoms"] == ["changed"]
 
@@ -123,9 +128,11 @@ def test_C7_read_spec_missing_returns_none_and_projection(tmp_path):
     store = build_memory_store(tmp_path)
     assert store.read_spec(PROJECT, HUNT_KEY, "nope") is None
     store.write_specs(PROJECT, HUNT_KEY, [_spec()])
-    projected = store.read_spec(PROJECT, HUNT_KEY, "csrf_probe",
-                                attributes=["status", "strategy_keyword"])
-    assert projected == {"status": "hypothesised", "strategy_keyword": "probe"}
+    projected = store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form",
+                                attributes=["status", "discriminators"])
+    assert projected["status"] == "hypothesised"
+    assert projected["discriminators"][0] == {
+        "axis": "fault", "value": "probe"}
 
 
 def test_C8_read_specs_listing_sides_and_statuses(tmp_path):
@@ -137,7 +144,7 @@ def test_C8_read_specs_listing_sides_and_statuses(tmp_path):
         _spec(status="dropped", fault_keyword="f2")])
     assert len(store.read_specs(PROJECT, HUNT_KEY)) == 2
     assert store.read_specs(PROJECT, HUNT_KEY, statuses=["dropped"]) == [
-        store.read_spec(PROJECT, HUNT_KEY, "f2_probe")]
+        store.read_spec(PROJECT, HUNT_KEY, "csrf__f2__form")]
     assert store.read_specs(PROJECT, HUNT_KEY, sides=("consumed",)) == []
 
 
@@ -145,7 +152,7 @@ def test_C9_sides_addressable_and_no_movement(tmp_path):
     store = build_memory_store(tmp_path)
     store.write_specs(PROJECT, HUNT_KEY, [_spec()], side="consumed")
     assert not _produced(tmp_path).exists()
-    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe",
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form",
                            side="consumed")["status"] == "hypothesised"
     assert store.produced_spec_files(PROJECT, HUNT_KEY) == []
 
@@ -212,7 +219,7 @@ def test_C15_hunt_and_note_share_the_identifier(tmp_path):
     (note,) = store.read_notes(PROJECT)
     assert note["key"] == f"{HUNT_KEY}:decision"
     assert note["hunt_key"] == HUNT_KEY
-    assert store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")["status"] == "hypothesised"
+    assert store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form")["status"] == "hypothesised"
 
 
 # --- the tool seam ------------------------------------------------------------
@@ -234,8 +241,8 @@ def test_C16_hunts_store_one_spec_writes(tmp_path):
     second = json.loads(_hunts(store, command="write",
                                spec=_spec(fault_keyword="f2")))
     assert first["ok"] is True and second["ok"] is True
-    assert first["specs"][0]["spec_id"] == "csrf_probe"
-    assert second["specs"][0]["spec_id"] == "f2_probe"
+    assert first["specs"][0]["spec_id"] == "csrf__probe__form"
+    assert second["specs"][0]["spec_id"] == "csrf__f2__form"
     assert len(store.read_specs(PROJECT, HUNT_KEY)) == 2
 
 
@@ -256,10 +263,9 @@ def test_C18_hunts_store_invalid_args(tmp_path):
     assert empty["error"] == "hunts_store_write_rejected"
     assert "spec" in empty["fields"]
     missing = json.loads(_hunts(store, command="write", spec={
-        "status": "hypothesised", "fault_keyword": "f1"}))
+        "status": "hypothesised"}))
     assert missing["error"] == "hunts_store_args_rejected"
-    assert "target_identity" in " ".join(missing["fields"])
-    assert "strategy_keyword" in " ".join(missing["fields"])
+    assert "discriminators" in " ".join(missing["fields"])
     bad_status = json.loads(_hunts(store, command="write",
                                    spec=_spec(status="specified")))
     assert bad_status["error"] == "hunts_store_write_rejected"
@@ -272,6 +278,10 @@ def test_C18_hunts_store_invalid_args(tmp_path):
 
 def test_C19_tool_read_filters_produce_projection(tmp_path):
     store = build_memory_store(tmp_path)
+    _hunts(store, command="write",
+           spec=_spec(fault_keyword="f1", strategy_keyword="probe"))
+    _hunts(store, command="write",
+           spec=_spec(fault_keyword="f2", strategy_keyword="probe"))
     _hunts(store, command="write",
            spec=_spec(status="ratified", fault_keyword="f1", strategy_keyword="probe"))
     _hunts(store, command="write",
@@ -330,9 +340,9 @@ def test_C23_the_hunt_key_is_bound_not_a_request_field(tmp_path):
 def test_C27_move_aware_write_and_single_owner_move(tmp_path, caplog):
     store = build_memory_store(tmp_path)
     store.write_specs(PROJECT, HUNT_KEY, [_spec()])
-    assert store.consume_spec(PROJECT, HUNT_KEY, "csrf_probe") is True
+    assert store.consume_spec(PROJECT, HUNT_KEY, "csrf__probe__form") is True
     assert store.produced_spec_files(PROJECT, HUNT_KEY) == []
-    assert store.consume_spec(PROJECT, HUNT_KEY, "csrf_probe") is True   # at-least-once
+    assert store.consume_spec(PROJECT, HUNT_KEY, "csrf__probe__form") is True   # at-least-once
     assert store.consume_spec(PROJECT, HUNT_KEY, "missing") is False
     # the late terminal write after the move is a no-op success, never a
     # produced/ re-creation (the #205 rule; the inbox keeps draining)
@@ -341,15 +351,16 @@ def test_C27_move_aware_write_and_single_owner_move(tmp_path, caplog):
     assert store.produced_spec_files(PROJECT, HUNT_KEY) == []
 
 
-def test_C28_the_typed_skill_procedure_round_trips_through_the_tool(tmp_path):
-    from polymerhus.attack.hunting.spec_contract import SkillProcedure
+def test_C28_the_typed_skill_concretisation_round_trips_through_the_tool(tmp_path):
+    from polymerhus.attack.hunting.spec_contract import (
+        SkillConcretisedProcedure,
+    )
 
     store = build_memory_store(tmp_path)
-    procedure = SkillProcedure(recon_action="mine the item id",
-                               bypass_technique="swap the id")
+    procedure = SkillConcretisedProcedure(recon_action="mine the item id",
+                                         bypass_technique="swap the id")
     out = json.loads(_hunts(store, command="write", spec=_spec(
-        provenance={**_spec()["provenance"],
-                    "skill_procedure": procedure.model_dump()})))
+        skill_concretised_procedure=procedure.model_dump())))
     assert out["ok"] is True
-    body = store.read_spec(PROJECT, HUNT_KEY, "csrf_probe")
-    assert body["provenance"]["skill_procedure"]["bypass_technique"] == "swap the id"
+    body = store.read_spec(PROJECT, HUNT_KEY, "csrf__probe__form")
+    assert body["skill_concretised_procedure"]["bypass_technique"] == "swap the id"

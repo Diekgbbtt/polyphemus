@@ -51,8 +51,10 @@ def _write(status, *, fault_keyword="f1", strategy_keyword="probe", **extra):
         "command": "write",
         "spec": {
             "status": status,
-            "fault_keyword": fault_keyword,
-            "strategy_keyword": strategy_keyword,
+            "discriminators": [
+                {"axis": "fault", "value": fault_keyword},
+                {"axis": "technique", "value": strategy_keyword},
+            ],
             "target_identity": {"url": "http://target.test/",
                                 "unit_id": "Service:slug:a"},
             **extra,
@@ -78,7 +80,7 @@ def _spec_set(*statuses, keywords=("f1", "f2")):
     """One `hunts_store` write per status (F-025). The GENERATE draft is
     all-`hypothesised`; the terminal VERIFY-CLAIMS writes promote the survivors
     and declass the unfeasible, then `finalize` closes the set. Each spec gets
-    its own derived identity (`f1_probe`, `f2_probe`)."""
+    its own derived identity (`spec__f1__probe`, `spec__f2__probe`)."""
     return [
         _write(status, fault_keyword=keywords[index], strategy_keyword="probe")
         for index, status in enumerate(statuses)
@@ -134,7 +136,7 @@ def test_H2_fault_and_note_share_the_identifier_over_the_real_pipeline(tmp_path)
     result = agent(_hunter_payload())
 
     # the produced spec file and the notes body both exist under the project
-    assert (_produced(tmp_path) / "f1_probe.yaml").is_file()
+    assert (_produced(tmp_path) / "spec__f1__probe.yaml").is_file()
     notes = store.read_notes(PROJECT, parent_key=HUNT_KEY)
     assert len(notes) == 1
     assert notes[0]["hunt_key"] == HUNT_KEY
@@ -191,9 +193,9 @@ def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
     # the produced side holds the typed set: the survivor ratified, the
     # declassed spec dropped - one file per derived identity
     assert [f.name for f in sorted(_produced(tmp_path).glob("*.yaml"))] == [
-        "f1_probe.yaml", "f2_probe.yaml"]
-    assert store.read_spec(PROJECT, HUNT_KEY, "f1_probe")["status"] == "ratified"
-    assert store.read_spec(PROJECT, HUNT_KEY, "f2_probe")["status"] == "dropped"
+        "spec__f1__probe.yaml", "spec__f2__probe.yaml"]
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__f1__probe")["status"] == "ratified"
+    assert store.read_spec(PROJECT, HUNT_KEY, "spec__f2__probe")["status"] == "dropped"
     # notes.yaml holds exactly the surviving note in append order (n1 deleted)
     notes = store.read_notes(PROJECT)
     assert [n["key"] for n in notes] == [f"{HUNT_KEY}:n2"]
@@ -395,4 +397,4 @@ def test_H7_the_terminal_state_follows_a_persisted_terminal_set(tmp_path):
         build_memory_store(tmp_path / "second"), steps=steps)(_hunter_payload())
     assert result["state"] == "complete"
     assert "state: complete" in result["feedback"]
-    assert "ratified: f1_probe" in result["feedback"]
+    assert "ratified: spec__f1__probe" in result["feedback"]

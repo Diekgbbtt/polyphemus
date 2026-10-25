@@ -1,0 +1,407 @@
+{
+  "counts": {
+    "search_http_history": 153,
+    "get_http_artifact": 79,
+    "graph_view": 135,
+    "exec": 587,
+    "query_lightrag": 42
+  },
+  "lightrag": {
+    "calls": 42,
+    "fallbacks": 19,
+    "reasons": {
+      "tool_or_stage4_request_present": 18,
+      "not_json": 1
+    },
+    "samples": [
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "not_json"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      },
+      {
+        "role": "pod_runner",
+        "gap": "tool_or_stage4_request_present"
+      }
+    ]
+  },
+  "search": {
+    "calls": 153,
+    "profiles": {
+      "<no filter>": 70,
+      "response.header.content-type:contains": 1,
+      "request.core.url:contains": 9,
+      "request.core.path:contains": 7,
+      "request.core.method:eq": 5,
+      "response.header.set-cookie:contains": 6,
+      "header.request.cookie:contains": 1,
+      "request.header.cookie:contains": 2,
+      "response.core.status:eq": 4,
+      "response.header.location:contains": 3,
+      "request.body.username:eq": 4,
+      "response.header.Retry-After:absent": 1,
+      "response.core.status:gte": 1,
+      "timing.timing.total_ms:gte": 1,
+      "request.header.Content-Type:contains": 1,
+      "request.core.path:eq": 5,
+      "response.body.size:lte": 1,
+      "response.body.size:gte": 1,
+      "timing.core.total_ms:gte": 2,
+      "request.core.url:contains & request.cookie.JSESSIONID:absent": 2,
+      "request.cookie.jsessionid:contains": 1,
+      "request.cookie.JSESSIONID:contains": 3,
+      "request.cookie.JSESSIONID:absent": 2,
+      "response.cookie.JSESSIONID:contains": 2,
+      "cookie.cookie.rememberMe:prefix": 1,
+      "request.cookie.rememberMe:contains": 2,
+      "response.header.Set-Cookie:contains & request.core.url:contains": 1,
+      "response.cookie.rememberMe:contains": 1,
+      "request.cookie.rememberMe:eq": 1,
+      "response.header.Location:contains": 1,
+      "request.cookie.rememberMe:absent": 1,
+      "response.cookie.deleteMe:None": 1,
+      "response.cookie.rememberMe:None": 1,
+      "response.cookie.name:eq": 2,
+      "response.header.Set-Cookie:contains": 1,
+      "request.header.Cookie:contains": 1,
+      "request.header.Cookie:contains & request.core.url:contains": 1,
+      "request.body.size:eq": 1,
+      "request.core.url:eq & request.core.method:eq & response.core.response_size:eq": 1,
+      "request.core.url:eq & request.core.method:eq": 1
+    },
+    "samples": [
+      {
+        "session": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:webpage-analysis:skill_evolver",
+        "searches": [
+          {
+            "args": {
+              "text": "t-1618c524.target",
+              "limit": 50
+            },
+            "chars": 22254,
+            "head": "{\"summaries\": [{\"artifact_id\": \"http_01M5MS2R12G98C7JJMNTFNXWY0\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"created_at\": 1792772497.4424717, \"method\": \"GET\", \"url\": \"http://t-1618c524.target/\", \"host\": \"t-16"
+          },
+          {
+            "args": {
+              "filters": [
+                {
+                  "side": "response",
+                  "namespace": "header",
+                  "key": "content-type",
+                  "op": "contains",
+                  "value": "text/html"
+                }
+              ],
+              "limit": 50
+            },
+            "chars": 22039,
+            "head": "{\"summaries\": [{\"artifact_id\": \"http_01M5MS2R12G98C7JJMNTFNXWY0\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"created_at\": 1792772497.4424717, \"method\": \"GET\", \"url\": \"http://t-1618c524.target/\", \"host\": \"t-16"
+          },
+          {
+            "args": {
+              "filters": [
+                {
+                  "key": "url",
+                  "namespace": "core",
+                  "op": "contains",
+                  "side": "request",
+                  "value": ".js.map"
+                }
+              ],
+              "limit": 20
+            },
+            "chars": 994,
+            "head": "{\"summaries\": [{\"artifact_id\": \"http_01M5MS58F1R5CXX7YF4SHXGSTK\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"created_at\": 1792772579.8099968, \"method\": \"GET\", \"url\": \"http://t-1618c524.target/static/js/manife"
+          }
+        ],
+        "gets": [
+          {
+            "args": {
+              "artifact_id": "http_01M5MS2R12G98C7JJMNTFNXWY0"
+            },
+            "chars": 1945,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5MS2R12G98C7JJMNTFNXWY0\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"fa616918-ddd2-4950-bb6a-353193c9aeba-0-htt"
+          },
+          {
+            "args": {
+              "artifact_id": "http_01M5MS3DZQWX7TZGY59VE3QKHT"
+            },
+            "chars": 1984,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5MS3DZQWX7TZGY59VE3QKHT\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"fa616918-ddd2-4950-bb6a-353193c9aeba-1-kat"
+          }
+        ]
+      },
+      {
+        "session": "fa616918-ddd2-4950-bb6a-353193c9aeba:mechanism_typist",
+        "searches": [
+          {
+            "args": {
+              "text": "/api/authentication",
+              "limit": 10
+            },
+            "chars": 494,
+            "head": "{\"summaries\": [{\"artifact_id\": \"http_01M5MS63G9K7Q73KEAB85CJ94E\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"created_at\": 1792772607.4974506, \"method\": \"GET\", \"url\": \"http://t-1618c524.target/api/authenticati"
+          },
+          {
+            "args": {
+              "text": "/api/menu",
+              "limit": 10
+            },
+            "chars": 2268,
+            "head": "{\"summaries\": [{\"artifact_id\": \"http_01M5MS64G6157CTXN2QWZN5MC8\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"created_at\": 1792772608.5185957, \"method\": \"GET\", \"url\": \"http://t-1618c524.target/api/menu\", \"host"
+          },
+          {
+            "args": {
+              "text": "/api/menu",
+              "limit": 10
+            },
+            "chars": 2268,
+            "head": "{\"summaries\": [{\"artifact_id\": \"http_01M5MS64G6157CTXN2QWZN5MC8\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"created_at\": 1792772608.5185957, \"method\": \"GET\", \"url\": \"http://t-1618c524.target/api/menu\", \"host"
+          }
+        ],
+        "gets": [
+          {
+            "args": {
+              "artifact_id": "http_01M5MS63G9K7Q73KEAB85CJ94E"
+            },
+            "chars": 1869,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5MS63G9K7Q73KEAB85CJ94E\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"fa616918-ddd2-4950-bb6a-353193c9aeba-3-htt"
+          },
+          {
+            "args": {
+              "artifact_id": "http_01M5MS64G6157CTXN2QWZN5MC8"
+            },
+            "chars": 1932,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5MS64G6157CTXN2QWZN5MC8\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"fa616918-ddd2-4950-bb6a-353193c9aeba-3-htt"
+          }
+        ]
+      },
+      {
+        "session": "fa616918-ddd2-4950-bb6a-353193c9aeba:assigner",
+        "searches": [
+          {
+            "args": {
+              "filters": [
+                {
+                  "side": "request",
+                  "namespace": "core",
+                  "key": "path",
+                  "op": "contains",
+                  "value": "menu"
+                }
+              ],
+              "limit": 20
+            },
+            "chars": 51,
+            "head": "{\"summaries\": [], \"next_cursor\": null, \"limit\": 20}"
+          },
+          {
+            "args": {
+              "filters": [
+                {
+                  "side": "request",
+                  "namespace": "core",
+                  "key": "path",
+                  "op": "contains",
+                  "value": "authentication"
+                }
+              ],
+              "limit": 20
+            },
+            "chars": 51,
+            "head": "{\"summaries\": [], \"next_cursor\": null, \"limit\": 20}"
+          },
+          {
+            "args": {
+              "filters": [
+                {
+                  "side": "request",
+                  "namespace": "core",
+                  "key": "path",
+                  "op": "contains",
+                  "value": "jotter"
+                }
+              ],
+              "limit": 20
+            },
+            "chars": 51,
+            "head": "{\"summaries\": [], \"next_cursor\": null, \"limit\": 20}"
+          }
+        ],
+        "gets": [
+          {
+            "args": {
+              "artifact_id": "http_01M5MS64G6157CTXN2QWZN5MC8"
+            },
+            "chars": 1932,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5MS64G6157CTXN2QWZN5MC8\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"fa616918-ddd2-4950-bb6a-353193c9aeba-3-htt"
+          }
+        ]
+      },
+      {
+        "session": "a5f487fb-8329-431c-b95d-207799a038f9:hunting_threat_modeller",
+        "searches": [
+          {
+            "args": {
+              "limit": 100
+            },
+            "chars": 44482,
+            "head": "{\"summaries\": [{\"artifact_id\": \"http_01M5MS2R12G98C7JJMNTFNXWY0\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"created_at\": 1792772497.4424717, \"method\": \"GET\", \"url\": \"http://t-1618c524.target/\", \"host\": \"t-16"
+          },
+          {
+            "args": {
+              "filters": [
+                {
+                  "side": "request",
+                  "namespace": "core",
+                  "key": "method",
+                  "op": "eq",
+                  "value": "POST"
+                }
+              ],
+              "limit": 100
+            },
+            "chars": 52,
+            "head": "{\"summaries\": [], \"next_cursor\": null, \"limit\": 100}"
+          },
+          {
+            "args": {
+              "text": "logout",
+              "limit": 50
+            },
+            "chars": 985,
+            "head": "{\"summaries\": [{\"artifact_id\": \"http_01M5MS58GSJ1Y39CSKF02MVKTG\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"created_at\": 1792772579.8658874, \"method\": \"GET\", \"url\": \"http://t-1618c524.target/static/js/app.3b"
+          }
+        ],
+        "gets": [
+          {
+            "args": {
+              "artifact_id": "http_01M5MS58GSJ1Y39CSKF02MVKTG"
+            },
+            "chars": 1764,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5MS58GSJ1Y39CSKF02MVKTG\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"fa616918-ddd2-4950-bb6a-353193c9aeba-2-jsl"
+          },
+          {
+            "args": {
+              "artifact_id": "http_01M5MS63G9K7Q73KEAB85CJ94E"
+            },
+            "chars": 1869,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5MS63G9K7Q73KEAB85CJ94E\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"fa616918-ddd2-4950-bb6a-353193c9aeba-3-htt"
+          }
+        ]
+      },
+      {
+        "session": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:session-management:skill_evolver",
+        "searches": [
+          {
+            "args": {
+              "text": "jsessionid",
+              "limit": 50
+            },
+            "chars": 51,
+            "head": "{\"summaries\": [], \"next_cursor\": null, \"limit\": 50}"
+          },
+          {
+            "args": {
+              "filters": [
+                {
+                  "side": "response",
+                  "namespace": "header",
+                  "key": "set-cookie",
+                  "op": "contains",
+                  "value": "JSESSIONID"
+                }
+              ],
+              "limit": 50
+            },
+            "chars": 51,
+            "head": "{\"summaries\": [], \"next_cursor\": null, \"limit\": 50}"
+          },
+          {
+            "args": {
+              "filters": [
+                {
+                  "key": "set-cookie",
+                  "namespace": "header",
+                  "op": "contains",
+                  "side": "response",
+                  "value": "SESSION"
+                }
+              ],
+              "limit": 100
+            },
+            "chars": 52,
+            "head": "{\"summaries\": [], \"next_cursor\": null, \"limit\": 100}"
+          }
+        ],
+        "gets": [
+          {
+            "args": {
+              "artifact_id": "http_01M5MS63G9K7Q73KEAB85CJ94E"
+            },
+            "chars": 1869,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5MS63G9K7Q73KEAB85CJ94E\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"fa616918-ddd2-4950-bb6a-353193c9aeba-3-htt"
+          },
+          {
+            "args": {
+              "artifact_id": "http_01M5NF616J8QV4DZDZYAZ6CM6C"
+            },
+            "chars": 1742,
+            "head": "{\"schema_version\": \"http-artifact/v1\", \"artifact_id\": \"http_01M5NF616J8QV4DZDZYAZ6CM6C\", \"project_id\": \"0c8cb6e6-7e91-4a01-880e-408896c0ce4a\", \"capture_context\": {\"session_id\": \"hunt-pod\", \"run_id\": \"a5f487fb-8329-431c-b"
+          }
+        ]
+      }
+    ]
+  },
+  "exec": {
+    "calls": 587,
+    "kinds": {
+      "curl": 389,
+      "python-inline": 82,
+      "other": 108,
+      "python3": 6,
+      "sh": 2
+    },
+    "median_chars": 444,
+    "density_median": 0.0
+  },
+  "graph": {
+    "calls": 135,
+    "shapes": {
+      "narrow": 132,
+      "broad": 3
+    },
+    "empty": 5
+  }
+}

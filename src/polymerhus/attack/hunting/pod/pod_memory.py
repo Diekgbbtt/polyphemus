@@ -29,7 +29,7 @@ variant's `raw_observations`, `kb_observations` (T3/#179: each KB-retrieve
 response, first-class and distinct from an exec observation),
 `interpretations`, the `executed` dedup ledger
 for the stretch, AND the `experiment_summary` terminal record (D84-35) - the
-P3 consolidated summary the Runner writes via the `note` tool lands IN the
+P3 consolidated summary the Runner writes via the `notes` tool lands IN the
 slice, not in `notes.yaml`. The slice is a SINGLE dict, OVERWRITTEN idempotently
 on a re-run (D84-37: the deterministic path is the address); the notes file is
 append-only with read-latest. The minted variant (the `VariantSpec` wrapper)
@@ -127,8 +127,8 @@ def order_of(ref: str | None) -> int:
 # The persistent SYSTEM-side block (D84-27, D84-36): the tool contract + kinds +
 # the two bodies + the typed read filters, re-presented in every lap opener and
 # triager delta.
-MEMORY_READ_GUIDANCE = """# Pod experiment memory (the note tool)
-Write or read pod experiment notes through the `note` tool, one operation per call.
+MEMORY_READ_GUIDANCE = """# Pod experiment memory (the `notes` tool)
+Write or read pod experiment notes through the `notes` tool, one command per call.
 The store's per-spec bodies, each addressable by a deterministic identifier:
 - <fault>_<strategy>/experiment-log/<order>.yaml - the per-variant experiment log
 - <fault>_<strategy>/variants/<variant>.yaml - the minted variant specs
@@ -145,7 +145,7 @@ Read filters (combinable or singular):
 - parent_key - the exact spec or variant prefix to range over (e.g. "<spec_id>:0")
 - key_keyword - a case-insensitive substring of the note key
 - body_keyword - a case-insensitive substring of the note body
-Read the EXPERIMENT-LOG body by its identifier: operation=read with kind=experiment_log
+Read the EXPERIMENT-LOG body by its identifier: command=read with kind=experiment_log
 and order=<N> returns the variant's persisted D6 slice (raw_observations, kb_observations,
 interpretations, executed) verbatim; kind=experiment_summary returns its consolidated summary.
 A read returns matching notes newest-first, with each note's full body verbatim."""
@@ -371,7 +371,7 @@ class PodMemoryStore:
         `<spec_id>:<order>:<note_name>` (D84-36); return its key. The notes file
         is append-only with read-latest. `kb_insight`/`freeform` accumulate
         here; `experiment_summary` is routed to the variant's log slice by the
-        `note` tool (D84-35) - this append remains available for the other kinds.
+        `notes` tool (D84-35) - this append remains available for the other kinds.
         A write failure raises - the caller degrades to a warning and keeps
         serving (O3)."""
         if kind not in POD_NOTE_KINDS:
@@ -452,7 +452,7 @@ class PodMemoryStore:
     def note_keys(self, spec_id: str) -> list[str]:
         """The spec's note KEYS in newest-first order - the prompt-embedded
         indexable list (D84-27), so the Runner/Triager can index into prior
-        notes and then call the `note` read tool for the relevant body."""
+        notes and then call the `notes` read tool for the relevant body."""
         return [str(r.get("key")) for r in self.read_notes(spec_id) if r.get("key")]
 
 
@@ -477,7 +477,7 @@ def compose_memory_guidance(store: PodMemoryStore | None, spec_id: str) -> str:
     the spec's notes on file PLUS the experiment-log identifiers (spec id + the
     orders present on file), plus the persistent reading guidance - embedded in
     the Runner's lap opener and the Triager's delta. NO deterministic retrieval
-    stage: the agent indexes the keys, then calls the `note` tool. Fail-open: a
+    stage: the agent indexes the keys, then calls the `notes` tool. Fail-open: a
     missing/raising store yields the guidance with an empty index, never a
     raise."""
     keys: list[str] = []

@@ -306,4 +306,9 @@ E splits into code (E2, E3, E7) and analysis (E1, E4, E5, E6).
 
 - The identity, the nine-field concretisation, the symbolic target binding, and the prompt realignment.
 - The impact map and the stale-verbatim audit: `docs/design/hunting-spec-identity-impact-map.md`.
-- The attack, pod, integration, and pod-contract suites are green.
+- The lifecycle fail-safe: malformed dispatch, consumed export, and the 45-minute session watchdog.
+  See `docs/design/hunting-lifecycle-failsafe.md`.
+- The feedback fixes: the evolver meter, the unified `notes` tool, the auth-store narrowing, and the LightRAG validator repair.
+  See `docs/design/hunting-run-feedback-fixes.md`.
+- The telemetry mining: `docs/experiments/white-jotter-batched-2026-10-24/` section 11 and its scripts.
+- The attack, pod, integration, and pod-contract suites are green; the live-environment suites remain environment-dependent.

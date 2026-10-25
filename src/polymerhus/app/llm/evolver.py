@@ -576,7 +576,8 @@ def _build_lessons_prompt(skill: str, version: str, records: list[dict]) -> "Hum
 
 
 async def _default_turn_fn(
-    thread_id, prompt, *, tools, middleware, system_prompt, context, model_factory
+    thread_id, prompt, *, tools, middleware, system_prompt, context, model_factory,
+    usage_scope: str | None = None,
 ):
     """The production turn seam: one stateful `arun_session_turn` on the pass's
     thread, resolving the checkpointer for the CURRENT module context (the
@@ -596,6 +597,7 @@ async def _default_turn_fn(
         system_prompt=system_prompt,
         context=context,
         model_factory=model_factory,
+        usage_scope=usage_scope,
         extra_tags=("skill-evolution",),
     )
 
@@ -692,16 +694,20 @@ async def arun_evolution_pass(
 
     model_factory = (lambda _role_id: model) if model is not None else None
     turn = turn_fn if turn_fn is not None else _default_turn_fn
+    turn_kwargs = dict(
+        tools=tools,
+        middleware=binding.middleware,
+        system_prompt=system_prompt,
+        context=binding.context,
+        model_factory=model_factory,
+    )
+    if turn_fn is None:
+        # The evolver's spend belongs to the project ledger under its own role,
+        # so the 7M cap and the /usage endpoint count it. An injected test turn
+        # keeps its own signature.
+        turn_kwargs["usage_scope"] = project_id
     try:
-        await turn(
-            thread_id,
-            prompt,
-            tools=tools,
-            middleware=binding.middleware,
-            system_prompt=system_prompt,
-            context=binding.context,
-            model_factory=model_factory,
-        )
+        await turn(thread_id, prompt, **turn_kwargs)
     except Exception as exc:  # noqa: BLE001 - fail-open: the pass degrades
         logger.warning(
             "skill evolver: pass for %s/%s degraded: %s", project_id, skill, exc

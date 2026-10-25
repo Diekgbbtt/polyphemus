@@ -339,8 +339,10 @@ def test_a_malformed_artifact_field_is_refused_by_the_schema() -> None:
 
     write = SpecWrite(
         status="hypothesised",
-        fault_keyword="ssrf",
-        strategy_keyword="blind",
+        discriminators=[
+            {"axis": "fault", "value": "ssrf"},
+            {"axis": "technique", "value": "blind"},
+        ],
         target_identity={"url": "http://svc/", "unit_id": "svc"},
         skills=["ssrf"],
     )
@@ -350,8 +352,10 @@ def test_a_malformed_artifact_field_is_refused_by_the_schema() -> None:
         # A bare string is not a list of names.
         SpecWrite(
             status="hypothesised",
-            fault_keyword="ssrf",
-            strategy_keyword="blind",
+            discriminators=[
+                {"axis": "fault", "value": "ssrf"},
+                {"axis": "technique", "value": "blind"},
+            ],
             target_identity={"url": "http://svc/", "unit_id": "svc"},
             skills="ssrf",
         )

@@ -1,0 +1,74 @@
+project_id: 0c8cb6e6-7e91-4a01-880e-408896c0ce4a
+agents:
+  job_orchestrator:
+    cached: 354432
+    uncached: 18440
+    reasoning: 13184
+    visible: 11188
+    total_tokens: 397244
+    capped_tokens: 42812
+    calls: 18
+    cache_detail_omitted: 0
+  triager:
+    cached: 56960
+    uncached: 55449
+    reasoning: 8992
+    visible: 4405
+    total_tokens: 125806
+    capped_tokens: 68846
+    calls: 10
+    cache_detail_omitted: 0
+  assigner:
+    cached: 142592
+    uncached: 25083
+    reasoning: 9155
+    visible: 4541
+    total_tokens: 181371
+    capped_tokens: 38779
+    calls: 11
+    cache_detail_omitted: 0
+  mechanism_typist:
+    cached: 1774336
+    uncached: 223965
+    reasoning: 54208
+    visible: 30308
+    total_tokens: 2082817
+    capped_tokens: 308481
+    calls: 42
+    cache_detail_omitted: 0
+  hunting_threat_modeller:
+    cached: 97075840
+    uncached: 1426763
+    reasoning: 281771
+    visible: 470521
+    total_tokens: 99254895
+    capped_tokens: 2179055
+    calls: 429
+    cache_detail_omitted: 0
+  hunting_hunter:
+    cached: 13244928
+    uncached: 953266
+    reasoning: 160400
+    visible: 140546
+    total_tokens: 14499140
+    capped_tokens: 1254212
+    calls: 231
+    cache_detail_omitted: 0
+  pod_runner:
+    cached: 26117120
+    uncached: 1752561
+    reasoning: 315304
+    visible: 234543
+    total_tokens: 28419528
+    capped_tokens: 2302408
+    calls: 702
+    cache_detail_omitted: 0
+  pod_triager:
+    cached: 729984
+    uncached: 697465
+    reasoning: 78060
+    visible: 30814
+    total_tokens: 1536323
+    capped_tokens: 806339
+    calls: 89
+    cache_detail_omitted: 0

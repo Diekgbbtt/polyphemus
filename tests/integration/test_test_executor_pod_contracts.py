@@ -410,7 +410,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
         AIMessage(content="", tool_calls=[
             {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "order": 0,
+            {"name": "notes", "args": {"command": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the default probe returned HTTP 404 "
@@ -566,10 +566,10 @@ def test_tool_contract_rejects_foreign_params(tmp_path):
             return super()._run(**kwargs)
 
     tool = SpyTool(store=store, spec_id="spec-x")
-    rejected = tool.invoke({"operation": "write", "order": 0,
+    rejected = tool.invoke({"command": "write", "order": 0,
                             "note_name": "x", "kind": "experiment_summary",
                             "body": "consolidation", "surprise_field": "oops"})
-    assert "note_args_rejected" in rejected
+    assert "notes_args_rejected" in rejected
     assert "surprise_field" in rejected
     assert calls == []                              # never reached _run
 
@@ -580,12 +580,12 @@ def test_tool_contract_coded_rejections(tmp_path):
     coded rejections, never executed, never persisted."""
     store = PodMemoryStore(tmp_path)
     tool = note_tool_for(store, "spec-x")
-    empty = tool.invoke({"operation": "write", "kind": "experiment_summary",
+    empty = tool.invoke({"command": "write", "kind": "experiment_summary",
                          "note_name": "x", "body": "   "})
-    assert empty.startswith(NOTES_EMPTY_BODY)
-    bad = tool.invoke({"operation": "write", "kind": "not-a-kind",
+    assert NOTES_EMPTY_BODY in empty
+    bad = tool.invoke({"command": "write", "kind": "not-a-kind",
                        "note_name": "x", "body": "body"})
-    assert bad.startswith(NOTES_BAD_KIND)
+    assert NOTES_BAD_KIND in bad
     assert store.read_notes("spec-x") == []         # nothing rejected persisted
 
 

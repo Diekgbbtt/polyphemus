@@ -301,7 +301,9 @@ _MODEL_NOTES_FIELD_MAP = NotesFieldMap(
     note="body",
     note_id="note_id",
     attributes="attributes",
-    passthrough=("note_name", "kind", "evidence"),
+    note_name="note_name",
+    kind="kind",
+    evidence="evidence",
 )
 
 

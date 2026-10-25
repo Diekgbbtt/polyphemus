@@ -155,7 +155,7 @@ _REACT_KB_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="", tool_calls=[
         {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
     AIMessage(content="", tool_calls=[
-        {"name": "note", "args": {"operation": "write", "order": 0,
+        {"name": "notes", "args": {"command": "write", "order": 0,
                                   "note_name": "experiment",
                                   "kind": "experiment_summary",
                                   "body": "the default probe returned HTTP 404 "
@@ -173,7 +173,7 @@ _REACT_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="", tool_calls=[
         {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
     AIMessage(content="", tool_calls=[
-        {"name": "note", "args": {"operation": "write", "order": 0,
+        {"name": "notes", "args": {"command": "write", "order": 0,
                                   "note_name": "experiment",
                                   "kind": "experiment_summary",
                                   "body": "the default probe returned HTTP 404 "

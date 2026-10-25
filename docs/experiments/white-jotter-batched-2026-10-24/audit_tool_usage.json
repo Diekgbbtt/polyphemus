@@ -1,0 +1,856 @@
+{
+  "generations": 1608,
+  "total_unique_calls": 1402,
+  "total_appearances": 27648,
+  "total_tokens": 65476290.90439048,
+  "unanswered": 122,
+  "unattributed": 4,
+  "malformed_args": 0,
+  "request_errors": {
+    "skill_list:unanswered": 86,
+    "search_http_history:unanswered": 18,
+    "TriageDecision:unanswered": 4,
+    "query_lightrag:unanswered": 3,
+    "load_skill:unanswered": 4,
+    "get_http_artifact:unanswered": 4,
+    "DivergenceDecision:unanswered": 3
+  },
+  "by_tool": {
+    "load_skill": {
+      "calls": 39,
+      "appearances": 449,
+      "chars": 6890199,
+      "tokens": 2341769.8755150964,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "skill_evolver": 178,
+        "pod_runner": 269,
+        "pod_triager": 2
+      },
+      "max_chars": 23785,
+      "samples": []
+    },
+    "search_http_history": {
+      "calls": 148,
+      "appearances": 1901,
+      "chars": 17366699,
+      "tokens": 13912410.424004387,
+      "errors": 2,
+      "error_appearances": 34,
+      "error_chars": 2108,
+      "error_tokens": 687.6751961026733,
+      "error_kinds": {
+        "error_field": 34
+      },
+      "roles": {
+        "skill_evolver": 652,
+        "mechanism_typist": 20,
+        "assigner": 33,
+        "hunting_threat_modeller": 508,
+        "hunting_hunter": 688
+      },
+      "max_chars": 57127,
+      "samples": [
+        {
+          "kind": "error_field",
+          "chars": 62,
+          "head": "{\"error\": \"invalid_filter\", \"detail\": \"unknown side 'header'\"}"
+        },
+        {
+          "kind": "error_field",
+          "chars": 62,
+          "head": "{\"error\": \"invalid_filter\", \"detail\": \"unknown side 'header'\"}"
+        },
+        {
+          "kind": "error_field",
+          "chars": 62,
+          "head": "{\"error\": \"invalid_filter\", \"detail\": \"unknown side 'header'\"}"
+        },
+        {
+          "kind": "error_field",
+          "chars": 62,
+          "head": "{\"error\": \"invalid_filter\", \"detail\": \"unknown side 'header'\"}"
+        }
+      ]
+    },
+    "get_http_artifact": {
+      "calls": 78,
+      "appearances": 1192,
+      "chars": 2150653,
+      "tokens": 2149238.1697568204,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "skill_evolver": 340,
+        "mechanism_typist": 18,
+        "assigner": 2,
+        "hunting_threat_modeller": 503,
+        "hunting_hunter": 329
+      },
+      "max_chars": 1984,
+      "samples": []
+    },
+    "graph_view": {
+      "calls": 135,
+      "appearances": 2222,
+      "chars": 10755106,
+      "tokens": 3955000.6775246654,
+      "errors": 3,
+      "error_appearances": 45,
+      "error_chars": 29402,
+      "error_tokens": 10541.8956140941,
+      "error_kinds": {
+        "error_field": 45
+      },
+      "roles": {
+        "skill_evolver": 86,
+        "mechanism_typist": 107,
+        "hunting_hunter": 414,
+        "pod_runner": 1612,
+        "pod_triager": 3
+      },
+      "max_chars": 14861,
+      "samples": [
+        {
+          "kind": "error_field",
+          "chars": 410,
+          "head": "{\"error\": \"graph_view degraded: {code: Neo.ClientError.Statement.SyntaxError} {message: Invalid input '|': expected a parameter, '&', '*', ':', 'WHERE', ']', '{' or '|' (line 1, co"
+        },
+        {
+          "kind": "error_field",
+          "chars": 410,
+          "head": "{\"error\": \"graph_view degraded: {code: Neo.ClientError.Statement.SyntaxError} {message: Invalid input '|': expected a parameter, '&', '*', ':', 'WHERE', ']', '{' or '|' (line 1, co"
+        },
+        {
+          "kind": "error_field",
+          "chars": 694,
+          "head": "{\"error\": \"graph_view degraded: {code: Neo.ClientError.Statement.SyntaxError} {message: Invalid input '*': expected a node label/relationship type name, '$', '%' or '(' (line 1, co"
+        },
+        {
+          "kind": "error_field",
+          "chars": 694,
+          "head": "{\"error\": \"graph_view degraded: {code: Neo.ClientError.Statement.SyntaxError} {message: Invalid input '*': expected a node label/relationship type name, '$', '%' or '(' (line 1, co"
+        }
+      ]
+    },
+    "exec": {
+      "calls": 587,
+      "appearances": 12473,
+      "chars": 8820548,
+      "tokens": 9525873.152064646,
+      "errors": 8,
+      "error_appearances": 119,
+      "error_chars": 63228,
+      "error_tokens": 32988.52709202486,
+      "error_kinds": {
+        "stderr": 119
+      },
+      "roles": {
+        "mechanism_typist": 19,
+        "hunting_threat_modeller": 2939,
+        "hunting_hunter": 323,
+        "pod_runner": 9192
+      },
+      "max_chars": 4842,
+      "samples": [
+        {
+          "kind": "stderr",
+          "chars": 263,
+          "head": "TOOL RESULT: status=None body=\"E n=12 statuses=['200'] msgs=['\u5bc6\u7801\u9519\u8bef'] t=0.038-0.102\\n\" stderr='Traceback (most recent call last):\\n  File \"<stdin>\", line 11, in <module>\\n  File \"<s"
+        },
+        {
+          "kind": "stderr",
+          "chars": 263,
+          "head": "TOOL RESULT: status=None body=\"E n=12 statuses=['200'] msgs=['\u5bc6\u7801\u9519\u8bef'] t=0.038-0.102\\n\" stderr='Traceback (most recent call last):\\n  File \"<stdin>\", line 11, in <module>\\n  File \"<s"
+        },
+        {
+          "kind": "stderr",
+          "chars": 263,
+          "head": "TOOL RESULT: status=None body=\"E n=12 statuses=['200'] msgs=['\u5bc6\u7801\u9519\u8bef'] t=0.038-0.102\\n\" stderr='Traceback (most recent call last):\\n  File \"<stdin>\", line 11, in <module>\\n  File \"<s"
+        },
+        {
+          "kind": "stderr",
+          "chars": 263,
+          "head": "TOOL RESULT: status=None body=\"E n=12 statuses=['200'] msgs=['\u5bc6\u7801\u9519\u8bef'] t=0.038-0.102\\n\" stderr='Traceback (most recent call last):\\n  File \"<stdin>\", line 11, in <module>\\n  File \"<s"
+        }
+      ]
+    },
+    "L1DeltaBatch": {
+      "calls": 2,
+      "appearances": 4,
+      "chars": 228,
+      "tokens": 83.34273432812323,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "mechanism_typist": 4
+      },
+      "max_chars": 57,
+      "samples": []
+    },
+    "hunts_store": {
+      "calls": 60,
+      "appearances": 2944,
+      "chars": 4851779,
+      "tokens": 5958781.156079404,
+      "errors": 11,
+      "error_appearances": 117,
+      "error_chars": 34133,
+      "error_tokens": 13115.25601694111,
+      "error_kinds": {
+        "ok_false": 110,
+        "error_field": 7
+      },
+      "roles": {
+        "hunting_threat_modeller": 2604,
+        "hunting_hunter": 340
+      },
+      "max_chars": 13030,
+      "samples": [
+        {
+          "kind": "ok_false",
+          "chars": 293,
+          "head": "{\"ok\": false, \"error\": \"hunts_store_args_rejected\", \"fields\": [\"spec.strategy_keyword\", \"spec.target_identity\"], \"detail\": \"missing required field(s): spec.strategy_keyword, spec.t"
+        },
+        {
+          "kind": "ok_false",
+          "chars": 293,
+          "head": "{\"ok\": false, \"error\": \"hunts_store_args_rejected\", \"fields\": [\"spec.strategy_keyword\", \"spec.target_identity\"], \"detail\": \"missing required field(s): spec.strategy_keyword, spec.t"
+        },
+        {
+          "kind": "ok_false",
+          "chars": 293,
+          "head": "{\"ok\": false, \"error\": \"hunts_store_args_rejected\", \"fields\": [\"spec.strategy_keyword\", \"spec.target_identity\"], \"detail\": \"missing required field(s): spec.strategy_keyword, spec.t"
+        },
+        {
+          "kind": "ok_false",
+          "chars": 293,
+          "head": "{\"ok\": false, \"error\": \"hunts_store_args_rejected\", \"fields\": [\"spec.strategy_keyword\", \"spec.target_identity\"], \"detail\": \"missing required field(s): spec.strategy_keyword, spec.t"
+        }
+      ]
+    },
+    "auth_store": {
+      "calls": 44,
+      "appearances": 968,
+      "chars": 37672916,
+      "tokens": 15431676.743425338,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "hunting_threat_modeller": 99,
+        "skill_evolver": 20,
+        "pod_runner": 680,
+        "hunting_hunter": 169
+      },
+      "max_chars": 73934,
+      "samples": []
+    },
+    "notes": {
+      "calls": 79,
+      "appearances": 3121,
+      "chars": 1222586,
+      "tokens": 1319111.8338036176,
+      "errors": 5,
+      "error_appearances": 81,
+      "error_chars": 18405,
+      "error_tokens": 6935.732006010534,
+      "error_kinds": {
+        "ok_false": 81
+      },
+      "roles": {
+        "hunting_threat_modeller": 2330,
+        "hunting_hunter": 791
+      },
+      "max_chars": 1989,
+      "samples": [
+        {
+          "kind": "ok_false",
+          "chars": 299,
+          "head": "{\"ok\": false, \"error\": \"notes_args_rejected\", \"fields\": [\"limit\"], \"detail\": \"unknown field(s): limit. The contract accepts required fields: command; optional fields: key_keyword, "
+        },
+        {
+          "kind": "ok_false",
+          "chars": 299,
+          "head": "{\"ok\": false, \"error\": \"notes_args_rejected\", \"fields\": [\"limit\"], \"detail\": \"unknown field(s): limit. The contract accepts required fields: command; optional fields: key_keyword, "
+        },
+        {
+          "kind": "ok_false",
+          "chars": 299,
+          "head": "{\"ok\": false, \"error\": \"notes_args_rejected\", \"fields\": [\"limit\"], \"detail\": \"unknown field(s): limit. The contract accepts required fields: command; optional fields: key_keyword, "
+        },
+        {
+          "kind": "ok_false",
+          "chars": 299,
+          "head": "{\"ok\": false, \"error\": \"notes_args_rejected\", \"fields\": [\"limit\"], \"detail\": \"unknown field(s): limit. The contract accepts required fields: command; optional fields: key_keyword, "
+        }
+      ]
+    },
+    "skill_load": {
+      "calls": 17,
+      "appearances": 605,
+      "chars": 8611314,
+      "tokens": 6813975.3658630615,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "hunting_threat_modeller": 322,
+        "hunting_hunter": 283
+      },
+      "max_chars": 19271,
+      "samples": []
+    },
+    "skill_list": {
+      "calls": 6,
+      "appearances": 124,
+      "chars": 5767736,
+      "tokens": 1990962.6065757263,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "hunting_hunter": 124
+      },
+      "max_chars": 46514,
+      "samples": []
+    },
+    "kb_query": {
+      "calls": 11,
+      "appearances": 179,
+      "chars": 913005,
+      "tokens": 345673.4265858671,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "hunting_hunter": 179
+      },
+      "max_chars": 20495,
+      "samples": []
+    },
+    "replay": {
+      "calls": 28,
+      "appearances": 634,
+      "chars": 13428,
+      "tokens": 4872.430101791181,
+      "errors": 1,
+      "error_appearances": 9,
+      "error_chars": 3753,
+      "error_tokens": 1276.221034967981,
+      "error_kinds": {
+        "error_field": 9
+      },
+      "roles": {
+        "pod_runner": 634
+      },
+      "max_chars": 417,
+      "samples": [
+        {
+          "kind": "error_field",
+          "chars": 417,
+          "head": "{\"status\": null, \"error\": {\"error\": \"invalid_request\", \"detail\": \"Command '['ip', 'netns', 'exec', 'kali-http-1181', 'curl', '-k', '-sS', '-o', '/dev/null', '-X', 'POST', '-H', 'Ho"
+        },
+        {
+          "kind": "error_field",
+          "chars": 417,
+          "head": "{\"status\": null, \"error\": {\"error\": \"invalid_request\", \"detail\": \"Command '['ip', 'netns', 'exec', 'kali-http-1181', 'curl', '-k', '-sS', '-o', '/dev/null', '-X', 'POST', '-H', 'Ho"
+        },
+        {
+          "kind": "error_field",
+          "chars": 417,
+          "head": "{\"status\": null, \"error\": {\"error\": \"invalid_request\", \"detail\": \"Command '['ip', 'netns', 'exec', 'kali-http-1181', 'curl', '-k', '-sS', '-o', '/dev/null', '-X', 'POST', '-H', 'Ho"
+        },
+        {
+          "kind": "error_field",
+          "chars": 417,
+          "head": "{\"status\": null, \"error\": {\"error\": \"invalid_request\", \"detail\": \"Command '['ip', 'netns', 'exec', 'kali-http-1181', 'curl', '-k', '-sS', '-o', '/dev/null', '-X', 'POST', '-H', 'Ho"
+        }
+      ]
+    },
+    "query_lightrag": {
+      "calls": 41,
+      "appearances": 368,
+      "chars": 2898587,
+      "tokens": 1175022.9281815693,
+      "errors": 19,
+      "error_appearances": 176,
+      "error_chars": 240714,
+      "error_tokens": 99819.16483501205,
+      "error_kinds": {
+        "fallback": 176
+      },
+      "roles": {
+        "pod_runner": 367,
+        "pod_triager": 1
+      },
+      "max_chars": 21443,
+      "samples": [
+        {
+          "kind": "fallback",
+          "chars": 1186,
+          "head": "{\"schema_version\": \"lightrag-answer/v2\", \"scenario_id\": \"Service-sign-in__loop-1\", \"summary\": \"Deterministic checklist fallback; model answer unavailable.\", \"ontology_explanations\""
+        },
+        {
+          "kind": "fallback",
+          "chars": 1186,
+          "head": "{\"schema_version\": \"lightrag-answer/v2\", \"scenario_id\": \"Service-sign-in__loop-1\", \"summary\": \"Deterministic checklist fallback; model answer unavailable.\", \"ontology_explanations\""
+        },
+        {
+          "kind": "fallback",
+          "chars": 1186,
+          "head": "{\"schema_version\": \"lightrag-answer/v2\", \"scenario_id\": \"Service-sign-in__loop-1\", \"summary\": \"Deterministic checklist fallback; model answer unavailable.\", \"ontology_explanations\""
+        },
+        {
+          "kind": "fallback",
+          "chars": 1186,
+          "head": "{\"schema_version\": \"lightrag-answer/v2\", \"scenario_id\": \"Service-sign-in__loop-1\", \"summary\": \"Deterministic checklist fallback; model answer unavailable.\", \"ontology_explanations\""
+        }
+      ]
+    },
+    "note": {
+      "calls": 69,
+      "appearances": 296,
+      "chars": 1415696,
+      "tokens": 525314.712693275,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "pod_runner": 230,
+        "pod_triager": 66
+      },
+      "max_chars": 128813,
+      "samples": []
+    },
+    "record_skill_lesson": {
+      "calls": 18,
+      "appearances": 41,
+      "chars": 3028,
+      "tokens": 1074.4289976872224,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "pod_runner": 35,
+        "skill_evolver": 5,
+        "pod_triager": 1
+      },
+      "max_chars": 86,
+      "samples": []
+    },
+    "write_skill": {
+      "calls": 5,
+      "appearances": 15,
+      "chars": 951,
+      "tokens": 380.2657715194643,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "skill_evolver": 15
+      },
+      "max_chars": 66,
+      "samples": []
+    },
+    "TriageDecision": {
+      "calls": 20,
+      "appearances": 68,
+      "chars": 41222,
+      "tokens": 14289.600896636719,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "pod_triager": 68
+      },
+      "max_chars": 798,
+      "samples": []
+    },
+    "DivergenceDecision": {
+      "calls": 15,
+      "appearances": 44,
+      "chars": 30574,
+      "tokens": 10779.763815043701,
+      "errors": 0,
+      "error_appearances": 0,
+      "error_chars": 0,
+      "error_tokens": 0.0,
+      "error_kinds": {},
+      "roles": {
+        "pod_triager": 44
+      },
+      "max_chars": 900,
+      "samples": []
+    }
+  },
+  "by_role_tool": {
+    "skill_evolver|load_skill": {
+      "calls": 21,
+      "appearances": 178,
+      "tokens": 751195.8679760176,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "skill_evolver|search_http_history": {
+      "calls": 90,
+      "appearances": 652,
+      "tokens": 3588460.5658962773,
+      "errors": 1,
+      "error_kinds": {
+        "error_field": 9
+      }
+    },
+    "skill_evolver|get_http_artifact": {
+      "calls": 50,
+      "appearances": 340,
+      "tokens": 228407.89947546212,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "skill_evolver|graph_view": {
+      "calls": 17,
+      "appearances": 86,
+      "tokens": 116537.17169786205,
+      "errors": 1,
+      "error_kinds": {
+        "error_field": 2
+      }
+    },
+    "mechanism_typist|graph_view": {
+      "calls": 20,
+      "appearances": 107,
+      "tokens": 129184.00344723566,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "mechanism_typist|search_http_history": {
+      "calls": 4,
+      "appearances": 20,
+      "tokens": 9052.502781852247,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "mechanism_typist|get_http_artifact": {
+      "calls": 4,
+      "appearances": 18,
+      "tokens": 11406.654049813824,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "mechanism_typist|exec": {
+      "calls": 4,
+      "appearances": 19,
+      "tokens": 7556.601050997151,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "mechanism_typist|L1DeltaBatch": {
+      "calls": 2,
+      "appearances": 4,
+      "tokens": 83.34273432812323,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "assigner|search_http_history": {
+      "calls": 12,
+      "appearances": 33,
+      "tokens": 24908.3730664174,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "assigner|get_http_artifact": {
+      "calls": 1,
+      "appearances": 2,
+      "tokens": 1427.4292338281682,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_threat_modeller|hunts_store": {
+      "calls": 25,
+      "appearances": 2604,
+      "tokens": 5913204.512402837,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_threat_modeller|auth_store": {
+      "calls": 1,
+      "appearances": 99,
+      "tokens": 1842643.856870543,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_threat_modeller|search_http_history": {
+      "calls": 5,
+      "appearances": 508,
+      "tokens": 8752349.545340158,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_threat_modeller|get_http_artifact": {
+      "calls": 5,
+      "appearances": 503,
+      "tokens": 1693663.6580154565,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_threat_modeller|exec": {
+      "calls": 31,
+      "appearances": 2939,
+      "tokens": 8006653.931830778,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "skill_evolver|auth_store": {
+      "calls": 3,
+      "appearances": 20,
+      "tokens": 60918.912200830615,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_threat_modeller|notes": {
+      "calls": 23,
+      "appearances": 2330,
+      "tokens": 1274609.9620973133,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_threat_modeller|skill_load": {
+      "calls": 2,
+      "appearances": 322,
+      "tokens": 5294416.233143784,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_hunter|graph_view": {
+      "calls": 28,
+      "appearances": 414,
+      "tokens": 707380.7026442577,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_hunter|skill_list": {
+      "calls": 6,
+      "appearances": 124,
+      "tokens": 1990962.6065757263,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_hunter|skill_load": {
+      "calls": 15,
+      "appearances": 283,
+      "tokens": 1519559.1327192767,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_hunter|search_http_history": {
+      "calls": 37,
+      "appearances": 688,
+      "tokens": 1537639.4369197018,
+      "errors": 1,
+      "error_kinds": {
+        "error_field": 25
+      }
+    },
+    "hunting_hunter|kb_query": {
+      "calls": 11,
+      "appearances": 179,
+      "tokens": 345673.4265858671,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_hunter|get_http_artifact": {
+      "calls": 18,
+      "appearances": 329,
+      "tokens": 214332.52898225954,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_hunter|notes": {
+      "calls": 56,
+      "appearances": 791,
+      "tokens": 44501.87170630302,
+      "errors": 5,
+      "error_kinds": {
+        "ok_false": 81
+      }
+    },
+    "hunting_hunter|exec": {
+      "calls": 25,
+      "appearances": 323,
+      "tokens": 103341.11825553175,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_hunter|hunts_store": {
+      "calls": 35,
+      "appearances": 340,
+      "tokens": 45576.643676569234,
+      "errors": 11,
+      "error_kinds": {
+        "ok_false": 110,
+        "error_field": 7
+      }
+    },
+    "pod_runner|graph_view": {
+      "calls": 68,
+      "appearances": 1612,
+      "tokens": 2995845.772694324,
+      "errors": 2,
+      "error_kinds": {
+        "error_field": 43
+      }
+    },
+    "pod_runner|auth_store": {
+      "calls": 29,
+      "appearances": 680,
+      "tokens": 11349497.72645003,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_runner|replay": {
+      "calls": 28,
+      "appearances": 634,
+      "tokens": 4872.430101791181,
+      "errors": 1,
+      "error_kinds": {
+        "error_field": 9
+      }
+    },
+    "pod_runner|load_skill": {
+      "calls": 17,
+      "appearances": 269,
+      "tokens": 1578744.4574502786,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_runner|exec": {
+      "calls": 527,
+      "appearances": 9192,
+      "tokens": 1408321.500927381,
+      "errors": 8,
+      "error_kinds": {
+        "stderr": 119
+      }
+    },
+    "pod_runner|query_lightrag": {
+      "calls": 40,
+      "appearances": 367,
+      "tokens": 1169641.7703729188,
+      "errors": 19,
+      "error_kinds": {
+        "fallback": 176
+      }
+    },
+    "pod_runner|note": {
+      "calls": 34,
+      "appearances": 230,
+      "tokens": 17113.018222009287,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_runner|record_skill_lesson": {
+      "calls": 16,
+      "appearances": 35,
+      "tokens": 921.0680421605825,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "skill_evolver|write_skill": {
+      "calls": 5,
+      "appearances": 15,
+      "tokens": 380.2657715194643,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_triager|TriageDecision": {
+      "calls": 20,
+      "appearances": 68,
+      "tokens": 14289.600896636719,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_triager|DivergenceDecision": {
+      "calls": 15,
+      "appearances": 44,
+      "tokens": 10779.763815043701,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_triager|note": {
+      "calls": 35,
+      "appearances": 66,
+      "tokens": 508201.69447126583,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "hunting_hunter|auth_store": {
+      "calls": 11,
+      "appearances": 169,
+      "tokens": 2178616.247903942,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_triager|graph_view": {
+      "calls": 2,
+      "appearances": 3,
+      "tokens": 6053.027040986862,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "skill_evolver|record_skill_lesson": {
+      "calls": 1,
+      "appearances": 5,
+      "tokens": 129.7664596711193,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_triager|load_skill": {
+      "calls": 1,
+      "appearances": 2,
+      "tokens": 11829.550088802644,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_triager|record_skill_lesson": {
+      "calls": 1,
+      "appearances": 1,
+      "tokens": 23.594495855520517,
+      "errors": 0,
+      "error_kinds": {}
+    },
+    "pod_triager|query_lightrag": {
+      "calls": 1,
+      "appearances": 1,
+      "tokens": 5381.157808650599,
+      "errors": 0,
+      "error_kinds": {}
+    }
+  }
+}

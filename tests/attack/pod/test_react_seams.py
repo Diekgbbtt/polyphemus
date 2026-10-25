@@ -198,7 +198,7 @@ def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
     spec_id = SPEC_ID
     replies = [
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "order": 0,
+            {"name": "notes", "args": {"command": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the consolidated summary"},
@@ -374,7 +374,7 @@ def test_stage_c_turn_keeps_the_full_tool_surface(tmp_path, monkeypatch):
 
     _run(_drive_stage(default_triager_fn, SPEC, hc, log))
 
-    assert {"note", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "exec" not in seen
 
 
@@ -508,7 +508,7 @@ def test_triager_turn_binds_its_react_tools_and_never_exec(tmp_path, monkeypatch
 
     # #236: the full skill surface rides the critic's turn (load_skill plus the
     # lesson sub-phase's record_skill_lesson); exec stays off it.
-    assert {"note", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert {"notes", "query_lightrag", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "exec" not in seen  # the critic never touches the target
     assert "write_skill" not in seen
 
@@ -527,7 +527,7 @@ def test_runner_turn_binds_the_full_skill_surface(tmp_path):
 
     _run(_drive_runner(SPEC, hc))
 
-    assert {"exec", "note", "load_skill", "record_skill_lesson"} <= set(seen)
+    assert {"exec", "notes", "load_skill", "record_skill_lesson"} <= set(seen)
     assert "write_skill" not in seen
 
 

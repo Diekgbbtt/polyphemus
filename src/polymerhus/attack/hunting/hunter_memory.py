@@ -526,7 +526,8 @@ class HunterMemoryStore(BoundedRecordStore):
                     project_id, hunt_key, spec_id, "consumed")
                 existing_path = self._spec_file(
                     project_id, hunt_key, spec_id, "produced")
-                if (spec.get("status") == "ratified"
+                if (side == "produced"
+                        and spec.get("status") == "ratified"
                         and not existing_path.exists()
                         and not consumed_path.exists()):
                     # Identity stability: a `ratified` write may only address a
