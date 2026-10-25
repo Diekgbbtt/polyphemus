@@ -84,6 +84,21 @@ def test_launch_returns_the_identifier_and_starts_a_running_record(
     assert records.get("p1", PASS_ID)["status"] == "running"
 
 
+def test_disabled_switch_refuses_the_launch_without_leaving_a_record(
+    monkeypatch, records: evolver.EvolutionPassStore
+) -> None:
+    """The experiment switch is a public-seam refusal: a disabled system never
+    schedules a pass and never leaves a dangling running record."""
+    evolver = _patch(monkeypatch)
+    monkeypatch.setenv(evolver.SKILL_EVOLUTION_ENV, "0")
+
+    resp = client.post("/projects/p1/skills/ssrf/evolve", json={})
+
+    assert resp.status_code == 503
+    assert "disabled" in resp.json()["detail"]
+    assert records.get("p1", PASS_ID) is None
+
+
 def test_status_serves_the_finished_record_with_the_outcome(
     monkeypatch, records: evolver.EvolutionPassStore
 ) -> None:

@@ -77,6 +77,7 @@ role that lists freely and loads a named body.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 from collections.abc import Mapping
@@ -93,6 +94,21 @@ logger = logging.getLogger(__name__)
 # The skills/ mount lives at the repo root (mounted at /srv/skills in dev, baked
 # by the Dockerfile in prod), OUTSIDE the src/ package tree.
 _SKILLS_ROOT = Path(__file__).resolve().parents[4] / "skills"
+
+# The experiment switch for the whole skill-evolution system. The default is
+# on; `0`/`false`/`no`/`off` disables the project evolver controller, the
+# `meta/meta-write-skill` binding, the `record_skill_lesson` tool, and the
+# lesson line in the pod prompts. It is read at CALL time, never cached, so a
+# container recreate is enough to switch an experiment arm.
+SKILL_EVOLUTION_ENV = "SKILL_EVOLUTION_ENABLED"
+_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def skill_evolution_enabled() -> bool:
+    """True unless `SKILL_EVOLUTION_ENABLED` carries an off value."""
+    raw = (os.environ.get(SKILL_EVOLUTION_ENV) or "1").strip().lower()
+    return raw not in _OFF_VALUES
+
 
 # The suite's logical root (taxonomy spec R1/D-T1): the identity of the whole
 # well-formed suite. It never appears as a segment of a reported skill name -
@@ -766,7 +782,13 @@ def skills_for_role(role_id: str) -> tuple[str, ...]:
     """The role's bounded skill set: `ROLE_SKILLS[role_id]`, or `()` for an
     unknown role (which `skill_agent_binding` refuses - an undeclared role is a
     wiring defect, not an exemption). `()` for a DECLARED role means exempt: no
-    skill surface is bound."""
+    skill surface is bound.
+
+    With the skill-evolution system disabled, the evolver's meta-write-skill
+    binding is empty: the disabled system must not read the authoring meta
+    skill even if a caller reaches the binding directly."""
+    if role_id == "skill_evolver" and not skill_evolution_enabled():
+        return ()
     return ROLE_SKILLS.get(role_id, ())
 
 
@@ -2139,10 +2161,12 @@ def build_skill_tools(
     stamped by the symbolic layer (the binding), never supplied by the model;
     `lesson_store` is the injectable lesson seam (tests)."""
     project_id = _resolve_project_id(project_id)
-    tools = [
-        build_load_skill_tool(project_id, store=store),
-        build_record_lesson_tool(project_id, store=lesson_store, role_id=role_id),
-    ]
+    tools = [build_load_skill_tool(project_id, store=store)]
+    if skill_evolution_enabled():
+        tools.append(
+            build_record_lesson_tool(
+                project_id, store=lesson_store, role_id=role_id)
+        )
     if with_write_skill:
         if not project_id:
             raise ValueError(
@@ -2533,6 +2557,7 @@ __all__ = [
     "PROTOCOL_SEPARATOR",
     "RECORD_LESSON_CONTRACT",
     "ROLE_SKILLS",
+    "SKILL_EVOLUTION_ENV",
     "SKILL_INDEX_HEADER",
     "SKILL_LIST_HEADER",
     "SKILL_LOAD_CONTRACT",
@@ -2552,6 +2577,7 @@ __all__ = [
     "build_record_lesson_tool",
     "build_skill_tools",
     "build_write_skill_tool",
+    "skill_evolution_enabled",
     "clear_cache",
     "is_meta_skill",
     "list_skill_descriptions",

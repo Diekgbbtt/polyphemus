@@ -32,10 +32,24 @@ _TERMINAL_SKILL: str | None = None
 def _compose(name: str) -> str:
     """Read one stage prompt and append the shared cortex (C1). The read is
     FAIL-CLOSED: a missing prompt file raises, so a pod role never reasons
-    without its prompt."""
+    without its prompt.
+
+    With the skill-evolution system disabled, the `record_skill_lesson` line
+    is removed: the tool is not bound on that arm, and the prompt must never
+    promise a tool the model cannot call."""
+    from polymerhus.app.llm.skills import skill_evolution_enabled  # noqa: PLC0415
     from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
 
-    return with_cortex((_PROMPTS_DIR / name).read_text(encoding="utf-8"))
+    text = (_PROMPTS_DIR / name).read_text(encoding="utf-8")
+    if not skill_evolution_enabled():
+        kept = [
+            line for line in text.splitlines()
+            if "record_skill_lesson" not in line
+        ]
+        text = "\n".join(kept)
+        if text and not text.endswith("\n"):
+            text += "\n"
+    return with_cortex(text)
 
 
 def load_pod_runner_skill() -> str:

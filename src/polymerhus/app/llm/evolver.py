@@ -63,6 +63,7 @@ from polymerhus.app.llm.session_address import ModuleScopedSession
 from polymerhus.app.llm.skills import (
     _SKILLS_ROOT,
     PROCEDURE_BRANCH,
+    SKILL_EVOLUTION_ENV,
     LessonInvalidError,
     LessonStore,
     SkillStore,
@@ -70,9 +71,15 @@ from polymerhus.app.llm.skills import (
     StoreUnavailableError,
     dump_text_atomic,
     skill_agent_binding,
+    skill_evolution_enabled,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SkillEvolutionDisabled(RuntimeError):
+    """The experiment switch turned the skill-evolution system off."""
+
 
 # The role identity the pass runs as (D232-7). It is a declared bound role
 # (`ROLE_SKILLS`), a registered session-mode `Role` validated at app boot, and
@@ -153,6 +160,12 @@ def ensure_project_evolver(
     refusal returns None and never blocks the launch."""
     from polymerhus.app.runtime import get_active_runtime  # noqa: PLC0415
 
+    if not skill_evolution_enabled():
+        logger.info(
+            "skill evolver: disabled by %s; no controller for %s",
+            SKILL_EVOLUTION_ENV, project_id,
+        )
+        return None
     runtime = runtime or get_active_runtime()
     if runtime is None:
         return None
@@ -211,6 +224,10 @@ def launch_evolution_pass(
     thread hold and a module pause address it like any other app thread."""
     from polymerhus.app.runtime import get_active_runtime  # noqa: PLC0415
 
+    if not skill_evolution_enabled():
+        raise SkillEvolutionDisabled(
+            f"skill evolution is disabled by {SKILL_EVOLUTION_ENV}"
+        )
     runtime = runtime or get_active_runtime()
     if runtime is None:
         raise RuntimeError("skills control plane is not active")
@@ -755,6 +772,12 @@ async def arun_evolver_controller(
     a module pause and a per-session hold (the app thread REST verbs, by this
     controller's thread id) stop and release the controller exactly like any
     other session. `None` (the unit tests and the REPL) runs ungated."""
+    if not skill_evolution_enabled():
+        logger.info(
+            "skill evolver: controller for %s is disabled by %s",
+            project_id, SKILL_EVOLUTION_ENV,
+        )
+        return
     lesson_store = _resolve_lesson_store(lesson_store, skill_store)
     if stop_event is None:
         stop_event = asyncio.Event()
@@ -846,6 +869,7 @@ __all__ = [
     "EVOLVER_SESSION_SEGMENT",
     "EvolutionOutcome",
     "EvolutionPassStore",
+    "SkillEvolutionDisabled",
     "StoreUnavailableError",
     "append_posted_lessons",
     "arun_evolution_pass",

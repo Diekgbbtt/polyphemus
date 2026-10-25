@@ -1022,6 +1022,15 @@ async def launch_skill_evolution(
         raise HTTPException(
             status_code=503, detail=f"pass record unavailable: {exc}"
         ) from exc
+    except evolver.SkillEvolutionDisabled as exc:  # the experiment switch
+        if launched is not None:
+            await asyncio.to_thread(
+                records.discard,
+                project_id,
+                pass_id,
+                launched_at=launched.get("launched_at"),
+            )
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:  # the store's coded lesson/skill/target refusals
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
