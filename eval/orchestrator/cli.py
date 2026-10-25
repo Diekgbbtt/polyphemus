@@ -186,7 +186,9 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--eval-sha",
         default=os.environ.get("EVAL_SHA"),
-        help="the eval SHA this trial ran on (stamped into the trial record, D32)",
+        help="a CROSS-CHECK only: the trial record's eval_sha is the commit HEAD "
+        "points to in the instance worktree, which the starter reads (D32); a "
+        "value that disagrees with HEAD is ignored and recorded as a trial note",
     )
     run_parser.add_argument(
         "--stack-fingerprint",
@@ -687,21 +689,60 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         project_id=args.project_id,
         recon_run_id=args.recon_run,
         existing_project_id=existing_project_id,
-        eval_sha=args.eval_sha,
+        # The version identity is stamped by `_with_version_identity` at real
+        # start (it reads the instance worktree HEAD); plan mode leaves it unset
+        # and prints the read instead. No second source exists here.
+        eval_sha=None,
         stack_fingerprint=args.stack_fingerprint,
         trace_id=args.trace_id,
     )
     return cfg, paths, run
 
 
+def _with_version_identity(cfg: trial.TrialConfig, paths, args,
+                           runner) -> trial.TrialConfig:
+    """Stamp the trial record with the code its stack loads (D32).
+
+    The starter owns this: it reads the commit HEAD points to in the instance
+    worktree, whose `src/`, `lightrag/`, `db/`, `skills/`, and `gateway/` the
+    compose files bind-mount (`docker-compose.dev.yml`). A declared
+    `--eval-sha`/`EVAL_SHA` is a cross-check only - a stale one must never
+    relabel the record - so a disagreement is recorded as a note.
+    """
+    # The identity read needs the code tree, and `up`'s first step is the
+    # idempotent worktree add: a standalone `trial` on a fresh instance must not
+    # fail here, before its own bring-up can create the tree.
+    instances.ensure_worktree(paths, runner)
+    head_sha = instances.instance_head_sha(paths, runner)
+    dirty = instances.worktree_dirty(paths, runner)
+    notes: list[str] = []
+    declared = (args.eval_sha or "").strip()
+    if declared and declared != head_sha:
+        notes.append(
+            f"declared eval_sha {declared!r} was ignored: the trial record names "
+            f"the instance worktree HEAD {head_sha} (the code the stack loads); "
+            "the stack fingerprint covers a patched tree"
+        )
+    return replace(
+        cfg, eval_sha=head_sha, worktree_dirty=dirty,
+        identity_notes=tuple(notes),
+    )
+
+
 def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, err: TextIO,
                runner_factory: RunnerFactory, api_factory: ApiFactory) -> int:
+    # The config resolves and validates the identifiers FIRST, so a bad setup is
+    # refused before any runner exists (plan mode constructs none).
     cfg, paths, _run = _trial_config(args, setup, config)
     if args.dry_run:
+        # Plan mode executes nothing, so the identity read is PRINTED, not run
+        # (D32: the starter reads it from the instance worktree at real start).
+        print(f"  {instances.plan_head_sha(paths).display()}", file=out)
         _print_trial_plan(trial.Trial(cfg).plan(), out)
         return 0
 
     runner = runner_factory()
+    cfg = _with_version_identity(cfg, paths, args, runner)
     api_runner = api_factory(args.api)
     engine = trial.Trial(cfg, api_runner=api_runner, runner=runner)
     orchestrator = Orchestrator(setup, config, runner=runner)
@@ -1784,7 +1825,9 @@ def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
         repo=args.repo,
         dry_run=False,
     )
+    runner = runner_factory()
     cfg, _paths, _run = _trial_config(resume_args, setup, config)
+    cfg = _with_version_identity(cfg, paths, resume_args, runner)
     cfg = replace(
         cfg,
         start_phase=plan.start_phase,
@@ -1793,7 +1836,6 @@ def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
         # trial snapshots a fresh one (D8/D16).
         spend_baseline=plan.spend_baseline,
     )
-    runner = runner_factory()
     api_runner = (api_factory or (lambda base: api.HttpApiRunner(base)))(args.api)
     engine = trial.Trial(cfg, api_runner=api_runner, runner=runner)
     orchestrator = Orchestrator(setup, config, runner=runner)

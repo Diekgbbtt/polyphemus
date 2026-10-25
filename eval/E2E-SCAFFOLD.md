@@ -52,7 +52,7 @@ A run attempted with one missing fails loud; none is silently defaulted.
 | B4 | The local WebExploitBench checkout `~/WebExploitBench` (or `EVAL_WEB_DIR`) with the `comfyui` target built (targetctl clones if missing) | target routed | `targetctl build/up comfyui` runs locally; the front is the shared `ph-eval-front` container (no ssh, no host nginx) |
 | B5 | The same local checkout serves ground truth (`EVAL_WEB_DIR`, default `~/WebExploitBench`; D45) | assessment, diagnosis | `gt.py` reads `<EVAL_WEB_DIR>/comfyui/challenge.json`; the KB is committed at `eval/data/webexploitbench/comfyui/operator_kb.md` |
 | B6 | LLM provider credits/keys for the roles in B2 | trial | Recon/analysis/hunting spend them |
-| B7 | `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` | trial, store | The `eval` branch commit and the operator-supplied stack fingerprint of the running tree. Read the SHA with `git -C "$EVAL_REPO" rev-parse eval`; the fingerprint is owned by the external operator (the jump and its manifest are out of this codebase), so take it from the operator's record or reuse a prior run's value. Both are mandatory: `store materialize` refuses `identity_missing`, and every verdict and diagnosis row must carry them. |
+| B7 | `EVAL_STACK_FINGERPRINT` | trial, store | The operator-supplied stack fingerprint of the running tree. The fingerprint is owned by the external operator (the jump and its manifest are out of this codebase), so take it from the operator's record or reuse a prior run's value. The trial's `eval_sha` is NOT an item here: the trial starter derives it from the instance worktree HEAD (D32), and `store materialize` refuses `identity_missing` when the pair is incomplete. Every verdict and diagnosis row must carry both. |
 | B8 | `EVAL_ASSESS_COMMAND` and `EVAL_DIAGNOSE_COMMAND` | assessment, diagnosis | Shell lines with the documented placeholders (OPERATOR.md 2.9/2.10); no command means `assessment_no_command` / `diagnosis_no_command` escalation |
 | B9 | `EVAL_GITHUB_TOKEN` | diagnosis | The read-only `issue-search` bank; absent means the diagnoser writes a `proposed_issue` |
 | B10 | `EVAL_ALIGNMENT_STATE` with no unresolved hold | trial | `up`/`trial` refuse while a hold exists; resolve with `alignment resolve` (the hold is recovery state, not a jump) |
@@ -83,16 +83,19 @@ export EVAL_BRANCH=eval
 export EVAL_WEB_DIR=~/WebExploitBench
 export EVAL_TARGET_PLATFORM=linux/amd64
 export PH_API=http://localhost:8080
-export EVAL_SHA=$(git -C "$EVAL_REPO" rev-parse eval)
 export EVAL_STACK_FINGERPRINT=<the operator's fingerprint for the running tree>
 export EVAL_ASSESS_COMMAND="opencode run --agent eval-assessor --dir $EVAL_REPO \"Follow {prompt}. trial_record={trial_record}; ground_truth={ground_truth}; data_root={data_root}; destination={destination}; trace_id={trace_id}. Write only {destination}.\""
 export EVAL_DIAGNOSE_COMMAND="opencode run --agent eval-diagnoser --dir $EVAL_REPO \"Follow {prompt}. trial_record={trial_record}; verdicts={verdicts}; ground_truth={ground_truth}; data_root={data_root}; vulns={vulns}; destination={destination}; trace_id={trace_id}. Write only {destination}.\""
 export EVAL_SURFER_COMMAND="opencode run --agent eval-surfer --dir $EVAL_REPO \"Follow {prompt}. input={input}; destination={destination}. Write only {destination}.\""
 ```
 
-`EVAL_STACK_FINGERPRINT` is the fingerprint of the running tree, so it matches the current `EVAL_SHA`.
-The version jump and its stack manifest are owned by the external operator, out of band, and are no longer computed by this codebase; the operator supplies the fingerprint (or reuses a prior run's value) when a scenario asserts it.
-The `eval/advance/` package and its `manifest`/`images`/`fingerprint` modules are gone, so there is no in-repo one-liner for this value.
+Do not export `EVAL_SHA`. The trial starter reads the commit HEAD points to in the instance worktree and stamps it into `trial.yaml`; the container bind-mounts that worktree's `src/`, `lightrag/`, `db/`, `skills/`, and `gateway/` (`docker-compose.dev.yml`), so its HEAD IS the code the stack loads.
+An `--eval-sha`/`EVAL_SHA` left over from habit is treated as a cross-check: a value that disagrees with HEAD is ignored and recorded as a note, never written over the loaded commit.
+The starter also sets `worktree_dirty` when a tracked path in that worktree differs from HEAD, because the SHA then names the base commit and the fingerprint carries the content identity.
+
+`EVAL_STACK_FINGERPRINT` is the fingerprint of the running tree.
+The version jump and its stack manifest are owned by the external operator, out of band, so the operator supplies the fingerprint (or reuses a prior run's value).
+The `eval/advance/` identity library (`manifest`, `images`, `fingerprint`) still exists, but it needs the running containers' digests, and the operator's historical formula is not the same value, so no in-repo one-liner reproduces a past fingerprint.
 
 ### Step 0 - plan gate (already green, re-run to confirm)
 
@@ -119,12 +122,13 @@ Every failure prints `orchestrator: error: ...` and exits 1.
 
 ```
 PYTHONPATH=eval python3 -m orchestrator trial eval/setups/first.yaml eval-server-1 comfyui-1 \
-  --eval-sha "$EVAL_SHA" --stack-fingerprint "$EVAL_STACK_FINGERPRINT" \
+  --stack-fingerprint "$EVAL_STACK_FINGERPRINT" \
   --data-root "$EVAL_DATA_ROOT"
 ```
 
 Needs: B5, B6, B7, B10.
-Expected: `trial <trial_id>: complete (project <id>)`, phases `recon` and `hunting` with statuses; `eval/runs/comfyui-1/<trial_id>/trial.yaml` carries `eval_sha` and `stack_fingerprint` and `target_run_id: eval-server-1`.
+Expected: `trial <trial_id>: complete (project <id>)`, phases `recon` and `hunting` with statuses; `eval/runs/comfyui-1/<trial_id>/trial.yaml` carries `eval_sha` (the instance worktree HEAD the starter read), `worktree_dirty`, and `stack_fingerprint`, and `target_run_id: eval-server-1`.
+The identity read happens before the first API call: a missing or unreadable worktree fails loud, so a trial record can never carry a null version.
 The trial stamps the derived seed `t-1fc05262.target` into the settings PUT, so routing and scope agree.
 Failure paths: a phase `blocked` (predicate unmet), `failed` (a failed run or a `complete` run with no job rows), or `timeout`; the record and stdout report it.
 The trial verb exits 1 on a `failed` or `timeout` terminal and 0 on `complete`, `blocked`, or `stopped`: the failure is a recorded trial event, and the surfer loop (`surfer --once`) is what asserts and recovers it.
@@ -180,13 +184,13 @@ Materialize is idempotent: a re-run replaces each copy atomically from the sourc
 Every produced record must carry the version identity. Verify:
 
 ```
-grep -E "eval_sha|stack_fingerprint" eval/runs/comfyui-1/<trial_id>/trial.yaml
+grep -E "eval_sha|worktree_dirty|stack_fingerprint" eval/runs/comfyui-1/<trial_id>/trial.yaml
 grep -E "eval_sha|stack_fingerprint" eval/runs/comfyui-1/<trial_id>/verdicts.yaml
 grep -E "eval_sha|stack_fingerprint" eval/runs/comfyui-1/<trial_id>/diagnoses.yaml
-grep -E "eval_sha|stack_fingerprint" /srv/eval-artifacts/comfyui-1/eval-server-1/<trial_id>/run-manifest.yaml
+grep -E "eval_sha|worktree_dirty|stack_fingerprint" /srv/eval-artifacts/comfyui-1/eval-server-1/<trial_id>/run-manifest.yaml
 ```
 
-Expected: the same `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` in all four.
+Expected: the same `eval_sha` and `stack_fingerprint` in all four (the trial record's values, copied).
 The verdict and diagnosis schemas refuse a row whose identity is missing or does not match the record, and `store materialize` refuses a record with no identity, so an unattributed artifact cannot land in the store.
 
 ## 4. Failure reporting, never silent patching

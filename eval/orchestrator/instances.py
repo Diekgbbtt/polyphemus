@@ -14,11 +14,12 @@ The commands are planned purely; execution is one injected runner.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from orchestrator.commands import Command, CommandRunner, require_ok
+from orchestrator.commands import Command, CommandRunner, LocalRunner, require_ok
 from orchestrator.ids import short_id
 from orchestrator.setup import Instance
 
@@ -147,6 +148,81 @@ def plan_worktree_remove(paths: InstancePaths) -> Command:
         ),
         description=f"remove worktree {paths.instance.instance_id}",
     )
+
+
+def plan_head_sha(paths: InstancePaths) -> Command:
+    """The version identity of the code the instance loads (D32).
+
+    The agent, lightrag, db, skills, and gateway sources are bind-mounted from
+    the instance worktree (`docker-compose.dev.yml`), so the commit HEAD points
+    to THERE is the code the stack runs. Reading it is what makes a trial
+    record name its own version instead of an operator-entered guess.
+    """
+    return Command(
+        argv=("git", "-C", str(paths.worktree), "rev-parse", "HEAD"),
+        description=f"read the {paths.instance.instance_id} worktree HEAD",
+    )
+
+
+# The one identity shape `git rev-parse HEAD` answers: a full object name.
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def instance_head_sha(
+    paths: InstancePaths, run: CommandRunner | None = None
+) -> str:
+    """The commit HEAD points to in the instance worktree (D32).
+
+    Fails loud - never a silent None - because a trial record that names no
+    commit cannot be reproduced, and the store, the verdicts, and the diagnoses
+    all refuse an identity-less record later (`store.materialize`). The error
+    names the worktree that was read, so a missing `up` is diagnosable from the
+    trial start and not from the artifact store.
+    """
+    command = plan_head_sha(paths)
+    result = (run or LocalRunner())(command)
+    sha = (result.stdout or "").strip().splitlines()
+    candidate = sha[0].strip() if sha else ""
+    if result.returncode != 0 or not _COMMIT_SHA.fullmatch(candidate):
+        detail = (result.stderr or "").strip() or repr(candidate)
+        raise InstanceError(
+            f"cannot read the commit HEAD points to in the instance worktree "
+            f"{paths.worktree} ({paths.instance.instance_id}): {detail}. A trial "
+            "record must name the code its stack loads; bring the instance up "
+            "from a checked-out worktree first."
+        )
+    return candidate
+
+
+def plan_worktree_dirty(paths: InstancePaths) -> Command:
+    """Whether the loaded code differs from the commit HEAD names.
+
+    Tracked changes only: untracked operator files (`.env.bak-*`, a log) are not
+    code the stack loads from the tree, while a tracked edit means the running
+    bytes are not the commit - the record must say so beside the SHA.
+    """
+    return Command(
+        argv=(
+            "git", "-C", str(paths.worktree), "status", "--porcelain",
+            "--untracked-files=no",
+        ),
+        description=f"read the {paths.instance.instance_id} worktree state",
+    )
+
+
+def worktree_dirty(
+    paths: InstancePaths, run: CommandRunner | None = None
+) -> bool:
+    """True when a tracked path in the instance worktree differs from HEAD.
+
+    Fail-open toward DIRTY: an unreadable status is reported as dirty, because a
+    record that claims "this is the commit" when it cannot tell is the defect
+    this field exists to prevent.
+    """
+    result = (run or LocalRunner())(plan_worktree_dirty(paths))
+    if result.returncode != 0:
+        return True
+    return bool((result.stdout or "").strip())
 
 
 def plan_preflight(paths: InstancePaths) -> Command:

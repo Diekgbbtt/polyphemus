@@ -67,6 +67,7 @@ def test_up_executes_through_the_injected_runner(
     setup_path = _write_setup(tmp_path, sample_setup)
     runner = recording_runner(
         routes={
+            "rev-parse HEAD": fake_result(0, "d" * 40 + "\n"),
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "curl": fake_result(0, "200"),
@@ -232,6 +233,7 @@ def test_trial_executes_through_the_injected_api_and_runner(
     setup_path = _write_setup(tmp_path, sample_setup)
     runner = recording_runner(
         routes={
+            "rev-parse HEAD": fake_result(0, "d" * 40 + "\n"),
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "scaffold.py": fake_result(0, "services: 3\n"),
@@ -273,6 +275,7 @@ def test_trial_api_transport_failure_is_handled_not_a_traceback(
     setup_path = _write_setup(tmp_path, sample_setup)
     runner = recording_runner(
         routes={
+            "rev-parse HEAD": fake_result(0, "d" * 40 + "\n"),
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "scaffold.py": fake_result(0, "services: 3\n"),
@@ -317,11 +320,13 @@ def test_trial_api_transport_failure_is_handled_not_a_traceback(
     )
 
 
-def _run_trial_cli(sample_setup, tmp_path, recording_runner, fake_result, extra_args=()):
+def _run_trial_cli(sample_setup, tmp_path, recording_runner, fake_result, extra_args=(),
+                   head_sha="a" * 40):
     sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
     setup_path = _write_setup(tmp_path, sample_setup)
     runner = recording_runner(
         routes={
+            "rev-parse HEAD": fake_result(0, f"{head_sha}\n"),
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "scaffold.py": fake_result(0, "services: 3\n"),
@@ -446,6 +451,7 @@ def test_trial_outcome_prints_the_token_spend(monkeypatch) -> None:
             return record
 
     monkeypatch.setattr(cli, "_trial_config", lambda *a, **k: (None, None, None))
+    monkeypatch.setattr(cli, "_with_version_identity", lambda cfg, *a, **k: cfg)
     monkeypatch.setattr(cli.trial, "Trial", _FakeTrial)
     monkeypatch.setattr(
         cli, "Orchestrator", lambda *a, **k: SimpleNamespace(up=lambda: None)
@@ -503,6 +509,7 @@ def test_trial_outcome_prints_the_per_agent_token_spectrum(monkeypatch) -> None:
             return record
 
     monkeypatch.setattr(cli, "_trial_config", lambda *a, **k: (None, None, None))
+    monkeypatch.setattr(cli, "_with_version_identity", lambda cfg, *a, **k: cfg)
     monkeypatch.setattr(cli.trial, "Trial", _FakeTrial)
     monkeypatch.setattr(
         cli, "Orchestrator", lambda *a, **k: SimpleNamespace(up=lambda: None)
@@ -525,3 +532,225 @@ def test_trial_outcome_prints_the_per_agent_token_spectrum(monkeypatch) -> None:
     assert "cached_input 19000" in line
     assert "uncached_input 43100" in line
     assert "cache_detail_omitted 3" in line
+
+
+# --- the trial record names the commit the stack loads (D32) ------------------
+
+
+def test_the_trial_starter_stamps_the_instance_head(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    """The starter - not an operator env var - writes the version identity: the
+    commit HEAD points to in the worktree whose sources the containers mount."""
+    head = "1f0c8a2b3c4d5e6f708192a3b4c5d6e7f8091a2b"
+
+    code, record = _run_trial_cli(
+        sample_setup, tmp_path, recording_runner, fake_result, head_sha=head
+    )
+
+    assert code == 0
+    assert record["eval_sha"] == head
+
+
+def test_the_starter_reads_head_from_the_instance_worktree(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    """The read targets `<instances_root>/<instance_id>`, never the repo checkout:
+    a detached instance worktree is the code its compose bind-mounts."""
+    sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={
+            "rev-parse HEAD": fake_result(0, "a" * 40 + "\n"),
+            "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
+            "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
+            "scaffold.py": fake_result(0, "services: 3\n"),
+            "curl": fake_result(0, "200"),
+            "ps -a --format json": fake_result(
+                0, '{"Service": "app", "Health": "healthy"}'
+            ),
+        }
+    )
+
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: _FakeApi(_trial_routes()),
+    )
+
+    assert code == 0
+    worktree = str(tmp_path / "instances" / "arm-a")
+    reads = [text for text in runner.argv_texts if "rev-parse HEAD" in text]
+    assert reads == [f"git -C {worktree} rev-parse HEAD"]
+
+
+def test_a_declared_eval_sha_never_overrides_head(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    """An operator-declared sha is a cross-check, not a source: the record names
+    the loaded commit, and the disagreement is recorded instead of swallowed."""
+    head = "b" * 40
+    declared = "c" * 40
+
+    code, record = _run_trial_cli(
+        sample_setup,
+        tmp_path,
+        recording_runner,
+        fake_result,
+        head_sha=head,
+        extra_args=("--eval-sha", declared),
+    )
+
+    assert code == 0
+    assert record["eval_sha"] == head
+    assert any(declared in note and head in note for note in record["notes"])
+
+
+def test_an_unreadable_head_stops_the_trial_before_it_starts(
+    sample_setup, tmp_path, recording_runner, fake_result, capsys
+) -> None:
+    """A record must never carry a null identity: the starter fails loud."""
+    sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={"rev-parse HEAD": fake_result(128, "", "fatal: not a git repository")}
+    )
+
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: _FakeApi(_trial_routes()),
+    )
+
+    assert code == 1
+    assert "worktree" in capsys.readouterr().err
+    assert list((tmp_path / "runs").glob("*/**/trial.yaml")) == []
+
+
+def test_the_trial_plan_names_the_identity_read(
+    sample_setup, tmp_path, capsys
+) -> None:
+    setup_path = _write_setup(tmp_path, sample_setup)
+
+    code = cli.main(
+        ["trial", setup_path, "arm-a", "jetlinks-1", "--dry-run"],
+        runner_factory=_explode,
+        api_factory=_explode,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "rev-parse HEAD" in out
+
+
+def test_the_record_marks_a_dirty_instance_worktree(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    """HEAD names the base commit only: a tracked edit in the loaded tree must be
+    visible on the record, so a reader never mistakes the SHA for the bytes."""
+    sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={
+            "rev-parse HEAD": fake_result(0, "f" * 40 + "\n"),
+            "status --porcelain": fake_result(0, " M src/polymerhus/app/auth/tool.py\n"),
+            "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
+            "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
+            "scaffold.py": fake_result(0, "services: 3\n"),
+            "curl": fake_result(0, "200"),
+            "ps -a --format json": fake_result(
+                0, '{"Service": "app", "Health": "healthy"}'
+            ),
+        }
+    )
+
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: _FakeApi(_trial_routes()),
+    )
+
+    assert code == 0
+    record = yaml.safe_load(
+        next((tmp_path / "runs" / "jetlinks-1").glob("*/trial.yaml")).read_text(
+            encoding="utf-8")
+    )
+    assert record["eval_sha"] == "f" * 40
+    assert record["worktree_dirty"] is True
+
+
+def test_a_standalone_trial_creates_the_worktree_before_reading_its_head(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    """`up`'s first step is idempotent and creates the tree; a `trial` run
+    without a prior `up` must therefore still be able to read its HEAD."""
+    sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={
+            "rev-parse HEAD": fake_result(0, "9" * 40 + "\n"),
+            "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
+            "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
+            "scaffold.py": fake_result(0, "services: 3\n"),
+            "curl": fake_result(0, "200"),
+            "ps -a --format json": fake_result(
+                0, '{"Service": "app", "Health": "healthy"}'
+            ),
+        }
+    )
+
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: _FakeApi(_trial_routes()),
+    )
+
+    assert code == 0
+    texts = runner.argv_texts
+    worktree_add = next(i for i, text in enumerate(texts) if "worktree add" in text)
+    head_read = next(i for i, text in enumerate(texts) if "rev-parse HEAD" in text)
+    assert worktree_add < head_read
