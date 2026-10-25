@@ -386,6 +386,24 @@ def loop_risk(likelihood: Likelihood, impact: Impact) -> int:
     return RISK_WEIGHTS[likelihood] * impact_weight(impact)
 
 
+# The dispatch buckets over the combined loop risk (ADR, 2026-10-25). The mover
+# uses the bucket, never the raw likelihood, to order and hold loops.
+RISK_BUCKETS: tuple[str, ...] = ("none", "low", "medium", "high", "critical")
+
+
+def risk_bucket(risk: int) -> str:
+    """The dispatch bucket of a combined loop risk, 0..16."""
+    if risk <= 0:
+        return "none"
+    if risk <= 3:
+        return "low"
+    if risk <= 7:
+        return "medium"
+    if risk <= 11:
+        return "high"
+    return "critical"
+
+
 class Loop(_Record):
     """One ranked research direction and the dispatch grain.
 
@@ -807,10 +825,12 @@ __all__ = [
     "check_completion",
     "compute_impact",
     "compute_risk_profile",
+    "RISK_BUCKETS",
     "impact_severity",
     "impact_weight",
     "impact_weight_from_sub_score",
     "loop_risk",
     "normalise_loops",
+    "risk_bucket",
     "unit_kind_from_unit_id",
 ]

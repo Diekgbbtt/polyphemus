@@ -84,6 +84,8 @@ def _completed_sum(unit_id: str, total: int = 3) -> dict:
         "total": total,
         "breakdown": {"none": 0, "low": 0, "medium": 0, "high": 1,
                       "critical": 0},
+        "impact_breakdown": {"none": 0, "low": 1, "medium": 0, "high": 0,
+                             "critical": 0},
     }
 
 

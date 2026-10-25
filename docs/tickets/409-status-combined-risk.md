@@ -4,7 +4,7 @@
 
 **Blocked by:** 408
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/hunting_status.py, attack/hunting/runtime.py
 
@@ -14,11 +14,11 @@ The operator reads the run record to compare the A/B arms. The status must show 
 
 ## Acceptance criteria
 
-- [ ] The status renders the combined total, the impact breakdown, and the risk breakdown.
-- [ ] The likelihood breakdown remains visible.
-- [ ] The threshold and its basis are rendered.
-- [ ] A legacy run without the impact fields renders an explicit absence.
-- [ ] The display tests cover the new and legacy records.
+- [x] The status renders the combined total, the impact breakdown, and the risk breakdown.
+- [x] The likelihood breakdown remains visible.
+- [x] The threshold and its basis are rendered.
+- [x] A legacy run without the impact fields renders an explicit absence.
+- [x] The display tests cover the new and legacy records.
 
 ## Verification
 

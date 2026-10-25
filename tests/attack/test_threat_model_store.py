@@ -752,6 +752,23 @@ def test_a_legacy_loop_without_impact_parses_and_contributes_zero(tmp_path):
     assert "loop:loop-1.impact" in model["validation"]["missing"]
 
 
+def test_a_zero_risk_loop_is_stored_but_emits_no_loop_file(tmp_path):
+    """The impact axis can zero a high-likelihood direction. The loop stays in
+    the model and the risk profile, but it is never dispatched."""
+    store = ThreatModelStore(tmp_path)
+    zero = {**_loop("high"), "impact": {
+        "confidentiality": "none", "integrity": "none", "availability": "none",
+        "end_impact": "no end impact",
+    }}
+
+    _write_to_completed(store, loops=[zero])
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["loops"][0]["risk"] == 0
+    assert model["risk_profile"]["total"] == 0
+    assert store.read_loop_files(PROJECT, UNIT) == []
+
+
 def test_the_loop_file_carries_the_impact_and_the_risk(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store, loops=[_loop("high")])

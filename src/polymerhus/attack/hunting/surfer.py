@@ -632,7 +632,7 @@ def build_run_dispatch(
             project_id=project_id,
             run_id=run_id,
             hunt_key=item.dispatch_id,
-            likelihood=item.likelihood,
+            likelihood=item.bucket,
             hunter_store=hunter_store,
             state=state,
             gate=gate,

@@ -143,6 +143,12 @@ def _hunter_payload(**overrides) -> dict:
             "web_vulnerability_class": "idor",
             "likelihood": "high",
             "likelihood_rationale": "An anonymous caller controls the id.",
+            "impact": {
+                "confidentiality": "low",
+                "integrity": "none",
+                "availability": "none",
+                "end_impact": "A caller reads another tenant's item.",
+            },
             "confidence": "INFERRED",
             "evidences": [{"kind": "request", "ref": "GET /api/a"}],
         },
@@ -469,6 +475,19 @@ def loop_row(**overrides) -> dict:
         "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
     }
     row.update(overrides)
+    if "impact" not in overrides:
+        # Keep the fixture's combined risk aligned with its likelihood tier, so
+        # a `high` loop is a high-bucket loop in the sequencing tests.
+        level = {
+            "low": "low", "medium": "medium", "high": "high",
+            "critical": "high", "none": "none",
+        }.get(str(row.get("likelihood") or "none"), "none")
+        row["impact"] = {
+            "confidentiality": level,
+            "integrity": "none",
+            "availability": "none",
+            "end_impact": "A caller reads another tenant's item.",
+        }
     return row
 
 

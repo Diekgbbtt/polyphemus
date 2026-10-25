@@ -498,7 +498,8 @@ def test_a_resumed_run_adopts_the_committed_models_and_recomputes_risk_total(
 
     assert seen == []  # the complete model is adopted, never re-modelled
     assert fake.record["intake_position"] == 2
-    assert fake.record["risk_total"] == 4  # A: 1 (low) + B: 3 (high, adopted)
+    # A: 1 (low likelihood, low impact) + B: 9 (high likelihood, high impact)
+    assert fake.record["risk_total"] == 10
     assert [entry["unit_id"] for entry in fake.record["model_sums"]] == [
         UNIT_A, UNIT_B]
     assert dispatched == [LOOP_B_DISPATCH]  # the adopted unit's loop dispatches

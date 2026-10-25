@@ -72,6 +72,15 @@ def _loop_record(*, unit_id=UNIT, loop_id="loop-1", likelihood="high",
             "web_vulnerability_class": "idor",
             "likelihood": likelihood,
             "likelihood_rationale": "the item id is caller-supplied",
+            "impact": {
+                "confidentiality": {
+                    "low": "low", "medium": "medium", "high": "high",
+                    "critical": "high", "none": "none",
+                }.get(likelihood, "none"),
+                "integrity": "none",
+                "availability": "none",
+                "end_impact": "A caller reads another tenant's item.",
+            },
             "confidence": "INFERRED",
             "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
         },
@@ -90,6 +99,28 @@ def _loop_item(*, record=None, loop_id="loop-1", likelihood="high",
         if record is None else record,
         run_id=run_id,
     )
+
+
+def test_the_loop_item_carries_the_combined_risk_bucket():
+    record = _loop_record()
+    record["risk"] = 7
+
+    item = threat_loop_item(
+        project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
+        loop_id="loop-1", record=record, run_id=RUN)
+
+    assert item is not None
+    assert item.risk == 7
+    assert item.bucket == "medium"
+
+
+def test_a_zero_risk_loop_file_is_refused():
+    record = _loop_record()
+    record["risk"] = 0
+
+    assert threat_loop_item(
+        project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
+        loop_id="loop-1", record=record, run_id=RUN) is None
 
 
 # --- the loop dispatch record and the validity predicate (T4, #377) -----------

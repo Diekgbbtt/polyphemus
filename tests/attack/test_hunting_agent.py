@@ -71,6 +71,19 @@ def test_compose_grounding_renders_the_loop_payload():
         assert gone not in text
 
 
+def test_compose_grounding_renders_the_end_impact():
+    """The hunter sees the intended end impact as context, not as a gate: the
+    symptoms it engineers remain its own."""
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+    from tests.hunting_fixtures import _hunter_payload
+
+    text = _compose_grounding(_hunter_payload())
+
+    assert "End impact:" in text
+    assert "A caller reads another tenant's item." in text
+    assert "VC low" in text and "VI none" in text and "VA none" in text
+
+
 def test_step_protocol_respecifies_the_phase_hint_as_a_transition_signal():
     """The step protocol says the ENDING tool response of a pass carries the
     hint; it does not claim every tool result carries one."""

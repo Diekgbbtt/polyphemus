@@ -38,8 +38,11 @@ def _record(**overrides) -> dict:
         "threshold_basis": "override",
         "risk_weights": {"none": 0, "low": 1, "medium": 2, "high": 3,
                          "critical": 4},
+        "impact_weights": {"none": 0, "low": 1, "medium": 2, "high": 3,
+                           "critical": 4},
         "risk_total": 0,
         "risk_breakdown": _breakdown(),
+        "impact_breakdown": _breakdown(),
         "model_sums": [],
         "crossing_unit": None,
         "blocked_unit": None,
@@ -51,31 +54,66 @@ def _record(**overrides) -> dict:
     return record
 
 
-def _model(*likelihoods: str) -> dict:
-    """A persisted COMPLETED, valid model carrying the given loop levels."""
+def _impact(confidentiality="low", integrity="none", availability="none") -> dict:
     return {
-        "state": "COMPLETED",
-        "validation": {"valid": True},
-        "loops": [{"likelihood": level} for level in likelihoods],
+        "confidentiality": confidentiality,
+        "integrity": integrity,
+        "availability": availability,
+        "end_impact": "a literal end effect",
     }
 
 
-def test_the_unit_total_sums_the_loop_likelihood_weights():
-    """S2 7.1/7.3: the harness-owned per-unit total sums the loop likelihood
-    weights (0/1/2/3/4), and the per-level breakdown counts every loop,
-    including `none`."""
+def _model(*likelihoods: str) -> dict:
+    """A persisted COMPLETED, valid model carrying the given loop levels.
+
+    The impact weight is 1 for every loop, so the combined total equals the
+    likelihood total in the resume fixtures.
+    """
+    return {
+        "state": "COMPLETED",
+        "validation": {"valid": True},
+        "loops": [
+            {"likelihood": level, "impact": _impact()} for level in likelihoods
+        ],
+    }
+
+
+def test_the_unit_total_sums_the_combined_loop_risk():
+    """S2 7.3 (amended 2026-10-25): the harness-owned per-unit total sums the
+    combined loop risk (likelihood weight x impact weight), the likelihood
+    breakdown counts every loop, and the impact breakdown counts every loop by
+    its ordinal impact severity."""
     model = {"loops": [
-        {"likelihood": "critical"},
-        {"likelihood": "high"},
-        {"likelihood": "high"},
-        {"likelihood": "low"},
-        {"likelihood": "none"},
+        {"likelihood": "critical", "impact": _impact("high", "high", "high")},
+        {"likelihood": "high", "impact": _impact("high", "high")},
+        {"likelihood": "medium", "impact": _impact("medium")},
+        {"likelihood": "low", "impact": _impact("low")},
+        {"likelihood": "none", "impact": _impact("high", "high", "high")},
     ]}
 
     assert model_sum("Service:a", model) == ModelSum(
         unit_id="Service:a",
-        total=4 + 3 + 3 + 1 + 0,
-        breakdown={"none": 1, "low": 1, "medium": 0, "high": 2, "critical": 1},
+        total=16 + 12 + 4 + 1 + 0,
+        breakdown={"none": 1, "low": 1, "medium": 1, "high": 1, "critical": 1},
+        impact_breakdown={
+            "none": 0, "low": 1, "medium": 1, "high": 0, "critical": 3,
+        },
+    )
+
+
+def test_a_loop_without_impact_contributes_zero_to_the_unit_total():
+    model = {"loops": [
+        {"likelihood": "critical"},
+        {"likelihood": "high"},
+    ]}
+
+    assert model_sum("Service:a", model) == ModelSum(
+        unit_id="Service:a",
+        total=0,
+        breakdown={"none": 0, "low": 0, "medium": 0, "high": 1, "critical": 1},
+        impact_breakdown={
+            "none": 2, "low": 0, "medium": 0, "high": 0, "critical": 0,
+        },
     )
 
 
@@ -109,7 +147,8 @@ def test_the_run_record_carries_every_fixed_key():
         excluded=(IntakeExclusion("Service:b", "completed"),),
         threshold=12, basis="default",
     )
-    run.complete_unit("Service:a", ModelSum("Service:a", 3, _breakdown(high=1)))
+    run.complete_unit("Service:a", ModelSum(
+        "Service:a", 3, _breakdown(high=1), _breakdown(low=1)))
 
     record = run.record()
 
@@ -122,10 +161,14 @@ def test_the_run_record_carries_every_fixed_key():
     assert record["threshold_basis"] == "default"
     assert record["risk_weights"] == {
         "none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+    assert record["impact_weights"] == {
+        "none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
     assert record["risk_total"] == 3
     assert record["risk_breakdown"] == _breakdown(high=1)
+    assert record["impact_breakdown"] == _breakdown(low=1)
     assert record["model_sums"] == [
-        {"unit_id": "Service:a", "total": 3, "breakdown": _breakdown(high=1)}]
+        {"unit_id": "Service:a", "total": 3, "breakdown": _breakdown(high=1),
+         "impact_breakdown": _breakdown(low=1)}]
     assert record["crossing_unit"] is None
     assert record["blocked_unit"] is None
     assert record["halt"] is False
@@ -171,7 +214,8 @@ def test_resume_adopts_a_model_committed_before_the_run_record_update():
     assert run.next_unit == "Service:b"
     assert run.accumulator.total == 3
     assert run.record()["model_sums"] == [
-        {"unit_id": "Service:a", "total": 3, "breakdown": _breakdown(high=1)}]
+        {"unit_id": "Service:a", "total": 3, "breakdown": _breakdown(high=1),
+         "impact_breakdown": _breakdown(low=1)}]
     assert run.record()["risk_total"] == 3
 
 

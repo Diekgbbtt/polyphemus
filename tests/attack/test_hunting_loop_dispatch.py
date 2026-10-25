@@ -125,6 +125,24 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
     assert "vector" not in payload
 
 
+def test_the_payload_carries_the_impact_and_not_the_derived_score(threat_store):
+    """The hunter receives the intended end impact as context. The derived
+    impact weight and loop risk are dispatch concerns, not hunter reasoning."""
+    produce_model(threat_store)
+    model = threat_store.read_model(PROJECT, UNIT)
+    loop_file = threat_store.read_loop_files(PROJECT, UNIT)[0]
+
+    payload = materialise_hunter_payload(
+        model, loop_file, dispatch_id=f"{UNIT_NAME}__loop-1",
+    )
+
+    assert payload["loop"]["impact"]["end_impact"] == (
+        "A caller reads another tenant's item.")
+    assert payload["loop"]["impact"]["confidentiality"] == "low"
+    assert "impact_weight" not in payload["loop"]
+    assert "risk" not in payload["loop"]
+
+
 # --- the payload's violation -> transition link (S2 5.1, S3 8.2) -------------
 
 def _dynamic_model(threat_store):
@@ -359,9 +377,10 @@ def test_the_hunter_session_receives_the_materialised_payload(
     assert seen[0]["canonical_class"] == "IDOR"
     assert seen[0]["trust_agreement"]["id"] == "ta-1"
     # DURING the graph stretch the two fields move TOGETHER (I1 + the F6
-    # invariant): `hunters_in_graph` holds quiesce, `loop_likelihoods` is what a
-    # later `low` loop waits behind - and both are released when the graph ends
-    assert snapshots == [({item.dispatch_id: "high"}, {item.dispatch_id})]
+    # invariant): `hunters_in_graph` holds quiesce, `loop_likelihoods` carries the
+    # live dispatch bucket a later `low` loop waits behind - and both are
+    # released when the graph ends.
+    assert snapshots == [({item.dispatch_id: item.bucket}, {item.dispatch_id})]
     assert state.loop_likelihoods == {}
     assert state.hunters_in_graph == set()
 

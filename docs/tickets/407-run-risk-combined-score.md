@@ -4,7 +4,7 @@
 
 **Blocked by:** 406
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/run_lifecycle.py, attack/hunting/runtime.py
 
@@ -14,13 +14,13 @@ The threshold is provisional at 360 and the A/B sets it per arm. The run record 
 
 ## Acceptance criteria
 
-- [ ] The model sum is the sum of the loop risks.
-- [ ] The accumulator total, breakdown, and per-unit entries use the combined score.
-- [ ] The run record carries both weight tables and both breakdowns.
-- [ ] The resume recomputes the combined total from the models.
-- [ ] The inclusive threshold comparison is preserved.
-- [ ] A model without impact contributes zero.
-- [ ] The crossing and blocked unit semantics are unchanged.
+- [x] The model sum is the sum of the loop risks.
+- [x] The accumulator total, breakdown, and per-unit entries use the combined score.
+- [x] The run record carries both weight tables and both breakdowns.
+- [x] The resume recomputes the combined total from the models.
+- [x] The inclusive threshold comparison is preserved.
+- [x] A model without impact contributes zero.
+- [x] The crossing and blocked unit semantics are unchanged.
 
 ## Verification
 

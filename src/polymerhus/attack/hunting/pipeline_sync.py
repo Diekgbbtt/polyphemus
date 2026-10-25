@@ -435,11 +435,21 @@ def _hunt_done(
 
 
 def _loop_weight(loop: Any) -> int:
-    """One model loop's risk weight; an unknown likelihood contributes nothing
-    (never a crash - the model is foreign or malformed, the queue still runs)."""
-    value = loop.get("likelihood") if isinstance(loop, Mapping) else None
+    """One model loop's combined risk weight.
+
+    The persisted loop carries the store-computed `risk`; a legacy or foreign
+    model without it falls back to the likelihood weight. An unknown likelihood
+    contributes nothing (never a crash - the queue still runs)."""
+    if not isinstance(loop, Mapping):
+        return 0
+    raw = loop.get("risk")
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0
     try:
-        return RISK_WEIGHTS[Likelihood(value)]
+        return RISK_WEIGHTS[Likelihood(loop.get("likelihood"))]
     except (ValueError, KeyError):
         return 0
 

@@ -98,6 +98,15 @@ def test_sync_mode_values_and_default():
     assert DEFAULT_SYNC_MODE is SyncMode.BATCHED
 
 
+def test_the_loop_weight_uses_the_combined_risk():
+    from polymerhus.attack.hunting.pipeline_sync import _loop_weight
+
+    assert _loop_weight({"risk": 9, "likelihood": "high"}) == 9
+    assert _loop_weight({"likelihood": "high"}) == 3
+    assert _loop_weight({"risk": "bad"}) == 0
+    assert _loop_weight(None) == 0
+
+
 def test_order_units_is_risk_desc_then_intake_position_then_name():
     units = [
         _unit("low", risk=1, intake=1),

@@ -198,6 +198,20 @@ def test_a_loop_without_an_impact_contributes_zero():
     assert compute_risk_profile([legacy]).total == 0
 
 
+def test_the_risk_buckets_cover_the_combined_score():
+    from polymerhus.attack.hunting.threat_model import risk_bucket
+
+    assert risk_bucket(0) == "none"
+    assert risk_bucket(1) == "low"
+    assert risk_bucket(3) == "low"
+    assert risk_bucket(4) == "medium"
+    assert risk_bucket(7) == "medium"
+    assert risk_bucket(8) == "high"
+    assert risk_bucket(11) == "high"
+    assert risk_bucket(12) == "critical"
+    assert risk_bucket(16) == "critical"
+
+
 def test_the_likelihood_weights_are_unchanged():
     assert RISK_WEIGHTS == {
         Likelihood.NONE: 0,

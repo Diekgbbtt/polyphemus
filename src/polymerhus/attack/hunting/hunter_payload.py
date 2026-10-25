@@ -128,6 +128,10 @@ def materialise_hunter_payload(
     COMPLETED model document, `loop_file` the produced loop file's body (the
     mover's dispatch record, S2 8.1). Pure and fail-open."""
     loop = dict(loop_file.get("loop") or {})
+    # The impact is hunter context. The derived impact weight and loop risk are
+    # dispatch concerns; the hunter does not reason over the score.
+    for derived in ("impact_weight", "risk"):
+        loop.pop(derived, None)
     fault_ref = str(loop.get("fault_ref") or "")
     assumption = _assumption_for_fault(model, fault_ref)
     trust_model = model.get("trust_model") or {}

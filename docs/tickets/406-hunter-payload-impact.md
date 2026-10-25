@@ -4,7 +4,7 @@
 
 **Blocked by:** 405
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/hunter_payload.py, attack/hunting/hunting_agent.py
 
@@ -14,11 +14,11 @@ The hunter's symptoms are more technical and scoped to a narrow part of the surf
 
 ## Acceptance criteria
 
-- [ ] The payload carries the impact metrics and the end-impact statement.
-- [ ] The payload does not carry the computed risk or a priority field.
-- [ ] The first human message can render the impact without narrowing the vector.
-- [ ] A payload for a model without impact renders an explicit absence, never a fabricated value.
-- [ ] The payload tests cover the present, absent, and degraded cases.
+- [x] The payload carries the impact metrics and the end-impact statement.
+- [x] The payload does not carry the computed risk or a priority field.
+- [x] The first human message can render the impact without narrowing the vector.
+- [x] A payload for a model without impact renders an explicit absence, never a fabricated value.
+- [x] The payload tests cover the present, absent, and degraded cases.
 
 ## Verification
 

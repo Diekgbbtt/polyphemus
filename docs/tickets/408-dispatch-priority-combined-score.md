@@ -4,7 +4,7 @@
 
 **Blocked by:** 407
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/pipeline_sync.py, attack/hunting/mover.py, attack/hunting/surfer.py
 
@@ -14,12 +14,12 @@ The buckets are critical >= 12, high 8..11, medium 4..7, low 1..3, none 0. A low
 
 ## Acceptance criteria
 
-- [ ] The loop file carries the risk bucket.
-- [ ] The mover's sequencing gates the low bucket behind higher buckets.
-- [ ] The live-loop map carries the bucket, not the likelihood string.
-- [ ] The pipeline sync risk helper uses the combined loop risk.
-- [ ] The hunt rank remains the loop rank and the rank is the risk rank.
-- [ ] A malformed or missing risk contributes zero and never crashes the queue.
+- [x] The loop file carries the risk bucket.
+- [x] The mover's sequencing gates the low bucket behind higher buckets.
+- [x] The live-loop map carries the bucket, not the likelihood string.
+- [x] The pipeline sync risk helper uses the combined loop risk.
+- [x] The hunt rank remains the loop rank and the rank is the risk rank.
+- [x] A malformed or missing risk contributes zero and never crashes the queue.
 
 ## Verification
 

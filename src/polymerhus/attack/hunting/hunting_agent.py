@@ -298,6 +298,8 @@ def _compose_grounding(payload: Mapping[str, Any]) -> str:
     loop_id = str(payload.get("loop_id") or "(unknown loop)")
     sharpening = payload.get("technical_sharpening") or {}
     target = payload.get("target_context") or {}
+    impact = (payload.get("loop") or {}).get("impact") or {}
+    end_impact = str(impact.get("end_impact") or "(none)")
     return (
         f"You are dispatched to hunt {unit_id} for one threat-model loop.\n"
         f"Loop: {loop_id} (dispatch id "
@@ -310,6 +312,10 @@ def _compose_grounding(payload: Mapping[str, Any]) -> str:
         f"{payload.get('vulnerability_rationale') or '(none)'}\n"
         f"Likelihood rationale: "
         f"{payload.get('likelihood_rationale') or '(none)'}\n"
+        f"End impact: {end_impact} (VC "
+        f"{impact.get('confidentiality') or 'none'}, VI "
+        f"{impact.get('integrity') or 'none'}, VA "
+        f"{impact.get('availability') or 'none'})\n"
         f"Confidence degree: {payload.get('confidence') or '(none)'}\n"
         f"Programming fault: {_render(payload.get('programming_fault'))}\n"
         f"Trust agreement: {_render(payload.get('trust_agreement'))}\n"

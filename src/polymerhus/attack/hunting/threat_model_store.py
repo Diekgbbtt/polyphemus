@@ -970,7 +970,9 @@ class ThreatModelStore(BoundedRecordStore):
         produced_dir = self._unit_dir(project_id, unit_name, "produced")
         written: set[str] = set()
         for loop in model.loops:
-            if loop.likelihood is Likelihood.NONE:
+            # A loop with zero combined risk is stored in the model but never
+            # dispatched: the impact axis can zero a high-likelihood direction.
+            if loop.risk <= 0:
                 continue
             record = {
                 "loop_id": loop.id,

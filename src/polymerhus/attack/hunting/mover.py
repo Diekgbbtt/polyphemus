@@ -64,7 +64,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, AbstractSet, Any, Callable, Iterable, Mapping, Protocol, Sequence
 
-from polymerhus.attack.hunting.threat_model import Likelihood, UnitKind
+from polymerhus.attack.hunting.threat_model import (
+    RISK_WEIGHTS,
+    Impact,
+    Likelihood,
+    UnitKind,
+    impact_weight,
+    risk_bucket,
+)
 from polymerhus.attack.hunting.threat_model_store import dispatch_id, is_loop_id
 from polymerhus.app.runtime import ModuleAdmissionRefused
 
@@ -235,6 +242,10 @@ class ThreatLoopItem(ProducedItem):
     record: Mapping[str, Any]
     model: Mapping[str, Any] | None = None
     recovered: bool = False
+    # The combined-risk dispatch bucket (ADR, 2026-10-25). The mover orders and
+    # holds loops by this bucket, never by the likelihood string.
+    risk: int = 0
+    bucket: str = "low"
 
 
 @dataclass(frozen=True)
@@ -276,8 +287,8 @@ class DispatchFeedback(Enum):
 
 # --- the loop dispatch record: the validity predicate + the sequencing ---------
 
-# The sequencing's higher tiers (S2 8.3): a `low` loop file waits while one of
-# these is produced or its hunter session is live.
+# The sequencing's higher buckets (S2 8.3, amended 2026-10-25): a `low` bucket
+# loop file waits while one of these is produced or its hunter session is live.
 HIGHER_TIERS: tuple[str, ...] = ("critical", "high", "medium")
 
 # The likelihood values a loop FILE may carry: `none` has no file at all
@@ -376,6 +387,36 @@ def threat_loop_item(
             "its loop record is missing or carries no fault_ref/"
             "vulnerability_ref/loop id",
         )
+    raw_risk = record.get("risk")
+    if raw_risk is None:
+        # A loop file written before the combined score: fall back to the
+        # likelihood tier. A file that carries an impact but no risk is
+        # malformed and is refused by the risk computation below.
+        if "impact" in loop:
+            try:
+                impact = Impact.model_validate(dict(loop.get("impact") or {}))
+            except Exception:  # noqa: BLE001 - a malformed impact is a refusal
+                return _refuse_loop(
+                    project_id, run_id, unit_name, loop_id,
+                    "its loop impact is unparseable",
+                )
+            risk = RISK_WEIGHTS[Likelihood(likelihood)] * impact_weight(impact)
+        else:
+            risk = RISK_WEIGHTS[Likelihood(likelihood)]
+    else:
+        try:
+            risk = int(raw_risk)
+        except (TypeError, ValueError):
+            return _refuse_loop(
+                project_id, run_id, unit_name, loop_id,
+                f"its risk {raw_risk!r} is not an integer",
+            )
+    bucket = risk_bucket(risk)
+    if bucket == "none":
+        return _refuse_loop(
+            project_id, run_id, unit_name, loop_id,
+            "a zero-risk loop has no dispatchable work",
+        )
     return ThreatLoopItem(
         message_id=dispatch,
         session_id=hunter_session_id(run_id, dispatch),
@@ -387,6 +428,8 @@ def threat_loop_item(
         record=record,
         model=model,
         recovered=recovered,
+        risk=risk,
+        bucket=bucket,
     )
 
 
@@ -422,17 +465,17 @@ def sequence_dispatch(
     is "live" while its hunter is still working the loop: an idle hunter authors
     nothing more, so it cannot hold a later low loop (and holding quiesce on it
     would deadlock the run terminal's settle, S2 8.4)."""
-    tiers = set(
+    buckets = set(
         live_likelihoods.values()
         if isinstance(live_likelihoods, Mapping) else live_likelihoods
     ) | {
-        item.likelihood for item in items if isinstance(item, ThreatLoopItem)
+        item.bucket for item in items if isinstance(item, ThreatLoopItem)
     }
-    if not any(tier in HIGHER_TIERS for tier in tiers):
+    if not any(bucket in HIGHER_TIERS for bucket in buckets):
         return tuple(items)
     return tuple(
         item for item in items
-        if not (isinstance(item, ThreatLoopItem) and item.likelihood == Likelihood.LOW.value)
+        if not (isinstance(item, ThreatLoopItem) and item.bucket == "low")
     )
 
 

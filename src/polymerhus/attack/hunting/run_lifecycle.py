@@ -29,7 +29,15 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-from .threat_model import DEFAULT_RISK_THRESHOLD, RISK_WEIGHTS, Likelihood
+from .threat_model import (
+    DEFAULT_RISK_THRESHOLD,
+    RISK_WEIGHTS,
+    Impact,
+    ImpactSeverity,
+    Likelihood,
+    impact_severity,
+    impact_weight,
+)
 from .unit_intake import IntakeExclusion
 
 logger = logging.getLogger(__name__)
@@ -37,6 +45,7 @@ logger = logging.getLogger(__name__)
 # The five likelihood levels in ascending weight order: the breakdown's key
 # order, so a recorded breakdown is stable and readable.
 RISK_LEVELS: tuple[str, ...] = tuple(level.value for level in Likelihood)
+IMPACT_LEVELS: tuple[str, ...] = tuple(level.value for level in ImpactSeverity)
 
 # The threshold's override variable and its recorded basis (S2 7.4). The DB
 # (`settings.hunting.risk_threshold`, ADR `hunting-pipeline-sync-adr.md`) wins
@@ -58,8 +67,10 @@ RUN_RECORD_KEYS: tuple[str, ...] = (
     "risk_threshold",
     "threshold_basis",
     "risk_weights",
+    "impact_weights",
     "risk_total",
     "risk_breakdown",
+    "impact_breakdown",
     "model_sums",
     "crossing_unit",
     "blocked_unit",
@@ -70,9 +81,17 @@ RUN_RECORD_KEYS: tuple[str, ...] = (
 
 
 def risk_weights() -> dict[str, int]:
-    """The recorded weight table (S2 7.1): the ONE likelihood-weight constant,
-    re-keyed by the enum's string value for the run record's JSON."""
+    """The recorded likelihood weight table (S2 7.1): the ONE likelihood-weight
+    constant, re-keyed by the enum's string value for the run record's JSON."""
     return {level.value: RISK_WEIGHTS[level] for level in Likelihood}
+
+
+def impact_weights() -> dict[str, int]:
+    """The recorded impact weight table: the ordinal 0..4 severity."""
+    return {
+        severity.value: weight
+        for weight, severity in enumerate(ImpactSeverity)
+    }
 
 
 def threshold_config(
@@ -125,12 +144,14 @@ class ModelSum:
     unit_id: str
     total: int
     breakdown: dict[str, int]
+    impact_breakdown: dict[str, int] = field(default_factory=lambda: _empty_impact_breakdown())
 
     def record(self) -> dict[str, Any]:
         return {
             "unit_id": self.unit_id,
             "total": self.total,
             "breakdown": dict(self.breakdown),
+            "impact_breakdown": dict(self.impact_breakdown),
         }
 
 
@@ -138,16 +159,35 @@ def _empty_breakdown() -> dict[str, int]:
     return {level: 0 for level in RISK_LEVELS}
 
 
-def model_sum(unit_id: str, model: Mapping[str, Any] | None) -> ModelSum:
-    """The harness-owned sum of ONE persisted model (S2 7.3).
+def _empty_impact_breakdown() -> dict[str, int]:
+    return {level: 0 for level in IMPACT_LEVELS}
 
-    The total and the breakdown come from the model's loops by the fixed weight
-    table; the store computes the same profile at the COMPLETED write and the
-    completion checker regression-checks it, so the recorded sum always restates
-    the loops the model carries. A model with no loops (a zero-loop unit, or a
-    partial document) sums to zero - it consumes no budget.
+
+def _loop_impact(loop: Mapping[str, Any]) -> Impact:
+    """The loop's authored impact, tolerant of a legacy or malformed record."""
+    raw = loop.get("impact")
+    if not isinstance(raw, Mapping):
+        return Impact()
+    try:
+        return Impact.model_validate(dict(raw))
+    except Exception:  # noqa: BLE001 - a malformed impact contributes zero
+        return Impact()
+
+
+def model_sum(unit_id: str, model: Mapping[str, Any] | None) -> ModelSum:
+    """The harness-owned sum of ONE persisted model (S2 7.3, amended).
+
+    The total sums the combined loop risk (`likelihood_weight * impact_weight`).
+    The likelihood breakdown counts every loop by likelihood, and the impact
+    breakdown counts every loop by ordinal impact severity. The store computes
+    the same profile at the COMPLETED write and the completion checker
+    regression-checks it, so the recorded sum always restates the loops the
+    model carries. A model with no loops (a zero-loop unit, or a partial
+    document) sums to zero - it consumes no budget. A loop without an impact
+    contributes zero risk and counts in the `none` impact bucket.
     """
     breakdown = _empty_breakdown()
+    impact_breakdown = _empty_impact_breakdown()
     total = 0
     for loop in (model or {}).get("loops") or []:
         likelihood = str((loop or {}).get("likelihood") or "")
@@ -158,8 +198,15 @@ def model_sum(unit_id: str, model: Mapping[str, Any] | None) -> ModelSum:
             )
             continue
         breakdown[likelihood] += 1
-        total += RISK_WEIGHTS[Likelihood(likelihood)]
-    return ModelSum(unit_id=unit_id, total=total, breakdown=breakdown)
+        weight = impact_weight(_loop_impact(loop))
+        impact_breakdown[impact_severity(weight).value] += 1
+        total += RISK_WEIGHTS[Likelihood(likelihood)] * weight
+    return ModelSum(
+        unit_id=unit_id,
+        total=total,
+        breakdown=breakdown,
+        impact_breakdown=impact_breakdown,
+    )
 
 
 @dataclass
@@ -178,6 +225,8 @@ class RiskAccumulator:
     weights: dict[str, int] = field(default_factory=risk_weights)
     total: int = 0
     breakdown: dict[str, int] = field(default_factory=_empty_breakdown)
+    impact_breakdown: dict[str, int] = field(
+        default_factory=_empty_impact_breakdown)
     model_sums: list[ModelSum] = field(default_factory=list)
     crossing_unit: str | None = None
     blocked_unit: str | None = None
@@ -189,6 +238,9 @@ class RiskAccumulator:
         self.total += entry.total
         for level, count in entry.breakdown.items():
             self.breakdown[level] = self.breakdown.get(level, 0) + count
+        for level, count in entry.impact_breakdown.items():
+            self.impact_breakdown[level] = (
+                self.impact_breakdown.get(level, 0) + count)
         self.model_sums.append(entry)
 
     @property
@@ -202,8 +254,10 @@ class RiskAccumulator:
             "risk_threshold": self.threshold,
             "threshold_basis": self.basis,
             "risk_weights": dict(self.weights),
+            "impact_weights": impact_weights(),
             "risk_total": self.total,
             "risk_breakdown": dict(self.breakdown),
+            "impact_breakdown": dict(self.impact_breakdown),
             "model_sums": [entry.record() for entry in self.model_sums],
             "crossing_unit": self.crossing_unit,
             "blocked_unit": self.blocked_unit,
@@ -393,6 +447,10 @@ def resume_run(
             total=int(entry.get("total") or 0),
             breakdown={level: int((entry.get("breakdown") or {}).get(level, 0))
                        for level in RISK_LEVELS},
+            impact_breakdown={
+                level: int((entry.get("impact_breakdown") or {}).get(level, 0))
+                for level in IMPACT_LEVELS
+            },
         )
     for entry in recorded.values():
         run.accumulator.add(entry)
@@ -445,6 +503,7 @@ def _dedupe_degraded(entries: Sequence[Mapping[str, Any]]) -> list[dict[str, str
 
 
 __all__ = [
+    "IMPACT_LEVELS",
     "ModelSum",
     "RISK_LEVELS",
     "RISK_THRESHOLD_ENV",
@@ -453,6 +512,7 @@ __all__ = [
     "THRESHOLD_BASIS_DEFAULT",
     "THRESHOLD_BASIS_OVERRIDE",
     "ThreatModelRun",
+    "impact_weights",
     "is_complete_model",
     "model_sum",
     "resume_run",
