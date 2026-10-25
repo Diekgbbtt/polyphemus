@@ -32,10 +32,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import AbstractSet
 
 from pydantic import BaseModel, ConfigDict, Field
 
 SCHEMA_VERSION = 1
+
+# Technique families are class parents in the suite tree, but they name a
+# technique, not a vulnerability class. The completion checker records their
+# use as a non-blocking finding; it never rejects the model.
+TECHNIQUE_FAMILIES: frozenset[str] = frozenset(
+    {"defence-bypass", "proxy-techniques", "two-principal-authz"}
+)
 
 # Migration note (2026-10-25): the failure-mode contraction removed the
 # `failure_modes` section and the `Loop.failure_mode_refs` link WITHOUT a
@@ -307,7 +315,6 @@ class Vulnerability(_Record):
     fault_ref: str
     canonical_class: str
     web_vulnerability_class: str = ""
-    suite_gap: bool = False
     characterisation: str
     dropped: bool = False
     drop_reason: str = ""
@@ -404,7 +411,6 @@ class Loop(_Record):
     vulnerability_ref: str
     canonical_class: str
     web_vulnerability_class: str = ""
-    suite_gap: bool = False
     likelihood: Likelihood
     likelihood_rationale: str
     risk_factors: RiskFactors
@@ -430,6 +436,10 @@ class Validation(_Record):
     missing: list[str] = Field(default_factory=list)
     unclosed: list[str] = Field(default_factory=list)
     referential_errors: list[str] = Field(default_factory=list)
+    # The class-binding signals (ADR, 2026-10-25). They never make the model
+    # invalid: they are a signal to the modeller that the modelling procedure
+    # went wrong, not a symbolic rejection.
+    class_findings: list[str] = Field(default_factory=list)
 
 
 class ModelSections(BaseModel):
@@ -583,8 +593,6 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
     for vulnerability in model.vulnerabilities:
         if not vulnerability.canonical_class:
             missing.append(f"vulnerability:{vulnerability.id}.canonical_class")
-        if not vulnerability.web_vulnerability_class and not vulnerability.suite_gap:
-            missing.append(f"vulnerability:{vulnerability.id}.web_vulnerability_class")
     every_vulnerability_dropped = bool(model.vulnerabilities) and all(
         vulnerability.dropped for vulnerability in model.vulnerabilities
     )
@@ -675,8 +683,6 @@ def _check_references(model: UnitThreatModel) -> list[str]:
                     f"loop:{loop.id}", "web_vulnerability_class",
                     loop.web_vulnerability_class,
                 )
-            if loop.suite_gap != vulnerability.suite_gap:
-                unresolved(f"loop:{loop.id}", "suite_gap", str(loop.suite_gap))
     return errors
 
 
@@ -706,8 +712,38 @@ def _check_closure(model: UnitThreatModel) -> list[str]:
     return unclosed
 
 
+def _check_classes(
+    model: UnitThreatModel, class_names: AbstractSet[str] | None,
+) -> list[str]:
+    """The class-binding signals (ADR, 2026-10-25).
+
+    An empty class, a technique family, or a name outside the supplied suite
+    index is a finding. A finding never makes the model invalid: the operator
+    wants a signal that the modelling procedure went wrong, not a symbolic
+    rejection.
+    """
+    findings: list[str] = []
+    for vulnerability in model.vulnerabilities:
+        value = vulnerability.web_vulnerability_class
+        if not value:
+            findings.append(
+                f"vulnerability:{vulnerability.id}.web_vulnerability_class=empty")
+        elif value in TECHNIQUE_FAMILIES:
+            findings.append(
+                f"vulnerability:{vulnerability.id}.web_vulnerability_class="
+                f"{value!r} is a technique family, not a vulnerability class")
+        elif class_names is not None and value not in class_names:
+            findings.append(
+                f"vulnerability:{vulnerability.id}.web_vulnerability_class="
+                f"{value!r} is not in the suite")
+    return findings
+
+
 def check_completion(
-    model: UnitThreatModel, *, checked_at: datetime | None = None
+    model: UnitThreatModel,
+    *,
+    checked_at: datetime | None = None,
+    class_names: AbstractSet[str] | None = None,
 ) -> Validation:
     """The non-blocking completion check (S2 5.7).
 
@@ -715,6 +751,10 @@ def check_completion(
     findings; `valid` is true only when the model parsed and all three finding
     lists are empty. The stored risk profile is REGRESSION-checked against a
     fresh recomputation from the loops, never trusted.
+
+    `class_names` is the optional suite index (class parents and variant
+    leaves). Its findings ride the separate `class_findings` list and never
+    affect `valid`.
 
     The boundary is a pydantic-validated `UnitThreatModel`, so
     `Validation.parseable` is always true here: the store rejects an
@@ -725,6 +765,7 @@ def check_completion(
     missing = _check_necessary(model)
     referential_errors = _check_references(model)
     unclosed = _check_closure(model)
+    class_findings = _check_classes(model, class_names)
     return Validation(
         checked_at=checked_at or datetime.now(timezone.utc),
         parseable=True,
@@ -732,6 +773,7 @@ def check_completion(
         missing=missing,
         unclosed=unclosed,
         referential_errors=referential_errors,
+        class_findings=class_findings,
     )
 
 
@@ -762,6 +804,7 @@ __all__ = [
     "RiskFactors",
     "RiskProfile",
     "SCHEMA_VERSION",
+    "TECHNIQUE_FAMILIES",
     "STATE_ORDER",
     "TechnicalSharpening",
     "Transition",

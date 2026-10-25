@@ -4,7 +4,7 @@
 
 **Blocked by:** 410
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/prompts/threat-modeller.md, attack/hunting/threat_modeller.py
 
@@ -14,16 +14,16 @@ The impact questions are: if exploited, could the issue enable privileged action
 
 ## Acceptance criteria
 
-- [ ] The prompt carries the three metric definitions and the ordinal impact weight.
-- [ ] The prompt requires the attacker-capability, target-state, and literal-damage reasoning.
-- [ ] The prompt carries the impact questions.
-- [ ] The prompt removes the failure-mode deduction.
-- [ ] The prompt removes the encoding floor.
-- [ ] The prompt carries the two-clause drop rule.
-- [ ] The prompt states that unobserved assumptions survive.
-- [ ] The prompt states that the hunter and the pod own feasibility and effective attempt.
-- [ ] The risk-scoring text matches the combined formula and the ranking.
-- [ ] The prompt tests assert the clauses and the removals.
+- [x] The prompt carries the three metric definitions and the ordinal impact weight.
+- [x] The prompt requires the attacker-capability, target-state, and literal-damage reasoning.
+- [x] The prompt carries the impact questions.
+- [x] The prompt removes the failure-mode deduction.
+- [x] The prompt removes the encoding floor.
+- [x] The prompt carries the two-clause drop rule.
+- [x] The prompt states that unobserved assumptions survive.
+- [x] The prompt states that the hunter and the pod own feasibility and effective attempt.
+- [x] The risk-scoring text matches the combined formula and the ranking.
+- [x] The prompt tests assert the clauses and the removals.
 
 ## Verification
 

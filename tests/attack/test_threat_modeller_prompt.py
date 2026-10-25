@@ -52,7 +52,10 @@ def test_the_prompt_carries_the_required_material():
         "section_assumptions": "assumptions",
         "section_vulnerabilities": "vulnerabilities",
         "section_loops": "loops",
-        "two_branch_method": "Branch A - trust agreements",
+        "axis_identity": "### Identity",
+        "axis_spatial": "### Spatial",
+        "axis_temporal": "### Temporal",
+        "axis_controls": "### Controls semantics",
         "dynamic_state_branch": "dynamic-state trust",
         "confidence_observed": "`OBSERVED`",
         "confidence_inferred": "`INFERRED`",
@@ -64,7 +67,8 @@ def test_the_prompt_carries_the_required_material():
         "evidence_entries_only": "the only place evidence lives",
         "live_authority": "live target responses are the evidence",
         "retention_first": "Retention first",
-        "infeasibility_criterion": "fundamental technical-infeasibility",
+        "drop_rule": "A drop requires ONE of two findings",
+        "unobserved_assumptions": "Unobserved assumptions survive",
         "closure_check": "Assumption-to-loop closure",
         "risk_factor_attack_vector": "**attack vector**",
         "risk_factor_attack_requirements": "**attack requirements**",
@@ -72,7 +76,12 @@ def test_the_prompt_carries_the_required_material():
         "risk_factor_complexity": "**complexity**",
         "likelihood_enum": "`none / low / medium / high / critical`",
         "monotonic_weights": "`0 / 1 / 2 / 3 / 4`",
-        "likelihood_only": "Impact is excluded",
+        "impact_metrics": "**Impact metrics.**",
+        "combined_risk": "**Combined risk.**",
+        "wellformedness": "Well-formedness: retrospective modelling",
+        "class_guard": "Technique families are not vulnerability classes",
+        "class_required": "never leave `web_vulnerability_class` empty",
+        "worked_example": "## Worked example: the cover fetch",
         "probe_rules": "NEVER destructive",
         "target_front_directive": "502 Bad Gateway",
         "route_absence": "404",
@@ -143,6 +152,17 @@ def test_the_prompt_reference_table_matches_the_typed_paths():
         "loops[].vulnerability_ref",
     ):
         assert path in prompt, path
+
+
+def test_the_worked_example_carries_the_impact_arithmetic():
+    """The composite example is the prompt's worked chain: the SSRF/TOCTOU
+    metrics, the sub-score, the ordinal weight, and the low-yield contrast."""
+    prompt = _modeller_skill()
+    assert "TOCTOU" in prompt
+    assert "0.6568" in prompt
+    assert "ordinal weight is `3`" in prompt
+    assert "soft-404 contract divergence" in prompt
+    assert "impact weight is `0`" in prompt
 
 
 def test_the_prompt_embeds_the_retired_notes_material():

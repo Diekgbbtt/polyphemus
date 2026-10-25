@@ -99,7 +99,16 @@ def test_the_pass_prompts_each_state_in_order_with_its_gate_instruction(tmp_path
 
     asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
 
-    assert [turn.state for turn in turns.turn_inputs] == list(ModelState)
+    assert [turn.state for turn in turns.turn_inputs] == [
+        ModelState.UNIT_TECHNICAL_SHARP,
+        ModelState.TRUST_MODELLED,
+        ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+        ModelState.VULNERABILITIES_WRITTEN,
+        ModelState.VULNERABILITIES_WRITTEN,
+    ]
+    assert turns.turn_inputs[4].phase == "WELLFORMEDNESS"
+    assert turns.turn_inputs[4].instruction.startswith(
+        "Run the well-formedness phase")
     first = turns.turn_inputs[0]
     assert first.unit_id == UNIT
     assert set(first.sections) == {"technical_sharpening"}
@@ -151,7 +160,7 @@ def test_each_gate_write_response_carries_the_next_state_hint(tmp_path):
     assert (GATE_HINTS[ModelState.TRUST_ASSUMPTIONS_WRITTEN]
             .startswith("Proceed to vulnerability citation"))
     assert (GATE_HINTS[ModelState.VULNERABILITIES_WRITTEN]
-            .startswith("Proceed to the ranked loops"))
+            .startswith("Proceed to the well-formedness phase"))
 
 
 def test_a_pass_that_never_completes_reports_a_degraded_unit(tmp_path):
@@ -174,6 +183,51 @@ def test_a_pass_that_never_completes_reports_a_degraded_unit(tmp_path):
     assert store.read_abandoned_units(PROJECT) == [UNIT]
 
 
+def test_a_lower_gate_write_re_enters_the_wellformedness_turn(tmp_path):
+    """The well-formedness phase is a loop: the first turn writes a lower gate
+    (a local patch), the pass asks the phase again, and the second turn writes
+    the exit note and COMPLETED. The harness records the lower-gate re-entry."""
+    store = ThreatModelStore(root_dir=tmp_path)
+
+    class _Reentering(_ScriptedTurns):
+        def __call__(self, turn):
+            self.turn_inputs.append(turn)
+            if turn.phase == "WELLFORMEDNESS":
+                attempts = [t for t in self.turn_inputs
+                            if t.phase == "WELLFORMEDNESS"]
+                if len(attempts) == 1:
+                    self.store_tool(turn).invoke({
+                        "cmd": "write",
+                        "state": ModelState.TRUST_ASSUMPTIONS_WRITTEN.value,
+                        "sections": _payloads()[
+                            ModelState.TRUST_ASSUMPTIONS_WRITTEN]})
+                    return None
+                notes = next(tool for tool in turn.tools if tool.name == "notes")
+                notes.invoke({
+                    "cmd": "write", "option": "append",
+                    "note_name": "wellformedness", "kind": "wellformedness",
+                    "body": "every loop checked after the local patch",
+                })
+                self.store_tool(turn).invoke({
+                    "cmd": "write", "state": ModelState.COMPLETED.value,
+                    "sections": _payloads()[ModelState.COMPLETED]})
+                return None
+            self.store_tool(turn).invoke({
+                "cmd": "write", "state": turn.state.value,
+                "sections": _payloads()[turn.state]})
+            return None
+
+    turns = _Reentering()
+    outcome = asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    assert outcome.status == "completed"
+    wellformedness_turns = [
+        turn for turn in turns.turn_inputs if turn.phase == "WELLFORMEDNESS"]
+    assert len(wellformedness_turns) == 2
+    assert any(entry.kind == "lower_gate" for entry in outcome.trail)
+
+
 def test_a_degraded_units_retry_re_authors_every_gate_from_scratch(tmp_path):
     """S1 7.7 retry policy: the archived partial leaves no persisted state, so a
     retry asks for the first gate again and models the unit to COMPLETED."""
@@ -187,7 +241,14 @@ def test_a_degraded_units_retry_re_authors_every_gate_from_scratch(tmp_path):
         PROJECT, RUN, UNIT, _tools(store), turn_fn=retry))
 
     assert outcome.status == "completed"
-    assert [turn.state for turn in retry.turn_inputs] == list(ModelState)
+    assert [turn.state for turn in retry.turn_inputs] == [
+        ModelState.UNIT_TECHNICAL_SHARP,
+        ModelState.TRUST_MODELLED,
+        ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+        ModelState.VULNERABILITIES_WRITTEN,
+        ModelState.VULNERABILITIES_WRITTEN,
+    ]
+    assert retry.turn_inputs[4].phase == "WELLFORMEDNESS"
     assert store.read_model(PROJECT, UNIT)["state"] == ModelState.COMPLETED.value
     assert store.read_abandoned_units(PROJECT) == [UNIT]
 
@@ -397,6 +458,16 @@ def test_a_run_scoped_actor_capture_completes_every_unit_of_the_run(tmp_path):
 
         def __call__(self, turn):
             self.turns.append(turn)
+            if turn.phase == "WELLFORMEDNESS":
+                captured_surface()["notes"].invoke({
+                    "cmd": "write", "option": "append",
+                    "note_name": "wellformedness", "kind": "wellformedness",
+                    "body": "every loop checked",
+                })
+                captured_surface()["hunts_store"].invoke({
+                    "cmd": "write", "state": ModelState.COMPLETED.value,
+                    "sections": _payloads()[ModelState.COMPLETED]})
+                return None
             captured_surface()["hunts_store"].invoke({
                 "cmd": "write", "state": turn.state.value,
                 "sections": _payloads()[turn.state]})
@@ -594,6 +665,17 @@ def test_the_suite_gap_reaches_the_unit_outcome(tmp_path):
     class _ProbingSuite(_ScriptedTurns):
         def __call__(self, turn):
             self.turn_inputs.append(turn)
+            if turn.phase == "WELLFORMEDNESS":
+                notes = next(tool for tool in turn.tools if tool.name == "notes")
+                notes.invoke({
+                    "cmd": "write", "option": "append",
+                    "note_name": "wellformedness", "kind": "wellformedness",
+                    "body": "every loop checked",
+                })
+                self.store_tool(turn).invoke({
+                    "cmd": "write", "state": ModelState.COMPLETED.value,
+                    "sections": _payloads()[ModelState.COMPLETED]})
+                return None
             suite_load = next(tool for tool in turn.tools
                               if tool.name == "skill_load")
             self.responses.append(suite_load.invoke({"name": "idor"}))
@@ -625,6 +707,17 @@ def test_injected_suite_tools_still_report_their_gaps(tmp_path):
     class _ProbingSuite(_ScriptedTurns):
         def __call__(self, turn):
             self.turn_inputs.append(turn)
+            if turn.phase == "WELLFORMEDNESS":
+                notes = next(tool for tool in turn.tools if tool.name == "notes")
+                notes.invoke({
+                    "cmd": "write", "option": "append",
+                    "note_name": "wellformedness", "kind": "wellformedness",
+                    "body": "every loop checked",
+                })
+                self.store_tool(turn).invoke({
+                    "cmd": "write", "state": ModelState.COMPLETED.value,
+                    "sections": _payloads()[ModelState.COMPLETED]})
+                return None
             suite_load = next(tool for tool in turn.tools
                               if tool.name == "skill_load")
             suite_load.invoke({"name": "idor"})

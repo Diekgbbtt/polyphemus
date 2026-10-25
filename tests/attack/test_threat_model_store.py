@@ -741,6 +741,72 @@ def test_check_completion_recomputes_the_risk_profile(tmp_path):
     assert "risk_profile.breakdown" in validation.missing
 
 
+def test_the_store_records_the_non_suite_class_finding(tmp_path):
+    store = ThreatModelStore(tmp_path, class_names={"idor"})
+    sections = _sections_below_completed()
+    for state, payload in sections:
+        if state == "VULNERABILITIES_WRITTEN":
+            payload = {"vulnerabilities": [{
+                **_vulnerabilities()[0],
+                "web_vulnerability_class": "made-up-class",
+            }]}
+        store.write_sections(PROJECT, UNIT, state, payload, run_id=RUN)
+    loops = [{**_loop("high"), "web_vulnerability_class": "made-up-class"}]
+    store.write_sections(
+        PROJECT, UNIT, "COMPLETED", _completed_sections(loops), run_id=RUN)
+
+    validation = store.read_model(PROJECT, UNIT)["validation"]
+
+    assert validation["valid"] is True
+    assert any("not in the suite" in finding
+               for finding in validation["class_findings"])
+
+
+def test_the_completion_records_a_technique_family_as_a_class_finding(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    for target in (document["vulnerabilities"][0], document["loops"][0]):
+        target["web_vulnerability_class"] = "defence-bypass"
+
+    validation = check_completion(
+        UnitThreatModel.model_validate(document),
+        class_names={"defence-bypass", "idor"},
+    )
+
+    assert validation.valid is True
+    assert any("technique family" in finding
+               for finding in validation.class_findings)
+
+
+def test_the_completion_records_a_non_suite_class_finding(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    for target in (document["vulnerabilities"][0], document["loops"][0]):
+        target["web_vulnerability_class"] = "made-up-class"
+
+    validation = check_completion(
+        UnitThreatModel.model_validate(document), class_names={"idor"})
+
+    assert validation.valid is True
+    assert any("not in the suite" in finding
+               for finding in validation.class_findings)
+
+
+def test_the_completion_records_an_empty_class_finding(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    for target in (document["vulnerabilities"][0], document["loops"][0]):
+        target["web_vulnerability_class"] = ""
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is True
+    assert any("=empty" in finding for finding in validation.class_findings)
+
+
 def test_check_completion_recomputes_the_impact_breakdown(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)

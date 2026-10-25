@@ -536,6 +536,20 @@ class ScriptedModellerTurns:
 
     def __call__(self, turn):
         self.turn_inputs.append(turn)
+        if turn.phase == "WELLFORMEDNESS":
+            notes = next(tool for tool in turn.tools if tool.name == "notes")
+            notes.invoke({
+                "cmd": "write", "option": "append",
+                "note_name": "wellformedness", "kind": "wellformedness",
+                "body": "every loop checked; no new assumption",
+            })
+            from polymerhus.attack.hunting.threat_model import ModelState
+            payload = self.payloads[ModelState.COMPLETED]
+            self.responses.append(self.store_tool(turn).invoke({
+                "cmd": "write", "state": ModelState.COMPLETED.value,
+                "sections": payload,
+            }))
+            return None
         if turn.state not in self.states:
             return None
         payload = self.payloads[turn.state]

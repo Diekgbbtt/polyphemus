@@ -4,7 +4,7 @@
 
 **Blocked by:** 411
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/threat_modeller.py, attack/hunting/threat_modeller_tools.py
 
@@ -14,15 +14,15 @@ The passive tracker observes hunts_store gate writes, not notes. A lower-gate wr
 
 ## Acceptance criteria
 
-- [ ] The pass asks the well-formedness turn after vulnerabilities.
-- [ ] The pass re-asks the turn after a lower-gate write.
-- [ ] The pass exits on the wellformedness note plus the COMPLETED write.
-- [ ] The notes tool accepts the wellformedness kind.
-- [ ] The note is written once at the exit and not per iteration.
-- [ ] The note carries the loops checked, the skills loaded, the assumptions added, the structural gap, and the final action.
-- [ ] The model state enum is unchanged.
-- [ ] A missing note is a non-blocking completion finding.
-- [ ] The pass tests cover the clean exit and the re-entry path.
+- [x] The pass asks the well-formedness turn after vulnerabilities.
+- [x] The pass re-asks the turn after a lower-gate write.
+- [x] The pass exits on the wellformedness note plus the COMPLETED write.
+- [x] The notes tool accepts the wellformedness kind.
+- [x] The note is written once at the exit and not per iteration.
+- [x] The note carries the loops checked, the skills loaded, the assumptions added, the structural gap, and the final action.
+- [x] The model state enum is unchanged.
+- [x] A missing note is a non-blocking completion finding.
+- [x] The pass tests cover the clean exit and the re-entry path.
 
 ## Verification
 

@@ -65,7 +65,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import AbstractSet, Any
 
 import yaml
 
@@ -101,7 +101,12 @@ NOTES_MAX_BYTES = 4 * 1024 * 1024
 
 # The existing note kinds (the pattern's #137 Q3). `phase_summary` is the
 # hunter's kind and is NOT available to the modeller (S1 5.2).
-NOTE_KINDS = ("hypothesis_refusal", "implicit_test_primitive", "freeform")
+NOTE_KINDS = (
+    "hypothesis_refusal",
+    "implicit_test_primitive",
+    "wellformedness",
+    "freeform",
+)
 
 _NOTE_ACTIONS = ("append", "update", "delete")
 
@@ -242,13 +247,22 @@ class ThreatModelDocumentError(ValueError):
 class ThreatModelStore(BoundedRecordStore):
     """The per-project unit threat model store (S2 10.1)."""
 
-    def __init__(self, root_dir: str | Path | None = None):
+    def __init__(
+        self,
+        root_dir: str | Path | None = None,
+        *,
+        class_names: AbstractSet[str] | None = None,
+    ):
         """Rooted under `root_dir` (default: the app-owned `DATA_ROOT`); the
         per-project bucket is `<root>/<project_id>/hunting/threat_modeller/`,
         resolved through the ONE `data_root.project_dir` layout owner. The
         explicit-root constructor is kept for the tests' temp stores (the
-        retired bounded-store precedent)."""
+        retired bounded-store precedent).
+
+        `class_names` is the optional web-vulnerability suite index used by the
+        class-binding completion findings. Its findings never reject a write."""
         self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
+        self._class_names = frozenset(class_names) if class_names is not None else None
 
     # --- path helpers ----------------------------------------------------------
 
@@ -931,7 +945,10 @@ class ThreatModelStore(BoundedRecordStore):
         if gate is ModelState.COMPLETED:
             model.loops = normalise_loops(model.loops)
             model.risk_profile = compute_risk_profile(model.loops)
-            model.validation = check_completion(UnitThreatModel.model_validate(model.model_dump()))
+            model.validation = check_completion(
+                UnitThreatModel.model_validate(model.model_dump()),
+                class_names=self._class_names,
+            )
         return model
 
     def _commit(

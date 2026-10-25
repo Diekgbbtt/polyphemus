@@ -46,7 +46,12 @@ class ProjectMemoryStore:
 
     # The closed enum of note kinds (#137, Q3). `constraint` is merged into
     # `hypothesis_refusal`; these three are canonical.
-    NOTE_KINDS = ("hypothesis_refusal", "implicit_test_primitive", "freeform")
+    NOTE_KINDS = (
+        "hypothesis_refusal",
+        "implicit_test_primitive",
+        "wellformedness",
+        "freeform",
+    )
 
     def __init__(self, root_dir: str | Path):
         self._root = Path(root_dir)

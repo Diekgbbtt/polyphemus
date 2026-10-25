@@ -644,6 +644,16 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
                 built.append(self.run_id)
             from tests.hunting_fixtures import modeller_gate_payloads
 
+            if turn_input.phase == "WELLFORMEDNESS":
+                self._surface["notes"].invoke({
+                    "cmd": "write", "option": "append",
+                    "note_name": "wellformedness", "kind": "wellformedness",
+                    "body": "every loop checked",
+                })
+                self._surface["hunts_store"].invoke({
+                    "cmd": "write", "state": ModelState.COMPLETED.value,
+                    "sections": modeller_gate_payloads()[ModelState.COMPLETED]})
+                return None
             self._surface["hunts_store"].invoke({
                 "cmd": "write", "state": turn_input.state.value,
                 "sections": modeller_gate_payloads()[turn_input.state]})

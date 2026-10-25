@@ -4,7 +4,7 @@
 
 **Blocked by:** 413
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/prompts/threat-modeller.md
 
@@ -14,12 +14,12 @@ The example is synthetic and must not overfit to the eval target. It shows the t
 
 ## Acceptance criteria
 
-- [ ] The example shows the technical sharpening, the trust agreement, the assumption and fault, the class, the impact metrics, the end impact, the well-formedness check, and the low-yield contrast.
-- [ ] The example uses the four axes by name.
-- [ ] The example's metric arithmetic is correct.
-- [ ] The example does not name the eval target.
-- [ ] The prompt tests assert the example's presence and the impact arithmetic.
-- [ ] The prompt stays within the line budget.
+- [x] The example shows the technical sharpening, the trust agreement, the assumption and fault, the class, the impact metrics, the end impact, the well-formedness check, and the low-yield contrast.
+- [x] The example uses the four axes by name.
+- [x] The example's metric arithmetic is correct.
+- [x] The example does not name the eval target.
+- [x] The prompt tests assert the example's presence and the impact arithmetic.
+- [x] The prompt stays within the line budget.
 
 ## Verification
 

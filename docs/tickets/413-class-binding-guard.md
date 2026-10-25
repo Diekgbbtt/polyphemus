@@ -4,7 +4,7 @@
 
 **Blocked by:** 412
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/prompts/threat-modeller.md, attack/hunting/threat_model.py, attack/hunting/threat_modeller_tools.py
 
@@ -14,16 +14,16 @@ The guard is a signal, not a symbolic rejection. A novel class binds its nearest
 
 ## Acceptance criteria
 
-- [ ] Every loop carries a suite class parent or leaf.
-- [ ] suite_gap is removed from the schema, the prompt, and the loop.
-- [ ] The prompt states the class-binding rule verbatim.
-- [ ] The prompt states that technique families are not classes.
-- [ ] The completion checker records a non-blocking finding for an empty class.
-- [ ] The completion checker records a non-blocking finding for a technique family.
-- [ ] The completion checker records a non-blocking finding for a name outside the suite.
-- [ ] The finding never rejects the write.
-- [ ] A novel class binds its nearest parent and keeps its canonical name.
-- [ ] The tests cover all four cases.
+- [x] Every loop carries a suite class parent or leaf.
+- [x] suite_gap is removed from the schema, the prompt, and the loop.
+- [x] The prompt states the class-binding rule verbatim.
+- [x] The prompt states that technique families are not classes.
+- [x] The completion checker records a non-blocking finding for an empty class.
+- [x] The completion checker records a non-blocking finding for a technique family.
+- [x] The completion checker records a non-blocking finding for a name outside the suite.
+- [x] The finding never rejects the write.
+- [x] A novel class binds its nearest parent and keeps its canonical name.
+- [x] The tests cover all four cases.
 
 ## Verification
 

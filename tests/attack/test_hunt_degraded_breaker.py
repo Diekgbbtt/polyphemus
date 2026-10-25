@@ -37,8 +37,23 @@ def _tools(tmp_path, **kwargs) -> ModellerTools:
 
 
 def _gate_writer(turn, store):
-    """The turn seam's real-decision action: the BOUND store tool's gate write."""
+    """The turn seam's real-decision action: the BOUND store tool's gate write.
+
+    The well-formedness pseudo-phase writes its exit note and the COMPLETED
+    gate, so a seam that writes every turn never re-enters the phase."""
     tool = next(t for t in turn.tools if t.name == "hunts_store")
+    if turn.phase == "WELLFORMEDNESS":
+        notes = next(t for t in turn.tools if t.name == "notes")
+        notes.invoke({
+            "cmd": "write", "option": "append",
+            "note_name": "wellformedness", "kind": "wellformedness",
+            "body": "every loop checked",
+        })
+        from polymerhus.attack.hunting.threat_model import ModelState
+        return tool.invoke({
+            "cmd": "write", "state": ModelState.COMPLETED.value,
+            "sections": modeller_gate_payloads()[ModelState.COMPLETED],
+        })
     return tool.invoke({
         "cmd": "write", "state": turn.state.value,
         "sections": modeller_gate_payloads()[turn.state],

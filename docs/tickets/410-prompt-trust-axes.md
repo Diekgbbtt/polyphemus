@@ -4,7 +4,7 @@
 
 **Blocked by:** 409
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** attack/hunting/prompts/threat-modeller.md, attack/hunting/threat_modeller.py
 
@@ -14,15 +14,15 @@ The spatial axis enumerates the spatially significant variables at each interfac
 
 ## Acceptance criteria
 
-- [ ] The prompt names the four axes and their elicitation questions.
-- [ ] The prompt requires the spatially significant variables at each interface and during processing.
-- [ ] The prompt requires the origin and lifecycle trace across creation, transformation, persistence, caching, queueing, replication, and service propagation.
-- [ ] The prompt distinguishes resource-selecting identifiers from identity claims.
-- [ ] The prompt requires the controls-semantics characterization, including the placement and the effective representation.
-- [ ] The prompt requires the temporal state and concurrency assumptions.
-- [ ] Branch A and Branch B carry comparable structural weight.
-- [ ] Temporal is not padded when the unit has few transitions.
-- [ ] The prompt tests assert the clauses, and the prompt stays within the line budget.
+- [x] The prompt names the four axes and their elicitation questions.
+- [x] The prompt requires the spatially significant variables at each interface and during processing.
+- [x] The prompt requires the origin and lifecycle trace across creation, transformation, persistence, caching, queueing, replication, and service propagation.
+- [x] The prompt distinguishes resource-selecting identifiers from identity claims.
+- [x] The prompt requires the controls-semantics characterization, including the placement and the effective representation.
+- [x] The prompt requires the temporal state and concurrency assumptions.
+- [x] Branch A and Branch B carry comparable structural weight.
+- [x] Temporal is not padded when the unit has few transitions.
+- [x] The prompt tests assert the clauses, and the prompt stays within the line budget.
 
 ## Verification
 
