@@ -155,7 +155,7 @@ The failure-mode removal is expand-contract: the impact lands first, the readers
 - Phase 3 is complete. The failure-mode contraction and the hunter/pod cleanup are at `de9cb2c5` and `2e2037a5`.
 - Phase 4 is complete for the docs. The implementation result is `docs/experiments/modeller-impact-quality/IMPLEMENTATION.md`.
 - Phase 5 is complete. The artifact is renamed from loop to threat across the module, the store, the prompts, the eval tooling, and the current documentation; the model schema is version 2. The next-trial narrowing measurement is built into `eval/measure_utm.py` and `eval/prompts/measure.md`.
-- The procedural verification is complete: `tests/attack` 1097 passed, `tests/eval` 831 passed, focused integration and e2e 89 passed, project management plus settings 50 passed and 2 skipped, `compileall` clean, `git diff --check` clean.
+- The procedural verification is complete: `tests/attack` 1103 passed, `tests/eval` 831 passed, focused integration and e2e 89 passed, project management plus settings 50 passed and 2 skipped, `compileall` clean, `git diff --check` clean.
 - The A/B is pending the operator's protocol. It is an experimentation item, not a tracked ticket.
 - The A/B also reports the narrowing metrics: the bound-class parent share, the spec count per threat, and the substantial-and-well-formed share.
 

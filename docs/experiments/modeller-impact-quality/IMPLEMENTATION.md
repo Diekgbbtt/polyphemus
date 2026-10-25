@@ -1,6 +1,6 @@
 # Impact-elicitation workstream: implementation result
 
-*Status: implemented on `feat/threat-model-impact-elicitation`, based on `hunt-enhancement-trunk` at `5c73ab82`; ready to merge. The A/B is pending the operator's protocol.*
+*Status: merged to `hunt-enhancement-trunk` at `11964f14` (feature branch based on `5c73ab82`, merged with the trunk at `55d10e65`). The A/B is pending the operator's protocol.*
 
 ## What landed
 
@@ -84,12 +84,14 @@ The measurement reports; it does not gate the run.
 - `2e2037a5` - pod basis removal, hunter vocabulary cleanup, docs (415, 417-420).
 - `156c549d` - the loop -> threat rename across the module, the tests, and the API (schema 2).
 - `c98108d5` - the eval rename plus the breadth and spec-discrimination measurement.
+- `2396b3a3` - the current-documentation rename and the narrowing record.
+- `11964f14` - the merge with the hunt-enhancement trunk (suite name-regex search and the HTTP-history fixes).
 
 ## Verification
 
 | Suite | Result |
 |---|---|
-| `tests/attack` | 1097 passed |
+| `tests/attack` | 1103 passed |
 | `tests/eval` | 831 passed |
 | focused integration and e2e | 89 passed |
 | project management plus settings deep merge | 50 passed, 2 skipped |
