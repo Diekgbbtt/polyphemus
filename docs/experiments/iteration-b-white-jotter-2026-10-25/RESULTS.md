@@ -2,7 +2,7 @@
 artifact: experiment-results
 version: "1.0"
 created: 2026-10-26
-status: interim
+status: complete
 ---
 
 # Experiment Results: Iteration B white-jotter impact elicitation
@@ -13,13 +13,16 @@ status: interim
 |---|---|
 | **Experiment ID** | `iteration-b-white-jotter-2026-10-25` |
 | **Experiment Name** | Threat-modeller impact elicitation, iteration B |
-| **Status** | Interim, trial in progress |
-| **Started** | 2026-10-25T21:55:50Z |
+| **Status** | Complete, negative on the green gate |
+| **Window** | 2026-10-25T21:51:53Z to 2026-10-26T03:11:21Z |
 | **Arms** | Arm A: 2026-10-24 batched white-jotter. Arm B: this run. |
-| **Sample Size** | 1 trial, 3 modelled units, 26 stored threats, 53 linked specs |
+| **Sample Size** | 1 trial, 3 modelled units of 27, 26 stored threats, 104 specs |
 | **Owner** | Operator |
 | **Design Doc** | `docs/experiments/iteration-b-white-jotter-2026-10-25/PLAN.md` |
-| **Trial Record** | `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/white-jotter-1/` |
+| **Measurement** | `artifacts/measurements.md`, `artifacts/measurements.yaml` |
+| **Trial Record** | `artifacts/trial.yaml` |
+
+**Headline:** the class guard and the impact ranking improved; the green gate, the discrimination space, and the discovery outcome did not.
 
 ---
 
@@ -67,19 +70,31 @@ status: interim
 | B | 10 | 26 | 38.5% | all stored threats, narrow high-yield set |
 | B (broad set) | 15 | 26 | 57.7% | all stored threats, broad high-yield set |
 
-**Observed difference:** not computable against the arm A green figure.
-
-The ADR's arm A green figure is 45 of 113 (39.8%).
-That is the same number as the arm A empty-and-suite-gap count, and the stored artifacts do not reproduce it.
+The gate is not met.
+The ADR's arm A figure of 45 of 113 (39.8%) is the same number as the arm A empty-and-suite-gap count; the stored artifacts do not reproduce it.
 The arm A class-binding rate is 68 of 111 (61.3%).
 
 **Interpretation:**
 
 The class guard works: 26 of 26 threats (100%) bind a suite class, against 61.3% in arm A.
-The green gate does not work: 10 of 26 threats (38.5%) are green under the narrow set, or 15 of 26 (57.7%) under the broad set.
 The impact elicitation shifted the class binding, not the class mass.
-
 The dominant non-green parents are information-disclosure (6), rate-limit-bypass (2), defence-bypass (2), and proxy-techniques (1).
+
+### Official Discovery Result
+
+The official record is 0 identified, 1 partial, and 6 missed.
+The identification rate is 0.0; the partial-or-identified rate is 0.1429.
+
+The partial is `white-jotter-001` at confidence 0.45.
+It is not a ground-truth-scoped discovery: the rate-limit pod's control probes authenticated `admin/123`, but the pod's confirmed class was rate-limit-bypass and its spec never tested credential acceptance.
+
+The seven diagnoses fall into three clusters:
+
+- the progressive risk halt (003, 004, 007) never modelled the unit;
+- the batched risk-descending queue plus the token budget (005, 006) modelled the loop but never hunted it;
+- modeller fault binding (001, 002) bound the wrong fault or closed the path-spelling family too early.
+
+The full record is in `artifacts/verdicts.yaml` and `artifacts/diagnoses.yaml`.
 
 ### Secondary Metrics
 
@@ -88,24 +103,25 @@ The dominant non-green parents are information-disclosure (6), rate-limit-bypass
 | Severe share | 25/113 (22.1%) | 10/26 (38.5%) | +16.4 pp | impact weight at least 3 |
 | Class-binding rate | 68/111 (61.3%) | 26/26 (100%) | +38.7 pp | non-empty suite class |
 | Severe threats below medium risk bucket | 18 of 25 below `high` | 0 | improved | no severe threat below medium |
-| Capped tokens per green threat | not comparable | 345,208 interim | - | 3,452,084 / 10 |
+| Capped tokens per green threat | not comparable | 701,745 | - | 7,017,453 / 10 |
+| Capped tokens per ground-truth vulnerability | - | 1,002,493 | - | 7,017,453 / 7 |
 | Sharp-boundary share | 32/113 (28.3%) | not measured | - | the schema has no boundary-shape field |
 | Risk total | 113 | 122 | +9 | the 110 threshold was crossed |
-
-The severe share improved.
-The severe threats are no longer demoted: every severe threat is at least medium.
-The green share did not improve.
 
 ### Guardrail Metrics
 
 | Guardrail | Threshold | Arm B | Status |
 |---|---|---|---|
-| Capped tokens | at most 7,000,000 | 3,452,084 interim | Pass so far |
+| Capped tokens | at most 7,000,000 | 7,017,453 | Fail by 17,453 (0.25%) |
 | Pipeline sync | `batched` | `batched` | Pass |
 | SkillEvolution | off | off | Pass |
-| `auth_store view:full` | never called | pending the log audit | Pending |
-| Execution terminal | complete or stopped at the cap | running | Pending |
-| Assessment and diagnosis | terminal or escalated | not started | Pending |
+| `auth_store view:full` | never called | not audited | Open |
+| Execution terminal | complete or stopped at the cap | `failed` (stop POST timeout) | Fail |
+| Assessment and diagnosis | terminal or escalated | complete | Pass |
+
+The app's hunting run finished `stopped` at 03:11:21 after crossing the budget.
+The trial's stop confirmation POST timed out, so the trial record says `failed` and records no overshoot.
+The token spend is 7,017,453, not the 7,000,000 cap.
 
 ### Narrowing Metrics
 
@@ -115,35 +131,44 @@ The green share did not improve.
 | Broad (`bound_class_is_parent=true`) | 21 | 80.8% |
 | Narrow (`false`) | 5 | 19.2% |
 | Breadth unknown (`null`) | 0 | every class is in the suite |
-| Linked specs | 53 | after dispatch-id normalisation |
-| Substantial spec sets (at least 3) | 11 | 42.3% of threats |
-| Well-formed spec sets | 1 | 3.8% of all threats, 9.1% of substantial |
-| Substantial sets with overlapping axes | 10 of 11 | 90.9% |
+| Linked specs | 104 | after dispatch-id normalisation |
+| Substantial spec sets (at least 3) | 21 | 80.8% of threats |
+| Well-formed spec sets | 1 | 3.8% of threats, 4.8% of substantial |
+| Substantial sets with overlapping axes | 20 of 21 | 95.2% |
 | Broad without a well-formed set | 21 of 21 | every broad threat |
 | Narrow without a well-formed set | 4 of 5 | the one well-formed set is narrow |
 
-The one well-formed set is `session-management` threat-2 with four distinct axes.
+The one well-formed set is `Service:sign-in__threat-2` (`session-management`) with four distinct axes.
 Every broad threat produced a substantial but one-dimensional set.
 The hunter varies technique, lifecycle event, artifact, signal channel, or principal consumer inside a single primary axis.
-That is the narrowing risk the experiment was built to measure, and it is present.
+
+The first unit carries 53 specs and 11 substantial sets.
+The second unit carries 51 specs and 10 substantial sets, none well-formed.
+The third unit carries 5 threats and 0 specs; the batched queue never reached it.
+
+The narrowing table is recomputed from the stored artifacts with the dispatch-id normalisation added in `3f8ac5cd`.
+The measurement subagent's deterministic narrowing undercounted the linked specs for the same reason.
 
 ### Token Tax
 
 | Agent | Capped tokens | Share | Calls | Notes |
 |---|---:|---:|---:|---|
-| Pod runner | 1,360,814 | 39.4% | - | 41 pods, 21 terminal |
-| Hunter | 967,315 | 28.0% | - | 53 linked specs |
-| Threat modeller | 582,875 | 16.9% | - | 3 units, stopped at risk 122 |
-| Mechanism typist | 322,896 | 9.4% | - | analysis |
-| Triager | 79,570 | 2.3% | - | recon |
-| Assigner | 49,080 | 1.4% | - | analysis |
-| Pod triager | 48,045 | 1.4% | - | 3 verdicts |
-| Job orchestrator | 41,489 | 1.2% | - | recon |
-| **Total** | **3,452,084** | 100% | 1,115 | interim |
+| Pod runner | 3,475,010 | 49.5% | 1,604 | 86 pods, 66 exports, 4 successes |
+| Hunter | 2,177,105 | 31.0% | 648 | 104 specs |
+| Threat modeller | 582,875 | 8.3% | 94 | 3 of 27 units |
+| Mechanism typist | 322,896 | 4.6% | 45 | analysis |
+| Pod triager | 289,428 | 4.1% | 31 | 4 successes |
+| Triager | 79,570 | 1.1% | 9 | recon |
+| Assigner | 49,080 | 0.7% | 9 | analysis |
+| Job orchestrator | 41,489 | 0.6% | 19 | recon |
+| **Total** | **7,017,453** | 100% | 2,459 | 0.25% over the cap |
 
-The pod runner is the largest consumer, as in arm A.
-The hunter is second at 28.0%, against 17.9% in arm A.
-The modeller is third at 16.9%, against 31.1% in arm A, because the risk threshold stopped it after three units.
+Hunting agents take 6,524,418 capped tokens (93.0%).
+The analysis-side agents take 451,546 (6.4%).
+The job orchestrator takes 41,489 (0.6%).
+Capped tokens are 7.25% of the 96.8M total; cached input is 94.6% of context.
+Reasoning is 54.6% of generated output.
+The live usage endpoint reads 7,022,363 capped and 2,460 calls, a 4,910-token drift after the terminal snapshot.
 
 ---
 
@@ -151,14 +176,15 @@ The modeller is third at 16.9%, against 31.1% in arm A, because the risk thresho
 
 ### By Unit
 
-| Unit | Threats | Green | Severe | Risk | Substantial specs | Well-formed |
-|---|---:|---:|---:|---:|---:|---:|
-| `Service:sign-in` | 11 | 5 | 6 | 47 | 11 | 1 |
-| `RESTApi:api` | 10 | 3 | 3 | 44 | 0 | 0 |
-| `Service:library-catalog` | 5 | 2 | 1 | 31 | 0 | 0 |
+| Unit | Threats | Green | Severe | Risk | Specs | Substantial | Well-formed |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `Service:sign-in` | 11 | 5 | 6 | 47 | 53 | 11 | 1 |
+| `RESTApi:api` | 10 | 3 | 3 | 44 | 51 | 10 | 0 |
+| `Service:library-catalog` | 5 | 2 | 1 | 31 | 0 | 0 | 0 |
 
 `Service:sign-in` carries the only green depth and the only well-formed set.
-`RESTApi:api` and `Service:library-catalog` have no specs yet; their hunter batches wait behind the first unit's pods.
+`RESTApi:api` produced specs but no well-formed set.
+`Service:library-catalog` produced the best SQL-injection loop and was never dispatched; 93% of the budget went to the two earlier units.
 
 ### By Threat Class
 
@@ -176,39 +202,46 @@ The modeller is third at 16.9%, against 31.1% in arm A, because the risk thresho
 | header-injection | 1 | 0 | 1 | - |
 | proxy-techniques | 1 | 0 | 0 | - |
 | http-method-tampering | 1 | 0 | 0 | - |
-| sql-injection | 1 | 1 | 1 | - |
-| path-traversal-lfi-rfi | 1 | 1 | 0 | - |
+| sql-injection | 1 | 1 | 1 | the best loop, never hunted |
+| path-traversal-lfi-rfi | 1 | 1 | 0 | the traversal loop, never hunted |
 | business-logic | 1 | 1 | 0 | - |
 
 ### By Phase
 
-| Phase | Capped tokens | Share | Notes |
+| Phase | Capped tokens | Share | Outcome |
 |---|---:|---:|---|
-| Recon and analysis | 493,035 | 14.3% | recon complete, analysis complete |
-| Hunting | 2,959,049 | 85.7% | modeller, hunter, pods |
+| Recon and analysis | 493,035 | 7.0% | recon complete, analysis drained |
+| Hunting | 6,524,418 | 93.0% | modeller, hunter, pods |
+| Trial total | 7,017,453 | 100% | stop confirmation failed |
 
 ### Segment Insights
 
-The modeller spends most of its budget on the first unit.
-The hunter spends its budget on one unit's deep spec set.
-The pod phase spends the most and loses most of it to budget timeouts.
+The cost is concentrated in the first two units.
+The third unit, which contains the best SQL-injection loop, was starved by the risk-descending batch and the 7M cap.
+The pod runner is 49.5% of the total, but 58 of 66 exports are watchdog envelopes.
 
 ---
 
 ## Workflow and Contract Findings
 
-- The class guard is effective: 26 of 26 threats bind a suite class.
-- The hunter writes the dispatch id `<unit_name>__threat-<n>` into `provenance.threat_id`; the measurement link missed 44 specs until normalised.
-- The measurement substrate now normalises the dispatch id in `eval/measure_utm.py`.
-- The hunter produces deep spec sets, but 10 of 11 substantial sets share one primary axis.
-- The batched 20-pod batch saturates the qemu target; 18 of 21 terminals are `budget-timeout`.
-- The threat files carry the impact fields; the first print that looked for `VC/VI/VA` was a reading error, not missing data.
+- The modeller modelled 3 of 27 intake units; the 110 risk threshold halted coverage before the ground-truth units 003, 004, and 007.
+- The batched queue drained the two highest-risk units first and never dispatched `Service:library-catalog`.
+- 58 of 66 PodExports are degraded `budget-timeout` envelopes written by the 2700 s watchdog; they carry zero raw observations.
+- 20 of 86 pod directories have no export at all.
+- 12 of 104 ratified specs lack `verification_symptoms`, `assumptions`, and `skill_concretised_procedure`.
+- The hunter writes the dispatch id into `provenance.threat_id`; the measurement link is normalised in `eval/measure_utm.py`.
+- The deterministic measurement has three recorded defects: the `loop-*.yaml` glob, the `provenance.skill_procedure` path, and keyword-inflated `spec_candidate`/`confirmed_non_gt`.
+- No skill-usage lesson shard exists under the project's `lessons/` directory, which is consistent with the SkillEvolution switch being off.
+- The trial-to-run identity chain breaks on the failure path: `trial.yaml` has `hunting.run_id: null` although run `12d15890` produced the artifacts.
 
 ## Failure and Error Findings
 
-- Three early trial attempts failed on the instance skills data-mount, not on branch code.
-- The repair is configuration-only: a bind mount of the `ph-dd131acc_skills-procedures` volume and `--skills-root` pointing at the instance worktree.
-- The pod budget timeouts are a harness loss, not a triager verdict. They are reported, not smoothed.
+- The budget-stop POST timed out after the run had stopped; the trial terminal is `failed` and `spend_overshoot` is null although the spend is 7,017,453.
+- 58 watchdog envelopes and 20 missing exports are the largest discovery-quality failures.
+- The 12 contract-broken specs were ratified and dispatched.
+- The default administrator pair `admin/123` was authenticated repeatedly as bootstrap material and never reported as a finding.
+- The wildcard BFLA pod reached `/api/;/admin/content/books` with HTTP 200 and a 41-byte code-400 envelope, then moved to `/actuator`; its export was lost to the watchdog.
+- The three early trial attempts failed on the instance skills data-mount, not on branch code; the repair is recorded in `RUN-STATE.md`.
 
 ---
 
@@ -216,25 +249,27 @@ The pod phase spends the most and loses most of it to budget timeouts.
 
 ### What We Learned
 
+- Coverage, not class knowledge, is the binding constraint on this target.
+- A sharp loop is not enough if the queue cannot reach it.
 - The impact model fixes the ranking: no severe threat sits below the medium bucket.
 - The class guard fixes the class binding: every stored threat is huntable by a suite skill.
 - Neither change shifts the class mass: 38.5% green narrow, 57.7% broad.
-- The trust-boundary sharpening narrows the spec set: one well-formed set out of eleven substantial sets.
-- The deepest confirmed findings are on non-green classes: rate-limit-bypass and defence-bypass-parser-confusion.
-- One green class confirmed: session-management.
+- The trust-boundary sharpening narrows the spec set: 1 well-formed set out of 21 substantial sets.
 
 ### What Surprised Us
 
-- The hunter produced 53 linked specs for 11 threats in one unit, more than arm A's whole run.
+- The pipeline spent 7,017,453 capped tokens to identify zero of seven ground-truth vulnerabilities.
+- The deepest confirmed findings are on non-green classes: rate-limit-bypass, defence-bypass-parser-confusion, and session fixation on a green class.
 - The only well-formed set is on a narrow class, not a broad one.
-- The 20-pod batch timed out 18 of 21 pods on the qemu target.
+- The pod runner is 49.5% of the total, but most of that spend ends in watchdog envelopes.
 
 ### What Remains Unknown
 
-- The official ground-truth verdicts for the three confirmed symptoms.
-- The second and third units' hunter and pod behaviour; their batches have not run.
-- Whether a target-aware pod concurrency would recover the 18 timeouts.
+- Whether a per-unit budget reservation would have admitted `Service:library-catalog` and the SQL-injection loop.
+- Whether the 58 watchdog exports are an intended degraded contract or a schema regression.
+- Whether the 12 contract-broken specs are a regression from `81522a71` or a pre-existing hunter defect.
 - Whether the green set should include the classes that produced confirmed findings.
+- Which SHA is authoritative for the aggregate: the plan says `5df29930`, the trial stamps `81522a71`.
 
 ---
 
@@ -243,34 +278,43 @@ The pod phase spends the most and loses most of it to budget timeouts.
 **Decision:** Iterate.
 
 The class-binding and ranking goals are met.
-The green gate and the narrowing goal are not met.
+The green gate, the discrimination space, and the discovery outcome are not.
+
 The next arm should:
 
-- redefine or ratify the high-yield class set before the run;
-- make the hunter choose distinct primary axes, not variants inside one axis;
-- cap pod concurrency per target, or raise the per-pod budget for a slow qemu target;
-- record the boundary-shape field that the sharp-boundary metric needs;
-- normalise the spec provenance threat id at the writer, not only in the measurement.
+- ratify the high-yield class set before the run and report it beside the class-binding rate;
+- add a per-unit budget reservation or a coverage floor, and dispatch the crossing unit;
+- enforce distinct primary discrimination axes, not variants inside one axis;
+- fix the pod lifecycle: preserve the pod's own terminal on watchdog expiry and emit an export for every pod;
+- enforce the hunter's reduced-D4 contract at ratification;
+- retry the budget-stop POST on transport timeout and record the stop as `stopped` with the overshoot;
+- write the store-owned threat id, not the dispatch id, into `provenance.threat_id`;
+- fix the three deterministic-measurement defects.
 
 ## Next Steps
 
-- Finish the trial and run the post-execution assessment and diagnosis.
-- Run `eval/measure_utm.py` on the final trial record.
-- Update this document with the final token, pod, and verdict numbers.
-- Open the follow-up tickets for the axis discrimination, the pod concurrency, and the provenance normalisation.
+- Ticket 422 is closed with this result.
+- The follow-up tickets 424 to 430 carry the next work items.
+- The branch is pushed at `1b92468c`; the trial ran at `81522a71`.
+- Nothing is merged into `dev`.
 
 ---
 
 ## Evidence Appendix
 
-- Trial record: `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/white-jotter-1/`
-- Project data: `/opt/polymerhus-dev/eval/instances/data/eval-server-1/dda347be-abea-48e4-94e5-4a4039f41858/`
-- Threat files: `<project>/hunting/threat_modeller/{produced,consumed}/<unit>/threat-*.yaml`
-- Hunter specs: `<project>/hunting/hunter/test-specs/**/*.yaml`
-- Pod exports: `<project>/hunting/test-executor-pod/<dispatch>/<run_id>.yaml`
-- Monitor log: `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/monitor.jsonl`
-- Trial log: `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/trial.log`
-- Arm A baseline: `docs/experiments/iteration-b-white-jotter-2026-10-25/ARM-A-BASELINE.md`
+- Official record: `artifacts/verdicts.yaml`, `artifacts/diagnoses.yaml`.
+- Deterministic base: `artifacts/metrics.yaml`.
+- Trial record: `artifacts/trial.yaml`.
+- Measurement: `artifacts/measurements.md`, `artifacts/measurements.yaml`.
+- Arm A baseline: `ARM-A-BASELINE.md`.
+- Run state and configuration repair: `RUN-STATE.md`.
+- Plan and arm definition: `PLAN.md`.
+- Remote project data: `dda347be-abea-48e4-94e5-4a4039f41858/hunting/`.
+- Remote trial log: `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/trial.log`.
+- Remote post-run log: `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/post.log`.
+- Monitor log: `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/monitor.jsonl`.
+- Private corpus: `/root/utm-groundtruth/white-jotter/white-jotter-00{1..7}/`.
+- Official ground truth: `/root/WebExploitBench/white-jotter/`.
 
 ## Measurement Discipline Checklist
 

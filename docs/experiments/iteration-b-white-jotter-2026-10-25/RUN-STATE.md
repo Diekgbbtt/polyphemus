@@ -1,6 +1,6 @@
 # Iteration B run state
 
-*Status: running. Started 2026-10-25T21:55:50Z.*
+*Status: complete 2026-10-26T03:11:21Z. The app run stopped at the 7M cap; the trial record says `failed` because the stop POST timed out.*
 
 ## Identity
 
@@ -13,10 +13,12 @@
 | Target id | `white-jotter-1` |
 | Target run id | `iterb-white-jotter` |
 | Project id | `dda347be-abea-48e4-94e5-4a4039f41858` |
-| Trial record | `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/white-jotter-1/` |
+| Hunting run id | `12d15890-47b2-43c2-bbe3-14c9626a2fdb` |
+| Trial record | `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/white-jotter-1/white-jotter-1-20261026T031121-1618c524/` |
 | Project data | `/opt/polymerhus-dev/eval/instances/data/eval-server-1/dda347be-abea-48e4-94e5-4a4039f41858/` |
 | Monitor log | `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/monitor.jsonl` |
 | Trial log | `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/trial.log` |
+| Post-run log | `/opt/polymerhus-dev/eval/runs-iteration-b-20261025/post.log` |
 
 ## Arm values
 
@@ -30,6 +32,32 @@
 | Hunter | `opencode-go:deepseek-v4.1-flash`, `xhigh` |
 | Compaction threshold | `0.4` |
 | Recon jobs | `httpx, httpx_reprofile, katana, jsluice, arjun` |
+
+## Final outcome
+
+| Metric | Value |
+|---|---:|
+| Capped tokens, trial snapshot | 7,017,453 |
+| Capped tokens, live usage | 7,022,363 |
+| Budget overshoot | 17,453 (0.25%) |
+| Calls | 2,459 |
+| Recon | complete |
+| Analysis | drained |
+| Hunting | stopped at the cap; trial record `failed` on the stop POST timeout |
+| Units modelled | 3 of 27 |
+| Stored threats | 26 |
+| Specs | 104 |
+| Pod directories | 86 |
+| Pod exports | 66 |
+| Successful pods | 4 |
+| Watchdog envelopes | 58 |
+| Pod directories without an export | 20 |
+| Official discovery | 0 identified, 1 partial, 6 missed |
+| Identification rate | 0.0 |
+
+The app's hunting run finished `stopped` after crossing the capped-token budget.
+The trial's `POST /projects/{id}/execution/stop` confirmation timed out, so the trial record says `failed` and records `spend_overshoot: null`.
+The spend is 17,453 capped tokens over the cap.
 
 ## Failed attempts before this run
 
@@ -49,10 +77,14 @@ No branch code changed for these failures.
 
 ## Monitoring
 
-The probe reads `/projects/{project_id}/usage` and the project data directory every 120 seconds.
-It records capped tokens, total tokens, calls, the per-agent capped split, threat-file count, spec-file count, and pod-directory count.
+The probe read `/projects/{project_id}/usage` and the project data directory every 120 seconds.
+It recorded capped tokens, total tokens, calls, the per-agent capped split, threat-file count, spec-file count, and pod-directory count.
+The checkpoints caught the modeller halt, the spec depth, the pod budget wave, and the first confirmed symptoms.
 
-## Next checkpoint
+## Measurement
 
-The first checkpoint after recon starts should show the recon agent's capped tokens and the first L0/L1 artifacts.
-The hunting checkpoint should show the threat files and the modeller's share of the capped budget.
+The post-run watcher waited for the trial, ran the monitor to convergence, close-verify, store materialize, and `eval/measure_trial.sh`.
+The deterministic metrics are in `artifacts/metrics.yaml`.
+The measurement report is `artifacts/measurements.md`.
+The official verdicts and diagnoses are `artifacts/verdicts.yaml` and `artifacts/diagnoses.yaml`.
+The final results are in `RESULTS.md`.

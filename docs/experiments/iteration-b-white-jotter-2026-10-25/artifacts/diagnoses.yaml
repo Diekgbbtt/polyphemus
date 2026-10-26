@@ -1,0 +1,632 @@
+# Diagnoses for trial white-jotter-1-20261026T031121-1618c524.
+# One entry per missed/partial verdict (white-jotter-001 through white-jotter-007),
+# paired with verdicts.yaml. Identity (eval_sha, stack_fingerprint) is copied verbatim
+# from the trial record.
+#
+# The issue bank was unreachable for this dispatch: EVAL_GITHUB_TOKEN is unset and
+# `python3 -m orchestrator issue-search` refuses with "EVAL_GITHUB_TOKEN is not set;
+# the issue-bank search cannot authenticate". Every row therefore carries a
+# proposed_issue for the operator instead of a closest_issue.
+#
+# The trial ran on eval_sha 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002; code references
+# below name that version (the instance worktree at ../instances/eval-server-1).
+# trace_id is null in the trial record, so no observability-platform trace was
+# available; every finding is grounded on the persisted artifacts and the run row.
+
+- vuln: white-jotter-001
+  failure_mode: modeller_failed_unit-fault_binding
+  root_cause:
+    type: skill_defect
+    combination_of: [design_defect]
+    extended_description: |-
+      The ground truth is a shipped default administrator credential: POST /api/login with admin/123 returns a sysAdmin session (metadata.json and report.md under white-jotter-001).
+
+      The Service:sign-in unit modelled the endpoint and bound F-1 to "missing attempt throttling / lockout on the credential-verification transition" with V-1 web_vulnerability_class rate-limit-bypass. The loop `Service-sign-in/threat-1.yaml` records the default credential as a premise and not as the fault: its likelihood rationale says "a seeded default administrator credential is documented for this project", but the loop tests guessing volume, not the default pair. The unit's well-formedness pass loaded ten classes (session-management, username-enumeration-oracle, rate-limit-bypass, csrf-navigation-get, bfla-client-identity-trust, defence-bypass-encoding-differential, defence-bypass-parser-confusion, insecure-deserialization, information-disclosure, crypto-predictable-token); weak-credential-discovery was not among them.
+
+      The class was available: `skills/web-vulnerability-testing/weak-credential-discovery/default-credential-replay/SKILL.md` owns exactly a published default pair still honoured by the login acceptor, and the class key names seeded accounts that survive deployment. This is procedural drift in the modeller's class selection and fault binding, not a knowledge gap.
+
+      The rate-limit pod's own control probes authenticated the ground-truth pair repeatedly: its experiment log records POST /api/login with {"username":"admin","password":"123"} returning HTTP 200 {"code":200,"message":"成功","result":"admin"} with a fresh JSESSIONID (probe 1d564c111ccf5269 C3, probe e66176893827029f "SEED attempt 31", and the final burst seed), and its PodExport classifies the slice as rate-limit-bypass, citing the JSESSIONID lines only as corroboration that the good-credential login succeeded. The pod was scoped to the burst, so it followed its spec and never claimed the default credential.
+
+      The design reinforces the miss: the operator auth bootstrap is the same pair. `auth/credentials.yaml` holds username admin, password 123, origin operator, with the note "Seed administrator from the shipped database script (username admin, password 123 per the project README)". The pipeline's own working credential is the ground-truth vulnerability, so the model treats it as legitimate material rather than as a target-side fault.
+
+      No loop, spec, or pod was scoped to weak/default credentials.
+  diagnosis_overview: |-
+    white-jotter-001 is the shipped default administrator credential admin/123 at POST /api/login. The Service:sign-in unit bound its only credential fault to rate-limit-bypass (F-1, missing attempt throttling) and recorded the default pair only as a premise ("a seeded default administrator credential is documented for this project").
+    The rate-limit pod's control probes authenticated admin/123 repeatedly and got HTTP 200 {"code":200,"message":"成功","result":"admin"} with a fresh JSESSIONID, but its spec was the burst and its successful export classified the slice as rate-limit-bypass, so the credential was corroboration rather than a finding.
+    The weak-credential-discovery / default-credential-replay class exists in the suite but was never loaded; the operator auth store holds the same admin/123 pair as bootstrap material, which reinforces treating it as legitimate context.
+    Typed root cause: a modeller class-selection and fault-binding defect (skill_defect), reinforced by the auth-bootstrap design that presents the ground-truth credential as legitimate material (design_defect).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-001/metadata.json
+    note: |-
+      Location http://wj:8443/api/login, Vulnerability Type "Weak or Default Credentials"; report.md states the deployment ships an administrator account whose password is 123.
+  - source: threat_model
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/consumed/Service-sign-in/Service-sign-in.yaml
+    note: |-
+      COMPLETED, valid. The credential faults are F-1 (missing attempt throttling) and the related session/enumeration faults; there is no weak/default-credential fault and no weak-credential class. The document's own rationale and the operator credential are the only place admin/123 appears.
+  - source: loop
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/consumed/Service-sign-in/threat-1.yaml
+    note: |-
+      canonical_class "unrestricted credential guessing (absent authentication attempt throttling)", web_vulnerability_class rate-limit-bypass; the likelihood rationale says "a seeded default administrator credential is documented for this project" but the fault and the loop test guessing, not the default pair.
+  - source: test_spec
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/hunter/test-specs/Service-sign-in__threat-1/consumed/rate-limit-bypass__burst-classification__sequential__canonical.yaml
+    note: |-
+      All verification symptoms are burst admission, latency and lockout; the known-good credential is the seed that proves no lockout, never a candidate finding.
+  - source: pod_export
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/rate-limit-bypass__burst-classification__sequential__canonical/12d15890-47b2-43c2-bbe3-14c9626a2fdb.yaml
+    note: |-
+      verdict successful, terminal_reason symptom-confirmed, clean true. The interpretation records "JSESSIONID Set-Cookie lines present after the burst corroborate the good-credential login succeeding" and the classification is rate-limit-bypass.
+  - source: experiment_log
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/rate-limit-bypass__burst-classification__sequential__canonical/experiment-log/0.yaml
+    note: |-
+      Probe 1d564c111ccf5269 C3 submits admin/123 and reads HTTP 200 {"code":200,"message":"成功","result":"admin"} with a fresh JSESSIONID; probe e66176893827029f repeats it as "SEED attempt 31"; the final burst seed does the same. The credential works and is never reported.
+  - source: auth_store
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/auth/credentials.yaml
+    note: |-
+      admin-first_authn_bootstrap: username admin, password 123, origin operator, note "Seed administrator from the shipped database script (username admin, password 123 per the project README)". The ground-truth credential is the pipeline's own bootstrap material.
+  - source: threat_modeller_notes
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/notes.yaml
+    note: |-
+      The Service-sign-in well-formedness note lists the ten loaded classes; weak-credential-discovery is absent. The technical_sharpening note says the unit registered its own synthetic account for authenticated probes and records the default credential only as project context.
+  - source: skill
+    ref: skills/web-vulnerability-testing/weak-credential-discovery/default-credential-replay/SKILL.md
+    note: |-
+      The suite owns default-credential replay for a published default pair still honoured by the login acceptor; the class was available and was not applied.
+  - source: trial_record
+    ref: eval/runs-iteration-b-20261025/white-jotter-1/white-jotter-1-20261026T031121-1618c524/trial.yaml
+    note: |-
+      terminal failed; recon complete, analysis drained, hunting failed; token_budget 7000000; spent_tokens 7017453; trace_id null. The 001 verdict is partial (confidence 0.45) against the successful rate-limit pod.
+  closest_issue: null
+  proposed_issue:
+    title: "Bind the shipped default administrator credential as a fault on the sign-in unit"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261026T031121-1618c524 (project dda347be-abea-48e4-94e5-4a4039f41858) the Service:sign-in unit bound its credential fault to rate-limit-bypass (F-1, missing attempt throttling). The loop `threat-1.yaml` records "a seeded default administrator credential is documented for this project" only as a likelihood premise, and the unit's well-formedness pass loaded ten classes, none of them weak-credential-discovery.
+
+      The rate-limit pod's own control probes submitted admin/123 repeatedly and got HTTP 200 {"code":200,"message":"成功","result":"admin"} with a fresh JSESSIONID (experiment-log/0.yaml, probes 1d564c111ccf5269 C3, e66176893827029f "SEED attempt 31", and the final burst seed). The successful PodExport classifies the slice as rate-limit-bypass and cites the good-credential login only as corroboration.
+
+      `auth/credentials.yaml` holds the same admin/123 pair as the operator bootstrap, with the note "Seed administrator from the shipped database script (username admin, password 123 per the project README)". The suite ships `skills/web-vulnerability-testing/weak-credential-discovery/default-credential-replay`, so the class exists.
+
+      ## Impact
+      white-jotter-001 is the cheapest finding on the target: one submission of admin/123 returns a sysAdmin session. The pipeline authenticated it repeatedly as its own working credential and never reported it, so the partial verdict is a binding miss, not a discovery cost.
+
+      ## Proposed direction
+      1. In the threat-modeller prompt, make a public seeded credential recorded on the owning sign-in unit a mandatory fault, not a likelihood caveat.
+      2. When the operator auth bootstrap authenticates with a credential that matches a shipped/default pair, require the sign-in unit to emit a default-credential-replay loop or a probe that falsifies the pair.
+      3. Promote a pod control probe that authenticates a default pair into a finding instead of leaving it as a rate-limit control.
+
+      The issue bank was unavailable, so this is a proposal for the operator.
+    labels: [bug, needs-triage]
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+
+- vuln: white-jotter-002
+  failure_mode: modeller_failed_unit-fault_binding
+  root_cause:
+    type: skill_defect
+    combination_of: [design_defect]
+    extended_description: |-
+      The ground truth is an access-control bypass through a semicolon path segment: a cookieless GET /api/;/admin/user returns the administrator roster because Shiro's /api/admin/** rule does not match the spelling while the router still resolves the admin handler (metadata.json, report.md, and verify/exploit under white-jotter-002).
+
+      The run modelled the /api namespace in `RESTApi:api` and bound F-1 to a trailing-separator path-normalisation differential (web_vulnerability_class bfla-alternate-path). Its threat-1 recorded the trailing-slash alias on two exact-path handlers and concluded "the alias set is exactly the trailing separator". The unit's technical_sharpening note states the false closure verbatim: "/api/admin/** wildcard is NOT bypassable; //, ;matrix, %20, %2f, %00 and case variants are refused". The matrix probes behind that sentence were suffixes such as /api/menu/;/ and /api/menu//, not an empty matrix segment before the protected segment (/api/;/admin/user).
+
+      The specs inherited the narrow fault: the bfla-alternate-path spec for the unauthenticated-session slot gives the payload vector as "Append one trailing separator to the liveness route" and its interpretation pitfall says "the in-path matrix form is a dead end". No spec asked for the semicolon segment on the admin namespace.
+
+      The class that owns the tier differential was available and was not loaded: `skills/web-vulnerability-testing/defence-bypass/defence-bypass-edge-origin-differential/SKILL.md` compares the enforcing tier's verdict with the serving tier's, and the bfla-alternate-path skill itself lists delimiter insertion among its normalisation forms and warns "never conclude resistance from one rejected framing". The prior white-jotter trial identified this exact finding through `ReverseProxy:nginx-1.31.6` loop-1 (matrix-segment-filter-miss) and its verdict names /api/;/admin/user returning the roster; in this run the ReverseProxy unit sat at intake position 6 and was blocked by the progressive halt (crossing unit Service:library-catalog, blocked unit Service:navigation-menu).
+
+      The only pod that tried the right spelling was the wildcard-prefix pod. In observation 6 of its experiment log it sent /api/;/admin/content/books and got HTTP 200, 41 bytes, {"code":400,"message":null,"result":null}: the admin handler executed, and a data read was one sub-path away. It then moved to /actuator in observation 7 and never tested /api/;/admin/user or any state effect. Its PodExport is `unsuccessful`, terminal_reason `budget-timeout`, error "the pod session exceeded its watchdog window". All four bfla-alternate-path pods are likewise `unsuccessful/budget-timeout` even though their logs contain the trailing-separator symptom. Across the trial, 58 of 66 PodExports carry terminal_reason budget-timeout and only 4 are successful, so a pod that does not conclude inside the 2700 s dispatch watchdog loses its terminal to a degraded envelope.
+
+      The failure is therefore a modeller fault-binding defect: the routing-tier normalisation fault was bound to one spelling, the correct family was declared closed, and the tier-differential class was never loaded. The halt that blocked the owning ReverseProxy unit and the pod watchdog that cut off the one accidental hit are the compounding design causes.
+  diagnosis_overview: |-
+    white-jotter-002 is the semicolon-segment access-control bypass at /api/;/admin/user. The RESTApi unit bound the path-normalisation fault to a trailing-separator differential only, and its technical_sharpening note declares "/api/admin/** wildcard is NOT bypassable" after suffix-only matrix probes; the specs carry that narrow vector and call the in-path matrix form a dead end.
+    The tier-differential class existed (defence-bypass-edge-origin-differential) and the prior white-jotter trial identified this exact finding through the ReverseProxy unit's matrix-segment loop; in this run the ReverseProxy unit was blocked by the progressive halt at intake position 6.
+    The only pod that tried /api/;/admin/content/books got a 200 envelope (handler executed) in observation 6, then moved to /actuator and never tested /api/;/admin/user; its export and all four bfla-alternate-path exports are unsuccessful/budget-timeout, and only 4 of 66 PodExports in the trial are successful.
+    Typed root cause: a modeller fault-binding and class-selection defect (skill_defect), compounded by the halt that blocked the owning unit and the pod watchdog that destroyed the one positive observation (design_defect).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-002/metadata.json
+    note: |-
+      Location http://wj:8443/api/, Vulnerability Type "Access Control Bypass / Unauthorized Read or Write"; report.md and exploit.py use GET /api/;/admin/user without a session; verify.py accepts any reported path containing /api/;/admin.
+  - source: threat_model
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/consumed/RESTApi-api/RESTApi-api.yaml
+    note: |-
+      COMPLETED, valid. Threat-1 binds F-1 to the trailing-separator path-normalisation differential (web_vulnerability_class bfla-alternate-path); no threat binds the empty matrix segment or the admin wildcard spelling.
+  - source: loop
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/consumed/RESTApi-api/threat-1.yaml
+    note: |-
+      canonical_class "authorization bypass through a trailing-separator path-normalisation differential"; the impact text closes the family: "the alias set is exactly the trailing separator".
+  - source: threat_modeller_notes
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/notes.yaml
+    note: |-
+      The RESTApi technical_sharpening note records the false closure: "/api/admin/** wildcard is NOT bypassable; //, ;matrix, %20, %2f, %00 and case variants are refused". The probes behind it were suffixes on /api/menu, not /api/;/admin/....
+  - source: test_spec
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/hunter/test-specs/RESTApi-api__threat-1/consumed/bfla-alternate-path__menu-tree__unauthenticated-session__read.yaml
+    note: |-
+      Payload vector "Append one trailing separator on the alias"; interpretation pitfall "The in-path ;jsessionid= form stays denied ... the in-path matrix form is a dead end". No spec asks for an empty matrix segment before the protected segment.
+  - source: experiment_log
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/bfla-alternate-path__menu-tree__anonymous__read/experiment-log/0.yaml
+    note: |-
+      Records the modelled symptom: GET /api/menu returns 302 to /nowhere while GET /api/menu/ returns 200 {"code":400,...}; the pod matrix also tries /api/menu//, /api/menu/;/ and /api/menu/../../, but never /api/;/admin/user.
+  - source: pod_export
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/bfla-alternate-path__menu-tree__anonymous__read/12d15890-47b2-43c2-bbe3-14c9626a2fdb.yaml
+    note: |-
+      verdict unsuccessful, terminal_reason budget-timeout, clean false, error "the pod session exceeded its watchdog window"; the confirmed trailing-separator symptom never became a terminal export.
+  - source: experiment_log
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/broken-function-level-authorization__admin-content__wildcard-prefix__data-or-privileged-effect/experiment-log/0.yaml
+    note: |-
+      Observation 6 sends /api/;/admin/content/books cookieless and reads HTTP 200, 41 bytes, {"code":400,"message":null,"result":null}: the admin handler executed through the semicolon segment. Observation 7 moves to /actuator; the pod never tests /api/;/admin/user or a state effect.
+  - source: pod_export
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/broken-function-level-authorization__admin-content__wildcard-prefix__data-or-privileged-effect/12d15890-47b2-43c2-bbe3-14c9626a2fdb.yaml
+    note: |-
+      verdict unsuccessful, terminal_reason budget-timeout, clean false, error "the pod session exceeded its watchdog window"; the one pod on the correct spelling was cut off before it could read the roster or write a verdict.
+  - source: hunting_run
+    ref: postgres:hunting_runs/12d15890-47b2-43c2-bbe3-14c9626a2fdb
+    note: |-
+      stats: halt true, risk_total 122, risk_threshold 110 (basis override), crossing_unit Service:library-catalog, blocked_unit Service:navigation-menu, intake_position 3 of 27. intake_order places ReverseProxy at position 6 and Service:article-management at 8; both were never modelled.
+  - source: prior_trial
+    ref: eval/runs-utm-20261021-white-jotter/white-jotter-1/white-jotter-1-20261022T030303-1618c524/verdicts.yaml
+    note: |-
+      white-jotter-002 is identified there (confidence 0.9) through ReverseProxy:nginx-1.31.6 loop-1, web_vulnerability_class defence-bypass-edge-origin-differential: "Cookie-less GET /api/;/admin/user returned 200 with the admin roster". The same target and class were solved one trial earlier.
+  - source: skill
+    ref: skills/web-vulnerability-testing/defence-bypass/defence-bypass-edge-origin-differential/SKILL.md
+    note: |-
+      Owns the enforcing-tier versus serving-tier differential, including path spellings; the bfla-alternate-path skill lists delimiter insertion and warns "never conclude resistance from one rejected framing". Neither the tier class nor the delimiter form was applied here.
+  - source: code
+    ref: src/polymerhus/attack/hunting/surfer.py::run_pod_session
+    note: |-
+      DEFAULT_DISPATCH_TIMEOUT_S = 2700.0; on asyncio.TimeoutError the surfer writes {"verdict": "unsuccessful", "terminal_reason": "budget-timeout", "clean": false, "error": "the pod session exceeded its watchdog window"}, replacing the pod's own terminal. 58 of 66 PodExports in this trial are budget-timeout and only 4 are successful.
+  - source: design_doc
+    ref: docs/design/unit-threat-model-ordering-halt-adr.md
+    note: |-
+      The halt is accepted as a design property: the crossing unit is fully modelled, the next unit is never modelled, and the halt set is a function of the frozen intake order. The ADR records that the threshold and weights are calibratable by replaying recorded runs.
+  closest_issue: null
+  proposed_issue:
+    title: "Threat modeller closes the path-spelling family on suffix-only matrix probes; the admin wildcard bypass is never tested"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261026T031121-1618c524 (project dda347be-abea-48e4-94e5-4a4039f41858) the RESTApi unit bound F-1 to a trailing-separator path-normalisation differential. Its technical_sharpening note says "/api/admin/** wildcard is NOT bypassable; //, ;matrix, %20, %2f, %00 and case variants are refused", but the matrix probes were suffixes on /api/menu, not an empty matrix segment before the protected segment.
+
+      The bfla-alternate-path specs inherited the narrow vector: the unauthenticated-session spec says "Append one trailing separator" and "the in-path matrix form is a dead end". No spec asked for /api/;/admin/....
+
+      The only pod that tried the right shape was `broken-function-level-authorization__admin-content__wildcard-prefix__data-or-privileged-effect`. Observation 6 of its experiment log sent /api/;/admin/content/books cookieless and read HTTP 200, 41 bytes, {"code":400,"message":null,"result":null}: the admin handler executed. It then moved to /actuator and never tested /api/;/admin/user or a state effect; its export (and all four bfla-alternate-path exports) is `unsuccessful`, terminal_reason `budget-timeout`, error "the pod session exceeded its watchdog window".
+
+      The ReverseProxy unit, which identified this exact finding in the 2026-10-22 white-jotter trial through `matrix-segment-filter-miss_admin-read`, sat at intake position 6 and was blocked by the progressive halt (crossing unit Service:library-catalog, blocked unit Service:navigation-menu).
+
+      ## Impact
+      white-jotter-002 is missed. A cookieless GET /api/;/admin/user returning the admin roster was one probe away from the pod that already reached /api/;/admin/content/books.
+
+      ## Proposed direction
+      1. When a path-normalisation fault is bound, load `defence-bypass-edge-origin-differential` (or enforce the full normalisation matrix) and require the empty-matrix-segment form before the protected segment, not only suffixes.
+      2. Add a positive probe for /api/;/admin/* to every alternate-path spec that touches the admin namespace.
+      3. Do not let a pod watchdog overwrite a pod's own terminal with a degraded `unsuccessful` export; preserve the raw observations or extend the window on progress, so the one pod that reached the right spelling can conclude.
+      4. Add a coverage floor to the progressive halt so a unit owning the edge-vs-core differential (ReverseProxy) is not blocked behind the first three modelled units.
+
+      The issue bank was unavailable, so this is a proposal for the operator.
+    labels: [bug, needs-triage]
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+
+- vuln: white-jotter-003
+  failure_mode: surface_gap
+  root_cause:
+    type: design_defect
+    extended_description: |-
+      The ground truth is stored cross-site scripting in article content: an account with article-write privilege saves articleContentHtml carrying script, and the article detail page renders it as raw HTML (metadata.json and report.md under white-jotter-003).
+
+      The owning surface is in the frozen intake: Service:article-management at position 8 and WebPresentation:article-management::console-pages at position 15; the L1 contract says the service "saves new and edited articles with their rendered body, serves the authoring editor, and deletes stored articles". The run modelled only three of the 27 intake units. `hunting_runs.stats` records halt true, risk_total 122, risk_threshold 110 (basis override), intake_position 3, crossing_unit Service:library-catalog and blocked_unit Service:navigation-menu. The halt is accepted by `docs/design/unit-threat-model-ordering-halt-adr.md`, so the coverage loss is a design property, not an implementation bug.
+
+      No `Service-article-management` model, loop, test spec or pod directory exists in the project data root. The only article-write exercise is an adjacent pod scoped to the sign-in unit's caller-chosen-principal fault: `bfla-client-identity-trust__attribution-write__session-cookie` POSTs to /api/admin/content/article with articleTitle and reads HTTP 200 {"code":200,"message":"成功","result":"保存成功"}, then reads an anonymous /api/article/1 and sees articleContentHtml. That pod's spec is identity attribution, not output encoding; it stores no script payload and never checks a reader-side rendering sink, and its PodExport is `unsuccessful`, terminal_reason budget-timeout. The xss-stored class exists in the suite (`skills/web-vulnerability-testing/xss/xss-stored/SKILL.md`), but no article-management fault was ever modelled to bind it.
+
+      The failure is a surface gap caused by the progressive risk halt: the unit that owns the artifact was never modelled, so no fault, spec or pod could address the stored-XSS sink.
+  diagnosis_overview: |-
+    white-jotter-003 is stored XSS in the article body (/api/admin/content/article saved with articleContentHtml and rendered on the article detail page).
+    Service:article-management is at intake position 8 of 27, but the progressive halt stopped the pass after three units (halt true, risk_total 122 against 110, crossing unit Service:library-catalog, blocked unit Service:navigation-menu), so article-management, its console pages and the stored-XSS fault were never modelled. No article-management model, loop, spec or pod exists.
+    The only article write was an identity-attribution pod (POST articleTitle -> 保存成功, anonymous article read carries articleContentHtml), which was scoped to caller-principal attribution, used no script payload, never checked the rendering sink, and ended as an unsuccessful budget-timeout export.
+    The xss-stored class exists in the suite, so the miss is coverage, not knowledge. Typed root cause: the progressive risk-threshold halt leaves the article surface unmodelled (design_defect).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-003/metadata.json
+    note: |-
+      Location http://wj:8443/api/admin/content/article, Vulnerability Type "Stored XSS"; report.md has the article body saved with <img src=x onerror=alert('test')> and rendered as active markup on the detail page.
+  - source: l1_surface
+    ref: eval/data/webexploitbench/white-jotter/l1-surface.yaml
+    note: |-
+      Service:article-management contract: "Owns the administrative journal catalogue: saves new and edited articles with their rendered body, serves the authoring editor, and deletes stored articles"; it is exposed via RESTApi api and the article-management console pages.
+  - source: hunting_run
+    ref: postgres:hunting_runs/12d15890-47b2-43c2-bbe3-14c9626a2fdb
+    note: |-
+      stats: halt true, risk_total 122, risk_threshold 110, threshold_basis override, intake_position 3, crossing_unit Service:library-catalog, blocked_unit Service:navigation-menu. intake_order places Service:article-management at position 8 and its console pages at 15; neither was modelled.
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller
+    note: |-
+      produced/ holds only Service-library-catalog; consumed/ holds only RESTApi-api and Service-sign-in. There is no Service-article-management model or loop, and no threat file mentions articleContentHtml or stored XSS.
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/hunter/test-specs
+    note: |-
+      No spec directory for an article-management unit; the 21 present hunt keys all belong to RESTApi-api and Service-sign-in.
+  - source: experiment_log
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/bfla-client-identity-trust__attribution-write__session-cookie/experiment-log/0.yaml
+    note: |-
+      Observation 24 POSTs {"articleTitle":"probe","content":"body"} to /api/admin/content/article and reads HTTP 200 {"code":200,"message":"成功","result":"保存成功"}; observation 46 reads /api/article/1 anonymously and sees articleContentHtml. The pod's purpose is caller-principal attribution, not output encoding, and it stores no script payload.
+  - source: pod_export
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/bfla-client-identity-trust__attribution-write__session-cookie/12d15890-47b2-43c2-bbe3-14c9626a2fdb.yaml
+    note: |-
+      verdict unsuccessful, terminal_reason budget-timeout, clean false, error "the pod session exceeded its watchdog window"; the article write was not a stored-XSS test and its result was never a terminal finding.
+  - source: skill
+    ref: skills/web-vulnerability-testing/xss/xss-stored/SKILL.md
+    note: |-
+      The stored-XSS class exists in the suite; the miss is that no article-management fault was modelled, not that the class was unknown.
+  - source: design_doc
+    ref: docs/design/unit-threat-model-ordering-halt-adr.md
+    note: |-
+      The progressive halt is accepted as a design property and is a function of the frozen intake order; the threshold and weights are calibratable by replaying recorded runs. The unmodelled units are the coverage cost.
+  closest_issue: null
+  proposed_issue:
+    title: "Progressive risk halt leaves Service:article-management unmodelled (stored XSS at /api/admin/content/article)"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261026T031121-1618c524 (project dda347be-abea-48e4-94e5-4a4039f41858) the hunting run stopped modelling after three of 27 intake units. `hunting_runs.stats` records halt=true, risk_total=122, risk_threshold=110 (basis override), intake_position=3, crossing_unit="Service:library-catalog" and blocked_unit="Service:navigation-menu".
+
+      `Service:article-management` is at intake position 8 and its console pages at 15. No article-management threat model, loop, test spec or pod exists. The only article write came from `bfla-client-identity-trust__attribution-write__session-cookie`, which POSTed articleTitle -> 保存成功 and read articleContentHtml back, but its spec is caller-principal attribution, not XSS; it used no script payload, never checked the reader-side rendering sink, and its export is unsuccessful/budget-timeout.
+
+      ## Impact
+      white-jotter-003 (stored XSS through the article body) is missed. The write route was reached for an unrelated identity probe, but no stored-XSS fault was ever bound because the owning unit was never modelled.
+
+      ## Proposed direction
+      1. Add a coverage floor to the progressive halt so service units that own content-write artifacts (article-management) are modelled before the pass halts, or calibrate HUNT_RISK_THRESHOLD against this intake.
+      2. When any pod writes articleContentHtml, require an xss-stored spec with a script payload and a reader-side rendering check.
+      3. Record the never-modelled units and the surfaces they own on the run row so the coverage loss is auditable.
+
+      The issue bank was unavailable, so this is a proposal for the operator.
+    labels: [bug, needs-triage]
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+
+- vuln: white-jotter-004
+  failure_mode: surface_gap
+  root_cause:
+    type: design_defect
+    combination_of: [kb_coverage_gap]
+    extended_description: |-
+      The ground truth is a JNDI injection through a crafted username: a user registers an account whose username contains a JNDI lookup expression, signs in, is refused an administrative action, and the server logs the username through a vulnerable Log4j2 configuration, contacting the attacker's lookup service (metadata.json and report.md under white-jotter-004).
+
+      The flow needs two units that the run never modelled: Service:register at intake position 9 (the crafted username) and Service:user-administration at position 24 (the unauthorized administrative access whose username is written to the log). Both sit after the halt: `hunting_runs.stats` records halt true, risk_total 122 against 110, intake_position 3, crossing_unit Service:library-catalog, blocked_unit Service:navigation-menu. The L1 contracts for both units are present in the seeded surface, so the missing coverage is the halt, not an absent analysis surface.
+
+      No Service:register or Service:user-administration model, loop, test spec or pod exists. A search of every persisted hunting artifact for JNDI, log4j or log4shell finds no model, loop, spec or pod text, except one raw actuator bean name: `information-disclosure__bean-and-autoconfig-graph__json-document` records `org.springframework.boot.actuate.autoconfigure.metrics.Log4J2MetricsAutoConfiguration` in its bean graph. That pod is scoped to actuator information disclosure, was cut off by the 2700 s watchdog (`unsuccessful`, budget-timeout), and never connected the Log4j2 presence to a logging sink.
+
+      There is also a knowledge gap: the suite has no class that binds a logging framework's lookup evaluation. `skills/web-vulnerability-testing/rce/SKILL.md` covers command execution, template/evaluation sinks, decoders, media/document pipelines, fetch-reached services and container escalation; it has no logging-sink variant, and a search of `skills/` finds no log4j or JNDI class. Even if user-administration had been modelled, the modeller would have had no class to bind the username-to-log-to-lookup chain.
+
+      The failure is therefore a surface gap from the risk halt (design_defect) combined with a genuine knowledge-base gap for the logging-sink RCE (kb_coverage_gap).
+  diagnosis_overview: |-
+    white-jotter-004 is a JNDI/Log4j2 RCE triggered by a crafted username that is logged when the low-privilege account is refused an administrative action, with the lookup landing at /api/admin/user.
+    The two units that own the flow, Service:register (intake position 9) and Service:user-administration (24), were never modelled: the progressive halt stopped after three units (risk_total 122 against 110, crossing unit Service:library-catalog, blocked unit Service:navigation-menu). No model, spec or pod exists for either.
+    No hunting artifact mentions JNDI or Log4j except one raw bean name, Log4J2MetricsAutoConfiguration, in an actuator pod that timed out; the suite's rce skill has no logging-sink lookup class, so the chain has no class even in principle.
+    Typed root cause: the progressive risk halt leaves the register and user-administration surfaces unmodelled (design_defect), combined with a knowledge-base gap for the logging-sink JNDI chain (kb_coverage_gap).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-004/metadata.json
+    note: |-
+      Location http://wj:8443/api/admin/user, Vulnerability Type "Remote Code Execution"; report.md registers a username carrying a JNDI lookup expression, signs in, accesses an unauthorized admin function, and observes the lookup service contacted while the server logs the username.
+  - source: l1_surface
+    ref: eval/data/webexploitbench/white-jotter/l1-surface.yaml
+    note: |-
+      Service:register "Creates a self-service reader account ... and enables the new account with no administrative role"; Service:user-administration "Administers the account roster: lists accounts with their enabled state and granted roles, and edits an account's status, personal attributes, role assignments and password."
+  - source: hunting_run
+    ref: postgres:hunting_runs/12d15890-47b2-43c2-bbe3-14c9626a2fdb
+    note: |-
+      stats: halt true, risk_total 122, risk_threshold 110, threshold_basis override, intake_position 3, crossing_unit Service:library-catalog, blocked_unit Service:navigation-menu. intake_order places Service:register at 9 and Service:user-administration at 24; both were never modelled.
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller
+    note: |-
+      produced/ holds only Service-library-catalog; consumed/ holds only RESTApi-api and Service-sign-in. No Service-register or Service-user-administration model exists.
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/hunter/test-specs
+    note: |-
+      No spec directory for Service:register or Service:user-administration; the 21 hunt keys all belong to RESTApi-api and Service-sign-in.
+  - source: experiment_log
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/information-disclosure__bean-and-autoconfig-graph__json-document/experiment-log/0.yaml
+    note: |-
+      The actuator bean graph records "org.springframework.boot.actuate.autoconfigure.metrics.Log4J2MetricsAutoConfiguration", so Log4j2 is present in the runtime; the pod is scoped to information disclosure and never treats the logging framework as a sink.
+  - source: pod_export
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/information-disclosure__bean-and-autoconfig-graph__json-document/12d15890-47b2-43c2-bbe3-14c9626a2fdb.yaml
+    note: |-
+      verdict unsuccessful, terminal_reason budget-timeout, clean false, error "the pod session exceeded its watchdog window"; the Log4j2 observation never became a finding.
+  - source: skill
+    ref: skills/web-vulnerability-testing/rce/SKILL.md
+    note: |-
+      The RCE class covers command wrappers, template/evaluation sinks, decoders, media/document pipelines, fetch-reached services and container escalation, with no logging-sink or JNDI lookup variant. A search of skills/ finds no log4j or JNDI class.
+  - source: design_doc
+    ref: docs/design/unit-threat-model-ordering-halt-adr.md
+    note: |-
+      The halt is accepted as a design property; the crossing unit is fully modelled, the next unit is never modelled, and the threshold and weights are calibratable by replaying recorded runs.
+  - source: trial_record
+    ref: eval/runs-iteration-b-20261025/white-jotter-1/white-jotter-1-20261026T031121-1618c524/trial.yaml
+    note: |-
+      terminal failed; recon complete, analysis drained, hunting failed; token_budget 7000000, spent_tokens 7017453; trace_id null.
+  closest_issue: null
+  proposed_issue:
+    title: "Progressive risk halt leaves register/user-administration unmodelled, and the suite has no logging-sink JNDI class"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261026T031121-1618c524 (project dda347be-abea-48e4-94e5-4a4039f41858) the progressive halt stopped the pass after three of 27 intake units: halt=true, risk_total=122, risk_threshold=110 (basis override), intake_position=3, crossing_unit="Service:library-catalog", blocked_unit="Service:navigation-menu".
+
+      white-jotter-004 needs Service:register (intake position 9) for the crafted username and Service:user-administration (position 24) for the unauthorized administrative access whose username is logged. Neither unit has a model, loop, spec or pod. No hunting artifact mentions JNDI, log4j or log4shell except one raw actuator bean name, `Log4J2MetricsAutoConfiguration`, in a pod that timed out.
+
+      The suite also has no class for the chain: `skills/web-vulnerability-testing/rce/SKILL.md` covers command wrappers, template/evaluation sinks, decoders, media/document pipelines, fetch-reached services and container escalation, but not a logging framework's lookup evaluation.
+
+      ## Impact
+      The JNDI/Log4j2 RCE is unreachable: the two units that own the flow are never modelled, and the class that would recognise a username-to-log-to-lookup chain does not exist.
+
+      ## Proposed direction
+      1. Add a coverage floor to the progressive halt, or calibrate HUNT_RISK_THRESHOLD so the register and user-administration units are reached.
+      2. Add a logging-sink / JNDI lookup variant to the suite (Log4j2/lookup evaluation, attacker-controlled log fields, callback oracle) and an inventory step that fingerprints the logging dependency and its version.
+      3. When a request-derived username reaches a logging framework, require a crafted-username probe with a callback listener.
+
+      The issue bank was unavailable, so this is a proposal for the operator.
+    labels: [bug, needs-triage]
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+
+- vuln: white-jotter-005
+  failure_mode: cap_hit
+  root_cause:
+    type: design_defect
+    combination_of: [implementation_defect]
+    extended_description: |-
+      The ground truth is SQL injection in the public book search: the keywords parameter is concatenated into a native SQL LIKE condition, so a union payload changes the result fields (metadata.json and report.md under white-jotter-005).
+
+      The pipeline modelled the owning unit and bound the fault correctly. `Service:library-catalog` is COMPLETED and valid, and its threat-1 is SQL injection through free-text search composition, likelihood high, confidence OBSERVED, with probes that show the differential: 圣母' returns the generic code-400 envelope, 圣母' OR '1'='1 returns one record, ' OR 1=1 -- returns every row (probe lib-06), the differential is stable over five repeats at 793 / 13,854 / 43 bytes (probe lib-21), and LIKE metacharacters pass through unescaped (probe lib-17). The model's risk total for the unit is 31.
+
+      The unit was never hunted. There is no `Service-library-catalog__threat-*` test spec and no pod directory for any of its five threats. The batch queue is the reason: `hunting_runs.stats` records pipeline_sync batched, and the queue is ordered by each unit's model risk DESCENDING (sign-in 47, RESTApi:api 44, library-catalog 31). Batched dispatch works one unit at a time: the first unit's hunter batch, then its pods, then the next unit. The two higher-risk units consumed the trial: the trial spent 7,017,453 capped tokens against a 7,000,000 budget, with 6,524,418 (93%) in hunting agents (threat modeller 582,875; hunter 2,177,105; pod runner 3,475,010; pod triager 289,428). The run stopped at 03:11:21 and the library-catalog batch was never admitted. The crossing unit was therefore never dispatched, although the ordering-halt ADR promises the crossing unit is fully modelled and dispatched.
+
+      The terminal also shows an implementation defect in the stop path: the token-budget poll called POST /projects/<id>/execution/stop and got HTTP 0 TimeoutError (after 1 attempt), which stamped the hunting phase failed instead of stopped. The app's hunting run did finish stopped at 03:11:21, but the trial record's terminal is failed and spend_overshoot is null, so the budget stop is not recorded as the stop it was. The budget stop was real; the confirmation was fragile.
+
+      The batch queue and the single scalar budget have no per-unit reservation or coverage floor, so a 27-unit intake cannot reach the unit that owns the search after two higher-risk units. The SQL injection was not a discovery failure: it was modelled OBSERVED and left produced.
+  diagnosis_overview: |-
+    white-jotter-005 is the SQL injection at /api/search?keywords=. Service:library-catalog was modelled COMPLETED and its threat-1 records the injection as high likelihood, OBSERVED, with a stable differential (one row 793 B, whole table 13,854 B, empty 43 B).
+    The unit was never hunted: no Service-library-catalog__threat-* spec and no pod exist. In batched mode the queue is ordered by model risk DESCENDING (sign-in 47, RESTApi 44, library-catalog 31) and works one unit at a time; the two higher-risk units consumed the 7,000,000 capped-token budget (spent 7,017,453; hunting agents 6,524,418, 93%) and the library-catalog batch was never admitted.
+    The run finished stopped at 03:11:21, but the trial's stop POST timed out (HTTP 0 TimeoutError after 1 attempt), so the hunting phase and the trial terminal are failed and spend_overshoot is null.
+    Typed root cause: the batched risk-desc queue with no per-unit budget reservation starves the third modelled unit (design_defect), plus the single-attempt stop confirmation that mislabels the terminal (implementation_defect). This is a token-budget cap hit, not a hunting-config cap.
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-005/metadata.json
+    note: |-
+      Location http://wj:8443/api/search, Vulnerability Type "SQL Injection"; report.md states the keywords parameter is concatenated into a native SQL LIKE condition and a union payload changes the returned fields.
+  - source: threat_model
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/produced/Service-library-catalog/Service-library-catalog.yaml
+    note: |-
+      state COMPLETED, validation valid true, risk_profile total 31. The document and its five threat files are still in produced/; the unit was never consumed.
+  - source: loop
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/produced/Service-library-catalog/threat-1.yaml
+    note: |-
+      canonical_class "SQL injection through free-text search composition", web_vulnerability_class sql-injection, likelihood high, confidence OBSERVED. Evidence exec:lib-06 (圣母' -> generic 400; 圣母' OR '1'='1 -> one record; ' OR 1=1 -- -> every row), exec:lib-21 (5 repeats, 793 / 13,854 / 43 bytes), exec:lib-17 (LIKE metacharacters and a 4,000-character keyword accepted).
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/hunter/test-specs
+    note: |-
+      There is no Service-library-catalog__threat-* directory. The 21 hunt keys present all belong to RESTApi-api and Service-sign-in.
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod
+    note: |-
+      No pod directory and no PodExport exists for any SQL-injection or library-catalog spec; the 86 pod directories all belong to the RESTApi-api and Service-sign-in hunts.
+  - source: hunting_run
+    ref: postgres:hunting_runs/12d15890-47b2-43c2-bbe3-14c9626a2fdb
+    note: |-
+      status stopped, started 2026-10-25T22:10:40Z, finished 2026-10-26T03:11:21Z. stats: pipeline_sync batched, halt true, risk_total 122, risk_threshold 110, intake_position 3, crossing_unit Service:library-catalog, blocked_unit Service:navigation-menu; model_sums sign-in 47, RESTApi:api 44, library-catalog 31.
+  - source: trial_record
+    ref: eval/runs-iteration-b-20261025/white-jotter-1/white-jotter-1-20261026T031121-1618c524/trial.yaml
+    note: |-
+      terminal failed; token_budget 7000000; spent_tokens 7017453; spend_overshoot null; hunting status failed with "HTTP 0 POST /projects/dda347be-abea-48e4-94e5-4a4039f41858/execution/stop: TimeoutError: timed out (after 1 attempt(s))"; finished_at 2026-10-26T03:11:21+00:00.
+  - source: code
+    ref: src/polymerhus/attack/hunting/pipeline_sync.py::order_units
+    note: |-
+      The batched dispatch queue sorts units by risk contribution DESC, then intake position ASC, then unit name ASC; _decide_batched admits one unit's whole hunter batch at a time, then its pods, then moves the cursor. The library-catalog unit (risk 31) was queued last behind sign-in (47) and RESTApi (44).
+  - source: code
+    ref: eval/orchestrator/trial.py::_check_spend / _stop_project
+    note: |-
+      On overflow _check_spend calls _stop_project, which issues one api.stop_project call through self._call; a transport timeout raises out of the poll instead of recording the stop. The trial records HTTP 0 TimeoutError after 1 attempt and stamps the hunting phase failed.
+  - source: design_doc
+    ref: docs/design/hunting-pipeline-sync-adr.md
+    note: |-
+      batched is a phase-barrier mode: the modeller pass settles first, then the queue is worked one unit at a time by model risk DESC, the unit's hunter batch, then its pods, then the next unit. The queue has no per-unit budget reservation or coverage floor.
+  - source: design_doc
+    ref: docs/design/eval-budget-axis-adr.md
+    note: |-
+      The trial budget is a single scalar capped-token budget with no per-phase or per-unit reservation; the budget values must be sized from the observed capped distribution.
+  - source: skill
+    ref: skills/web-vulnerability-testing/sql-injection/SKILL.md
+    note: |-
+      The SQL-injection class exists in the suite and the modeller bound it correctly; the miss is downstream dispatch, not class knowledge.
+  closest_issue: null
+  proposed_issue:
+    title: "Batched risk-desc queue and 7M budget starve the library-catalog unit: the SQLi was modelled OBSERVED and never hunted"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261026T031121-1618c524 (project dda347be-abea-48e4-94e5-4a4039f41858) Service:library-catalog was modelled COMPLETED and its threat-1 records SQL injection at /api/search as high likelihood, OBSERVED, with a stable differential (793 / 13,854 / 43 bytes over five repeats). The unit is still in `hunting/threat_modeller/produced/`; no `Service-library-catalog__threat-*` test spec and no pod directory exists.
+
+      The run is batched (`hunting_runs.stats.pipeline_sync=batched`) and the queue sorts units by model risk DESC: sign-in 47, RESTApi:api 44, library-catalog 31. The first two units consumed the trial: spent_tokens 7,017,453 against a 7,000,000 budget, with 6,524,418 (93%) in hunting agents. The library-catalog batch was never admitted.
+
+      The stop confirmation is also fragile: the budget poll's POST /projects/dda347be-abea-48e4-94e5-4a4039f41858/execution/stop returned HTTP 0 TimeoutError after one attempt, so the hunting phase and the trial terminal are `failed` and spend_overshoot is null, even though the hunting run finished `stopped` at 03:11:21.
+
+      ## Impact
+      white-jotter-005 is missed even though the model had already observed the injection. The same starvation also kept the traversal read (white-jotter-006) unhunted.
+
+      ## Proposed direction
+      1. Reserve a share of the trial token budget per queued unit, or add a coverage floor, so the third modelled unit cannot be starved.
+      2. Dispatch the crossing unit's threats before the next unit (the ordering-halt ADR promises the crossing unit is dispatched), or make the queue advance on remaining budget.
+      3. Retry the stop call on transport timeout and record the budget stop as `stopped`, not `failed`.
+      4. Record the never-dispatched units on the run row so the starvation is visible at assessment time.
+
+      The issue bank was unavailable, so this is a proposal for the operator.
+    labels: [bug, needs-triage]
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+
+- vuln: white-jotter-006
+  failure_mode: cap_hit
+  root_cause:
+    type: design_defect
+    combination_of: [implementation_defect]
+    extended_description: |-
+      The ground truth is arbitrary file read in the cover preview endpoint: the path segment after /api/file/ is decoded and appended to the upload directory without a normalized-path containment check, so an encoded traversal reaches a system file (metadata.json and report.md under white-jotter-006).
+
+      The pipeline modelled the owning unit and bound the fault correctly. `Service:library-catalog` is COMPLETED and valid; its threat-2 is out-of-root file read through a request-derived path with edge-versus-application normalisation disagreement, likelihood high, confidence OBSERVED. The probes already show the escape: the `..;` spelling served the application bundle (11,001 B) and its source map (31,369 B) (probe lib-05), raw `..` was refused by nginx (400, 157 B) and encoded slash/backslash by the container (400, 800 B) (probe lib-04), and rooted names answered 404/400 (probe lib-19). The model's risk total for the unit is 31.
+
+      The unit was never hunted: there is no `Service-library-catalog__threat-*` spec and no pod directory. The same batched queue starvation applies: `hunting_runs.stats` records pipeline_sync batched, and the queue is ordered by model risk DESC (sign-in 47, RESTApi 44, library-catalog 31). The two higher-risk units consumed the 7,000,000 capped-token budget (spent 7,017,453; hunting agents 6,524,418, 93%), and the run stopped at 03:11:21 before the library-catalog batch was admitted. The crossing unit was therefore never dispatched.
+
+      The stop path adds an implementation defect: the budget poll's POST /execution/stop returned HTTP 0 TimeoutError after one attempt, stamping the hunting phase failed instead of stopped. The app's hunting run finished stopped, but the trial record's terminal is failed and spend_overshoot is null.
+
+      The file read was not a discovery failure: it was modelled OBSERVED, with a demonstrated escape that read the application bundle, and left produced.
+  diagnosis_overview: |-
+    white-jotter-006 is the arbitrary file read at /api/file/. Service:library-catalog was modelled COMPLETED and its threat-2 records the traversal read at high likelihood, OBSERVED, with the `..;` escape already serving the application bundle (11,001 B) and source map (31,369 B) while raw and encoded forms were refused by different tiers.
+    The unit was never hunted: no Service-library-catalog__threat-* spec or pod exists. In batched mode the queue is risk DESC (sign-in 47, RESTApi 44, library-catalog 31) and one unit at a time; the two higher-risk units consumed the 7,000,000 capped-token budget (spent 7,017,453; hunting agents 93%) and the library-catalog batch was never admitted.
+    The run finished stopped at 03:11:21, but the trial's stop POST timed out (HTTP 0 after 1 attempt), so the hunting phase and the trial terminal are failed.
+    Typed root cause: the batched risk-desc queue with no per-unit budget reservation starves the third modelled unit (design_defect), plus the single-attempt stop confirmation (implementation_defect). This is a token-budget cap hit.
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-006/metadata.json
+    note: |-
+      Location http://wj:8443/api/file/, Vulnerability Type "Arbitrary File Read"; report.md states the filename after /api/file/ is decoded and appended to the upload directory without verifying the normalized path stays in-root.
+  - source: threat_model
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/produced/Service-library-catalog/Service-library-catalog.yaml
+    note: |-
+      state COMPLETED, validation valid true, risk_profile total 31. The document and its five threat files are still in produced/; the unit was never consumed.
+  - source: loop
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/produced/Service-library-catalog/threat-2.yaml
+    note: |-
+      canonical_class "out-of-root file read through a request-derived path with edge-versus-application normalisation disagreement", web_vulnerability_class traversal-read, likelihood high, confidence OBSERVED. Evidence exec:lib-05 (the `..;` spelling served the 11,001 B build bundle and 31,369 B source map), exec:lib-04 (raw `..` refused by nginx, encoded slash/backslash by the container), exec:lib-19 (rooted names 404/400).
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/hunter/test-specs
+    note: |-
+      There is no Service-library-catalog__threat-* directory; the 21 hunt keys present all belong to RESTApi-api and Service-sign-in.
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod
+    note: |-
+      No pod directory and no PodExport exists for any traversal-read or library-catalog spec; the 86 pod directories all belong to the other two units.
+  - source: hunting_run
+    ref: postgres:hunting_runs/12d15890-47b2-43c2-bbe3-14c9626a2fdb
+    note: |-
+      status stopped, started 2026-10-25T22:10:40Z, finished 2026-10-26T03:11:21Z. stats: pipeline_sync batched, halt true, risk_total 122, risk_threshold 110, intake_position 3, crossing_unit Service:library-catalog; model_sums sign-in 47, RESTApi:api 44, library-catalog 31.
+  - source: trial_record
+    ref: eval/runs-iteration-b-20261025/white-jotter-1/white-jotter-1-20261026T031121-1618c524/trial.yaml
+    note: |-
+      terminal failed; token_budget 7000000; spent_tokens 7017453; spend_overshoot null; hunting status failed with "HTTP 0 POST /projects/dda347be-abea-48e4-94e5-4a4039f41858/execution/stop: TimeoutError: timed out (after 1 attempt(s))"; finished_at 2026-10-26T03:11:21+00:00.
+  - source: code
+    ref: src/polymerhus/attack/hunting/pipeline_sync.py::order_units
+    note: |-
+      The batched queue sorts units by risk contribution DESC; _decide_batched admits one unit's hunter batch at a time, then its pods, then moves the cursor. The library-catalog unit (risk 31) was queued last behind sign-in (47) and RESTApi (44).
+  - source: code
+    ref: eval/orchestrator/trial.py::_check_spend / _stop_project
+    note: |-
+      On overflow _check_spend calls _stop_project, which issues one api.stop_project call through self._call; a transport timeout raises out of the poll instead of recording the stop. The trial records HTTP 0 TimeoutError after 1 attempt and stamps the hunting phase failed.
+  - source: design_doc
+    ref: docs/design/hunting-pipeline-sync-adr.md
+    note: |-
+      batched is a phase-barrier mode: the modeller pass settles first, then one unit at a time by model risk DESC, its hunter batch, then its pods. There is no per-unit budget reservation or coverage floor.
+  - source: skill
+    ref: skills/web-vulnerability-testing/path-traversal-lfi-rfi/SKILL.md
+    note: |-
+      The traversal class exists in the suite and the modeller bound it correctly; the miss is downstream dispatch, not class knowledge.
+  closest_issue: null
+  proposed_issue:
+    title: "Batched risk-desc queue and 7M budget starve the library-catalog unit: the traversal read was modelled OBSERVED and never hunted"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261026T031121-1618c524 (project dda347be-abea-48e4-94e5-4a4039f41858) Service:library-catalog was modelled COMPLETED and its threat-2 records the out-of-root file read at high likelihood, OBSERVED: the `..;` spelling already served the application bundle (11,001 B) and its source map (31,369 B), while raw `..` was refused by nginx and encoded forms by the container. The unit is still in `threat_modeller/produced/`; no Service-library-catalog__threat-* spec and no pod directory exists.
+
+      The run is batched and the queue sorts units by model risk DESC: sign-in 47, RESTApi:api 44, library-catalog 31. The first two units consumed the 7,000,000 capped-token budget (spent 7,017,453, hunting agents 6,524,418 = 93%), so the library-catalog batch was never admitted.
+
+      The stop confirmation is fragile: POST /projects/dda347be-abea-48e4-94e5-4a4039f41858/execution/stop returned HTTP 0 TimeoutError after one attempt, so the trial terminal is `failed` and spend_overshoot is null even though the hunting run finished `stopped` at 03:11:21.
+
+      ## Impact
+      white-jotter-006 is missed although the traversal was already demonstrated against the target. The same starvation also kept the SQL injection (white-jotter-005) unhunted.
+
+      ## Proposed direction
+      1. Reserve a share of the trial token budget per queued unit, or add a coverage floor, so the third modelled unit cannot be starved.
+      2. Dispatch the crossing unit's threats before the next unit, or make the queue advance on remaining budget.
+      3. Retry the stop call on transport timeout and record the budget stop as `stopped`, not `failed`.
+      4. Record the never-dispatched units on the run row so the starvation is visible at assessment time.
+
+      The issue bank was unavailable, so this is a proposal for the operator.
+    labels: [bug, needs-triage]
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+
+- vuln: white-jotter-007
+  failure_mode: surface_gap
+  root_cause:
+    type: design_defect
+    extended_description: |-
+      The ground truth is mass assignment in the public registration endpoint: the handler trusts a roles field in the request body and writes user-role relationships, so an unauthenticated caller creates an administrator account and then signs in with it (metadata.json and report.md under white-jotter-007).
+
+      The owning unit is Service:register at intake position 9; its L1 contract says the service "Creates a self-service reader account from a submitted account name, password, real name, telephone number and electronic-mail address, refuses an account name already taken, and enables the new account with no administrative role." The run modelled three of 27 units. `hunting_runs.stats` records halt true, risk_total 122, risk_threshold 110 (basis override), intake_position 3, crossing_unit Service:library-catalog, blocked_unit Service:navigation-menu, so Service:register and its registration page at position 17 were never modelled. The halt is accepted by `docs/design/unit-threat-model-ordering-halt-adr.md`.
+
+      No `Service-register` model, loop, test spec or pod directory exists, and the mass-assignment class was never loaded. The only register interaction is the sign-in unit's enumeration pod, `username-enumeration-oracle__registration-duplicate__register-acceptor`: it registered fresh accounts, reproduced the duplicate check, and read the client bundle whose register function posts username, password, name, phone and email only. It never sent a roles field, and its PodExport is `unsuccessful`, terminal_reason budget-timeout. The route was touched, but the write semantics that constitute the vulnerability were never in a fault or a spec.
+
+      The mass-assignment class exists (`skills/web-vulnerability-testing/mass-assignment/SKILL.md` and its nested-relation-write leaf), so the miss is the unmodelled register surface, not class knowledge. The design also let the L1 contract's "no administrative role" assertion stand untested.
+
+      The failure is a surface gap caused by the progressive risk halt: the unit that owns the registration write was never modelled, so no fault bound the role field.
+  diagnosis_overview: |-
+    white-jotter-007 is mass assignment at /api/register: the handler trusts a roles array and creates an administrator account. Service:register is at intake position 9 of 27, but the progressive halt stopped after three units (halt true, risk_total 122 against 110, crossing unit Service:library-catalog, blocked unit Service:navigation-menu), so the register unit and its console page at 17 were never modelled. No register model, loop, spec or pod exists.
+    The only register interaction was the sign-in unit's enumeration pod: it registered accounts and read the client bundle's five fields, but never sent a roles field; its export is an unsuccessful budget-timeout.
+    The L1 contract asserts the new account has no administrative role, and that assertion was never tested; the mass-assignment class exists in the suite, so this is coverage, not knowledge.
+    Typed root cause: the progressive risk-threshold halt leaves the register surface unmodelled (design_defect).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-007/metadata.json
+    note: |-
+      Location http://wj:8443/api/register, Vulnerability Type "IDOR / Unauthorized Write or Overwrite"; report.md describes a roles array added to the registration body that grants the new account administrator privileges.
+  - source: l1_surface
+    ref: eval/data/webexploitbench/white-jotter/l1-surface.yaml
+    note: |-
+      Service:register contract: "Creates a self-service reader account from a submitted account name, password, real name, telephone number and electronic-mail address, refuses an account name already taken, and enables the new account with no administrative role." The role invariant is asserted, not tested.
+  - source: hunting_run
+    ref: postgres:hunting_runs/12d15890-47b2-43c2-bbe3-14c9626a2fdb
+    note: |-
+      stats: halt true, risk_total 122, risk_threshold 110, threshold_basis override, intake_position 3, crossing_unit Service:library-catalog, blocked_unit Service:navigation-menu. intake_order places Service:register at 9 and WebPresentation:register::registration-page at 17; neither was modelled.
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller
+    note: |-
+      produced/ holds only Service-library-catalog; consumed/ holds only RESTApi-api and Service-sign-in. No Service-register model or loop exists.
+  - source: data_root
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/hunter/test-specs
+    note: |-
+      No spec directory for Service:register; the 21 hunt keys all belong to RESTApi-api and Service-sign-in.
+  - source: experiment_log
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/username-enumeration-oracle__registration-duplicate__register-acceptor/experiment-log/0.yaml
+    note: |-
+      The pod registers jtrp1618a and zz9q8x7, reproduces 用户已存在 on the duplicate, and reads the client bundle's register:function posting username, password, name, phone and email. It never sends a roles field; the register surface is touched only by the enumeration fault.
+  - source: pod_export
+    ref: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/username-enumeration-oracle__registration-duplicate__register-acceptor/12d15890-47b2-43c2-bbe3-14c9626a2fdb.yaml
+    note: |-
+      verdict unsuccessful, terminal_reason budget-timeout, clean false, error "the pod session exceeded its watchdog window"; the enumeration pod's register interaction never became a terminal finding.
+  - source: skill
+    ref: skills/web-vulnerability-testing/mass-assignment/SKILL.md
+    note: |-
+      The mass-assignment class and its nested-relation-write leaf exist in the suite; the miss is that the register unit was never modelled, not that the class was unknown.
+  - source: design_doc
+    ref: docs/design/unit-threat-model-ordering-halt-adr.md
+    note: |-
+      The progressive halt is accepted as a design property and is a function of the frozen intake order; the threshold and weights are calibratable by replaying recorded runs.
+  closest_issue: null
+  proposed_issue:
+    title: "Progressive risk halt leaves Service:register unmodelled (mass assignment at /api/register)"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261026T031121-1618c524 (project dda347be-abea-48e4-94e5-4a4039f41858) the hunting run stopped modelling after three of 27 intake units: halt=true, risk_total=122, risk_threshold=110 (basis override), intake_position=3, crossing_unit="Service:library-catalog", blocked_unit="Service:navigation-menu".
+
+      `Service:register` is at intake position 9 and its console page at 17. There is no register model, loop, spec or pod. The L1 contract asserts the new account "has no administrative role", but that invariant was never tested.
+
+      The only register interaction is `username-enumeration-oracle__registration-duplicate__register-acceptor`: it registered accounts and read the client bundle's register function (username, password, name, phone, email), never sent a roles field, and ended as an unsuccessful/budget-timeout export.
+
+      ## Impact
+      white-jotter-007 (mass assignment through a roles array at /api/register) is missed even though the route and the client fields were observed. The unmodelled register unit leaves the registration write semantics unassessed.
+
+      ## Proposed direction
+      1. Add a coverage floor to the progressive halt so the register unit is modelled before the pass halts, or calibrate HUNT_RISK_THRESHOLD against this intake.
+      2. Bind mass-assignment on any registration acceptor and require a roles / nested-relation write probe beside the normal registration control.
+      3. Record the never-modelled units and the surfaces they own on the run row so the coverage loss is auditable.
+
+      The issue bank was unavailable, so this is a proposal for the operator.
+    labels: [bug, needs-triage]
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6

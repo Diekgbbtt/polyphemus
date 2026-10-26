@@ -1,6 +1,6 @@
 # Iteration B - white-jotter impact-elicitation experiment
 
-*Status: planned 2026-10-25. Ticket: 422. Baseline: `docs/experiments/white-jotter-batched-2026-10-24/TOKEN-USAGE-AND-CONTEXT-OCCUPANCY.md` and `docs/experiments/modeller-impact-quality/BASELINE.md`.*
+*Status: completed 2026-10-26. Ticket: 422. Result: `RESULTS.md`. Baseline: `docs/experiments/white-jotter-batched-2026-10-24/TOKEN-USAGE-AND-CONTEXT-OCCUPANCY.md` and `docs/experiments/modeller-impact-quality/BASELINE.md`.*
 
 ## Hypothesis
 
