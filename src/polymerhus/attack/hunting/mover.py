@@ -326,8 +326,13 @@ def threat_risk(record: Mapping[str, Any]) -> int | None:
     elif "impact" in record:
         impact_raw = record.get("impact")
     if impact_raw is not None:
+        # A legacy v2 record carries the retired `end_impact` string beside the
+        # CIA vector. The vector is the risk input; drop the retired key before
+        # the strict validation so the legacy file still reads.
+        impact_payload = dict(impact_raw or {})
+        impact_payload.pop("end_impact", None)
         try:
-            impact = Impact.model_validate(dict(impact_raw or {}))
+            impact = Impact.model_validate(impact_payload)
         except Exception:  # noqa: BLE001 - a malformed impact is unreadable
             return None
         return RISK_WEIGHTS[likelihood] * impact_weight(impact)

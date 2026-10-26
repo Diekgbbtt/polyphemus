@@ -4,7 +4,7 @@
 
 **Blocked by:** 436.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** `project_management/api.py`, `project_management/repository.py`, `app/clients/pg.py`, `attack/hunting/runtime.py`, `attack/hunting/threat_modeller.py`, `attack/hunting/prompts/threat-modeller.md`
 

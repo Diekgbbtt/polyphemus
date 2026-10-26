@@ -1,7 +1,7 @@
 """Unit tier: the threat modeller prompt material and the role rename (T2, #375).
 
 The prompt contract of S1 8: the system prompt carries the stable role and
-method (the five states and their content requirements, the trust-modelling
+method (the seven states and their content requirements, the trust-modelling
 ontology and the two-branch method, the confidence degrees and their
 falsification lifecycle, the evidence discipline, the live-authority rule, the
 retention-first drop rule, the assumption-to-threat closure check, the risk-scoring
@@ -137,7 +137,7 @@ def test_the_prompt_delegates_the_target_front_rule_to_the_shared_constant():
 
 
 def test_the_prompt_state_and_section_table_matches_the_typed_contract():
-    """The five states and their sections are pinned to the typed source, so a
+    """The seven states and their sections are pinned to the typed source, so a
     gate change cannot leave the human projection stale."""
     prompt = _modeller_skill()
     for state in ModelState:
@@ -145,6 +145,45 @@ def test_the_prompt_state_and_section_table_matches_the_typed_contract():
     for state, sections in GATE_SECTIONS.items():
         for section in sections:
             assert section in prompt, f"{state.value}:{section}"
+
+
+def test_the_prompt_states_the_seven_gates_in_workflow_order():
+    """The state table is a reader's map of the workflow: the gates must appear
+    in the machine's order, not in an arbitrary mention order."""
+    prompt = _modeller_skill()
+    table = prompt.split("## The seven states and their gates", 1)[1].split("## ", 1)[0]
+    positions = [table.index(state.value) for state in ModelState]
+    assert positions == sorted(positions)
+
+
+def test_the_prompt_states_the_damage_semantic_and_the_precursor_boundary():
+    """Ticket 436's prompt contract: the damage names the victim and the
+    property, the victim/property catalog is explicit, a precursor is an abstract
+    capability (never a request or payload), one threat references one damage
+    row, and the CIA vector is scored AFTER the assessment."""
+    prompt = _modeller_skill()
+    required = {
+        "damage_field": "The damage field names the victim and the damaged property",
+        "victim_user": "An end user",
+        "victim_application": "The application",
+        "victim_infrastructure": "The infrastructure",
+        "property_code": "privileged code execution",
+        "threat_row": "A `threat` row names a concrete victim and property",
+        "placeholder_row": "A `placeholder` row has no concrete victim",
+        "capability_path": "capability_path",
+        "precursor_procedure": (
+            "an abstract trust-boundary mechanism, never a request, a payload, "
+            "or a tool"),
+        "one_threat_one_damage": (
+            "One threat references exactly one `impact_assessment` row"),
+        "several_per_vulnerability": "one per exploitation manner",
+        "cia_after": "CIA vector AFTER the impact assessment",
+        "threat_cia_non_none": "at least one non-none value",
+        "placeholder_no_threat": "A placeholder has no threat",
+        "placeholder_no_file": "produces no threat file",
+    }
+    missing = [name for name, clause in required.items() if clause not in prompt]
+    assert missing == []
 
 
 def test_the_prompt_reference_table_matches_the_typed_paths():
@@ -215,7 +254,9 @@ def test_the_turn_prompt_renders_the_state_the_unit_and_the_fresh_model():
         sections=GATE_SECTIONS[ModelState.TRUST_MODELLED],
         instruction=STATE_INSTRUCTIONS[ModelState.TRUST_MODELLED],
         model={"state": "UNIT_TECHNICAL_SHARP",
-               "technical_sharpening": {"interface_agreements": []}},
+               "technical_sharpening": {
+                   "interface_agreements": [{"id": "ia-1", "statement": "x"}],
+               }},
     )
 
     rendered = _compose_modeller_prompt(turn)
@@ -226,6 +267,31 @@ def test_the_turn_prompt_renders_the_state_the_unit_and_the_fresh_model():
     assert "state: UNIT_TECHNICAL_SHARP" in rendered
     assert "technical_sharpening" in rendered
     assert "hunts_store" in rendered and "notes" in rendered
+
+
+def test_the_turn_prompt_does_not_report_a_never_written_section():
+    """A defaulted section is not "written": the PRIOR_ART turn must not be
+    told that prior art is already authored."""
+    turn = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.PRIOR_ART,
+        sections=GATE_SECTIONS[ModelState.PRIOR_ART],
+        instruction=STATE_INSTRUCTIONS[ModelState.PRIOR_ART],
+        model={
+            "state": "UNIT_TECHNICAL_SHARP",
+            "technical_sharpening": {
+                "interface_agreements": [{"id": "ia-1", "statement": "x"}],
+            },
+            "prior_art": {"queries": [], "reused": [], "notes": ""},
+        },
+    )
+
+    rendered = _compose_modeller_prompt(turn)
+    written = next(
+        line for line in rendered.splitlines() if "sections written:" in line)
+
+    assert "technical_sharpening" in written
+    assert "prior_art" not in written
 
 
 def test_the_turn_prompt_degrades_a_missing_model_to_a_denotation():
@@ -278,6 +344,127 @@ def test_the_prompt_names_the_read_command():
     """The store's read needs `cmd='read'` (the schema's discriminator); a
     prompt that says "no arguments" sends an invalid call."""
     assert "cmd='read'" in _modeller_skill()
+
+
+def test_the_prompt_states_the_prior_art_phase_and_the_query_contract():
+    """Ticket 437: the phase runs after the technical sharpening and before the
+    trust model; it carries the query contract (the kind, the filters, the
+    AND/regex semantics, the `*` traversal, the limit, the bound-unit
+    exclusion) and the three required query kinds plus the prior-art note."""
+    prompt = _modeller_skill()
+    required = {
+        "phase_heading": "## Prior art (PRIOR_ART)",
+        "phase_order": "after the technical sharpening and before the trust model",
+        "query_command": "cmd='query'",
+        "kind_field": "`kind`",
+        "kinds": (
+            "`threat`, `vulnerability`, `precursor`, `assumption`, or `impact`"
+        ),
+        "filters_field": "`filters`",
+        "filter_path": "`path`",
+        "filter_regex": "`regex`",
+        "filter_flags": "`flags`",
+        "and_semantics": "the filters are AND",
+        "search_semantics": "`re.search(regex, value, flags)`",
+        "star_traversal": "`*` iterates a list",
+        "missing_path": "a missing path is no match",
+        "limit": "`limit` is 1..50, default 20",
+        "bound_unit_exclusion": "unless a filter path is `unit_id`",
+        "produced_and_consumed": "produced and the consumed",
+        "matched_pairs": "`matched` path/value pairs",
+        "three_kinds": "at least ONE query for threats, one for vulnerabilities, "
+                       "and one for precursors",
+        "note": "`prior_art` note",
+    }
+    missing = [name for name, clause in required.items() if clause not in prompt]
+    assert missing == []
+
+
+def test_the_prompt_keeps_the_prior_art_phase_before_the_trust_mapping():
+    prompt = _modeller_skill()
+    assert prompt.index("## Prior art (PRIOR_ART)") < prompt.index(
+        "## Trust mapping (TRUST_MODELLED)")
+
+
+# --- #438: the project scope ------------------------------------------------
+
+SCOPE = ("The target is assumed to have a request-rate limiter and a WAF in "
+         "blocking mode. The internal build network is out of scope; a threat "
+         "that needs access to the build network is not modelled.")
+
+
+def _assumptions_section(prompt: str) -> str:
+    return prompt.split(
+        "## Assumptions (TRUST_ASSUMPTIONS_WRITTEN)", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_turn_prompt_appends_the_project_scope_verbatim():
+    """#438: the run's scope string rides the turn under `## Project scope
+    (verbatim)`, exactly as the operator wrote it - the prompt never paraphrases
+    or reformats it."""
+    turn = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+        sections=GATE_SECTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN],
+        instruction=STATE_INSTRUCTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN],
+        threat_model_scope=SCOPE,
+    )
+
+    rendered = _compose_modeller_prompt(turn)
+
+    heading = "## Project scope (verbatim)"
+    assert heading in rendered
+    appended = rendered.split(heading, 1)[1]
+    # verbatim: the operator's string is one contiguous block, unedited
+    assert SCOPE in appended
+    assert appended.count(SCOPE) == 1
+
+
+def test_an_empty_project_scope_appends_no_scope_section():
+    """#438: an unset project appends nothing - no empty heading, no empty
+    claim for the model to fill in."""
+    turn = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+        sections=GATE_SECTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN],
+        instruction=STATE_INSTRUCTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN],
+        threat_model_scope="",
+    )
+
+    rendered = _compose_modeller_prompt(turn)
+
+    assert "## Project scope (verbatim)" not in rendered
+    assert SCOPE not in rendered
+
+
+def test_the_prompt_binds_the_assumptions_phase_to_the_project_scope():
+    """#438: the scope is a project assumption, not a prompt rule bolted onto
+    the impact rows. The assumptions phase states the binding: an excluded trust
+    boundary is never modelled, so the excluded assumption and fault are never
+    made."""
+    assumptions = _assumptions_section(_modeller_skill())
+
+    assert "## Project scope (verbatim)" in assumptions
+    assert "do not model a trust boundary the project scope excludes" in assumptions
+    assert "do not make the excluded assumption or fault" in assumptions
+    assert "at the assumptions layer, never as an impact-row exclusion" in assumptions
+
+
+def test_the_hunting_config_scope_is_not_a_prompt_constant():
+    """#438: the scope is the PROJECT's string, read per run - the static
+    prompt names the section and the binding but never hardcodes a posture."""
+    assert SCOPE not in _modeller_skill()
+
+
+def test_the_hunts_store_description_states_the_query_contract():
+    from polymerhus.attack.hunting.threat_modeller_tools import (
+        _HUNTS_STORE_DESCRIPTION,
+    )
+
+    assert "cmd='query'" in _HUNTS_STORE_DESCRIPTION
+    assert "`kind`" in _HUNTS_STORE_DESCRIPTION
+    assert "`filters`" in _HUNTS_STORE_DESCRIPTION
+    assert "`limit`" in _HUNTS_STORE_DESCRIPTION
 
 
 def test_the_session_segment_and_the_role_are_the_new_names():

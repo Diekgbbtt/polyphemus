@@ -84,10 +84,13 @@ class SettingsUpdate(BaseModel):
 
 class HuntingConfigUpdate(BaseModel):
     """The partial PUT body of the project's hunting config (ADR
-    `hunting-pipeline-sync-adr.md`, amended 2026-10-26). Only the provided keys
-    land (deep-merged); `risk_threshold: null` clears the DB override and falls
-    back to the env/default basis; `pod_batch_size: null` clears it to the
-    default 1; `promotion_risk_threshold: null` clears it to no filter."""
+    `hunting-pipeline-sync-adr.md`, amended 2026-10-26, and spec 6 of the
+    impact assessment system). Only the provided keys land (deep-merged);
+    `risk_threshold: null` clears the DB override and falls back to the
+    env/default basis; `pod_batch_size: null` clears it to the default 1;
+    `promotion_risk_threshold: null` clears it to no filter;
+    `threat_model_scope` is the project's free-text posture statement (null
+    clears it)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -96,6 +99,7 @@ class HuntingConfigUpdate(BaseModel):
     pod_batch_size: int | None = Field(default=None, ge=1, strict=True)
     promotion_risk_threshold: int | None = Field(
         default=None, ge=0, strict=True)
+    threat_model_scope: str | None = None
 
 
 class ReconLaunch(BaseModel):
@@ -238,9 +242,10 @@ def update_settings(project_id: str, body: SettingsUpdate) -> dict:
 def read_hunting_config(project_id: str) -> dict:
     """The project's hunting config (ADR `hunting-pipeline-sync-adr.md`): the
     frozen-at-run-start `pipeline_sync` mode, the threat-modeller risk
-    threshold, the pod batch size, and the per-threat promotion threshold.
-    Unknown project -> 404; a project that never stored a blob reads back the
-    defaults (mode `batched`, threshold None, batch size 1, promotion None)."""
+    threshold, the pod batch size, the per-threat promotion threshold, and the
+    verbatim threat-model scope. Unknown project -> 404; a project that never
+    stored a blob reads back the defaults (mode `batched`, threshold None,
+    batch size 1, promotion None, scope empty)."""
     try:
         return repository.read_hunting_config(project_id)
     except ProjectNotFound:
@@ -251,7 +256,8 @@ def read_hunting_config(project_id: str) -> dict:
 def update_hunting_config(project_id: str, body: HuntingConfigUpdate) -> dict:
     """Partial update: only the provided keys land (deep-merged into
     `settings.hunting`). The mode is validated by the body enum; a bad
-    threshold or an unknown project is refused with nothing landing."""
+    threshold, a non-string scope, or an unknown project is refused with
+    nothing landing."""
     payload = body.model_dump(exclude_unset=True)
     try:
         repository.save_hunting_config(project_id, payload)

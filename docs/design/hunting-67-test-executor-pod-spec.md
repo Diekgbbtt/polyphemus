@@ -29,7 +29,7 @@ Where this document and the new spec disagree, the new spec wins.
 - The CIA score is authored after the impact assessment.
   The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
 - The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `PRIOR_ART`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `IMPACT_ASSESSED`, `COMPLETED`.
-- `hunts_store` gains `cmd=query` with typed filters for unit, kind, class, disposition, and text.
+- `hunts_store` gains `cmd=query`: a required `kind` plus a non-empty AND list of `{path, regex, flags}` filters over the threat-file and model fields. An empty filter, an invalid regex, or an unknown path is a coded rejection.
 - The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
 - The hunter payload carries the impact assessment and the precursors.
   The spec contract and the pod contract are unchanged.

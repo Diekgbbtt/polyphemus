@@ -30,8 +30,20 @@ from polymerhus.app.memory.tool_contract import (
     build_notes_tool,
 )
 
-from .threat_model import GATE_SECTIONS, ModelSections, ModelState
-from .threat_model_store import NOTE_KINDS, ThreatModelIdentityError
+from .threat_model import (
+    GATE_SECTIONS,
+    FieldFilter,
+    ModelSections,
+    ModelState,
+    PriorArtKind,
+)
+from .threat_model_store import (
+    NOTE_KINDS,
+    QUERY_DEFAULT_LIMIT,
+    QUERY_MAX_LIMIT,
+    ThreatModelIdentityError,
+    ThreatQueryError,
+)
 from .threat_modeller import (
     GATE_HINTS,
     ModellerUnit,
@@ -44,9 +56,24 @@ MAX_SKILL_FILTER_CHARS = 200
 MAX_SKILL_LIST_ENTRIES = 20
 
 MODEL_SECTIONS: tuple[str, ...] = (
-    "technical_sharpening", "trust_model", "assumptions",
-    "vulnerabilities", "threats",
+    "technical_sharpening", "prior_art", "trust_model", "assumptions",
+    "vulnerabilities", "impact_assessment", "precursors", "threats",
 )
+
+
+def _section_holds(value: Any) -> bool:
+    """Whether a persisted section carries authored content.
+
+    The schema materialises every section with its empty defaults, so a plain
+    truthiness test counts a never-written mapping (`prior_art` dumps to
+    `{"queries": [], "reused": [], "notes": ""}`). A section is held when a
+    mapping has at least one held value or a sequence has at least one held
+    entry."""
+    if isinstance(value, Mapping):
+        return any(_section_holds(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_section_holds(item) for item in value)
+    return bool(value)
 
 
 @dataclass
@@ -76,16 +103,19 @@ class ModellerHuntsStoreArgs(BaseModel):
     the model id, and every derived symbol are bound at construction and are
     never request fields. The read carries `{cmd, unit_id?, section?}` - no
     `unit_id` reads the bound unit, a `unit_id` reads another unit's model for
-    prior insight, a `section` projects one section.
+    prior insight, a `section` projects one section. The query carries
+    `{cmd, kind, filters, limit?}`: a regex field filter over one record kind,
+    scoped to the project and excluding the bound unit unless a filter path is
+    `unit_id`.
     """
 
-    cmd: Literal["read", "write"] = Field(
-        description="The operation: 'read' or 'write' (required).")
+    cmd: Literal["read", "write", "query"] = Field(
+        description="The operation: 'read', 'write', or 'query' (required).")
     state: str | None = Field(
         default=None,
         description="Write payload: the gate state, one of UNIT_TECHNICAL_SHARP, "
-                    "TRUST_MODELLED, TRUST_ASSUMPTIONS_WRITTEN, "
-                    "VULNERABILITIES_WRITTEN, COMPLETED.")
+                    "PRIOR_ART, TRUST_MODELLED, TRUST_ASSUMPTIONS_WRITTEN, "
+                    "VULNERABILITIES_WRITTEN, IMPACT_ASSESSED, COMPLETED.")
     sections: ModelSections | None = Field(
         default=None,
         description="Write payload: the typed section content for that gate. "
@@ -97,29 +127,54 @@ class ModellerHuntsStoreArgs(BaseModel):
     section: str | None = Field(
         default=None,
         description="Read projection: return only this section.")
+    kind: str | None = Field(
+        default=None,
+        description="Query filter: the record kind, one of threat, "
+                    "vulnerability, precursor, assumption, impact (required).")
+    filters: list[FieldFilter] | None = Field(
+        default=None,
+        description="Query filter: a non-empty AND list of {path, regex, flags}. "
+                    "Each is a re.search over the value at the dotted path; `*` "
+                    "iterates a list; an unknown path, an invalid regex, and an "
+                    "empty list are rejected.")
+    limit: int = Field(
+        default=QUERY_DEFAULT_LIMIT, ge=1, le=QUERY_MAX_LIMIT,
+        description="Query filter: the maximum matches to return (1..50).")
 
     model_config = ConfigDict(extra="forbid")
 
 
 _HUNTS_STORE_DESCRIPTION = (
-    "Read or write the unit threat model through the per-project threat model "
-    "store.\n"
+    "Read, write, or query the unit threat model through the per-project threat "
+    "model store.\n"
     "cmd='write': pass the gate `state` and the `sections` that gate carries. "
     "The unit identity is BOUND: never pass a unit id, a file name, a model id, "
     "or a path. The states and their sections are: UNIT_TECHNICAL_SHARP "
-    "(technical_sharpening), TRUST_MODELLED (trust_model), "
-    "TRUST_ASSUMPTIONS_WRITTEN (assumptions), VULNERABILITIES_WRITTEN "
-    "(vulnerabilities), COMPLETED (threats; the store computes the risk profile "
-    "and runs the completion checker). A section outside the "
+    "(technical_sharpening), PRIOR_ART (prior_art), TRUST_MODELLED "
+    "(trust_model), TRUST_ASSUMPTIONS_WRITTEN (assumptions), "
+    "VULNERABILITIES_WRITTEN (vulnerabilities), IMPACT_ASSESSED "
+    "(impact_assessment, precursors), COMPLETED (threats; the store computes "
+    "the risk profile and runs the completion checker). A section outside the "
     "state's set is rejected; the model state is monotonic, so a later write for "
     "an earlier gate updates that section without regressing the state.\n"
     "cmd='read': pass an optional `unit_id` (default: the unit you are modelling) "
     "and an optional `section` to project one section. Reads are read-only.\n"
+    "cmd='query': pass `kind` (threat, vulnerability, precursor, assumption, or "
+    "impact), a non-empty `filters` list of {path, regex, flags}, and an optional "
+    "`limit` (1..50, default 20). The filters are AND; each is a re.search over "
+    "the value at the dotted path, `*` iterates a list, and a missing path is no "
+    "match. The query reads the produced and consumed models of THIS project, "
+    "excludes your bound unit unless a filter path is `unit_id`, and returns "
+    "summaries with each model's state and the matched path/value pairs - never "
+    "a full model. An empty filter list, an invalid regex, and an unknown path "
+    "are rejected.\n"
     "Every reference field carries an ID, never prose. "
     "`trust_model.trust_agreements[].interface_agreement_refs` names "
-    "`technical_sharpening.interface_agreements[].id` (`IA-*`), and "
+    "`technical_sharpening.interface_agreements[].id` (`IA-*`), "
     "`trust_model.dynamic_state_trust.violations[].maps_to_fault` names an "
-    "`assumptions[].fault.id` (`F-*`). The store resolves every reference and "
+    "`assumptions[].fault.id` (`F-*`), `threats[].impact_ref` names an "
+    "`impact_assessment[].id` (`IA-*`), and `threats[].enabling_precursors` "
+    "names `precursors[].id` (`P-*`). The store resolves every reference and "
     "archives a model with an unresolved one."
 )
 
@@ -132,6 +187,7 @@ class ModellerHuntsStoreTool(StoreToolBase):
     description: str = _HUNTS_STORE_DESCRIPTION
     args_schema: type[BaseModel] = ModellerHuntsStoreArgs
     _discriminator: str = "cmd"
+    _known_commands: tuple[str, ...] = ("read", "write", "query")
     _rejection_name: str = "hunts_store"
     _require_write_intent: bool = False
     _as_json: bool = False
@@ -158,14 +214,22 @@ class ModellerHuntsStoreTool(StoreToolBase):
         return self._unit.run_id if self._unit is not None else self._run_id
 
     @staticmethod
-    def _rejected(fields: list[str], detail: str) -> dict:
+    def _rejected(fields: list[str], detail: str,
+                  *, error: str = "hunts_store_write_rejected") -> dict:
         """The coded contract rejection (the `coded_teaching_rejection`
         convention): a machine error code plus the field name(s) the model must
         supply - never a silent degenerate write and never a bare raise."""
         return {
-            "ok": False, "error": "hunts_store_write_rejected",
+            "ok": False, "error": error,
             "fields": list(fields), "detail": detail, "rejected": True,
         }
+
+    def _dispatch_other(self, args: ModellerHuntsStoreArgs, command: str):
+        """The prior-art query is this seam's third command; read/write keep
+        the shared base's dispatch."""
+        if command == "query":
+            return self._query(args)
+        return super()._dispatch_other(args, command)
 
     def _read(self, args: ModellerHuntsStoreArgs) -> dict:
         if self._store is None:
@@ -188,11 +252,50 @@ class ModellerHuntsStoreTool(StoreToolBase):
         return {
             "unit_id": unit_id,
             "state": model.get("state"),
-            "sections": [name for name in MODEL_SECTIONS if model.get(name)],
+            "sections": [
+                name for name in MODEL_SECTIONS if _section_holds(model.get(name))
+            ],
             "model": model,
             "risk_profile": model.get("risk_profile"),
             "validation": model.get("validation"),
         }
+
+    def _query(self, args: ModellerHuntsStoreArgs) -> dict:
+        """The project-scoped prior-art query (S2 section 7).
+
+        The record kind and the non-empty AND filters are the command's
+        contract; the store rejects a bad path or regex with its coded error,
+        re-surfaced here with the query error code. The typed args bound the
+        limit. A read failure degrades to an empty result (O4), never a raise
+        into the turn."""
+        if self._store is None:
+            return {"error": "threat model store unavailable", "degraded": True}
+        raw_kind = str(args.kind or "").strip()
+        known = ", ".join(member.value for member in PriorArtKind)
+        if not raw_kind:
+            return self._rejected(
+                ["kind"], f"a query needs `kind`, one of {known}",
+                error="hunts_store_query_rejected")
+        try:
+            kind = PriorArtKind(raw_kind)
+        except ValueError:
+            return self._rejected(
+                ["kind"], f"unknown kind {raw_kind!r}; known: {known}",
+                error="hunts_store_query_rejected")
+        filters = list(args.filters or [])
+        try:
+            return self._store.query_prior_art(
+                self._bound_project, kind=kind, filters=filters,
+                limit=args.limit, bound_unit_id=self._bound_unit)
+        except ThreatQueryError as exc:
+            return self._rejected(
+                list(exc.fields), str(exc), error="hunts_store_query_rejected")
+        except Exception as exc:  # noqa: BLE001 - a read failure degrades (O4)
+            logger.warning("hunts_store query degraded (%s)", exc)
+            return {
+                "matches": [], "count": 0, "truncated": False,
+                "error": f"hunts_store query degraded: {exc}",
+            }
 
     def _write(self, args: ModellerHuntsStoreArgs) -> dict:
         if not self._bound_unit:
@@ -720,6 +823,11 @@ class ModellerTools:
     # HTTP-history reads): the surface builder attaches it to those tools and
     # the pass folds the unit's slice into the outcome's `context_gaps`.
     seam_gaps: ToolSeamGaps | None = None
+    # The project's free-text posture statement (#438). The run reads it ONCE
+    # at its start (`runtime._run_intake`) from `settings.hunting` and stamps
+    # it here; the pass copies it verbatim onto every turn prompt. It never
+    # rides the run record (S6: the run record does not duplicate it).
+    threat_model_scope: str = ""
 
 
 def build_grounding_provider(project_id: str, *, read_fn=None):

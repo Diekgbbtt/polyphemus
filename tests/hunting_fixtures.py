@@ -147,10 +147,23 @@ def _hunter_payload(**overrides) -> dict:
                 "confidentiality": "low",
                 "integrity": "none",
                 "availability": "none",
-                "end_impact": "A caller reads another tenant's item.",
             },
+            "impact_ref": "ia-1",
+            "enabling_precursors": ["p-1"],
             "confidence": "INFERRED",
             "evidences": [{"kind": "request", "ref": "GET /api/a"}],
+        },
+        "impact": {
+            "impact_ref": "ia-1",
+            "damage": "A caller reads another tenant's item.",
+            "disposition": "threat",
+            "precursors": [{
+                "id": "p-1",
+                "capability": "read the item by its identifier",
+                "procedure": "resolve the item by the caller-supplied id",
+                "evidence_refs": ["GET /api/a"],
+            }],
+            "capability_path": ["p-1"],
         },
         "technical_sharpening": {
             "interface_agreements": [{
@@ -286,11 +299,14 @@ def _evidence(ref: str = "GET /catalogue") -> dict:
 
 
 def modeller_gate_payloads() -> dict:
-    """The five gate payloads, the minimum the completion checker needs.
+    """The seven gate payloads, the minimum the completion checker needs.
 
     The literal content is the T1 fixture shape (a known-good worked example),
     never derived from the code under test. Single home: the modeller's pass
-    tests and the runtime wiring tests drive the SAME example."""
+    tests, the runtime wiring tests, and the mover fixtures drive the SAME
+    example. The worked example carries ONE damage-bearing row (`ia-1`), ONE
+    precursor (`p-1`), and ONE high threat that references them.
+    """
     from polymerhus.attack.hunting.threat_model import ModelState
 
     return {
@@ -314,6 +330,49 @@ def modeller_gate_payloads() -> dict:
                     "confidence": "OBSERVED",
                     "evidences": [_evidence()],
                 }],
+            },
+        },
+        ModelState.PRIOR_ART: {
+            "prior_art": {
+                # One query per kind the completion check requires (ticket 437):
+                # threat, vulnerability, precursor - each with at least one
+                # filter - plus the phase note.
+                "queries": [
+                    {
+                        "kind": "precursor",
+                        "filters": [{
+                            "path": "capability",
+                            "regex": "session|item",
+                            "flags": "i",
+                        }],
+                        "result_count": 2,
+                    },
+                    {
+                        "kind": "threat",
+                        "filters": [{
+                            "path": "threat.web_vulnerability_class",
+                            "regex": "session-management",
+                            "flags": "i",
+                        }],
+                        "result_count": 0,
+                    },
+                    {
+                        "kind": "vulnerability",
+                        "filters": [{
+                            "path": "canonical_class",
+                            "regex": "credential",
+                            "flags": "i",
+                        }],
+                        "result_count": 0,
+                    },
+                ],
+                "reused": [{
+                    "unit_id": "Service:sign-in",
+                    "record_id": "p-2",
+                    "kind": "precursor",
+                    "reason": "the item-read capability applies to the lookup surface",
+                }],
+                "notes": "No prior threat matched the item read.",
             },
         },
         ModelState.TRUST_MODELLED: {
@@ -378,6 +437,10 @@ def modeller_gate_payloads() -> dict:
                 "evidences": [_evidence()],
             }],
         },
+        ModelState.IMPACT_ASSESSED: {
+            "impact_assessment": [_damage_row()],
+            "precursors": [_precursor()],
+        },
         ModelState.COMPLETED: {
             "threats": [{
                 "fault_ref": "fault-1",
@@ -392,17 +455,61 @@ def modeller_gate_payloads() -> dict:
                     "privileges_required": "none",
                     "complexity": "low",
                 },
+                "impact_ref": "ia-1",
+                "enabling_precursors": ["p-1"],
                 "impact": {
                     "confidentiality": "low",
                     "integrity": "none",
                     "availability": "none",
-                    "end_impact": "A caller reads another tenant's item.",
                 },
                 "confidence": "INFERRED",
                 "evidences": [_evidence()],
             }],
         },
     }
+
+
+# The worked example's one damage claim: the victim is the tenant user, the
+# property is the confidentiality of the persisted item data (S2 section 2).
+DAMAGE = (
+    "An anonymous caller reads another tenant's item from the catalogue "
+    "database."
+)
+
+
+def _precursor(index: int = 1) -> dict:
+    return {
+        "id": f"p-{index}",
+        "capability": "read another tenant's item",
+        "procedure": "resolve the item by the identifier the caller supplies",
+        "evidence_refs": ["GET /catalogue?id=2"],
+    }
+
+
+def _damage_row(index: int = 1) -> dict:
+    return {
+        "id": f"ia-{index}",
+        "vulnerability_ref": "v-1",
+        "disposition": "threat",
+        "damage": DAMAGE,
+        "precursor_refs": [f"p-{index}"],
+        "capability_path": [f"p-{index}"],
+        "evidence_refs": ["GET /catalogue?id=2"],
+    }
+
+
+def _coherent_threats(threats):
+    """Renumber the supplied threat rows onto their OWN damage rows (ticket
+    436's one-threat-one-damage rule): threat i references `ia-<i>` and
+    `p-<i>`, so a fan-out fixture stays a valid COMPLETED model."""
+    return [
+        {
+            **row,
+            "impact_ref": f"ia-{index}",
+            "enabling_precursors": [f"p-{index}"],
+        }
+        for index, row in enumerate(threats, start=1)
+    ]
 
 
 # --- the produced-model fixtures (T4b, #387) ------------------------------------
@@ -418,29 +525,44 @@ def produce_model(
     run_id: str,
     threats=None,
 ) -> str:
-    """Drive a REAL `ThreatModelStore`'s five gates to COMPLETED for `unit_id` -
+    """Drive a REAL `ThreatModelStore`'s seven gates to COMPLETED for `unit_id` -
     the produced COMPLETED valid model the mover dispatches from.
 
     The one home of the worked example's ladder (T4b #387 lifted it out of the
     per-file test helpers, so the retired-config tests could be re-pointed at the
     same produced model): `threats` overrides the COMPLETED write's threat rows
-    (the sequencing fixtures). The gate payloads are a KNOWN-GOOD literal
-    (`modeller_gate_payloads`), never derived from the code under test."""
+    (the sequencing fan-out fixtures) and the `IMPACT_ASSESSED` write's rows are
+    derived per threat, so every fan-out row keeps its own damage claim (ticket
+    436's one-threat-one-damage rule). The gate payloads are a KNOWN-GOOD
+    literal (`modeller_gate_payloads`), never derived from the code under test."""
     payloads = modeller_gate_payloads()
     from polymerhus.attack.hunting.threat_model import ModelState
 
+    rows = _coherent_threats(threats) if threats is not None else None
     for state in ModelState:
         sections = dict(payloads[state])
-        if state is ModelState.COMPLETED and threats is not None:
-            sections["threats"] = threats
+        if rows is not None:
+            if state is ModelState.IMPACT_ASSESSED:
+                sections = {
+                    "impact_assessment": [
+                        _damage_row(index) for index in range(1, len(rows) + 1)
+                    ],
+                    "precursors": [
+                        _precursor(index) for index in range(1, len(rows) + 1)
+                    ],
+                }
+            elif state is ModelState.COMPLETED:
+                sections["threats"] = rows
         store.write_sections(project_id, unit_id, state, sections, run_id=run_id)
     return unit_id
 
 
 def threat_row(**overrides) -> dict:
     """One COMPLETED-write threat row (the shared worked example): one `high`
-    threat over fault-1 / v-1. `overrides` carry the sequencing fixtures'
-    likelihood (or a distinct threat's rows)."""
+    threat over fault-1 / v-1 that references the worked example's `ia-1` row and
+    `p-1` precursor. `overrides` carry the sequencing fixtures' likelihood (or a
+    distinct threat's rows); `produce_model` renumbers a fan-out onto its own
+    rows."""
     row = {
         "fault_ref": "fault-1",
         "vulnerability_ref": "v-1",
@@ -454,11 +576,12 @@ def threat_row(**overrides) -> dict:
             "privileges_required": "none",
             "complexity": "low",
         },
+        "impact_ref": "ia-1",
+        "enabling_precursors": ["p-1"],
         "impact": {
             "confidentiality": "low",
             "integrity": "none",
             "availability": "none",
-            "end_impact": "A caller reads another tenant's item.",
         },
         "confidence": "INFERRED",
         "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
@@ -475,7 +598,6 @@ def threat_row(**overrides) -> dict:
             "confidentiality": level,
             "integrity": "none",
             "availability": "none",
-            "end_impact": "A caller reads another tenant's item.",
         }
     return row
 
@@ -527,7 +649,12 @@ class ScriptedModellerTurns:
         from polymerhus.attack.hunting.threat_model import ModelState
 
         self.states = list(states if states is not None else ModelState)
-        self.payloads = payloads if payloads is not None else modeller_gate_payloads()
+        # `payloads` OVERRIDES the worked example's gate payloads (one gate's
+        # override, never a replacement of the other gates), so a test that
+        # rewrites the COMPLETED write still drives the full ladder.
+        self.payloads = {
+            **modeller_gate_payloads(), **(payloads if payloads is not None else {}),
+        }
         self.turn_inputs: list = []
         self.responses: list = []
 
@@ -544,9 +671,9 @@ class ScriptedModellerTurns:
                 "body": "every threat checked; no new assumption",
             })
             from polymerhus.attack.hunting.threat_model import ModelState
-            payload = self.payloads[ModelState.COMPLETED]
+            payload = self.payloads[ModelState.IMPACT_ASSESSED]
             self.responses.append(self.store_tool(turn).invoke({
-                "cmd": "write", "state": ModelState.COMPLETED.value,
+                "cmd": "write", "state": ModelState.IMPACT_ASSESSED.value,
                 "sections": payload,
             }))
             return None

@@ -4,7 +4,7 @@
 
 **Blocked by:** 436.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** `attack/hunting/threat_model.py`, `attack/hunting/threat_model_store.py`, `attack/hunting/threat_modeller_tools.py`, `attack/hunting/threat_modeller.py`, `attack/hunting/prompts/threat-modeller.md`
 

@@ -191,20 +191,24 @@ def _stored_int(
 
 def read_hunting_config(project_id: str) -> dict:
     """The project's hunting config (`{"pipeline_sync", "risk_threshold",
-    "pod_batch_size", "promotion_risk_threshold"}`).
+    "pod_batch_size", "promotion_risk_threshold", "threat_model_scope"}`).
 
     Unknown project -> ProjectNotFound; a known project that never stored a
     blob reads back the documented defaults (mode `batched`, threshold None,
-    batch size 1, promotion threshold None - no filter). A stored mode outside
-    the enum (a hand-edited row) reads back as the default rather than an error.
-    A malformed or out-of-range batch size or promotion threshold reads back the
-    default with a warning."""
+    batch size 1, promotion threshold None - no filter, scope `""`). A stored
+    mode outside the enum (a hand-edited row) reads back as the default rather
+    than an error. A malformed or out-of-range batch size or promotion
+    threshold reads back the default with a warning; a stored scope that is not
+    a string reads back as the empty default."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
     stored = dict(pg.get_hunting_settings(project_id) or {})
     mode = stored.get("pipeline_sync")
     if mode not in HUNTING_SYNC_MODES:
         mode = HUNTING_SYNC_DEFAULT
+    scope = stored.get("threat_model_scope")
+    if not isinstance(scope, str):
+        scope = ""
     return {
         "pipeline_sync": mode,
         "risk_threshold": stored.get("risk_threshold"),
@@ -213,6 +217,7 @@ def read_hunting_config(project_id: str) -> dict:
             default=HUNTING_POD_BATCH_DEFAULT),
         "promotion_risk_threshold": _stored_int(
             stored, "promotion_risk_threshold", minimum=0, default=None),
+        "threat_model_scope": scope,
     }
 
 
@@ -220,14 +225,15 @@ def save_hunting_config(project_id: str, body: dict) -> None:
     """Persist a PARTIAL hunting config PUT (deep-merged into the stored blob).
 
     Only the provided keys land (`pipeline_sync`, `risk_threshold`,
-    `pod_batch_size`, `promotion_risk_threshold`). The mode must be a known enum
-    value; the risk threshold must be a non-negative integer (or an explicit
-    None, which clears the DB override and falls back to the env/default basis);
-    the batch size must be an integer at least 1 (or an explicit None, which
-    clears it to the default 1); the promotion threshold must be a non-negative
-    integer (or an explicit None, which clears it to no filter). Raises
-    ProjectNotFound if unknown, ValueError on an invalid value - nothing lands
-    on a refusal."""
+    `pod_batch_size`, `promotion_risk_threshold`, `threat_model_scope`). The
+    mode must be a known enum value; the risk threshold must be a non-negative
+    integer (or an explicit None, which clears the DB override and falls back
+    to the env/default basis); the batch size must be an integer at least 1 (or
+    an explicit None, which clears it to the default 1); the promotion
+    threshold must be a non-negative integer (or an explicit None, which clears
+    it to no filter); the scope is free text (an explicit None clears it).
+    Raises ProjectNotFound if unknown, ValueError on an invalid value - nothing
+    lands on a refusal."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
     if "pipeline_sync" in body and body["pipeline_sync"] not in HUNTING_SYNC_MODES:
@@ -235,6 +241,10 @@ def save_hunting_config(project_id: str, body: dict) -> None:
             f"hunting_pipeline_sync must be one of {HUNTING_SYNC_MODES}; "
             f"got {body['pipeline_sync']!r}"
         )
+    if ("threat_model_scope" in body
+            and body["threat_model_scope"] is not None
+            and not isinstance(body["threat_model_scope"], str)):
+        raise ValueError("threat_model_scope must be a free-text string or null")
     if "risk_threshold" in body and body["risk_threshold"] is not None:
         try:
             threshold = int(body["risk_threshold"])

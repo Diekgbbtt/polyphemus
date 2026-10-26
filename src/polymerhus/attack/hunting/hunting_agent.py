@@ -299,7 +299,15 @@ def _compose_grounding(payload: Mapping[str, Any]) -> str:
     sharpening = payload.get("technical_sharpening") or {}
     target = payload.get("target_context") or {}
     impact = (payload.get("threat") or {}).get("impact") or {}
-    end_impact = str(impact.get("end_impact") or "(none)")
+    assessment = payload.get("impact") or {}
+    damage = str(assessment.get("damage") or "(none)")
+    disposition = str(assessment.get("disposition") or "(none)")
+    precursors = assessment.get("precursors") or []
+    attacker_position = "; ".join(
+        f"{precursor.get('capability')} via {precursor.get('procedure')}"
+        for precursor in precursors
+        if isinstance(precursor, Mapping)
+    ) or "(none)"
     return (
         f"You are dispatched to hunt {unit_id} for one threat-model threat.\n"
         f"Threat: {threat_id} (dispatch id "
@@ -312,10 +320,12 @@ def _compose_grounding(payload: Mapping[str, Any]) -> str:
         f"{payload.get('vulnerability_rationale') or '(none)'}\n"
         f"Likelihood rationale: "
         f"{payload.get('likelihood_rationale') or '(none)'}\n"
-        f"End impact: {end_impact} (VC "
-        f"{impact.get('confidentiality') or 'none'}, VI "
+        f"Impact assessment: {damage} (disposition {disposition})\n"
+        f"Attacker position: {attacker_position}\n"
+        f"CIA: VC {impact.get('confidentiality') or 'none'}, VI "
         f"{impact.get('integrity') or 'none'}, VA "
-        f"{impact.get('availability') or 'none'})\n"
+        f"{impact.get('availability') or 'none'}\n"
+        "The verification symptoms are variant-specific; the end damage is shared.\n"
         f"Confidence degree: {payload.get('confidence') or '(none)'}\n"
         f"Programming fault: {_render(payload.get('programming_fault'))}\n"
         f"Trust agreement: {_render(payload.get('trust_agreement'))}\n"

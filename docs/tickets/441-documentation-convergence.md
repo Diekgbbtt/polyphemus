@@ -4,7 +4,7 @@
 
 **Blocked by:** 436, 437, 438, 439, 440.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** `docs/design`, `src/polymerhus/attack/hunting/CONTEXT.md`, `attack/hunting/prompts/threat-modeller.md`, `attack/hunting/prompts/hunting-agent.md`
 

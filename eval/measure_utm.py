@@ -382,14 +382,40 @@ def load_models(store: Path) -> tuple[list[dict], list[dict]]:
                 model["_family"] = family
                 model["_unit_name"] = unit_dir.name
                 models.append(model)
-            for threat_path in sorted(unit_dir.glob("threat-*.yaml")):
+            # A v2 model names the ranked artifact `loop-*.yaml`; the v3 model
+            # names it `threat-*.yaml`. Both are rows of the legacy recomputation.
+            for threat_path in (
+                *sorted(unit_dir.glob("threat-*.yaml")),
+                *sorted(unit_dir.glob("loop-*.yaml")),
+            ):
                 record = load_mapping(threat_path)
-                if record:
-                    record["_path"] = str(threat_path)
-                    record["_family"] = family
-                    record["_unit_name"] = unit_dir.name
-                    threats.append(record)
+                if not record:
+                    continue
+                if threat_path.name.startswith("loop-"):
+                    record = legacy_threat_record(record)
+                record["_path"] = str(threat_path)
+                record["_family"] = family
+                record["_unit_name"] = unit_dir.name
+                record["_schema"] = (
+                    model.get("schema_version")
+                    if model else (2 if threat_path.name.startswith("loop-") else None)
+                )
+                threats.append(record)
     return models, threats
+
+
+def legacy_threat_record(record: dict) -> dict:
+    """A v2 `loop-*.yaml` record under the threat vocabulary, one legacy row.
+
+    The v2 artifact names the ranked row `loop` and its id `loop_id`; the metric
+    names it `threat`. The record keeps its `loop` entity because the legacy CIA
+    vector lives on `loop.impact`.
+    """
+    mapped = dict(record)
+    mapped["threat_id"] = str(record.get("threat_id") or record.get("loop_id") or "")
+    mapped["threat"] = as_dict(record.get("threat")) or as_dict(record.get("loop"))
+    mapped["_legacy"] = True
+    return mapped
 
 
 def resolve_model_text(model: dict) -> str:
@@ -654,6 +680,228 @@ def load_pods(pod_dir: Path) -> list[dict]:
     return pods
 
 
+# --- the impact metric (spec section 9) --------------------------------------
+
+CIA_METRICS = ("confidentiality", "integrity", "availability")
+IMPACT_LEVELS = ("none", "low", "medium", "high")
+
+
+def cia_levels(impact: Any) -> dict[str, str]:
+    """The three CIA levels of one `impact` block, lowercased.
+
+    A missing or unrecognised level reads as `none`: an absent vector is no
+    evidence of damage, so it can never make a row green.
+    """
+    block = as_dict(impact)
+    levels: dict[str, str] = {}
+    for metric in CIA_METRICS:
+        level = norm(block.get(metric))
+        levels[metric] = level if level in IMPACT_LEVELS else "none"
+    return levels
+
+
+def share(part: int, whole: int) -> float | None:
+    """A four-place share, or None when the denominator is zero."""
+    return round(part / whole, 4) if whole else None
+
+
+def is_bound_class(class_name: Any, index: dict[str, int]) -> bool:
+    """True when the class resolves to the suite, parent or leaf.
+
+    The binding question is not the breadth question: a leaf is bound, a
+    parent is bound, and an empty or absent name is not.
+    """
+    name = norm(class_name)
+    return bool(name) and name in index
+
+
+def class_binding_rate(
+    classes: list[str], class_index: dict[str, int] | None
+) -> float | None:
+    """The share of stored threats whose class resolves to the suite.
+
+    A diagnostic only: the retired class gate is never a pass/fail signal
+    (spec section 9). A missing suite index leaves the rate unknown.
+    """
+    if not classes or not class_index:
+        return None
+    bound = sum(1 for name in classes if is_bound_class(name, class_index))
+    return share(bound, len(classes))
+
+
+def impact_block(
+    rows: list[dict],
+    *,
+    schema: str | None,
+    legacy_recomputation: bool,
+    precursors: int | None,
+    prior_art_reused: int | None,
+    classes: list[str],
+    class_index: dict[str, int] | None,
+) -> dict:
+    """The impact block: the red/green share, the split, the distribution.
+
+    `rows` carries one `disposition` and one normalised `cia` vector each. The
+    disposition split is a v3 result only; a v2 legacy row has no disposition,
+    so its split and its precursor and prior-art counts stay unknown.
+    """
+    distribution = {
+        metric: {level: 0 for level in IMPACT_LEVELS} for metric in CIA_METRICS
+    }
+    green = 0
+    for row in rows:
+        if any(level != "none" for level in row["cia"].values()):
+            green += 1
+        for metric in CIA_METRICS:
+            distribution[metric][row["cia"][metric]] += 1
+    total = len(rows)
+    threat_rows = sum(1 for row in rows if row["disposition"] == "threat")
+    placeholder_rows = sum(1 for row in rows if row["disposition"] == "placeholder")
+    split = schema == "v3"
+    return {
+        "schema": schema,
+        "legacy_recomputation": legacy_recomputation,
+        "impact_rows": total,
+        "threats": threat_rows if split else None,
+        "placeholders": placeholder_rows if split else None,
+        "red": total - green,
+        "green": green,
+        "green_share": share(green, total),
+        "threat_share": share(threat_rows, total) if split else None,
+        "placeholder_share": share(placeholder_rows, total) if split else None,
+        "cia": distribution,
+        "precursors": precursors,
+        "prior_art_reused": prior_art_reused,
+        "class_binding_rate": class_binding_rate(classes, class_index),
+    }
+
+
+def v3_impact(models: list[dict], class_index: dict[str, int] | None) -> dict:
+    """The v3 impact metric: one row per `impact_assessment` row.
+
+    The CIA vector lives on the threat that references the row through
+    `impact_ref`, in the model document; the threat file is the published
+    denormalisation and may be absent for a zero-risk threat, so the metric
+    reads the model. A row whose reference does not resolve reads all-none.
+    """
+    rows: list[dict] = []
+    classes: list[str] = []
+    precursors = 0
+    prior_art_reused = 0
+    for model in models:
+        model = as_dict(model)
+        threats_by_ref: dict[str, dict] = {}
+        for threat in as_list(model.get("threats")):
+            threat = as_dict(threat)
+            ref = str(threat.get("impact_ref") or "")
+            if ref and ref not in threats_by_ref:
+                threats_by_ref[ref] = threat
+            classes.append(str(threat.get("web_vulnerability_class") or ""))
+        for assessment in as_list(model.get("impact_assessment")):
+            assessment = as_dict(assessment)
+            threat = threats_by_ref.get(str(assessment.get("id") or ""), {})
+            rows.append({
+                "disposition": norm(assessment.get("disposition")),
+                "cia": cia_levels(threat.get("impact")),
+            })
+        precursors += len(as_list(model.get("precursors")))
+        prior_art_reused += len(
+            as_list(as_dict(model.get("prior_art")).get("reused")))
+    return impact_block(
+        rows,
+        schema="v3",
+        legacy_recomputation=False,
+        precursors=precursors,
+        prior_art_reused=prior_art_reused,
+        classes=classes,
+        class_index=class_index,
+    )
+
+
+def v2_impact(threats: list[dict], class_index: dict[str, int] | None) -> dict:
+    """The v2 legacy recomputation: one row per legacy ranked artifact.
+
+    A v2 model carries no disposition, no precursor entity, and no prior-art
+    section, so only the red/green share and the CIA distribution are
+    recomputed. The old artifact names the row `loop`; a schema-2 threat file
+    names it `threat`. Both keep the legacy `impact` record. The
+    `legacy_recomputation` marker keeps the block from being read as a v3
+    result (spec section 13).
+    """
+    rows: list[dict] = []
+    classes: list[str] = []
+    for record in threats:
+        record = as_dict(record)
+        entity = as_dict(record.get("loop")) or as_dict(record.get("threat"))
+        rows.append({"disposition": None, "cia": cia_levels(entity.get("impact"))})
+        classes.append(str(entity.get("web_vulnerability_class") or ""))
+    return impact_block(
+        rows,
+        schema="v2",
+        legacy_recomputation=True,
+        precursors=None,
+        prior_art_reused=None,
+        classes=classes,
+        class_index=class_index,
+    )
+
+
+def impact_metric(
+    models: list[dict],
+    threats: list[dict],
+    class_index: dict[str, int] | None = None,
+) -> dict:
+    """The impact metric of one trial over the files the loader read.
+
+    A v3 model carries `impact_assessment` rows and the threats that hold the
+    CIA vector. A v2 model carries neither: its ranked artifacts ARE the rows,
+    and the legacy `impact` record holds the vector, so its block is a legacy
+    recomputation. No readable model yields a zero-row block with unknown
+    shares, never a failure.
+
+    An abandoned copy is a degraded retry of the same unit, not a second damage
+    claim. The loader reads it for the artifact inventory; the primary metric
+    excludes it, so a retried unit is not counted twice.
+    """
+    models = [
+        model for model in models
+        if as_dict(model).get("_family") != "abandoned"
+    ]
+    threats = [
+        threat for threat in threats
+        if as_dict(threat).get("_family") != "abandoned"
+    ]
+    v3_models = [
+        model for model in models
+        if as_list(as_dict(model).get("impact_assessment"))
+    ]
+    v3 = v3_impact(v3_models, class_index) if v3_models else None
+    v2_threats = [
+        threat for threat in threats
+        if as_dict(threat).get("_schema") == 2
+        or as_dict(threat).get("_legacy")
+    ]
+    v2 = v2_impact(v2_threats, class_index) if v2_threats else None
+    if v3 is not None and v2 is not None:
+        v3["schema"] = "mixed"
+        v3["legacy_recomputation"] = True
+        v3["legacy_v2"] = v2
+        return v3
+    if v3 is not None:
+        return v3
+    if v2 is not None:
+        return v2
+    return impact_block(
+        [],
+        schema=None,
+        legacy_recomputation=False,
+        precursors=0,
+        prior_art_reused=0,
+        classes=[],
+        class_index=class_index,
+    )
+
+
 # --- official records ---------------------------------------------------------
 
 
@@ -746,6 +994,7 @@ def main() -> int:
     models, threats = load_models(project_root / "threat_modeller")
     specs = load_specs(project_root / "hunter" / "test-specs")
     pods = load_pods(project_root / "test-executor-pod")
+    impact = impact_metric(models, threats, class_index)
 
     per_vuln: list[dict] = []
     for vuln in ground_truth:
@@ -922,6 +1171,7 @@ def main() -> int:
             "core_floor_rate": round(core_floor / gt_total, 4) if gt_total else None,
             "full_core_rate": round(full_core / gt_total, 4) if gt_total else None,
         },
+        "impact": impact,
         "narrowing": {
             "threats_total": len(threats_all),
             "broad": sum(
@@ -973,6 +1223,7 @@ def main() -> int:
         "out": str(out),
         "counts": metrics["counts"],
         "rates": metrics["rates"],
+        "impact": metrics["impact"],
     }, indent=2))
     return 0
 

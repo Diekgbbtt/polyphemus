@@ -75,6 +75,9 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
         "drop_probe": "a second tenant's item id returning that item",
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
+    payloads[ModelState.IMPACT_ASSESSED] = {
+        "impact_assessment": [], "precursors": [],
+    }
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         hid = asyncio.run(hunting_runtime.start_hunting(
@@ -387,6 +390,9 @@ def _zero_threat_turns():
         "drop_probe": "a second tenant's item id returning that item",
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
+    payloads[ModelState.IMPACT_ASSESSED] = {
+        "impact_assessment": [], "precursors": [],
+    }
     return ScriptedModellerTurns(payloads=payloads)
 
 

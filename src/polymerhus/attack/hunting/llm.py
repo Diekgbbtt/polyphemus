@@ -240,10 +240,13 @@ def _compose_modeller_prompt(turn) -> str:
     else:
         from polymerhus.attack.hunting.threat_modeller_tools import (  # noqa: PLC0415
             MODEL_SECTIONS,
+            _section_holds,
         )
 
         lines.append(f"  state: {model.get('state')}")
-        written = [name for name in MODEL_SECTIONS if model.get(name)]
+        written = [
+            name for name in MODEL_SECTIONS if _section_holds(model.get(name))
+        ]
         lines.append(f"  sections written: {', '.join(written) or '(none)'}")
         if model.get("risk_profile"):
             lines.append(f"  risk profile: {model['risk_profile']}")
@@ -255,6 +258,13 @@ def _compose_modeller_prompt(turn) -> str:
         "sections. Then end the reasoning phase with ONE episodic note through "
         "`notes`: the decision nodes and the rationales of the branches you took.",
     ]
+    # #438: the project scope rides the turn verbatim, under its own heading.
+    # An empty scope appends nothing (an unset project makes no claim); the
+    # string is never paraphrased, trimmed, or reflowed - it is the operator's
+    # posture statement and the assumptions phase is bound by it.
+    scope = getattr(turn, "threat_model_scope", "") or ""
+    if scope:
+        lines += ["", "## Project scope (verbatim)", str(scope)]
     return "\n".join(lines)
 
 

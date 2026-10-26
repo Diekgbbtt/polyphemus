@@ -46,6 +46,13 @@ Write contract:
 - Every whole-file write routes through the shared atomic primitive (`#340`),
   so a killed write leaves the previous complete file.
 
+Read contract:
+
+- `query_prior_art` is the prior-art query (S2 7): one record kind, a
+  non-empty AND list of regex field filters, project-scoped, over the produced
+  and consumed models. It excludes the bound unit unless a filter path is
+  `unit_id` and returns summaries, never a full model.
+
 Fail-open canon: a read failure degrades (a warning, then None/[]), never a
 raise into the caller. A write failure raises to the caller (O3). An unknown
 `schema_version` refuses to load (a warning records the version) and refuses a
@@ -57,11 +64,12 @@ section 6).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
 import shutil
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,15 +85,26 @@ from .threat_model import (
     GATE_SECTIONS,
     SCHEMA_VERSION,
     STATE_ORDER,
+    FieldFilter,
+    ImpactDisposition,
     Likelihood,
     ModelState,
     PartialThreatModel,
+    PriorArtKind,
+    ThreatQueryMatch,
+    ThreatQueryResult,
     UnitThreatModel,
     check_completion,
     compute_risk_profile,
     normalise_threats,
+    prior_art_paths,
     unit_kind_from_unit_id,
 )
+
+# The read-only legacy schema. The intake and the measurement read it;
+# the mover and the prior-art query do not.
+LEGACY_SCHEMA_VERSION = 2
+
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +128,27 @@ NOTE_KINDS = (
 )
 
 _NOTE_ACTIONS = ("append", "update", "delete")
+
+# The prior-art query contract bounds (S2 section 7).
+QUERY_DEFAULT_LIMIT = 20
+QUERY_MAX_LIMIT = 50
+QUERY_PATH_MAX_CHARS = 120
+QUERY_REGEX_MAX_CHARS = 200
+QUERY_MATCH_VALUE_MAX_CHARS = 500
+
+
+class ThreatQueryError(ValueError):
+    """A prior-art query the store refuses (a coded teaching rejection).
+
+    `fields` names the request field(s) the model must correct, so the tool can
+    return its field-naming rejection instead of a bare raise. The store owns
+    the validation because the path catalog and the compiled regex belong to
+    the query engine, never to the tool's argument shape.
+    """
+
+    def __init__(self, fields: list[str], message: str):
+        super().__init__(message)
+        self.fields = list(fields)
 
 
 def sanitise_unit_name(unit_id: str) -> str:
@@ -231,7 +271,7 @@ class ThreatModelDirectoryError(ValueError):
 class ThreatModelDocumentError(ValueError):
     """An existing model document cannot be merged.
 
-    Its persisted `state` is not one of the five workflow gates (a corrupt or
+    Its persisted `state` is not one of the seven workflow gates (a corrupt or
     foreign document). The store refuses with a coded error instead of a raw
     pydantic/enum `ValueError`."""
 
@@ -242,6 +282,318 @@ class ThreatModelDocumentError(ValueError):
         )
         self.path = path
         self.state = state
+
+
+# --- the prior-art query engine helpers (S2 section 7) -----------------------
+
+# The model section each non-threat query kind reads. The `threat` view is the
+# threat file merged with these sections, so it is built separately.
+_QUERY_SECTION_BY_KIND: dict[PriorArtKind, str] = {
+    PriorArtKind.IMPACT: "impact_assessment",
+    PriorArtKind.PRECURSOR: "precursors",
+    PriorArtKind.VULNERABILITY: "vulnerabilities",
+    PriorArtKind.ASSUMPTION: "assumptions",
+}
+
+
+def _records_by_id(value: Any) -> dict[str, dict]:
+    """The section records keyed by their `id`, skipping malformed entries."""
+    records: dict[str, dict] = {}
+    for item in value or []:
+        if not isinstance(item, Mapping):
+            continue
+        record_id = item.get("id")
+        if isinstance(record_id, str) and record_id:
+            records[record_id] = dict(item)
+    return records
+
+
+def _query_leaf_values(value: Any) -> list[Any]:
+    """The values one resolved path contributes to matching.
+
+    A dict is matched on its JSON string (S2 section 7); a list is iterated
+    element-wise (the `evidence_refs` example names a leaf list without a `*`);
+    `None` is absent and never matches.
+    """
+    if isinstance(value, Mapping):
+        return [json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)]
+    if isinstance(value, list):
+        values: list[Any] = []
+        for item in value:
+            values.extend(_query_leaf_values(item))
+        return values
+    if value is None:
+        return []
+    return [value]
+
+
+def _resolve_query_path(value: Any, segments: Sequence[str]) -> list[Any]:
+    """Every leaf value at one dotted path, `*` iterating a list."""
+    if not segments:
+        return _query_leaf_values(value)
+    head, rest = segments[0], segments[1:]
+    if head == "*":
+        if not isinstance(value, list):
+            return []
+        values: list[Any] = []
+        for item in value:
+            values.extend(_resolve_query_path(item, rest))
+        return values
+    if not isinstance(value, Mapping) or head not in value:
+        return []
+    return _resolve_query_path(value[head], rest)
+
+
+def _query_searchable(value: Any) -> str:
+    """The string one leaf value is matched on."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _json_safe(value: Any) -> Any:
+    """A matched value in the result payload's JSON-safe form.
+
+    A structured value is stringified and truncated: the result is a summary,
+    never a full record body smuggled through a dict path."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    text = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    if len(text) <= QUERY_MATCH_VALUE_MAX_CHARS:
+        return text
+    return text[:QUERY_MATCH_VALUE_MAX_CHARS] + "..."
+
+
+def _parse_query_filters(
+    kind: PriorArtKind, filters: Sequence[Any],
+) -> list[tuple[str, re.Pattern[str]]]:
+    """Validate and compile one query's filters.
+
+    An empty list, an unknown path, an over-long path or regex, an unsupported
+    flag, and an invalid regex are coded teaching rejections (S2 section 7).
+    """
+    if not filters:
+        raise ThreatQueryError(
+            ["filters"],
+            "a prior-art query needs at least one filter of "
+            "{path, regex, flags}; an empty list would dump the store",
+        )
+    accepted = prior_art_paths(kind)
+    parsed: list[tuple[str, re.Pattern[str]]] = []
+    for index, raw in enumerate(filters):
+        prefix = f"filters[{index}]"
+        if isinstance(raw, FieldFilter):
+            path, regex, flags = raw.path, raw.regex, raw.flags
+        elif isinstance(raw, Mapping):
+            path = raw.get("path")
+            regex = raw.get("regex")
+            flags = raw.get("flags", "i")
+        else:
+            raise ThreatQueryError(
+                [prefix], "a filter must be an object of {path, regex, flags}")
+        if not isinstance(path, str) or not path.strip():
+            raise ThreatQueryError(
+                [f"{prefix}.path"], "a filter needs a non-empty dotted `path`")
+        path = path.strip()
+        if len(path) > QUERY_PATH_MAX_CHARS:
+            raise ThreatQueryError(
+                [f"{prefix}.path"],
+                f"path {path!r} is longer than {QUERY_PATH_MAX_CHARS} characters",
+            )
+        if path not in accepted:
+            raise ThreatQueryError(
+                [f"{prefix}.path"],
+                f"unknown path {path!r} for kind {kind.value}; accepted paths: "
+                f"{', '.join(accepted)}",
+            )
+        if not isinstance(regex, str):
+            raise ThreatQueryError(
+                [f"{prefix}.regex"], "a filter needs a `regex` string")
+        if len(regex) > QUERY_REGEX_MAX_CHARS:
+            raise ThreatQueryError(
+                [f"{prefix}.regex"],
+                f"regex is longer than {QUERY_REGEX_MAX_CHARS} characters",
+            )
+        if flags not in ("", "i"):
+            raise ThreatQueryError(
+                [f"{prefix}.flags"],
+                "`flags` is 'i' for case-insensitive or '' for case-sensitive",
+            )
+        try:
+            pattern = re.compile(regex, re.IGNORECASE if flags == "i" else 0)
+        except re.error as exc:
+            raise ThreatQueryError(
+                [f"{prefix}.regex"],
+                f"invalid regex {regex!r}: {exc}; correct the expression and "
+                f"retry",
+            ) from exc
+        parsed.append((path, pattern))
+    return parsed
+
+
+def _match_query_filters(
+    view: Mapping[str, Any], parsed: Sequence[tuple[str, re.Pattern[str]]],
+) -> list[dict] | None:
+    """The `matched` path/value pairs when EVERY filter matches, else None.
+
+    The filters are AND: each must match at least one value at its path, and
+    every value that matches contributes one pair in filter order.
+    """
+    matched: list[dict] = []
+    for path, pattern in parsed:
+        values = _resolve_query_path(view, path.split("."))
+        hits = [value for value in values if pattern.search(_query_searchable(value))]
+        if not hits:
+            return None
+        for value in hits:
+            matched.append({"path": path, "value": _json_safe(value)})
+    return matched
+
+
+def _evidence_refs(entries: Any) -> list[str]:
+    """The deduplicated evidence refs of a record's `evidences`/`evidence_refs`."""
+    refs: list[str] = []
+    for entry in entries or []:
+        if isinstance(entry, Mapping):
+            ref = entry.get("ref")
+        elif isinstance(entry, str):
+            ref = entry
+        else:
+            continue
+        if isinstance(ref, str) and ref and ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text or None
+
+
+def _threat_view(
+    record: Mapping[str, Any],
+    rows: Mapping[str, dict],
+    precursors: Mapping[str, dict],
+    document: Mapping[str, Any],
+) -> dict:
+    """One threat file merged with its impact row and precursor entities.
+
+    The threat file is the published denormalisation; the model's impact row is
+    authoritative for the damage context and supplies `precursor_refs`, which
+    the threat file does not carry (S2 section 7).
+    """
+    threat_value = record.get("threat")
+    threat = dict(threat_value) if isinstance(threat_value, Mapping) else {}
+    impact_value = record.get("impact")
+    impact = dict(impact_value) if isinstance(impact_value, Mapping) else {}
+    impact_ref = str(impact.get("impact_ref") or threat.get("impact_ref") or "")
+    row = rows.get(impact_ref, {})
+    if row:
+        # The model row is authoritative for the damage context; the threat
+        # file is the published denormalisation. Key presence (not truthiness)
+        # is the overlay rule, so an explicit empty path survives.
+        for key in ("damage", "disposition", "capability_path", "precursor_refs"):
+            if key not in row:
+                continue
+            value = row[key]
+            impact[key] = list(value) if isinstance(value, list) else value
+    if not impact.get("precursors"):
+        impact["precursors"] = [
+            dict(precursors[ref])
+            for ref in impact.get("capability_path") or []
+            if ref in precursors
+        ]
+    return {
+        "threat_id": str(record.get("threat_id") or threat.get("id") or ""),
+        "dispatch_id": str(record.get("dispatch_id") or ""),
+        "unit_id": str(document.get("unit_id") or record.get("unit_id") or ""),
+        "run_id": str(record.get("run_id") or document.get("run_id") or ""),
+        "likelihood": record.get("likelihood") or threat.get("likelihood") or "",
+        "threat": threat,
+        "impact": impact,
+    }
+
+
+def _section_query_views(
+    kind: PriorArtKind, document: Mapping[str, Any],
+) -> Iterator[tuple[str, dict]]:
+    """The model's records of one non-threat kind, each with the owner identity."""
+    for item in document.get(_QUERY_SECTION_BY_KIND[kind]) or []:
+        if not isinstance(item, Mapping):
+            continue
+        view = dict(item)
+        view["unit_id"] = str(document.get("unit_id") or "")
+        if kind is PriorArtKind.ASSUMPTION and "description" not in view:
+            # The spec's catalog names the assumption prose `description`; the
+            # schema field is `statement`, so both paths resolve one value.
+            view["description"] = view.get("statement", "")
+        yield str(item.get("id") or ""), view
+
+
+def _query_match(
+    kind: PriorArtKind,
+    record_id: str,
+    unit_id: str,
+    view: Mapping[str, Any],
+    state: str,
+    matched: list[dict],
+) -> ThreatQueryMatch:
+    """The summary one query result carries, per kind, never the full model."""
+    threat: Mapping[str, Any] = {}
+    impact: Mapping[str, Any] = {}
+    if kind is PriorArtKind.THREAT:
+        threat = view.get("threat") or {}
+        impact = view.get("impact") or {}
+        label = str(threat.get("canonical_class") or "")
+        web_vulnerability_class = str(threat.get("web_vulnerability_class") or "")
+        disposition = _optional_text(impact.get("disposition"))
+        summary = str(impact.get("damage") or "")
+        evidence_refs = _evidence_refs(impact.get("evidence_refs"))
+        for ref in _evidence_refs(threat.get("evidences")):
+            if ref not in evidence_refs:
+                evidence_refs.append(ref)
+    elif kind is PriorArtKind.VULNERABILITY:
+        label = str(view.get("canonical_class") or "")
+        web_vulnerability_class = str(view.get("web_vulnerability_class") or "")
+        disposition = None
+        summary = str(view.get("characterisation") or "")
+        evidence_refs = _evidence_refs(view.get("evidences"))
+    elif kind is PriorArtKind.PRECURSOR:
+        label = str(view.get("capability") or "")
+        web_vulnerability_class = ""
+        disposition = None
+        summary = str(view.get("procedure") or "")
+        evidence_refs = _evidence_refs(view.get("evidence_refs"))
+    elif kind is PriorArtKind.ASSUMPTION:
+        fault = view.get("fault")
+        fault = fault if isinstance(fault, Mapping) else {}
+        label = str(fault.get("label") or "")
+        web_vulnerability_class = ""
+        disposition = None
+        summary = str(view.get("statement") or view.get("description") or "")
+        evidence_refs = _evidence_refs(view.get("evidences"))
+    else:  # impact
+        disposition = _optional_text(view.get("disposition"))
+        label = disposition or ""
+        web_vulnerability_class = ""
+        summary = str(view.get("damage") or "")
+        evidence_refs = _evidence_refs(view.get("evidence_refs"))
+    return ThreatQueryMatch(
+        unit_id=unit_id,
+        record_id=record_id,
+        kind=kind.value,
+        label=label,
+        web_vulnerability_class=web_vulnerability_class,
+        disposition=disposition,
+        summary=summary,
+        state=state,
+        evidence_refs=evidence_refs,
+        matched=matched,
+    )
 
 
 class ThreatModelStore(BoundedRecordStore):
@@ -303,20 +655,29 @@ class ThreatModelStore(BoundedRecordStore):
             return None
         return loaded if isinstance(loaded, dict) else None
 
-    def _load_document(self, path: Path) -> dict | None:
-        """A document under the reader's schema version; an unknown version is
-        refused and logged, never migrated (S2 5.8)."""
+    def _load_document(
+        self, path: Path, *, allow_legacy: bool = False,
+    ) -> dict | None:
+        """A document under the reader's schema version.
+
+        The current version is always read. A legacy v2 document is read only
+        when the caller asks for it: the intake and the measurement need it, the
+        mover and the query do not. Any other version is refused and logged,
+        never migrated (S2 5.8)."""
         raw = self._load_raw(path)
         if raw is None:
             return None
-        if raw.get("schema_version") != SCHEMA_VERSION:
-            logger.error(
-                "threat model store: refusing %s - unknown schema_version %r "
-                "(this reader knows %s only)",
-                path, raw.get("schema_version"), SCHEMA_VERSION,
-            )
-            return None
-        return raw
+        version = raw.get("schema_version")
+        if version == SCHEMA_VERSION:
+            return raw
+        if allow_legacy and version == LEGACY_SCHEMA_VERSION:
+            return raw
+        logger.error(
+            "threat model store: refusing %s - unsupported schema_version %r "
+            "(this reader knows %s, and the legacy read accepts %s)",
+            path, version, SCHEMA_VERSION, LEGACY_SCHEMA_VERSION,
+        )
+        return None
 
     # --- derived unit names (S2 4.2) -------------------------------------------
 
@@ -400,7 +761,8 @@ class ThreatModelStore(BoundedRecordStore):
         )
 
     def _find_model_path(
-        self, project_id: str, unit_id: str, family: str
+        self, project_id: str, unit_id: str, family: str,
+        *, allow_legacy: bool = False,
     ) -> Path | None:
         """The model path for `unit_id` in one family, name- and identity-checked.
 
@@ -410,7 +772,7 @@ class ThreatModelStore(BoundedRecordStore):
         """
         for name in self._candidate_names(unit_id):
             path = self._model_path(project_id, name, family)
-            raw = self._load_document(path)
+            raw = self._load_document(path, allow_legacy=allow_legacy)
             if raw is not None and raw.get("unit_id") == unit_id:
                 return path
         return None
@@ -420,16 +782,143 @@ class ThreatModelStore(BoundedRecordStore):
         None. An unknown `schema_version` refuses to load (a version error is
         logged). A read failure degrades to None, never a raise (O4)."""
         with self._lock_for(project_id):
-            path = self._find_model_path(project_id, unit_id, "produced")
+            path = self._find_model_path(
+                project_id, unit_id, "produced", allow_legacy=True)
             if path is None:
-                path = self._find_model_path(project_id, unit_id, "consumed")
-            return self._load_document(path) if path is not None else None
+                path = self._find_model_path(
+                    project_id, unit_id, "consumed", allow_legacy=True)
+            return (
+                self._load_document(path, allow_legacy=True)
+                if path is not None else None
+            )
 
     def read_section(self, project_id: str, unit_id: str, section: str) -> Any:
         """One section of the unit's model, or None when the model or the
         section is absent. Read-only."""
         model = self.read_model(project_id, unit_id)
         return model.get(section) if model is not None else None
+
+    # --- the prior-art query (S2 section 7) ------------------------------------
+
+    def _query_documents(
+        self, project_id: str, family: str, *, produced_fallback: bool,
+    ) -> Iterator[tuple[Path, dict]]:
+        """One family's readable unit documents, by directory name.
+
+        A consumed threat can outlive its model document (the model moves with
+        the unit's LAST threat file), so the threat scan falls back to the
+        produced document. An unreadable or unknown-version document is skipped
+        fail-open (O4).
+        """
+        root = self._family_dir(project_id, family)
+        if not root.exists():
+            return
+        for directory in sorted(root.iterdir()):
+            if not directory.is_dir():
+                continue
+            document = self._load_document(directory / f"{directory.name}.yaml")
+            if document is None and produced_fallback and family == "consumed":
+                document = self._load_document(
+                    self._model_path(project_id, directory.name, "produced"))
+            if document is None:
+                continue
+            yield directory, document
+
+    def _threat_query_views(
+        self, directory: Path, document: dict,
+    ) -> Iterator[tuple[str, dict]]:
+        """The directory's threat files merged with the model's impact rows and
+        precursor entities. A malformed threat file is skipped (a read failure
+        degrades, never raises)."""
+        rows = _records_by_id(document.get("impact_assessment"))
+        precursors = _records_by_id(document.get("precursors"))
+        for path in sorted(
+            directory.glob("threat-*.yaml"),
+            key=lambda item: _threat_rank(item.stem),
+        ):
+            state, record = self._read_threat_file(path)
+            if state != "record" or record is None:
+                continue
+            view = _threat_view(record, rows, precursors, document)
+            yield str(record.get("threat_id") or view["threat_id"] or path.stem), view
+
+    def query_prior_art(
+        self,
+        project_id: str,
+        *,
+        kind: PriorArtKind | str,
+        filters: Sequence[FieldFilter | Mapping[str, Any]],
+        limit: int = QUERY_DEFAULT_LIMIT,
+        bound_unit_id: str = "",
+    ) -> dict:
+        """The project-scoped prior-art query over the produced and consumed
+        models (S2 section 7).
+
+        `kind` selects one record view; `filters` is a non-empty AND list, each
+        a case-(in)sensitive `re.search` over the values at a dotted path. The
+        query EXCLUDES the bound unit unless a filter path is `unit_id`. Each
+        match carries its model's `state`, a summary, the evidence refs, and the
+        `matched` path/value pairs; a full model is never returned.
+
+        The empty filter list, an invalid regex, an unknown path, and an
+        out-of-range limit are `ThreatQueryError`s (the tool's coded teaching
+        rejection). A single unreadable document or threat file is skipped
+        fail-open (O4).
+        """
+        try:
+            query_kind = (
+                kind if isinstance(kind, PriorArtKind) else PriorArtKind(str(kind))
+            )
+        except ValueError as exc:
+            raise ThreatQueryError(
+                ["kind"],
+                f"unknown kind {kind!r}; known: "
+                f"{', '.join(member.value for member in PriorArtKind)}",
+            ) from exc
+        parsed = _parse_query_filters(query_kind, filters)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not (
+            1 <= limit <= QUERY_MAX_LIMIT
+        ):
+            raise ThreatQueryError(
+                ["limit"],
+                f"`limit` is an integer 1..{QUERY_MAX_LIMIT}",
+            )
+        exclude_bound = bool(bound_unit_id) and not any(
+            path == "unit_id" for path, _ in parsed)
+        matches: list[ThreatQueryMatch] = []
+        seen: set[tuple[str, str]] = set()
+        with self._lock_for(project_id):
+            for family in _READ_FAMILIES:
+                for directory, document in self._query_documents(
+                    project_id, family,
+                    produced_fallback=query_kind is PriorArtKind.THREAT,
+                ):
+                    unit_id = str(document.get("unit_id") or "")
+                    if not unit_id or (exclude_bound and unit_id == bound_unit_id):
+                        continue
+                    state = str(document.get("state") or "")
+                    views = (
+                        self._threat_query_views(directory, document)
+                        if query_kind is PriorArtKind.THREAT
+                        else _section_query_views(query_kind, document)
+                    )
+                    for record_id, view in views:
+                        dedupe = (unit_id, record_id)
+                        if record_id and dedupe in seen:
+                            continue
+                        matched = _match_query_filters(view, parsed)
+                        if matched is None:
+                            continue
+                        if record_id:
+                            seen.add(dedupe)
+                        matches.append(_query_match(
+                            query_kind, record_id, unit_id, view, state, matched))
+            result = ThreatQueryResult(
+                matches=matches[:limit],
+                count=min(len(matches), limit),
+                truncated=len(matches) > limit,
+            )
+        return result.model_dump(mode="json")
 
     def read_threat_files(self, project_id: str, unit_id: str) -> list[dict]:
         """The unit's threat files in rank order: produced/ first, then
@@ -602,7 +1091,8 @@ class ThreatModelStore(BoundedRecordStore):
             for directory in sorted(consumed.iterdir()):
                 if not directory.is_dir():
                     continue
-                raw = self._load_document(directory / f"{directory.name}.yaml")
+                raw = self._load_document(
+                    directory / f"{directory.name}.yaml", allow_legacy=True)
                 if raw is None or not self._consumable(raw):
                     continue
                 unit_id = raw.get("unit_id")
@@ -1005,12 +1495,29 @@ class ThreatModelStore(BoundedRecordStore):
         model: PartialThreatModel,
         now: datetime,
     ) -> None:
+        """Emit one threat file per DISPATCHABLE threat (S2 4.3, 8.1).
+
+        A threat is dispatchable when its combined risk is above zero and its
+        `impact_ref` resolves to a `threat` assessment: the file carries the
+        denormalised `impact` block (the row, the precursors on its capability
+        path, and the path), so the hunter needs no model document for the
+        damage context. A placeholder never has a threat, and a threat whose
+        reference does not resolve emits no file - the completion check reports
+        it and the model is never consumable.
+        """
         produced_dir = self._unit_dir(project_id, unit_name, "produced")
+        assessments = {
+            assessment.id: assessment for assessment in model.impact_assessment
+        }
+        precursors = {precursor.id: precursor for precursor in model.precursors}
         written: set[str] = set()
         for threat in model.threats:
             # A threat with zero combined risk is stored in the model but never
-            # dispatched: the impact axis can zero a high-likelihood direction.
+            # dispatched: a `none` likelihood zeroes a damage-bearing direction.
             if threat.risk <= 0:
+                continue
+            assessment = assessments.get(threat.impact_ref)
+            if assessment is None or assessment.disposition != ImpactDisposition.THREAT:
                 continue
             record = {
                 "threat_id": threat.id,
@@ -1020,6 +1527,18 @@ class ThreatModelStore(BoundedRecordStore):
                 "dispatch_id": dispatch_id(unit_name, threat.id),
                 "likelihood": threat.likelihood.value,
                 "threat": threat.model_dump(mode="json"),
+                "impact": {
+                    "impact_ref": assessment.id,
+                    "damage": assessment.damage,
+                    "disposition": assessment.disposition.value,
+                    # only the precursors that resolve, in capability-path order
+                    "precursors": [
+                        precursors[ref].model_dump(mode="json")
+                        for ref in assessment.capability_path
+                        if ref in precursors
+                    ],
+                    "capability_path": list(assessment.capability_path),
+                },
                 "created_at": now,
             }
             name = threat_file_name(threat.id)

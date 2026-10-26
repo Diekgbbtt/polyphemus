@@ -167,10 +167,8 @@ class FieldFilter(BaseModel):
     flags: str = "i"          # "i" case-insensitive, "" case-sensitive
 
 
-class ThreatQuery(BaseModel):
-    kind: Literal["threat", "vulnerability", "precursor", "assumption", "impact"]
-    filters: list[FieldFilter]
-    limit: int = 20
+# The tool's `cmd=query` args carry `kind`, `filters`, and `limit`.
+# `PriorArtQuery` records the same kind and filters plus the result count.
 
 
 class ThreatQueryMatch(BaseModel):
@@ -325,8 +323,10 @@ PUT /projects/{project_id}/hunting/config
 
 `HuntingConfigUpdate` gains `threat_model_scope: str | None` with `extra="forbid"`.
 The PUT is a partial deep merge.
-The run reads the string at start and appends it verbatim to the modeller prompt under `## Project scope (verbatim)`.
+The run reads the string at start and appends it verbatim to the per-turn modeller prompt under `## Project scope (verbatim)`.
+The static system prompt carries the assumptions binding, never the per-project text.
 The run record does not duplicate it.
+The repository has no separate `Project` entity class; the project domain model is the settings projection behind the hunting config pair.
 The string is applied at the assumptions layer.
 The modeller does not model a trust boundary the scope excludes, so it does not make the excluded assumption or fault.
 
@@ -476,7 +476,7 @@ threat:
 ```
 
 `materialise_hunter_payload` adds the `impact` block to the payload.
-`_compose_grounding` renders `## Impact assessment` and `## Attacker position`.
+`_compose_grounding` renders the impact assessment and the attacker position as labelled lines.
 The payload carries no request, payload, or procedure that belongs to the hunter.
 The `procedure` on a precursor is the abstract trust-boundary mechanism, not the hunter's technique.
 

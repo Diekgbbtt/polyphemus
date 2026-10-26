@@ -56,12 +56,17 @@ status: draft
 
 ## Results
 
-### Primary Metric: Green-threat share
+### Primary Metric: Impact-bearing share
 
-| Arm | Green | Stored | Share | Denominator |
-|---|---:|---:|---:|---|
-| A | [n] | [n] | [%] | all stored threats |
-| B | [n] | [n] | [%] | all stored threats |
+| Arm | Impact rows | Threats | Placeholders | Green | Green share |
+|---|---:|---:|---:|---:|---:|
+| A | [n] | [n] | [n] | [n] | [%] |
+| B | [n] | [n] | [n] | [n] | [%] |
+
+The denominator is every impact-assessment row.
+A row is green when any CIA value is not none.
+A row is red when every CIA value is none.
+A placeholder row is red.
 
 **Observed difference:** [+/- percentage points].
 
@@ -69,16 +74,39 @@ status: draft
 With one trial per arm, report the counts and the descriptive difference.
 Do not report a p-value or a confidence interval as if the sample supported it.
 
+### CIA Distribution
+
+| Metric | Arm | None | Low | Medium | High |
+|---|---|---:|---:|---:|---:|
+| Confidentiality | A | [n] | [n] | [n] | [n] |
+| Confidentiality | B | [n] | [n] | [n] | [n] |
+| Integrity | A | [n] | [n] | [n] | [n] |
+| Integrity | B | [n] | [n] | [n] | [n] |
+| Availability | A | [n] | [n] | [n] | [n] |
+| Availability | B | [n] | [n] | [n] | [n] |
+
 ### Secondary Metrics
 
 | Metric | Arm A | Arm B | Difference | Notes |
 |---|---:|---:|---:|---|
-| Severe share | [%] | [%] | [pp] | [definition] |
-| Sharp-boundary share | [%] | [%] | [pp] | [definition] |
-| Class-binding rate | [%] | [%] | [pp] | [definition] |
-| Severe threats below medium bucket | [n] | [n] | [n] | [definition] |
-| Capped tokens per green threat | [n] | [n] | [n] | [definition] |
+| Threat share | [%] | [%] | [pp] | threats / impact rows |
+| Placeholder share | [%] | [%] | [pp] | placeholders / impact rows |
+| Severe share (impact weight at least 3) | [%] | [%] | [pp] | over damage-bearing threats |
+| Class-binding rate | [%] | [%] | [pp] | diagnostic, never a gate |
+| Precursors | [n] | [n] | [n] | capability entities |
+| Prior-art reuses | [n] | [n] | [n] | records reused from other units |
+| Capped tokens per damage-bearing threat | [n] | [n] | [n] | [definition] |
 | Modeller share of capped budget | [%] | [%] | [pp] | [definition] |
+
+### Continuity: class-based green (superseded)
+
+| Arm | Green | Stored | Share | Status |
+|---|---:|---:|---:|---|
+| A | [n] | [n] | [%] | superseded |
+| B | [n] | [n] | [%] | superseded |
+
+The class-based green figure is kept for continuity only.
+It is not a pass/fail gate.
 
 ### Guardrail Metrics
 
@@ -201,7 +229,9 @@ Do not report a p-value or a confidence interval as if the sample supported it.
 
 ## Measurement Discipline Checklist
 
-- [ ] The primary metric has its numerator, denominator, and arm values.
+- [ ] The impact-bearing share has its numerator, denominator, and arm values.
+- [ ] The placeholder share and the CIA distribution are reported.
+- [ ] The class-based green figure is marked superseded, never used as a gate.
 - [ ] The secondary and guardrail metrics are reported, including the ones that did not move.
 - [ ] The narrowing metrics are reported with the same denominator as the primary metric.
 - [ ] The token tax is split by agent and by phase.

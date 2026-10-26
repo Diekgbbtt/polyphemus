@@ -112,6 +112,27 @@ A parent class is broad only when the artifact actually keeps more than one vari
 Record `breadth` as `broad`, `narrow`, or `unknown`, and quote the bound class and the metric in `breadth_notes`.
 The semantic judgement may override the metric only with quoted evidence from the threat or the suite tree.
 
+### Impact assessment
+
+Use the deterministic `metrics.impact` block.
+It is the primary impact metric.
+
+- `impact_rows` is every impact-assessment row.
+- `threats` is the rows with `disposition=threat`. `placeholders` is the rows with `disposition=placeholder`.
+- `red` is a row with all CIA values none. `green` is a row with any CIA value not none.
+- `green_share` is `green / impact_rows`. `threat_share` is `threats / impact_rows`. `placeholder_share` is `placeholders / impact_rows`.
+- `cia` is the distribution of each metric over `none / low / medium / high`.
+- `precursors` is the number of capability entities. `prior_art_reused` is the number of prior-art records the modeller reused.
+- `class_binding_rate` is a diagnostic, never a gate.
+
+A `threat` row must name a concrete victim and damaged property in its `damage` field.
+A `placeholder` must state that no concrete victim or property is affected.
+Read the damage text and judge whether it is concrete.
+A row whose damage names only a capability or a route is a placeholder at best.
+The class-based green gate is retired.
+The old class figure may be quoted beside the impact figure, marked superseded.
+A v2 block is a legacy recomputation: report it separately and never mix it with a v3 result.
+
 ### Hunter
 
 Use `spec_candidate`, `required_present`, `procedure_fields`, `generic_symptoms`, and the artifact itself.
@@ -142,7 +163,7 @@ Judge whether it is a real new finding, a duplicate, or a false positive.
 
 This is the qualitative axis the deterministic script cannot fully decide.
 Check:
-- the modeller gate order and the five states;
+- the modeller gate order and the seven states;
 - the hunter pass order and the eight states;
 - the pod runner/triager order;
 - degraded or interrupted turns;
@@ -184,6 +205,26 @@ official:
   partial: int
   missed: int
   identification_rate: number
+impact:
+  schema: v3 | v2 | mixed
+  legacy_recomputation: bool
+  impact_rows: int
+  threats: int | null
+  placeholders: int | null
+  red: int
+  green: int
+  green_share: number | null
+  threat_share: number | null
+  placeholder_share: number | null
+  cia:
+    confidentiality: {none: int, low: int, medium: int, high: int}
+    integrity: {none: int, low: int, medium: int, high: int}
+    availability: {none: int, low: int, medium: int, high: int}
+  precursors: int | null
+  prior_art_reused: int | null
+  class_binding_rate: number | null
+  legacy_v2: object | null
+  notes: string
 narrowing:
   threats_total: int
   broad: int
@@ -312,6 +353,7 @@ Use the experiment-results structure from the measure-experiment-results skill.
 Include:
 - the trial summary and identity;
 - the official discovery result;
+- the impact assessment: the red/green share, the threat and placeholder split, the CIA distribution, the precursor count, and the prior-art reuse;
 - the quality results by the six criteria;
 - the narrowing table: threat breadth, the spec count per threat, the primary axes, and whether the set is substantial and well-formed;
 - the token tax;

@@ -955,7 +955,7 @@ def _write_seed_unit(source: Path, *, run_id: str = "source-run") -> Path:
     (unit_dir / f"{UNIT_NAME}.yaml").write_text(
         yaml.safe_dump(
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "unit_id": UNIT,
                 "unit_kind": "service",
                 "run_id": run_id,

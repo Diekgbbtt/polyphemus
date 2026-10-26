@@ -4,7 +4,7 @@
 
 **Blocked by:** 436.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** `eval/measure_utm.py`, `eval/prompts/measure.md`, `docs/experiments/EXPERIMENT-RESULTS-TEMPLATE.md`
 
