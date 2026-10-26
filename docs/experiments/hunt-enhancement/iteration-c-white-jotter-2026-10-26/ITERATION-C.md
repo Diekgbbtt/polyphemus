@@ -163,7 +163,8 @@ Two baselines are reported:
 | Project id | `8e2e5dc7-a880-4451-aaa5-267cedd48264` |
 | Project created | `2026-10-26T20:07:29Z` |
 | Frozen hunting config | `batched`, `pod_batch_size=3`, `promotion_risk_threshold=0`, `risk_threshold=180` (verified live) |
-| Hunting run id | pending |
+| Hunting run id | `65ec294b-e5cf-49c6-9f7c-4664a73aa557` |
+| Run record check | `pipeline_sync=batched`, `risk_threshold=180`, `threshold_basis=db`, `pod_batch_size=3`, `promotion_risk_threshold=0` (verified live) |
 | Trial record | pending |
 
 ### Harness lineage finding
