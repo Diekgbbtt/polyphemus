@@ -22,7 +22,9 @@ Rules this module owns:
   descending, ties in the modeller's write order, ids renumbered `threat-1..n`.
   The store owns the id, so the write schema defaults `Threat.id` empty.
 - The completion checker (S2 5.7): the loose necessary-attribute set, the
-  referential integrity, the assumption-to-threat closure, the impact invariants
+  prior-art query requirement (one threat, one vulnerability, and one precursor
+  query, each with a filter, plus the phase note), the referential integrity,
+  the assumption-to-threat closure, the impact invariants
   (one threat row per damage-bearing assessment, a placeholder with no threat,
   the precursor resolution, the enabling-precursor/capability-path equality),
   the threat order, and a REGRESSION check of the stored risk profile against a
@@ -353,6 +355,112 @@ class PriorArtKind(StrEnum):
     IMPACT = "impact"
 
 
+# The prior-art query path catalog (spec section 7), one tuple per kind. The
+# `threat` view is the threat file merged with its impact row and its precursor
+# entities; the other views are the unit model's records. The catalog covers
+# every field of the threat file and of the model records (a dict-valued path is
+# matched on its JSON string); `unit_id` is accepted for EVERY kind (see
+# `prior_art_paths`), because every view carries the owning model's identity and
+# the query excludes the bound unit unless a filter names it.
+PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
+    PriorArtKind.THREAT: (
+        "threat_id",
+        "dispatch_id",
+        "unit_id",
+        "unit_kind",
+        "run_id",
+        "likelihood",
+        "created_at",
+        "threat",
+        "threat.id",
+        "threat.fault_ref",
+        "threat.vulnerability_ref",
+        "threat.canonical_class",
+        "threat.web_vulnerability_class",
+        "threat.likelihood",
+        "threat.likelihood_rationale",
+        "threat.risk_factors",
+        "threat.risk_factors.attack_vector",
+        "threat.risk_factors.attack_requirements",
+        "threat.risk_factors.privileges_required",
+        "threat.risk_factors.complexity",
+        "threat.confidence",
+        "threat.evidences",
+        "threat.impact_ref",
+        "threat.enabling_precursors",
+        "threat.impact",
+        "threat.impact.confidentiality",
+        "threat.impact.integrity",
+        "threat.impact.availability",
+        "threat.impact_weight",
+        "threat.risk",
+        "impact",
+        "impact.impact_ref",
+        "impact.damage",
+        "impact.disposition",
+        "impact.capability_path",
+        "impact.precursor_refs",
+        "impact.evidence_refs",
+        "impact.precursors",
+        "impact.precursors.*.id",
+        "impact.precursors.*.capability",
+        "impact.precursors.*.procedure",
+        "impact.precursors.*.evidence_refs",
+    ),
+    PriorArtKind.IMPACT: (
+        "id",
+        "vulnerability_ref",
+        "disposition",
+        "damage",
+        "capability_path",
+        "precursor_refs",
+        "evidence_refs",
+    ),
+    PriorArtKind.PRECURSOR: (
+        "id",
+        "capability",
+        "procedure",
+        "evidence_refs",
+    ),
+    PriorArtKind.VULNERABILITY: (
+        "id",
+        "fault_ref",
+        "canonical_class",
+        "web_vulnerability_class",
+        "characterisation",
+        "dropped",
+        "drop_reason",
+        "drop_probe",
+        "confidence",
+        "evidences",
+    ),
+    PriorArtKind.ASSUMPTION: (
+        "id",
+        "description",
+        "statement",
+        "boundary_ref",
+        "fault",
+        "fault.id",
+        "fault.label",
+        "fault.description",
+        "confidence",
+        "evidences",
+    ),
+}
+
+
+def prior_art_paths(kind: PriorArtKind) -> tuple[str, ...]:
+    """The accepted filter paths of one query kind.
+
+    The catalog plus the owning model's `unit_id`, which every record view
+    carries: the query excludes the bound unit unless a filter path is
+    `unit_id` (spec section 7). The assumption view carries both `description`
+    (the catalog's name for the prose) and `statement` (the schema field), so
+    either path resolves the one value.
+    """
+    return tuple(dict.fromkeys((*PRIOR_ART_PATHS[kind], "unit_id")))
+
+
 class FieldFilter(_Record):
     """One regex field filter of a prior-art query (spec section 7)."""
 
@@ -381,14 +489,43 @@ class PriorArtReuse(_Record):
 class PriorArt(_Record):
     """The `PRIOR_ART` gate section (spec section 7).
 
-    The queries the modeller ran and the records it reused. The query tool and
-    the completion requirement land with the prior-art ticket; this is the typed
-    section the gate writes, so the document shape is fixed here.
+    The queries the modeller ran and the records it reused. The completion
+    check requires one query each for threats, vulnerabilities, and precursors
+    (each with at least one filter) and a non-empty `notes`.
     """
 
     queries: list[PriorArtQuery] = Field(default_factory=list)
     reused: list[PriorArtReuse] = Field(default_factory=list)
     notes: str = ""
+
+
+class ThreatQueryMatch(_Record):
+    """One prior-art query match: the record summary, never the full model.
+
+    The summary names the unit, the record, the kind, the label, the class, the
+    disposition, the summary text, and the owning model's `state`, plus the
+    evidence refs and the `matched` path/value pairs that made it match.
+    """
+
+    unit_id: str
+    record_id: str
+    kind: str
+    label: str = ""
+    web_vulnerability_class: str = ""
+    disposition: str | None = None
+    summary: str = ""
+    state: str = ""
+    evidence_refs: list[str] = Field(default_factory=list)
+    matched: list[dict] = Field(default_factory=list)
+
+
+class ThreatQueryResult(_Record):
+    """The result of one prior-art query (spec section 7)."""
+
+    matches: list[ThreatQueryMatch] = Field(default_factory=list)
+    count: int = 0
+    truncated: bool = False
+
 
 
 class Impact(_Record):
@@ -698,6 +835,21 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
         missing.append("technical_sharpening.control_flows")
     if not sharpening.data_flows:
         missing.append("technical_sharpening.data_flows")
+    # The prior-art requirement (spec section 7): the modeller grounds the
+    # trust model in at least one query for each of the three record kinds, each
+    # with at least one filter, and records the phase note.
+    for kind in (
+        PriorArtKind.THREAT,
+        PriorArtKind.VULNERABILITY,
+        PriorArtKind.PRECURSOR,
+    ):
+        queries = [query for query in model.prior_art.queries if query.kind is kind]
+        if not queries:
+            missing.append(f"prior_art.queries.{kind.value}")
+        elif not any(query.filters for query in queries):
+            missing.append(f"prior_art.queries.{kind.value}.filters")
+    if not model.prior_art.notes:
+        missing.append("prior_art.notes")
     if not model.trust_model.trust_agreements:
         missing.append("trust_model.trust_agreements")
     if not model.trust_model.dynamic_state_trust.states:
@@ -1021,6 +1173,7 @@ __all__ = [
     "Threat",
     "ModelState",
     "PartialThreatModel",
+    "PRIOR_ART_PATHS",
     "Precursor",
     "PriorArt",
     "PriorArtKind",
@@ -1034,6 +1187,8 @@ __all__ = [
     "TECHNIQUE_FAMILIES",
     "STATE_ORDER",
     "TechnicalSharpening",
+    "ThreatQueryMatch",
+    "ThreatQueryResult",
     "Transition",
     "TrustAgreement",
     "TrustModel",
@@ -1052,6 +1207,7 @@ __all__ = [
     "impact_weight_from_sub_score",
     "threat_risk",
     "normalise_threats",
+    "prior_art_paths",
     "risk_bucket",
     "unit_kind_from_unit_id",
 ]

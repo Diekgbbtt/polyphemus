@@ -138,16 +138,39 @@ def _vulnerabilities() -> list[dict]:
 
 
 def _prior_art() -> dict:
+    """The known-good prior-art section: one query for each kind the completion
+    check requires (threat, vulnerability, precursor), each with a filter, and
+    the phase note."""
     return {
-        "queries": [{
-            "kind": "precursor",
-            "filters": [{
-                "path": "capability",
-                "regex": "session|item",
-                "flags": "i",
-            }],
-            "result_count": 3,
-        }],
+        "queries": [
+            {
+                "kind": "precursor",
+                "filters": [{
+                    "path": "capability",
+                    "regex": "session|item",
+                    "flags": "i",
+                }],
+                "result_count": 3,
+            },
+            {
+                "kind": "threat",
+                "filters": [{
+                    "path": "threat.web_vulnerability_class",
+                    "regex": "session-management",
+                    "flags": "i",
+                }],
+                "result_count": 0,
+            },
+            {
+                "kind": "vulnerability",
+                "filters": [{
+                    "path": "canonical_class",
+                    "regex": "credential",
+                    "flags": "i",
+                }],
+                "result_count": 0,
+            },
+        ],
         "reused": [{
             "unit_id": "Service:sign-in",
             "record_id": "p-2",
@@ -1348,7 +1371,7 @@ def test_the_threat_file_carries_the_impact_and_the_risk(tmp_path):
 
 def test_the_prior_art_gate_persists_the_section_and_refuses_it_elsewhere(tmp_path):
     """`PRIOR_ART` is the only gate that writes `prior_art`; the section round-
-    trips as the typed skeleton (the query contract lands with its own ticket)."""
+    trips as the typed section (three query kinds, the reused records, the note)."""
     store = ThreatModelStore(tmp_path)
     store.write_sections(
         PROJECT, UNIT, "PRIOR_ART", {"prior_art": _prior_art()}, run_id=RUN)
@@ -1364,6 +1387,60 @@ def test_the_prior_art_gate_persists_the_section_and_refuses_it_elsewhere(tmp_pa
             PROJECT, UNIT, "TRUST_MODELLED",
             {"prior_art": _prior_art()}, run_id=RUN)
     assert raised.value.fields == ["prior_art"]
+
+
+def test_completion_requires_the_three_prior_art_query_kinds_and_the_note(
+        tmp_path):
+    """S2 section 7: at least one query for threats, one for vulnerabilities,
+    and one for precursors - each with a filter - plus a non-empty note. A
+    missing kind and a missing note are completion findings."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    document["prior_art"]["queries"] = [
+        query for query in document["prior_art"]["queries"]
+        if query["kind"] == "precursor"
+    ]
+    document["prior_art"]["notes"] = ""
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is False
+    assert "prior_art.queries.threat" in validation.missing
+    assert "prior_art.queries.vulnerability" in validation.missing
+    assert "prior_art.queries.precursor" not in validation.missing
+    assert "prior_art.notes" in validation.missing
+
+
+def test_completion_requires_a_filter_on_each_prior_art_query(tmp_path):
+    """A recorded query with no filter is the empty-filter dump the query tool
+    refuses; the completion check reports it on that kind."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    for query in document["prior_art"]["queries"]:
+        if query["kind"] == "precursor":
+            query["filters"] = []
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is False
+    assert "prior_art.queries.precursor.filters" in validation.missing
+    assert "prior_art.queries.threat" not in validation.missing
+    assert "prior_art.queries.vulnerability" not in validation.missing
+
+
+def test_the_three_prior_art_queries_and_the_note_close_the_check(tmp_path):
+    store = ThreatModelStore(tmp_path)
+
+    _write_to_completed(store)
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["validation"]["valid"] is True
+    assert [query["kind"] for query in model["prior_art"]["queries"]] == [
+        "precursor", "threat", "vulnerability",
+    ]
+    assert model["prior_art"]["notes"]
 
 
 def test_the_impact_assessed_gate_writes_the_rows_and_the_precursors(tmp_path):

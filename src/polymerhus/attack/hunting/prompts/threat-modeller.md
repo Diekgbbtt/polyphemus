@@ -84,6 +84,12 @@ Then define formally: the technical interface agreements between the components 
 Treat the unit as a data plane and a control plane wired through every layer: which artifact carries which field, which decision consumes it, and which component owns the guarantee at that point.
 Each claim carries its confidence degree and its evidence entries.
 
+## Prior art (PRIOR_ART)
+
+The phase runs after the technical sharpening and before the trust model; query the store with `hunts_store` and `cmd='query'`: `kind` is `threat`, `vulnerability`, `precursor`, `assumption`, or `impact`; `filters` is a non-empty list and the filters are AND, each a `re.search(regex, value, flags)` over the value at its dotted `path`, where `regex` is a Python expression, `flags` is `i` or `""`, `*` iterates a list, a dict value is matched on its JSON string, a missing path is no match, and `limit` is 1..50, default 20.
+The `threat` view merges the threat file with its impact row and its precursor entities; the other views read the unit model; the query is project-scoped, reads the produced and the consumed models, returns each match's `state`, summary, evidence refs, and `matched` path/value pairs, and excludes your own unit unless a filter path is `unit_id`.
+Run at least ONE query for threats, one for vulnerabilities, and one for precursors, each with at least one filter, record them with the reused records in `prior_art`, and write a `prior_art` note as the phase exit.
+
 ## Trust mapping (TRUST_MODELLED)
 
 Work four characterization axes in order.
@@ -334,7 +340,7 @@ An unclosed assumption is recorded as a validation finding - close it before the
 
 ## Tools
 
-- `hunts_store` - the threat model read/write. Read your own model with `cmd='read'` (no other argument), another unit's model with `cmd='read'` and its `unit_id` for prior insight, and project one section with `section`. The store merges the sections, keeps the state monotonic, computes the combined risk profile at COMPLETED, and runs the completion check. The sections are `technical_sharpening`, `prior_art`, `trust_model`, `assumptions`, `vulnerabilities`, `impact_assessment`, `precursors`, and `threats`, one gate each.
+- `hunts_store` - the threat model read/write/query. Read your own model with `cmd='read'` (no other argument), another unit's model with `cmd='read'` and its `unit_id` for prior insight, and project one section with `section`. Run the prior-art query with `cmd='query'`, a `kind`, and a `filters` list (see Prior art). The store merges the sections, keeps the state monotonic, computes the combined risk profile at COMPLETED, and runs the completion check. The sections are `technical_sharpening`, `prior_art`, `trust_model`, `assumptions`, `vulnerabilities`, `impact_assessment`, `precursors`, and `threats`, one gate each.
 - `notes` - the episodic notes, keyed `<unit_name>:<note_name>`. Write ONE note per reasoning phase: the decision nodes and the rationales of the branches you took. The `wellformedness` note is the exit memory. Available kinds: `hypothesis_refusal`, `implicit_test_primitive`, `wellformedness`, `freeform` (`phase_summary` is the hunter's kind and is not accepted here).
 - `search_http_history` / `get_http_artifact` - the recorded request traffic for the unit's endpoints. Search returns candidate summary rows; get inspects one artifact and its capture state. Their ids and request records are your evidence entries. You never replay: replay belongs to the test-executor pod.
 - `exec` - the live probe against the Kali surface, for the mechanics and the evidence above.

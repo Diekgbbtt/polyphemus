@@ -158,12 +158,15 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "the technical_sharpening section."
     ),
     ModelState.PRIOR_ART: (
-        "Query the store before you commit to a trust model. Search the other "
-        "units' completed and in-progress models for the threats, "
-        "vulnerabilities, and precursors that bear on this unit. Record at "
-        "least one query per kind with its filters and its match count, every "
-        "record you reuse with the reason, and a prior_art note as the phase "
-        "exit. Write the prior_art section."
+        "Query the store before you commit to a trust model. Use `hunts_store` "
+        "with cmd='query', a `kind` (threat, vulnerability, precursor, "
+        "assumption, or impact), a non-empty AND list of {path, regex, flags} "
+        "filters, and a limit. Search the other units' produced and consumed "
+        "models for the threats, vulnerabilities, and precursors that bear on "
+        "this unit. Record at least one query per kind (threat, vulnerability, "
+        "precursor) with its filters and its match count, every record you reuse "
+        "with the reason, and a prior_art note as the phase exit. Write the "
+        "prior_art section."
     ),
     ModelState.TRUST_MODELLED: (
         "Work the four trust axes in order: identity, spatial, temporal, "

@@ -321,15 +321,38 @@ def modeller_gate_payloads() -> dict:
         },
         ModelState.PRIOR_ART: {
             "prior_art": {
-                "queries": [{
-                    "kind": "precursor",
-                    "filters": [{
-                        "path": "capability",
-                        "regex": "session|item",
-                        "flags": "i",
-                    }],
-                    "result_count": 2,
-                }],
+                # One query per kind the completion check requires (ticket 437):
+                # threat, vulnerability, precursor - each with at least one
+                # filter - plus the phase note.
+                "queries": [
+                    {
+                        "kind": "precursor",
+                        "filters": [{
+                            "path": "capability",
+                            "regex": "session|item",
+                            "flags": "i",
+                        }],
+                        "result_count": 2,
+                    },
+                    {
+                        "kind": "threat",
+                        "filters": [{
+                            "path": "threat.web_vulnerability_class",
+                            "regex": "session-management",
+                            "flags": "i",
+                        }],
+                        "result_count": 0,
+                    },
+                    {
+                        "kind": "vulnerability",
+                        "filters": [{
+                            "path": "canonical_class",
+                            "regex": "credential",
+                            "flags": "i",
+                        }],
+                        "result_count": 0,
+                    },
+                ],
                 "reused": [{
                     "unit_id": "Service:sign-in",
                     "record_id": "p-2",

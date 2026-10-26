@@ -124,6 +124,27 @@ def test_the_pass_prompts_each_state_in_order_with_its_gate_instruction(tmp_path
     assert set(turns.turn_inputs[6].sections) == {"threats"}
 
 
+def test_the_prior_art_gate_is_tracked_between_sharpening_and_trust(tmp_path):
+    """S2 section 5: `PRIOR_ART` is a tracked gate whose section is
+    `prior_art`; the passive tracker observes it after the technical
+    sharpening and before the trust model, never gating the write."""
+    from polymerhus.attack.hunting.threat_model import GATE_SECTIONS
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    turns = _ScriptedTurns()
+
+    outcome = asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    assert GATE_SECTIONS[ModelState.PRIOR_ART] == ("prior_art",)
+    states = [write.state for write in outcome.gate_writes]
+    assert states.index(ModelState.PRIOR_ART) == (
+        states.index(ModelState.UNIT_TECHNICAL_SHARP) + 1)
+    prior = outcome.gate_writes[states.index(ModelState.PRIOR_ART)]
+    assert prior.sections == ("prior_art",)
+    assert store.read_model(PROJECT, UNIT)["prior_art"]["queries"]
+
+
 def test_a_lower_gate_write_updates_the_section_without_regressing_the_state(tmp_path):
     """The model state is monotonic (S1 5.1, S2 5.3): a late write for an
     earlier gate merges its section content, records the trail entry, and never

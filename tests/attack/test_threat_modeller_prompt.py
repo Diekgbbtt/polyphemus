@@ -319,6 +319,57 @@ def test_the_prompt_names_the_read_command():
     assert "cmd='read'" in _modeller_skill()
 
 
+def test_the_prompt_states_the_prior_art_phase_and_the_query_contract():
+    """Ticket 437: the phase runs after the technical sharpening and before the
+    trust model; it carries the query contract (the kind, the filters, the
+    AND/regex semantics, the `*` traversal, the limit, the bound-unit
+    exclusion) and the three required query kinds plus the prior-art note."""
+    prompt = _modeller_skill()
+    required = {
+        "phase_heading": "## Prior art (PRIOR_ART)",
+        "phase_order": "after the technical sharpening and before the trust model",
+        "query_command": "cmd='query'",
+        "kind_field": "`kind`",
+        "kinds": (
+            "`threat`, `vulnerability`, `precursor`, `assumption`, or `impact`"
+        ),
+        "filters_field": "`filters`",
+        "filter_path": "`path`",
+        "filter_regex": "`regex`",
+        "filter_flags": "`flags`",
+        "and_semantics": "the filters are AND",
+        "search_semantics": "`re.search(regex, value, flags)`",
+        "star_traversal": "`*` iterates a list",
+        "missing_path": "a missing path is no match",
+        "limit": "`limit` is 1..50, default 20",
+        "bound_unit_exclusion": "unless a filter path is `unit_id`",
+        "produced_and_consumed": "produced and the consumed",
+        "matched_pairs": "`matched` path/value pairs",
+        "three_kinds": "at least ONE query for threats, one for vulnerabilities, "
+                       "and one for precursors",
+        "note": "`prior_art` note",
+    }
+    missing = [name for name, clause in required.items() if clause not in prompt]
+    assert missing == []
+
+
+def test_the_prompt_keeps_the_prior_art_phase_before_the_trust_mapping():
+    prompt = _modeller_skill()
+    assert prompt.index("## Prior art (PRIOR_ART)") < prompt.index(
+        "## Trust mapping (TRUST_MODELLED)")
+
+
+def test_the_hunts_store_description_states_the_query_contract():
+    from polymerhus.attack.hunting.threat_modeller_tools import (
+        _HUNTS_STORE_DESCRIPTION,
+    )
+
+    assert "cmd='query'" in _HUNTS_STORE_DESCRIPTION
+    assert "`kind`" in _HUNTS_STORE_DESCRIPTION
+    assert "`filters`" in _HUNTS_STORE_DESCRIPTION
+    assert "`limit`" in _HUNTS_STORE_DESCRIPTION
+
+
 def test_the_session_segment_and_the_role_are_the_new_names():
     """T10 removed the planner-era alias: `threat-modeller` is the only
     segment that classifies as the modeller role."""
