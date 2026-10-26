@@ -97,7 +97,8 @@ The pod prompts embed an INDEXABLE LIST of the pod memory's keys (notes by key +
 
 ### 1.6 Output template
 
-- The pod verdict record (D5, Q3-amended): `{verdict: successful | unsuccessful, terminal_reason: <6-value>, clean: bool, init_validation: [str], iterations}`.
+- The pod verdict record (D5, Q3-amended): `{verdict: successful | unsuccessful, terminal_reason: <11-value>, clean: bool, init_validation: [str], iterations}`.
+  Five reasons are domain choices; six are harness-owned terminals.
 - The experiment log record (D6): `{variant_specs, raw_observations, interpretations}` - the full evidence trail (D67-08), plus the pod notes (D84-17/20).
 
 ### 1.7 Produced outcome
@@ -117,16 +118,43 @@ Langfuse is fail-open and never a gate (C12).
 - Fail-open: section 5.
 - Fixed internal caps: budget and timeout are pod-internal (D67-09), set by the pod, env-overridable, never carried in the spec.
   `HUNT_POD_MAX_TOOL_CALLS` defaults to **200** (D84-22), `HUNT_POD_MAX_ITERS` defaults to 8, `MAX_POD_ITERS = 3`, `EXEC_TIMEOUT_S = 300`.
+  The pod graph's node idle timeout defaults to 600 seconds and its tool idle timeout to 300 seconds.
+  A node run timeout is off by default; the surfer's one-hour pod backstop is the hard wall clock.
+
+### 1.10 Pod control-plane failure handling and resume (2026-10-26)
+
+The pod graph owns the primary failure detection.
+
+- `runner_agent`, `triager`, and `tool_exec` carry a LangGraph `TimeoutPolicy`.
+  The idle clock resets on model tokens, tool results, state writes, and child-task starts.
+- The node `error_handler` classifies the failure:
+  - provider 429, 5xx, transport timeout, or quota re-raises for the surfer's retry and pause policy;
+  - node timeout, context-window overflow, graph recursion limit, and tool timeout route to `degraded_terminal`;
+  - a generic error keeps the `technical-infeasibility` degrade.
+- `degraded_terminal` writes the `PodExport` from the durable experiment log, so the typed reason and partial trail survive.
+- The surfer's backstop writes `pod-watchdog-timeout`.
+  The pod's own lap budget writes `budget-timeout`; the two are distinct.
+- A stopped pod is resumable at the variant boundary.
+  `PodMemoryStore` writes `<spec_id>/<run_id>.resume.yaml`; `ExperimentLog.hydrate` rebuilds the D6 trail and the executed ledger; `init` restarts at the cursor variant.
+  A cancelled pod writes no export, so the gate holds the hunt.
+  A terminal export clears the cursor.
 
 ## 2. Domain peculiarities
 
-- The six-way termination (Q3-amended, ratified 2026-08-04; supersedes the four-way D67-06), each landing a binary end with the distinguishing evidence in the trail:
+- The domain termination (Q3-amended, ratified 2026-08-04; supersedes the four-way D67-06), each landing a binary end with the distinguishing evidence in the trail:
   1. Symptom confirmed via the verification symptom(s) -> `successful`, terminal_reason `symptom-confirmed`.
   2. Pattern/probe space exhausted without symptom AND every knowledge-base query relied on returned a real answer -> `unsuccessful`, terminal_reason `space-exhausted`. A degraded/unavailable KB result is UNAVAILABLE evidence, never absence: a `space-exhausted` claim over degraded KB coverage is downgraded to `no-symptom-evidence` with `clean=false` (#304).
   3. A strong technical infeasibility assertion (unreachable target, missing tool, everything WAF-blocked) -> `unsuccessful`, terminal_reason `technical-infeasibility`, infeasibility in the trail.
   4. A specific active defence prevented the probes (a WAF/filter soft-block) -> `unsuccessful`, terminal_reason `specific-defence-prevention`.
   5. Symptom absent but coverage partial or observations impaired (including a degraded/unavailable knowledge-base result) -> `unsuccessful`, terminal_reason `no-symptom-evidence`.
-  6. Budget/timeout reached -> `unsuccessful`, terminal_reason `budget-timeout`, partial evidence.
+- The harness-owned terminals, never triager choices:
+  - the pod's own lap budget -> `budget-timeout`;
+  - a pod node idle/run timeout -> `node-timeout`;
+  - a context-window overflow -> `context-window-exceeded`;
+  - a graph recursion limit -> `graph-limit`;
+  - a tool exec timeout -> `tool-timeout`;
+  - the surfer's last-resort backstop -> `pod-watchdog-timeout`.
+  A provider quota, 5xx, or transport timeout is not a terminal; it pauses or retries the run.
   `clean` True = clean completed observations; False = blocked/unreachable or a mid-flight cut. `init_validation` present only on an INIT rejection.
   **As of #209 - presentation rule**: the triager prompt presents `verdict` and `terminal_reason` as SEPARATE
   outputs (e.g. "verdict successful, terminal_reason symptom-confirmed"), NEVER slash-joined shorthand
@@ -177,7 +205,11 @@ Reuses:
 H1 - Confirmed: the spec's verification symptom is observed -> `{successful, symptom-confirmed}`, iterations = N, the log holds the variant spec, the raw observation, and the interpretation.
 H2 - Absent: the pattern/probe space exhausts without the symptom on an AVAILABLE knowledge base -> `{unsuccessful, space-exhausted}`, with the P3 note written. Over a degraded KB the same shape lands `{unsuccessful, no-symptom-evidence, clean=false}` (#304).
 H3 - Infeasible: unreachable target or all tools blocked -> `{unsuccessful, technical-infeasibility}` with the infeasibility in the trail.
-H4 - Capped: budget/timeout reached -> `{unsuccessful, budget-timeout}` with partial evidence.
+H4 - Capped: the pod's own lap budget is reached -> `{unsuccessful, budget-timeout}` with partial evidence.
+H4a - Node timeout: a node makes no progress past its idle window -> `{unsuccessful, node-timeout}` with the partial log.
+H4b - Context overflow: a provider context-length error -> `{unsuccessful, context-window-exceeded}`, never a domain infeasibility.
+H4c - Tool timeout: a tool exec exceeds its window -> `{unsuccessful, tool-timeout}` with the partial log.
+H4d - Resume: a stopped pod leaves no export and a resume cursor; the next dispatch continues at the cursor variant and skips executed probes.
 H5 - Variant: a variant basis yields a derived variant spec with provenance; the loop continues; the log records both variants.
 H6 - Note: on P3 exhaustion the consolidated experiment summary is written to the pod experiment-memory store and the Triager reads it.
 
@@ -185,7 +217,8 @@ H6 - Note: on P3 exhaustion the consolidated experiment summary is written to th
 
 O1 - Invalid spec at INIT: rejected, `unsuccessful` with the validation evidence; never executed.
 O2 - Non-zero exit: retried up to `MAX_POD_ITERS = 3`, then lands a binary end with the evidence.
-O3 - Exec timeout: `EXEC_TIMEOUT_S` enforced; the run lands `budget-timeout` (or the feasible alternative) with partial evidence.
+O3 - Exec timeout: `EXEC_TIMEOUT_S` enforced; the tool node lands `tool-timeout` with partial evidence.
+The pod's own lap cap still lands `budget-timeout`; the surfer's backstop lands `pod-watchdog-timeout`.
 O4 - Exec tool unavailable: the technical-infeasibility path.
 O5 - Target unreachable (DNS/connection refused): the technical-infeasibility path.
 O6 - Empty observation (empty body): interpreted as noise, preserved raw, the loop continues.
@@ -216,13 +249,16 @@ Delivery canon (merged spec section 3): all delivery is synchronous-threaded and
 ### 6.1 Contract predicates (integration tier)
 
 C1 - INIT rejection: given a spec violating the typed base schema, exercising malformed, the pod lands `unsuccessful` with the validation evidence in the trail and executes no tool call.
-C2 - Binary terminal invariant: given any spec and any tool behaviour, exercising ordering, every run terminates in exactly one of `{successful, unsuccessful}` and carries a `terminal_reason` from the Q3-amended vocabulary.
+C2 - Binary terminal invariant: given any spec and any tool behaviour, exercising ordering, every run terminates in exactly one of `{successful, unsuccessful}` and carries a `terminal_reason` from the Q3-amended vocabulary (domain or harness).
 C3 - Symptom confirmed: given a spec whose symptom a scripted tool output satisfies, exercising success, the pod lands `{successful, symptom-confirmed}` with iterations = N and the log populated.
 C4 - Space exhausted: given a spec whose symptom never appears across the whole probe space over an AVAILABLE KB (no degraded observation), exercising empty-valid, the pod lands `{unsuccessful, space-exhausted}`. Over a DEGRADED KB the same run lands `{unsuccessful, no-symptom-evidence, clean=false}` (#304).
 C5 - Infeasibility: given an unreachable target (connection refused), exercising degradation, the pod lands `{unsuccessful, technical-infeasibility}` with the infeasibility in the trail.
 C6 - Budget/timeout: given tool calls exceeding the fixed caps, exercising degradation, the pod lands `{unsuccessful, budget-timeout}` with partial evidence.
 C7 - Retry: given a tool call failing with non-zero exit twice then succeeding, exercising degradation, the retries converge at `MAX_POD_ITERS = 3` and the run lands a binary end.
-C8 - Timeout enforcement: given a tool call hanging past `EXEC_TIMEOUT_S`, exercising degradation, the exec is aborted and the run lands a binary end within the caps.
+C8 - Timeout enforcement: given a tool call hanging past `EXEC_TIMEOUT_S`, exercising degradation, the exec is aborted and the tool node lands `tool-timeout` within the caps.
+C14 - Node timeout: a hung async runner lands `{unsuccessful, node-timeout}` with the partial experiment log.
+C15 - Context overflow: a provider context-length error lands `{unsuccessful, context-window-exceeded}`, not `technical-infeasibility`.
+C16 - Durable resume: a cancelled pod leaves no export and a resume cursor; a re-dispatch starts at the cursor variant and skips an executed probe; a terminal export clears the cursor.
 C9 - Variant provenance: given a variant basis, exercising success, the experiment log contains the derived variant spec with provenance and the raw observation and interpretation entries (D6 shape).
 C10 - Duplicate probe: given the same variant + payload re-decided, exercising duplicate-idempotent, exactly one execution is recorded in the log.
 C11 - Empty payload vector: given a spec with an empty payload vector space, exercising empty-valid, the Runner still probes once (or the run lands `space-exhausted` when no probe is derivable).

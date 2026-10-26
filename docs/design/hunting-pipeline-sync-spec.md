@@ -42,7 +42,7 @@ The resolved mode is stamped on every run-record write (`hunting_runs.stats.pipe
 
 - Modeller phase end: the `hunting:<run>:threat-modeller` session is settled (halt or exhausted).
 - Hunter terminal: the hunt left its ReAct graph (`hunters_in_graph` no longer holds it) AND its consumed-threat recovery is settled. The move is only admission: F-022 recovers a consumed threat whose hunter left no current-run `terminal.yaml`, so a hunt that ended without finalizing (a degrade or a transiently failed child) reappears as a pending threat item and the phase holds while it re-dispatches; F-026 defers a transient provider failure per child until its backoff. A normal completion finalizes the set (zero-spec is valid) and is done.
-- Pod terminal: the durable `PodExport` record exists for the spec (`pod_store.read_pod_export(stem, run_id)` truthy) - any verdict, or the degraded export. A transiently failed pod has no export, so F-017 recovers its spec and the cursor holds until the retry exports.
+- Pod terminal: the durable `PodExport` record exists for the spec (`pod_store.read_pod_export(stem, run_id)` truthy) - any verdict, or the degraded export. A transiently failed pod has no export, so F-017 recovers its spec and the cursor holds until the retry exports. A stopped pod has a resume cursor and no export; the cursor is not a terminal, and the next dispatch resumes from it.
 - A pod still executing (`hunting:<run>:pod:<hunt>:<spec>` live) keeps its unit current.
 - Every signal is storage- or registry-backed, so the gate re-derives on resume with no persisted ledger.
 

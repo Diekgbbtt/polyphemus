@@ -1,31 +1,38 @@
-# 432 - Export live pods on run stop or keep them resumable
+# 432 - Keep stopped pods durably resumable
 
-**What to build:** When a hunting run stops with live pod sessions, write a durable terminal export for every live pod, or keep the pod durably resumable.
-The stop must never leave a pod directory without a terminal record.
+**What to build:** Persist a resume cursor when a pod attempt stops or is cancelled, rehydrate the experiment log on the next dispatch, and keep the gate holding until a terminal export exists.
 
 **Blocked by:** none
 
-**Status:** open
+**Status:** done
 
-**Seams:** `attack/hunting/surfer.py`, `attack/hunting/runtime.py`, `attack/hunting/run_lifecycle.py`, `eval/orchestrator/trial.py`
+**Seams:** `attack/hunting/pod/pod_memory.py`, `attack/hunting/pod/context.py`, `attack/hunting/pod/graph.py`, `attack/hunting/surfer.py`, `attack/hunting/pipeline_sync.py`
 
 ## Context
 
-Iteration B stopped the hunting run at `2026-10-26T03:11:21Z` after crossing the 7M capped-token budget.
-The last 20 pod directories were born between `02:48:42Z` and `02:50:50Z`, had 4 to 14 executed probes each, and have no export.
-The run stop cancelled them without a terminal record, so the measurement counts 20 export-less directories and the queue cannot tell "not finished" from "lost".
+Iteration B stopped the hunting run at `2026-10-26T03:11:21Z`.
+The last 20 pod directories were born between `02:48:42Z` and `02:50:50Z`, had 4 to 14 executed probes each, and had no export.
+The old behaviour cancelled the pods without a terminal record and lost their work.
 
-## Acceptance criteria
+The approved path chooses durable resume over a synthetic stop export.
 
-- [ ] A run stop cancels every live pod and writes one durable export for it, with a reason that names the stop.
-- [ ] A pod that cannot be exported is left with a durable in-flight marker and is resumable.
-- [ ] The run record names the live-pod count at stop.
-- [ ] A regression test starts a run with a live pod, stops it, and asserts the export or the resumable marker.
-- [ ] The next run reports zero pod directories without an export.
+## Result
+
+- `PodMemoryStore` persists `<spec_id>/<run_id>.resume.yaml` beside the terminal export.
+  The cursor is excluded from `list_pod_exports` and is never a `PodExport`.
+- The cursor records the last order, current variant, iteration, feedback, and executed ledger.
+- `ExperimentLog.hydrate` rebuilds variants, raw observations, KB observations, interpretations, and the executed ledger from the per-order slices.
+- `init` continues at the cursor variant.
+  The tools skip every probe signature already in the executed ledger.
+- `runner_agent`, `triager`, and `mint_variant` write the cursor at their node boundaries.
+- A terminal export clears the cursor.
+- A cancelled pod writes no export.
+  The gate holds because no durable export exists; the next dispatch resumes from the cursor.
 
 ## Verification
 
-- `tests/attack/test_hunting_surfer_tick.py`
-- `tests/attack/test_hunting_run_lifecycle.py`
-- `tests/eval/test_orchestrator_trial.py`
-- A stopped white-jotter run.
+- `tests/attack/pod/test_pod_memory.py`: 50 passed, including the cursor round-trip, the per-spec isolation, the export-list exclusion, and `ExperimentLog.hydrate`.
+- `tests/attack/pod/test_graph.py`: 35 passed, including the resumed pod that skips an executed probe and the cancelled pod that keeps its cursor with no export.
+- `tests/attack/test_hunting_session_watchdog.py`: 5 passed, including the cancelled session with no export and a retained cursor.
+- `tests/attack/test_hunting_pipeline_sync_lifecycle.py`: 14 passed, including the resume cursor that does not count as a terminal export.
+- `tests/attack`: 1142 passed.

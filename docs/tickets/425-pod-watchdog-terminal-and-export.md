@@ -1,39 +1,44 @@
-# 425 - Preserve the pod terminal on watchdog expiry and emit an export for every pod
+# 425 - Pod-owned failure boundary and typed terminals
 
-**What to build:** Make the pod watchdog preserve the pod's own terminal or extend the window on progress, and guarantee one export per pod directory.
+**What to build:** Move the primary failure detection into the pod graph with LangGraph node timeouts and an error handler, write a typed `PodExport` from the durable trail, and keep the surfer watchdog as a typed last-resort backstop.
 
 **Blocked by:** none
 
-**Status:** open
+**Status:** done
 
-**Seams:** `attack/hunting/surfer.py`, `attack/hunting/pod/pod.py`, `attack/hunting/pod/types.py`, `attack/hunting/pod/graph.py`
+**Seams:** `attack/hunting/pod/graph.py`, `attack/hunting/pod/pod.py`, `attack/hunting/pod/config.py`, `attack/hunting/pod/failures.py`, `attack/hunting/pod/types.py`, `attack/hunting/surfer.py`
 
 ## Context
 
 Iteration B produced 86 pod directories and 66 exports.
-58 of the 66 exports are degraded `budget-timeout` envelopes written by the 2700 s watchdog, with top-level terminal fields and zero raw observations.
-20 pod directories have no export at all.
-The one pod that reached the correct semicolon spelling lost its evidence to the watchdog.
+58 of the 66 exports were the 2700-second surfer watchdog's `budget-timeout` envelope, with zero raw observations.
+The pods were progressing, not wedged: 37 of the 58 wrote a probe observation less than five minutes before the export; the median gap was 3.3 minutes.
+The unit-wide pod batch put 20 pods on the qemu target at once.
 
-The pods were progressing, not wedged.
-37 of the 58 timeout pods wrote a probe observation less than five minutes before the export; the median gap was 3.3 minutes.
-Two first-wave pods finished at 29.9 and 45.0 minutes, the second ten seconds before the window.
-The unit-wide pod batch put 20 pods on the qemu target at once, so one lap could consume the whole window.
-The per-hunt pod sequencing change (ticket 431) reduces the concurrency; this ticket fixes the deadline and the evidence loss.
-The `budget-timeout` reason must distinguish a watchdog expiry from the pod's own lap budget.
+The approved fix path moved the primary failure detection into the pod graph.
+The surfer remains a last-resort backstop.
 
-## Acceptance criteria
+## Result
 
-- [ ] A watchdog expiry preserves the pod's own last terminal when one exists.
-- [ ] A progressing pod extends its window instead of being cut at a fixed wall clock.
-- [ ] Every pod directory receives exactly one export, including a degraded one when the pod never concluded.
-- [ ] The export schema is single: the degraded envelope and the normal export do not fork the top-level contract.
-- [ ] A slow-target test drives a pod past the watchdog and asserts the export and the terminal are preserved.
-- [ ] A watchdog expiry is distinguishable from the pod's own `budget-timeout` in the export.
-- [ ] The next run reports the watchdog-envelope share and the no-export count.
+- `PodTimeouts` gives `runner_agent`, `triager`, and `tool_exec` a LangGraph `TimeoutPolicy`.
+  The node idle timeout is 600 seconds and the tool idle timeout is 300 seconds.
+  The optional node run timeout is off by default.
+- The node `error_handler` routes `node-timeout`, `context-window-exceeded`, `graph-limit`, and `tool-timeout` to `degraded_terminal`.
+  A provider failure re-raises for the surfer's retry/pause policy.
+  A generic error keeps the `technical-infeasibility` degrade.
+- `degraded_terminal` writes the typed `PodExport` from the durable experiment log.
+- The surfer split the hunter and pod backstops: 2700 seconds for a hunter, 3600 seconds for a pod.
+  The pod backstop writes `pod-watchdog-timeout`; the pod's own lap budget writes `budget-timeout`.
+- Both surfer degraded envelopes now use the same `{verdict, evidence}` shape as the pod.
+- The `TERMINAL_REASONS` vocabulary is split into domain and harness sets; the triager cannot choose a harness terminal.
 
 ## Verification
 
-- `tests/attack/pod/test_pod_lifecycle.py`
-- `tests/attack/test_hunting_surfer_tick.py`
-- A slow-target pod run.
+- `tests/attack/pod/test_failures.py`: 8 passed.
+- `tests/attack/pod/test_graph.py`: 35 passed.
+- `tests/attack/pod/test_verification.py`, `test_prompts.py`, `test_variant_mint.py`: passed.
+- `tests/attack/test_hunting_session_watchdog.py`: 5 passed.
+- `tests/attack`: 1143 passed.
+- `tests/app` and `tests/eval`: 1157 passed, 22 skipped.
+- `tests/project_management`: 159 passed, 6 skipped.
+- Hunting integration selection: 50 passed, 28 skipped.

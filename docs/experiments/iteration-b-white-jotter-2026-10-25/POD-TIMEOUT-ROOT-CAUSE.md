@@ -6,9 +6,11 @@
 
 ## Status
 
-Cause 1 is fixed on `fix/batched-pod-sequencing`.
-The ADR, spec, assertions, and CONTEXT now state the per-hunt pod phase, and the gate is refactored under TDD (ticket 431).
-Causes 2 to 5 remain open: the watchdog (ticket 425), the live pods at stop (ticket 432), and the per-target concurrency cap (ticket 433).
+Causes 1 to 4 are fixed on `feat/pod-control-plane`.
+The per-hunt batch (ticket 431) removed the unit-wide pod concurrency.
+The pod control plane (tickets 425 and 434) owns node timeouts, typed terminals, and the one-hour surfer backstop.
+The resume cursor (ticket 432) keeps stopped pods resumable.
+The per-target concurrency cap (ticket 433) is rejected by the operator.
 
 ## What failed
 
@@ -118,9 +120,9 @@ The queue can therefore not distinguish "not finished" from "lost", and the meas
 
 ## Fix order
 
-1. Amend the pipeline-sync ADR, spec, assertions, and CONTEXT to the per-hunt pod phase (ticket 431).
-2. Refactor `pipeline_sync.py` under TDD so `batched` admits only the cursor hunt's specs, and advances the hunt only when every pod of the hunt has a durable export (ticket 431).
-3. Run the pipeline-sync unit and gate suites, then `tests/attack`, `tests/eval`, and the hunting integration suites (ticket 431).
-4. Make the watchdog progress-aware or inactivity-based, and preserve the pod's own terminal on expiry (ticket 425).
-5. Export every live pod at run stop or keep the run resumable (ticket 432).
-6. Add a per-target concurrency cap beside the global gate width (ticket 433).
+1. Amend the pipeline-sync ADR, spec, assertions, and CONTEXT to the per-hunt pod phase (ticket 431, done).
+2. Refactor `pipeline_sync.py` under TDD so `batched` admits only the cursor hunt's specs, and advances the hunt only when every pod of the hunt has a durable export (ticket 431, done).
+3. Run the pipeline-sync unit and gate suites, then `tests/attack`, `tests/eval`, and the hunting integration suites (ticket 431, done).
+4. Make the watchdog progress-aware or inactivity-based, and preserve the pod's own terminal on expiry (tickets 425 and 434, done).
+5. Keep every live pod durably resumable (ticket 432, done).
+6. Add a per-target concurrency cap beside the global gate width (ticket 433, rejected by the operator).
