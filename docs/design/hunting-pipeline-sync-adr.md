@@ -45,7 +45,8 @@ The full contract is `docs/design/hunting-batch-and-promotion-spec.md`.
   The completion audit and the gate's lifecycle read ignore a demoted hunt's leftover spec folder, including after the unit model moves to `consumed/`.
   The mover's spec inbox drops a spec whose hunt is demoted, and the gate excludes that hunt from the pod block.
   `parallel` has no phase gate; when a threshold is set, a promotion-only gate supplies the demoted set and never filters a parallel item.
-  A refused file left after the model moves is the same pre-existing fail-open as any refused threat file.
+  A refused threat file is not archived by the mover. It stays in `produced/`; once the unit model moves to `consumed/`, it is an orphan and the produced-threat read no longer sees it.
+  `abandoned/` is the whole-unit archive for a stale produced model or a degraded or invalid model, written by the intake freeze or the modeller, never by a mover refusal.
 - Both settings live in `settings.hunting`, are read and written by the existing config GET and PUT, freeze at run start, and are stamped on the run record beside `pipeline_sync`.
   The run record wins on resume.
   There is no environment fallback.

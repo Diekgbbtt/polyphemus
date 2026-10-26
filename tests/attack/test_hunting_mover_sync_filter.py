@@ -8,6 +8,8 @@ predicate (which reads the unfiltered inbox) still sees held items as work.
 """
 from __future__ import annotations
 
+import yaml
+
 from polymerhus.attack.hunting.mover import (
     ThreatItem,
     read_produced_inbox,
@@ -368,3 +370,43 @@ def test_a_recovered_consumed_threat_is_never_demoted(tmp_path):
 
     threats = [item for item in inbox.items if isinstance(item, ThreatItem)]
     assert [item.threat_id for item in threats] == ["threat-2"]
+
+
+def test_a_refused_threat_stays_in_produced_and_is_not_archived(tmp_path):
+    """A mover refusal leaves the file in produced/. It is not an `abandoned/`
+    archive: that family is written only for a whole stale or invalid unit
+    model, by the intake freeze or the modeller."""
+    from tests.hunting_fixtures import threat_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    produce_model(
+        threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
+        threats=[threat_row(likelihood="high"), threat_row(likelihood="high")],
+    )
+    produced = (
+        tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"
+        / "produced" / "Service-catalogue-and-discovery"
+    )
+    refused_path = produced / "threat-2.yaml"
+    record = yaml.safe_load(refused_path.read_text())
+    record["unit_kind"] = "not-a-unit-kind"
+    refused_path.write_text(yaml.safe_dump(record), encoding="utf-8")
+
+    assert threat.consume_threat(PROJECT, UNIT, "threat-1") is True
+    hunter.finalize_specs(
+        PROJECT, "Service-catalogue-and-discovery__threat-1", run_id=RUN)
+    report = run_delivery_tick(
+        PROJECT, RUN,
+        threat_store=threat,
+        hunter_store=hunter,
+        pod_store=None,
+        control=RecordingControlPlane(),
+        coro_for=lambda item: None,
+    )
+
+    assert report.dispatched == 0
+    assert report.models_consumed == 1
+    assert refused_path.exists()
+    assert threat.read_produced_threats(PROJECT) == []
+    assert not list((tmp_path / "threat").rglob("abandoned/*"))

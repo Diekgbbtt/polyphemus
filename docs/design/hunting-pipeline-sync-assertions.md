@@ -52,6 +52,7 @@ Each predicate names its executable test.
 | C26 | `hunting_artifacts_terminal` ignores demoted produced threats and a demoted hunt's leftover spec folder, including after the model moves. | `tests/attack/test_hunting_pipeline_sync_lifecycle.py::test_demoted_produced_threat_is_not_pending_in_the_completion_audit`, `...::test_demoted_hunt_leftover_spec_is_ignored_after_the_model_moves` |
 | C27 | The run record stamps `pod_batch_size` and `promotion_risk_threshold`; a resume prefers the run record; a mid-run PUT changes only future runs. | `tests/attack/test_hunting_run_lifecycle.py::test_the_run_record_stamps_the_pod_batch_and_promotion_threshold`, `...::test_a_resume_prefers_the_recorded_pipeline_settings` |
 | C28 | The dispatch-gap diagnostic counts only promoted produced threats. | `tests/attack/test_hunting_review_fixes.py::test_a_demoted_produced_threat_is_not_a_dispatch_gap` |
+| C29 | A mover-refused threat file stays in `produced/` and is not archived; once the unit model moves to `consumed/`, it is an orphan in `produced/` and the produced-threat read no longer sees it. `abandoned/` is the whole-unit archive for a stale, degraded, or invalid model. | `tests/attack/test_hunting_mover_sync_filter.py::test_a_refused_threat_stays_in_produced_and_is_not_archived` |
 
 ## E2E / live-stack assertions (opt-in, `PH_E2E_LIVE=1`)
 

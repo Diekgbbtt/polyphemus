@@ -57,8 +57,11 @@ The full hunt list includes only promoted, dispatchable, observable hunts: a zer
 no threat file (S2 8.3), and a refused threat has no observable artifact. Neither can hold the pod
 phase.
 A threat whose combined risk is unreadable is a refusal, never a demotion; the audit sees it
-while the model is produced, and a refused file left after the model moves is the same
-pre-existing fail-open as any refused threat file.
+while the model is produced.
+A refused threat file is not archived by the mover. It stays in `produced/`; once the unit
+model moves to `consumed/`, it is an orphan and the produced-threat read no longer sees it.
+`abandoned/` is the whole-unit archive for a stale produced model or a degraded or invalid
+model, written by the intake freeze or the modeller, never by a mover refusal.
 The gate's lifecycle read uses the same demoted-hunt resolution, so a leftover spec folder
 cannot hold the pod phase after the model moves.
 The threat modeller is not aware of the threshold; the unit risk budget and the queue order

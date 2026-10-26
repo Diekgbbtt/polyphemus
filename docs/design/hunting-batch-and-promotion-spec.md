@@ -125,7 +125,8 @@ The threat modeller is not aware of the threshold.
 - A produced threat is promoted when its computed combined `risk` is at least the threshold.
 - A threshold of `null` or 0 promotes every valid threat.
 - A combined risk of 0 is already refused by the threat validity predicate.
-- A threat whose combined risk is unreadable is a refusal, never a demotion. The completion audit sees it while the unit model is produced; a refused file that remains after the model moves is left as evidence, the same pre-existing fail-open as any refused threat file.
+- A threat whose combined risk is unreadable is a refusal, never a demotion. The completion audit sees it while the unit model is produced.
+- A refused threat file is not archived by the mover. It stays in `produced/`. Once the unit model moves to `consumed/`, the file is an orphan in `produced/` and the produced-threat read no longer sees it. `abandoned/` is the whole-unit archive for a stale produced model or a degraded or invalid model; the intake freeze or the modeller writes it, never a mover refusal.
 - The mover's produced-inbox read applies the predicate.
 - A demoted threat is not an item.
 - The demoted threat id is carried as non-pending for the unit's model consume.
