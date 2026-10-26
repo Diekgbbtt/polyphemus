@@ -263,6 +263,11 @@ def main() -> None:
                     row["hunting_status"] = status.get("status")
                     row["pipeline_sync"] = stats.get("pipeline_sync")
                     row["risk_total"] = stats.get("risk_total")
+                    row["risk_threshold"] = stats.get("risk_threshold")
+                    row["threshold_basis"] = stats.get("threshold_basis")
+                    row["pod_batch_size"] = stats.get("pod_batch_size")
+                    row["promotion_risk_threshold"] = stats.get(
+                        "promotion_risk_threshold")
                     row["halt"] = stats.get("halt")
                     row["crossing_unit"] = stats.get("crossing_unit")
                     row["blocked_unit"] = stats.get("blocked_unit")
