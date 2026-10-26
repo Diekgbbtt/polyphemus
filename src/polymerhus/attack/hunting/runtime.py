@@ -1210,6 +1210,8 @@ async def start_hunting(
         )
         from polymerhus.attack.hunting import surfer as surfer_mod  # noqa: PLC0415
         from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
+            RunSyncGate,
+            SyncMode,
             make_sync_gate,
             resolve_mode,
             resolve_pod_batch_size,
@@ -1442,6 +1444,22 @@ async def start_hunting(
             promotion_risk_threshold=promotion_risk_threshold,
             intake_order=lambda: tuple(
                 run_record_cell.get("intake_order") or ()),
+        )
+        # `parallel` has no phase gate, but the promotion floor still makes a
+        # demoted hunt's leftover spec evidence. The light gate supplies only
+        # that read; it never filters a parallel item.
+        state.promotion_gate = (
+            RunSyncGate(
+                mode=SyncMode.PARALLEL,
+                project_id=project_id,
+                run_id=hunting_run_id,
+                threat_store=run_threat_store,
+                hunter_store=hunter_store,
+                pod_store=pod_store,
+                promotion_risk_threshold=promotion_risk_threshold,
+            )
+            if state.sync_gate is None and promotion_risk_threshold is not None
+            else None
         )
 
         async def _modeller_units_pass():

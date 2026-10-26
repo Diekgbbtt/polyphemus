@@ -278,6 +278,10 @@ class RunDispatchState:
     # `batched`/`serial`. Consulted once per surfer tick; held items stay
     # produced (the mover's at-least-once rule).
     sync_gate: Any = None
+    # The parallel-mode demotion reader (2026-10-26). `sync_gate` is None in
+    # `parallel`, but a demoted hunt's leftover spec is still evidence, not
+    # work. This gate is used only for its `demoted_hunts()` read.
+    promotion_gate: Any = None
     # The frozen per-threat promotion floor (2026-10-26): a produced threat
     # below it is evidence, not work. `None` means no filter.
     promotion_risk_threshold: int | None = None
@@ -354,17 +358,22 @@ def tier_sequencing_enabled(sync_gate: Any) -> bool:
 
 
 def demoted_hunts_for(state: Any) -> AbstractSet[str]:
-    """The demoted hunt set of the run's sync gate, or empty when the gate has
-    no promotion surface (a test double or a legacy gate). Fail-open: a gate
-    read failure never stops the tick."""
-    gate = getattr(state, "sync_gate", None)
-    reader = getattr(gate, "demoted_hunts", None)
-    if reader is None:
-        return frozenset()
-    try:
-        return reader()
-    except Exception:  # noqa: BLE001 - a gate read failure is not work
-        return frozenset()
+    """The demoted hunt set of the run's sync gate, or its parallel-mode
+    promotion gate, or empty when neither has the promotion surface. Fail-open:
+    a gate read failure never stops the tick."""
+    gates = (
+        getattr(state, "sync_gate", None),
+        getattr(state, "promotion_gate", None),
+    )
+    for gate in gates:
+        reader = getattr(gate, "demoted_hunts", None)
+        if reader is None:
+            continue
+        try:
+            return reader()
+        except Exception:  # noqa: BLE001 - a gate read failure is not work
+            return frozenset()
+    return frozenset()
 
 
 def run_work_remaining(

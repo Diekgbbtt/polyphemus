@@ -120,4 +120,7 @@ def test_demoted_hunts_for_reads_the_gate_and_fails_open():
         RunDispatchState(sync_gate=WithDemotions())) == frozenset({"u__threat-2"})
     assert demoted_hunts_for(
         RunDispatchState(sync_gate=Without())) == frozenset()
+    assert demoted_hunts_for(
+        RunDispatchState(promotion_gate=WithDemotions())) == frozenset({
+            "u__threat-2"})
     assert demoted_hunts_for(RunDispatchState()) == frozenset()

@@ -138,6 +138,7 @@ The threat modeller is not aware of the threshold.
 - The completion audit ignores demoted produced threats and the demoted hunt's leftover spec folder, including after the unit model moves to `consumed/`.
 - The gate's lifecycle read uses the same demoted-hunt resolution, so a leftover spec folder cannot hold the pod phase after the model moves.
 - The mover's spec inbox drops a spec whose hunt is demoted; the gate excludes that hunt from the pod block. A demoted hunt's leftover spec is evidence, not work.
+- `parallel` has no phase gate. When a threshold is set, the run carries a promotion-only gate that supplies the demoted set to the spec inbox and the work read; it never filters a parallel item.
 - The dispatch-gap diagnostic counts only promoted produced threats.
 - The unit risk budget and the unit queue order are unchanged. They still use every stored threat.
 - The threat modeller is not aware of the threshold.
