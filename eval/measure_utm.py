@@ -396,6 +396,10 @@ def load_models(store: Path) -> tuple[list[dict], list[dict]]:
                 record["_path"] = str(threat_path)
                 record["_family"] = family
                 record["_unit_name"] = unit_dir.name
+                record["_schema"] = (
+                    model.get("schema_version")
+                    if model else (2 if threat_path.name.startswith("loop-") else None)
+                )
                 threats.append(record)
     return models, threats
 
@@ -701,6 +705,16 @@ def share(part: int, whole: int) -> float | None:
     return round(part / whole, 4) if whole else None
 
 
+def is_bound_class(class_name: Any, index: dict[str, int]) -> bool:
+    """True when the class resolves to the suite, parent or leaf.
+
+    The binding question is not the breadth question: a leaf is bound, a
+    parent is bound, and an empty or absent name is not.
+    """
+    name = norm(class_name)
+    return bool(name) and name in index
+
+
 def class_binding_rate(
     classes: list[str], class_index: dict[str, int] | None
 ) -> float | None:
@@ -711,9 +725,7 @@ def class_binding_rate(
     """
     if not classes or not class_index:
         return None
-    bound = sum(
-        1 for name in classes if is_broad_class(name, class_index) is not None
-    )
+    bound = sum(1 for name in classes if is_bound_class(name, class_index))
     return share(bound, len(classes))
 
 
@@ -846,11 +858,39 @@ def impact_metric(
     and the legacy `impact` record holds the vector, so its block is a legacy
     recomputation. No readable model yields a zero-row block with unknown
     shares, never a failure.
+
+    An abandoned copy is a degraded retry of the same unit, not a second damage
+    claim. The loader reads it for the artifact inventory; the primary metric
+    excludes it, so a retried unit is not counted twice.
     """
-    if any(as_list(as_dict(model).get("impact_assessment")) for model in models):
-        return v3_impact(models, class_index)
-    if threats:
-        return v2_impact(threats, class_index)
+    models = [
+        model for model in models
+        if as_dict(model).get("_family") != "abandoned"
+    ]
+    threats = [
+        threat for threat in threats
+        if as_dict(threat).get("_family") != "abandoned"
+    ]
+    v3_models = [
+        model for model in models
+        if as_list(as_dict(model).get("impact_assessment"))
+    ]
+    v3 = v3_impact(v3_models, class_index) if v3_models else None
+    v2_threats = [
+        threat for threat in threats
+        if as_dict(threat).get("_schema") == 2
+        or as_dict(threat).get("_legacy")
+    ]
+    v2 = v2_impact(v2_threats, class_index) if v2_threats else None
+    if v3 is not None and v2 is not None:
+        v3["schema"] = "mixed"
+        v3["legacy_recomputation"] = True
+        v3["legacy_v2"] = v2
+        return v3
+    if v3 is not None:
+        return v3
+    if v2 is not None:
+        return v2
     return impact_block(
         [],
         schema=None,

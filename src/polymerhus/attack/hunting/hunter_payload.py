@@ -24,10 +24,12 @@ The payload carries (S2 8.2):
 It does NOT carry (S2 8.2): any narrowed vector or payload, a
 `HuntConfig`, or a pre-authored payload vector space. The rationale stays
 vulnerability-level, so the hunter keeps the room to engineer its own procedure.
-The key set is exactly the list above (T4a review F4): the importing assumption
-record and the threat's `suite_gap` flag are NOT separate payload fields - the
-programming fault carries the fault, and the threat record the hunter receives
-already carries `suite_gap`.
+The payload also carries the threat file's `impact` block: the damage, the
+disposition, the precursor entities, and the capability path.
+The key set is exactly the list above plus `impact` (T4a review F4): the
+importing assumption record and the threat's `suite_gap` flag are NOT separate
+payload fields - the programming fault carries the fault, and the threat record
+the hunter receives already carries `suite_gap`.
 
 PURE by construction (CODING_STANDARD s3): the model document and the threat
 record go in, one dict comes out; no I/O, no clock, no LLM. Every lookup is

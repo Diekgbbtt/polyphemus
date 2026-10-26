@@ -223,6 +223,7 @@ impact:
   precursors: int | null
   prior_art_reused: int | null
   class_binding_rate: number | null
+  legacy_v2: object | null
   notes: string
 narrowing:
   threats_total: int

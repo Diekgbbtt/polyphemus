@@ -889,9 +889,6 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
                 missing.append(f"impact_assessment:{assessment.id}.capability_path")
         elif assessment.capability_path:
             missing.append(f"impact_assessment:{assessment.id}.capability_path")
-        if not set(assessment.capability_path) <= set(assessment.precursor_refs):
-            missing.append(
-                f"impact_assessment:{assessment.id}.precursor_refs")
     for index, assessment in enumerate(model.impact_assessment):
         if not assessment.id:
             missing.append(f"impact_assessment[{index}].id")
@@ -963,8 +960,8 @@ def _check_references(model: UnitThreatModel) -> list[str]:
         agreement.id for agreement in model.trust_model.trust_agreements
     }
     state_ids = {state.id for state in dynamic.states}
-    impact_ids = {row.id for row in model.impact_assessment}
-    precursor_ids = {precursor.id for precursor in model.precursors}
+    impact_ids = {row.id for row in model.impact_assessment if row.id}
+    precursor_ids = {precursor.id for precursor in model.precursors if precursor.id}
 
     def unresolved(owner: str, field: str, ref: str) -> None:
         errors.append(f"{owner}.{field}={ref!r}")

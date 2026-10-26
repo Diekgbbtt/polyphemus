@@ -305,9 +305,18 @@ class StoreToolBase(BaseTool):
                 "must declare its typed args schema"
             )
         args = schema(**kwargs)
-        if getattr(args, self._discriminator) == _READ:
+        command = getattr(args, self._discriminator)
+        if command == _READ:
             return self._read(args)
-        return self._write(args)
+        if command == _WRITE:
+            return self._write(args)
+        return self._dispatch_other(args, command)
+
+    def _dispatch_other(self, args: BaseModel, command: str):
+        """A seam-specific command beyond read/write; the default refuses."""
+        raise ValueError(
+            f"{type(self).__name__} does not know the command {command!r}"
+        )
 
     def _read(self, args: BaseModel):
         raise NotImplementedError

@@ -101,6 +101,11 @@ from .threat_model import (
     unit_kind_from_unit_id,
 )
 
+# The read-only legacy schema. The intake and the measurement read it;
+# the mover and the prior-art query do not.
+LEGACY_SCHEMA_VERSION = 2
+
+
 logger = logging.getLogger(__name__)
 
 # The model directories (S2 4.2). A threat file lives only in produced/ or
@@ -129,6 +134,7 @@ QUERY_DEFAULT_LIMIT = 20
 QUERY_MAX_LIMIT = 50
 QUERY_PATH_MAX_CHARS = 120
 QUERY_REGEX_MAX_CHARS = 200
+QUERY_MATCH_VALUE_MAX_CHARS = 500
 
 
 class ThreatQueryError(ValueError):
@@ -265,7 +271,7 @@ class ThreatModelDirectoryError(ValueError):
 class ThreatModelDocumentError(ValueError):
     """An existing model document cannot be merged.
 
-    Its persisted `state` is not one of the five workflow gates (a corrupt or
+    Its persisted `state` is not one of the seven workflow gates (a corrupt or
     foreign document). The store refuses with a coded error instead of a raw
     pydantic/enum `ValueError`."""
 
@@ -348,10 +354,16 @@ def _query_searchable(value: Any) -> str:
 
 
 def _json_safe(value: Any) -> Any:
-    """A matched value in the result payload's JSON-safe form."""
+    """A matched value in the result payload's JSON-safe form.
+
+    A structured value is stringified and truncated: the result is a summary,
+    never a full record body smuggled through a dict path."""
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    text = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    if len(text) <= QUERY_MATCH_VALUE_MAX_CHARS:
+        return text
+    return text[:QUERY_MATCH_VALUE_MAX_CHARS] + "..."
 
 
 def _parse_query_filters(
@@ -643,20 +655,29 @@ class ThreatModelStore(BoundedRecordStore):
             return None
         return loaded if isinstance(loaded, dict) else None
 
-    def _load_document(self, path: Path) -> dict | None:
-        """A document under the reader's schema version; an unknown version is
-        refused and logged, never migrated (S2 5.8)."""
+    def _load_document(
+        self, path: Path, *, allow_legacy: bool = False,
+    ) -> dict | None:
+        """A document under the reader's schema version.
+
+        The current version is always read. A legacy v2 document is read only
+        when the caller asks for it: the intake and the measurement need it, the
+        mover and the query do not. Any other version is refused and logged,
+        never migrated (S2 5.8)."""
         raw = self._load_raw(path)
         if raw is None:
             return None
-        if raw.get("schema_version") != SCHEMA_VERSION:
-            logger.error(
-                "threat model store: refusing %s - unknown schema_version %r "
-                "(this reader knows %s only)",
-                path, raw.get("schema_version"), SCHEMA_VERSION,
-            )
-            return None
-        return raw
+        version = raw.get("schema_version")
+        if version == SCHEMA_VERSION:
+            return raw
+        if allow_legacy and version == LEGACY_SCHEMA_VERSION:
+            return raw
+        logger.error(
+            "threat model store: refusing %s - unsupported schema_version %r "
+            "(this reader knows %s, and the legacy read accepts %s)",
+            path, version, SCHEMA_VERSION, LEGACY_SCHEMA_VERSION,
+        )
+        return None
 
     # --- derived unit names (S2 4.2) -------------------------------------------
 
@@ -740,7 +761,8 @@ class ThreatModelStore(BoundedRecordStore):
         )
 
     def _find_model_path(
-        self, project_id: str, unit_id: str, family: str
+        self, project_id: str, unit_id: str, family: str,
+        *, allow_legacy: bool = False,
     ) -> Path | None:
         """The model path for `unit_id` in one family, name- and identity-checked.
 
@@ -750,7 +772,7 @@ class ThreatModelStore(BoundedRecordStore):
         """
         for name in self._candidate_names(unit_id):
             path = self._model_path(project_id, name, family)
-            raw = self._load_document(path)
+            raw = self._load_document(path, allow_legacy=allow_legacy)
             if raw is not None and raw.get("unit_id") == unit_id:
                 return path
         return None
@@ -760,10 +782,15 @@ class ThreatModelStore(BoundedRecordStore):
         None. An unknown `schema_version` refuses to load (a version error is
         logged). A read failure degrades to None, never a raise (O4)."""
         with self._lock_for(project_id):
-            path = self._find_model_path(project_id, unit_id, "produced")
+            path = self._find_model_path(
+                project_id, unit_id, "produced", allow_legacy=True)
             if path is None:
-                path = self._find_model_path(project_id, unit_id, "consumed")
-            return self._load_document(path) if path is not None else None
+                path = self._find_model_path(
+                    project_id, unit_id, "consumed", allow_legacy=True)
+            return (
+                self._load_document(path, allow_legacy=True)
+                if path is not None else None
+            )
 
     def read_section(self, project_id: str, unit_id: str, section: str) -> Any:
         """One section of the unit's model, or None when the model or the
@@ -1058,7 +1085,8 @@ class ThreatModelStore(BoundedRecordStore):
             for directory in sorted(consumed.iterdir()):
                 if not directory.is_dir():
                     continue
-                raw = self._load_document(directory / f"{directory.name}.yaml")
+                raw = self._load_document(
+                    directory / f"{directory.name}.yaml", allow_legacy=True)
                 if raw is None or not self._consumable(raw):
                     continue
                 unit_id = raw.get("unit_id")

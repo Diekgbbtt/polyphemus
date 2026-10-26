@@ -167,10 +167,8 @@ class FieldFilter(BaseModel):
     flags: str = "i"          # "i" case-insensitive, "" case-sensitive
 
 
-class ThreatQuery(BaseModel):
-    kind: Literal["threat", "vulnerability", "precursor", "assumption", "impact"]
-    filters: list[FieldFilter]
-    limit: int = 20
+# The tool's `cmd=query` args carry `kind`, `filters`, and `limit`.
+# `PriorArtQuery` records the same kind and filters plus the result count.
 
 
 class ThreatQueryMatch(BaseModel):
@@ -478,7 +476,7 @@ threat:
 ```
 
 `materialise_hunter_payload` adds the `impact` block to the payload.
-`_compose_grounding` renders `## Impact assessment` and `## Attacker position`.
+`_compose_grounding` renders the impact assessment and the attacker position as labelled lines.
 The payload carries no request, payload, or procedure that belongs to the hunter.
 The `procedure` on a precursor is the abstract trust-boundary mechanism, not the hunter's technique.
 

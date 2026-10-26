@@ -240,10 +240,13 @@ def _compose_modeller_prompt(turn) -> str:
     else:
         from polymerhus.attack.hunting.threat_modeller_tools import (  # noqa: PLC0415
             MODEL_SECTIONS,
+            _section_holds,
         )
 
         lines.append(f"  state: {model.get('state')}")
-        written = [name for name in MODEL_SECTIONS if model.get(name)]
+        written = [
+            name for name in MODEL_SECTIONS if _section_holds(model.get(name))
+        ]
         lines.append(f"  sections written: {', '.join(written) or '(none)'}")
         if model.get("risk_profile"):
             lines.append(f"  risk profile: {model['risk_profile']}")

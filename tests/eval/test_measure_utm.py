@@ -33,6 +33,15 @@ def _skill(root: Path, name: str, *, parent: bool = False, variants: tuple[str, 
             (child / "SKILL.md").write_text(f"# {variant}\n", encoding="utf-8")
 
 
+def test_is_bound_class_counts_a_leaf_and_a_parent_but_not_an_absent_name():
+    index = {"ssrf": 2, "xss": 0}
+
+    assert measure_utm.is_bound_class("ssrf", index) is True
+    assert measure_utm.is_bound_class("xss", index) is True
+    assert measure_utm.is_bound_class("not-in-suite", index) is False
+    assert measure_utm.is_bound_class("", index) is False
+
+
 def test_the_suite_index_marks_a_class_with_variants_as_a_parent(tmp_path):
     _skill(tmp_path, "ssrf", parent=True, variants=("metadata-read", "egress"))
     _skill(tmp_path, "xss")
@@ -343,6 +352,64 @@ def test_the_impact_metric_counts_a_v3_threat_and_a_placeholder(tmp_path):
     assert metric["green_share"] == 0.5
     assert metric["threat_share"] == 0.5
     assert metric["placeholder_share"] == 0.5
+
+
+def test_the_impact_metric_ignores_an_abandoned_copy(tmp_path):
+    """An abandoned copy is a degraded retry, not a second damage claim. The
+    loader reads it; the primary metric does not count its rows twice."""
+    _v3_model(tmp_path)
+    produced = (
+        tmp_path / "produced" / "Service-catalogue" / "Service-catalogue.yaml")
+    abandoned = tmp_path / "abandoned" / "Service-catalogue"
+    abandoned.mkdir(parents=True)
+    (abandoned / "Service-catalogue.yaml").write_text(
+        produced.read_text(encoding="utf-8"), encoding="utf-8")
+    models, threats = measure_utm.load_models(tmp_path)
+    assert any(model.get("_family") == "abandoned" for model in models)
+
+    metric = measure_utm.impact_metric(models, threats)
+
+    assert metric["impact_rows"] == 2
+    assert metric["green"] == 1
+    assert metric["red"] == 1
+
+
+def test_the_impact_metric_reports_a_mixed_store_in_two_blocks(tmp_path):
+    """A v2 unit and a v3 unit in one project: the v3 block is primary, the v2
+    rows ride a legacy sub-block instead of vanishing."""
+    _v3_model(tmp_path)
+    legacy = tmp_path / "consumed" / "Service-legacy"
+    legacy.mkdir(parents=True)
+    (legacy / "Service-legacy.yaml").write_text(
+        yaml.safe_dump({
+            "schema_version": 2,
+            "unit_id": "Service:legacy",
+            "state": "COMPLETED",
+            "validation": {"valid": True},
+        }),
+        encoding="utf-8",
+    )
+    (legacy / "loop-1.yaml").write_text(
+        yaml.safe_dump({
+            "loop": {
+                "impact": {
+                    "confidentiality": "high",
+                    "integrity": "none",
+                    "availability": "none",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    models, threats = measure_utm.load_models(tmp_path)
+
+    metric = measure_utm.impact_metric(models, threats)
+
+    assert metric["schema"] == "mixed"
+    assert metric["impact_rows"] == 2
+    assert metric["legacy_v2"]["schema"] == "v2"
+    assert metric["legacy_v2"]["impact_rows"] == 1
+    assert metric["legacy_v2"]["green"] == 1
 
 
 def test_the_impact_metric_reports_the_cia_distribution_and_the_counts(tmp_path):

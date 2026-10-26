@@ -355,6 +355,40 @@ def test_a_crossing_gate_write_hints_and_the_state_jumps_forward(tmp_path):
     ]
 
 
+def test_a_silent_ladder_then_a_forward_jump_is_accepted(tmp_path):
+    """The pass tolerates six silent turns and still accepts the cold forward
+    jump on the seventh. This pins the default abort bound at 7: the six states
+    below COMPLETED are silent on a cold jump."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    payloads = _payloads()
+
+    class _ColdJump(_ScriptedTurns):
+        def __call__(self, turn):
+            self.turn_inputs.append(turn)
+            if len(self.turn_inputs) < 7:
+                return None
+            for state in list(ModelState)[:-1]:
+                self.store_tool(turn).invoke({
+                    "cmd": "write", "state": state.value,
+                    "sections": payloads[state],
+                })
+            self.responses.append(self.store_tool(turn).invoke({
+                "cmd": "write", "state": "COMPLETED",
+                "sections": payloads[ModelState.COMPLETED],
+            }))
+            return None
+
+    turns = _ColdJump()
+    outcome = asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    assert outcome.status == "completed"
+    assert len(turns.turn_inputs) == 7
+    assert [write.state for write in outcome.gate_writes] == [
+        state.value for state in ModelState
+    ]
+
+
 def test_the_gate_hint_table_covers_every_gate_but_the_last(tmp_path):
     """The hint table is fixed by S1 9.3: one entry per gate write, none for
     COMPLETED."""

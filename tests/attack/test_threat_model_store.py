@@ -32,6 +32,7 @@ from polymerhus.attack.hunting.threat_model_store import (
     ThreatModelSchemaVersionError,
     ThreatModelStore,
     collision_suffix,
+    sanitise_unit_name,
 )
 
 PROJECT = "proj-1"
@@ -1238,16 +1239,28 @@ def test_completion_reports_duplicate_assessment_and_precursor_ids(tmp_path):
     assert "precursors.ids" in validation.missing
 
 
-def test_completion_reports_a_path_outside_the_yielded_precursors(tmp_path):
-    """The capability path is a subset of the precursors the row yields."""
+def test_completion_accepts_a_path_that_uses_another_vulnerabilitys_precursor(
+    tmp_path,
+):
+    """A path may chain a capability yielded by another vulnerability; the
+    row's `precursor_refs` names only the capabilities this vulnerability
+    yields."""
     store = ThreatModelStore(tmp_path)
     document = _completed_document(store)
-    document["impact_assessment"][0]["precursor_refs"] = []
+    document["precursors"].append({
+        "id": "p-2",
+        "capability": "reuse a session recovered elsewhere",
+        "procedure": "apply the recovered session to the item lookup",
+        "evidence_refs": ["GET /catalogue?id=3"],
+    })
+    document["impact_assessment"][0]["precursor_refs"] = ["p-1"]
+    document["impact_assessment"][0]["capability_path"] = ["p-1", "p-2"]
+    document["threats"][0]["enabling_precursors"] = ["p-1", "p-2"]
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
-    assert validation.valid is False
-    assert "impact_assessment:ia-1.precursor_refs" in validation.missing
+    assert validation.valid is True
+    assert "impact_assessment:ia-1.precursor_refs" not in validation.missing
 
 
 def test_completion_reports_unresolved_assessment_and_precursor_references(tmp_path):
@@ -2062,3 +2075,37 @@ def test_a_late_lower_gate_write_on_a_completed_model_keeps_the_threat_files(tmp
     assert model["state"] == "COMPLETED"  # the state never regresses
     assert model["technical_sharpening"]["data_flows"] == []  # content still merges
     assert threat_file.read_bytes() == before  # the committed threat set is untouched
+
+
+def test_a_v2_model_is_readable_for_intake_but_not_dispatched(tmp_path):
+    """The spec keeps a v2 model readable for the intake and the measurement.
+    The mover and the prior-art query stay on the current schema, so a v2
+    threat file is never dispatched into the v3 hunter contract."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    name = sanitise_unit_name(UNIT)
+    directory = (
+        tmp_path / PROJECT / "hunting" / "threat_modeller" / "consumed" / name
+    )
+    directory.mkdir(parents=True)
+    document = {
+        "schema_version": 2,
+        "unit_id": UNIT,
+        "state": "COMPLETED",
+        "validation": {"valid": True},
+        "threats": [{"id": "threat-1", "web_vulnerability_class": "idor"}],
+    }
+    (directory / f"{name}.yaml").write_text(
+        yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    (directory / "threat-1.yaml").write_text(
+        yaml.safe_dump(
+            {"threat_id": "threat-1", "threat": {"id": "threat-1"}},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert store.read_model(PROJECT, UNIT)["schema_version"] == 2
+    assert store.read_completed_units(PROJECT) == [UNIT]
+    assert store.read_threat_files(PROJECT, UNIT) == []
+    assert store.read_consumed_threats(PROJECT) == []
+    assert store.read_produced_threats(PROJECT) == []

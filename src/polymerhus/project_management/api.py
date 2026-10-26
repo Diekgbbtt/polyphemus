@@ -235,9 +235,10 @@ def update_settings(project_id: str, body: SettingsUpdate) -> dict:
 @router.get("/projects/{project_id}/hunting/config")
 def read_hunting_config(project_id: str) -> dict:
     """The project's hunting config (ADR `hunting-pipeline-sync-adr.md`): the
-    frozen-at-run-start `pipeline_sync` mode and the threat-modeller risk
-    threshold. Unknown project -> 404; a project that never stored a blob reads
-    back the defaults (mode `batched`, threshold None)."""
+    frozen-at-run-start `pipeline_sync` mode, the threat-modeller risk
+    threshold, and the verbatim threat-model scope. Unknown project -> 404; a
+    project that never stored a blob reads back the defaults (mode `batched`,
+    threshold None, scope empty)."""
     try:
         return repository.read_hunting_config(project_id)
     except ProjectNotFound:
@@ -248,7 +249,8 @@ def read_hunting_config(project_id: str) -> dict:
 def update_hunting_config(project_id: str, body: HuntingConfigUpdate) -> dict:
     """Partial update: only the provided keys land (deep-merged into
     `settings.hunting`). The mode is validated by the body enum; a bad
-    threshold or an unknown project is refused with nothing landing."""
+    threshold, a non-string scope, or an unknown project is refused with
+    nothing landing."""
     payload = body.model_dump(exclude_unset=True)
     try:
         repository.save_hunting_config(project_id, payload)

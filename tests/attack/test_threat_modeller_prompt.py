@@ -254,7 +254,9 @@ def test_the_turn_prompt_renders_the_state_the_unit_and_the_fresh_model():
         sections=GATE_SECTIONS[ModelState.TRUST_MODELLED],
         instruction=STATE_INSTRUCTIONS[ModelState.TRUST_MODELLED],
         model={"state": "UNIT_TECHNICAL_SHARP",
-               "technical_sharpening": {"interface_agreements": []}},
+               "technical_sharpening": {
+                   "interface_agreements": [{"id": "ia-1", "statement": "x"}],
+               }},
     )
 
     rendered = _compose_modeller_prompt(turn)
@@ -265,6 +267,31 @@ def test_the_turn_prompt_renders_the_state_the_unit_and_the_fresh_model():
     assert "state: UNIT_TECHNICAL_SHARP" in rendered
     assert "technical_sharpening" in rendered
     assert "hunts_store" in rendered and "notes" in rendered
+
+
+def test_the_turn_prompt_does_not_report_a_never_written_section():
+    """A defaulted section is not "written": the PRIOR_ART turn must not be
+    told that prior art is already authored."""
+    turn = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.PRIOR_ART,
+        sections=GATE_SECTIONS[ModelState.PRIOR_ART],
+        instruction=STATE_INSTRUCTIONS[ModelState.PRIOR_ART],
+        model={
+            "state": "UNIT_TECHNICAL_SHARP",
+            "technical_sharpening": {
+                "interface_agreements": [{"id": "ia-1", "statement": "x"}],
+            },
+            "prior_art": {"queries": [], "reused": [], "notes": ""},
+        },
+    )
+
+    rendered = _compose_modeller_prompt(turn)
+    written = next(
+        line for line in rendered.splitlines() if "sections written:" in line)
+
+    assert "technical_sharpening" in written
+    assert "prior_art" not in written
 
 
 def test_the_turn_prompt_degrades_a_missing_model_to_a_denotation():

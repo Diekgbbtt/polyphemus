@@ -224,15 +224,12 @@ class ModellerHuntsStoreTool(StoreToolBase):
             "fields": list(fields), "detail": detail, "rejected": True,
         }
 
-    def _run(self, **kwargs: Any):
-        """Dispatch the three commands. The shared base knows read/write only;
-        the prior-art query is this seam's third command."""
-        args = ModellerHuntsStoreArgs(**kwargs)
-        if args.cmd == "query":
+    def _dispatch_other(self, args: ModellerHuntsStoreArgs, command: str):
+        """The prior-art query is this seam's third command; read/write keep
+        the shared base's dispatch."""
+        if command == "query":
             return self._query(args)
-        if args.cmd == "read":
-            return self._read(args)
-        return self._write(args)
+        return super()._dispatch_other(args, command)
 
     def _read(self, args: ModellerHuntsStoreArgs) -> dict:
         if self._store is None:
@@ -266,10 +263,11 @@ class ModellerHuntsStoreTool(StoreToolBase):
     def _query(self, args: ModellerHuntsStoreArgs) -> dict:
         """The project-scoped prior-art query (S2 section 7).
 
-        The record kind, the non-empty AND filters, and the limit are the
-        command's contract; the store rejects a bad path/regex/limit with its
-        coded error, re-surfaced here with the query error code. A read failure
-        degrades to an empty result (O4), never a raise into the turn."""
+        The record kind and the non-empty AND filters are the command's
+        contract; the store rejects a bad path or regex with its coded error,
+        re-surfaced here with the query error code. The typed args bound the
+        limit. A read failure degrades to an empty result (O4), never a raise
+        into the turn."""
         if self._store is None:
             return {"error": "threat model store unavailable", "degraded": True}
         raw_kind = str(args.kind or "").strip()
@@ -285,12 +283,6 @@ class ModellerHuntsStoreTool(StoreToolBase):
                 ["kind"], f"unknown kind {raw_kind!r}; known: {known}",
                 error="hunts_store_query_rejected")
         filters = list(args.filters or [])
-        if not filters:
-            return self._rejected(
-                ["filters"],
-                "a query needs at least one filter of {path, regex, flags}; "
-                "an empty list would dump the store",
-                error="hunts_store_query_rejected")
         try:
             return self._store.query_prior_art(
                 self._bound_project, kind=kind, filters=filters,
