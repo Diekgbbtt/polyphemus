@@ -549,6 +549,19 @@ def spec_text(spec: dict) -> str:
     return text_of(spec)
 
 
+def threat_id_of(provenance: dict) -> str:
+    """The store-owned threat id a spec provenance carries.
+
+    The hunter may write the dispatch id `<unit_name>__threat-<n>` into
+    `provenance.threat_id`; the threat file id is the suffix after the last
+    `__`. Normalise it so the spec links to its threat file.
+    """
+    value = str(as_dict(provenance).get("threat_id") or "").strip()
+    if "__" in value:
+        value = value.rsplit("__", 1)[-1]
+    return value
+
+
 def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
     target = as_dict(spec.get("target_identity"))
     provenance = as_dict(spec.get("provenance"))
@@ -586,7 +599,7 @@ def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
         "family": spec.get("_family"),
         "status": spec.get("status"),
         "unit_id": unit_id,
-        "threat_id": str(provenance.get("threat_id") or ""),
+        "threat_id": threat_id_of(provenance),
         "web_vulnerability_class": str(provenance.get("web_vulnerability_class") or ""),
         "canonical_class": str(provenance.get("canonical_class") or ""),
         "discriminators": as_list(spec.get("discriminators")),

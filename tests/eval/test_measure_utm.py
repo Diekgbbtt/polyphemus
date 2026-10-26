@@ -147,3 +147,32 @@ def test_the_measurement_prompt_carries_the_narrowing_rubric():
         "substantial_and_well_formed",
     ):
         assert clause in prompt, clause
+
+
+def test_a_dispatch_id_provenance_value_normalises_to_the_threat_id():
+    assert measure_utm.threat_id_of(
+        {"threat_id": "Service-sign-in__threat-1"}
+    ) == "threat-1"
+    assert measure_utm.threat_id_of({"threat_id": "threat-1"}) == "threat-1"
+    assert measure_utm.threat_id_of({}) == ""
+
+
+def test_spec_metrics_normalises_the_dispatch_id_provenance():
+    spec = {
+        "target_identity": {"unit_id": "Service:sign-in"},
+        "verification_symptoms": "a symptom",
+        "assumptions": [],
+        "rationale": "a rationale",
+        "provenance": {"threat_id": "Service-sign-in__threat-1"},
+        "discriminators": [{"axis": "technique", "value": "burst"}],
+    }
+
+    identity = {
+        "expected_id": "Service:sign-in",
+        "names": ["Service:sign-in"],
+        "fault_class": "",
+        "location": "",
+    }
+    row = measure_utm.spec_metrics(spec, {"type": ""}, identity)
+
+    assert row["threat_id"] == "threat-1"
