@@ -4,7 +4,7 @@
 
 **Blocked by:** 436, 437, 438, 439, 440, 441.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Seams:** the changed modules and tests
 
@@ -52,3 +52,23 @@ It looks for the failure modes the design is meant to prevent:
 - The `code-reviewer` subagent report.
 - `tests/attack`, `tests/eval`, the project-management tests, and the prompt tests.
 - `compileall` and `git diff --check`.
+
+
+## Result
+
+The adversarial review ran on `impact-assessment-tdd` against base `a15f5ec3`.
+The spec reviewer found one high finding (v2 models refused by the store) and one medium finding (an extra capability-path subset invariant), plus documentation drift.
+The code reviewer found one high finding (the turn prompt reported `prior_art` as written before the gate) and one medium finding (the cold-jump test was weakened).
+The high and medium findings are fixed in `fcb8c0c8`.
+The full focused suite is 2244 passed, 6 skipped.
+The residual risks are recorded in `docs/design/impact-assessment-review-2026-10-26.md`.
+
+Acceptance criteria:
+
+- [x] The spec-compliance report is written.
+- [x] The coding-standard report is written.
+- [x] The native-pattern report is written.
+- [x] Every high finding has a fix or a recorded exception.
+- [x] The full focused suites pass.
+- [x] `compileall` and `git diff --check` are clean.
+- [x] The final report states the residual risks.
