@@ -557,7 +557,7 @@ def get_session_checkpointer():
         with _lock:
             if _fallback is None:
                 from langgraph.checkpoint.memory import InMemorySaver
-                _fallback = InMemorySaver()
+                _fallback = InMemorySaver(serde=checkpoint_serde())
     return _fallback
 
 

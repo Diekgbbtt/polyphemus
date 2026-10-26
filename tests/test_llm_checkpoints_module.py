@@ -120,6 +120,25 @@ def test_module_context_routes_resolution_to_that_modules_index():
     assert C.get_session_checkpointer() is fallback       # context reset -> fallback again
 
 
+def test_fallback_checkpointer_uses_the_one_serde(monkeypatch):
+    """The unset-context fallback must carry the app serde, not the stock
+    langgraph serializer. Under strict msgpack the stock serializer blocks a
+    persisted `TriagerDecision`; the fallback is a construction point exactly
+    like the module index and the pooled PG saver."""
+    from polymerhus.attack.hunting.pod.agents import TriagerDecision
+
+    monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
+    monkeypatch.setattr(C, "_fallback", None)
+    fallback = C.get_session_checkpointer()
+
+    loaded = fallback.serde.loads_typed(fallback.serde.dumps_typed(TriagerDecision()))
+
+    assert isinstance(loaded, TriagerDecision)
+    assert getattr(fallback.serde, "_allowed_msgpack_modules", None) == set(
+        C._ALLOWED_MSGPACK_MODULES
+    )
+
+
 def test_module_context_propagates_into_executor_and_to_thread_work():
     """`copy_context` carries the module context into executor work, so offloaded
     stateful turns resolve the right module's index (G3): both the explicit
