@@ -29,6 +29,10 @@ This ticket removes the second.
   The pod path writes `pod-watchdog-timeout`, not `budget-timeout`.
 - The pod store writes a resume cursor; `ExperimentLog.hydrate` rebuilds the D6 trail; the next dispatch skips executed probes.
   A cancelled pod writes no export, so the gate holds.
+- `pod/finalize.py` is the ONLY production `PodExport` writer.
+  The graph, `arun_pod`, and the surfer call it.
+  An execution terminal replaces a prior export for the same spec and run; a surfer fallback never overwrites an execution terminal.
+  The source guard in `tests/attack/pod/test_finalize.py` pins the single writer.
 - The impacted design specs are updated: the lifecycle fail-safe, the pod spec, the pipeline-sync ADR and spec, and the hunting CONTEXT.
 
 ## Acceptance criteria
@@ -40,11 +44,15 @@ This ticket removes the second.
 - [x] The surfer pod default is one hour and is separate from the hunter default.
 - [x] A stopped pod is resumable at the variant boundary.
 - [x] The gate holds a pod with a resume cursor and no export.
+- [x] The finalizer is the only production `PodExport` writer.
+- [x] A surfer fallback writes the full durable trail and never overwrites an execution terminal.
 - [x] The impacted design specs describe the code as built.
 
 ## Verification
 
-- `tests/attack`: 1143 passed.
+- `tests/attack`: 1154 passed.
+- `tests/attack/pod/test_finalize.py`: 9 passed.
+- `tests/attack/test_hunting_session_watchdog.py`: 7 passed.
 - `tests/app` and `tests/eval`: 1157 passed, 22 skipped.
 - `tests/project_management`: 159 passed, 6 skipped.
 - Hunting integration selection: 50 passed, 28 skipped.

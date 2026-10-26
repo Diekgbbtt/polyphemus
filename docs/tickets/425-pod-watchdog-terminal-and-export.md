@@ -26,19 +26,20 @@ The surfer remains a last-resort backstop.
 - The node `error_handler` routes `node-timeout`, `context-window-exceeded`, `graph-limit`, and `tool-timeout` to `degraded_terminal`.
   A provider failure re-raises for the surfer's retry/pause policy.
   A generic error keeps the `technical-infeasibility` degrade.
-- `degraded_terminal` writes the typed `PodExport` from the durable experiment log.
+- `degraded_terminal` calls the finalizer, which writes the typed `PodExport` from the durable experiment log.
 - The surfer split the hunter and pod backstops: 2700 seconds for a hunter, 3600 seconds for a pod.
-  The pod backstop writes `pod-watchdog-timeout`; the pod's own lap budget writes `budget-timeout`.
-- Both surfer degraded envelopes now use the same `{verdict, evidence}` shape as the pod.
+  The pod backstop calls the finalizer with `pod-watchdog-timeout`; the pod's own lap budget writes `budget-timeout`.
+- Both surfer degraded paths now use the finalizer and the same `{verdict, evidence}` shape as the pod.
 - The `TERMINAL_REASONS` vocabulary is split into domain and harness sets; the triager cannot choose a harness terminal.
 
 ## Verification
 
 - `tests/attack/pod/test_failures.py`: 8 passed.
+- `tests/attack/pod/test_finalize.py`: 9 passed.
 - `tests/attack/pod/test_graph.py`: 35 passed.
 - `tests/attack/pod/test_verification.py`, `test_prompts.py`, `test_variant_mint.py`: passed.
-- `tests/attack/test_hunting_session_watchdog.py`: 5 passed.
-- `tests/attack`: 1143 passed.
+- `tests/attack/test_hunting_session_watchdog.py`: 7 passed.
+- `tests/attack`: 1154 passed.
 - `tests/app` and `tests/eval`: 1157 passed, 22 skipped.
 - `tests/project_management`: 159 passed, 6 skipped.
 - Hunting integration selection: 50 passed, 28 skipped.

@@ -131,13 +131,17 @@ The pod graph owns the primary failure detection.
   - provider 429, 5xx, transport timeout, or quota re-raises for the surfer's retry and pause policy;
   - node timeout, context-window overflow, graph recursion limit, and tool timeout route to `degraded_terminal`;
   - a generic error keeps the `technical-infeasibility` degrade.
-- `degraded_terminal` writes the `PodExport` from the durable experiment log, so the typed reason and partial trail survive.
-- The surfer's backstop writes `pod-watchdog-timeout`.
+- All terminal paths call `pod/finalize.py`, the only production `PodExport` writer.
+  It assembles the evidence from the in-memory log or hydrates the durable store.
+  A fallback terminal never overwrites an execution terminal.
+  An execution terminal replaces a prior export for the same spec and run.
+- `degraded_terminal` calls the finalizer, so the typed reason and partial trail survive.
+- The surfer's backstop calls the finalizer with `pod-watchdog-timeout`; it never builds an envelope.
   The pod's own lap budget writes `budget-timeout`; the two are distinct.
 - A stopped pod is resumable at the variant boundary.
   `PodMemoryStore` writes `<spec_id>/<run_id>.resume.yaml`; `ExperimentLog.hydrate` rebuilds the D6 trail and the executed ledger; `init` restarts at the cursor variant.
   A cancelled pod writes no export, so the gate holds the hunt.
-  A terminal export clears the cursor.
+  The finalizer clears the cursor after a terminal export exists.
 
 ## 2. Domain peculiarities
 
@@ -153,7 +157,8 @@ The pod graph owns the primary failure detection.
   - a context-window overflow -> `context-window-exceeded`;
   - a graph recursion limit -> `graph-limit`;
   - a tool exec timeout -> `tool-timeout`;
-  - the surfer's last-resort backstop -> `pod-watchdog-timeout`.
+  - the surfer's last-resort backstop -> `pod-watchdog-timeout`;
+  - the surfer's builder degrade -> `surfer-dispatch-degraded`.
   A provider quota, 5xx, or transport timeout is not a terminal; it pauses or retries the run.
   `clean` True = clean completed observations; False = blocked/unreachable or a mid-flight cut. `init_validation` present only on an INIT rejection.
   **As of #209 - presentation rule**: the triager prompt presents `verdict` and `terminal_reason` as SEPARATE

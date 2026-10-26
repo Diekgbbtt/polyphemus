@@ -62,7 +62,8 @@ The primary failure detection is in the pod graph, not in the surfer.
   the typed reason and the partial trail.
 - The surfer's watchdog is a last-resort backstop.
   The hunter backstop stays at 2700 seconds; the pod backstop is 3600 seconds.
-  It writes `pod-watchdog-timeout`, never `budget-timeout`.
+  It calls the finalizer, which writes `pod-watchdog-timeout` from the durable
+  trail, never `budget-timeout`.
 - The pod's own lap budget still writes `budget-timeout`.
   The two reasons are no longer conflated.
 
@@ -70,6 +71,23 @@ The provider classifier remains the ONE infrastructure policy.
 A provider failure never becomes a domain verdict and never writes a
 `PodExport`; the surfer records the child failure, backs off, and pauses the run
 on quota exhaustion.
+
+## The one terminal writer (2026-10-26)
+
+`pod/finalize.py` is the only production writer of a `PodExport`.
+The pod graph, the pod entry point, and the surfer call it.
+
+- It assembles the evidence from the in-memory `ExperimentLog` or hydrates the
+  durable store.
+- A fallback terminal never overwrites an existing execution terminal.
+- An execution terminal replaces a prior export for the same spec and run, so a
+  legitimate re-dispatch still rewrites its own result.
+- A per-`(spec_id, run_id)` lock serializes the check-and-write.
+- It clears the resume cursor only after the durable export exists.
+
+The surfer no longer builds an envelope.
+The source guard in `tests/attack/pod/test_finalize.py` fails if another
+production module calls `write_pod_export`.
 
 ## Durable resume
 
@@ -84,7 +102,7 @@ A stopped pod is resumable at the variant boundary.
   slices.
 - `init` restarts at the cursor variant. The tools skip every probe signature
   already in the executed ledger.
-- A terminal export clears the cursor.
+- The finalizer clears the cursor after a terminal export exists.
 - A cancelled pod writes no export. The gate holds the hunt because no durable
   export exists; the mover's consumed-spec recovery re-offers the spec after the
   backoff, and the next dispatch resumes from the cursor.

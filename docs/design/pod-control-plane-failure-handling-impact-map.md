@@ -18,6 +18,33 @@
    A resumable pod has no export, so the existing hunt cursor holds.
 6. No batch-scoped timer and no per-target concurrency cap.
    The per-hunt batch already bounds the live pod set, and each pod owns its execution timeout.
+7. One finalizer owns the terminal record.
+   The pod graph, the pod entry point, and the surfer call the same `pod/finalize.py`.
+   No scheduler path assembles evidence.
+
+## Finalizer ownership (2026-10-26)
+
+The accepted mechanical rule is:
+
+> Only `pod/finalize.py` constructs and writes a `PodExport`.
+
+| Component | Responsibility |
+|---|---|
+| `pod/finalize.py` | Assemble evidence from `ExperimentLog` or the durable store; write once; clear the cursor; return the envelope |
+| `pod/graph.py` | Select the domain or harness terminal; call the finalizer with the in-memory log |
+| `pod/pod.py` | Call the finalizer on the graph-level degrade path |
+| `surfer.py` | Call the finalizer on its backstop or builder exception; never build an envelope |
+| `pod/pod_memory.py` | Store the log, variants, export, and resume cursor |
+| `pipeline_sync.py` | Read the export as the completion fact |
+
+Two write modes:
+
+- **Execution terminal** (`replace_existing=True`): the pod graph or the pod entry point completed the attempt. It replaces a prior export for the same spec and run, so a legitimate re-dispatch rewrites its own result.
+- **Fallback terminal** (`replace_existing=False`): the surfer backstop or builder exception. It never overwrites an execution terminal. The existing domain terminal wins.
+
+The finalizer is idempotent under a per-`(spec_id, run_id)` lock.
+The surfer no longer produces a minimal envelope.
+It passes `PodTerminal.infrastructure(...)` and the finalizer hydrates the durable trail.
 
 ## Current dependency graph
 
@@ -41,13 +68,19 @@ pod/graph.py  build_pod_graph
 
 pod/pod.py arun_pod
   ainvoke(config={recursion_limit, callbacks})
-  node timeouts + error handler -> typed degraded PodExport
-  graph recursion -> graph-limit
+  node timeouts + error handler -> graph terminal
+  graph recursion -> finalize_pod(graph-limit)
   provider failure -> ProviderUnavailableError
+
+pod/finalize.py
+  the ONLY PodExport writer
+  evidence from the in-memory log or the durable store
+  execution terminal replaces; fallback terminal never overwrites
 
 surfer.py run_pod_session
   asyncio.wait_for(arun_pod, pod timeout=3600)
-  timeout -> typed pod-watchdog-timeout
+  timeout -> finalize_pod(pod-watchdog-timeout), full trail
+  builder exception -> finalize_pod(surfer-dispatch-degraded), full trail
   cancellation -> no export; resume cursor remains
 
 pipeline_sync.py
@@ -74,6 +107,7 @@ pipeline_sync.py
 | 14 | `eval/measure_utm.py` | Counts `symptom-confirmed` only. | No change required for the new reasons; the measurement report must split watchdog, node, context, and pod-budget terminals. | `tests/eval/test_measure_utm.py` if a helper is added |
 | 15 | Pod prompts | Triager prompt lists the domain terminal reasons. | Add a note that infrastructure reasons are harness-owned, never triager choices. | `tests/attack/pod/test_prompts.py` |
 | 16 | Design docs | The fail-safe, pod spec, and pipeline-sync docs describe the surfer as the primary timeout and do not describe resume. | Update `hunting-lifecycle-failsafe.md`, `hunting-67-test-executor-pod-spec.md`, `hunting-pipeline-sync-adr.md`, `hunting-pipeline-sync-spec.md`, and `attack/hunting/CONTEXT.md`. | docs review |
+| 17 | `pod/finalize.py` (new) | The graph and the surfer both assembled and wrote `PodExport`; the backstop could overwrite a domain terminal with minimal evidence. | The finalizer is the only writer. Execution terminals replace; fallback terminals never overwrite. The surfer passes a typed terminal, not an envelope. | `tests/attack/pod/test_finalize.py`, `tests/attack/test_hunting_session_watchdog.py` |
 
 ## Failure taxonomy
 
@@ -140,7 +174,9 @@ Each slice is one red test, one minimal implementation, then the next slice.
 10. A resumed pod starts at the cursor variant and skips an executed probe.
 11. A cancelled pod leaves no terminal export and keeps its resume cursor; the gate holds.
 12. The surfer splits hunter and pod timeouts and writes `pod-watchdog-timeout` for its backstop.
-13. Existing session-watchdog, pod contract, pipeline-sync, and resume tests are updated where the vocabulary or defaults changed.
+13. The finalizer writes the full store trail on a backstop, returns an existing execution terminal unchanged, and lets a new execution terminal replace a prior export.
+14. A source guard asserts only `pod/finalize.py` calls `write_pod_export`.
+15. Existing session-watchdog, pod contract, pipeline-sync, and resume tests are updated where the vocabulary or defaults changed.
 
 ## Out of scope
 
@@ -167,6 +203,8 @@ Each slice is one red test, one minimal implementation, then the next slice.
 - [x] The pod graph's idle timeout owns a hung node; the surfer backstop is above it.
 - [x] A cancelled pod leaves a resume cursor and no export; a re-dispatch resumes and skips an executed probe.
 - [x] The gate holds a pod with a resume cursor and no export.
+- [x] The surfer backstop writes the full durable trail, not a minimal envelope.
+- [x] Only `pod/finalize.py` writes a `PodExport`; a fallback never overwrites an execution terminal.
 - [x] The surfer pod default is one hour and is separate from the hunter default.
 - [x] The full relevant suites pass: `tests/attack`, `tests/app`, `tests/eval`, `tests/project_management`, and the hunting integration selection.
 - [x] The impacted design specs describe the code as built.

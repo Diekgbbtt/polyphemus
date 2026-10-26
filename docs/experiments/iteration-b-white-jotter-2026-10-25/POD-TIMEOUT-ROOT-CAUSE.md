@@ -10,6 +10,7 @@ Causes 1 to 4 are fixed on `feat/pod-control-plane`.
 The per-hunt batch (ticket 431) removed the unit-wide pod concurrency.
 The pod control plane (tickets 425 and 434) owns node timeouts, typed terminals, and the one-hour surfer backstop.
 The resume cursor (ticket 432) keeps stopped pods resumable.
+The terminal record has ONE writer, `pod/finalize.py`; the surfer backstop now preserves the durable trail and never overwrites an execution terminal.
 The per-target concurrency cap (ticket 433) is rejected by the operator.
 
 ## What failed
