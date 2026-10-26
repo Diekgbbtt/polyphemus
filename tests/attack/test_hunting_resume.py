@@ -606,6 +606,10 @@ def test_a_resumed_run_never_redispatches_a_live_pod(tmp_path, monkeypatch):
     hunter.write_specs(PROJECT, THREAT_A_DISPATCH, [spec])
     hunter.write_specs(
         PROJECT, THREAT_A_DISPATCH, [{**spec, "status": "ratified"}])
+    # A pod is only dispatchable after its hunter is terminal. The batched
+    # gate now enforces that invariant, so the resume fixture must carry the
+    # terminal marker the live-pod crash window really has.
+    hunter.finalize_specs(PROJECT, THREAT_A_DISPATCH, run_id=RUN)
     session_id = pod_session_id(RUN, THREAT_A_DISPATCH, "sqli__blind__boolean")
     control = _ResumeControl(live_extra=lambda: (
         {session_id}

@@ -214,8 +214,9 @@ DEFAULT_CHILD_RETRY_BACKOFF_S = 30.0
 # hunter or pod graph that does not finish inside this window is classed
 # degraded: the hunter's registration is released and its drafts are settled,
 # and a pod writes a degraded PodExport. The queue moves on instead of waiting
-# forever on a wedged session. The value is a ceiling, not a target: a healthy
-# 7M-capped run's sessions finish well inside it.
+# forever on a wedged session. The value is a ceiling, not a liveness proof: a
+# healthy pod can exceed it when the target is saturated, so a timeout is a
+# degraded execution, never proof that the pod was wedged.
 DEFAULT_DISPATCH_TIMEOUT_S = 2700.0
 
 

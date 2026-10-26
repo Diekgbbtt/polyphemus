@@ -7,7 +7,8 @@ The project-level mode governs WHEN the pipeline phases may dispatch:
   dispatched as it appears (the S1 7.3 interleave stays live);
 - `batched` - phase barriers only: the modeller pass settles first, then one
   unit at a time in risk order, its whole hunter batch concurrently, then its
-  pods once every hunt of the unit left the graph, then the next unit;
+  pods one hunt at a time in threat-rank order (every spec of the current hunt
+  concurrently), then the next unit;
 - `serial` - the same queue strictly one agent at a time: hunter N+1 after
   hunter N completed AND every one of its pods reached a terminal export, and
   the pods of one hunt one at a time in file-stem order.
@@ -111,11 +112,11 @@ class BatchState:
     """The derived per-unit phase snapshot (the ledger's cursor view).
 
     `phase` is `hunt` while the unit's hunter batch is still running,
-    `pod` once the batch is terminal (batched), `serial` for the strict cursor
-    view, and `done` once every member is finished. `hunts` is the unit's hunt
-    order (by threat rank) and `cursor` the first hunt that is not fully done;
-    `pods`/`pod_cursor` are the cursor hunt's spec stems and the first stem
-    without a durable export.
+    `pod` once the batch is terminal and one hunt's pod set is current
+    (batched), `serial` for the strict cursor view, and `done` once every
+    member is finished. `hunts` is the unit's hunt order (by threat rank) and
+    `cursor` the first hunt that is not fully done; `pods`/`pod_cursor` are the
+    cursor hunt's spec stems and the first stem without a durable export.
     """
 
     unit_name: str
@@ -289,25 +290,65 @@ def batch_state(
     items: Sequence[ProducedItem],
     facts: SyncFacts,
 ) -> BatchState:
-    """The unit's derived phase state: `hunt`/`pod` for `batched`, the ordered
-    hunts + cursor + pod cursor for `serial`, `done` when nothing is left."""
+    """The unit's derived phase state: `hunt` while the hunter batch is
+    unfinished, `pod` for the first hunt whose pod set is not fully exported,
+    the ordered hunts + cursor + pod cursor for `serial`, `done` when nothing
+    is left."""
     unit_items = [item for item in items if unit_of_item(item) == current]
     if mode is SyncMode.BATCHED:
-        hunts_pending = (
-            any(isinstance(item, ThreatItem) for item in unit_items)
-            or any(
-                unit_of_dispatch(hunt) == current
-                for hunt in facts.hunts_in_graph)
-        )
+        threat_hunts = {
+            item.dispatch_id for item in unit_items
+            if isinstance(item, ThreatItem)
+        }
+        spec_hunts = {
+            item.hunt_key for item in unit_items
+            if isinstance(item, TestSpecItem)
+        }
+        graph_hunts = {
+            hunt for hunt in facts.hunts_in_graph
+            if unit_of_dispatch(hunt) == current
+        }
+        pod_hunts = {
+            hunt for hunt in facts.live_pod_hunts
+            if unit_of_dispatch(hunt) == current
+        }
+        blocked_hunts = {
+            hunt for hunt in facts.blocked_hunts
+            if unit_of_dispatch(hunt) == current
+        }
         hunts = tuple(sorted(
-            (item.dispatch_id for item in unit_items
-             if isinstance(item, ThreatItem)),
+            threat_hunts | spec_hunts | graph_hunts | pod_hunts | blocked_hunts,
             key=hunt_rank,
         ))
+        # The hunter phase ends only when every hunt of the unit is terminal:
+        # a produced threat file or a live graph is obvious work, and a hunt
+        # that ended without a terminal marker is blocked, never a silent pass
+        # to the pod phase.
+        hunters_ready = (
+            not threat_hunts
+            and not graph_hunts
+            and all(
+                hunt in facts.terminal_hunts
+                and hunt not in facts.blocked_hunts
+                for hunt in hunts
+            )
+        )
+        if not hunters_ready:
+            return BatchState(unit_name=current, phase="hunt", hunts=hunts)
+        cursor = next(
+            (hunt for hunt in hunts if not _hunt_done(hunt, threat_hunts, facts)),
+            None,
+        )
+        if cursor is None:
+            return BatchState(unit_name=current, phase="done", hunts=hunts)
+        pods = tuple(facts.spec_stems.get(cursor, ()))
+        pod_cursor = next(
+            (stem for stem in pods if (cursor, stem) not in facts.terminal_specs),
+            None,
+        )
         return BatchState(
-            unit_name=current,
-            phase="hunt" if hunts_pending else "pod",
-            hunts=hunts,
+            unit_name=current, phase="pod", hunts=hunts, cursor=cursor,
+            pods=pods, pod_cursor=pod_cursor,
         )
 
     threat_hunts = {
@@ -362,16 +403,23 @@ def _decide_batched(
     items: Sequence[ProducedItem], current: str, facts: SyncFacts,
 ) -> frozenset[str]:
     """One unit's phase at a time: the whole hunter batch while the hunt phase
-    is active, then the unit's whole pod set."""
+    is active, then one hunt's whole pod set. The next hunt waits until every
+    pod of the current hunt carries a durable export."""
     state = batch_state(SyncMode.BATCHED, current, items, facts)
     unit_items = [item for item in items if unit_of_item(item) == current]
     if state.phase == "hunt":
         return frozenset(
             item.message_id for item in unit_items
             if isinstance(item, ThreatItem))
+    if state.phase != "pod" or state.cursor is None:
+        return frozenset()
+    cursor = state.cursor
     return frozenset(
         item.message_id for item in unit_items
-        if isinstance(item, TestSpecItem))
+        if isinstance(item, TestSpecItem)
+        and item.hunt_key == cursor
+        and (item.hunt_key, item.spec_file) not in facts.terminal_specs
+    )
 
 
 def _decide_serial(
@@ -521,15 +569,13 @@ class RunSyncGate:
             return items
         live = frozenset(live_session_ids)
         facts = self._base_facts(live, hunts_in_graph)
-        if self.mode is SyncMode.SERIAL:
-            # The lifecycle facts must land before the queue is built: a stale
-            # or malformed hunt is pending work even when it contributes no
-            # produced item, so its unit must stay current and block a silent
-            # skip to the next unit.
-            facts = self._lifecycle_facts(facts)
+        # The lifecycle facts must land before the queue is built: a stale or
+        # malformed hunt is pending work even when it contributes no produced
+        # item, so its unit must stay current and block a silent skip. Both
+        # batched and serial read the per-hunt pod cursor from the same facts.
+        facts = self._lifecycle_facts(facts)
         units = self._units(items, facts)
-        if self.mode is SyncMode.SERIAL:
-            facts = self._serial_facts(items, units, facts)
+        facts = self._pod_cursor_facts(items, units, facts)
         admitted = decide(self.mode, items, units, facts)
         return tuple(item for item in items if item.message_id in admitted)
 
@@ -706,15 +752,17 @@ class RunSyncGate:
             return None
         return dict(marker)
 
-    def _serial_facts(
+    def _pod_cursor_facts(
         self,
         items: Sequence[ProducedItem],
         units: Sequence[UnitMeta],
         facts: SyncFacts,
     ) -> SyncFacts:
-        """The cursor facts: pending (produced) pod specs, the consumed
-        completion set, and the durable exports. Only the current unit needs
-        its per-spec facts this tick."""
+        """The per-hunt pod cursor facts: pending (produced) pod specs, the
+        consumed completion set, and the durable exports. Batched reads them
+        to gate one hunt's pod set at a time; serial reads them to gate one
+        pod at a time. Only the current unit needs its per-spec facts this
+        tick."""
         current = current_unit(items, units, facts)
         if current is None:
             return facts

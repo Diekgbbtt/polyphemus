@@ -28,8 +28,10 @@ The resolved mode is stamped on every run-record write (`hunting_runs.stats.pipe
   2. the queue: the run's units sorted by model risk contribution (`model_sum`-equivalent threat weights) descending, ties by intake position ascending, then unit name;
   3. per unit: the whole hunter batch concurrently (one hunter per produced threat file, bounded by `HUNTING_DISPATCH_GATE_WIDTH`);
   4. the batch advances when every hunt of the unit is terminal (see the gate signals);
-  5. then the unit's pods concurrently, one per `ratified` spec;
-  6. the next unit starts only when the current unit's pods are all terminal;
+  5. then the unit's pods one hunt at a time in threat-rank order: every `ratified` spec of
+     the current hunt concurrently (one pod per spec), and the next hunt only when every pod
+     of the current hunt is terminal;
+  6. the next unit starts only when every hunt's pods are terminal;
   7. an empty member set (a zero-loop unit, a zero-`ratified` hunt) advances immediately.
 - `serial` - the same queue strictly one agent at a time:
   1. intra-unit hunters are sequential: hunter N+1 dispatches only after hunter N is terminal AND every pod that consumed hunter N's spec set reached a terminal export;

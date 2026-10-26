@@ -68,6 +68,26 @@ The existing `a16bb256` settle remains the first line of defence: a graph that
 ends without a finalize settles immediately.
 The watchdog is the second line: a graph that never ends is bounded.
 
+## Measured failure: iteration B, 2026-10-26
+
+The 2700-second window is a deadline, not an inactivity bound.
+The iteration B white-jotter run produced 66 pod exports; 58 were this watchdog's
+`budget-timeout` envelope.
+The pods were progressing, not wedged:
+
+- 37 of the 58 wrote a probe observation less than five minutes before the export;
+- the median gap was 3.3 minutes;
+- two first-wave pods finished at 29.9 and 45.0 minutes, the second ten seconds
+  before the window.
+
+The unit-wide pod batch put 20 pods on the qemu target at once.
+One lap could consume the whole window, so the pod's own lap budget never fired.
+The per-hunt pod sequencing change (ticket 431) reduces the concurrency.
+The watchdog still needs a progress-aware or inactivity-based window, and it
+must preserve the pod's own terminal and partial experiment log (ticket 425).
+Until then, a watchdog `budget-timeout` export is a degraded execution, never
+evidence that the pod exhausted its own budget.
+
 ## Risk assessment
 
 | Scenario | Likelihood | Effect without the fail-safe | Prevention now |

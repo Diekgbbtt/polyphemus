@@ -10,7 +10,7 @@ For one run, `mode = resolve_mode(record.stats.pipeline_sync, settings.hunting)`
 | mode | phase gate | order | concurrency |
 |---|---|---|---|
 | parallel | none (historical) | produced order + S2 8.3 tiering | every item as it appears |
-| batched | modeller settled; per-unit hunt phase then pod phase | units by model risk desc, intake position, name; loops by rank | whole batch / whole pod set |
+| batched | modeller settled; per-unit hunt phase then per-hunt pod phase | units by model risk desc, intake position, name; hunts and their pods by rank | whole hunter batch / one hunt's pod set |
 | serial | modeller settled; cursor hunt fully done before the next | same queue; pods by spec stem | one hunter, one pod |
 
 Gate signals: modeller session settled; hunter = left its graph; pod = durable PodExport exists; a live pod keeps its unit current.
@@ -26,13 +26,14 @@ Each predicate names its executable test.
 | C3 | The queue orders by risk contribution DESC, intake position ASC, unit name ASC. | `...::test_order_units_is_risk_desc_then_intake_position_then_name` |
 | C4 | While the modeller pass is live, no item is admissible in `batched` or `serial`. | `...::test_modeller_live_holds_every_item` |
 | C5 | `batched` admits the whole unit hunter batch and refuses the unit's pods while a threat file remains or a hunt is mid-graph. | `...::test_batched_admits_the_whole_unit_hunter_batch`, `...::test_batched_refuses_pods_while_a_hunt_file_remains`, `...::test_batched_refuses_pods_while_a_hunt_is_mid_graph` |
-| C6 | `batched` admits the unit's pods after the hunt batch, and holds the next unit until the current unit is done. | `...::test_batched_admits_all_pods_after_the_hunt_batch`, `...::test_batched_holds_the_next_unit_until_the_current_unit_is_done`, `...::test_batched_skips_a_done_unit_in_the_queue` |
+| C6 | `batched` admits every pod of the first unfinished hunt after the hunt batch, holds the next hunt until every pod of the current hunt is terminal, and holds the next unit until the current unit is done. | `...::test_batched_admits_all_pods_of_the_first_hunt`, `...::test_batched_holds_the_next_hunt_until_every_pod_of_the_current_hunt_is_terminal`, `...::test_batched_advances_to_the_next_hunt_when_the_first_hunt_is_exported`, `...::test_batched_holds_the_next_unit_until_the_current_unit_is_done`, `...::test_batched_skips_a_done_unit_in_the_queue` |
+| C6a | The impure batched gate reads the terminal markers and the durable exports, and applies the per-hunt pod cursor. | `tests/attack/test_hunting_pipeline_sync_gate.py::test_gate_batched_*` |
 | C7 | `serial` admits one hunter at a time and holds its siblings. | `...::test_serial_admits_one_hunter_and_holds_its_siblings` |
 | C8 | `serial` dispatches pods one at a time in stem order and advances past terminal exports. | `...::test_serial_dispatches_pods_one_at_a_time_in_stem_order`, `...::test_serial_advances_the_pod_cursor_past_terminal_specs` |
 | C9 | `serial` holds hunter N+1 until hunter N is terminal AND all its pods are terminal; a zero-spec hunt advances immediately. | `...::test_serial_holds_the_next_hunter_until_the_previous_hunts_pods_are_terminal`, `...::test_serial_advances_to_the_next_hunt_when_the_previous_hunt_is_fully_done`, `...::test_serial_treats_a_specless_hunt_as_done` |
 | C10 | `serial` holds the next unit while the current unit's hunt is mid-graph. | `...::test_serial_holds_the_next_unit_while_the_current_units_hunt_is_in_graph` |
 | C11 | `parallel` admits every item unchanged. | `...::test_parallel_admits_every_item`, `tests/attack/test_hunting_pipeline_sync_gate.py::test_gate_parallel_returns_every_item_unchanged` |
-| C12 | The gate reads the model risk, the intake-order tie-break, the live pod session (session-only unit), and the serial stems/exports from the stores. | `tests/attack/test_hunting_pipeline_sync_gate.py::test_gate_*` |
+| C12 | The gate reads the model risk, the intake-order tie-break, the live pod session (session-only unit), and the per-hunt stems/exports from the stores. | `tests/attack/test_hunting_pipeline_sync_gate.py::test_gate_*` |
 | C13 | A held item stays produced, counts as `paused`, and never reaches the control plane; an admitted item dispatches and moves. | `tests/attack/test_hunting_mover_sync_filter.py::test_pre_filter_*` |
 | C14 | The surfer consults the gate once per tick with the live session set and the mid-graph hunt set, and honours its verdict. | `tests/attack/test_hunting_surfer_sync_wiring.py::test_surfer_holds_the_loop_file_until_the_sync_gate_admits_it` |
 | C15 | The bootstrap stamps the frozen mode on the run record; the default run is `batched` and dispatches only after the pass settles; `parallel` keeps the interleave. | `tests/attack/test_hunting_run_lifecycle.py::test_default_mode_is_batched_and_holds_dispatch_until_the_pass_settles`, `...::test_parallel_mode_keeps_the_modeller_dispatch_interleave` |
@@ -44,7 +45,7 @@ Each predicate names its executable test.
 
 These are the end-to-end cases to run against a live compose stack; they observe the app log, the run row, the stores and Langfuse, never internals.
 
-- E1 - batched happy path: one project, `hunting_pipeline_sync=batched`; launch a run; the modeller pass settles before ANY hunter session starts (app log order / Langfuse session start times); each unit's hunter batch starts together; the unit's pods start only after every hunt of the unit left its graph; the next unit starts after the pods' exports land; the run reaches `complete` with `stats.pipeline_sync == "batched"`.
+- E1 - batched happy path: one project, `hunting_pipeline_sync=batched`; launch a run; the modeller pass settles before ANY hunter session starts (app log order / Langfuse session start times); each unit's hunter batch starts together; the unit's pods start only after every hunt of the unit is terminal; only one hunt's pod set is live at a time, in threat-rank order; the next hunt starts only after every pod of the current hunt has a durable export; the next unit starts after the last hunt's pods export; the run reaches `complete` with `stats.pipeline_sync == "batched"`.
 - E2 - serial happy path: same target, `serial`; at no moment are two hunter sessions of the same unit live; at no moment are two pod sessions of the same hunt live; each pod starts after the previous spec's `PodExport` file exists; the run reaches `complete` (or the token cap) with `stats.pipeline_sync == "serial"`.
 - E3 - parallel regression: `parallel` reproduces the historical interleave (a hunter starts while the modeller pass is still modelling a later unit) and the S2 8.3 low-tier sequencing still applies.
 - E4 - config round-trip: `GET /projects/{p}/hunting/config` returns `batched` on a fresh project; `PUT` `serial` then `GET` returns `serial`; a run launched afterwards records `serial`; a run launched BEFORE the PUT keeps its frozen mode.

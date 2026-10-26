@@ -168,6 +168,122 @@ def test_gate_holds_the_next_unit_behind_a_live_pod():
     assert admitted == ()
 
 
+def _spec_body(unit_id: str = "Service:u1") -> dict:
+    return {"status": "ratified", "target": {"unit_id": unit_id}}
+
+
+def test_gate_batched_admits_only_the_first_hunts_pods():
+    first, second = "u1__threat-1", "u1__threat-2"
+    bodies = {
+        (first, "a_first"): _spec_body(),
+        (second, "b_second"): _spec_body(),
+    }
+    terminals = {
+        first: _terminal(first, a_first="ratified"),
+        second: _terminal(second, b_second="ratified"),
+    }
+    gate = _gate(
+        SyncMode.BATCHED,
+        produced={first: ["a_first"], second: ["b_second"]},
+        bodies=bodies,
+        terminals=terminals,
+    )
+    spec_first = _spec(first, "a_first")
+    spec_second = _spec(second, "b_second")
+
+    admitted = gate.filter([spec_first, spec_second])
+
+    assert _ids(admitted) == (spec_first.message_id,)
+
+
+def test_gate_batched_holds_the_next_hunt_until_every_pod_of_the_current_hunt_is_terminal():
+    first, second = "u1__threat-1", "u1__threat-2"
+    bodies = {
+        (first, "a_first"): _spec_body(),
+        (first, "b_second"): _spec_body(),
+        (second, "c_third"): _spec_body(),
+    }
+    terminals = {
+        first: _terminal(first, a_first="ratified", b_second="ratified"),
+        second: _terminal(second, c_third="ratified"),
+    }
+    gate = _gate(
+        SyncMode.BATCHED,
+        consumed={first: ["a_first", "b_second"], second: ["c_third"]},
+        bodies=bodies,
+        terminals=terminals,
+        exports={("a_first", RUN)},
+    )
+    spec_b = _spec(first, "b_second")
+    spec_c = _spec(second, "c_third")
+
+    admitted = gate.filter([spec_b, spec_c])
+
+    assert _ids(admitted) == (spec_b.message_id,)
+
+
+def test_gate_batched_advances_to_the_next_hunt_when_the_first_is_exported():
+    first, second = "u1__threat-1", "u1__threat-2"
+    bodies = {
+        (first, "a_first"): _spec_body(),
+        (second, "c_third"): _spec_body(),
+    }
+    terminals = {
+        first: _terminal(first, a_first="ratified"),
+        second: _terminal(second, c_third="ratified"),
+    }
+    gate = _gate(
+        SyncMode.BATCHED,
+        consumed={first: ["a_first"], second: ["c_third"]},
+        bodies=bodies,
+        terminals=terminals,
+        exports={("a_first", RUN)},
+    )
+    spec_a = _spec(first, "a_first")
+    spec_c = _spec(second, "c_third")
+
+    admitted = gate.filter([spec_a, spec_c])
+
+    assert _ids(admitted) == (spec_c.message_id,)
+
+
+def test_gate_batched_holds_pods_until_every_hunt_is_terminal():
+    hunt = "u1__threat-1"
+    gate = _gate(
+        SyncMode.BATCHED,
+        produced={hunt: ["a_first"]},
+        bodies={(hunt, "a_first"): _spec_body()},
+    )
+
+    admitted = gate.filter([_spec(hunt, "a_first")])
+
+    assert admitted == ()
+
+
+def test_gate_batched_holds_the_next_hunt_while_the_current_hunt_has_a_live_pod():
+    first, second = "u1__threat-1", "u1__threat-2"
+    bodies = {
+        (first, "a_first"): _spec_body(),
+        (second, "c_third"): _spec_body(),
+    }
+    terminals = {
+        first: _terminal(first, a_first="ratified"),
+        second: _terminal(second, c_third="ratified"),
+    }
+    gate = _gate(
+        SyncMode.BATCHED,
+        consumed={first: ["a_first"], second: ["c_third"]},
+        bodies=bodies,
+        terminals=terminals,
+        exports={("a_first", RUN)},
+    )
+    live = f"hunting:{RUN}:pod:{first}:a_first"
+
+    admitted = gate.filter([_spec(second, "c_third")], live_session_ids={live})
+
+    assert admitted == ()
+
+
 def test_gate_serial_reads_stems_and_exports_for_the_cursor_hunt():
     hunt = "u1__threat-1"
     bodies = {
