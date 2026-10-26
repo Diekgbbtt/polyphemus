@@ -195,7 +195,8 @@ def main() -> None:
                 root = DATA / pid
                 rows = []
                 distribution: dict[str, dict[str, int]] = {key: {} for key in CIA_KEYS}
-                for path in unit_models(root):
+                model_paths = unit_models(root)
+                for path in model_paths:
                     model = load_yaml(path)
                     summary = impact_summary(model)
                     rows.append(summary)
@@ -249,6 +250,13 @@ def main() -> None:
                 row["pod_terminals"] = pod_terminals(root)
 
                 run_id = os.environ.get("MONITOR_HUNTING_RUN_ID")
+                if not run_id:
+                    # The unit model names its run as soon as the first gate
+                    # lands, which is sooner than the first hunt terminal.
+                    for path in model_paths:
+                        run_id = str(load_yaml(path).get("run_id") or "") or None
+                        if run_id:
+                            break
                 if not run_id:
                     for path in hunts[:1]:
                         run_id = str(load_yaml(path).get("run_id") or "") or None
