@@ -182,6 +182,40 @@ The plugin file is backed up at `eval-monitor.ts.bak-iterc`.
 After the fix, `next_target` parsed the setup and brought the target up.
 
 
+## Progressive findings
+
+### The risk halt never fires
+
+The intake is 27 units in risk-descending order.
+At 15 completed units the cumulative risk is 124 against a threshold of 180, and the last three units added zero.
+
+The tail is the page-presentation layer: `WebPresentation:library-catalog`, `WebPresentation:sign-in`, and their siblings carry no damage of their own.
+The projected total is about 125 to 130, so the run cannot cross 180.
+`RunState.next_unit` returns `None` on either a halt or an exhausted intake, so the arm will model all 27 units and start hunting only when the intake empties.
+
+That makes iteration C a **coverage arm**, not a halt arm:
+
+- the modeller price is paid for the whole 27-unit surface;
+- `promotion_risk_threshold = 0` then promotes every threat from every unit;
+- the hunter faces a queue far larger than B or B.a ever produced.
+
+### The new primary metric dilutes with coverage
+
+`green_share` is computed over every `impact_assessment` row of every modelled unit, and a placeholder row is red by construction.
+
+| Units completed | Impact rows | Green | `green_share` |
+|---:|---:|---:|---:|
+| 7 | 22 | 17 | 77.3% |
+| 9 | 26 | 18 | 69.2% |
+| 13 | 30 | 20 | 66.7% |
+| 15 | 34 | 20 | 58.8% |
+
+Every zero-impact unit adds rows and no green.
+The presentation units (`AuthorizationSystem`, `IdentificationSystem`, `navigation-menu`, `jotter-reading`, the `WebPresentation` page systems) contribute 14 red rows and one green between them.
+
+The 90% gate is therefore unreachable on a full-surface run: it can only be met by a run that stops early enough to exclude the non-damage-bearing tail.
+That is a property of the metric and the halt together, not a quality regression in the threat models.
+
 ## Results
 
 *Filled after the trial terminal.*
