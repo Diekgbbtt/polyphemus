@@ -1199,6 +1199,34 @@ def test_completion_reports_a_capability_path_mismatch(tmp_path):
     assert "threat:threat-1.enabling_precursors" in validation.unclosed
 
 
+def test_completion_reports_duplicate_assessment_and_precursor_ids(tmp_path):
+    """The assessment and precursor ids are unique in the unit."""
+    store = ThreatModelStore(tmp_path)
+    document = _completed_document(store)
+    document["impact_assessment"].append(
+        {**document["impact_assessment"][0]})
+    document["precursors"].append(
+        {**document["precursors"][0], "capability": "a second capability"})
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is False
+    assert "impact_assessment.ids" in validation.missing
+    assert "precursors.ids" in validation.missing
+
+
+def test_completion_reports_a_path_outside_the_yielded_precursors(tmp_path):
+    """The capability path is a subset of the precursors the row yields."""
+    store = ThreatModelStore(tmp_path)
+    document = _completed_document(store)
+    document["impact_assessment"][0]["precursor_refs"] = []
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is False
+    assert "impact_assessment:ia-1.precursor_refs" in validation.missing
+
+
 def test_completion_reports_unresolved_assessment_and_precursor_references(tmp_path):
     """Every row and precursor reference resolves inside the same model."""
     store = ThreatModelStore(tmp_path)

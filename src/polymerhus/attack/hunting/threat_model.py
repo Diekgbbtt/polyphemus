@@ -737,9 +737,17 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
                 missing.append(f"impact_assessment:{assessment.id}.capability_path")
         elif assessment.capability_path:
             missing.append(f"impact_assessment:{assessment.id}.capability_path")
+        if not set(assessment.capability_path) <= set(assessment.precursor_refs):
+            missing.append(
+                f"impact_assessment:{assessment.id}.precursor_refs")
     for index, assessment in enumerate(model.impact_assessment):
         if not assessment.id:
             missing.append(f"impact_assessment[{index}].id")
+    assessment_ids = [
+        assessment.id for assessment in model.impact_assessment if assessment.id
+    ]
+    if len(assessment_ids) != len(set(assessment_ids)):
+        missing.append("impact_assessment.ids")
     for precursor in model.precursors:
         if not precursor.capability:
             missing.append(f"precursor:{precursor.id}.capability")
@@ -748,6 +756,11 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
     for index, precursor in enumerate(model.precursors):
         if not precursor.id:
             missing.append(f"precursor[{index}].id")
+    precursor_ids = [
+        precursor.id for precursor in model.precursors if precursor.id
+    ]
+    if len(precursor_ids) != len(set(precursor_ids)):
+        missing.append("precursors.ids")
     for threat in model.threats:
         if not threat.likelihood_rationale:
             missing.append(f"threat:{threat.id}.likelihood_rationale")
