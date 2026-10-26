@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from polymerhus.attack.hunting.pod.types import (
     ProbeChain,
     TargetIdentity,
-    TERMINAL_REASONS,
+    DOMAIN_TERMINAL_REASONS,
     TestImplementationSpec,
 )
 
@@ -154,8 +154,11 @@ def validate_decision(decision: dict | None) -> list[str]:
     if verdict not in ("successful", "unsuccessful"):
         violations.append(f"verdict {verdict!r} is not one of successful/unsuccessful")
     reason = decision.get("terminal_reason")
-    if reason not in TERMINAL_REASONS:
-        violations.append(f"terminal_reason {reason!r} is not in the Q3-amended vocabulary")
+    if reason not in DOMAIN_TERMINAL_REASONS:
+        violations.append(
+            f"terminal_reason {reason!r} is not a triager-selectable "
+            "Q3-amended vocabulary value"
+        )
     if not isinstance(decision.get("clean"), bool):
         violations.append("clean must be a boolean")
     return violations

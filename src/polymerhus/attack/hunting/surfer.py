@@ -79,6 +79,7 @@ from typing import Any, Awaitable, Callable
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
+from polymerhus.attack.hunting.pod.types import POD_WATCHDOG_TIMEOUT
 from polymerhus.attack.hunting.mover import (
     MODELLER_SESSION_SEGMENT,
     SPEC_DISPATCH_STATUS,
@@ -210,14 +211,12 @@ def is_pod_session_id(session_id: str) -> bool:
 MAX_CONSECUTIVE_CHILD_FAILURES = 3
 DEFAULT_CHILD_RETRY_BACKOFF_S = 30.0
 
-# The per-dispatched-session watchdog (the serial/batched degraded fix). A
-# hunter or pod graph that does not finish inside this window is classed
-# degraded: the hunter's registration is released and its drafts are settled,
-# and a pod writes a degraded PodExport. The queue moves on instead of waiting
-# forever on a wedged session. The value is a ceiling, not a liveness proof: a
-# healthy pod can exceed it when the target is saturated, so a timeout is a
-# degraded execution, never proof that the pod was wedged.
-DEFAULT_DISPATCH_TIMEOUT_S = 2700.0
+# The per-dispatched-session watchdogs. These are last-resort backstops above
+# the pod graph's own node timeouts. A hunter and a pod have different budgets:
+# the pod's control plane owns its idle/run bounds and writes the typed terminal
+# first; the surfer only bounds a genuinely wedged session.
+DEFAULT_HUNTER_SESSION_TIMEOUT_S = 2700.0
+DEFAULT_POD_SESSION_TIMEOUT_S = 3600.0
 
 
 @dataclass
@@ -266,10 +265,13 @@ class RunDispatchState:
     threat_buckets: dict[str, str] = field(default_factory=dict)
     child_failures: dict[str, ChildFailure] = field(default_factory=dict)
     provider_failure: ProviderUnavailableError | None = None
-    # The watchdog ceiling for one dispatched hunter or pod session. A session
-    # that exceeds it is classed degraded and the queue moves on; the run state
-    # carries the value so a trial can tighten it without a code change.
-    session_timeout_s: float = DEFAULT_DISPATCH_TIMEOUT_S
+    # The watchdog ceilings for one dispatched hunter or pod session. A session
+    # that exceeds its ceiling is classed degraded and the queue moves on; the
+    # run state carries the values so a trial can tighten them without a code
+    # change. The pod ceiling sits above the pod graph's own run timeout, so the
+    # pod control plane writes the terminal first.
+    hunter_session_timeout_s: float = DEFAULT_HUNTER_SESSION_TIMEOUT_S
+    pod_session_timeout_s: float = DEFAULT_POD_SESSION_TIMEOUT_S
     # The run's pipeline sync gate (`hunting_pipeline_sync`, ADR 2026-10-22):
     # None in `parallel` (the historical behaviour), a `RunSyncGate` in
     # `batched`/`serial`. Consulted once per surfer tick; held items stay
@@ -639,7 +641,7 @@ def build_run_dispatch(
             gate=gate,
             role_gate=_role_gate("hunter"),
             hunter_builder=hunter_builder,
-            session_timeout_s=state.session_timeout_s,
+            session_timeout_s=state.hunter_session_timeout_s,
         )
 
     def _spec_dispatch(item: TestSpecItem) -> Any:
@@ -693,7 +695,7 @@ def build_run_dispatch(
             pod_builder=pod_builder,
             pod_store=pod_store,
             state=state,
-            session_timeout_s=state.session_timeout_s,
+            session_timeout_s=state.pod_session_timeout_s,
         )
 
     return coro_for
@@ -711,7 +713,7 @@ async def run_hunter_session(
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
     role_gate: Any = None,
-    session_timeout_s: float = DEFAULT_DISPATCH_TIMEOUT_S,
+    session_timeout_s: float = DEFAULT_HUNTER_SESSION_TIMEOUT_S,
 ) -> None:
     """ONE hunter session (ADR Q13 hunter id `hunting:<run_id>:hunt:<hunt_key>`,
     S3 8.9): the build-to-END ReAct graph on the hunt's own thread - handed
@@ -966,7 +968,7 @@ async def run_pod_session(
     pod_store: Any,
     state: RunDispatchState | None = None,
     role_gate: Any = None,
-    session_timeout_s: float = DEFAULT_DISPATCH_TIMEOUT_S,
+    session_timeout_s: float = DEFAULT_POD_SESSION_TIMEOUT_S,
 ) -> dict | None:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
     injected builder; `arun_pod` in production), then record the completed
@@ -1031,9 +1033,12 @@ async def run_pod_session(
             logger.warning("surfer: pod %s degraded (%s)", spec_id, exc)
             return {
                 "verdict": "unsuccessful",
-                "terminal_reason": "surfer-dispatch-degraded",
-                "clean": False,
-                "error": str(exc),
+                "evidence": {
+                    "terminal_reason": "surfer-dispatch-degraded",
+                    "iterations": 0,
+                    "clean": False,
+                    "error": str(exc),
+                },
             }
 
     async with _gate_or_null(gate):
@@ -1047,9 +1052,12 @@ async def run_pod_session(
                     "a degraded export", spec_id, session_timeout_s)
                 export = {
                     "verdict": "unsuccessful",
-                    "terminal_reason": "budget-timeout",
-                    "clean": False,
-                    "error": "the pod session exceeded its watchdog window",
+                    "evidence": {
+                        "terminal_reason": POD_WATCHDOG_TIMEOUT,
+                        "iterations": 0,
+                        "clean": False,
+                        "error": "the pod session exceeded its watchdog window",
+                    },
                 }
 
     if export is None:
@@ -1062,6 +1070,9 @@ async def run_pod_session(
     if pod_store is not None and spec_id:
         try:
             pod_store.write_pod_export(spec_id, run_id, export)
+            clear = getattr(pod_store, "clear_resume", None)
+            if clear is not None:
+                clear(spec_id, run_id)
         except Exception as exc:  # noqa: BLE001 - O3/IA-4 fail-open
             logger.warning(
                 "surfer: pod %s export persistence failed (%s)", spec_id, exc)

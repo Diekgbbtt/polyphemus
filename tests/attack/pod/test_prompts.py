@@ -365,3 +365,14 @@ def test_prompts_carry_no_differential_reference():
     for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM, POD_TRIAGE_SYSTEM,
                    POD_DIVERGENCE_SYSTEM, POD_TERMINAL_SYSTEM):
         assert "differential" not in prompt
+
+def test_terminal_prompt_names_the_harness_terminal_reasons():
+    for reason in ("node-timeout", "context-window-exceeded", "tool-timeout",
+                   "graph-limit", "pod-watchdog-timeout"):
+        assert reason in POD_TERMINAL_SYSTEM, reason
+
+
+def test_triager_prompt_does_not_offer_harness_terminal_reasons():
+    for reason in ("node-timeout", "context-window-exceeded", "tool-timeout",
+                   "graph-limit", "pod-watchdog-timeout"):
+        assert reason not in POD_TRIAGER_SYSTEM, reason

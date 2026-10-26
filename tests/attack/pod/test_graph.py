@@ -11,9 +11,15 @@ with `asyncio.run`, exactly like the hunt-orchestrator graph tier's `_drive`.
 import asyncio
 import inspect
 
+import pytest
+
+from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 from polymerhus.attack.hunting.llm import hunt_session
 from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
+from polymerhus.attack.hunting.pod.config import PodTimeouts
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
+from polymerhus.attack.hunting.pod.tools import command_signature
 from polymerhus.attack.hunting.pod.llm import (
     POD_DEFAULT_RUN_ID,
     POD_RUNNER_ROLE,
@@ -626,3 +632,223 @@ def test_export_write_failure_degrades_to_the_envelope(tmp_path):
                         spec_id=SPEC_ID, run_id="run-42"))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+
+
+# --- pod control-plane failure handling (2026-10-26) -------------------------
+
+def test_a_hung_runner_routes_to_a_node_timeout_terminal_with_the_log():
+    async def hung(spec, messages, tool_calls):
+        await asyncio.sleep(30)
+
+    env = _run(arun_pod(
+        VALID_SPEC,
+        exec_fn=_exec(_OK),
+        runner_step_fn=hung,
+        trace_fn=_no_trace,
+        timeouts=PodTimeouts(
+            node_idle_s=0.01, node_run_s=None,
+            tool_idle_s=None, tool_run_s=None,
+        ),
+    ))
+
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "node-timeout"
+    assert env["evidence"]["clean"] is False
+    assert "runner_agent" in env["evidence"]["error"]
+    assert env["evidence"]["variant_specs"][0]["ref"] == "v0"
+
+
+def test_a_provider_failure_in_a_node_is_not_a_domain_verdict():
+    async def provider(spec, messages, tool_calls):
+        raise ProviderUnavailableError("429 too many requests")
+
+    with pytest.raises(ProviderUnavailableError):
+        _run(arun_pod(
+            VALID_SPEC,
+            exec_fn=_exec(_OK),
+            runner_step_fn=provider,
+            trace_fn=_no_trace,
+            timeouts=PodTimeouts(
+                node_idle_s=None, node_run_s=None,
+                tool_idle_s=None, tool_run_s=None,
+            ),
+        ))
+
+
+def test_a_context_window_error_is_a_typed_terminal():
+    async def context(spec, messages, tool_calls):
+        raise Exception("This model's maximum context length is 128000 tokens")
+
+    env = _run(arun_pod(
+        VALID_SPEC,
+        exec_fn=_exec(_OK),
+        runner_step_fn=context,
+        trace_fn=_no_trace,
+        timeouts=PodTimeouts(
+            node_idle_s=None, node_run_s=None,
+            tool_idle_s=None, tool_run_s=None,
+        ),
+    ))
+
+    assert env["evidence"]["terminal_reason"] == "context-window-exceeded"
+    assert env["evidence"]["clean"] is False
+    assert "context" in env["evidence"]["error"].lower()
+
+
+def test_a_generic_node_error_keeps_the_domain_degrade():
+    async def generic(spec, messages, tool_calls):
+        raise RuntimeError("bad parsing")
+
+    env = _run(arun_pod(
+        VALID_SPEC,
+        exec_fn=_exec(_OK),
+        runner_step_fn=generic,
+        trace_fn=_no_trace,
+        timeouts=PodTimeouts(
+            node_idle_s=None, node_run_s=None,
+            tool_idle_s=None, tool_run_s=None,
+        ),
+    ))
+
+    assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
+    assert "bad parsing" in env["evidence"]["error"]
+
+
+def test_a_hung_tool_routes_to_a_tool_timeout_terminal():
+    async def hanging_exec(*args, **kwargs):
+        await asyncio.sleep(30)
+
+    def runner(spec, messages, tool_calls):
+        return RunnerStep(action="tool_call", tool="exec",
+                          command="curl -k -sS https://target/")
+
+    env = _run(arun_pod(
+        VALID_SPEC,
+        exec_fn=hanging_exec,
+        runner_step_fn=runner,
+        trace_fn=_no_trace,
+        timeouts=PodTimeouts(
+            node_idle_s=None, node_run_s=None,
+            tool_idle_s=0.01, tool_run_s=None,
+        ),
+    ))
+
+    assert env["evidence"]["terminal_reason"] == "tool-timeout"
+    assert env["evidence"]["clean"] is False
+    assert "tool_exec" in env["evidence"]["error"]
+
+
+def test_a_graph_recursion_error_is_a_typed_graph_limit(monkeypatch):
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.pod.pod.RECURSION_LIMIT", 3)
+
+    def runner(spec, messages, tool_calls):
+        return RunnerStep(action="tool_call", tool="exec",
+                          command="curl -k -sS https://target/")
+
+    env = _run(arun_pod(
+        VALID_SPEC,
+        exec_fn=_exec(_OK),
+        runner_step_fn=runner,
+        trace_fn=_no_trace,
+    ))
+
+    assert env["evidence"]["terminal_reason"] == "graph-limit"
+    assert env["evidence"]["clean"] is False
+    assert "recursion" in env["evidence"]["error"].lower()
+
+
+# --- durable resume (2026-10-26) ---------------------------------------------
+
+RUN = "run-resume"
+COMMAND = "curl -k -sS https://target/"
+RESUME_SPEC = {
+    **VALID_SPEC,
+    "verification_symptoms": ["reflects the marker"],
+}
+
+
+def _seed_resume(tmp_path):
+    store = PodMemoryStore(tmp_path / "pod")
+    store.write_variant(
+        SPEC_ID, "v0",
+        {"ref": "v0", "parent_ref": None, "declined_attribute": "",
+         "spec": {**RESUME_SPEC, "rationale": "resumed"}},
+    )
+    store.write_experiment_log(SPEC_ID, 0, {
+        "order": 0,
+        "variant_ref": "v0",
+        "raw_observations": [],
+        "kb_observations": [],
+        "interpretations": [],
+        "executed": [command_signature("v0", COMMAND)],
+    })
+    store.write_resume(SPEC_ID, RUN, {
+        "schema_version": 1,
+        "last_order": 0,
+        "current_variant_ref": "v0",
+        "iteration": 1,
+        "feedback": "continue from the persisted variant",
+    })
+    return store
+
+
+def test_a_resumed_pod_skips_an_executed_probe(tmp_path):
+    store = _seed_resume(tmp_path)
+    new_command = "curl -k -sS https://target/new"
+    steps = [
+        RunnerStep(action="tool_call", tool="exec", command=COMMAND),
+        RunnerStep(action="tool_call", tool="exec", command=new_command),
+        RunnerStep(action="conclude", observation_note="done"),
+    ]
+    calls = []
+
+    def triager(spec, obs, messages, log):
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "space-exhausted", "clean": True}
+
+    env = _run(arun_pod(
+        RESUME_SPEC,
+        exec_fn=_exec(_OK, calls=calls),
+        runner_step_fn=_scripted(steps),
+        triager_fn=triager,
+        trace_fn=_no_trace,
+        memory_store=store,
+        spec_id=SPEC_ID,
+        run_id=RUN,
+    ))
+
+    assert calls == [new_command]
+    assert env["evidence"]["terminal_reason"] == "space-exhausted"
+    assert env["evidence"]["variant_specs"][0]["spec"]["rationale"] == "resumed"
+    assert store.read_resume(SPEC_ID, RUN) == {}
+
+
+def test_a_cancelled_pod_keeps_a_resume_cursor_and_writes_no_export(tmp_path):
+    store = PodMemoryStore(tmp_path / "pod")
+
+    async def hung(spec, messages, tool_calls):
+        await asyncio.sleep(30)
+
+    with pytest.raises(asyncio.TimeoutError):
+        _run(asyncio.wait_for(
+            arun_pod(
+                VALID_SPEC,
+                exec_fn=_exec(_OK),
+                runner_step_fn=hung,
+                trace_fn=_no_trace,
+                memory_store=store,
+                spec_id=SPEC_ID,
+                run_id=RUN,
+                timeouts=PodTimeouts(
+                    node_idle_s=None, node_run_s=None,
+                    tool_idle_s=None, tool_run_s=None,
+                ),
+            ),
+            timeout=0.05,
+        ))
+
+    assert store.read_pod_export(SPEC_ID, RUN) == {}
+    cursor = store.read_resume(SPEC_ID, RUN)
+    assert cursor["current_variant_ref"] == "v0"
+    assert cursor["executed"] == []

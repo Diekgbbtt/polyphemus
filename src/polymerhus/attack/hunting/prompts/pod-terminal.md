@@ -19,6 +19,10 @@ Present `verdict` and `terminal_reason` as SEPARATE outputs - never a slash-join
 - symptom absent, coverage partial or observations impaired (including a degraded or unavailable KB result) -> verdict unsuccessful, terminal_reason no-symptom-evidence.
 - budget/timeout reached -> verdict unsuccessful, terminal_reason budget-timeout.
 
+Harness-owned terminals are out of your choice. The pod graph writes
+`node-timeout`, `context-window-exceeded`, `tool-timeout`, and `graph-limit`.
+The surfer writes `pod-watchdog-timeout`. Do not select them.
+
 # Clean
 Set `clean` true only when the threat completed with every observation captured, none blocked or unreachable, and the symptom's absence is credibly established.
 A degraded, failed, or unavailable KB result is NOT absence evidence: use no-symptom-evidence with `clean` false.

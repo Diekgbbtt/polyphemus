@@ -34,10 +34,32 @@ SPECIFIC_DEFENCE_PREVENTION = "specific-defence-prevention"
 NO_SYMPTOM_EVIDENCE = "no-symptom-evidence"
 BUDGET_TIMEOUT = "budget-timeout"
 
-TERMINAL_REASONS = frozenset({
+# The harness-owned infrastructure terminals. They are pod results, never
+# triager choices: a critic cannot decide that a node timed out or that the
+# context window overflowed.
+NODE_TIMEOUT = "node-timeout"
+CONTEXT_WINDOW_EXCEEDED = "context-window-exceeded"
+GRAPH_LIMIT = "graph-limit"
+TOOL_TIMEOUT = "tool-timeout"
+POD_WATCHDOG_TIMEOUT = "pod-watchdog-timeout"
+
+# The domain terminals a triager may choose.
+DOMAIN_TERMINAL_REASONS = frozenset({
     SYMPTOM_CONFIRMED, SPACE_EXHAUSTED, TECHNICAL_INFEASIBILITY,
-    SPECIFIC_DEFENCE_PREVENTION, NO_SYMPTOM_EVIDENCE, BUDGET_TIMEOUT,
+    SPECIFIC_DEFENCE_PREVENTION, NO_SYMPTOM_EVIDENCE,
 })
+
+# The harness terminals. `budget-timeout` is the pod's own lap budget; the
+# others are the pod graph's node, context, structure, and tool bounds plus the
+# surfer's last-resort backstop.
+HARNESS_TERMINAL_REASONS = frozenset({
+    BUDGET_TIMEOUT, NODE_TIMEOUT, CONTEXT_WINDOW_EXCEEDED, GRAPH_LIMIT,
+    TOOL_TIMEOUT, POD_WATCHDOG_TIMEOUT,
+})
+
+# The whole PodExport vocabulary. `validate_decision` deliberately reads the
+# narrower DOMAIN set: the triager must never choose a harness reason.
+TERMINAL_REASONS = DOMAIN_TERMINAL_REASONS | HARNESS_TERMINAL_REASONS
 
 # The observation classes the Triager assigns (spec 6.4 INTERPRET).
 SYMPTOM_CONFIRMED_CLASS = "symptom-confirmed"

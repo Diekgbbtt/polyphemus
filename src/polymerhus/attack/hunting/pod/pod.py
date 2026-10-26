@@ -6,7 +6,9 @@ D84-15): it takes the D4 `TestImplementationSpec` and returns the D5 + D6
 wrapper is DELETED (Q7 VERDICTED): the parent HuntingAgent awaits `arun_pod`
 natively through its `_await_seam` (async seams are awaited, sync seams are
 to_thread-ed), so no sync wrapper remains a public entry. It NEVER raises a
-DOMAIN failure into the parent HuntingAgent (IA-4): any collaborator failure
+DOMAIN failure into the parent HuntingAgent (IA-4): a node timeout, context
+overflow, graph recursion limit, or tool timeout is a typed harness terminal
+written by the pod graph from the durable trail; any other collaborator failure
 degrades to `unsuccessful` with the error in the evidence trail, mirroring the
 recon degrade-to-failed-export pattern (`recon/control/job_agent.py`). The ONE
 exception is a provider failure (#329): a 429/5xx/timeout/quota is an
@@ -24,6 +26,8 @@ import logging
 from typing import Callable, Sequence
 
 from polymerhus.app.llm.provider_failure import as_provider_error
+from polymerhus.attack.hunting.pod.config import PodTimeouts
+from polymerhus.attack.hunting.pod.failures import classify_pod_failure
 from polymerhus.attack.hunting.pod.graph import RECURSION_LIMIT, build_pod_graph
 from polymerhus.attack.hunting.pod.llm import POD_DEFAULT_RUN_ID
 from polymerhus.attack.hunting.pod.tools import default_exec_fn
@@ -65,18 +69,24 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                    project_id: str | None = None,
                    spec_id: str | None = None,
                    graph_view_fn: Callable | None = None,
-                   replay_fn: Callable | None = None) -> dict:
+                   replay_fn: Callable | None = None,
+                   timeouts: PodTimeouts | None = None) -> dict:
     """Execute `spec` against the live target and return the IA-4 envelope.
 
     Async-only (D84-15): the graph is driven with `ainvoke`, and every injected
     seam - `exec_fn`, `runner_step_fn`, `triager_fn` - rides the `_await_seam`
     pattern inside the nodes (async seams awaited natively, sync seams offloaded
     via `asyncio.to_thread`), so both the production async terminals and the
-    contract-tier sync fakes are injectable. The whole run is wrapped fail-open:
-    a raise anywhere degrades to `unsuccessful` / `technical-infeasibility` with
-    the error in the trail - the pod never raises a DOMAIN failure into the
-    parent. The one exception is a provider failure (#329): it propagates the
-    typed `ProviderUnavailableError` instead of fabricating a domain verdict.
+    contract-tier sync fakes are injectable. The graph's node error handler
+    writes a typed infrastructure terminal from the durable trail; a generic
+    raise in `arun_pod` degrades to `unsuccessful` with the error in the trail.
+    The pod never raises a DOMAIN failure into the parent. The one exception is
+    a provider failure (#329): it propagates the typed
+    `ProviderUnavailableError` instead of fabricating a domain verdict.
+
+    `timeouts` is the pod graph's node/tool bound set. The default keeps the
+    600-second node idle timeout and the 300-second tool idle timeout; the
+    surfer's one-hour pod backstop is the hard wall clock.
 
     `runner_middleware` / `triager_middleware` are the per-role #95 compaction
     middleware sets (T5, D9 wiring): threaded into the graph's pod-session
@@ -116,7 +126,7 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
             runner_middleware=runner_middleware, triager_middleware=triager_middleware,
             memory_store=memory_store, model_factory=model_factory,
             project_id=project_id, spec_id=spec_id, graph_view_fn=graph_view_fn,
-            replay_fn=replay_fn)
+            replay_fn=replay_fn, timeouts=timeouts)
         final = await graph.ainvoke(
             {"spec": dict(spec or {}), "run_id": run_id},
             config={"recursion_limit": RECURSION_LIMIT, "callbacks": callbacks})
@@ -136,7 +146,11 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                 "pod run hit a provider failure (%s); propagating it instead of "
                 "fabricating a domain verdict", exc)
             raise failure from exc
-        logger.warning("pod run degraded to unsuccessful (%s)", exc)
+        typed = classify_pod_failure(exc)
+        reason = typed.reason if typed is not None else TECHNICAL_INFEASIBILITY
+        detail = typed.detail if typed is not None else str(exc)
+        logger.warning(
+            "pod run degraded to unsuccessful (%s): %s", reason, detail)
         # The degrade path still reports the structural violations, so a
         # malformed field is visible on the PodExport even when the runner could
         # not start. The schema never fabricates a domain verdict here.
@@ -148,8 +162,8 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
         except Exception:  # noqa: BLE001 - the degrade path never raises
             init_v = []
         export = PodExport(
-            verdict="unsuccessful", terminal_reason=TECHNICAL_INFEASIBILITY,
-            iterations=0, clean=False, error=str(exc),
+            verdict="unsuccessful", terminal_reason=reason,
+            iterations=0, clean=False, error=detail,
             init_validation=init_v).to_envelope()
         # T7 (#183): the degrade path is a REAL terminal result - persist it too
         # (idempotent overwrite, GP1). The fail-closed spec_id gate is respected:
@@ -159,6 +173,9 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
         if memory_store is not None and spec_id:
             try:
                 memory_store.write_pod_export(spec_id, run_id, export)
+                clear = getattr(memory_store, "clear_resume", None)
+                if clear is not None:
+                    clear(spec_id, run_id)
             except Exception:  # noqa: BLE001 - fail-open (O3/IA-4)
                 logger.warning("pod export persistence failed on the degrade "
                                "path (%s)", exc)

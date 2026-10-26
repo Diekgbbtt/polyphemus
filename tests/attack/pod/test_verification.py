@@ -175,3 +175,42 @@ def test_decision_vocabulary_is_enforced():
     assert any("verdict" in v for v in bad)
     assert any("terminal_reason" in v for v in bad)  # the OLD 4-value name is rejected
     assert any("clean" in v for v in bad)
+
+
+# --- the failure taxonomy (2026-10-26) ---------------------------------------
+
+def test_harness_terminal_reasons_are_known_but_not_triager_choices():
+    from polymerhus.attack.hunting.pod.types import (
+        CONTEXT_WINDOW_EXCEEDED,
+        DOMAIN_TERMINAL_REASONS,
+        GRAPH_LIMIT,
+        HARNESS_TERMINAL_REASONS,
+        NODE_TIMEOUT,
+        POD_WATCHDOG_TIMEOUT,
+        TERMINAL_REASONS,
+        TOOL_TIMEOUT,
+    )
+
+    for reason in (NODE_TIMEOUT, CONTEXT_WINDOW_EXCEEDED, GRAPH_LIMIT,
+                   TOOL_TIMEOUT, POD_WATCHDOG_TIMEOUT):
+        assert reason in TERMINAL_REASONS
+        assert reason in HARNESS_TERMINAL_REASONS
+        assert reason not in DOMAIN_TERMINAL_REASONS
+        violations = validate_decision({
+            "verdict": "unsuccessful",
+            "terminal_reason": reason,
+            "clean": False,
+        })
+        assert violations, reason
+        assert "terminal_reason" in violations[0]
+
+
+def test_domain_terminal_reasons_remain_triager_choices():
+    from polymerhus.attack.hunting.pod.types import DOMAIN_TERMINAL_REASONS
+
+    for reason in DOMAIN_TERMINAL_REASONS:
+        assert validate_decision({
+            "verdict": "unsuccessful",
+            "terminal_reason": reason,
+            "clean": False,
+        }) == []

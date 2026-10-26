@@ -199,6 +199,55 @@ class ExperimentLog:
         except Exception:  # noqa: BLE001 - fail-open (O3)
             pass
 
+    def hydrate(self) -> bool:
+        """Rehydrate the log from the store's persisted variant slices.
+
+        The resume unit is the variant boundary. Variants, raw observations,
+        KB observations, interpretations, and the full executed ledger come back
+        from the per-order slices; the caller starts at the cursor's current
+        variant and the tools skip every already-executed probe.
+
+        Returns True when at least one persisted record was loaded. An absent
+        store or an empty spec returns False, leaving the log fresh.
+        """
+        if self.store is None or not self.spec_id:
+            return False
+        orders = self.store.list_variant_orders(self.spec_id)
+        if not orders:
+            return False
+        self.variant_specs = []
+        self.raw_observations = []
+        self.kb_observations = []
+        self.interpretations = []
+        self.executed = []
+        loaded = False
+        for order in orders:
+            ref = f"v{int(order)}"
+            variant = self.store.read_variant(self.spec_id, ref)
+            if isinstance(variant, dict) and variant:
+                self.variant_specs.append(VariantSpec(**variant))
+                loaded = True
+            slice = self.store.read_experiment_log(self.spec_id, order)
+            if not isinstance(slice, dict):
+                continue
+            for raw in slice.get("raw_observations") or []:
+                if isinstance(raw, dict):
+                    self.raw_observations.append(RawObservation(**raw))
+                    loaded = True
+            for kb in slice.get("kb_observations") or []:
+                if isinstance(kb, dict):
+                    self.kb_observations.append(KbObservation(**kb))
+                    loaded = True
+            for interp in slice.get("interpretations") or []:
+                if isinstance(interp, dict):
+                    self.interpretations.append(Interpretation(**interp))
+                    loaded = True
+            for signature in slice.get("executed") or []:
+                if isinstance(signature, str) and signature not in self.executed:
+                    self.executed.append(signature)
+                    loaded = True
+        return loaded
+
     def _persist(self, order: int) -> None:
         """The capture seam: re-write the variant's experiment-log slice
         idempotently. No-op when no store/spec_id is bound (fail-open - the
