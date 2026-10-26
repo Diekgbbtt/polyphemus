@@ -97,6 +97,43 @@ class TargetConfig:
     recon_jobs: tuple[str, ...] = ()
 
 
+HUNTING_PIPELINE_SYNCS = ("serial", "batched", "parallel")
+
+
+@dataclass(frozen=True)
+class HuntingSettings:
+    """The project-side hunting policy an eval trial freezes before the hunt.
+
+    The three settings live on the project (`PUT /projects/{id}/hunting/config`)
+    and are read into the hunting run record at its start, so the trial applies
+    them during bootstrap, before recon launches.
+
+    `promotion_risk_threshold` is inclusive and explicit: `0` is a stored value
+    that promotes every threat (the control arm), while an unset field leaves
+    the project default in place. `risk_threshold` is the cumulative halt, a
+    different knob from the per-threat promotion floor.
+    """
+
+    pipeline_sync: str | None = None
+    pod_batch_size: int | None = None
+    promotion_risk_threshold: int | None = None
+    risk_threshold: int | None = None
+
+    def payload(self) -> dict[str, object]:
+        """Only the fields the setup set, so a partial block stays partial.
+
+        `0` is a real value for the two thresholds and must survive the filter,
+        which is why this tests `is not None` and never truthiness.
+        """
+        pairs = (
+            ("pipeline_sync", self.pipeline_sync),
+            ("pod_batch_size", self.pod_batch_size),
+            ("promotion_risk_threshold", self.promotion_risk_threshold),
+            ("risk_threshold", self.risk_threshold),
+        )
+        return {key: value for key, value in pairs if value is not None}
+
+
 @dataclass(frozen=True)
 class TargetRun:
     """The evaluation of one `<dataset>/<target>` on one instance (spec #301).
@@ -110,6 +147,9 @@ class TargetRun:
     target_key: str
     target_id: str
     target_config: TargetConfig = field(default_factory=TargetConfig)
+    # The frozen hunting policy the trial applies to the project before recon.
+    # An unset block leaves every project default in place.
+    hunting: HuntingSettings = field(default_factory=HuntingSettings)
     start_phase: str = "recon"
     # The per-trial bound on the project's token spend (spec token tracking).
     token_budget: int | None = None
@@ -348,6 +388,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
             "preloaded_hunting_artifacts",
             "target_run_id",
             "existing_project_id",
+            "hunting",
         ),
         where,
     )
@@ -386,6 +427,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
         target_key=target_key,
         target_id=target_id,
         target_config=target_config,
+        hunting=_parse_hunting(mapping.get("hunting"), f"{where}.hunting"),
         start_phase=start_phase,
         token_budget=token_budget,
         preloaded_hunting_artifacts=_parse_preloaded_artifacts(
@@ -395,6 +437,57 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
         target_run_id=_path_safe(mapping, "target_run_id", where),
         existing_project_id=existing_project_id,
     )
+
+
+def _parse_hunting(payload: object, where: str) -> HuntingSettings:
+    """The optional per-target hunting policy, validated like the REST body.
+
+    Unknown keys, an unknown sync mode, a non-integer, and an out-of-range value
+    all fail loud and name the field, so a typo cannot silently leave the
+    project default in place.
+    """
+    if payload is None:
+        return HuntingSettings()
+    mapping = _mapping(payload, where)
+    _check_keys(
+        mapping,
+        (
+            "pipeline_sync",
+            "pod_batch_size",
+            "promotion_risk_threshold",
+            "risk_threshold",
+        ),
+        where,
+    )
+    mode = _optional_str(mapping, "pipeline_sync", where)
+    if mode is not None and mode not in HUNTING_PIPELINE_SYNCS:
+        raise SetupError(
+            f"{where}.pipeline_sync: expected one of "
+            f"{', '.join(HUNTING_PIPELINE_SYNCS)}, got {mode!r}"
+        )
+    return HuntingSettings(
+        pipeline_sync=mode,
+        pod_batch_size=_optional_int_at_least(
+            mapping, "pod_batch_size", where, minimum=1),
+        promotion_risk_threshold=_optional_int_at_least(
+            mapping, "promotion_risk_threshold", where, minimum=0),
+        risk_threshold=_optional_int_at_least(
+            mapping, "risk_threshold", where, minimum=0),
+    )
+
+
+def _optional_int_at_least(
+    mapping: Mapping, key: str, where: str, *, minimum: int,
+) -> int | None:
+    value = mapping.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise SetupError(f"{where}.{key}: expected an integer or null")
+    if value < minimum:
+        raise SetupError(
+            f"{where}.{key}: expected an integer >= {minimum}, got {value}")
+    return value
 
 
 def _parse_preloaded_artifacts(payload: object, where: str) -> PreloadedArtifacts | None:
