@@ -15,6 +15,14 @@ import functools, json, os, re, shlex, subprocess, tempfile, time
 import anyio
 from fastmcp import FastMCP
 
+from kali.steel_contract import (
+    BrowserCommand,
+    ContractError,
+    classify_result,
+    sanitize_shell_command,
+    sanitize_steel_command,
+)
+
 os.environ["PATH"] = ":".join([
     "/opt/localbin", "/root/go/bin", "/opt/venv/bin", "/usr/local/go/bin", os.environ.get("PATH", ""),
 ])
@@ -43,26 +51,10 @@ _STEEL_VERSION_PIN = "0.5.0-preview.6"
 # Runtime selection belongs to the `steel` wrapper (#395, D359-13). The
 # gateway keeps the grammar and lifecycle guards and passes the command text
 # through byte-for-byte; it never inserts `--local` or rewrites the URL.
-_START_SHAPE = re.compile(r"\bbrowser\s+start\b")
-_SESSION_FLAG = re.compile(r"--session[= ]+(?:\"([^\"]+)\"|'([^']+)'|(\S+))")
 _STEEL_WAIT = re.compile(r"(?<!\S)--timeout[= ]+(\d+)")
 _CATALOGUE_TIMEOUT_S = 30
 _VERSION_TIMEOUT_S = 15
 _SCRIPT_RUNNERS = {"sh": "sh", "py": "python3"}
-# Every variadic verb the pinned CLI exposes (`<--help>`): `fill`/`type`/
-# `setvalue`/`select`/`upload` take `[VALUE(S)]...` after `<SELECTOR>`, and
-# `batch` takes `[COMMANDS]...`. clap's variadic greedily consumes a flag that
-# follows the first positional, folding it into the value silently - a trailing
-# `--session` folds too, dropping the command onto an auto-provisioned billable
-# `default` session. The CLI's own end-of-options marker is the fix (D19).
-_VARIADIC_VERBS = frozenset({"fill", "type", "setvalue", "select", "upload", "batch"})
-_BOUNDARY = "--"
-# The canonical form per verb, quoted back on refusal so re-encoding is trivial.
-_CANONICAL_FORM = {
-    **{v: f"steel browser {v} [OPTIONS] <selector> -- <value>..." for v in
-       ("fill", "type", "setvalue", "select", "upload")},
-    "batch": 'steel browser batch [OPTIONS] -- "<cmd>" "<cmd>"...',
-}
 
 _SERVICE = None
 
@@ -151,7 +143,23 @@ async def execute_command(
     Returns the legacy {stdout, stderr, returncode, duration_ms} plus exec_id,
     http_artifact_refs and capture_warning. Older callers that pass only
     (command, session_id) keep working unchanged.
+
+    The Steel contract sanitizer runs before the downstream executor when the
+    command contains a Steel invocation. An unknown or missing session is
+    refused before any process starts. A completed Steel command is classified
+    so a shell pipeline cannot turn a browser-state failure into a zero exit.
     """
+    live: set[str] | None = None
+    steel_commands = ()
+    if "steel" in command:
+        live = _live_session_names()
+        sanitized = sanitize_shell_command(command, live_sessions=live)
+        if isinstance(sanitized, ContractError):
+            env = sanitized.envelope()
+            env.update({"exec_id": "", "http_artifact_refs": [],
+                        "capture_warning": None})
+            return env
+        steel_commands = sanitized
     try:
         result = await _offload(
             _get_service().execute,
@@ -166,17 +174,36 @@ async def execute_command(
             replay_kind=replay_kind,
         )
     except Exception as exc:  # noqa: BLE001 - never take the exec server down
+        message = f"execute_command failed: {type(exc).__name__}: {exc}"
         return {
             "stdout": "",
-            "stderr": f"execute_command failed: {type(exc).__name__}: {exc}",
+            "stderr": message,
             "returncode": 1,
             "duration_ms": 0,
             "exec_id": "",
             "http_artifact_refs": [],
             "capture_warning": f"execution error: {type(exc).__name__}: {exc}",
+            "error": {
+                "code": "command_failed",
+                "message": message,
+                "retryable": True,
+                "fatal": False,
+                "recovery": {
+                    "action": "inspect",
+                    "reason": "the execution surface raised before returning a result",
+                },
+                "suggestion": None,
+                "session": {"name": None, "live": None},
+                "platform_state": None,
+                "canonical_command": command,
+            },
         }
     result["stdout"] = _sanitize_output(result["stdout"])
     result["stderr"] = _sanitize_output(result["stderr"])
+    if steel_commands:
+        session = next((item.session for item in steel_commands if item.session), None)
+        result = classify_result(command, result, session=session,
+                                 live_sessions=live)
     return result
 
 
@@ -252,10 +279,25 @@ def _workdir(session_id: str) -> str:
     os.makedirs(workdir, exist_ok=True)
     return workdir
 
-def _refused(kind: str, detail: str) -> dict:
+def _refused(kind: str, detail: str, *, recovery: dict | None = None) -> dict:
     # Typed refusal: stable refused:<kind> prefix, never raises, never executes.
-    return {"stdout": "", "stderr": f"refused:{kind}: {detail}",
-            "returncode": 2, "duration_ms": 0}
+    return {
+        "stdout": "",
+        "stderr": f"refused:{kind}: {detail}",
+        "returncode": 2,
+        "duration_ms": 0,
+        "error": {
+            "code": kind,
+            "message": detail,
+            "retryable": False,
+            "fatal": False,
+            "recovery": recovery,
+            "suggestion": None,
+            "session": {"name": None, "live": None},
+            "platform_state": None,
+            "canonical_command": None,
+        },
+    }
 
 def _run(command: str, session_id: str, timeout_s: int) -> dict:
     # The one exec implementation both tools share: per-session workdir,
@@ -270,72 +312,6 @@ def _run(command: str, session_id: str, timeout_s: int) -> dict:
         rc, out, err = 124, (e.stdout or ""), f"timeout after {timeout_s}s"
     return {"stdout": _ANSI.sub("", out), "stderr": _ANSI.sub("", err),
             "returncode": rc, "duration_ms": int((time.time() - start) * 1000)}
-
-def _session_name(command: str) -> str | None:
-    # Narrow start-shape detection for the namespace guard: command-mode
-    # session starts only. Scripts rely on skill-constructed unique names,
-    # so script text is never scanned here.
-    if not _START_SHAPE.search(command):
-        return None
-    m = _SESSION_FLAG.search(command)
-    if not m:
-        return None
-    return m.group(1) or m.group(2) or m.group(3)
-
-
-def _shlex_tokens(text: str) -> list[str] | None:
-    # Shell-aware tokenization, so a `--` inside a quoted value stays one token
-    # and is not mistaken for the boundary. None on unparseable text: the shell
-    # rejects that itself, so the guard stays out of it rather than guess.
-    try:
-        return shlex.split(text)
-    except ValueError:
-        return None
-
-
-def _verb_of(tokens: list[str]) -> str | None:
-    # The dispatched subcommand: the token after `browser` for a top-level
-    # command, the first token for a `batch` element (which carries no `browser`).
-    for i, tok in enumerate(tokens):
-        if tok == "browser" and i > 0:
-            return tokens[i + 1] if i + 1 < len(tokens) else None
-    return tokens[0] if tokens else None
-
-
-def _boundary_gap(command: str) -> str | None:
-    # The offending verb when a variadic command omits the `--` boundary, else
-    # None. This never guesses where the boundary is and never reorders: it
-    # requires the caller to declare it with the CLI's own end-of-options token,
-    # so a canonical command cannot fold and a non-canonical one fails loudly
-    # rather than folding a trailing flag into the entered value.
-    tokens = _shlex_tokens(command)
-    if not tokens:
-        return None
-    verb = _verb_of(tokens)
-    if verb not in _VARIADIC_VERBS:
-        return None
-    if _BOUNDARY not in tokens:
-        return verb
-    if verb == "batch":
-        # Each batch element is its own command over the same variadic grammar,
-        # so a text-entry element must carry its own boundary too.
-        for element in tokens[tokens.index(_BOUNDARY) + 1:]:
-            sub = _shlex_tokens(element)
-            sub_verb = _verb_of(sub) if sub else None
-            if sub_verb in _VARIADIC_VERBS and sub_verb != "batch" \
-                    and _BOUNDARY not in sub:
-                return sub_verb
-    return None
-
-
-def _boundary_refused(verb: str) -> dict:
-    target = "commands" if verb == "batch" else "value"
-    return _refused(
-        "variadic-boundary",
-        f"{verb} needs its -- boundary before the {target}: "
-        f"{_CANONICAL_FORM[verb]} (options precede the --; everything after it "
-        "is the value, verbatim)")
-
 
 def _live_session_names() -> set[str] | None:
     # The session catalogue (re-probed live 2026-09-16): `steel browser
@@ -406,15 +382,13 @@ def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh
         if waits and max(waits) >= timeout_s:
             return _refused("timeout-ordering",
                             f"longest steel wait {max(waits)}s needs tool timeout_s above it, got {timeout_s}")
-        name = _session_name(command)
-        if name is not None:
-            live = _live_session_names()
-            if live is not None and name in live:
-                return _refused("session-taken", f"{name} is already used")
-        gap = _boundary_gap(command)
-        if gap is not None:
-            return _boundary_refused(gap)
-        return _run(command, session_id, timeout_s)
+        live = _live_session_names()
+        parsed = sanitize_steel_command(command, live_sessions=live)
+        if isinstance(parsed, ContractError):
+            return parsed.envelope()
+        result = _run(command, session_id, timeout_s)
+        return classify_result(command, result, session=parsed.session,
+                               live_sessions=live)
     if script_lang not in _SCRIPT_RUNNERS:
         return _refused("unsupported-script-lang", f"want one of {sorted(_SCRIPT_RUNNERS)}")
     if not _steel_version_ok():
@@ -426,17 +400,23 @@ def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh
 @mcp.tool()
 async def steel_exec(command: str = "", script: str = "", script_lang: str = "sh",
                      session_id: str = "steel", timeout_s: int = 600) -> dict:
-    """Run a steel CLI command or automation script in /work/{session_id} and
-    return the unchanged {stdout, stderr, returncode, duration_ms} envelope.
-    Exactly one of command/script; commands must carry the steel token.
-    Guards, in order: pinned steel version re-check; longest steel --timeout
-    must sit below timeout_s (default 600, steel clock authoritative); a
-    command-mode start on a name the live session catalogue reports is refused
-    with `<name> is already used`; a variadic command (fill/type/setvalue/
-    select/upload/batch) without the `--` boundary is refused, because clap
-    would silently fold a trailing flag into the value. Scripts carry timeout
-    ordering, unique names, and the boundary by skill construction and are
-    never scanned."""
+    """Run a Steel CLI command or automation script in /work/{session_id}.
+
+    The result keeps the legacy {stdout, stderr, returncode, duration_ms}
+    envelope and adds a canonical ``error`` object with a recovery directive
+    when the command is contextually invalid or a browser-state failure is
+    recognized. Exactly one of command/script is accepted.
+
+    Guards, in order: pinned Steel version re-check; longest Steel --timeout
+    below timeout_s; the modular contract sanitizer validates the browser
+    session before execution; a stale CDP target, missing session, stuck page,
+    or unavailable runtime is classified with recovery. The sanitizer does not
+    re-implement the CLI grammar and does not rewrite clear CLI errors.
+
+    Scripts carry timeout ordering, unique names, and the boundary by skill
+    construction and are never scanned; commands are scanned because they can
+    be composed from model-authored shell text.
+    """
     return await _offload(_steel_exec_sync, command=command, script=script,
                           script_lang=script_lang, session_id=session_id,
                           timeout_s=timeout_s)

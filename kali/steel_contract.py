@@ -358,6 +358,18 @@ def sanitize_shell_command(
         if isinstance(parsed, ContractError):
             return parsed
         commands.append(parsed)
+    sessions = {command.session for command in commands if command.session}
+    if len(sessions) > 1:
+        return _contract_error(
+            "ambiguous_session",
+            "the shell command targets more than one browser session",
+            retryable=True,
+            recovery={
+                "action": "fix_command",
+                "reason": "run one session per command",
+                "sessions": sorted(sessions),
+            },
+        )
     return tuple(commands)
 
 
