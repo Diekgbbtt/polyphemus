@@ -22,6 +22,10 @@ export EVAL_TARGET_RUN_ID="iterc-white-jotter"
 
 INSTANCE=eval-server-1
 INSTANCE_DIR="$EVAL_INSTANCES_ROOT/$INSTANCE"
+# The eval harness checkout and the eval arm code are separate lineages: the
+# orchestrator that understands the arm setup must come from the instance
+# worktree, so it is prefixed on the import path ahead of the harness copy.
+export PYTHONPATH="$INSTANCE_DIR/eval:$PYTHONPATH"
 SETUP="$INSTANCE_DIR/eval/setups/white-jotter-iteration-c.yaml"
 CHAIN_STATE="$INSTANCE_DIR/chain-state.yaml"
 MONITOR="$EVAL_REPO/eval/monitor-iteration-c.py"
