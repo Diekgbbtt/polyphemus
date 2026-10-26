@@ -24,8 +24,10 @@ INSTANCE=eval-server-1
 INSTANCE_DIR="$EVAL_INSTANCES_ROOT/$INSTANCE"
 # The eval harness checkout and the eval arm code are separate lineages: the
 # orchestrator that understands the arm setup must come from the instance
-# worktree, so it is prefixed on the import path ahead of the harness copy.
+# worktree. The driver shell needs it on PYTHONPATH, and the harness plugin that
+# runs `next_target` overrides PYTHONPATH itself, so it reads the dedicated var.
 export PYTHONPATH="$INSTANCE_DIR/eval:$PYTHONPATH"
+export EVAL_ORCHESTRATOR_PYTHONPATH="$INSTANCE_DIR/eval:eval"
 SETUP="$INSTANCE_DIR/eval/setups/white-jotter-iteration-c.yaml"
 CHAIN_STATE="$INSTANCE_DIR/chain-state.yaml"
 MONITOR="$EVAL_REPO/eval/monitor-iteration-c.py"
