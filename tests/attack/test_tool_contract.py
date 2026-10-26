@@ -134,7 +134,10 @@ def test_modeller_notes_write_without_option_is_rejected(tmp_path):
 
 def test_modeller_hunts_store_schema_carries_enum_and_descriptions(tmp_path):
     params = _params(_surface(ThreatModelStore(root_dir=tmp_path))["hunts_store"])
-    assert params["properties"]["cmd"]["enum"] == ["read", "write"]
+    assert params["properties"]["cmd"]["enum"] == ["read", "write", "query"]
+    assert params["properties"]["kind"]["description"].startswith("Query filter")
+    assert "filters" in params["properties"]
+    assert params["properties"]["limit"]["maximum"] == 50
     for name, prop in params["properties"].items():
         assert prop.get("description"), f"{name} has no description"
 
