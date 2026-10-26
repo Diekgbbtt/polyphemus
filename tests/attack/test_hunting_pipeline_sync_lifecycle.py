@@ -161,9 +161,9 @@ def test_surfer_degraded_pod_export_is_durable(tmp_path):
         pod_builder=_raising_builder, pod_store=pod,
     ))
 
-    assert export["terminal_reason"] == "surfer-dispatch-degraded"
+    assert export["evidence"]["terminal_reason"] == "surfer-dispatch-degraded"
     stored = pod.read_pod_export("spec__f__keep", RUN)
-    assert stored["terminal_reason"] == "surfer-dispatch-degraded"
+    assert stored["evidence"]["terminal_reason"] == "surfer-dispatch-degraded"
     assert stored["verdict"] == "unsuccessful"
 
 
@@ -381,3 +381,27 @@ def test_run_hunter_session_settles_when_the_graph_degrades(tmp_path, monkeypatc
     marker = hunter.read_terminal_set(PROJECT, hunt)
     assert marker is not None
     assert marker["spec_statuses"] == {"spec__f__draft": "dropped"}
+
+
+def test_a_resume_cursor_does_not_count_as_a_terminal_export(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    hunt = "u1__threat-1"
+    _write_set(hunter, hunt, [_spec("f", "keep", "ratified")])
+    hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+    hunter.consume_spec(PROJECT, hunt, "spec__f__keep")
+    pod.write_resume("spec__f__keep", RUN, {
+        "schema_version": 1,
+        "last_order": 0,
+        "current_variant_ref": "v0",
+        "iteration": 1,
+        "feedback": "",
+        "executed": [],
+    })
+
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+    )
+
+    assert complete is False
+    assert any("no PodExport" in reason for reason in reasons)

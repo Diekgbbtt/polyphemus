@@ -139,6 +139,8 @@ storage-backed or registry-backed; no new artifact kind is introduced.
   A pod still executing keeps its unit current; a transiently failed pod has no export, so
   F-017 recovers its spec and the mover re-dispatches it after the per-child backoff - the
   pod cursor holds meanwhile.
+  A stopped pod has a resume cursor and no export: the cursor is not a terminal, the gate
+  holds, and the next dispatch resumes from the cursor variant.
 - A batch (or the serial cursor) with an EMPTY member set advances immediately: a zero-threat
   unit skips hunting, a hunt with zero `ratified` specs skips the pod phase.
 - Empty-unit cases therefore never wedge the queue; a degraded hunt holds its unit until a
@@ -272,22 +274,32 @@ The `serial` fix is a product decision:
 Until that decision lands, do not run `serial` on a unit whose only remaining
 threats are `low` while a later unit still has produced medium/high threats.
 
-## The stall fail-safes (2026-10-25)
+## The stall fail-safes (2026-10-25, amended 2026-10-26)
 
 The tier hold above is a sequencing defect.
 Two lifecycle fail-safes bound the OTHER stall classes:
 
-- **The per-session watchdog.** `RunDispatchState.session_timeout_s` (default
-  2700 seconds) wraps each hunter and pod graph.
-  A hunter past its window releases its registration and settles its drafts; a
-  pod past its window writes a `budget-timeout` PodExport.
+- **The pod failure boundary.** The pod graph's async nodes carry a
+  `TimeoutPolicy` (600-second node idle, 300-second tool idle) and an
+  `error_handler` that writes a typed `PodExport` from the durable trail:
+  `node-timeout`, `context-window-exceeded`, `graph-limit`, or `tool-timeout`.
+  A provider quota or transport failure re-raises to the surfer and never
+  becomes a domain verdict.
+  The surfer's per-session watchdog is a last-resort backstop: 2700 seconds for
+  a hunter, 3600 seconds for a pod; the pod path writes `pod-watchdog-timeout`.
   The queue advances from storage, not from a transient registry fact.
+- **The durable resume cursor.** A stopped pod writes
+  `<spec_id>/<run_id>.resume.yaml` and no export.
+  The cursor is not a terminal; the gate holds, and the next dispatch hydrates
+  the experiment log and skips the executed probes.
 - **The malformed fail-safe.** A produced body the store cannot parse is
   dispatched as a degraded pod, consumed, and closed by its PodExport.
   It is never left produced to hold the queue.
 
 The comparison and the risk table are in
 `docs/design/hunting-lifecycle-failsafe.md`.
+The pod graph owns the primary failure path; the surfer remains the local
+last-resort backstop.
 The lower control plane's thread state was not used: it needs a second source
-of truth and a worker-thread-to-hunt mapping, while the watchdog is local to
-the dispatched coroutine and leaves a durable degraded record.
+of truth and a worker-thread-to-hunt mapping, while the pod graph's node
+timeouts and the surfer's backstop stay local and leave a durable record.

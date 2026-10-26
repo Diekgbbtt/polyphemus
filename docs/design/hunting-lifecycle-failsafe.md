@@ -1,6 +1,6 @@
 # Hunting lifecycle fail-safe
 
-*Status: implemented on `fix/hunt-spec-contract-realign`.*
+*Status: implemented on `fix/hunt-spec-contract-realign`; the pod failure boundary and durable resume were added 2026-10-26.*
 
 ## The problem
 
@@ -17,8 +17,8 @@ The gate keeps an anomaly record only for:
 2. a write appears after the terminal marker;
 3. the body is malformed.
 
-Only cases 1 and 2 can hold the queue for an unbounded time, and the session
-watchdog bounds case 1.
+Only cases 1 and 2 can hold the queue for an unbounded time, and the pod
+failure boundary plus the surfer backstop bound case 1.
 Case 3 is recorded and dispatched as a degraded pod, never held.
 
 ## The malformed fail-safe
@@ -34,39 +34,82 @@ The algorithm changed from "skip and block" to "dispatch, consume, export".
    recorded parse error.
 5. The pod's `init_route` rejects only when no probe URL exists; every other
    violation is recorded and the runner attempts a probe.
-6. The pod writes a PodExport on every path, including INIT rejection and the
-   outer degrade path.
+6. The pod writes a PodExport on every terminal path, including INIT rejection
+   and the outer degrade path. A resumable stop writes a cursor and no export.
 7. The mover consumes the spec; the pod export is the completion fact.
 
 A consumed malformed body is terminal once its PodExport exists.
 Without an export it remains an anomaly and the quiesce blocks.
 
-## The session watchdog
+## The pod failure boundary (2026-10-26)
 
-`RunDispatchState.session_timeout_s` defaults to 2700 seconds (45 minutes).
+The primary failure detection is in the pod graph, not in the surfer.
 
-- `run_hunter_session` wraps its graph in `asyncio.wait_for`.
-  On timeout the registration is released, `settle_hypothesised` declasses the
-  leftover drafts, and the terminal marker lands.
-- `run_pod_session` wraps its pod builder in `asyncio.wait_for`.
-  On timeout it writes a `budget-timeout` PodExport with `clean=false`.
-- The value is a run-state attribute, so a trial can tighten it without a code
-  change.
+- `PodTimeouts` gives `runner_agent`, `triager`, and `tool_exec` a LangGraph
+  `TimeoutPolicy`.
+  The node idle timeout is 600 seconds and the tool idle timeout is 300 seconds.
+  A node run timeout is off by default; the surfer's one-hour pod backstop is the
+  hard wall clock.
+- The idle clock resets on model tokens, tool results, state writes, and
+  child-task starts. A healthy but slow pod is not killed by a fixed deadline.
+- The node `error_handler` classifies the failure:
+  - a provider 429, 5xx, transport timeout, or quota is re-raised for the
+    surfer's retry and pause policy;
+  - a node timeout, context-window overflow, graph recursion limit, or tool
+    timeout routes to `degraded_terminal`;
+  - a generic error keeps the existing `technical-infeasibility` degrade.
+- `degraded_terminal` writes a `PodExport` from the durable experiment log with
+  the typed reason and the partial trail.
+- The surfer's watchdog is a last-resort backstop.
+  The hunter backstop stays at 2700 seconds; the pod backstop is 3600 seconds.
+  It calls the finalizer, which writes `pod-watchdog-timeout` from the durable
+  trail, never `budget-timeout`.
+- The pod's own lap budget still writes `budget-timeout`.
+  The two reasons are no longer conflated.
 
-This is simpler and more reliable than polling the lower control plane's thread
-state:
+The provider classifier remains the ONE infrastructure policy.
+A provider failure never becomes a domain verdict and never writes a
+`PodExport`; the surfer records the child failure, backs off, and pauses the run
+on quota exhaustion.
 
-- the watchdog is local to the dispatched coroutine and needs no extra API;
-- it covers a wedged model call and a wedged harness turn alike;
-- it leaves a durable degraded record (a terminal set or a PodExport), so the
-  queue advances from storage, not from a transient registry fact;
-- the thread-state approach needs a second source of truth and a mapping from a
-  worker thread to a hunt, which is exactly the coupling the run-local state
-  already avoids.
+## The one terminal writer (2026-10-26)
 
-The existing `a16bb256` settle remains the first line of defence: a graph that
-ends without a finalize settles immediately.
-The watchdog is the second line: a graph that never ends is bounded.
+`pod/finalize.py` is the only production writer of a `PodExport`.
+The pod graph, the pod entry point, and the surfer call it.
+
+- It assembles the evidence from the in-memory `ExperimentLog` or hydrates the
+  durable store.
+- A fallback terminal never overwrites an existing execution terminal.
+- An execution terminal replaces a prior export for the same spec and run, so a
+  legitimate re-dispatch still rewrites its own result.
+- A per-`(spec_id, run_id)` lock serializes the check-and-write.
+- It clears the resume cursor only after the durable export exists.
+
+The surfer no longer builds an envelope.
+The source guard in `tests/attack/pod/test_finalize.py` fails if another
+production module calls `write_pod_export`.
+
+## Durable resume
+
+A stopped pod is resumable at the variant boundary.
+
+- `PodMemoryStore` writes `<spec_id>/<run_id>.resume.yaml`.
+  The cursor is a sibling of the terminal export and is never an export.
+- The cursor records the last order, the current variant, the iteration, the
+  feedback, and the executed ledger.
+- `ExperimentLog.hydrate` rebuilds the variants, raw observations, KB
+  observations, interpretations, and the executed ledger from the per-order
+  slices.
+- `init` restarts at the cursor variant. The tools skip every probe signature
+  already in the executed ledger.
+- The finalizer clears the cursor after a terminal export exists.
+- A cancelled pod writes no export. The gate holds the hunt because no durable
+  export exists; the mover's consumed-spec recovery re-offers the spec after the
+  backoff, and the next dispatch resumes from the cursor.
+
+The inner `stateful_turn` checkpointer remains the conversation memory of the
+pod roles.
+The outer pod graph does not add a second checkpointer.
 
 ## Measured failure: iteration B, 2026-10-26
 
@@ -83,10 +126,11 @@ The pods were progressing, not wedged:
 The unit-wide pod batch put 20 pods on the qemu target at once.
 One lap could consume the whole window, so the pod's own lap budget never fired.
 The per-hunt pod sequencing change (ticket 431) reduces the concurrency.
-The watchdog still needs a progress-aware or inactivity-based window, and it
-must preserve the pod's own terminal and partial experiment log (ticket 425).
-Until then, a watchdog `budget-timeout` export is a degraded execution, never
-evidence that the pod exhausted its own budget.
+The pod failure boundary above (tickets 425, 432, 434) replaces the fixed pod
+deadline with a progress-resetting idle timeout, a typed pod terminal, and a
+one-hour surfer backstop.
+The surfer path no longer writes `budget-timeout`; that reason now means only
+the pod's own lap budget.
 
 ## Risk assessment
 
@@ -97,7 +141,9 @@ evidence that the pod exhausted its own budget.
 | A malformed body carries no target URL | low | the pod cannot probe | `init_route` rejects and the PodExport records it; the queue moves |
 | A consumed malformed body has no export | low | the quiesce blocks forever | the mover recovers it as a degraded pod; a missing export stays an anomaly only until the retry lands |
 | A hunter graph never ends | medium | the gate holds every later unit | the 45-minute watchdog settles the hunt and releases the registration |
-| A pod graph never ends | medium | the spec stays consumed with no export | the watchdog writes a `budget-timeout` PodExport |
+| A pod node stops making progress | medium | the spec stays consumed with no export | the 600-second node idle timeout routes to the typed pod terminal |
+| A pod process is stopped mid-run | medium | the spec has no export and the gate holds forever | the resume cursor hydrates the next dispatch; the gate holds until the terminal export |
+| A provider quota is exhausted | medium | a domain verdict would fabricate a miss | the provider failure is re-raised; the surfer pauses the run; no PodExport |
 | A terminal marker exists but a new draft lands after it | low | the cursor could skip a late spec | the gate records the late write as an anomaly; the store rejects a write after finalize |
 | The target origin is unreadable | low | the bound identity is empty | the hunter keeps the authored override; the pod records the INIT violation |
 

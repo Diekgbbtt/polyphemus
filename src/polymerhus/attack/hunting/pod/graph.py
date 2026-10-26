@@ -11,7 +11,8 @@ and the contract:
   G1 termination - the ReAct loop is capped at `HUNT_POD_MAX_TOOL_CALLS` per
      stretch by the harness middleware (D84-22) and the outer loop at
      `HUNT_POD_MAX_ITERS` stretches (`decide_router`); LangGraph's recursion
-     limit is the backstop.
+     limit is the backstop, and the async nodes carry the pod's own
+     `TimeoutPolicy` idle/run bounds.
   G2 safety      - a malformed exec call is rejected by the harness gate; tool
      ARGUMENT validation is the tool's own `extra="forbid"` contract (a wrong
      parameter is a REJECTED tool call, never re-validated by the harness).
@@ -20,8 +21,10 @@ and the contract:
   G4 honesty     - every exec result is recorded RAW in the experiment log (D6)
      by the exec tool before curation.
   G5 fail-open   - a raising collaborator degrades to a terminal with the partial
-     trail; nothing raises a DOMAIN failure past `arun_pod` (a provider
-     failure propagates as the typed `ProviderUnavailableError`, #329).
+     trail; a node timeout, context overflow, graph limit, or tool timeout is a
+     typed harness terminal from `degraded_terminal`. Nothing raises a DOMAIN
+     failure past `arun_pod` (a provider failure propagates as the typed
+     `ProviderUnavailableError`, #329).
 
 The FSM (production):
 
@@ -59,8 +62,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from datetime import datetime, timezone
 
+from langgraph.errors import NodeError
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, TimeoutPolicy
 
 from polymerhus.attack.hunting.pod.agents import (
     default_divergence_fn,
@@ -74,11 +80,15 @@ from polymerhus.attack.hunting.pod.prompts import (
     load_pod_triager_skill,
 )
 from polymerhus.attack.hunting.pod.config import (
+    DEFAULT_POD_TIMEOUTS,
     EXEC_TIMEOUT_S,
     HUNT_POD_MAX_ITERS,
     HUNT_POD_MAX_TOOL_CALLS,
     MAX_POD_ITERS,
+    PodTimeouts,
 )
+from polymerhus.attack.hunting.pod.failures import classify_pod_failure
+from polymerhus.attack.hunting.pod.finalize import PodTerminal, finalize_pod
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
@@ -105,10 +115,10 @@ from polymerhus.attack.hunting.pod.tools import (
 )
 from polymerhus.attack.hunting.pod.types import (
     BUDGET_TIMEOUT,
+    HARNESS_TERMINAL_REASONS,
     INFEASIBILITY_SIGNAL_CLASS,
     Interpretation,
     NO_SYMPTOM_EVIDENCE,
-    PodExport,
     PodState,
     RawObservation,
     RunnerStep,
@@ -297,42 +307,71 @@ async def _await_seam(fn, *args):
     return await asyncio.to_thread(fn, *args)
 
 
-def _persist_pod_export(state: PodState, log: ExperimentLog,
-                        envelope: dict) -> None:
-    """The deterministic terminal persistence of the `PodExport` envelope
-    (T7/#183, GP1/GP4): `<spec_id>/<run_id>.yaml`, idempotent overwrite, written
-    by the terminal node - never an LLM seam (the pure-log invariant extends to
-    the export). Only happens when a store is bound (the log carries it) with a
-    spec_id (fail-closed). Fail-open (O3/IA-4): a write failure degrades to the
-    in-memory envelope - the run still returns it, never raising into the parent."""
+def _persist_resume(state: PodState, *, feedback: str | None = None,
+                    last_order: int | None = None, ref: str | None = None,
+                    iteration: int | None = None) -> None:
+    """Persist the variant-boundary resume cursor.
+
+    The cursor lives beside the terminal export and is never an export itself.
+    A write failure is fail-open: the pod continues, and the terminal export is
+    still the completion fact.
+    """
+    log = state.get("log")
     store = getattr(log, "store", None)
     spec_id = getattr(log, "spec_id", None)
     if store is None or not spec_id:
         return
+    current_ref = ref or str(state.get("current_variant_ref") or "v0")
+    order = last_order
+    if order is None:
+        try:
+            order = int(current_ref[1:]) if current_ref.startswith("v") else 0
+        except ValueError:
+            order = 0
+    cursor = {
+        "schema_version": 1,
+        "spec_id": spec_id,
+        "run_id": state.get("run_id") or POD_DEFAULT_RUN_ID,
+        "last_order": int(order),
+        "current_variant_ref": current_ref,
+        "iteration": int(iteration if iteration is not None
+                         else state.get("iteration", 1)),
+        "feedback": (feedback if feedback is not None
+                     else str(state.get("feedback") or "")),
+        "executed": list(getattr(log, "executed", [])),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
     try:
-        store.write_pod_export(spec_id, state.get("run_id") or POD_DEFAULT_RUN_ID,
-                               envelope)
-    except Exception as exc:  # noqa: BLE001 - fail-open (O3/IA-4)
-        logger.warning("pod export persistence failed, returning the in-memory "
-                       "envelope (%s)", exc)
+        store.write_resume(
+            spec_id, state.get("run_id") or POD_DEFAULT_RUN_ID, cursor)
+    except Exception as exc:  # noqa: BLE001 - resume is best-effort
+        logger.warning("pod resume cursor write failed (%s)", exc)
 
 
 def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
             init_validation=None, error=None) -> dict:
-    log: ExperimentLog = state["log"]
-    export = PodExport(
-        verdict=verdict, terminal_reason=reason,
-        iterations=state.get("iteration", 0), clean=clean,
-        init_validation=list(init_validation or []),
-        variant_specs=[v.model_dump() for v in log.variant_specs],
-        raw_observations=[o.model_dump() for o in log.raw_observations],
-        interpretations=[i.model_dump() for i in log.interpretations],
-        error=error)
-    envelope = export.to_envelope()
-    # T7 (#183): the pod OWNS the persistence of its OWN terminal result - the
-    # `PodExport` envelope - written here by this deterministic terminal node.
-    # The persisted record EQUALS the envelope returned to the parent.
-    _persist_pod_export(state, log, envelope)
+    """Render a terminal through the ONE pod finalizer.
+
+    The finalizer owns the evidence assembly, the write, and the cursor clear.
+    The graph only selects the terminal fields.
+    """
+    log = state.get("log")
+    store = getattr(log, "store", None)
+    spec_id = getattr(log, "spec_id", "")
+    iterations = state.get("iteration", 0)
+    if reason in HARNESS_TERMINAL_REASONS:
+        terminal = PodTerminal.infrastructure(
+            reason=reason, error=error, iterations=iterations,
+            init_validation=init_validation or ())
+    else:
+        terminal = PodTerminal.domain(
+            verdict=verdict, reason=reason, clean=clean, error=error,
+            iterations=iterations, init_validation=init_validation or ())
+    envelope = finalize_pod(
+        store=store, spec_id=spec_id,
+        run_id=state.get("run_id") or POD_DEFAULT_RUN_ID,
+        terminal=terminal, log=log, replace_existing=True,
+    )
     return {"export": envelope, "verdict": verdict, "terminal_reason": reason}
 
 
@@ -442,12 +481,45 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
         replay_fn=replay_fn, task_skills=_spec_task_skills(state))
 
 
+def _timeout_policy(idle_s: float | None,
+                    run_s: float | None) -> TimeoutPolicy | None:
+    """The LangGraph node timeout policy, or None when both bounds are off."""
+    if idle_s is None and run_s is None:
+        return None
+    return TimeoutPolicy(idle_timeout=idle_s, run_timeout=run_s)
+
+
+def _pod_error_handler(state: PodState, error: NodeError) -> Command:
+    """Turn a typed execution failure into the pod's degraded terminal.
+
+    Provider failures are re-raised so the surfer retries or pauses the run and
+    no domain verdict is fabricated. A generic error is re-raised into
+    `arun_pod`'s existing domain degrade. A typed infrastructure failure routes
+    to the terminal with its reason and detail.
+    """
+    failure = classify_pod_failure(error.error, node=error.node)
+    if failure is None:
+        raise error.error
+    return Command(
+        update={"error": failure.detail, "terminal_reason": failure.reason},
+        goto="degraded_terminal",
+    )
+
+
+def _degraded_terminal(state: PodState) -> dict:
+    """Write the typed failure terminal from the pod's durable trail."""
+    reason = state.get("terminal_reason") or TECHNICAL_INFEASIBILITY
+    error = state.get("error")
+    return _export(
+        state, verdict="unsuccessful", reason=reason, clean=False, error=error)
+
+
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     triager_stages=None,
                     runner_middleware=(), triager_middleware=(),
                     memory_store=None, model_factory=None,
                     project_id=None, spec_id=None, graph_view_fn=None,
-                    replay_fn=None):
+                    replay_fn=None, timeouts: PodTimeouts | None = None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -481,7 +553,11 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     - `graph_view_fn` - the read-only L0/L1 view seam (#197); when None AND a
       project_id is given, resolved to `ReadOnlyGraphView(project_id).read` so
       the production pod always binds the shared `graph_view` tool.
+    - `timeouts` - the pod graph's node and tool bounds. The defaults are the
+      pod's own idle/run budgets; the surfer's watchdog is a backstop above
+      them.
     """
+    timeouts = timeouts or DEFAULT_POD_TIMEOUTS
     if runner_step_fn is None:
         runner_step_fn = default_runner_step_fn
         production_runner = True
@@ -507,6 +583,54 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     def init(state: PodState) -> dict:
         spec = dict(state["spec"])
         mem_key = _mem_key(state, spec_id, memory_store)
+        run_id = state.get("run_id") or POD_DEFAULT_RUN_ID
+        resume: dict = {}
+        if memory_store is not None and mem_key:
+            try:
+                resume = memory_store.read_resume(mem_key, run_id) or {}
+            except Exception as exc:  # noqa: BLE001 - resume is best-effort
+                logger.warning(
+                    "pod resume cursor read failed (%s); starting fresh", exc)
+        if resume:
+            # The variant-boundary resume: the durable slices rebuild the D6
+            # trail and the executed ledger, and the cursor names the variant
+            # to continue from. The pod does not replay a completed variant.
+            log = ExperimentLog(store=memory_store, spec_id=mem_key)
+            if log.hydrate():
+                current_ref = str(resume.get("current_variant_ref") or "v0")
+                variant = next(
+                    (v for v in log.variant_specs if v.ref == current_ref),
+                    None,
+                )
+                current_spec = dict(variant.spec) if variant is not None else spec
+                iteration = int(
+                    resume.get("iteration") or len(log.variant_specs) or 1)
+                feedback = str(resume.get("feedback") or "")
+                violations = validate_spec(current_spec)
+                runner_messages = [
+                    {"role": "system", "content": load_pod_runner_skill()}]
+                if not violations and not production_runner:
+                    runner_messages.append({
+                        "role": "human",
+                        "content": log.runner_context(
+                            current_spec, feedback, iteration,
+                            HUNT_POD_MAX_ITERS),
+                    })
+                update = {
+                    "log": log, "root_spec": spec, "spec": current_spec,
+                    "init_validation": violations, "iteration": iteration,
+                    "current_variant_ref": current_ref or "v0",
+                    "feedback": feedback, "run_id": run_id,
+                    "runner_messages": _dicts_to_lc(runner_messages),
+                    "triager_messages": _dicts_to_lc(
+                        [{"role": "system", "content": load_pod_triager_skill()}]),
+                    "tool_calls": 0, "stretch_obs": 0,
+                }
+                _persist_resume(
+                    update, feedback=feedback,
+                    last_order=int(resume.get("last_order") or 0),
+                    ref=current_ref or "v0", iteration=iteration)
+                return update
         # T2: the in-memory ExperimentLog is ALSO the symbolic-layer capture
         # middleware - bound to the store it re-persists every deterministic
         # mutation to the variant's experiment-log slice (init records v0 here).
@@ -519,15 +643,18 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             runner_messages.append(
                 {"role": "human",
                  "content": log.runner_context(spec, "", 1, HUNT_POD_MAX_ITERS)})
-        return {
+        update = {
             "log": log, "root_spec": spec, "spec": spec,
             "init_validation": violations, "iteration": 1,
-            "current_variant_ref": "v0", "feedback": "",
+            "current_variant_ref": "v0", "feedback": "", "run_id": run_id,
             "runner_messages": _dicts_to_lc(runner_messages),
             "triager_messages": _dicts_to_lc(
                 [{"role": "system", "content": load_pod_triager_skill()}]),
             "tool_calls": 0, "stretch_obs": 0,
         }
+        _persist_resume(
+            update, feedback="", last_order=0, ref="v0", iteration=1)
+        return update
 
     def init_router(state: PodState) -> str:
         # C1: a spec with no probe URL cannot run a single call, so it stops
@@ -541,6 +668,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
 
     async def runner_agent(state: PodState) -> dict:
         spec = state["spec"]
+        # A stop during this stretch resumes at the current variant and skips
+        # the probes the durable executed ledger already carries.
+        _persist_resume(state)
         if production_runner:
             log: ExperimentLog = state["log"]
             mem_key = _mem_key(state, spec_id, memory_store)
@@ -578,6 +708,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     step = RunnerStep(action="conclude", exhausted=True,
                                       observation_note="malformed runner turn")
             obs_added = len(log.raw_observations) - before_obs
+            _persist_resume(state)
             return {
                 "pending_step": step.model_dump(),
                 # D84-11: the consumed inbox delta is deleted on consumption
@@ -607,6 +738,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                   observation_note="malformed runner step")
         ai = (f"thought: {step.thought}\naction: {step.action} "
               f"{step.tool} {step.command}{step.kb_query}").strip()
+        _persist_resume(state)
         # D84-4: deposit ONLY the turn's new messages - `add_messages` merges
         # them onto the channel (never the replacement list).
         return {"pending_step": step.model_dump(),
@@ -781,6 +913,11 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         log.record_interpretation(Interpretation(
             variant=state.get("current_variant_ref", "v0"),
             classification=decision.get("classification", ""), note=decision.get("note", "")))
+        _persist_resume(
+            state,
+            feedback=(decision.get("feedback", "")
+                      if decision.get("action") == "variant" else ""),
+        )
         # D84-4: deposit ONLY this lap's new messages (the context turn + the
         # decision turn); `add_messages` merges them onto the triager channel.
         return {"decision": decision,
@@ -822,6 +959,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         out = {"current_variant_ref": ref, "spec": variant_spec, "iteration": iteration,
                "tool_calls": 0, "stretch_obs": 0,
                "feedback": decision.get("feedback", "")}
+        _persist_resume(
+            state, feedback=decision.get("feedback", ""),
+            last_order=len(log.variant_specs) - 1, ref=ref, iteration=iteration)
         if production_runner:
             # The runner_agent node composes the next lap's delta on entry and
             # clears the inbox on consumption (D84-9/11) - no deposit here.
@@ -871,12 +1011,18 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         return _export(state, verdict="unsuccessful", reason=BUDGET_TIMEOUT, clean=False)
 
     g = StateGraph(PodState)
-    for name, fn in [("init", init), ("runner_agent", runner_agent),
-                     ("triager", triager), ("mint_variant", mint_variant),
+    for name, fn in [("init", init), ("mint_variant", mint_variant),
                      ("terminal", terminal), ("infeasible_terminal", infeasible_terminal),
                      ("exhausted_terminal", exhausted_terminal),
-                     ("budget_terminal", budget_terminal)]:
+                     ("budget_terminal", budget_terminal),
+                     ("degraded_terminal", _degraded_terminal)]:
         g.add_node(name, fn)
+
+    node_timeout = _timeout_policy(timeouts.node_idle_s, timeouts.node_run_s)
+    g.add_node("runner_agent", runner_agent, timeout=node_timeout,
+               error_handler=_pod_error_handler)
+    g.add_node("triager", triager, timeout=node_timeout,
+               error_handler=_pod_error_handler)
 
     g.add_edge(START, "init")
     g.add_conditional_edges("init", init_router,
@@ -890,7 +1036,11 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                  "exhausted": "exhausted_terminal",
                                  "infeasible": "infeasible_terminal"})
     else:
-        g.add_node("tool_exec", tool_exec)
+        g.add_node(
+            "tool_exec", tool_exec,
+            timeout=_timeout_policy(timeouts.tool_idle_s, timeouts.tool_run_s),
+            error_handler=_pod_error_handler,
+        )
         g.add_conditional_edges("runner_agent", runner_router,
                                 {"tool": "tool_exec", "triager": "triager",
                                  "exhausted": "exhausted_terminal",
@@ -900,7 +1050,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                             {"terminal": "terminal", "variant": "mint_variant",
                              "budget": "budget_terminal"})
     g.add_edge("mint_variant", "runner_agent")
-    for t in ("terminal", "infeasible_terminal", "exhausted_terminal", "budget_terminal"):
+    for t in ("terminal", "infeasible_terminal", "exhausted_terminal",
+              "budget_terminal", "degraded_terminal"):
         g.add_edge(t, END)
     return g.compile()
 

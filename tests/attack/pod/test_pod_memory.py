@@ -502,3 +502,73 @@ def test_failed_variant_dump_leaves_prior_content_intact(store, monkeypatch):
     monkeypatch.undo()
 
     assert store.read_variant(SPEC_ID, "v0") == {"variant_ref": "v0", "payload": "a"}
+
+
+# --- the durable resume cursor (2026-10-26) ----------------------------------
+
+RESUME_CURSOR = {
+    "schema_version": 1,
+    "last_order": 1,
+    "current_variant_ref": "v1",
+    "iteration": 2,
+    "feedback": "try the alternate spelling",
+    "executed": ["sig-a", "sig-b"],
+}
+
+
+def test_resume_cursor_round_trips_and_clears(store):
+    store.write_resume(SPEC_ID, "run-42", RESUME_CURSOR)
+    assert store.read_resume(SPEC_ID, "run-42") == RESUME_CURSOR
+    store.clear_resume(SPEC_ID, "run-42")
+    assert store.read_resume(SPEC_ID, "run-42") == {}
+
+
+def test_resume_cursor_is_per_spec_and_run(store):
+    store.write_resume(SPEC_ID, "run-42", RESUME_CURSOR)
+    assert store.read_resume(OTHER_ID, "run-42") == {}
+    assert store.read_resume(SPEC_ID, "run-43") == {}
+
+
+def test_a_resume_cursor_is_not_a_pod_export(store):
+    store.write_resume(SPEC_ID, "run-42", RESUME_CURSOR)
+    assert store.list_pod_exports(SPEC_ID) == []
+    assert store.read_pod_export(SPEC_ID, "run-42") == {}
+
+
+def test_clear_resume_is_idempotent(store):
+    store.clear_resume(SPEC_ID, "missing")
+    assert store.read_resume(SPEC_ID, "missing") == {}
+
+
+def test_experiment_log_hydrates_variants_observations_and_executed(store):
+    from polymerhus.attack.hunting.pod.context import ExperimentLog
+    from polymerhus.attack.hunting.pod.types import (
+        Interpretation,
+        RawObservation,
+        VariantSpec,
+    )
+
+    log = ExperimentLog(store=store, spec_id=SPEC_ID)
+    log.start_run()
+    log.record_variant(VariantSpec(ref="v0", spec={"rationale": "first"}))
+    log.mark_executed("sig-a")
+    log.record_observation(RawObservation(
+        probe_ref="sig-a", variant_ref="v0", status=200, body="ok"))
+    log.record_interpretation(Interpretation(
+        variant="v0", classification="noise", note="keep going"))
+
+    hydrated = ExperimentLog(store=store, spec_id=SPEC_ID)
+
+    assert hydrated.hydrate() is True
+    assert [v.ref for v in hydrated.variant_specs] == ["v0"]
+    assert hydrated.variant_specs[0].spec == {"rationale": "first"}
+    assert [o.probe_ref for o in hydrated.raw_observations] == ["sig-a"]
+    assert [i.note for i in hydrated.interpretations] == ["keep going"]
+    assert hydrated.executed == ["sig-a"]
+
+
+def test_experiment_log_hydrate_is_empty_without_a_store_or_slices(store):
+    from polymerhus.attack.hunting.pod.context import ExperimentLog
+
+    assert ExperimentLog(store=None, spec_id=SPEC_ID).hydrate() is False
+    assert ExperimentLog(store=store, spec_id=SPEC_ID).hydrate() is False

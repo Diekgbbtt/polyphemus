@@ -11,7 +11,11 @@ import asyncio
 
 from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.agents import TriagerDecision, symbolic_runner_step_fn
-from polymerhus.attack.hunting.pod.types import TERMINAL_REASONS
+from polymerhus.attack.hunting.pod.types import (
+    DOMAIN_TERMINAL_REASONS,
+    HARNESS_TERMINAL_REASONS,
+    TERMINAL_REASONS,
+)
 from polymerhus.attack.hunting.pod.variant_basis import (
     PROCEDURE_GAP_BASES,
     VARIANT_BASES,
@@ -233,13 +237,19 @@ def test_a_fully_covered_procedure_cannot_mint_a_claimed_gap_basis():
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
 
 
-def test_the_terminal_vocabulary_is_unchanged():
+def test_the_terminal_vocabulary_separates_domain_and_harness_reasons():
     # The eleven bases are a DECISION vocabulary; the terminal_reason vocabulary
-    # stays the six Q3-amended literals and never absorbs a basis.
+    # never absorbs a basis. The domain reasons are the triager's choices; the
+    # harness reasons are pod-graph and surfer terminals.
     assert set(VARIANT_BASES) & set(TERMINAL_REASONS) == set()
-    assert TERMINAL_REASONS == {
+    assert DOMAIN_TERMINAL_REASONS == {
         "symptom-confirmed", "space-exhausted", "technical-infeasibility",
-        "specific-defence-prevention", "no-symptom-evidence", "budget-timeout"}
+        "specific-defence-prevention", "no-symptom-evidence"}
+    assert HARNESS_TERMINAL_REASONS == {
+        "budget-timeout", "node-timeout", "context-window-exceeded",
+        "graph-limit", "tool-timeout", "pod-watchdog-timeout",
+        "surfer-dispatch-degraded"}
+    assert TERMINAL_REASONS == DOMAIN_TERMINAL_REASONS | HARNESS_TERMINAL_REASONS
 
 
 def test_the_triager_decision_carries_the_coverage_assessment():

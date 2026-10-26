@@ -39,6 +39,8 @@ precedent); the #73 retry wrapper resolves lazily inside `summarise`.
 """
 from __future__ import annotations
 
+from polymerhus.app.llm.context_window import classify_terminal
+
 import datetime as dt
 import logging
 from dataclasses import dataclass, field
@@ -55,16 +57,6 @@ logger = logging.getLogger(__name__)
 # resume point, or carrying unparseable fields. 200-500 tokens is dense enough to
 # carry all eight concepts yet small enough that compaction still reclaims room.
 SUMMARY_TARGET_TOKENS = (200, 500)
-
-# The terminal window-cap markers (D6), matched case-insensitively against the
-# exception's name/message/code/body - a superset of the openai BadRequestError
-# `code="context_length_exceeded"` and its message phrasing.
-_TERMINAL_MARKERS = (
-    "context_length_exceeded",
-    "maximum context length",
-    "context length",
-)
-
 
 class _TerminalWindowError(BaseException):
     """Sentinel for a window-cap failure (D6).
@@ -410,44 +402,6 @@ def is_quality_summary(update: Any) -> bool:
         if not isinstance(getattr(ts, name, None), list):
             return False
     return True
-
-
-# --- terminal classification (D6) --------------------------------------------
-
-def classify_terminal(exc: Any) -> bool:
-    """Detect a provider context-length / window-cap error (D6).
-
-    Inspects the exception type name, message, `code`, and body, case-insensitively
-    scanning the three ratified markers; the openai `BadRequestError` shape
-    (`code` / `message` / `body["error"]`) is covered by each scan surface.
-    Fail-open: anything unrecognised - or unclassifiable - is NOT terminal, never
-    a raise."""
-    try:
-        if exc is None:
-            return False
-        haystack: list[str] = []
-        type_name = type(exc).__name__
-        if type_name:
-            haystack.append(type_name)
-        message = str(exc)
-        if message:
-            haystack.append(message)
-        for attr in ("code", "message"):
-            value = getattr(exc, attr, None)
-            if isinstance(value, str):
-                haystack.append(value)
-        body = getattr(exc, "body", None)
-        if isinstance(body, dict):
-            error = body.get("error")
-            if isinstance(error, dict):
-                for key in ("message", "code", "type"):
-                    value = error.get(key)
-                    if isinstance(value, str):
-                        haystack.append(value)
-        exploded = " ".join(haystack).lower()
-        return any(marker in exploded for marker in _TERMINAL_MARKERS)
-    except Exception:  # noqa: BLE001 - classification is fail-open by contract
-        return False
 
 
 # --- the atomic call ----------------------------------------------------------

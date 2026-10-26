@@ -38,6 +38,7 @@ Each predicate names its executable test.
 | C14 | The surfer consults the gate once per tick with the live session set and the mid-graph hunt set, and honours its verdict. | `tests/attack/test_hunting_surfer_sync_wiring.py::test_surfer_holds_the_loop_file_until_the_sync_gate_admits_it` |
 | C15 | The bootstrap stamps the frozen mode on the run record; the default run is `batched` and dispatches only after the pass settles; `parallel` keeps the interleave. | `tests/attack/test_hunting_run_lifecycle.py::test_default_mode_is_batched_and_holds_dispatch_until_the_pass_settles`, `...::test_parallel_mode_keeps_the_modeller_dispatch_interleave` |
 | C16 | The stored `risk_threshold` wins over `HUNT_RISK_THRESHOLD` (basis `db`); a malformed value falls back; no value keeps the env basis. | `tests/attack/test_hunting_run_lifecycle.py::test_threshold_config_*` |
+| C17 | A pod resume cursor without a durable `PodExport` is not completion; the gate holds the consumed spec until a terminal export exists. | `tests/attack/test_hunting_pipeline_sync_lifecycle.py::test_a_resume_cursor_does_not_count_as_a_terminal_export` |
 | C17 | The config endpoints: GET defaults/stored, PUT partial merge, enum + extra-field validation, 404 unknown project. | `tests/project_management/test_hunting_config_api.py::*` |
 | C18 | The hunting blob deep-merges (partial PUT preserves siblings) and never touches the recon blob. | `tests/integration/test_settings_deep_merge.py::test_partial_hunting_put_preserves_siblings_and_the_recon_blob` (skips without Postgres) |
 
@@ -51,6 +52,7 @@ These are the end-to-end cases to run against a live compose stack; they observe
 - E4 - config round-trip: `GET /projects/{p}/hunting/config` returns `batched` on a fresh project; `PUT` `serial` then `GET` returns `serial`; a run launched afterwards records `serial`; a run launched BEFORE the PUT keeps its frozen mode.
 - E5 - interrupted resume: interrupt a batched run mid-unit-batch (provider pause or stop); resume; the gate re-derives the queue from the stores - already-terminal hunts and exported pods are not re-run, the first unfinished phase dispatches.
 - E6 - threshold override: a stored `risk_threshold` below the env value halts the run at the stored value, and `stats.threshold_basis == "db"`.
+- E7 - resumable pod: stop a batched run while a pod is live; the pod writes no export and a resume cursor; the gate holds the hunt; resume with the same spec, run, and project; the pod continues at the cursor variant and skips an executed probe; the terminal export clears the cursor and advances the hunt.
 
 ## Deliberately uncovered here
 

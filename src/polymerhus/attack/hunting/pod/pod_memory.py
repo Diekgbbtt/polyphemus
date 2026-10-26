@@ -205,6 +205,15 @@ class PodMemoryStore:
         SAME file (idempotent, D84-37)."""
         return self._spec_dir(spec_id) / f"{_sanitise_run_id(run_id)}.yaml"
 
+    def _resume_file(self, spec_id: str, run_id: str) -> Path:
+        """The durable resume cursor: `<spec_id>/<run_id>.resume.yaml`.
+
+        It is a sibling of the terminal export, never an export itself. The
+        suffix keeps `list_pod_exports` and the completion gate from mistaking
+        a resumable pod for a terminal one.
+        """
+        return self._spec_dir(spec_id) / f"{_sanitise_run_id(run_id)}.resume.yaml"
+
     # -- minted variants (D84-35: the TestImplementationSpec variants) --------
 
     def write_variant(self, spec_id: str, variant_ref: str, variant: dict) -> None:
@@ -307,16 +316,53 @@ class PodMemoryStore:
                 f"pod memory: unreadable pod-export file {path}: {exc}") from exc
         return loaded if isinstance(loaded, dict) else {}
 
+    # -- the durable resume cursor --------------------------------------------
+
+    def write_resume(self, spec_id: str, run_id: str, cursor: dict) -> None:
+        """Persist the resume cursor for one pod attempt.
+
+        The cursor is a sibling of the terminal export and is overwritten
+        idempotently. A write failure raises for the caller to degrade.
+        """
+        path = self._resume_file(spec_id, run_id)
+        write_text_atomic(path, yaml.safe_dump(cursor, sort_keys=False))
+
+    def read_resume(self, spec_id: str, run_id: str) -> dict:
+        """The persisted resume cursor, or {} when absent.
+
+        A corrupt cursor raises (O4); the caller decides whether to fail the
+        pod or start fresh.
+        """
+        path = self._resume_file(spec_id, run_id)
+        if not path.exists():
+            return {}
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise OSError(
+                f"pod memory: unreadable resume file {path}: {exc}") from exc
+        return loaded if isinstance(loaded, dict) else {}
+
+    def clear_resume(self, spec_id: str, run_id: str) -> None:
+        """Remove a terminal pod's resume cursor. Idempotent."""
+        try:
+            self._resume_file(spec_id, run_id).unlink(missing_ok=True)
+        except OSError:
+            # A failed cleanup is not a terminal failure; the export is the
+            # completion fact and the next terminal write retries the clear.
+            pass
+
     def list_pod_exports(self, spec_id: str) -> list[str]:
         """The pod-export run_ids present on file for one spec - the
         deterministic export identifiers directly under `<spec_id>/` (never the
-        `variants/`/`experiment-log/` sub-bodies)."""
+        `variants/`/`experiment-log/` sub-bodies and never a resume cursor)."""
         sdir = self._spec_dir(spec_id)
         if not sdir.exists():
             return []
         run_ids = []
         for child in sdir.iterdir():
-            if child.suffix == ".yaml" and child.is_file():
+            if (child.suffix == ".yaml" and child.is_file()
+                    and not child.name.endswith(".resume.yaml")):
                 run_ids.append(child.stem)
         return sorted(run_ids)
 
