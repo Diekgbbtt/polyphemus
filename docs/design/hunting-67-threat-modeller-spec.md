@@ -13,6 +13,30 @@ Where this document and the amendment disagree, the amendment wins.
 - The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
+## Amendment 2026-10-26: impact assessment system
+
+The impact-assessment system supersedes the 2026-10-25 impact-first amendment in this document.
+The authoritative spec is `docs/design/impact-assessment-system-spec.md`.
+The prototype is `docs/design/impact-assessment-system-prototype.md`.
+Where this document and the new spec disagree, the new spec wins.
+
+- The impact assessment is a first-class model section.
+  A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
+- A `precursor` is a capability entity, not a row.
+  The threat references its precursors through `enabling_precursors`.
+- The `damage` field merges the victim and the damage into one semantic field.
+  The damage-family and victim-class enums are removed.
+- The CIA score is authored after the impact assessment.
+  The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
+- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `PRIOR_ART`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `IMPACT_ASSESSED`, `COMPLETED`.
+- `hunts_store` gains `cmd=query` with typed filters for unit, kind, class, disposition, and text.
+- The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
+- The hunter payload carries the impact assessment and the precursors.
+  The spec contract and the pod contract are unchanged.
+  No damage symptom or damage verdict is added.
+- The class-based green gate is retired.
+  The impact metric is the CIA red/green share over all impact rows.
+
 
 *Status: spec (contract), NOT implementation. Tracker: [#373](https://github.com/Diekgbbtt/polyphemus/issues/373). This document is the build spec for the unit threat model redesign. It supersedes `docs/design/hunting-67-orchestrator-spec.md` in full for the modeller role. It is synthesised from the grilling record (`docs/design/unit-threat-model-workbench.md`), the workflow contract (`docs/design/unit-threat-model-workflow.md`), the tool-binding ADR (`docs/design/unit-threat-model-tools-adr.md`), and the ordering-halt ADR (`docs/design/unit-threat-model-ordering-halt-adr.md`). The artifact contract is `docs/design/hunting-67-threat-model-artifact-spec.md`; the impact map is `docs/design/unit-threat-model-spec-impact-map.md`.*
 

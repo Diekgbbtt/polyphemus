@@ -5,6 +5,21 @@
 *Decision owner: operator. Grilled and settled 2026-10-25.*
 **Vocabulary note (2026-10-25).** The ranked artifact was called a **loop** in the earlier baseline and design text. The module, the store, and the current documentation now call it a **threat**. A historical "loop" in the baseline means the same artifact.
 
+
+## Superseded 2026-10-26: impact assessment system
+
+The impact-assessment system replaces the impact-elicitation model in this ADR.
+The authoritative spec is `docs/design/impact-assessment-system-spec.md`.
+The prototype is `docs/design/impact-assessment-system-prototype.md`.
+Where this ADR and the new spec disagree, the new spec wins.
+
+The CIA scoring, the impact sub-score, the ordinal weight, and the risk formula remain.
+The 2026-10-25 impact-first threat definition, the failure-mode removal, the damage-family and victim-class model, and the five-state workflow are superseded by the new spec.
+The impact assessment is now a first-class model section.
+A `threat` names a concrete victim and damaged property; a `placeholder` does not.
+A `precursor` is a capability entity, not a row.
+The hunter payload carries the impact assessment; the spec and pod contracts are unchanged.
+The class-based green gate is retired in favour of the CIA red/green share.
 ## Problem
 
 The eval-server-1 baseline measured 113 threats over 17 unit models.

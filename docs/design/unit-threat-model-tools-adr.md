@@ -1,6 +1,9 @@
 # ADR: the threat modeller binds live-evidence tools (HTTP-history reads, exec probes, skills)
 
 > **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+> **Superseded 2026-10-26.** The impact-assessment system supersedes the impact-first and five-state model in this historical document.
+> The authoritative spec is `docs/design/impact-assessment-system-spec.md`; the prototype is `docs/design/impact-assessment-system-prototype.md`.
+> The current model is: `threat` (a concrete victim and damaged property), `placeholder` (no concrete damage), `precursor` (a capability entity), a first-class impact assessment, and a `hunts_store` query phase.
 
 ## Status
 Accepted (design phase, 2026-10-15).

@@ -1,5 +1,8 @@
 # Threat-model impact elicitation: impact map
 
+*Superseded 2026-10-26 by `docs/design/impact-assessment-system-spec.md` and `docs/design/impact-assessment-system-prototype.md`.*
+*This map is kept as the 2026-10-25 implementation history; the new spec wins where they disagree.*
+
 *Status: settled 2026-10-25, built 2026-10-25. The artifact is now called a threat; a historical "loop" in the baseline means the same artifact. This document lists every component that reads the threat-model threat artifact or the failure-mode artifact, the change each component needs, and the order that keeps the tree green. It is not the final spec; the grilling round settles the scoring algorithm and the phase boundaries.*
 
 ## 1. End state

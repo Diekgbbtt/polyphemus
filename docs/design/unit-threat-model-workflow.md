@@ -13,6 +13,30 @@ Where this document and the amendment disagree, the amendment wins.
 - The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
+## Amendment 2026-10-26: impact assessment system
+
+The impact-assessment system supersedes the 2026-10-25 impact-first amendment in this document.
+The authoritative spec is `docs/design/impact-assessment-system-spec.md`.
+The prototype is `docs/design/impact-assessment-system-prototype.md`.
+Where this document and the new spec disagree, the new spec wins.
+
+- The impact assessment is a first-class model section.
+  A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
+- A `precursor` is a capability entity, not a row.
+  The threat references its precursors through `enabling_precursors`.
+- The `damage` field merges the victim and the damage into one semantic field.
+  The damage-family and victim-class enums are removed.
+- The CIA score is authored after the impact assessment.
+  The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
+- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `PRIOR_ART`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `IMPACT_ASSESSED`, `COMPLETED`.
+- `hunts_store` gains `cmd=query` with typed filters for unit, kind, class, disposition, and text.
+- The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
+- The hunter payload carries the impact assessment and the precursors.
+  The spec contract and the pod contract are unchanged.
+  No damage symptom or damage verdict is added.
+- The class-based green gate is retired.
+  The impact metric is the CIA red/green share over all impact rows.
+
 
 *Status: design decision record (2026-10-15), from the unit threat model grilling (workbench: `docs/design/unit-threat-model-workbench.md`). It records the operator's decisions and the specified workflow as given. Open points are marked. Nothing here is built. The workbench carries the question numbering; this document carries the workflow contract. Extended the same day with the Q10-Q17 answers (consumption at COMPLETED, the evidence and drop rules, the threat entity, the grounding inputs, the material disposal). Extended 2026-10-16 with the Q18-Q32 answers (drop semantics reframed to retention-first, the hunter threat payload, the store home, dispatch sequencing in scope, no schema gate - per-step verbatims). Extended 2026-10-17 with the Q33-Q36 answers (the CVSS-inspired 5-level risk scoring with the four-attribute ontology; the confidence-degree rename and its falsification-nature lifecycle; design B, the per-unit directory with per-threat files; the validation seam; the hunter feed-forward contract). Extended 2026-10-18 with the Q37-Q40 answers and the production hunter prompt redesign decisions (workbench Rounds 7 and 8).*
 
