@@ -574,6 +574,11 @@ async def _run_intake(
             run_id, exc,
         )
         hunting_settings = {}
+    # The project scope (#438, spec 6): read ONCE here, from the SAME blob as
+    # the threshold, and carried on the per-run tool seams. It is deliberately
+    # NOT written into the run record - the prompt append is its only copy.
+    scope = (hunting_settings or {}).get("threat_model_scope")
+    tools.threat_model_scope = scope if isinstance(scope, str) else ""
     threshold, basis = lifecycle.threshold_config(
         db_value=(hunting_settings or {}).get("risk_threshold"))
     if record:

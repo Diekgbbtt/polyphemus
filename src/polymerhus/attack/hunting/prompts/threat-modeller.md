@@ -159,6 +159,8 @@ Compare what each component guarantees with what the next component assumes: the
 
 ## Assumptions (TRUST_ASSUMPTIONS_WRITTEN)
 
+The project scope rides the turn under `## Project scope (verbatim)` and binds this phase: do not model a trust boundary the project scope excludes, and do not make the excluded assumption or fault; the scope applies at the assumptions layer, never as an impact-row exclusion.
+
 Enumerate every security-relevant artifact and field, including headers, claims, identifiers, metadata, serialized content, derived artifacts, and state-bearing values.
 For each field, determine:
 

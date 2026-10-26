@@ -44,7 +44,8 @@ def test_get_reads_the_default_batched_mode(monkeypatch):
     response = client.get("/projects/p1/hunting/config")
     assert response.status_code == 200
     assert response.json() == {
-        "pipeline_sync": "batched", "risk_threshold": None}
+        "pipeline_sync": "batched", "risk_threshold": None,
+        "threat_model_scope": ""}
 
 
 def test_get_reads_the_stored_config(monkeypatch):
@@ -52,7 +53,22 @@ def test_get_reads_the_stored_config(monkeypatch):
         "p1": {"pipeline_sync": "serial", "risk_threshold": 250}})
     _install(monkeypatch, fake)
     assert client.get("/projects/p1/hunting/config").json() == {
-        "pipeline_sync": "serial", "risk_threshold": 250}
+        "pipeline_sync": "serial", "risk_threshold": 250,
+        "threat_model_scope": ""}
+
+
+def test_get_reads_the_stored_project_scope_verbatim(monkeypatch):
+    """#438: the project model exposes the free-text posture statement; the
+    read returns it exactly as stored."""
+    scope = ("The target is assumed to have a request-rate limiter and a WAF "
+             "in blocking mode. The internal build network is out of scope.")
+    fake = FakeHuntingSettings(stored={
+        "p1": {"pipeline_sync": "serial", "risk_threshold": 250,
+               "threat_model_scope": scope}})
+    _install(monkeypatch, fake)
+    assert client.get("/projects/p1/hunting/config").json() == {
+        "pipeline_sync": "serial", "risk_threshold": 250,
+        "threat_model_scope": scope}
 
 
 def test_put_merges_a_pipeline_sync_update(monkeypatch):
@@ -63,7 +79,8 @@ def test_put_merges_a_pipeline_sync_update(monkeypatch):
     assert response.status_code == 200
     assert fake.saves == [("p1", {"pipeline_sync": "serial"})]
     assert client.get("/projects/p1/hunting/config").json() == {
-        "pipeline_sync": "serial", "risk_threshold": 250}
+        "pipeline_sync": "serial", "risk_threshold": 250,
+        "threat_model_scope": ""}
 
 
 def test_put_accepts_the_risk_threshold(monkeypatch):
@@ -73,6 +90,37 @@ def test_put_accepts_the_risk_threshold(monkeypatch):
         "/projects/p1/hunting/config", json={"risk_threshold": 250})
     assert response.status_code == 200
     assert fake.saves == [("p1", {"risk_threshold": 250})]
+
+
+def test_put_sets_only_the_scope_and_preserves_the_sibling_settings(monkeypatch):
+    """#438: the PUT is a partial deep merge - a scope-only body lands the
+    string and never drops `pipeline_sync` or `risk_threshold`."""
+    scope = ("The target is assumed to have a request-rate limiter and a WAF "
+             "in blocking mode.")
+    fake = FakeHuntingSettings(stored={
+        "p1": {"pipeline_sync": "serial", "risk_threshold": 250}})
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config", json={"threat_model_scope": scope})
+    assert response.status_code == 200
+    assert fake.saves == [("p1", {"threat_model_scope": scope})]
+    assert client.get("/projects/p1/hunting/config").json() == {
+        "pipeline_sync": "serial", "risk_threshold": 250,
+        "threat_model_scope": scope}
+
+
+def test_put_an_empty_scope_round_trips_and_preserves_the_siblings(monkeypatch):
+    """#438: the empty string is a real value - it round-trips as `""` and wipes
+    nothing, distinct from the unset default."""
+    fake = FakeHuntingSettings(stored={"p1": {"pipeline_sync": "parallel"}})
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config", json={"threat_model_scope": ""})
+    assert response.status_code == 200
+    assert fake.saves == [("p1", {"threat_model_scope": ""})]
+    assert client.get("/projects/p1/hunting/config").json() == {
+        "pipeline_sync": "parallel", "risk_threshold": None,
+        "threat_model_scope": ""}
 
 
 def test_put_rejects_an_unknown_mode(monkeypatch):

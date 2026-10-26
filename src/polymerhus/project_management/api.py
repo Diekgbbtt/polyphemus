@@ -84,14 +84,16 @@ class SettingsUpdate(BaseModel):
 
 class HuntingConfigUpdate(BaseModel):
     """The partial PUT body of the project's hunting config (ADR
-    `hunting-pipeline-sync-adr.md`). Only the provided keys land (deep-merged);
-    `risk_threshold: null` clears the DB override and falls back to the
-    env/default basis."""
+    `hunting-pipeline-sync-adr.md`, spec 6 of the impact assessment system).
+    Only the provided keys land (deep-merged); `risk_threshold: null` clears
+    the DB override and falls back to the env/default basis; `threat_model_scope`
+    is the project's free-text posture statement (null clears it)."""
 
     model_config = ConfigDict(extra="forbid")
 
     pipeline_sync: Literal["serial", "batched", "parallel"] | None = None
     risk_threshold: int | None = Field(default=None, ge=0)
+    threat_model_scope: str | None = None
 
 
 class ReconLaunch(BaseModel):

@@ -58,15 +58,21 @@ def _stores(tmp_path):
 
 class _FakePg:
     """The fake pg accessors: mint a deterministic hunting_run_id, record every
-    status write in order, and fail on demand (the seam's fail-open paths)."""
+    status write in order, serve the project's hunting config, and fail on
+    demand (the seam's fail-open paths)."""
 
-    def __init__(self, *, fail_create: bool = False, fail_status: bool = False):
+    def __init__(self, *, fail_create: bool = False, fail_status: bool = False,
+                 hunting_settings: dict | None = None):
         self.fail_create = fail_create
         self.fail_status = fail_status
         self.statuses: list[tuple[str, str]] = []
         self.stats_writes: list[tuple[str, str, dict | None]] = []
         self.records: dict[str, dict] = {}
+        self.hunting_settings: dict = dict(hunting_settings or {})
         self.next_id = "rt-hunt-0001"
+
+    def get_hunting_settings(self, project_id: str) -> dict:
+        return dict(self.hunting_settings)
 
     def create_hunting_run(self, project_id: str) -> str:
         if self.fail_create:
@@ -168,6 +174,9 @@ def _patch_pg(monkeypatch, fake):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr(
+        "polymerhus.app.clients.pg.get_hunting_settings",
+        fake.get_hunting_settings)
 
 
 def test_the_runtime_carries_no_hunt_store_threading():
@@ -209,6 +218,88 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
 
     assert hid == "rt-hunt-0001"
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "complete")]
+
+
+# --- #438: the project scope read ---------------------------------------------
+
+PROJECT_SCOPE = (
+    "The target is assumed to have a request-rate limiter and a WAF in "
+    "blocking mode. The internal build network is out of scope.")
+
+
+def test_start_hunting_reads_the_project_scope_into_the_run_tools(
+        tmp_path, monkeypatch):
+    """#438: the run reads `settings.hunting.threat_model_scope` at its start
+    (the same settings read as the threshold) and arms the per-run tool seams,
+    so every unit's pass turns carry the one verbatim string."""
+    fake = _FakePg(hunting_settings={"threat_model_scope": PROJECT_SCOPE})
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    scopes: list = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        scopes.append(getattr(tools, "threat_model_scope", None))
+        return _outcome(unit_id)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project",
+        intake_units=[intake_unit(SERVICE_A), intake_unit(OTHER_UNIT)],
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert scopes == [PROJECT_SCOPE, PROJECT_SCOPE]
+
+
+def test_a_project_without_a_scope_runs_with_the_empty_scope(
+        tmp_path, monkeypatch):
+    """#438: an unset scope is the empty string, never a fabricated posture."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    scopes: list = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        scopes.append(getattr(tools, "threat_model_scope", None))
+        return _outcome(unit_id)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert scopes == [""]
+
+
+def test_the_run_record_does_not_duplicate_the_project_scope(
+        tmp_path, monkeypatch):
+    """#438: the scope rides the prompt, never the run record - the record's
+    stats stay the fixed key set (plus the frozen sync mode), so the same string
+    is not persisted twice."""
+    fake = _FakePg(hunting_settings={"threat_model_scope": PROJECT_SCOPE})
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
+        modeller_pass_fn=_recording_pass(),
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert fake.stats_writes  # the run wrote its record
+    for _run_id, _status, stats in fake.stats_writes:
+        assert "threat_model_scope" not in (stats or {})
+    assert "threat_model_scope" not in fake.records["rt-hunt-0001"]
 
 
 def test_the_injected_intake_snapshot_is_the_unit_set(monkeypatch):

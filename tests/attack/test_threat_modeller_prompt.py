@@ -359,6 +359,76 @@ def test_the_prompt_keeps_the_prior_art_phase_before_the_trust_mapping():
         "## Trust mapping (TRUST_MODELLED)")
 
 
+# --- #438: the project scope ------------------------------------------------
+
+SCOPE = ("The target is assumed to have a request-rate limiter and a WAF in "
+         "blocking mode. The internal build network is out of scope; a threat "
+         "that needs access to the build network is not modelled.")
+
+
+def _assumptions_section(prompt: str) -> str:
+    return prompt.split(
+        "## Assumptions (TRUST_ASSUMPTIONS_WRITTEN)", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_turn_prompt_appends_the_project_scope_verbatim():
+    """#438: the run's scope string rides the turn under `## Project scope
+    (verbatim)`, exactly as the operator wrote it - the prompt never paraphrases
+    or reformats it."""
+    turn = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+        sections=GATE_SECTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN],
+        instruction=STATE_INSTRUCTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN],
+        threat_model_scope=SCOPE,
+    )
+
+    rendered = _compose_modeller_prompt(turn)
+
+    heading = "## Project scope (verbatim)"
+    assert heading in rendered
+    appended = rendered.split(heading, 1)[1]
+    # verbatim: the operator's string is one contiguous block, unedited
+    assert SCOPE in appended
+    assert appended.count(SCOPE) == 1
+
+
+def test_an_empty_project_scope_appends_no_scope_section():
+    """#438: an unset project appends nothing - no empty heading, no empty
+    claim for the model to fill in."""
+    turn = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+        sections=GATE_SECTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN],
+        instruction=STATE_INSTRUCTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN],
+        threat_model_scope="",
+    )
+
+    rendered = _compose_modeller_prompt(turn)
+
+    assert "## Project scope (verbatim)" not in rendered
+    assert SCOPE not in rendered
+
+
+def test_the_prompt_binds_the_assumptions_phase_to_the_project_scope():
+    """#438: the scope is a project assumption, not a prompt rule bolted onto
+    the impact rows. The assumptions phase states the binding: an excluded trust
+    boundary is never modelled, so the excluded assumption and fault are never
+    made."""
+    assumptions = _assumptions_section(_modeller_skill())
+
+    assert "## Project scope (verbatim)" in assumptions
+    assert "do not model a trust boundary the project scope excludes" in assumptions
+    assert "do not make the excluded assumption or fault" in assumptions
+    assert "at the assumptions layer, never as an impact-row exclusion" in assumptions
+
+
+def test_the_hunting_config_scope_is_not_a_prompt_constant():
+    """#438: the scope is the PROJECT's string, read per run - the static
+    prompt names the section and the binding but never hardcodes a posture."""
+    assert SCOPE not in _modeller_skill()
+
+
 def test_the_hunts_store_description_states_the_query_contract():
     from polymerhus.attack.hunting.threat_modeller_tools import (
         _HUNTS_STORE_DESCRIPTION,

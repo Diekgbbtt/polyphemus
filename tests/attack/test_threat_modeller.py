@@ -94,6 +94,34 @@ def test_a_scripted_pass_writes_all_seven_gates_to_the_real_store(tmp_path):
     assert [threat["threat_id"] for threat in store.read_threat_files(PROJECT, UNIT)] == ["threat-1"]
 
 
+def test_the_pass_carries_the_project_scope_on_every_turn(tmp_path):
+    """#438: the run reads the project scope once at its start; the pass stamps
+    that one value on EVERY turn it asks - the seven gates and the
+    well-formedness pass - so the assumptions phase is bound wherever it runs."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    turns = _ScriptedTurns()
+    tools = _tools(store)
+    tools.threat_model_scope = (
+        "The target is assumed to have a WAF in blocking mode.")
+
+    asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, tools, turn_fn=turns))
+
+    assert any(turn.phase == "WELLFORMEDNESS" for turn in turns.turn_inputs)
+    assert {turn.threat_model_scope for turn in turns.turn_inputs} == {
+        "The target is assumed to have a WAF in blocking mode."}
+
+
+def test_the_pass_defaults_the_project_scope_to_empty(tmp_path):
+    """#438: a run whose project set no scope carries the empty string - the
+    turn then appends no scope section."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    turns = _ScriptedTurns()
+
+    asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    assert {turn.threat_model_scope for turn in turns.turn_inputs} == {""}
+
+
 def test_the_pass_prompts_each_state_in_order_with_its_gate_instruction(tmp_path):
     """The pass asks for the seven states in workflow order; each turn carries
     that state's gate section names and instruction (the prompt-level cadence).

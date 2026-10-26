@@ -559,6 +559,10 @@ class ModellerTurnInput(BaseModel):
     projection: Any = None
     surface_overview: Any = None
     context_gaps: tuple[str, ...] = ()
+    # The project's free-text posture statement (#438), read once by the RUN
+    # (runtime._run_intake) and carried verbatim into every turn. Empty means
+    # the project set no scope: the composed turn appends nothing.
+    threat_model_scope: str = ""
     tools: Any = Field(default=None, exclude=True)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -626,6 +630,7 @@ async def _run_wellformedness_turns(
     context: dict,
     context_gaps: tuple[str, ...],
     surface: dict,
+    threat_model_scope: str = "",
 ) -> None:
     """Ask the well-formedness turn until the model exits or re-enters.
 
@@ -649,6 +654,7 @@ async def _run_wellformedness_turns(
             projection=context.get("projection"),
             surface_overview=context.get("surface_overview"),
             context_gaps=context_gaps,
+            threat_model_scope=threat_model_scope,
             tools=list(surface.values()),
         )
         cause: BaseException | None = None
@@ -745,6 +751,10 @@ async def arun_modeller_pass(
                  if persisted and persisted.get("state") in set(ModelState)
                  else None)
     context, context_gaps = _grounding_context(tools, unit_id)
+    # #438: the RUN read the project's scope once at its start
+    # (runtime._run_intake arms this attribute); the pass copies that value onto
+    # every turn it asks, so the assumptions phase is bound on every pass.
+    threat_model_scope = getattr(tools, "threat_model_scope", "") or ""
     if _bindable(tools):
         # lazy: the tool layer imports this module's tracker and unit cell at
         # its own import time, so the dependency runs one way only (C_STD 6)
@@ -772,6 +782,7 @@ async def arun_modeller_pass(
             projection=context.get("projection"),
             surface_overview=context.get("surface_overview"),
             context_gaps=context_gaps,
+            threat_model_scope=threat_model_scope,
             tools=list(surface.values()),
         )
         cause: BaseException | None = None
@@ -799,6 +810,7 @@ async def arun_modeller_pass(
                 turn_fn=turn_fn, breaker=breaker, tracker=tracker,
                 tools=tools, project_id=project_id, unit_id=unit_id,
                 context=context, context_gaps=context_gaps, surface=surface,
+                threat_model_scope=threat_model_scope,
             )
             if tracker.state is LAST_GATE:
                 break

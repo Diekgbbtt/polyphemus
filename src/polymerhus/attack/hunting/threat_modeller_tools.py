@@ -831,6 +831,11 @@ class ModellerTools:
     # HTTP-history reads): the surface builder attaches it to those tools and
     # the pass folds the unit's slice into the outcome's `context_gaps`.
     seam_gaps: ToolSeamGaps | None = None
+    # The project's free-text posture statement (#438). The run reads it ONCE
+    # at its start (`runtime._run_intake`) from `settings.hunting` and stamps
+    # it here; the pass copies it verbatim onto every turn prompt. It never
+    # rides the run record (S6: the run record does not duplicate it).
+    threat_model_scope: str = ""
 
 
 def build_grounding_provider(project_id: str, *, read_fn=None):

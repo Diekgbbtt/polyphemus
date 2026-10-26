@@ -255,6 +255,13 @@ def _compose_modeller_prompt(turn) -> str:
         "sections. Then end the reasoning phase with ONE episodic note through "
         "`notes`: the decision nodes and the rationales of the branches you took.",
     ]
+    # #438: the project scope rides the turn verbatim, under its own heading.
+    # An empty scope appends nothing (an unset project makes no claim); the
+    # string is never paraphrased, trimmed, or reflowed - it is the operator's
+    # posture statement and the assumptions phase is bound by it.
+    scope = getattr(turn, "threat_model_scope", "") or ""
+    if scope:
+        lines += ["", "## Project scope (verbatim)", str(scope)]
     return "\n".join(lines)
 
 
