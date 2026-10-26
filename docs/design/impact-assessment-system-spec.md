@@ -325,8 +325,10 @@ PUT /projects/{project_id}/hunting/config
 
 `HuntingConfigUpdate` gains `threat_model_scope: str | None` with `extra="forbid"`.
 The PUT is a partial deep merge.
-The run reads the string at start and appends it verbatim to the modeller prompt under `## Project scope (verbatim)`.
+The run reads the string at start and appends it verbatim to the per-turn modeller prompt under `## Project scope (verbatim)`.
+The static system prompt carries the assumptions binding, never the per-project text.
 The run record does not duplicate it.
+The repository has no separate `Project` entity class; the project domain model is the settings projection behind the hunting config pair.
 The string is applied at the assumptions layer.
 The modeller does not model a trust boundary the scope excludes, so it does not make the excluded assumption or fault.
 

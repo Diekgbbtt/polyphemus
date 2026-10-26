@@ -25,8 +25,8 @@ Concrete settings for the live e2e targets are held in the eval dataset `tests/e
 
 **Hunting config** (2026-10-23, ADR `hunting-pipeline-sync-adr.md`):
 The project-level hunting tuning lives in the sibling `settings.hunting` JSON column (same deep-merge discipline, never touching `settings.recon`).
-It carries `pipeline_sync` (`serial | batched | parallel`, default `batched` - the hunting pipeline's phase synchronisation) and `risk_threshold` (the threat-modeller budget, which overrides `HUNT_RISK_THRESHOLD` when set).
-Its own faces are `GET/PUT /projects/{project_id}/hunting/config` (`read_hunting_config` / `save_hunting_config` -> `pg.get_hunting_settings` / `save_hunting_settings`): GET defaults an unset project and 404s an unknown one; PUT is partial with an enum-validated mode and a non-negative threshold, and never touches a live run.
+It carries `pipeline_sync` (`serial | batched | parallel`, default `batched` - the hunting pipeline's phase synchronisation), `risk_threshold` (the threat-modeller budget, which overrides `HUNT_RISK_THRESHOLD` when set), and `threat_model_scope` (the free-text project posture statement the threat modeller receives verbatim; default empty).
+Its own faces are `GET/PUT /projects/{project_id}/hunting/config` (`read_hunting_config` / `save_hunting_config` -> `pg.get_hunting_settings` / `save_hunting_settings`): GET defaults an unset project and 404s an unknown one; PUT is partial with an enum-validated mode, a non-negative threshold, and an optional scope string, and never touches a live run.
 
 **AuthContext** (retired, #223 - removal landed T4 #243):
 The superseded operator value object - how authenticated recon used to declare its credentials (cookies, autonomous-login credentials, role/realm-tagged sets, arbitrary request headers) and the settings-blob anchor of auth.
