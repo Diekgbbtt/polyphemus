@@ -36,6 +36,32 @@ def test_artifact_mapping_keeps_old_payloads_working():
     assert result.capture_warning is None
 
 
+def test_artifact_mapping_reads_the_browser_error_fields():
+    artifact = {
+        "stdout": "",
+        "stderr": "CDP error",
+        "returncode": 1,
+        "duration_ms": 1,
+        "error": {
+            "code": "target_lost",
+            "message": "the page target is gone",
+            "retryable": False,
+            "fatal": False,
+            "recovery": {"action": "tab_new"},
+            "session": {"name": "wj-live", "live": True},
+            "canonical_command": "steel browser eval --session wj-live --json",
+        },
+    }
+    result = _exec_result_from_artifact(artifact)
+    assert result.error_code == "target_lost"
+    assert result.error_message == "the page target is gone"
+    assert result.retryable is False
+    assert result.fatal is False
+    assert result.recovery["action"] == "tab_new"
+    assert result.session_state == {"name": "wj-live", "live": True}
+    assert result.canonical_command == "steel browser eval --session wj-live --json"
+
+
 def test_capture_context_is_a_typed_runtime_value():
     context = CaptureContext(project_id="proj-1", run_id="r1", spec_id="s", variant_ref="v0")
     assert context.project_id == "proj-1"

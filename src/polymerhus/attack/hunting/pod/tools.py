@@ -111,6 +111,11 @@ async def run_with_retry(exec_fn: ExecFn, command: str, *,
             )
         else:
             result = await _await_seam(exec_fn, command, timeout_s)
+        if result.error_code:
+            # A contract/tool error is not a transient shell failure. The
+            # agent receives the error and its recovery directive; retrying the
+            # same defective command would only repeat the error.
+            break
         if result.returncode == 0:
             break
     return result, attempts
@@ -321,9 +326,31 @@ class ExecTool(BaseTool):
             status=parsed.get("status"), body=parsed.get("body", "") or result.stdout,
             stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
             duration_ms=result.duration_ms or parsed.get("time_ms", 0),
-            http_artifact_refs=list(result.http_artifact_refs or []))
+            http_artifact_refs=list(result.http_artifact_refs or []),
+            error_code=result.error_code,
+            error_message=result.error_message,
+            retryable=result.retryable,
+            fatal=result.fatal,
+            recovery=result.recovery,
+            canonical_command=result.canonical_command,
+            session_state=result.session_state,
+            warning=result.warning)
         self._log.mark_executed(sig)
         self._log.record_observation(observation)
+        if result.error_code:
+            recovery = result.recovery or {}
+            return (
+                f"TOOL ERROR: code={result.error_code} "
+                f"message={result.error_message or result.stderr[:200]} "
+                f"recovery={json.dumps(recovery, ensure_ascii=False)} "
+                "(the command was recorded; resume with a changed action)"
+            )
+        if result.warning:
+            return (
+                f"TOOL RESULT: warning={result.warning.get('code', 'warning')} "
+                f"message={result.warning.get('message', '')} "
+                f"recovery={json.dumps(result.warning.get('recovery') or {}, ensure_ascii=False)}"
+            )
         return (f"TOOL RESULT: status={observation.status} "
                 f"body={observation.body[:400]!r} stderr={observation.stderr[:200]!r}")
 

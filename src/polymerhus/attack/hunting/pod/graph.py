@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 
 from langgraph.graph import END, START, StateGraph
@@ -171,6 +172,10 @@ def _clean_from_trail(log: ExperimentLog) -> bool:
     if _degraded_kb_evidence(log):
         return False
     for obs in log.raw_observations:
+        if getattr(obs, "error_code", ""):
+            return False
+        if getattr(obs, "warning", None):
+            return False
         if obs.status is None and (obs.returncode not in (0, None)):
             return False
     return bool(log.raw_observations)
@@ -665,11 +670,26 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             status=parsed.get("status"), body=parsed.get("body", "") or result.stdout,
             stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
             duration_ms=result.duration_ms or parsed.get("time_ms", 0),
-            http_artifact_refs=list(result.http_artifact_refs or []))
+            http_artifact_refs=list(result.http_artifact_refs or []),
+            error_code=result.error_code,
+            error_message=result.error_message,
+            retryable=result.retryable,
+            fatal=result.fatal,
+            recovery=result.recovery,
+            canonical_command=result.canonical_command,
+            session_state=result.session_state,
+            warning=result.warning)
         log.mark_executed(sig)
         log.record_observation(observation)
-        result_text = (f"TOOL RESULT: status={observation.status} "
-                       f"body={observation.body[:400]!r} stderr={observation.stderr[:200]!r}")
+        if result.error_code:
+            result_text = (
+                f"TOOL ERROR: code={result.error_code} "
+                f"message={result.error_message or result.stderr[:200]} "
+                f"recovery={json.dumps(result.recovery or {}, ensure_ascii=False)} "
+                "(the command was recorded; resume with a changed action)")
+        else:
+            result_text = (f"TOOL RESULT: status={observation.status} "
+                           f"body={observation.body[:400]!r} stderr={observation.stderr[:200]!r}")
         return {"tool_calls": tc, "stretch_obs": state.get("stretch_obs", 0) + 1,
                 "last_observation": observation.model_dump(),
                 "runner_messages": _dicts_to_lc(

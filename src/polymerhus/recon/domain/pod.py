@@ -586,6 +586,11 @@ def _exec_result_from_artifact(artifact, *, content=None, duration_ms: int = 0) 
         structured = getattr(artifact, "structured_content", structured)
 
     if isinstance(structured, dict) and "returncode" in structured:
+        error = structured.get("error")
+        error = error if isinstance(error, dict) else {}
+        warning = structured.get("warning")
+        warning = warning if isinstance(warning, dict) else None
+        session = error.get("session")
         return ExecResult(
             stdout=str(structured.get("stdout", "")),
             stderr=str(structured.get("stderr", "")),
@@ -600,6 +605,14 @@ def _exec_result_from_artifact(artifact, *, content=None, duration_ms: int = 0) 
                 if structured.get("capture_warning")
                 else None
             ),
+            error_code=str(error.get("code", "") or ""),
+            error_message=str(error.get("message", "") or ""),
+            retryable=error.get("retryable") if isinstance(error.get("retryable"), bool) else None,
+            fatal=error.get("fatal") if isinstance(error.get("fatal"), bool) else None,
+            recovery=error.get("recovery") if isinstance(error.get("recovery"), dict) else None,
+            canonical_command=str(error.get("canonical_command") or "") or None,
+            session_state=session if isinstance(session, dict) else None,
+            warning=warning,
         )
 
     # No structured result: treat as FAILURE, never assume success.

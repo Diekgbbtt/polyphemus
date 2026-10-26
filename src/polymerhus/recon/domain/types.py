@@ -55,6 +55,15 @@ class ExecResult(BaseModel):
     exec_id: str = ""
     http_artifact_refs: list[str] = Field(default_factory=list)
     capture_warning: str | None = None
+    # The Steel tool contract: additive, optional, and backward-compatible.
+    error_code: str = ""
+    error_message: str = ""
+    retryable: bool | None = None
+    fatal: bool | None = None
+    recovery: dict | None = None
+    canonical_command: str | None = None
+    session_state: dict | None = None
+    warning: dict | None = None
 
 
 class CaptureContext(BaseModel):

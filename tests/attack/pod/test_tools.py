@@ -28,6 +28,7 @@ from polymerhus.attack.hunting.pod.tools import (
     ExecSpec,
     ExecTool,
     KbQueryTool,
+    run_with_retry,
 )
 from polymerhus.recon.domain.types import ExecResult
 
@@ -329,6 +330,59 @@ def test_exec_tool_async_path_records_same_shape():
     out = asyncio.run(tool.ainvoke({"command": "curl -k -sS https://t/"}))
     assert "TOOL RESULT: status=200" in out
     assert len(log.raw_observations) == 1
+
+
+def test_exec_tool_records_structured_browser_error_and_returns_tool_error():
+    log = ExperimentLog()
+    error = ExecResult(
+        stdout="",
+        stderr="CDP error: target lost",
+        returncode=1,
+        duration_ms=1,
+        error_code="target_lost",
+        error_message="the session is live but its page target is gone",
+        retryable=False,
+        fatal=False,
+        recovery={
+            "action": "tab_new",
+            "command": "steel browser tab new --session wj-live --json",
+        },
+        canonical_command="steel browser eval ...",
+        session_state={"name": "wj-live", "live": True},
+    )
+    tool = ExecTool(exec_fn=lambda command, timeout_s: error,
+                    log=log, variant_ref="v0")
+
+    out = tool.invoke({"command": "steel browser eval ..."})
+
+    assert out.startswith("TOOL ERROR: code=target_lost")
+    assert "tab_new" in out
+    obs = log.raw_observations[0]
+    assert obs.error_code == "target_lost"
+    assert obs.retryable is False
+    assert obs.fatal is False
+    assert obs.recovery["action"] == "tab_new"
+    assert obs.session_state == {"name": "wj-live", "live": True}
+
+
+def test_run_with_retry_stops_on_a_fatal_browser_error():
+    calls = []
+
+    async def fake(command, timeout_s):
+        calls.append(command)
+        return ExecResult(
+            stdout="", stderr="runtime unavailable", returncode=1, duration_ms=1,
+            error_code="browser_unavailable", retryable=False, fatal=True,
+            recovery={"action": "recreate_session"},
+        )
+
+    result, attempts = asyncio.run(
+        run_with_retry(fake, "steel browser snapshot --session wj --json",
+                       max_iters=3))
+
+    assert attempts == 1
+    assert len(calls) == 1
+    assert result.error_code == "browser_unavailable"
 
 
 def test_runner_tools_note_tool_rejects_a_storeless_instance(tmp_path):

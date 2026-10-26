@@ -156,6 +156,16 @@ class RawObservation(BaseModel):
     # #196: links this D6 record to captured HTTP artifacts by id - the artifact
     # contents are never copied here.
     http_artifact_refs: list[str] = Field(default_factory=list)
+    # Steel tool-contract semantics: additive and optional. The runner receives
+    # the same error in its tool result; this record keeps it in the D6 trail.
+    error_code: str = ""
+    error_message: str = ""
+    retryable: bool | None = None
+    fatal: bool | None = None
+    recovery: dict | None = None
+    canonical_command: str | None = None
+    session_state: dict | None = None
+    warning: dict | None = None
 
 
 class KbObservation(BaseModel):

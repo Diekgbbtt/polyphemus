@@ -13,14 +13,16 @@ import inspect
 
 from polymerhus.attack.hunting.llm import hunt_session
 from polymerhus.attack.hunting.pod import arun_pod
+import polymerhus.attack.hunting.pod.graph as graph_mod
 from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
+from polymerhus.attack.hunting.pod.context import ExperimentLog
 from polymerhus.attack.hunting.pod.llm import (
     POD_DEFAULT_RUN_ID,
     POD_RUNNER_ROLE,
     POD_TRIAGER_ROLE,
     pod_session,
 )
-from polymerhus.attack.hunting.pod.types import RunnerStep
+from polymerhus.attack.hunting.pod.types import RawObservation, RunnerStep
 from polymerhus.recon.domain.types import ExecResult
 
 from polymerhus.attack.hunting.pod.pod_memory import spec_identifier
@@ -191,6 +193,49 @@ def test_no_derivable_probe_lands_no_symptom_evidence_clean_false():
                         trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["clean"] is False
+
+
+def test_clean_from_trail_rejects_a_tool_error_observation():
+    log = ExperimentLog()
+    log.record_observation(RawObservation(
+        returncode=0,
+        error_code="cli_error",
+        error_message="the CLI rejected the command",
+        recovery={"action": "fix_command"},
+    ))
+    assert graph_mod._clean_from_trail(log) is False
+
+
+def test_contract_tier_tool_exec_records_browser_error_fields():
+    steps = [
+        RunnerStep(action="tool_call", tool="exec",
+                   command='steel browser eval "1" --session wj-live --json'),
+        RunnerStep(action="conclude", observation_note="stop after the error"),
+    ]
+
+    def exec_fn(command, timeout_s):
+        return ExecResult(
+            stdout="", stderr="CDP error: target lost", returncode=1,
+            duration_ms=1, error_code="target_lost",
+            error_message="the page target is gone", retryable=False,
+            fatal=False, recovery={"action": "tab_new"},
+            canonical_command=command,
+            session_state={"name": "wj-live", "live": True},
+        )
+
+    def triager(spec, obs, messages, log):
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "no-symptom-evidence", "clean": False}
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=exec_fn,
+                        runner_step_fn=_scripted(steps), triager_fn=triager,
+                        trace_fn=_no_trace))
+
+    obs = env["evidence"]["raw_observations"][0]
+    assert obs["error_code"] == "target_lost"
+    assert obs["recovery"]["action"] == "tab_new"
+    assert obs["session_state"] == {"name": "wj-live", "live": True}
     assert env["evidence"]["clean"] is False
 
 
