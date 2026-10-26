@@ -1,0 +1,116 @@
+{
+  "run_id": "steel-e2e-395-gateway-20261026T211848Z",
+  "thread_id": "steel-e2e-395-gateway-20261026T211848Z:job_orchestrator",
+  "project": "steel-e2e-395",
+  "account": "admin-sessiononly-e2e",
+  "session": "wj-gateway-e2e",
+  "expected": {
+    "gate": "run_loop",
+    "directive": "browser_only",
+    "candidate": "admin-sessiononly-e2e",
+    "account": "admin-sessiononly-e2e",
+    "branch": "browser_only"
+  },
+  "verdict": {
+    "outcome": "authenticated",
+    "account": "admin-sessiononly-e2e",
+    "branch": "browser_only",
+    "replayability_resolved": false,
+    "replayability": null,
+    "rationale": "Browser-only validation of admin-sessiononly-e2e succeeded exclusively through the Steel path (no request tools used, no browser state reference written). Reused the operator-owned live session wj-gateway-e2e (confirmed present and status=live via `steel browser sessions`). Proof chain: (1) /admin/dashboard rendered the authenticated admin SPA (menu 用户管理/内容管理/系统配置, dashboard widgets); (2) GET /api/authentication returned the marker 身份认证成功, proving the httpOnly JSESSIONID was sent and the server session is live (not a 302 /nowhere); (3) GET /api/admin/user returned code:200 with the administrator entry username=admin carrying role sysAdmin (系统管理员), proving the URLPathMatchingFilter role gate admitted the session (a member session would return an empty 200 body). Asserted accounts.admin-sessiononly-e2e.status=valid via a leaf merge write on the operator-stamped account (origin:operator provenance retained; token value never rewritten). Outer skill loop: the verified browser-session-reuse procedure ran clean with no deviation, new route, selector fix, runtime fact, or blocking condition, so no write_skill/lesson was recorded (skip per skill guidance). Branch is browser_only per the fixture overlay (anti-bot=steel-e2e-browser-only-fixture, http-client-replayability=false); request phases are pruned and only the Steel crawl runs. replayability_resolved left false because the overview already records the known http-client-replayability=false — no unknown fact was resolved in-loop. Operator note: this is a deliberate test overlay, not a target fact — the target is actually request-replayable. No token, cookie value, or credential is exposed in this verdict."
+  },
+  "verdict_ok": true,
+  "verdict_secret_leak": false,
+  "loop_phase": "FINISH",
+  "loop_observed": null,
+  "loop_skill": null,
+  "loop_retrieve": null,
+  "loop_probe": null,
+  "loop_validate": null,
+  "loop_history": null,
+  "loop_state": {
+    "phase": "FINISH",
+    "grounded": true,
+    "overview_seen": true,
+    "skill_seen": true,
+    "skill_missing": false,
+    "accounts_seen": true,
+    "account": "admin-sessiononly-e2e",
+    "usable_accounts": [
+      "admin-sessiononly-e2e"
+    ],
+    "probe_count": 7,
+    "attempt_count": 0,
+    "injected_hint": "Authenticated state persisted. Run the outer loop: re-read the authn skill, judge what this target taught (a blocking condition, a replay fact, a selector fix), and write the reusable part back through write_skill. Then emit the gateway verdict."
+  },
+  "account_after": {
+    "status": "valid",
+    "origin": "operator",
+    "updated_at": "2026-10-26T21:20:09.280338+00:00",
+    "token_present": true,
+    "snapshot_cookie_names": [
+      "JSESSIONID",
+      "rememberMe"
+    ]
+  },
+  "status_write_ok": true,
+  "overview": {
+    "anti_bot": "steel-e2e-browser-only-fixture",
+    "http_client_replayability": false,
+    "defences": [
+      "steel-e2e fixture overlay: request replay is deliberately disabled for this run. The target is actually request-replayable; this is test configuration, not a target fact."
+    ]
+  },
+  "skill": {
+    "before_chars": 7213,
+    "after_chars": 7213,
+    "before_hash": "812110002af00749a0d397befd40b65722c81450d763ff38df194fc7dd5d818e",
+    "after_hash": "812110002af00749a0d397befd40b65722c81450d763ff38df194fc7dd5d818e",
+    "modified": false
+  },
+  "trace": {
+    "messages": 24,
+    "chars": 53290,
+    "secret_leak": true,
+    "redacted": true
+  },
+  "tools": {
+    "tool_names": [
+      "auth_store",
+      "load_skill",
+      "auth_store",
+      "steel_exec",
+      "steel_exec",
+      "steel_exec",
+      "steel_exec",
+      "steel_exec",
+      "steel_exec",
+      "steel_exec",
+      "auth_store",
+      "GatewayVerdict"
+    ],
+    "browser_commands": [
+      "steel browser sessions --json",
+      "steel browser navigate http://t-1618c524.target/admin/dashboard --wait-until domcontentloaded --session wj-gateway-e2e --json",
+      "steel browser snapshot -i --session wj-gateway-e2e --json",
+      "steel browser navigate http://t-1618c524.target/api/authentication --wait-until domcontentloaded --session wj-gateway-e2e --json",
+      "steel browser eval \"document.body.innerText\" --session wj-gateway-e2e --json",
+      "steel browser navigate http://t-1618c524.target/api/admin/user --wait-until domcontentloaded --session wj-gateway-e2e --json",
+      "steel browser eval \"document.body.innerText\" --session wj-gateway-e2e --json"
+    ],
+    "auth_store_writes": [
+      {
+        "path": "accounts.admin-sessiononly-e2e.status",
+        "value": "valid"
+      }
+    ],
+    "skill_loads": [
+      "authn"
+    ],
+    "skill_writes": []
+  },
+  "session_live": true,
+  "stop_error": null,
+  "error": null,
+  "ok": true
+}

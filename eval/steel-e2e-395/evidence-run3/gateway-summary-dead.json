@@ -1,0 +1,107 @@
+{
+  "run_id": "steel-e2e-395-gateway-20261026T215622Z",
+  "thread_id": "steel-e2e-395-gateway-20261026T215622Z:job_orchestrator",
+  "project": "steel-e2e-395",
+  "account": "admin-sessiononly-e2e",
+  "session": "wj-dead-e2e",
+  "expected": {
+    "gate": "run_loop",
+    "directive": "browser_only",
+    "candidate": "admin-sessiononly-e2e",
+    "account": "admin-sessiononly-e2e",
+    "branch": "browser_only"
+  },
+  "verdict": {
+    "outcome": "failed",
+    "account": "admin-sessiononly-e2e",
+    "branch": "browser_only",
+    "replayability_resolved": false,
+    "replayability": null,
+    "rationale": "Browser-only validation of admin-sessiononly-e2e could not proceed: the operator-owned pre-authenticated Steel session wj-gateway-e2e is ABSENT. Proved by two independent Steel probes — `steel browser sessions --json` returned an empty catalogue ({\"data\":[]}), and a reattach `navigate .../admin/dashboard --session wj-gateway-e2e` returned error.code unknown_session (retryable false, live_sessions []). Per the authn skill failure branch I did NOT mint a replacement (the CLI recovery's start_command is an anti-pattern here): the account stores no credentials and no roles, and the branch is browser_only, so a fresh session could never reach the authenticated admin state and request login is forbidden. I asserted accounts.admin-sessiononly-e2e.status = not_valid in the store (leaf merge; token value untouched, no material emitted). The sign-in/tweaking space is exhausted — no request path (pruned by browser_only), no credentials for a browser login, no permitted replacement session — so this is the terminal failed verdict, loud, not a silent anonymous turn. Collection will run unauthenticated. OPERATOR ACTION at next seed: re-mint the pre-authenticated wj-gateway-e2e Steel session (operator owns the session lifecycle); the account itself is unchanged and reusable once the live browser context is restored. replayability_resolved stays false because the overview already records the known http-client-replayability false (a fixture overlay, not resolved in-loop). branch browser_only: request jobs pruned, only the Steel crawl runs. No token, cookie value, or credential is carried in this verdict."
+  },
+  "verdict_ok": false,
+  "verdict_secret_leak": false,
+  "loop_phase": "GENERATION",
+  "loop_observed": null,
+  "loop_skill": null,
+  "loop_retrieve": null,
+  "loop_probe": null,
+  "loop_validate": null,
+  "loop_history": null,
+  "loop_state": {
+    "phase": "GENERATION",
+    "grounded": true,
+    "overview_seen": true,
+    "skill_seen": true,
+    "skill_missing": false,
+    "accounts_seen": true,
+    "account": "admin-sessiononly-e2e",
+    "usable_accounts": [
+      "admin-sessiononly-e2e"
+    ],
+    "probe_count": 2,
+    "attempt_count": 0,
+    "injected_hint": null
+  },
+  "account_after": {
+    "status": "not_valid",
+    "origin": "operator",
+    "updated_at": "2026-10-26T21:58:49.302195+00:00",
+    "token_present": true,
+    "snapshot_cookie_names": [
+      "JSESSIONID",
+      "rememberMe"
+    ]
+  },
+  "status_write_ok": true,
+  "overview": {
+    "anti_bot": "steel-e2e-browser-only-fixture",
+    "http_client_replayability": false,
+    "defences": [
+      "steel-e2e fixture overlay: request replay is deliberately disabled for this run. The target is actually request-replayable; this is test configuration, not a target fact."
+    ]
+  },
+  "skill": {
+    "before_chars": 7213,
+    "after_chars": 7213,
+    "before_hash": "812110002af00749a0d397befd40b65722c81450d763ff38df194fc7dd5d818e",
+    "after_hash": "812110002af00749a0d397befd40b65722c81450d763ff38df194fc7dd5d818e",
+    "modified": false
+  },
+  "trace": {
+    "messages": 14,
+    "chars": 60179,
+    "secret_leak": true,
+    "redacted": true
+  },
+  "tools": {
+    "tool_names": [
+      "auth_store",
+      "load_skill",
+      "auth_store",
+      "steel_exec",
+      "steel_exec",
+      "auth_store",
+      "record_skill_lesson",
+      "GatewayVerdict"
+    ],
+    "browser_commands": [
+      "steel browser sessions --json",
+      "steel browser navigate http://t-1618c524.target/admin/dashboard --wait-until domcontentloaded --session wj-gateway-e2e --json"
+    ],
+    "auth_store_writes": [
+      {
+        "path": "accounts.admin-sessiononly-e2e.status",
+        "value": "not_valid"
+      }
+    ],
+    "skill_loads": [
+      "authn"
+    ],
+    "skill_writes": []
+  },
+  "session_live": false,
+  "stop_error": null,
+  "error": null,
+  "ok": false
+}
