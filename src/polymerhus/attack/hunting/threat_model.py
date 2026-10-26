@@ -8,8 +8,9 @@ level, so a typo can never silently persist.
 
 The entity names are the artifact contract's (`UnitThreatModel`,
 `TechnicalSharpening`, `TrustModel`, `TrustAgreement`, `DynamicStateTrust`,
-`Assumption`, `Fault`, `Vulnerability`, `Threat`, `Evidence`,
-`Confidence`, `Likelihood`, `RiskFactors`, `RiskProfile`, `Validation`).
+`Assumption`, `Fault`, `Vulnerability`, `PriorArt`, `Precursor`,
+`ImpactAssessment`, `Threat`, `Evidence`, `Confidence`, `Likelihood`,
+`RiskFactors`, `RiskProfile`, `Validation`).
 
 Rules this module owns:
 
@@ -21,8 +22,11 @@ Rules this module owns:
   descending, ties in the modeller's write order, ids renumbered `threat-1..n`.
   The store owns the id, so the write schema defaults `Threat.id` empty.
 - The completion checker (S2 5.7): the loose necessary-attribute set, the
-  referential integrity, the assumption-to-threat closure, the threat order, and a
-  REGRESSION check of the stored risk profile against a fresh recomputation.
+  referential integrity, the assumption-to-threat closure, the impact invariants
+  (one threat row per damage-bearing assessment, a placeholder with no threat,
+  the precursor resolution, the enabling-precursor/capability-path equality),
+  the threat order, and a REGRESSION check of the stored risk profile against a
+  fresh recomputation.
   It is non-blocking: it records findings, it never rejects the model.
 
 The checker is pure; the store (`threat_model_store`) applies it on the
@@ -36,7 +40,7 @@ from typing import AbstractSet
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Technique families are class parents in the suite tree, but they name a
 # technique, not a vulnerability class. The completion checker records their
@@ -45,12 +49,15 @@ TECHNIQUE_FAMILIES: frozenset[str] = frozenset(
     {"defence-bypass", "proxy-techniques", "two-principal-authz"}
 )
 
-# Migration note (2026-10-25): the failure-mode contraction removed the
+# Migration note (2026-10-26): schema 3 replaced the damage-first model with the
+# impact-assessment model - the `prior_art`, `impact_assessment`, and
+# `precursors` sections, the `PRIOR_ART` and `IMPACT_ASSESSED` gates,
+# `Threat.impact_ref` / `Threat.enabling_precursors`, and `Impact` without
+# `end_impact`. The damage text lives on the `ImpactAssessment` row. A v2 model
+# is NOT migrated: this reader refuses it, and the measurement reads it raw.
+# (2026-10-25, kept for history: the failure-mode contraction removed the
 # `failure_modes` section and the `Threat.failure_mode_refs` link WITHOUT a
-# version bump - the A/B uses fresh models and no legacy model is migrated.
-# A legacy document that still carries either key no longer parses here
-# (`extra="forbid"`), so the store refuses to merge it instead of silently
-# dropping the section.
+# version bump - the A/B uses fresh models and no legacy model is migrated.)
 
 # The progressive risk budget's default halt (S2 7.4). The canary's first unit
 # reached risk_total=44, so the operator raised the documented default to 250;
@@ -136,12 +143,14 @@ class UnitKind(StrEnum):
 
 
 class ModelState(StrEnum):
-    """The five workflow gates; the persisted state is the latest gate."""
+    """The seven workflow gates; the persisted state is the latest gate."""
 
     UNIT_TECHNICAL_SHARP = "UNIT_TECHNICAL_SHARP"
+    PRIOR_ART = "PRIOR_ART"
     TRUST_MODELLED = "TRUST_MODELLED"
     TRUST_ASSUMPTIONS_WRITTEN = "TRUST_ASSUMPTIONS_WRITTEN"
     VULNERABILITIES_WRITTEN = "VULNERABILITIES_WRITTEN"
+    IMPACT_ASSESSED = "IMPACT_ASSESSED"
     COMPLETED = "COMPLETED"
 
 
@@ -152,12 +161,16 @@ STATE_ORDER: dict[ModelState, int] = {
 }
 
 # The section names each gate may write (S2 5.4). The COMPLETED write does not
-# carry `risk_profile`; the store computes it after the merge.
+# carry `risk_profile`; the store computes it after the merge. The
+# `IMPACT_ASSESSED` gate writes the rows and the precursor entities together,
+# because every row's precursor references resolve inside the same model.
 GATE_SECTIONS: dict[ModelState, tuple[str, ...]] = {
     ModelState.UNIT_TECHNICAL_SHARP: ("technical_sharpening",),
+    ModelState.PRIOR_ART: ("prior_art",),
     ModelState.TRUST_MODELLED: ("trust_model",),
     ModelState.TRUST_ASSUMPTIONS_WRITTEN: ("assumptions",),
     ModelState.VULNERABILITIES_WRITTEN: ("vulnerabilities",),
+    ModelState.IMPACT_ASSESSED: ("impact_assessment", "precursors"),
     ModelState.COMPLETED: ("threats",),
 }
 
@@ -330,22 +343,119 @@ class RiskFactors(_Record):
     complexity: Complexity
 
 
-class Impact(_Record):
-    """The end impact of exploiting the threat's vulnerability.
+class PriorArtKind(StrEnum):
+    """The record kinds the prior-art gate can query (spec section 7)."""
 
-    The modeller authors the three CVSS 4.0-like metrics and the literal
-    end-impact statement. The store computes the sub-score, the ordinal weight,
-    the threat risk, and the profile; the modeller never authors a score.
+    THREAT = "threat"
+    VULNERABILITY = "vulnerability"
+    PRECURSOR = "precursor"
+    ASSUMPTION = "assumption"
+    IMPACT = "impact"
+
+
+class FieldFilter(_Record):
+    """One regex field filter of a prior-art query (spec section 7)."""
+
+    path: str
+    regex: str
+    flags: str = "i"
+
+
+class PriorArtQuery(_Record):
+    """One recorded prior-art query: the kind, its filters, its match count."""
+
+    kind: PriorArtKind
+    filters: list[FieldFilter]
+    result_count: int
+
+
+class PriorArtReuse(_Record):
+    """One record reused from another unit's completed model."""
+
+    unit_id: str
+    record_id: str
+    kind: str
+    reason: str
+
+
+class PriorArt(_Record):
+    """The `PRIOR_ART` gate section (spec section 7).
+
+    The queries the modeller ran and the records it reused. The query tool and
+    the completion requirement land with the prior-art ticket; this is the typed
+    section the gate writes, so the document shape is fixed here.
+    """
+
+    queries: list[PriorArtQuery] = Field(default_factory=list)
+    reused: list[PriorArtReuse] = Field(default_factory=list)
+    notes: str = ""
+
+
+class Impact(_Record):
+    """The CIA vector of one damage claim.
+
+    The modeller authors the three CVSS 4.0-like metrics AFTER the impact
+    assessment has named the damage. The store computes the sub-score, the
+    ordinal weight, the threat risk, and the profile; the modeller never authors
+    a score. The damage text lives on the `ImpactAssessment` row.
     """
 
     confidentiality: ImpactLevel = ImpactLevel.NONE
     integrity: ImpactLevel = ImpactLevel.NONE
     availability: ImpactLevel = ImpactLevel.NONE
-    end_impact: str = ""
 
     @classmethod
     def none(cls) -> "Impact":
         return cls()
+
+    def is_none(self) -> bool:
+        """True when every metric is `none` - the red row of the impact metric."""
+        return all(
+            level == ImpactLevel.NONE
+            for level in (
+                self.confidentiality, self.integrity, self.availability,
+            )
+        )
+
+
+class ImpactDisposition(StrEnum):
+    """Whether an assessment row is damage-bearing or a placeholder."""
+
+    THREAT = "threat"
+    PLACEHOLDER = "placeholder"
+
+
+class Precursor(_Record):
+    """One capability entity of the model (spec section 3).
+
+    The `procedure` is the abstract trust-boundary mechanism that gains the
+    capability - never a request, a payload, or a tool. A precursor is not a
+    threat: a threat references the precursors it needs through
+    `enabling_precursors`.
+    """
+
+    id: str
+    capability: str
+    procedure: str
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class ImpactAssessment(_Record):
+    """One damage claim of the model (spec section 3).
+
+    `damage` is the one damage text: it names the victim and the damaged
+    property. A `threat` row reaches at least one non-none CIA value through its
+    threat and has a non-empty `capability_path`; a `placeholder` row has no
+    threat, so its vector is all none, and its `capability_path` is empty.
+    """
+
+    id: str = ""
+    vulnerability_ref: str
+    disposition: ImpactDisposition
+    damage: str
+    precursor_refs: list[str] = Field(default_factory=list)
+    capability_path: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
 
 
 def compute_impact(impact: Impact) -> float:
@@ -400,10 +510,13 @@ def risk_bucket(risk: int) -> str:
 
 
 class Threat(_Record):
-    """One ranked research direction and the dispatch grain.
+    """One damage-bearing row and the dispatch grain.
 
     `id` defaults empty: the threat id is a store-owned derived symbol assigned
-    at the COMPLETED write (S2 5.6 / 10.2), never authored by the modeller.
+    at the COMPLETED write (S2 5.6 / 10.2), never authored by the modeller. The
+    same reasoning keeps `impact_ref` and `enabling_precursors` defaulted empty:
+    the completion checker reports them as findings, so an incomplete threat is
+    feedback for the model rather than a rejected write.
     """
 
     id: str = ""
@@ -416,6 +529,11 @@ class Threat(_Record):
     risk_factors: RiskFactors
     confidence: Confidence
     evidences: list[Evidence]
+    # The impact-assessment row this threat publishes (IA-*) and the precursors
+    # that reach its damage (P-*). One threat references exactly one `threat`
+    # assessment, and its enabling set equals that row's capability path.
+    impact_ref: str = ""
+    enabling_precursors: list[str] = Field(default_factory=list)
     impact: Impact = Field(default_factory=Impact)
     # Derived at the COMPLETED normalisation. The write schema defaults them to
     # zero; the store overwrites them and the checker regression-checks them.
@@ -451,9 +569,12 @@ class ModelSections(BaseModel):
     because a gate writes only its own section(s)."""
 
     technical_sharpening: TechnicalSharpening | None = None
+    prior_art: PriorArt | None = None
     trust_model: TrustModel | None = None
     assumptions: list[Assumption] | None = None
     vulnerabilities: list[Vulnerability] | None = None
+    impact_assessment: list[ImpactAssessment] | None = None
+    precursors: list[Precursor] | None = None
     threats: list[Threat] | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -475,9 +596,12 @@ class UnitThreatModel(_Record):
     updated_at: datetime
     state: ModelState
     technical_sharpening: TechnicalSharpening = Field(default_factory=TechnicalSharpening)
+    prior_art: PriorArt = Field(default_factory=PriorArt)
     trust_model: TrustModel = Field(default_factory=TrustModel)
     assumptions: list[Assumption] = Field(default_factory=list)
     vulnerabilities: list[Vulnerability] = Field(default_factory=list)
+    impact_assessment: list[ImpactAssessment] = Field(default_factory=list)
+    precursors: list[Precursor] = Field(default_factory=list)
     threats: list[Threat] = Field(default_factory=list)
     risk_profile: RiskProfile | None = None
     validation: Validation | None = None
@@ -596,14 +720,44 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
     every_vulnerability_dropped = bool(model.vulnerabilities) and all(
         vulnerability.dropped for vulnerability in model.vulnerabilities
     )
-    if not model.threats and not every_vulnerability_dropped:
-        missing.append("threats")
+    if not model.impact_assessment and not every_vulnerability_dropped:
+        # A model whose vulnerabilities are all placeholders has no threats and
+        # is still complete; the damage claims are the impact rows.
+        missing.append("impact_assessment")
+    # The impact invariants (S2 5.7). The CIA vector lives on the threat, so a
+    # `threat` row's non-none requirement is checked on its threat below; a
+    # placeholder has no threat, so its all-none vector is vacuous. The damage
+    # is necessary for both dispositions; only a `threat` row reaches damage, so
+    # only it carries a capability path.
+    for assessment in model.impact_assessment:
+        if not assessment.damage:
+            missing.append(f"impact_assessment:{assessment.id}.damage")
+        if assessment.disposition is ImpactDisposition.THREAT:
+            if not assessment.capability_path:
+                missing.append(f"impact_assessment:{assessment.id}.capability_path")
+        elif assessment.capability_path:
+            missing.append(f"impact_assessment:{assessment.id}.capability_path")
+    for index, assessment in enumerate(model.impact_assessment):
+        if not assessment.id:
+            missing.append(f"impact_assessment[{index}].id")
+    for precursor in model.precursors:
+        if not precursor.capability:
+            missing.append(f"precursor:{precursor.id}.capability")
+        if not precursor.procedure:
+            missing.append(f"precursor:{precursor.id}.procedure")
+    for index, precursor in enumerate(model.precursors):
+        if not precursor.id:
+            missing.append(f"precursor[{index}].id")
     for threat in model.threats:
         if not threat.likelihood_rationale:
             missing.append(f"threat:{threat.id}.likelihood_rationale")
         if not threat.evidences:
             missing.append(f"threat:{threat.id}.evidences")
-        if not threat.impact.end_impact:
+        if not threat.impact_ref:
+            missing.append(f"threat:{threat.id}.impact_ref")
+        if not threat.enabling_precursors:
+            missing.append(f"threat:{threat.id}.enabling_precursors")
+        if threat.impact.is_none():
             missing.append(f"threat:{threat.id}.impact")
         expected_weight = impact_weight(threat.impact)
         if threat.impact_weight != expected_weight:
@@ -644,6 +798,8 @@ def _check_references(model: UnitThreatModel) -> list[str]:
         agreement.id for agreement in model.trust_model.trust_agreements
     }
     state_ids = {state.id for state in dynamic.states}
+    impact_ids = {row.id for row in model.impact_assessment}
+    precursor_ids = {precursor.id for precursor in model.precursors}
 
     def unresolved(owner: str, field: str, ref: str) -> None:
         errors.append(f"{owner}.{field}={ref!r}")
@@ -651,6 +807,21 @@ def _check_references(model: UnitThreatModel) -> list[str]:
     for vulnerability in model.vulnerabilities:
         if vulnerability.fault_ref not in fault_ids:
             unresolved(f"vulnerability:{vulnerability.id}", "fault_ref", vulnerability.fault_ref)
+    for assessment in model.impact_assessment:
+        if assessment.vulnerability_ref not in vulnerability_ids:
+            unresolved(
+                f"impact_assessment:{assessment.id}",
+                "vulnerability_ref",
+                assessment.vulnerability_ref,
+            )
+        for ref in assessment.precursor_refs:
+            if ref not in precursor_ids:
+                unresolved(
+                    f"impact_assessment:{assessment.id}", "precursor_refs", ref)
+        for ref in assessment.capability_path:
+            if ref not in precursor_ids:
+                unresolved(
+                    f"impact_assessment:{assessment.id}", "capability_path", ref)
     for assumption in model.assumptions:
         if assumption.boundary_ref and assumption.boundary_ref not in trust_agreement_ids:
             unresolved(f"assumption:{assumption.id}", "boundary_ref", assumption.boundary_ref)
@@ -674,6 +845,11 @@ def _check_references(model: UnitThreatModel) -> list[str]:
             unresolved(f"threat:{threat.id}", "fault_ref", threat.fault_ref)
         if threat.vulnerability_ref not in vulnerability_ids:
             unresolved(f"threat:{threat.id}", "vulnerability_ref", threat.vulnerability_ref)
+        if threat.impact_ref not in impact_ids:
+            unresolved(f"threat:{threat.id}", "impact_ref", threat.impact_ref)
+        for ref in threat.enabling_precursors:
+            if ref not in precursor_ids:
+                unresolved(f"threat:{threat.id}", "enabling_precursors", ref)
         vulnerability = vulnerability_index.get(threat.vulnerability_ref)
         if vulnerability is not None:
             if threat.canonical_class != vulnerability.canonical_class:
@@ -687,9 +863,35 @@ def _check_references(model: UnitThreatModel) -> list[str]:
 
 
 def _check_closure(model: UnitThreatModel) -> list[str]:
-    """The assumption-to-threat closure findings (S2 5.7), as dotted paths."""
+    """The assumption-to-threat closure findings (S2 5.7), as dotted paths.
+
+    The impact closure is the one-threat-one-damage rule: a `threat` row
+    publishes exactly one threat, a `placeholder` none, a threat references a
+    `threat` row of its own vulnerability, and its enabling set equals that
+    row's capability path. An unresolved reference is the referential check's
+    finding, so a threat whose row is missing is not reported twice here.
+    """
     unclosed: list[str] = []
     vulnerability_index = {vulnerability.id: vulnerability for vulnerability in model.vulnerabilities}
+    impact_index = {row.id: row for row in model.impact_assessment}
+    threats_by_impact: dict[str, list[Threat]] = {}
+    for threat in model.threats:
+        threats_by_impact.setdefault(threat.impact_ref, []).append(threat)
+    for assessment in model.impact_assessment:
+        expected = 1 if assessment.disposition is ImpactDisposition.THREAT else 0
+        if len(threats_by_impact.get(assessment.id, [])) != expected:
+            unclosed.append(f"impact_assessment:{assessment.id}.threat")
+    for threat in model.threats:
+        assessment = impact_index.get(threat.impact_ref)
+        if assessment is None:
+            continue
+        if (
+            assessment.disposition is not ImpactDisposition.THREAT
+            or assessment.vulnerability_ref != threat.vulnerability_ref
+        ):
+            unclosed.append(f"threat:{threat.id}.impact_ref")
+        elif set(threat.enabling_precursors) != set(assessment.capability_path):
+            unclosed.append(f"threat:{threat.id}.enabling_precursors")
     for assumption in model.assumptions:
         if not any(
             vulnerability.fault_ref == assumption.fault.id
@@ -703,8 +905,11 @@ def _check_closure(model: UnitThreatModel) -> list[str]:
             if not vulnerability.drop_probe:
                 unclosed.append(f"vulnerability:{vulnerability.id}.drop_probe")
             continue
-        if not any(threat.vulnerability_ref == vulnerability.id for threat in model.threats):
-            unclosed.append(f"vulnerability:{vulnerability.id}.threats")
+        if not any(
+            row.vulnerability_ref == vulnerability.id
+            for row in model.impact_assessment
+        ):
+            unclosed.append(f"vulnerability:{vulnerability.id}.impact_assessment")
     for threat in model.threats:
         vulnerability = vulnerability_index.get(threat.vulnerability_ref)
         if vulnerability is not None and vulnerability.dropped:
@@ -790,15 +995,24 @@ __all__ = [
     "Evidence",
     "EvidenceKind",
     "Fault",
+    "FieldFilter",
     "GATE_SECTIONS",
     "IMPACT_METRIC_WEIGHTS",
     "Impact",
+    "ImpactAssessment",
+    "ImpactDisposition",
     "ImpactLevel",
     "ImpactSeverity",
     "Likelihood",
+    "ModelSections",
     "Threat",
     "ModelState",
     "PartialThreatModel",
+    "Precursor",
+    "PriorArt",
+    "PriorArtKind",
+    "PriorArtQuery",
+    "PriorArtReuse",
     "PrivilegesRequired",
     "RISK_WEIGHTS",
     "RiskFactors",

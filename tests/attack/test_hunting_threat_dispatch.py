@@ -58,7 +58,7 @@ def hunter_store(tmp_path):
 def produce_model(store, *, unit_id=UNIT, run_id=RUN, threats=None) -> str:
     """This module's binding of the SHARED produced-model fixture
     (`tests.hunting_fixtures.produce_model`): the project/run/unit defaults
-    stay here, the five-gate ladder has one home."""
+    stay here, the seven-gate ladder has one home."""
     return _produce_model(
         store, project_id=PROJECT, unit_id=unit_id, run_id=run_id, threats=threats)
 
@@ -126,8 +126,9 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
 
 
 def test_the_payload_carries_the_impact_and_not_the_derived_score(threat_store):
-    """The hunter receives the intended end impact as context. The derived
-    impact weight and threat risk are dispatch concerns, not hunter reasoning."""
+    """The hunter receives the intended impact vector as context. The derived
+    impact weight and threat risk are dispatch concerns, not hunter reasoning,
+    and the damage text lives in the threat file's `impact` block."""
     produce_model(threat_store)
     model = threat_store.read_model(PROJECT, UNIT)
     threat_file = threat_store.read_threat_files(PROJECT, UNIT)[0]
@@ -136,9 +137,11 @@ def test_the_payload_carries_the_impact_and_not_the_derived_score(threat_store):
         model, threat_file, dispatch_id=f"{UNIT_NAME}__threat-1",
     )
 
-    assert payload["threat"]["impact"]["end_impact"] == (
-        "A caller reads another tenant's item.")
-    assert payload["threat"]["impact"]["confidentiality"] == "low"
+    assert payload["threat"]["impact"] == {
+        "confidentiality": "low",
+        "integrity": "none",
+        "availability": "none",
+    }
     assert "impact_weight" not in payload["threat"]
     assert "risk" not in payload["threat"]
 
@@ -1084,6 +1087,9 @@ def _zero_threat_turns():
         "drop_probe": "a second tenant's item id returning that item",
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
+    payloads[ModelState.IMPACT_ASSESSED] = {
+        "impact_assessment": [], "precursors": [],
+    }
     return ScriptedModellerTurns(payloads=payloads)
 
 
@@ -1102,6 +1108,9 @@ def _produce_zero_threat_model(store, *, unit_id=UNIT):
         "drop_probe": "a second tenant's item id returning that item",
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
+    payloads[ModelState.IMPACT_ASSESSED] = {
+        "impact_assessment": [], "precursors": [],
+    }
     for state in ModelState:
         store.write_sections(PROJECT, unit_id, state, payloads[state], run_id=RUN)
     return unit_id

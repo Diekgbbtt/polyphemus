@@ -39,8 +39,9 @@ def _tools(tmp_path, **kwargs) -> ModellerTools:
 def _gate_writer(turn, store):
     """The turn seam's real-decision action: the BOUND store tool's gate write.
 
-    The well-formedness pseudo-phase writes its exit note and the COMPLETED
-    gate, so a seam that writes every turn never re-enters the phase."""
+    The well-formedness pseudo-phase writes its exit note and the
+    IMPACT_ASSESSED gate, so a seam that writes every turn never re-enters the
+    phase."""
     tool = next(t for t in turn.tools if t.name == "hunts_store")
     if turn.phase == "WELLFORMEDNESS":
         notes = next(t for t in turn.tools if t.name == "notes")
@@ -51,8 +52,8 @@ def _gate_writer(turn, store):
         })
         from polymerhus.attack.hunting.threat_model import ModelState
         return tool.invoke({
-            "cmd": "write", "state": ModelState.COMPLETED.value,
-            "sections": modeller_gate_payloads()[ModelState.COMPLETED],
+            "cmd": "write", "state": ModelState.IMPACT_ASSESSED.value,
+            "sections": modeller_gate_payloads()[ModelState.IMPACT_ASSESSED],
         })
     return tool.invoke({
         "cmd": "write", "state": turn.state.value,
@@ -172,16 +173,16 @@ def test_pass_aborts_after_k_consecutive_no_decision_turns(tmp_path, monkeypatch
 
 
 def test_pass_a_real_decision_resets_consecutive_failures(tmp_path, monkeypatch):
-    """None, gate, None, None, None: the gate write resets the counter, so with
-    abort=4 the two later no-decisions stay below the threshold and the pass
-    returns instead of aborting."""
+    """None, None, gate, None, None, gate, None: each gate write resets the
+    counter, so with abort=4 the trailing no-decisions stay below the threshold
+    and the pass returns instead of aborting."""
     _set_breaker_env(monkeypatch, abort=4, warn=1, base=0.0)
     store = ThreatModelStore(root_dir=tmp_path)
     seen: list[ModelState] = []
 
     def turns(turn):
         seen.append(turn.state)
-        if turn.state == ModelState.TRUST_MODELLED:
+        if turn.state in (ModelState.TRUST_MODELLED, ModelState.IMPACT_ASSESSED):
             _gate_writer(turn, store)
         return None
 

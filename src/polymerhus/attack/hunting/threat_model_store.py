@@ -77,6 +77,7 @@ from .threat_model import (
     GATE_SECTIONS,
     SCHEMA_VERSION,
     STATE_ORDER,
+    ImpactDisposition,
     Likelihood,
     ModelState,
     PartialThreatModel,
@@ -999,12 +1000,29 @@ class ThreatModelStore(BoundedRecordStore):
         model: PartialThreatModel,
         now: datetime,
     ) -> None:
+        """Emit one threat file per DISPATCHABLE threat (S2 4.3, 8.1).
+
+        A threat is dispatchable when its combined risk is above zero and its
+        `impact_ref` resolves to a `threat` assessment: the file carries the
+        denormalised `impact` block (the row, the precursors on its capability
+        path, and the path), so the hunter needs no model document for the
+        damage context. A placeholder never has a threat, and a threat whose
+        reference does not resolve emits no file - the completion check reports
+        it and the model is never consumable.
+        """
         produced_dir = self._unit_dir(project_id, unit_name, "produced")
+        assessments = {
+            assessment.id: assessment for assessment in model.impact_assessment
+        }
+        precursors = {precursor.id: precursor for precursor in model.precursors}
         written: set[str] = set()
         for threat in model.threats:
             # A threat with zero combined risk is stored in the model but never
-            # dispatched: the impact axis can zero a high-likelihood direction.
+            # dispatched: a `none` likelihood zeroes a damage-bearing direction.
             if threat.risk <= 0:
+                continue
+            assessment = assessments.get(threat.impact_ref)
+            if assessment is None or assessment.disposition != ImpactDisposition.THREAT:
                 continue
             record = {
                 "threat_id": threat.id,
@@ -1014,6 +1032,18 @@ class ThreatModelStore(BoundedRecordStore):
                 "dispatch_id": dispatch_id(unit_name, threat.id),
                 "likelihood": threat.likelihood.value,
                 "threat": threat.model_dump(mode="json"),
+                "impact": {
+                    "impact_ref": assessment.id,
+                    "damage": assessment.damage,
+                    "disposition": assessment.disposition.value,
+                    # only the precursors that resolve, in capability-path order
+                    "precursors": [
+                        precursors[ref].model_dump(mode="json")
+                        for ref in assessment.capability_path
+                        if ref in precursors
+                    ],
+                    "capability_path": list(assessment.capability_path),
+                },
                 "created_at": now,
             }
             name = threat_file_name(threat.id)

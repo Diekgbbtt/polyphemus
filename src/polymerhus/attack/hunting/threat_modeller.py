@@ -1,17 +1,19 @@
-"""The threat modeller: the five-gate reasoning pass over one L1 unit (S1 4-6, 9).
+"""The threat modeller: the seven-gate reasoning pass over one L1 unit (S1 4-6, 9).
 
 The hunt-orchestrator planner was rewritten in place into the **threat modeller**
 (S1 2.1): for each admitted L1 unit it builds a formal trust model and publishes
 a ranked set of threats, one gate write at a time, into the per-project
 `ThreatModelStore` (T1, `threat_model_store.py`).
 
-The machine is an extended finite state machine of five states, whose gates are
+The machine is an extended finite state machine of seven states, whose gates are
 gate writes (S1 6.1):
 
     UNIT_TECHNICAL_SHARP      technical_sharpening
+    PRIOR_ART                 prior_art
     TRUST_MODELLED            trust_model
     TRUST_ASSUMPTIONS_WRITTEN assumptions
     VULNERABILITIES_WRITTEN   vulnerabilities
+    IMPACT_ASSESSED           impact_assessment, precursors
     COMPLETED                 threats
 
 Three rules govern the harness side:
@@ -97,10 +99,16 @@ TOOL_SURFACE: tuple[str, ...] = (
 # hint only tells the model what the next state expects.
 GATE_HINTS: dict[ModelState, str] = {
     ModelState.UNIT_TECHNICAL_SHARP: (
+        "Proceed to prior art: query the store for the earlier threats, "
+        "vulnerabilities, and precursors that bear on this unit, and record the "
+        "queries and the reused records in the prior_art section. Write the "
+        "outcomes with a hunts_store write for state PRIOR_ART."
+    ),
+    ModelState.PRIOR_ART: (
         "Proceed to trust mapping: work the four axes in order - identity, "
         "spatial, temporal, controls_semantics. Name the artifact, the "
         "controlling principal, the security-sensitive decision, and the "
-        "worst-case end impact for each trust agreement. Write the outcomes "
+        "worst-case damage for each trust agreement. Write the outcomes "
         "with a hunts_store write for state TRUST_MODELLED."
     ),
     ModelState.TRUST_MODELLED: (
@@ -124,8 +132,15 @@ GATE_HINTS: dict[ModelState, str] = {
         "overview, Trust Assumptions section, and closing summary, and add the "
         "missed assumptions. Patch a local gap or return to the "
         "undermodelled part for a structural gap. When the pass yields no new "
-        "assumption, write the wellformedness note and then the COMPLETED write "
-        "with the threats and their end impacts."
+        "assumption, write the wellformedness note and then the IMPACT_ASSESSED "
+        "write with the impact rows and the precursors."
+    ),
+    ModelState.IMPACT_ASSESSED: (
+        "Proceed to completion: score each threat's CIA vector AFTER its damage "
+        "claim (at least one value above none), reference the threat's impact "
+        "row and its enabling precursors, and score the likelihood from the "
+        "four risk factors. Write ONLY the threats section; the store ranks the "
+        "threats, computes the risk profile, and runs the completion checker."
     ),
 }
 
@@ -142,12 +157,20 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "flows, each with its confidence degree and evidence entries, and write "
         "the technical_sharpening section."
     ),
+    ModelState.PRIOR_ART: (
+        "Query the store before you commit to a trust model. Search the other "
+        "units' completed and in-progress models for the threats, "
+        "vulnerabilities, and precursors that bear on this unit. Record at "
+        "least one query per kind with its filters and its match count, every "
+        "record you reuse with the reason, and a prior_art note as the phase "
+        "exit. Write the prior_art section."
+    ),
     ModelState.TRUST_MODELLED: (
         "Work the four trust axes in order: identity, spatial, temporal, "
         "controls_semantics. Each axis carries the same weight; temporal may be "
         "shorter when the unit has few transitions. For each trust agreement, "
         "name the artifact, the controlling principal, the security-sensitive "
-        "decision, and the worst-case end impact. Write the trust_model section."
+        "decision, and the worst-case damage. Write the trust_model section."
     ),
     ModelState.TRUST_ASSUMPTIONS_WRITTEN: (
         "Enumerate the security-relevant artifacts and fields, the assumed "
@@ -165,22 +188,35 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "families are not classes; bind the nearest parent for a novel class "
         "and never leave the class empty. Then run the well-formedness phase."
     ),
+    ModelState.IMPACT_ASSESSED: (
+        "Assess the damage BEFORE you score it. For every vulnerability that is "
+        "not dropped, write one impact_assessment row per damage claim and every "
+        "precursor entity through the precursors section. The damage field names "
+        "the victim and the damaged property in one concise sentence. A row with "
+        "a concrete victim and property is a threat row and carries its "
+        "precursor_refs and its ordered capability_path; a row without one is a "
+        "placeholder, carries an empty capability_path, and has no threat. The "
+        "procedure on a precursor is the abstract trust-boundary mechanism, "
+        "never a request, a payload, or a tool. Write ONLY the impact_assessment "
+        "and precursors sections."
+    ),
     ModelState.COMPLETED: (
-        "Rank the threats: apply the two-clause drop rule, write each surviving "
-        "threat's end impact as VC, VI, and VA plus a literal end-impact "
-        "statement, and score its likelihood from the four risk factors. Copy "
-        "each threat's canonical_class and web_vulnerability_class verbatim from "
-        "its vulnerability. Write ONLY the threats section. The store computes "
-        "the combined risk profile and runs the completion checker after your "
+        "Rank the threats: apply the two-clause drop rule, reference each "
+        "threat's impact row (impact_ref) and its enabling_precursors, score its "
+        "VC, VI, and VA AFTER the damage claim (at least one value above none), "
+        "and score its likelihood from the four risk factors. Copy each threat's "
+        "canonical_class and web_vulnerability_class verbatim from its "
+        "vulnerability. Write ONLY the threats section. The store computes the "
+        "combined risk profile and runs the completion checker after your "
         "write; if validation.valid is false, fix every finding and write "
         "COMPLETED again before ending the pass."
     ),
 }
 
 # The well-formedness phase is a pass-level pseudo-phase between the
-# vulnerabilities write and COMPLETED. It is not a ModelState: the enter signal
-# is the `wellformedness` note, the re-entry signal is a lower-gate write, and
-# the exit is the COMPLETED write.
+# vulnerabilities write and the impact-assessed write. It is not a ModelState:
+# the enter signal is the `wellformedness` note, the re-entry signal is a
+# lower-gate write, and the exit is the IMPACT_ASSESSED write.
 WELLFORMEDNESS = "WELLFORMEDNESS"
 
 WELLFORMEDNESS_INSTRUCTION = (
@@ -190,7 +226,7 @@ WELLFORMEDNESS_INSTRUCTION = (
     "assumptions. Patch a local gap or return to the undermodelled part "
     "for a structural gap. When the pass yields no new assumption and every "
     "vulnerability has a bound suite class, write ONE wellformedness note and "
-    "then the COMPLETED write with the threats and their end impacts."
+    "then the IMPACT_ASSESSED write with the impact rows and the precursors."
 )
 
 # The last gate carries no hint: the model is published (S1 9.3).
@@ -206,7 +242,11 @@ LAST_GATE = ModelState.COMPLETED
 # All four knobs are env-backed with sane defaults.
 
 _DEFAULT_DEGRADED_WARN_STREAK = 2
-_DEFAULT_DEGRADED_ABORT_STREAK = 5
+# The abort threshold must let a model that writes every gate in ONE
+# COMPLETED-turn jump survive: the pass asks one turn per gate, so a cold
+# forward jump is silent on the six states below COMPLETED. Anything lower
+# would abort a transition the pass is documented to accept.
+_DEFAULT_DEGRADED_ABORT_STREAK = 7
 _DEFAULT_DEGRADED_BACKOFF_BASE_S = 1.0
 _DEFAULT_DEGRADED_BACKOFF_MAX_S = 30.0
 
@@ -588,10 +628,11 @@ async def _run_wellformedness_turns(
 
     The phase is not a ModelState. The tracker observes the gate writes: a
     lower-gate write is the re-entry signal, the `wellformedness` note is the
-    exit memory, and the COMPLETED write is the exit. The harness never gates
-    the model; it only asks the turn again after a re-entry.
+    exit memory, and the `IMPACT_ASSESSED` write is the exit. The harness never
+    gates the model; it only asks the turn again after a re-entry.
     """
-    while tracker.state is not LAST_GATE:
+    while tracker.state is None or _rank(tracker.state) < _rank(
+            ModelState.IMPACT_ASSESSED):
         before_trail = len(tracker.trail)
         await breaker.before_turn(WELLFORMEDNESS)
         model = _read_model(tools, project_id, unit_id)
@@ -616,7 +657,8 @@ async def _run_wellformedness_turns(
             logger.warning(
                 "threat modeller well-formedness turn failed (%s)", exc)
             cause = exc
-        if tracker.state is LAST_GATE:
+        if tracker.state is not None and _rank(tracker.state) >= _rank(
+                ModelState.IMPACT_ASSESSED):
             breaker.record_outcome(WELLFORMEDNESS, True)
             return
         reentered = any(
@@ -641,7 +683,7 @@ async def arun_modeller_pass(
     turn_fn: Callable[[ModellerTurnInput], Any] | None = None,
     actor_factory: Callable[[str], "ThreatModellerActor"] | None = None,
 ) -> UnitOutcome:
-    """Model ONE unit through the five gates (S1 6.2).
+    """Model ONE unit through the seven gates (S1 6.2).
 
     The pass asks for each state in workflow order; the model's gate writes are
     the only writer of the model document (the harness mints nothing). The

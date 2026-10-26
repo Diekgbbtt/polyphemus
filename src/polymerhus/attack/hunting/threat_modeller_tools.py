@@ -44,9 +44,24 @@ MAX_SKILL_FILTER_CHARS = 200
 MAX_SKILL_LIST_ENTRIES = 20
 
 MODEL_SECTIONS: tuple[str, ...] = (
-    "technical_sharpening", "trust_model", "assumptions",
-    "vulnerabilities", "threats",
+    "technical_sharpening", "prior_art", "trust_model", "assumptions",
+    "vulnerabilities", "impact_assessment", "precursors", "threats",
 )
+
+
+def _section_holds(value: Any) -> bool:
+    """Whether a persisted section carries authored content.
+
+    The schema materialises every section with its empty defaults, so a plain
+    truthiness test counts a never-written mapping (`prior_art` dumps to
+    `{"queries": [], "reused": [], "notes": ""}`). A section is held when a
+    mapping has at least one held value or a sequence has at least one held
+    entry."""
+    if isinstance(value, Mapping):
+        return any(_section_holds(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_section_holds(item) for item in value)
+    return bool(value)
 
 
 @dataclass
@@ -84,8 +99,8 @@ class ModellerHuntsStoreArgs(BaseModel):
     state: str | None = Field(
         default=None,
         description="Write payload: the gate state, one of UNIT_TECHNICAL_SHARP, "
-                    "TRUST_MODELLED, TRUST_ASSUMPTIONS_WRITTEN, "
-                    "VULNERABILITIES_WRITTEN, COMPLETED.")
+                    "PRIOR_ART, TRUST_MODELLED, TRUST_ASSUMPTIONS_WRITTEN, "
+                    "VULNERABILITIES_WRITTEN, IMPACT_ASSESSED, COMPLETED.")
     sections: ModelSections | None = Field(
         default=None,
         description="Write payload: the typed section content for that gate. "
@@ -107,19 +122,22 @@ _HUNTS_STORE_DESCRIPTION = (
     "cmd='write': pass the gate `state` and the `sections` that gate carries. "
     "The unit identity is BOUND: never pass a unit id, a file name, a model id, "
     "or a path. The states and their sections are: UNIT_TECHNICAL_SHARP "
-    "(technical_sharpening), TRUST_MODELLED (trust_model), "
-    "TRUST_ASSUMPTIONS_WRITTEN (assumptions), VULNERABILITIES_WRITTEN "
-    "(vulnerabilities), COMPLETED (threats; the store computes the risk profile "
-    "and runs the completion checker). A section outside the "
+    "(technical_sharpening), PRIOR_ART (prior_art), TRUST_MODELLED "
+    "(trust_model), TRUST_ASSUMPTIONS_WRITTEN (assumptions), "
+    "VULNERABILITIES_WRITTEN (vulnerabilities), IMPACT_ASSESSED "
+    "(impact_assessment, precursors), COMPLETED (threats; the store computes "
+    "the risk profile and runs the completion checker). A section outside the "
     "state's set is rejected; the model state is monotonic, so a later write for "
     "an earlier gate updates that section without regressing the state.\n"
     "cmd='read': pass an optional `unit_id` (default: the unit you are modelling) "
     "and an optional `section` to project one section. Reads are read-only.\n"
     "Every reference field carries an ID, never prose. "
     "`trust_model.trust_agreements[].interface_agreement_refs` names "
-    "`technical_sharpening.interface_agreements[].id` (`IA-*`), and "
+    "`technical_sharpening.interface_agreements[].id` (`IA-*`), "
     "`trust_model.dynamic_state_trust.violations[].maps_to_fault` names an "
-    "`assumptions[].fault.id` (`F-*`). The store resolves every reference and "
+    "`assumptions[].fault.id` (`F-*`), `threats[].impact_ref` names an "
+    "`impact_assessment[].id` (`IA-*`), and `threats[].enabling_precursors` "
+    "names `precursors[].id` (`P-*`). The store resolves every reference and "
     "archives a model with an unresolved one."
 )
 
@@ -188,7 +206,9 @@ class ModellerHuntsStoreTool(StoreToolBase):
         return {
             "unit_id": unit_id,
             "state": model.get("state"),
-            "sections": [name for name in MODEL_SECTIONS if model.get(name)],
+            "sections": [
+                name for name in MODEL_SECTIONS if _section_holds(model.get(name))
+            ],
             "model": model,
             "risk_profile": model.get("risk_profile"),
             "validation": model.get("validation"),

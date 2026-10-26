@@ -1,7 +1,7 @@
 """Unit tier: the threat modeller prompt material and the role rename (T2, #375).
 
 The prompt contract of S1 8: the system prompt carries the stable role and
-method (the five states and their content requirements, the trust-modelling
+method (the seven states and their content requirements, the trust-modelling
 ontology and the two-branch method, the confidence degrees and their
 falsification lifecycle, the evidence discipline, the live-authority rule, the
 retention-first drop rule, the assumption-to-threat closure check, the risk-scoring
@@ -137,7 +137,7 @@ def test_the_prompt_delegates_the_target_front_rule_to_the_shared_constant():
 
 
 def test_the_prompt_state_and_section_table_matches_the_typed_contract():
-    """The five states and their sections are pinned to the typed source, so a
+    """The seven states and their sections are pinned to the typed source, so a
     gate change cannot leave the human projection stale."""
     prompt = _modeller_skill()
     for state in ModelState:
@@ -145,6 +145,45 @@ def test_the_prompt_state_and_section_table_matches_the_typed_contract():
     for state, sections in GATE_SECTIONS.items():
         for section in sections:
             assert section in prompt, f"{state.value}:{section}"
+
+
+def test_the_prompt_states_the_seven_gates_in_workflow_order():
+    """The state table is a reader's map of the workflow: the gates must appear
+    in the machine's order, not in an arbitrary mention order."""
+    prompt = _modeller_skill()
+    table = prompt.split("## The seven states and their gates", 1)[1].split("## ", 1)[0]
+    positions = [table.index(state.value) for state in ModelState]
+    assert positions == sorted(positions)
+
+
+def test_the_prompt_states_the_damage_semantic_and_the_precursor_boundary():
+    """Ticket 436's prompt contract: the damage names the victim and the
+    property, the victim/property catalog is explicit, a precursor is an abstract
+    capability (never a request or payload), one threat references one damage
+    row, and the CIA vector is scored AFTER the assessment."""
+    prompt = _modeller_skill()
+    required = {
+        "damage_field": "The damage field names the victim and the damaged property",
+        "victim_user": "An end user",
+        "victim_application": "The application",
+        "victim_infrastructure": "The infrastructure",
+        "property_code": "privileged code execution",
+        "threat_row": "A `threat` row names a concrete victim and property",
+        "placeholder_row": "A `placeholder` row has no concrete victim",
+        "capability_path": "capability_path",
+        "precursor_procedure": (
+            "an abstract trust-boundary mechanism, never a request, a payload, "
+            "or a tool"),
+        "one_threat_one_damage": (
+            "One threat references exactly one `impact_assessment` row"),
+        "several_per_vulnerability": "one per exploitation manner",
+        "cia_after": "CIA vector AFTER the impact assessment",
+        "threat_cia_non_none": "at least one non-none value",
+        "placeholder_no_threat": "A placeholder has no threat",
+        "placeholder_no_file": "produces no threat file",
+    }
+    missing = [name for name, clause in required.items() if clause not in prompt]
+    assert missing == []
 
 
 def test_the_prompt_reference_table_matches_the_typed_paths():

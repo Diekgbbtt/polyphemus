@@ -1,23 +1,33 @@
-"""Unit tier: the CVSS 4.0-like impact model and the combined threat risk.
+"""Unit tier: the impact model, the impact assessment schema, the combined risk.
 
-Ticket 404. The impact is authored on the threat: three metrics and a literal
-end-impact statement. The store computes the sub-score, the ordinal weight, the
-threat risk, the unit profile, and the ranking. The tests use the known-good
-literals from the ADR, never a recomputation of the implementation formula.
+Ticket 404 authored the CVSS 4.0-like impact on the threat. Ticket 436 moved the
+damage text into the `impact_assessment` section: the threat carries the CIA
+vector and references one assessment row plus its enabling precursors. The store
+computes the sub-score, the ordinal weight, the threat risk, the unit profile,
+and the ranking. The tests use the known-good literals from the ADR, never a
+recomputation of the implementation formula.
 """
 from __future__ import annotations
 
 import pytest
 
 from polymerhus.attack.hunting.threat_model import (
+    GATE_SECTIONS,
+    SCHEMA_VERSION,
     Confidence,
     Evidence,
     EvidenceKind,
     Impact,
+    ImpactAssessment,
+    ImpactDisposition,
     ImpactLevel,
     ImpactSeverity,
     Likelihood,
+    ModelState,
+    Precursor,
+    PriorArt,
     Threat,
+    UnitThreatModel,
     RiskFactors,
     AttackVector,
     AttackRequirements,
@@ -41,7 +51,6 @@ def impact(confidentiality=ImpactLevel.NONE, integrity=ImpactLevel.NONE,
         confidentiality=confidentiality,
         integrity=integrity,
         availability=availability,
-        end_impact="a literal end effect",
     )
 
 
@@ -62,8 +71,67 @@ def threat(*, likelihood=Likelihood.MEDIUM, impact_value=None,
         ),
         confidence=Confidence.OBSERVED,
         evidences=[Evidence(kind=EvidenceKind.PROBE, ref="probe:test", detail="")],
+        impact_ref="IA-1",
+        enabling_precursors=["P-1"],
         impact=impact_value or Impact.none(),
     )
+
+
+# --- the impact-assessment schema contract (ticket 436) ----------------------
+
+def test_the_seven_states_wire_their_gate_sections():
+    """S2 section 5: seven states, each with the section(s) its gate writes."""
+    assert SCHEMA_VERSION == 3
+    assert [state.value for state in ModelState] == [
+        "UNIT_TECHNICAL_SHARP",
+        "PRIOR_ART",
+        "TRUST_MODELLED",
+        "TRUST_ASSUMPTIONS_WRITTEN",
+        "VULNERABILITIES_WRITTEN",
+        "IMPACT_ASSESSED",
+        "COMPLETED",
+    ]
+    assert GATE_SECTIONS == {
+        ModelState.UNIT_TECHNICAL_SHARP: ("technical_sharpening",),
+        ModelState.PRIOR_ART: ("prior_art",),
+        ModelState.TRUST_MODELLED: ("trust_model",),
+        ModelState.TRUST_ASSUMPTIONS_WRITTEN: ("assumptions",),
+        ModelState.VULNERABILITIES_WRITTEN: ("vulnerabilities",),
+        ModelState.IMPACT_ASSESSED: ("impact_assessment", "precursors"),
+        ModelState.COMPLETED: ("threats",),
+    }
+
+
+def test_the_model_carries_the_assessment_the_precursors_and_the_prior_art():
+    """S2 section 3: the sections exist on the model and the row holds exactly
+    the ratified fields; the damage text moved off the CIA vector."""
+    assert set(UnitThreatModel.model_fields) >= {
+        "prior_art", "impact_assessment", "precursors",
+    }
+    assert set(PriorArt.model_fields) == {"queries", "reused", "notes"}
+    assert set(Precursor.model_fields) == {
+        "id", "capability", "procedure", "evidence_refs",
+    }
+    assert set(ImpactAssessment.model_fields) == {
+        "id",
+        "vulnerability_ref",
+        "disposition",
+        "damage",
+        "precursor_refs",
+        "capability_path",
+        "evidence_refs",
+    }
+    assert ImpactDisposition.THREAT.value == "threat"
+    assert ImpactDisposition.PLACEHOLDER.value == "placeholder"
+
+
+def test_the_threat_references_one_assessment_and_its_precursors():
+    """The threat keeps its scoring fields, gains `impact_ref` and
+    `enabling_precursors`, and its `impact` carries the three CIA metrics only."""
+    assert set(Threat.model_fields) >= {"impact_ref", "enabling_precursors"}
+    assert set(Impact.model_fields) == {
+        "confidentiality", "integrity", "availability",
+    }
 
 
 def test_the_metric_weights_are_the_ratified_values():

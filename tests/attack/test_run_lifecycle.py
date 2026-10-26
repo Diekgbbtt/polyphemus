@@ -59,7 +59,6 @@ def _impact(confidentiality="low", integrity="none", availability="none") -> dic
         "confidentiality": confidentiality,
         "integrity": integrity,
         "availability": availability,
-        "end_impact": "a literal end effect",
     }
 
 

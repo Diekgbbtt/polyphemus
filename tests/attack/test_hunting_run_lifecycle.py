@@ -99,7 +99,7 @@ def _resume_fake(record: dict) -> _FakePg:
 def _write_completed_model(models: ThreatModelStore, unit_id: str,
                            *, run_id: str = "earlier-run") -> None:
     """Drive the REAL store to a COMPLETED, valid model for `unit_id` through
-    its five gates (the shared worked example: one `high` threat)."""
+    its seven gates (the shared worked example: one `high` threat)."""
     from tests.hunting_fixtures import modeller_gate_payloads
 
     for state, sections in modeller_gate_payloads().items():
@@ -165,7 +165,7 @@ def test_the_run_record_carries_every_fixed_key_and_the_accumulated_sum(
     assert record["halt"] is False
     assert record["degraded_units"] == []
     assert [entry["unit_id"] for entry in record["trajectory"]] == [
-        UNIT_A] * 5 + [UNIT_B] * 5
+        UNIT_A] * len(ModelState) + [UNIT_B] * len(ModelState)
     assert {entry["to_state"] for entry in record["trajectory"]} == {
         state.value for state in ModelState}
     assert all(entry["outcome"] == "gate" for entry in record["trajectory"])
