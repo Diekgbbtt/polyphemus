@@ -160,7 +160,9 @@ Two baselines are reported:
 | Target backend | `127.0.0.1:32979` (re-provisioned, clean database) |
 | Stack fingerprint | `112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407` |
 | Runs root | `/opt/polymerhus-dev/eval/runs-iteration-c-20261026` |
-| Project id | pending |
+| Project id | `8e2e5dc7-a880-4451-aaa5-267cedd48264` |
+| Project created | `2026-10-26T20:07:29Z` |
+| Frozen hunting config | `batched`, `pod_batch_size=3`, `promotion_risk_threshold=0`, `risk_threshold=180` (verified live) |
 | Hunting run id | pending |
 | Trial record | pending |
 
