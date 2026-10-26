@@ -86,10 +86,12 @@ def unit_models(root: pathlib.Path) -> list[pathlib.Path]:
 
 def impact_summary(model: dict) -> dict:
     """The CIA red/green split over one model's impact-assessment rows."""
+    # The join is the threat's `impact_ref`: several threats share one
+    # vulnerability, so a vulnerability-keyed map would double-count.
     threats = {
-        str(row.get("id") or ""): (row.get("impact") or {})
+        str(row.get("impact_ref") or ""): (row.get("impact") or {})
         for row in (model.get("threats") or [])
-        if isinstance(row, dict)
+        if isinstance(row, dict) and row.get("impact_ref")
     }
     rows = [row for row in (model.get("impact_assessment") or [])
             if isinstance(row, dict)]
@@ -100,7 +102,7 @@ def impact_summary(model: dict) -> dict:
     for row in rows:
         disposition = str(row.get("disposition") or "")
         ref = str(row.get("vulnerability_ref") or "")
-        impact = threats.get(ref) or {}
+        impact = threats.get(str(row.get("id") or "")) or {}
         vector = {key: str(impact.get(key) or "none") for key in CIA_KEYS}
         for key in CIA_KEYS:
             level = vector[key]

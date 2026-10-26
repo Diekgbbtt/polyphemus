@@ -95,16 +95,18 @@ def impact_rows(models: list[dict]) -> list[dict]:
     rows: list[dict] = []
     for entry in models:
         model = entry["model"]
+        # A threat names its impact row in `impact_ref`, and several threats may
+        # share one vulnerability, so the join is by `impact_ref` only.
         threats = {
-            str(row.get("id") or ""): row
+            str(row.get("impact_ref") or ""): row
             for row in (model.get("threats") or [])
-            if isinstance(row, dict)
+            if isinstance(row, dict) and row.get("impact_ref")
         }
         for assessment in (model.get("impact_assessment") or []):
             if not isinstance(assessment, dict):
                 continue
             ref = str(assessment.get("vulnerability_ref") or "")
-            threat = threats.get(ref) or {}
+            threat = threats.get(str(assessment.get("id") or "")) or {}
             impact = threat.get("impact") or {}
             vector = {key: str(impact.get(key) or "none") for key in CIA_KEYS}
             green = any(level != "none" for level in vector.values())
