@@ -150,15 +150,34 @@ Two baselines are reported:
 
 | Attribute | Value |
 |---|---|
-| Eval head | `8da28a6f` (impact merge `1b83126c` plus the eval hunting-config schema) |
+| Eval head | `13ce0edb` (impact merge `1b83126c` plus the eval hunting-config schema) |
+| Thinking patch | assigner and mechanism_typist `max`; live check: all four roles wire `max`, `exact-match` |
 | Setup | `eval/setups/white-jotter-iteration-c.yaml` |
 | Target | `webexploitbench/white-jotter` |
 | Target id | `white-jotter-1` |
 | Target run id | `iterc-white-jotter` |
+| Trial command start | `2026-10-26T20:03:33Z` |
+| Target backend | `127.0.0.1:32979` (re-provisioned, clean database) |
+| Stack fingerprint | `112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407` |
 | Runs root | `/opt/polymerhus-dev/eval/runs-iteration-c-20261026` |
 | Project id | pending |
 | Hunting run id | pending |
 | Trial record | pending |
+
+### Harness lineage finding
+
+The eval harness checkout (`/opt/polymerhus-dev`, branch `dev`) and the eval arm code (`/opt/polymerhus-dev/eval/instances/eval-server-1`, the trunk) are separate git worktrees on separate lineages.
+The harness plugin that runs `next_target` and `eval_monitor` hardcoded `PYTHONPATH=eval`, so the tool parsed the arm setup with the harness schema, not the arm schema.
+The first launch failed with `unknown field(s): hunting`.
+
+The fix is configuration-layer only:
+
+- the plugin now reads `process.env.EVAL_ORCHESTRATOR_PYTHONPATH ?? "eval"`;
+- the driver exports `EVAL_ORCHESTRATOR_PYTHONPATH="$INSTANCE_DIR/eval:eval"` and the same path on its own `PYTHONPATH`.
+
+The plugin file is backed up at `eval-monitor.ts.bak-iterc`.
+After the fix, `next_target` parsed the setup and brought the target up.
+
 
 ## Results
 
