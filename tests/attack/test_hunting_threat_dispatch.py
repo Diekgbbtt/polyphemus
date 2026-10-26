@@ -89,10 +89,14 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
         "technical_sharpening", "trust_agreement", "dynamic_state",
         "programming_fault", "canonical_class", "web_vulnerability_class",
         "evidence", "likelihood", "likelihood_rationale",
-        "vulnerability_rationale", "confidence", "target_context",
+        "vulnerability_rationale", "confidence", "target_context", "impact",
     }
     assert payload["dispatch_id"] == f"{UNIT_NAME}__threat-1"
     assert payload["threat_id"] == "threat-1"
+    assert payload["impact"]["damage"] == (
+        "An anonymous caller reads another tenant's item from the catalogue database."
+    )
+    assert payload["impact"]["capability_path"] == ["p-1"]
     assert payload["unit_id"] == UNIT
     assert payload["unit_kind"] == "service"
     assert payload["threat"]["id"] == "threat-1"

@@ -147,10 +147,23 @@ def _hunter_payload(**overrides) -> dict:
                 "confidentiality": "low",
                 "integrity": "none",
                 "availability": "none",
-                "end_impact": "A caller reads another tenant's item.",
             },
+            "impact_ref": "ia-1",
+            "enabling_precursors": ["p-1"],
             "confidence": "INFERRED",
             "evidences": [{"kind": "request", "ref": "GET /api/a"}],
+        },
+        "impact": {
+            "impact_ref": "ia-1",
+            "damage": "A caller reads another tenant's item.",
+            "disposition": "threat",
+            "precursors": [{
+                "id": "p-1",
+                "capability": "read the item by its identifier",
+                "procedure": "resolve the item by the caller-supplied id",
+                "evidence_refs": ["GET /api/a"],
+            }],
+            "capability_path": ["p-1"],
         },
         "technical_sharpening": {
             "interface_agreements": [{

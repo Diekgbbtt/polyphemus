@@ -172,6 +172,7 @@ def materialise_hunter_payload(
         "unit_id": unit_id,
         "unit_kind": unit_kind,
         "threat": threat,
+        "impact": dict(threat_file.get("impact") or {}),
         "technical_sharpening": {
             "interface_agreements": interface_agreements,
             "control_flows": _as_list(sharpening.get("control_flows")),

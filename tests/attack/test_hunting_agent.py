@@ -71,16 +71,21 @@ def test_compose_grounding_renders_the_threat_payload():
         assert gone not in text
 
 
-def test_compose_grounding_renders_the_end_impact():
-    """The hunter sees the intended end impact as context, not as a gate: the
-    symptoms it engineers remain its own."""
+def test_compose_grounding_renders_the_impact_assessment():
+    """The hunter sees the shared damage and the attacker position as context,
+    not as a gate: the symptoms it engineers remain variant-specific."""
     from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
     from tests.hunting_fixtures import _hunter_payload
 
     text = _compose_grounding(_hunter_payload())
 
-    assert "End impact:" in text
+    assert "Impact assessment:" in text
     assert "A caller reads another tenant's item." in text
+    assert "Attacker position:" in text
+    assert "read the item by its identifier" in text
+    assert "resolve the item by the caller-supplied id" in text
+    assert "The verification symptoms are variant-specific; the end damage is shared." in text
+    assert "End impact:" not in text
     assert "VC low" in text and "VI none" in text and "VA none" in text
 
 
