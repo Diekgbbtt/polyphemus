@@ -196,8 +196,15 @@ def main() -> None:
                 rows = []
                 distribution: dict[str, dict[str, int]] = {key: {} for key in CIA_KEYS}
                 model_paths = unit_models(root)
+                in_flight = 0
                 for path in model_paths:
                     model = load_yaml(path)
+                    # The CIA vector lands with the threats at COMPLETED, so an
+                    # earlier gate would read as a red row and understate the
+                    # share. Only complete models score.
+                    if str(model.get("state") or "") != "COMPLETED":
+                        in_flight += 1
+                        continue
                     summary = impact_summary(model)
                     rows.append(summary)
                     for key in CIA_KEYS:
@@ -207,6 +214,7 @@ def main() -> None:
                 total_rows = sum(item["rows"] for item in rows)
                 total_green = sum(item["green"] for item in rows)
                 row["units_modelled"] = len(rows)
+                row["units_in_flight"] = in_flight
                 row["impact_rows"] = total_rows
                 row["impact_green"] = total_green
                 row["impact_red"] = total_rows - total_green
