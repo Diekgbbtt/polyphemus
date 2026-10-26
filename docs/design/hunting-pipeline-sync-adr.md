@@ -88,11 +88,15 @@ The policy implementation is a no-op.
    The batch is the unit's whole threat set; the low-tier sequencing (S2 8.3) is subsumed and
    does not order a batch.
 4. The batch advances only when every hunt of the batch is terminal (signals in section 3).
-5. Then the unit's pods: one pod per `ratified` spec of the batch, dispatched CONCURRENTLY
-   (same gate bound).
-   The pod phase advances only when every pod is terminal.
-6. The queue cursor moves to the next unit and the batch threat repeats, until the queue is
-   exhausted and the run quiesces as today (`is_run_quiesced`, unchanged).
+5. Then the unit's pods, ONE HUNT AT A TIME in the batch's threat-rank order: every
+   `ratified` spec of the current hunt is dispatched CONCURRENTLY (one pod per spec, same
+   gate bound).
+   The hunt's pod phase advances only when every pod of that hunt is terminal.
+   A hunt with no `ratified` spec advances immediately.
+   Then the next hunt's pods dispatch, until every hunt of the batch is done.
+6. The queue cursor moves to the next unit only after every hunt's pods are terminal, and
+   the batch repeats, until the queue is exhausted and the run quiesces as today
+   (`is_run_quiesced`, unchanged).
 
 **`serial`** - the same queue, strictly one agent at a time:
 

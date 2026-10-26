@@ -8,8 +8,9 @@ without a store, session, or clock:
 
 - `parallel`: every item is admissible (today's behaviour);
 - `batched`: one unit at a time in risk order; the unit's whole hunter batch
-  dispatches concurrently, and its pods only once no hunt of the unit is still
-  mid-graph or still holding a produced threat file;
+  dispatches concurrently, then its pods one hunt at a time in threat-rank
+  order, each hunt's specs concurrently, and the next hunt only once every pod
+  of the current hunt carries a durable export;
 - `serial`: the same queue, one agent at a time - hunter N+1 only after hunter
   N completed AND every one of its pods reached a terminal export; the pods of
   one hunt dispatch one at a time in file-stem order;
@@ -157,16 +158,82 @@ def test_batched_refuses_pods_while_a_hunt_is_mid_graph():
     assert admitted == frozenset()
 
 
-def test_batched_admits_all_pods_after_the_hunt_batch():
-    items = [_spec(stem="a_x"), _spec(stem="b_y")]
-    admitted = decide(SyncMode.BATCHED, items, [_unit("u1")], _facts())
+def test_batched_admits_all_pods_of_the_first_hunt():
+    hunt = "u1__threat-1"
+    items = [
+        _spec(hunt_key=hunt, stem="a_x"),
+        _spec(hunt_key=hunt, stem="b_y"),
+    ]
+    facts = _facts(spec_stems={hunt: ("a_x", "b_y")})
+    admitted = decide(SyncMode.BATCHED, items, [_unit("u1")], facts)
     assert admitted == _ids(items)
 
 
+def test_batched_admits_only_the_first_hunts_pods():
+    first, second = "u1__threat-1", "u1__threat-2"
+    items = [
+        _spec(hunt_key=first, stem="a_x"),
+        _spec(hunt_key=second, stem="b_y"),
+    ]
+    facts = _facts(spec_stems={first: ("a_x",), second: ("b_y",)})
+    admitted = decide(SyncMode.BATCHED, items, [_unit("u1")], facts)
+    assert admitted == {items[0].message_id}
+
+
+def test_batched_holds_the_next_hunt_until_every_pod_of_the_current_hunt_is_terminal():
+    first, second = "u1__threat-1", "u1__threat-2"
+    items = [
+        _spec(hunt_key=first, stem="a_x"),
+        _spec(hunt_key=first, stem="b_y"),
+        _spec(hunt_key=second, stem="c_z"),
+    ]
+    facts = _facts(
+        spec_stems={first: ("a_x", "b_y"), second: ("c_z",)},
+        terminal_specs=frozenset({(first, "a_x")}),
+    )
+    admitted = decide(SyncMode.BATCHED, items, [_unit("u1")], facts)
+    assert admitted == {items[1].message_id}
+
+
+def test_batched_advances_to_the_next_hunt_when_the_first_hunt_is_exported():
+    first, second = "u1__threat-1", "u1__threat-2"
+    items = [_spec(hunt_key=second, stem="c_z")]
+    facts = _facts(
+        spec_stems={first: ("a_x",), second: ("c_z",)},
+        terminal_specs=frozenset({(first, "a_x")}),
+    )
+    admitted = decide(SyncMode.BATCHED, items, [_unit("u1")], facts)
+    assert admitted == {items[0].message_id}
+
+
+def test_batched_holds_pods_until_every_hunt_is_terminal():
+    hunt = "u1__threat-1"
+    items = [_spec(hunt_key=hunt, stem="a_x")]
+    facts = _facts(
+        spec_stems={hunt: ("a_x",)},
+        terminal_hunts=frozenset(),
+    )
+    admitted = decide(SyncMode.BATCHED, items, [_unit("u1")], facts)
+    assert admitted == frozenset()
+
+
+def test_batched_holds_pods_for_a_blocked_hunt():
+    hunt = "u1__threat-1"
+    items = [_spec(hunt_key=hunt, stem="a_x")]
+    facts = _facts(
+        spec_stems={hunt: ("a_x",)},
+        blocked_hunts=frozenset({hunt}),
+    )
+    admitted = decide(SyncMode.BATCHED, items, [_unit("u1")], facts)
+    assert admitted == frozenset()
+
+
 def test_batched_holds_the_next_unit_until_the_current_unit_is_done():
-    items = [_spec(hunt_key="u1__threat-1"), _threat(unit_name="u2")]
+    hunt = "u1__threat-1"
+    items = [_spec(hunt_key=hunt), _threat(unit_name="u2")]
     units = [_unit("u1", risk=9), _unit("u2", risk=1)]
-    admitted = decide(SyncMode.BATCHED, items, units, _facts())
+    facts = _facts(spec_stems={hunt: ("sqli__blind__boolean",)})
+    admitted = decide(SyncMode.BATCHED, items, units, facts)
     # u1 is the current unit (risk-desc) and is in its pod phase; u2 is held.
     assert admitted == {items[0].message_id}
 
@@ -265,8 +332,12 @@ def test_batch_state_batched_reports_the_hunt_then_the_pod_phase():
     assert hunting.phase == "hunt"
     assert hunting.hunts == (hunt,)
 
-    podding = batch_state(SyncMode.BATCHED, "u1", [_spec()], _facts())
+    podding = batch_state(
+        SyncMode.BATCHED, "u1", [_spec()],
+        _facts(spec_stems={hunt: ("sqli__blind__boolean",)}),
+    )
     assert podding.phase == "pod"
+    assert podding.cursor == hunt
 
 
 def test_batch_state_serial_reports_the_cursor_and_the_pod_cursor():
