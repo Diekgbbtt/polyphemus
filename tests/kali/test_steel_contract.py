@@ -205,6 +205,37 @@ def test_empty_snapshot_adds_a_tab_new_warning():
     assert out["warning"]["recovery"]["action"] == "tab_new"
 
 
+def test_multi_command_result_does_not_emit_empty_warning():
+    command = (
+        'echo start; steel browser get url --session wj-live --json; echo end'
+    )
+    out = classify_result(
+        command,
+        _result(
+            stdout='=== url ===\n{"data":"http://target/","success":true}\n',
+            returncode=0,
+        ),
+        session="wj-live",
+        live_sessions=LIVE,
+    )
+    assert "error" not in out
+    assert "warning" not in out
+
+
+def test_successful_page_text_mentioning_target_error_is_not_classified():
+    command = 'steel browser eval "document.body.innerText" --session wj-live --json'
+    out = classify_result(
+        command,
+        _result(
+            stdout='{"data":"Session with given id not found is a page phrase","success":true}',
+            returncode=0,
+        ),
+        session="wj-live",
+        live_sessions=LIVE,
+    )
+    assert "error" not in out
+
+
 def test_non_browser_steel_command_is_allowed():
     out = sanitize_steel_command("steel --version", live_sessions=LIVE)
     assert isinstance(out, BrowserCommand)

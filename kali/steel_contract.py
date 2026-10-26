@@ -447,17 +447,21 @@ def classify_result(
     out = dict(result)
     stdout = str(out.get("stdout") or "")
     stderr = str(out.get("stderr") or "")
-    text = f"{stdout}\n{stderr}".lower()
     returncode = int(out.get("returncode") or 0)
     inner = _json_envelope(stdout)
     inner_error = str(inner.get("error") or "")
     inner_success = inner.get("success")
     session_live = session in live_sessions if (session and live_sessions is not None) else None
     canonical = command
+    # Browser-state signals come from stderr or an explicit CLI error object.
+    # A successful page body may legitimately contain words such as "websocket"
+    # or "Session with given id not found"; those are page content, not CLI
+    # state. Never classify page text as a browser failure.
+    signal_text = f"{stderr}\n{inner_error}".lower()
 
     # A stale CDP target is a page-level failure, not a missing API session.
-    if "session with given id not found" in text or (
-        "cdp error" in text and "not found" in text
+    if "session with given id not found" in signal_text or (
+        "cdp error" in signal_text and "not found" in signal_text
     ):
         if session_live is False:
             return _classified(
@@ -531,7 +535,7 @@ def classify_result(
         "connect failed",
         "connection reset",
     )
-    if any(marker in text for marker in unavailable_markers):
+    if any(marker in signal_text for marker in unavailable_markers):
         return _classified(
             out,
             _contract_error(
@@ -554,7 +558,7 @@ def classify_result(
         )
 
     if session and session_live is False and any(
-        marker in text for marker in (
+        marker in signal_text for marker in (
             "session not found",
             "no such session",
             "session does not exist",
@@ -614,7 +618,9 @@ def classify_result(
         if token == "browser" and token_index + 1 < len(shlex.split(command)):
             verb = shlex.split(command)[token_index + 1]
             break
-    if verb in _PAGE_COMMANDS:
+    if verb in _PAGE_COMMANDS and not any(
+        separator in command for separator in (";", "|", "&", "\n")
+    ):
         data = inner.get("data") if isinstance(inner, dict) else None
         blank = data in ("", None, "(no interactive elements)",
                          "<html><head></head><body></body></html>")

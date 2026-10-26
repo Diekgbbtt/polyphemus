@@ -15,13 +15,22 @@ import functools, json, os, re, shlex, subprocess, tempfile, time
 import anyio
 from fastmcp import FastMCP
 
-from kali.steel_contract import (
-    BrowserCommand,
-    ContractError,
-    classify_result,
-    sanitize_shell_command,
-    sanitize_steel_command,
-)
+try:
+    from kali.steel_contract import (
+        BrowserCommand,
+        ContractError,
+        classify_result,
+        sanitize_shell_command,
+        sanitize_steel_command,
+    )
+except ImportError:  # the deployed 8001 layout runs flat in /tmp/polymerhus-e2e/kali
+    from steel_contract import (  # type: ignore[no-redef]
+        BrowserCommand,
+        ContractError,
+        classify_result,
+        sanitize_shell_command,
+        sanitize_steel_command,
+    )
 
 os.environ["PATH"] = ":".join([
     "/opt/localbin", "/root/go/bin", "/opt/venv/bin", "/usr/local/go/bin", os.environ.get("PATH", ""),
