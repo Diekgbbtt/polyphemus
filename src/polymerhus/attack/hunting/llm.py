@@ -203,10 +203,19 @@ def _compose_modeller_prompt(turn) -> str:
 
     Every slot degrades independently: a model that cannot be read renders as
     "(not written yet)", never as an empty claim."""
+    from .unit_projection import UnitProjection  # noqa: PLC0415
+    from .unit_projection_render import render_unit_projection  # noqa: PLC0415
+
     state = getattr(turn, "state", None)
     state_value = getattr(state, "value", state) or "UNIT_TECHNICAL_SHARP"
     sections = list(getattr(turn, "sections", ()) or ())
     model = getattr(turn, "model", None)
+    projection = getattr(turn, "projection", None)
+    projection_text = (
+        render_unit_projection(projection)
+        if isinstance(projection, UnitProjection)
+        else _render_grounding(projection)
+    )
     lines = [
         f"Unit under analysis: {getattr(turn, 'unit_id', '(unbound)')}",
         f"Current workflow state: {state_value}",
@@ -215,8 +224,7 @@ def _compose_modeller_prompt(turn) -> str:
         str(getattr(turn, "instruction", "") or ""),
         "",
         "Grounding inputs:",
-        "  Unit projection: " + (
-            _render_grounding(getattr(turn, "projection", None)) or "(unavailable)"),
+        "  Unit projection: " + (projection_text or "(unavailable)"),
         "  Application-surface overview: " + (
             _render_grounding(getattr(turn, "surface_overview", None))
             or "(unavailable)"),

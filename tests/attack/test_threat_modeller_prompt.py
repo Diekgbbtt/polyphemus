@@ -34,6 +34,16 @@ from polymerhus.attack.hunting.threat_modeller import (
 )
 
 
+def test_the_spatial_axis_reads_the_data_contract_not_only_the_http_carrier():
+    prompt = _modeller_skill()
+
+    assert "data attributes of the data contracts" in prompt
+    assert "application contexts" in prompt
+    assert "every attribute of every data type as written" in prompt
+    assert "HTTP headers, URL schemes, hosts, ports, paths, fragments" not in prompt
+    assert "cookies, request-body fields, multipart fields, resource identifiers" not in prompt
+
+
 def test_the_prompt_carries_the_required_material():
     """Every clause S1 8 requires, as clauses a reader (or the model) can hold
     the prompt to - the workflow contract's required material, not a wording

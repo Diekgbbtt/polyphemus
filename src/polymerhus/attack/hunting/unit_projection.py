@@ -35,7 +35,7 @@ fail-open discipline).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Mapping
 
 from polymerhus.analysis.index_card import _SPINE_KEYS
@@ -130,18 +130,46 @@ class DataRelationship:
 
 
 @dataclass(frozen=True)
+class HeaderInfo:
+    """One unique L0 header linked to a BaseURL.
+
+    The live L1 graph links response headers to the BaseURL
+    (`BaseURL-[:HAS_HEADER]->Header`), not to the Endpoint. The reader
+    deduplicates by (name, value, direction) so the renderer can show one
+    header line per baseURL. A future graph that links headers to Endpoints
+    is handled by the same read and declassed to the endpoint's baseURL.
+    """
+
+    name: str | None = None
+    value: str | None = None
+    direction: str | None = None
+
+
+@dataclass(frozen=True)
+class ParameterInfo:
+    """One L0 Parameter linked to an Endpoint (`Endpoint-[:HAS_PARAMETER]->Parameter`)."""
+
+    name: str | None = None
+    position: str | None = None
+
+
+@dataclass(frozen=True)
 class AggregatedEndpoint:
     """One L0 Endpoint a unit aggregates via the native `AGGREGATES` edge
     (#201): the typed identity props (method/path/baseurl, present ones only)
     plus the owning service slug when the aggregate resolves through a System
     unit's LINKED services. Absent props stay None - absence is not-yet-filled,
-    never a prune signal. L0 Headers are out of scope (they ride the BaseURLs
-    linked to endpoints, never AGGREGATES)."""
+    never a prune signal. `parameters` carries the Endpoint's L0 Parameter
+    nodes; absent means none were observed, never a prune signal."""
 
     method: str | None = None
     path: str | None = None
     baseurl: str | None = None
     service_slug: str | None = None
+    status_code: int | None = None
+    content_type: str | None = None
+    content_length: int | None = None
+    parameters: tuple[ParameterInfo, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -172,6 +200,7 @@ class UnitProjection:
     data_relationships: tuple[DataRelationship, ...] = ()
     cooperating_systems: Mapping[str, tuple[SystemInfo, ...]] = field(default_factory=dict)
     aggregated_endpoints: tuple[AggregatedEndpoint, ...] = ()
+    baseurl_headers: Mapping[str, tuple[HeaderInfo, ...]] = field(default_factory=dict)
     diagnostics: tuple[str, ...] = ()
 
 
@@ -243,6 +272,9 @@ def _aggregated_endpoint_from(tprops: dict) -> AggregatedEndpoint:
         method=props.get("method"),
         path=props.get("path"),
         baseurl=props.get("baseurl"),
+        status_code=props.get("status_code"),
+        content_type=props.get("content_type"),
+        content_length=props.get("content_length"),
     )
 
 
@@ -430,6 +462,9 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
                     path=props.get("path"),
                     baseurl=props.get("baseurl"),
                     service_slug=row.get("slug"),
+                    status_code=props.get("status_code"),
+                    content_type=props.get("content_type"),
+                    content_length=props.get("content_length"),
                 )
                 for row in agg_rows
                 for props in [dict(row.get("props") or {})]
@@ -444,6 +479,74 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
         key=lambda ep: (ep.baseurl or "", ep.method or "", ep.path or "",
                         ep.service_slug or ""))
 
+    baseurls = sorted({e.baseurl for e in aggregated_endpoints if e.baseurl})
+
+    # The Endpoint-level Parameters. The live graph links a Parameter to its
+    # Endpoint (HAS_PARAMETER from Endpoint). Absence is not-yet-filled, never
+    # a prune signal; the renderer spells it "none observed".
+    params_by_endpoint: dict[tuple, list[ParameterInfo]] = {}
+    if baseurls:
+        try:
+            param_rows = read_fn(
+                "MATCH (e:Endpoint {project_id: $project_id})"
+                "-[:HAS_PARAMETER]->(p:Parameter) "
+                "WHERE e.baseurl IN $baseurls "
+                "RETURN e.baseurl AS baseurl, e.path AS path, "
+                "e.method AS method, p.name AS name, p.position AS position "
+                "ORDER BY baseurl, path, method, name, position",
+                {"project_id": project_id, "baseurls": baseurls},
+            )
+            for row in param_rows:
+                key = (row.get("baseurl"), row.get("path"), row.get("method"))
+                params_by_endpoint.setdefault(key, []).append(
+                    ParameterInfo(name=row.get("name"),
+                                  position=row.get("position")))
+        except Exception as exc:  # noqa: BLE001 - fail-open: degrade the slot only
+            diagnostics.append(f"parameters read degraded: {exc}")
+
+    aggregated_endpoints = [
+        replace(e, parameters=tuple(params_by_endpoint.get(
+            (e.baseurl, e.path, e.method), ())))
+        for e in aggregated_endpoints
+    ]
+
+    # The BaseURL-level headers. The live graph links response headers to the
+    # BaseURL (HAS_HEADER from BaseURL); a future graph that links them to the
+    # Endpoint is declassed to the endpoint's baseURL by the same read. Dedupe
+    # by (baseurl, name, value, direction) so the renderer never repeats a
+    # header across the endpoint cluster.
+    baseurl_headers: dict[str, list[HeaderInfo]] = {}
+    if baseurls:
+        try:
+            header_rows = read_fn(
+                "MATCH (b:BaseURL {project_id: $project_id})"
+                "-[:HAS_HEADER]->(h:Header) "
+                "WHERE b.url IN $baseurls "
+                "RETURN b.url AS baseurl, h.name AS name, h.value AS value, "
+                "h.direction AS direction "
+                "UNION "
+                "MATCH (e:Endpoint {project_id: $project_id})"
+                "-[:HAS_HEADER]->(h:Header) "
+                "WHERE e.baseurl IN $baseurls "
+                "RETURN e.baseurl AS baseurl, h.name AS name, h.value AS value, "
+                "h.direction AS direction",
+                {"project_id": project_id, "baseurls": baseurls},
+            )
+            seen_headers: set[tuple] = set()
+            for row in header_rows:
+                key = (row.get("baseurl"), row.get("name"), row.get("value"),
+                       row.get("direction"))
+                if not key[0] or key in seen_headers:
+                    continue
+                seen_headers.add(key)
+                baseurl_headers.setdefault(key[0], []).append(
+                    HeaderInfo(name=key[1], value=key[2], direction=key[3]))
+            for rows in baseurl_headers.values():
+                rows.sort(key=lambda h: (
+                    h.name or "", h.value or "", h.direction or ""))
+        except Exception as exc:  # noqa: BLE001 - fail-open: degrade the slot only
+            diagnostics.append(f"baseurl headers read degraded: {exc}")
+
     return UnitProjection(
         unit_id=unit_id,
         kind=unit_kind,
@@ -455,6 +558,10 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
         data_relationships=tuple(data_relationships),
         cooperating_systems={f: tuple(s) for f, s in cooperating_systems.items()},
         aggregated_endpoints=tuple(aggregated_endpoints),
+        baseurl_headers={
+            baseurl: tuple(headers)
+            for baseurl, headers in baseurl_headers.items()
+        },
         diagnostics=tuple(diagnostics),
     )
 
