@@ -26,6 +26,7 @@ the live pod sessions), so a resumed run re-derives the same decision.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -37,6 +38,7 @@ from polymerhus.attack.hunting.mover import (
     TestSpecItem,
     ThreatItem,
     threat_modeller_session_id,
+    threat_risk,
 )
 from polymerhus.attack.hunting.threat_model import RISK_WEIGHTS, Likelihood
 
@@ -64,6 +66,88 @@ class SyncMode(StrEnum):
 
 
 DEFAULT_SYNC_MODE = SyncMode.BATCHED
+DEFAULT_POD_BATCH_SIZE = 1
+
+logger = logging.getLogger(__name__)
+
+
+def _int_at_least(value: Any, minimum: int, *, setting: str) -> int | None:
+    """One stored integer candidate, or None when it is malformed or below the
+    documented floor. A boolean, a float, a numeric string, or a negative value
+    is malformed: the settings are DB-stored integers, and the API writes only
+    strict integers. A malformed value warns once and falls through."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        logger.warning(
+            "hunting: %s=%r is not an integer; falling back", setting, value)
+        return None
+    if value < minimum:
+        logger.warning(
+            "hunting: %s=%d is below %d; falling back", setting, value, minimum)
+        return None
+    return value
+
+
+def resolve_pod_batch_size(
+    recorded: Any,
+    settings: Mapping[str, Any] | None,
+) -> int:
+    """The run's frozen pod batch size: the run record first (a resume keeps
+    the width the run booted with), then the project setting, then 1. A
+    malformed candidate warns and falls through rather than failing the run."""
+    for candidate in (recorded, (settings or {}).get("pod_batch_size")):
+        value = _int_at_least(candidate, 1, setting="pod_batch_size")
+        if value is not None:
+            return value
+    return DEFAULT_POD_BATCH_SIZE
+
+
+def resolve_promotion_risk_threshold(
+    recorded: Any,
+    settings: Mapping[str, Any] | None,
+    *,
+    recorded_present: bool = False,
+) -> int | None:
+    """The run's frozen promotion threshold: the run record first (an explicit
+    null is a frozen "no filter"), then the project setting, then None. A
+    malformed recorded candidate warns and falls through to the setting; a
+    malformed setting warns and falls back to no filter."""
+    if recorded_present:
+        if recorded is None:
+            return None
+        value = _int_at_least(recorded, 0, setting="promotion_risk_threshold")
+        if value is not None:
+            return value
+    return _int_at_least(
+        (settings or {}).get("promotion_risk_threshold"), 0,
+        setting="promotion_risk_threshold")
+
+
+def risk_is_promoted(risk: int, threshold: int | None) -> bool:
+    """The ONE promotion comparison: inclusive; None or 0 means no filter."""
+    return threshold is None or threshold <= 0 or risk >= threshold
+
+
+def threat_is_promoted(
+    record: Mapping[str, Any], threshold: int | None,
+) -> bool:
+    """Whether one stored threat file is promoted to a hunter. A threat whose
+    combined risk is unreadable is never promoted."""
+    risk = threat_risk(record)
+    return risk is not None and risk_is_promoted(risk, threshold)
+
+
+def threat_is_demoted(
+    record: Mapping[str, Any], threshold: int | None,
+) -> bool:
+    """Whether one stored threat is DEMOTED: a readable, positive risk below an
+    active floor. An unreadable risk is a refusal, never a demotion, so the
+    audit still sees the corrupt artifact."""
+    if threshold is None or threshold <= 0:
+        return False
+    risk = threat_risk(record)
+    return risk is not None and risk > 0 and risk < threshold
 
 
 @dataclass(frozen=True)
@@ -105,6 +189,14 @@ class SyncFacts:
     consumed_spec_stems: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     terminal_hunts: frozenset[str] = frozenset()
     blocked_hunts: frozenset[str] = frozenset()
+    # The hunts this run demotes by the promotion floor. A demoted hunt is
+    # evidence, not work: its leftover spec folder is excluded from the pod
+    # block and the spec inbox.
+    demoted_hunts: frozenset[str] = frozenset()
+    # The current unit's FULL rank-ordered hunt list, including hunts whose
+    # threat files are already consumed. The fixed pod block needs the original
+    # positions, so a done hunt cannot slide the next hunt into its place.
+    unit_hunts: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -123,6 +215,9 @@ class BatchState:
     phase: str
     hunts: tuple[str, ...] = ()
     cursor: str | None = None
+    # The current `batched` pod block: the fixed slice of rank-ordered hunts
+    # whose pod sets dispatch together. Its first unfinished hunt is `cursor`.
+    pod_batch: tuple[str, ...] = ()
     pods: tuple[str, ...] = ()
     pod_cursor: str | None = None
 
@@ -136,6 +231,7 @@ class PipelineSyncState:
 
     mode: SyncMode
     intake_order: Sequence[str] | Callable[[], Sequence[str]] | None = None
+    pod_batch_size: int = DEFAULT_POD_BATCH_SIZE
     _metas: dict[str, UnitMeta] = field(default_factory=dict)
 
     def intake_position(self, unit_id: str) -> int:
@@ -256,15 +352,18 @@ def decide(
     items: Sequence[ProducedItem],
     units: Sequence[UnitMeta],
     facts: SyncFacts,
+    *,
+    pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
 ) -> frozenset[str]:
     """The items admissible NOW, as `message_id`s (the pure policy decision).
 
     `parallel` admits every item. `batched`/`serial` hold everything while the
     modeller pass is live, then work the queue one unit at a time:
     `batched` admits the current unit's whole hunter batch, and its pods only
-    once no threat file and no mid-graph hunt remains; `serial` admits only the
-    cursor hunt (or, once it is terminal, its next pod in stem order), and only
-    after every earlier hunt is fully done (terminal AND all its pods
+    once no threat file and no mid-graph hunt remains; the pods dispatch in
+    fixed blocks of `pod_batch_size` hunts in rank order. `serial` admits only
+    the cursor hunt (or, once it is terminal, its next pod in stem order), and
+    only after every earlier hunt is fully done (terminal AND all its pods
     exported).
     """
     items = tuple(items)
@@ -280,8 +379,10 @@ def decide(
         return frozenset()
 
     if mode is SyncMode.SERIAL:
-        return _decide_serial(items, current, facts)
-    return _decide_batched(items, current, facts)
+        return _decide_serial(
+            items, current, facts, pod_batch_size=pod_batch_size)
+    return _decide_batched(
+        items, current, facts, pod_batch_size=pod_batch_size)
 
 
 def batch_state(
@@ -289,12 +390,15 @@ def batch_state(
     current: str,
     items: Sequence[ProducedItem],
     facts: SyncFacts,
+    *,
+    pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
 ) -> BatchState:
     """The unit's derived phase state: `hunt` while the hunter batch is
-    unfinished, `pod` for the first hunt whose pod set is not fully exported,
-    the ordered hunts + cursor + pod cursor for `serial`, `done` when nothing
-    is left."""
+    unfinished, `pod` for the first fixed block of hunts whose pod set is not
+    fully exported, the ordered hunts + cursor + pod block for `batched`, the
+    strict cursor view for `serial`, `done` when nothing is left."""
     unit_items = [item for item in items if unit_of_item(item) == current]
+    size = max(1, int(pod_batch_size))
     if mode is SyncMode.BATCHED:
         threat_hunts = {
             item.dispatch_id for item in unit_items
@@ -317,9 +421,12 @@ def batch_state(
             if unit_of_dispatch(hunt) == current
         }
         hunts = tuple(sorted(
-            threat_hunts | spec_hunts | graph_hunts | pod_hunts | blocked_hunts,
+            set(facts.unit_hunts.get(current, ()))
+            | threat_hunts | spec_hunts | graph_hunts | pod_hunts | blocked_hunts,
             key=hunt_rank,
         ))
+        hunts = tuple(
+            hunt for hunt in hunts if hunt not in facts.demoted_hunts)
         # The hunter phase ends only when every hunt of the unit is terminal:
         # a produced threat file or a live graph is obvious work, and a hunt
         # that ended without a terminal marker is blocked, never a silent pass
@@ -335,12 +442,16 @@ def batch_state(
         )
         if not hunters_ready:
             return BatchState(unit_name=current, phase="hunt", hunts=hunts)
-        cursor = next(
-            (hunt for hunt in hunts if not _hunt_done(hunt, threat_hunts, facts)),
-            None,
-        )
-        if cursor is None:
+        pending = [
+            index for index, hunt in enumerate(hunts)
+            if not _hunt_done(hunt, threat_hunts, facts)
+        ]
+        if not pending:
             return BatchState(unit_name=current, phase="done", hunts=hunts)
+        first = pending[0]
+        start = (first // size) * size
+        pod_batch = hunts[start:start + size]
+        cursor = hunts[first]
         pods = tuple(facts.spec_stems.get(cursor, ()))
         pod_cursor = next(
             (stem for stem in pods if (cursor, stem) not in facts.terminal_specs),
@@ -348,7 +459,7 @@ def batch_state(
         )
         return BatchState(
             unit_name=current, phase="pod", hunts=hunts, cursor=cursor,
-            pods=pods, pod_cursor=pod_cursor,
+            pod_batch=pod_batch, pods=pods, pod_cursor=pod_cursor,
         )
 
     threat_hunts = {
@@ -366,8 +477,17 @@ def batch_state(
         hunt for hunt in facts.live_pod_hunts
         if unit_of_dispatch(hunt) == current
     }
+    blocked_hunts = {
+        hunt for hunt in facts.blocked_hunts
+        if unit_of_dispatch(hunt) == current
+    }
     hunts = tuple(sorted(
-        threat_hunts | spec_hunts | graph_hunts | pod_hunts, key=hunt_rank))
+        set(facts.unit_hunts.get(current, ()))
+        | threat_hunts | spec_hunts | graph_hunts | pod_hunts | blocked_hunts,
+        key=hunt_rank,
+    ))
+    hunts = tuple(
+        hunt for hunt in hunts if hunt not in facts.demoted_hunts)
     cursor = next(
         (hunt for hunt in hunts if not _hunt_done(hunt, threat_hunts, facts)),
         None,
@@ -400,35 +520,51 @@ def current_unit(
 
 
 def _decide_batched(
-    items: Sequence[ProducedItem], current: str, facts: SyncFacts,
+    items: Sequence[ProducedItem],
+    current: str,
+    facts: SyncFacts,
+    *,
+    pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
 ) -> frozenset[str]:
     """One unit's phase at a time: the whole hunter batch while the hunt phase
-    is active, then one hunt's whole pod set. The next hunt waits until every
-    pod of the current hunt carries a durable export."""
-    state = batch_state(SyncMode.BATCHED, current, items, facts)
+    is active, then the current fixed block's pod sets. The next block waits
+    until every pod of every hunt in the current block carries a durable export.
+    """
+    state = batch_state(
+        SyncMode.BATCHED, current, items, facts,
+        pod_batch_size=pod_batch_size,
+    )
     unit_items = [item for item in items if unit_of_item(item) == current]
     if state.phase == "hunt":
         return frozenset(
             item.message_id for item in unit_items
             if isinstance(item, ThreatItem))
-    if state.phase != "pod" or state.cursor is None:
+    if state.phase != "pod" or not state.pod_batch:
         return frozenset()
-    cursor = state.cursor
+    block = frozenset(state.pod_batch)
     return frozenset(
         item.message_id for item in unit_items
         if isinstance(item, TestSpecItem)
-        and item.hunt_key == cursor
+        and item.hunt_key in block
         and (item.hunt_key, item.spec_file) not in facts.terminal_specs
     )
 
 
 def _decide_serial(
-    items: Sequence[ProducedItem], current: str, facts: SyncFacts,
+    items: Sequence[ProducedItem],
+    current: str,
+    facts: SyncFacts,
+    *,
+    pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
 ) -> frozenset[str]:
     """The cursor: the pending threat file of the cursor hunt is the hunter;
     once that hunt is terminal, its next pod in stem order; a hunt still
-    mid-graph admits nothing."""
-    state = batch_state(SyncMode.SERIAL, current, items, facts)
+    mid-graph admits nothing. The batch size is ignored: serial stays one
+    agent at a time."""
+    state = batch_state(
+        SyncMode.SERIAL, current, items, facts,
+        pod_batch_size=pod_batch_size,
+    )
     if state.cursor is None:
         return frozenset()
     cursor = state.cursor
@@ -542,14 +678,39 @@ class RunSyncGate:
         hunter_store: Any = None,
         pod_store: Any = None,
         intake_order: Sequence[str] | Callable[[], Sequence[str]] | None = None,
+        pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
+        promotion_risk_threshold: int | None = None,
     ) -> None:
         self.state = PipelineSyncState(
-            mode=SyncMode(mode), intake_order=intake_order)
+            mode=SyncMode(mode), intake_order=intake_order,
+            pod_batch_size=max(1, int(pod_batch_size)),
+        )
         self.project_id = project_id
         self.run_id = run_id
         self.threat_store = threat_store
         self.hunter_store = hunter_store
         self.pod_store = pod_store
+        self.promotion_risk_threshold = promotion_risk_threshold
+        # The unit models freeze at COMPLETED, so one COMPLETED read per unit
+        # per gate is enough. A pre-COMPLETED or transiently unreadable model is
+        # not cached: the next call re-reads it.
+        self._models: dict[str, Mapping[str, Any]] = {}
+        self._unit_ids: dict[str, str] = {}
+
+    def _read_model(self, unit_id: str) -> Mapping[str, Any] | None:
+        cached = self._models.get(unit_id)
+        if cached is not None:
+            return cached
+        if self.threat_store is None:
+            return None
+        try:
+            model = self.threat_store.read_model(self.project_id, unit_id)
+        except Exception:  # noqa: BLE001 - fail-open: the queue still runs
+            return None
+        if isinstance(model, Mapping) and model.get("state") == "COMPLETED":
+            self._models[unit_id] = model
+            return model
+        return model if isinstance(model, Mapping) else None
 
     @property
     def mode(self) -> SyncMode:
@@ -576,7 +737,10 @@ class RunSyncGate:
         facts = self._lifecycle_facts(facts)
         units = self._units(items, facts)
         facts = self._pod_cursor_facts(items, units, facts)
-        admitted = decide(self.mode, items, units, facts)
+        admitted = decide(
+            self.mode, items, units, facts,
+            pod_batch_size=self.state.pod_batch_size,
+        )
         return tuple(item for item in items if item.message_id in admitted)
 
     # -- the fact reads ---------------------------------------------------------
@@ -637,7 +801,11 @@ class RunSyncGate:
 
     def _unit_id_for_hunt(self, hunt_key: str) -> str:
         """The unit identity a hunt's stored spec body names, when the hunt is
-        visible only through a session. Fail-open to the empty id."""
+        visible only through a session. Fail-open to the empty id. A resolved
+        id is cached per gate: the spec body is immutable once written."""
+        cached = self._unit_ids.get(hunt_key)
+        if cached is not None:
+            return cached
         if self.hunter_store is None:
             return ""
         for stem in sorted(self._stems(hunt_key)):
@@ -649,6 +817,7 @@ class RunSyncGate:
                     body = None
                 unit_id = _spec_unit_id(body)
                 if unit_id:
+                    self._unit_ids[hunt_key] = unit_id
                     return unit_id
         return ""
 
@@ -673,10 +842,7 @@ class RunSyncGate:
         an unreadable or unknown model contributes zero."""
         if not unit_id or self.threat_store is None:
             return 0
-        try:
-            model = self.threat_store.read_model(self.project_id, unit_id)
-        except Exception:  # noqa: BLE001 - fail-open: the queue still runs
-            return 0
+        model = self._read_model(unit_id)
         threats = (model or {}).get("threats") or ()
         return sum(_threat_weight(threat) for threat in threats)
 
@@ -711,6 +877,7 @@ class RunSyncGate:
         except Exception:  # noqa: BLE001 - a read failure is not a false done
             return facts
         live = set(facts.hunts_in_graph) | set(facts.live_pod_hunts)
+        demoted = set(self._demoted_hunts())
         for hunt in hunt_keys:
             marker = self._terminal_marker(hunt)
             if marker is not None:
@@ -724,6 +891,12 @@ class RunSyncGate:
                 if self._spec_set_blocked(hunt):
                     blocked.add(hunt)
                 continue
+            if self._hunt_is_demoted(hunt, frozenset(demoted)):
+                # A threat below the promotion floor is evidence, not work:
+                # its stale spec folder must not block the promoted queue,
+                # even after the unit model moved to consumed/.
+                demoted.add(hunt)
+                continue
             if hunt in live:
                 continue
             blocked.add(hunt)
@@ -731,6 +904,7 @@ class RunSyncGate:
             facts,
             terminal_hunts=frozenset(terminal),
             blocked_hunts=frozenset(blocked),
+            demoted_hunts=frozenset(demoted),
         )
 
     def _terminal_marker(self, hunt_key: str) -> dict | None:
@@ -751,6 +925,102 @@ class RunSyncGate:
         if str(marker.get("run_id") or "") != self.run_id:
             return None
         return dict(marker)
+
+    def _demoted_hunts(self) -> frozenset[str]:
+        """The produced hunts whose threat is below the frozen promotion floor.
+
+        A demoted threat is evidence, not work. Its stale spec folder must not
+        block the promoted queue or the completion audit. The read is
+        run-scoped; a failed read demotes nothing (fail-open, the existing
+        stale-hunt fail-closed rule still applies)."""
+        threshold = self.promotion_risk_threshold
+        if threshold is None or threshold <= 0 or self.threat_store is None:
+            return frozenset()
+        reader = getattr(self.threat_store, "read_produced_threats", None)
+        if reader is None:
+            return frozenset()
+        try:
+            entries = reader(self.project_id)
+        except Exception:  # noqa: BLE001 - a read failure demotes nothing
+            return frozenset()
+        demoted: set[str] = set()
+        for entry in entries:
+            if entry.get("run_id") != self.run_id:
+                continue
+            unit_name = str(entry.get("unit_name") or "")
+            for threat in entry.get("threats") or ():
+                if not isinstance(threat, Mapping):
+                    continue
+                threat_id = str(threat.get("threat_id") or "")
+                if not threat_id:
+                    continue
+                if threat_is_demoted(
+                        threat.get("record") or {}, threshold):
+                    demoted.add(f"{unit_name}__{threat_id}")
+        return frozenset(demoted)
+
+    def demoted_hunts(self) -> frozenset[str]:
+        """Every hunt this run DEMOTES, including a hunt whose unit model has
+        already moved to `consumed/`.
+
+        The produced read covers a produced model. A leftover spec folder is
+        resolved through `_hunt_is_demoted`, which reads the model from
+        produced/ or consumed/. A demoted hunt's spec is evidence, not work;
+        the mover drops it from the spec inbox and the gate excludes it from
+        the pod block."""
+        threshold = self.promotion_risk_threshold
+        if threshold is None or threshold <= 0:
+            return frozenset()
+        demoted = set(self._demoted_hunts())
+        if self.hunter_store is None:
+            return frozenset(demoted)
+        try:
+            hunt_keys = self.hunter_store.list_hunt_keys(self.project_id)
+        except Exception:  # noqa: BLE001 - a read failure demotes nothing extra
+            return frozenset(demoted)
+        for hunt in hunt_keys:
+            if hunt in demoted:
+                continue
+            if self._hunt_is_demoted(hunt, frozenset(demoted)):
+                demoted.add(hunt)
+        return frozenset(demoted)
+
+    def _hunt_is_demoted(
+        self, hunt_key: str, demoted: frozenset[str],
+    ) -> bool:
+        """Whether ONE hunt is a demoted threat, even after its unit model moved
+        to consumed/.
+
+        The produced read cannot see a demoted file once the model document has
+        moved, so the audit resolves the unit id from a leftover spec body (or
+        the known unit metadata), reads the model from produced/ or consumed/,
+        and checks the threat's risk. A model from another run never demotes
+        this run's hunt."""
+        if hunt_key in demoted:
+            return True
+        threshold = self.promotion_risk_threshold
+        if threshold is None or threshold <= 0 or self.threat_store is None:
+            return False
+        unit_id = self._unit_id_for_hunt(hunt_key)
+        if not unit_id:
+            cached = self.state.cached(unit_of_dispatch(hunt_key))
+            unit_id = cached.unit_id if cached is not None else ""
+        if not unit_id:
+            return False
+        model = self._read_model(unit_id)
+        if not isinstance(model, Mapping):
+            return False
+        if model.get("state") != "COMPLETED":
+            return False
+        if str(model.get("run_id") or "") != self.run_id:
+            return False
+        threat_id = hunt_key.rpartition("__")[2]
+        for threat in model.get("threats") or ():
+            if not isinstance(threat, Mapping):
+                continue
+            if str(threat.get("id") or "") == threat_id:
+                return threat_is_demoted(threat, threshold)
+        return False
 
     def _pod_cursor_facts(
         self,
@@ -782,6 +1052,50 @@ class RunSyncGate:
             hunt for hunt in facts.live_pod_hunts
             if unit_of_dispatch(hunt) == current
         }
+        hunts -= set(facts.demoted_hunts)
+        # The current unit's FULL promoted hunt order, including hunts whose
+        # threat files are already consumed. The fixed pod block needs the
+        # original positions, so a done hunt cannot slide the next hunt in.
+        # Only a DISPATCHABLE threat is a hunt: a zero-risk threat has no
+        # threat file (S2 8.3) and a threat the mover refused has no observable
+        # artifact, so neither may hold the pod phase.
+        unit_hunts: dict[str, tuple[str, ...]] = {}
+        meta = next((unit for unit in units if unit.unit_name == current), None)
+        if meta is not None and meta.unit_id and self.threat_store is not None:
+            observed = (
+                hunts
+                | set(facts.terminal_hunts)
+                | set(facts.blocked_hunts)
+            )
+            model = self._read_model(meta.unit_id)
+            if (
+                isinstance(model, Mapping)
+                and model.get("state") == "COMPLETED"
+            ):
+                ranked: list[str] = []
+                for threat in model.get("threats") or ():
+                    if not isinstance(threat, Mapping):
+                        continue
+                    threat_id = str(threat.get("id") or "")
+                    if not threat_id:
+                        continue
+                    risk = _threat_weight(threat)
+                    if risk <= 0:
+                        # A zero-risk threat is stored but never written as a
+                        # threat file: it can never become a hunt.
+                        continue
+                    if not risk_is_promoted(
+                            risk, self.promotion_risk_threshold):
+                        continue
+                    hunt_key = f"{current}__{threat_id}"
+                    if hunt_key not in observed:
+                        # A refused or otherwise unobservable threat is not a
+                        # hunt and must not hold the pod phase.
+                        continue
+                    ranked.append(hunt_key)
+                if ranked:
+                    unit_hunts[current] = tuple(ranked)
+                    hunts |= set(ranked)
         stems: dict[str, tuple[str, ...]] = {}
         pending: dict[str, tuple[str, ...]] = {}
         consumed: dict[str, tuple[str, ...]] = {}
@@ -803,6 +1117,7 @@ class RunSyncGate:
             pending_spec_stems=pending,
             consumed_spec_stems=consumed,
             terminal_specs=frozenset(terminal),
+            unit_hunts=unit_hunts,
         )
 
     def _side_stems(self, hunt_key: str, side: str) -> tuple[str, ...]:
@@ -905,6 +1220,7 @@ def hunting_artifacts_terminal(
     hunter_store: Any,
     pod_store: Any,
     threat_store: Any = None,
+    promotion_risk_threshold: int | None = None,
 ) -> tuple[bool, tuple[str, ...]]:
     """Hard completion audit over every CURRENT-RUN hunting artifact.
 
@@ -925,9 +1241,11 @@ def hunting_artifacts_terminal(
         threat_store=threat_store,
         hunter_store=hunter_store,
         pod_store=pod_store,
+        promotion_risk_threshold=promotion_risk_threshold,
     )
     reasons: list[str] = []
     current_hunts: set[str] = set()
+    demoted = gate._demoted_hunts()
 
     if threat_store is not None:
         for reader_name, side in (
@@ -948,14 +1266,22 @@ def hunting_artifacts_terminal(
                 unit_name = str(entry.get("unit_name") or "")
                 for malformed in entry.get("malformed_threats") or ():
                     threat_id = str(malformed.get("threat_id") or "")
-                    if threat_id:
-                        current_hunts.add(f"{unit_name}__{threat_id}")
-                        reasons.append(
-                            f"{unit_name}__{threat_id}: malformed threat body")
+                    if not threat_id:
+                        continue
+                    hunt_key = f"{unit_name}__{threat_id}"
+                    if side == "produced" and hunt_key in demoted:
+                        continue
+                    current_hunts.add(hunt_key)
+                    reasons.append(
+                        f"{hunt_key}: malformed threat body")
                 for threat in entry.get("threats") or ():
                     threat_id = str(threat.get("threat_id") or "")
-                    if threat_id:
-                        current_hunts.add(f"{unit_name}__{threat_id}")
+                    if not threat_id:
+                        continue
+                    hunt_key = f"{unit_name}__{threat_id}"
+                    if side == "produced" and hunt_key in demoted:
+                        continue
+                    current_hunts.add(hunt_key)
 
     if hunter_store is None:
         return False, ("hunter store unavailable",)
@@ -966,6 +1292,10 @@ def hunting_artifacts_terminal(
         return False, (f"hunt inventory read failed: {exc}",)
 
     for hunt in hunt_keys:
+        if gate._hunt_is_demoted(hunt, demoted):
+            # A demoted threat is evidence, not work: its stale spec folder
+            # must not block the run terminal, even after the unit model moved.
+            continue
         marker = gate._terminal_marker(hunt)
         if marker is not None:
             current_hunts.add(hunt)
@@ -1021,6 +1351,7 @@ def make_sync_gate(
 
 __all__ = [
     "BatchState",
+    "DEFAULT_POD_BATCH_SIZE",
     "DEFAULT_SYNC_MODE",
     "PipelineSyncState",
     "RunSyncGate",
@@ -1037,6 +1368,11 @@ __all__ = [
     "make_sync_gate",
     "order_units",
     "resolve_mode",
+    "resolve_pod_batch_size",
+    "resolve_promotion_risk_threshold",
+    "risk_is_promoted",
+    "threat_is_demoted",
+    "threat_is_promoted",
     "unit_of_dispatch",
     "unit_of_item",
 ]

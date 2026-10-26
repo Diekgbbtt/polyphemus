@@ -754,6 +754,7 @@ def report_dispatch_gap(
     (the caller awaits this inside the quiesce hand-off), so a failed read is
     treated as "no pending work" and the gap line is logged - never silently."""
     from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
+        demoted_hunts_for,
         run_work_remaining,
     )
 
@@ -762,9 +763,13 @@ def report_dispatch_gap(
     if not completed or state.hunter_inboxes:
         return None
     try:
+        demoted = demoted_hunts_for(state)
         pending = run_work_remaining(
             project_id, run_id, threat_store=threat_store,
-            hunter_store=hunter_store)
+            hunter_store=hunter_store,
+            promotion_risk_threshold=state.promotion_risk_threshold,
+            demoted_hunts=demoted,
+        )
     except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
         logger.warning(
             "hunting run %s: the pending-work read degraded (%s); reporting the "
@@ -773,7 +778,9 @@ def report_dispatch_gap(
         pending = False
     if pending:
         return None
-    threats = _produced_threat_count(threat_store, project_id, run_id)
+    threats = _produced_threat_count(
+        threat_store, project_id, run_id,
+        promotion_risk_threshold=state.promotion_risk_threshold)
     if threats:
         reason = (
             f"{len(completed)} unit model(s) produced and NOTHING is "
@@ -791,16 +798,32 @@ def report_dispatch_gap(
     return reason
 
 
-def _produced_threat_count(threat_store: Any, project_id: str, run_id: str) -> int:
-    """The run's produced threat files, for the dispatch-gap line. Best-effort (a
-    read failure counts zero): the terminal path must never raise."""
+def _produced_threat_count(
+    threat_store: Any,
+    project_id: str,
+    run_id: str,
+    *,
+    promotion_risk_threshold: int | None = None,
+) -> int:
+    """The run's PROMOTED produced threat files, for the dispatch-gap line.
+    Best-effort (a read failure counts zero): the terminal path must never
+    raise. A threat below the frozen promotion floor is evidence, not a gap."""
     if threat_store is None:
         return 0
+    # The hunting modules are imported lazily here, like the run-lifecycle and
+    # intake imports above, so the runtime module stays import-light at boot.
+    from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
+        threat_is_promoted,
+    )
+
     try:
         return sum(
-            len(entry.get("threats") or ())
+            1
             for entry in threat_store.read_produced_threats(project_id)
             if entry.get("run_id") == run_id
+            for threat in (entry.get("threats") or ())
+            if threat_is_promoted(
+                (threat or {}).get("record") or {}, promotion_risk_threshold)
         )
     except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
         logger.warning(
@@ -1189,6 +1212,8 @@ async def start_hunting(
         from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
             make_sync_gate,
             resolve_mode,
+            resolve_pod_batch_size,
+            resolve_promotion_risk_threshold,
         )
         from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
             RunDispatchState,
@@ -1361,6 +1386,17 @@ async def start_hunting(
             hunting_settings = {}
         sync_mode = resolve_mode(
             (resume_record or {}).get("pipeline_sync"), hunting_settings)
+        pod_batch_size = resolve_pod_batch_size(
+            (resume_record or {}).get("pod_batch_size"), hunting_settings)
+        promotion_risk_threshold = resolve_promotion_risk_threshold(
+            (resume_record or {}).get("promotion_risk_threshold"),
+            hunting_settings,
+            recorded_present=bool(resume_record)
+            and "promotion_risk_threshold" in (resume_record or {}),
+        )
+        # The frozen promotion floor rides the run state so the surfer's work
+        # read, the mover tick, and the completion audit all see one value.
+        state.promotion_risk_threshold = promotion_risk_threshold
 
         # The latest run record the sync gate reads its queue tie-break from
         # (the intake order): updated by every `_write_run_record` (same worker
@@ -1377,7 +1413,12 @@ async def start_hunting(
             on disk, and the resume recomputes it."""
             run_record_cell.clear()
             run_record_cell.update(record)
-            payload = {**record, "pipeline_sync": sync_mode.value}
+            payload = {
+                **record,
+                "pipeline_sync": sync_mode.value,
+                "pod_batch_size": pod_batch_size,
+                "promotion_risk_threshold": promotion_risk_threshold,
+            }
             try:
                 await asyncio.to_thread(
                     pg.set_hunting_run_stats, hunting_run_id, payload)
@@ -1397,6 +1438,8 @@ async def start_hunting(
             threat_store=run_threat_store,
             hunter_store=hunter_store,
             pod_store=pod_store,
+            pod_batch_size=pod_batch_size,
+            promotion_risk_threshold=promotion_risk_threshold,
             intake_order=lambda: tuple(
                 run_record_cell.get("intake_order") or ()),
         )

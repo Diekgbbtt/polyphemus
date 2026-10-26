@@ -509,3 +509,32 @@ def test_the_dispatch_gap_survives_a_transient_pending_work_read_failure(
     assert reason is not None and "produced threat file" in reason
     assert any("pending-work read degraded" in record.message
                for record in caplog.records)
+
+
+def test_a_demoted_produced_threat_is_not_a_dispatch_gap(tmp_path, caplog):
+    """The dispatch-gap diagnostic counts only PROMOTED produced threats: a
+    demoted file left in produced/ is evidence, not a missed dispatch."""
+    from polymerhus.attack.hunting.surfer import RunDispatchState
+    from tests.hunting_fixtures import threat_row
+
+    models = ThreatModelStore(root_dir=tmp_path / "models")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    produce_model(
+        models, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
+        threats=[threat_row(likelihood="low")],
+    )
+    assert models.consume_model_if_done(
+        PROJECT, UNIT, non_pending_threats=("threat-1",)) is True
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
+        reason = hunting_runtime.report_dispatch_gap(
+            PROJECT, RUN,
+            [UnitOutcome(unit_id=UNIT, status="completed")],
+            state=RunDispatchState(promotion_risk_threshold=5),
+            threat_store=models,
+            hunter_store=hunter,
+        )
+
+    assert reason is not None
+    assert "no dispatchable threat file was produced" in reason
+    assert "produced threat file(s) stayed undispatched" not in reason

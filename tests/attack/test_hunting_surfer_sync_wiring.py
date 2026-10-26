@@ -51,6 +51,9 @@ class GateSpy:
             tuple(items), frozenset(live_session_ids), frozenset(hunts_in_graph)))
         return tuple(items) if self.allow else ()
 
+    def demoted_hunts(self):
+        return frozenset()
+
 
 async def _noop():
     return None
@@ -101,3 +104,20 @@ def test_surfer_holds_the_threat_file_until_the_sync_gate_admits_it(tmp_path):
     assert [item.dispatch_id for item in items] == [DISPATCH]
     assert live == frozenset()
     assert graph == frozenset()
+
+
+def test_demoted_hunts_for_reads_the_gate_and_fails_open():
+    from polymerhus.attack.hunting.surfer import demoted_hunts_for
+
+    class WithDemotions:
+        def demoted_hunts(self):
+            return frozenset({"u__threat-2"})
+
+    class Without:
+        pass
+
+    assert demoted_hunts_for(
+        RunDispatchState(sync_gate=WithDemotions())) == frozenset({"u__threat-2"})
+    assert demoted_hunts_for(
+        RunDispatchState(sync_gate=Without())) == frozenset()
+    assert demoted_hunts_for(RunDispatchState()) == frozenset()

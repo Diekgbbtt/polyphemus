@@ -84,14 +84,18 @@ class SettingsUpdate(BaseModel):
 
 class HuntingConfigUpdate(BaseModel):
     """The partial PUT body of the project's hunting config (ADR
-    `hunting-pipeline-sync-adr.md`). Only the provided keys land (deep-merged);
-    `risk_threshold: null` clears the DB override and falls back to the
-    env/default basis."""
+    `hunting-pipeline-sync-adr.md`, amended 2026-10-26). Only the provided keys
+    land (deep-merged); `risk_threshold: null` clears the DB override and falls
+    back to the env/default basis; `pod_batch_size: null` clears it to the
+    default 1; `promotion_risk_threshold: null` clears it to no filter."""
 
     model_config = ConfigDict(extra="forbid")
 
     pipeline_sync: Literal["serial", "batched", "parallel"] | None = None
     risk_threshold: int | None = Field(default=None, ge=0)
+    pod_batch_size: int | None = Field(default=None, ge=1, strict=True)
+    promotion_risk_threshold: int | None = Field(
+        default=None, ge=0, strict=True)
 
 
 class ReconLaunch(BaseModel):
@@ -233,9 +237,10 @@ def update_settings(project_id: str, body: SettingsUpdate) -> dict:
 @router.get("/projects/{project_id}/hunting/config")
 def read_hunting_config(project_id: str) -> dict:
     """The project's hunting config (ADR `hunting-pipeline-sync-adr.md`): the
-    frozen-at-run-start `pipeline_sync` mode and the threat-modeller risk
-    threshold. Unknown project -> 404; a project that never stored a blob reads
-    back the defaults (mode `batched`, threshold None)."""
+    frozen-at-run-start `pipeline_sync` mode, the threat-modeller risk
+    threshold, the pod batch size, and the per-threat promotion threshold.
+    Unknown project -> 404; a project that never stored a blob reads back the
+    defaults (mode `batched`, threshold None, batch size 1, promotion None)."""
     try:
         return repository.read_hunting_config(project_id)
     except ProjectNotFound:

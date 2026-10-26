@@ -18,6 +18,8 @@ without a store, session, or clock:
 """
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from polymerhus.attack.hunting.mover import TestSpecItem, ThreatItem
@@ -29,8 +31,15 @@ from polymerhus.attack.hunting.pipeline_sync import (
     UnitMeta,
     batch_state,
     decide,
+    hunt_rank,
     order_units,
     resolve_mode,
+    resolve_pod_batch_size,
+    resolve_promotion_risk_threshold,
+    risk_is_promoted,
+    threat_is_demoted,
+    threat_is_promoted,
+    unit_of_dispatch,
 )
 
 RUN = "run-1"
@@ -70,6 +79,9 @@ def _unit(name: str, risk: int = 1, intake: int = 1) -> UnitMeta:
 
 def _facts(**overrides) -> SyncFacts:
     stems = overrides.get("spec_stems") or {}
+    unit_hunts: dict[str, list[str]] = {}
+    for hunt in stems:
+        unit_hunts.setdefault(unit_of_dispatch(hunt), []).append(hunt)
     values = dict(
         modeller_live=False,
         hunts_in_graph=frozenset(),
@@ -83,6 +95,10 @@ def _facts(**overrides) -> SyncFacts:
         consumed_spec_stems=dict(stems),
         terminal_hunts=frozenset(stems),
         blocked_hunts=frozenset(),
+        unit_hunts={
+            unit: tuple(sorted(hunts, key=hunt_rank))
+            for unit, hunts in unit_hunts.items()
+        },
     )
     values.update(overrides)
     return SyncFacts(**values)
@@ -386,3 +402,250 @@ def test_the_gate_reads_the_live_target_identity_unit():
     assert _spec_unit_id(
         {"provenance": {"unit_id": "Service:u3"}}) == "Service:u3"
     assert _spec_unit_id({}) == ""
+
+
+# --- the pod batch size and the promotion threshold (2026-10-26) ------------------
+
+def test_resolve_pod_batch_size_prefers_the_run_record_then_the_settings_then_one():
+    assert resolve_pod_batch_size(3, {"pod_batch_size": 2}) == 3
+    assert resolve_pod_batch_size(None, {"pod_batch_size": 2}) == 2
+    assert resolve_pod_batch_size(None, {}) == 1
+    assert resolve_pod_batch_size("bogus", {"pod_batch_size": 2}) == 2
+    assert resolve_pod_batch_size(0, {"pod_batch_size": -1}) == 1
+    assert resolve_pod_batch_size(True, {"pod_batch_size": 2}) == 2
+
+
+def test_resolve_promotion_risk_threshold_prefers_the_run_record_then_the_settings_then_none():
+    assert resolve_promotion_risk_threshold(
+        6, {"promotion_risk_threshold": 4}, recorded_present=True) == 6
+    assert resolve_promotion_risk_threshold(
+        None, {"promotion_risk_threshold": 4}, recorded_present=True) is None
+    assert resolve_promotion_risk_threshold(
+        None, {"promotion_risk_threshold": 4}) == 4
+    assert resolve_promotion_risk_threshold(None, {}) is None
+    assert resolve_promotion_risk_threshold(
+        "bad", {"promotion_risk_threshold": 4}, recorded_present=True) == 4
+    assert resolve_promotion_risk_threshold(
+        -1, {"promotion_risk_threshold": -2}, recorded_present=True) is None
+
+
+def test_risk_is_promoted_is_inclusive_and_off_by_default():
+    assert risk_is_promoted(4, 4)
+    assert not risk_is_promoted(3, 4)
+    assert risk_is_promoted(1, None)
+    assert risk_is_promoted(1, 0)
+
+
+def test_threat_is_promoted_reads_the_combined_risk():
+    assert threat_is_promoted({"risk": 6}, 5)
+    assert not threat_is_promoted({"risk": 4}, 5)
+    # A legacy file without the stored risk falls back to the impact product:
+    # high likelihood (3) x high impact (3) = 9.
+    legacy = {
+        "likelihood": "high",
+        "threat": {"impact": {
+            "confidentiality": "high",
+            "integrity": "none",
+            "availability": "none",
+            "end_impact": "reads another tenant",
+        }},
+    }
+    assert threat_is_promoted(legacy, 9)
+    assert not threat_is_promoted(legacy, 10)
+    # The model document stores the impact at the threat's own level; the same
+    # fallback must read it.
+    model_shape = {
+        "likelihood": "high",
+        "impact": {
+            "confidentiality": "high",
+            "integrity": "none",
+            "availability": "none",
+            "end_impact": "reads another tenant",
+        },
+    }
+    assert threat_is_promoted(model_shape, 9)
+    assert not threat_is_promoted(model_shape, 10)
+
+
+def _spec_set(hunts):
+    items = []
+    stems = {}
+    for index, hunt in enumerate(hunts, start=1):
+        stem = f"s{index}"
+        items.append(_spec(hunt_key=hunt, stem=stem))
+        stems[hunt] = (stem,)
+    return items, stems
+
+
+def test_batched_admits_the_first_block_of_n_hunts():
+    hunts = ("u1__threat-1", "u1__threat-2", "u1__threat-3")
+    items, stems = _spec_set(hunts)
+
+    admitted = decide(
+        SyncMode.BATCHED, items, [_unit("u1")], _facts(spec_stems=stems),
+        pod_batch_size=2,
+    )
+
+    assert admitted == {items[0].message_id, items[1].message_id}
+
+
+def test_batched_holds_the_next_block_until_every_spec_in_the_block_is_terminal():
+    hunts = ("u1__threat-1", "u1__threat-2", "u1__threat-3")
+    items, stems = _spec_set(hunts)
+    facts = _facts(
+        spec_stems=stems,
+        terminal_specs=frozenset({(hunts[0], "s1")}),
+    )
+
+    admitted = decide(
+        SyncMode.BATCHED, items, [_unit("u1")], facts, pod_batch_size=2,
+    )
+
+    assert admitted == {items[1].message_id}
+
+
+def test_batched_block_does_not_slide_when_an_earlier_hunt_is_done():
+    hunts = ("u1__threat-1", "u1__threat-2", "u1__threat-3")
+    items, stems = _spec_set(hunts)
+    facts = _facts(
+        spec_stems=stems,
+        terminal_specs=frozenset({(hunts[0], "s1")}),
+    )
+
+    admitted = decide(
+        SyncMode.BATCHED, [items[1], items[2]], [_unit("u1")], facts,
+        pod_batch_size=2,
+    )
+
+    # Hunt 1 is done, but hunt 2 still holds the first block: hunt 3 must not
+    # slide into its place.
+    assert admitted == {items[1].message_id}
+
+
+def test_batched_block_advances_to_the_next_block():
+    hunts = (
+        "u1__threat-1", "u1__threat-2", "u1__threat-3", "u1__threat-4",
+    )
+    items, stems = _spec_set(hunts)
+    facts = _facts(
+        spec_stems=stems,
+        terminal_specs=frozenset({
+            (hunts[0], "s1"), (hunts[1], "s2"),
+        }),
+    )
+
+    admitted = decide(
+        SyncMode.BATCHED, items, [_unit("u1")], facts, pod_batch_size=2,
+    )
+
+    assert admitted == {items[2].message_id, items[3].message_id}
+
+
+def test_batched_block_holds_on_a_blocked_hunt():
+    hunts = ("u1__threat-1", "u1__threat-2")
+    items, stems = _spec_set(hunts)
+    facts = _facts(
+        spec_stems=stems,
+        blocked_hunts=frozenset({hunts[0]}),
+    )
+
+    admitted = decide(
+        SyncMode.BATCHED, items, [_unit("u1")], facts, pod_batch_size=2,
+    )
+
+    assert admitted == frozenset()
+
+
+def test_batched_zero_spec_hunt_is_done_inside_its_block():
+    first, second = "u1__threat-1", "u1__threat-2"
+    item = _spec(hunt_key=second, stem="s2")
+    facts = _facts(
+        spec_stems={first: (), second: ("s2",)},
+        terminal_hunts=frozenset({first, second}),
+    )
+
+    admitted = decide(
+        SyncMode.BATCHED, [item], [_unit("u1")], facts, pod_batch_size=2,
+    )
+
+    assert admitted == {item.message_id}
+
+
+def test_batched_batch_size_larger_than_the_hunts_clamps():
+    hunts = ("u1__threat-1", "u1__threat-2", "u1__threat-3")
+    items, stems = _spec_set(hunts)
+
+    admitted = decide(
+        SyncMode.BATCHED, items, [_unit("u1")], _facts(spec_stems=stems),
+        pod_batch_size=10,
+    )
+
+    assert admitted == _ids(items)
+
+
+def test_serial_ignores_the_pod_batch_size():
+    first, second = "u1__threat-1", "u1__threat-2"
+    items = [
+        _spec(hunt_key=first, stem="a_first"),
+        _spec(hunt_key=first, stem="b_second"),
+        _spec(hunt_key=second, stem="c_third"),
+    ]
+    facts = _facts(spec_stems={
+        first: ("a_first", "b_second"), second: ("c_third",),
+    })
+
+    admitted = decide(
+        SyncMode.SERIAL, items, [_unit("u1")], facts, pod_batch_size=2,
+    )
+
+    assert admitted == {items[0].message_id}
+
+
+def test_parallel_ignores_the_pod_batch_size():
+    hunts = ("u1__threat-1", "u1__threat-2", "u1__threat-3")
+    items, stems = _spec_set(hunts)
+
+    admitted = decide(
+        SyncMode.PARALLEL, items, [_unit("u1")], _facts(spec_stems=stems),
+        pod_batch_size=2,
+    )
+
+    assert admitted == _ids(items)
+
+
+def test_batch_state_reports_the_pod_block():
+    hunts = ("u1__threat-1", "u1__threat-2", "u1__threat-3")
+    items, stems = _spec_set(hunts)
+
+    state = batch_state(
+        SyncMode.BATCHED, "u1", items, _facts(spec_stems=stems),
+        pod_batch_size=2,
+    )
+
+    assert state.phase == "pod"
+    assert state.pod_batch == (hunts[0], hunts[1])
+    assert state.cursor == hunts[0]
+
+
+def test_threat_is_demoted_reads_only_a_readable_positive_risk():
+    assert threat_is_demoted({"risk": 1}, 5)
+    assert not threat_is_demoted({"risk": 5}, 5)
+    assert not threat_is_demoted({"risk": 9}, 5)
+    assert not threat_is_demoted({"risk": 0}, 5)
+    assert not threat_is_demoted({"risk": 1}, None)
+    assert not threat_is_demoted({"risk": "bad"}, 5)
+
+
+def test_a_malformed_setting_warns_and_falls_through(caplog):
+    with caplog.at_level(
+        logging.WARNING, logger="polymerhus.attack.hunting.pipeline_sync",
+    ):
+        assert resolve_pod_batch_size(
+            "bogus", {"pod_batch_size": 2}) == 2
+        assert resolve_promotion_risk_threshold(
+            "bad", {"promotion_risk_threshold": 4},
+            recorded_present=True,
+        ) == 4
+
+    assert "pod_batch_size" in caplog.text
+    assert "promotion_risk_threshold" in caplog.text

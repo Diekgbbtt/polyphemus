@@ -13,6 +13,49 @@ Where this document and the amendment disagree, the amendment wins.
 - The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
+## Amendment 2026-10-26: configurable pod batch and per-threat promotion
+
+This amendment adds two frozen project settings to the `batched` pipeline.
+It does not add a sync mode and does not change the `parallel` or `serial` vocabulary.
+The full contract is `docs/design/hunting-batch-and-promotion-spec.md`.
+
+- **`pod_batch_size`** widens the pod phase from one hunt to a fixed block of hunts.
+  The hunter phase is unchanged: the unit's whole threat set still dispatches concurrently.
+  The pod phase still starts only when every hunt of the unit is terminal.
+  The unit's hunts are rank-ordered, and the first not-done hunt determines a fixed block of `pod_batch_size` hunts.
+  Every spec of every hunt in the block dispatches concurrently.
+  The next block starts only when every consumed spec in the current block has a durable export.
+  A done hunt contributes no work and does not slide the next hunt into the block.
+  A blocked hunt holds the block.
+  A zero-spec hunt is done immediately.
+  The default is 1, which is the current per-hunt behaviour.
+  `serial` ignores the setting and stays one hunter and one pod at a time.
+  A large value is clamped to the remaining hunts.
+- **`promotion_risk_threshold`** is the minimum per-threat combined risk that reaches a hunter.
+  The comparison is inclusive: `risk >= threshold`.
+  A `null` or 0 threshold promotes every valid threat, which is the current behaviour.
+  The filter runs in the mover's produced-inbox read, before the low-tier sequencing.
+  A demoted threat stays in `produced/` as evidence and is not an item.
+  It is excluded from the hunter completion set, the dispatch work, and the run quiesce.
+  The unit model moves to `consumed/` once its promoted threats are done; the demoted files remain in `produced/`.
+  The threat modeller is not aware of the threshold.
+  The unit risk budget and the queue order still use every stored threat.
+  A zero-risk threat has no threat file and cannot be a hunt; a refused threat has no observable artifact, so neither holds the pod phase.
+  A threat whose combined risk is unreadable is a refusal, never a demotion.
+  The completion audit and the gate's lifecycle read ignore a demoted hunt's leftover spec folder, including after the unit model moves to `consumed/`.
+  The mover's spec inbox drops a spec whose hunt is demoted, and the gate excludes that hunt from the pod block.
+  A refused file left after the model moves is the same pre-existing fail-open as any refused threat file.
+- Both settings live in `settings.hunting`, are read and written by the existing config GET and PUT, freeze at run start, and are stamped on the run record beside `pipeline_sync`.
+  The run record wins on resume.
+  There is no environment fallback.
+- The completion audit ignores demoted produced threats.
+  The dispatch-gap diagnostic counts only promoted produced threats.
+  Recovered consumed threats are never filtered, because they were admitted under the frozen threshold.
+- The rejected alternatives are a threat-modeller-side filter, a separate store family for demoted threats, and a sliding pod window.
+  The first would make the modeller aware of a dispatch policy.
+  The second would destroy the evidence contract.
+  The third would make the batch boundary depend on completion timing instead of the frozen rank order.
+
 
 *Status: decided (2026-10-22), built (2026-10-23). Spec: `docs/design/hunting-pipeline-sync-spec.md`; assertions: `docs/design/hunting-pipeline-sync-assertions.md`.*
 *Extends: `hunting-pipeline-wiring-adr.md` (the run-scoped inbox surfer, ADR #169/T4), `unit-threat-model-ordering-halt-adr.md` (the risk budget and the halt).*
@@ -48,6 +91,9 @@ The `hunting` blob also lifts the threat-modeller budget into it: a stored `risk
 OVERRIDES the `HUNT_RISK_THRESHOLD` environment variable when set (the env stays the
 fallback), and `threshold_config()` gains the resulting `db` basis value next to
 `default`/`override`.
+The same blob carries `pod_batch_size` (integer at least 1, default 1) and
+`promotion_risk_threshold` (integer at least 0 or `null`, default `null`); see the
+2026-10-26 amendment.
 (Verified fact at decision time: no hunting settings area existed; `settings` carried only
 the `recon` column, and the budget was env-only.)
 
@@ -88,12 +134,13 @@ The policy implementation is a no-op.
    The batch is the unit's whole threat set; the low-tier sequencing (S2 8.3) is subsumed and
    does not order a batch.
 4. The batch advances only when every hunt of the batch is terminal (signals in section 3).
-5. Then the unit's pods, ONE HUNT AT A TIME in the batch's threat-rank order: every
-   `ratified` spec of the current hunt is dispatched CONCURRENTLY (one pod per spec, same
-   gate bound).
-   The hunt's pod phase advances only when every pod of that hunt is terminal.
+5. Then the unit's pods, in FIXED BLOCKS of `pod_batch_size` hunts in the batch's
+   threat-rank order (the default of 1 is the historical one hunt at a time).
+   Every `ratified` spec of every hunt in the block is dispatched CONCURRENTLY
+   (one pod per spec, same gate bound).
+   The block advances only when every pod of every hunt in the block is terminal.
    A hunt with no `ratified` spec advances immediately.
-   Then the next hunt's pods dispatch, until every hunt of the batch is done.
+   Then the next block's pods dispatch, until every hunt of the batch is done.
 6. The queue cursor moves to the next unit only after every hunt's pods are terminal, and
    the batch repeats, until the queue is exhausted and the run quiesces as today
    (`is_run_quiesced`, unchanged).
@@ -181,14 +228,23 @@ One new module, `attack/hunting/pipeline_sync.py`, clean separation of concerns:
 - `SyncMode` - the frozen enum (`serial` / `batched` / `parallel`) and `resolve_mode`.
 - The PURE surface - `SyncFacts` (the storage/registry snapshot), `UnitMeta`, `BatchState`
   (the derived per-unit phase snapshot: `hunt`/`pod`/`serial`/`done`, the rank-ordered hunts,
-  the serial cursor and pod cursor), `order_units`, `batch_state`, and
-  `decide(mode, items, units, facts) -> frozenset[message_id]`, which dispatches to the
-  batched/serial rule bodies.
-- `PipelineSyncState` - the run-local ledger: the frozen mode, the intake-order source, and
-  the per-unit metadata cache. It is in-memory and run-scoped, living beside
-  `RunDispatchState`; the single worker thread stands, so no lock.
+  the pod block, the serial cursor and pod cursor), `order_units`, `batch_state`, and
+  `decide(mode, items, units, facts, pod_batch_size=1) -> frozenset[message_id]`, which
+  dispatches to the batched/serial rule bodies.
+- The promotion surface - one pure predicate over the stored combined `risk` and the frozen
+  `promotion_risk_threshold`; the mover's inbox read applies it before the low-tier
+  sequencing. A demoted threat is not an item, is excluded from the hunter completion set and
+  quiesce, and stays in `produced/` as evidence. The unit model moves to `consumed/` once the
+  promoted threats are done.
+- `PipelineSyncState` - the run-local ledger: the frozen mode and pod batch size, the
+  intake-order source, and the per-unit metadata cache. It is in-memory and run-scoped, living
+  beside `RunDispatchState`; the single worker thread stands, so no lock.
 - `RunSyncGate` - the impure adapter (`make_sync_gate`, None for `parallel`) that gathers the
-  facts from the stores and the session registry and applies `decide`.
+  facts from the stores and the session registry and applies `decide`. It also carries the
+  frozen promotion threshold so the completion audit can ignore demoted produced threats.
+- `resolve_pod_batch_size` and `resolve_promotion_risk_threshold` - the run-record-first,
+  settings-second, default-last resolvers. Both values are stamped on the run record beside
+  `pipeline_sync`.
 
 Wiring: the ledger is consulted at the TWO existing dispatch seams only.
 
@@ -198,9 +254,15 @@ Wiring: the ledger is consulted at the TWO existing dispatch seams only.
 - `sequence_dispatch` (or the equivalent pre-deduction filter) is extended so the quiesce
   read and the dispatch decision can still never disagree: a held item is produced work, and
   `run_work_remaining` keeps counting it until dispatch or quiesce - the existing contract.
+- The promotion filter runs inside the mover's produced-inbox read, before
+  `sequence_dispatch`. A `batched` run then dispatches the unit's WHOLE promoted threat set:
+  every threat at or above the promotion threshold is work while the modeller is settled. A
+  demoted threat is not work and does not block quiesce. The completion audit and the
+  dispatch-gap diagnostic use the same predicate.
 
-The surfer keeps ticking unchanged; the mover protocol, the stores, the quiesce
-predicate, and the at-least-once ring are untouched.
+The surfer tick shape is unchanged; the mover's produced-inbox read, the
+model-consume primitive, and the quiesce predicate gain the frozen promotion
+threshold.
 No new session is scheduled; the ledger is not a runtime entity, it is state the existing
 surfer and builders read.
 A handful of small state classes (`BatchState`, the phase cursors) ride the module.

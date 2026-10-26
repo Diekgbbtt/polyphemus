@@ -299,6 +299,41 @@ _DISPATCHABLE_LIKELIHOODS = tuple(
 _UNIT_KINDS = tuple(kind.value for kind in UnitKind)
 
 
+def threat_risk(record: Mapping[str, Any]) -> int | None:
+    """The combined risk one threat file carries, or None when it is unreadable.
+
+    The persisted top-level `risk` is authoritative. A legacy file without it
+    falls back to `likelihood_weight * impact_weight`; a file without an impact
+    falls back to the likelihood weight. The promotion predicate, the gate, the
+    completion audit, and the dispatch validity predicate share this read, so
+    they can never disagree on a threat's risk."""
+    if not isinstance(record, Mapping):
+        return None
+    raw = record.get("risk")
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+    try:
+        likelihood = Likelihood(record.get("likelihood"))
+    except (ValueError, KeyError):
+        return None
+    threat = record.get("threat")
+    impact_raw = None
+    if isinstance(threat, Mapping) and "impact" in threat:
+        impact_raw = threat.get("impact")
+    elif "impact" in record:
+        impact_raw = record.get("impact")
+    if impact_raw is not None:
+        try:
+            impact = Impact.model_validate(dict(impact_raw or {}))
+        except Exception:  # noqa: BLE001 - a malformed impact is unreadable
+            return None
+        return RISK_WEIGHTS[likelihood] * impact_weight(impact)
+    return RISK_WEIGHTS[likelihood]
+
+
 def threat_item(
     *,
     project_id: str,
@@ -389,30 +424,12 @@ def threat_item(
             "its threat record is missing or carries no fault_ref/"
             "vulnerability_ref/threat id",
         )
-    raw_risk = record.get("risk")
-    if raw_risk is None:
-        # A threat file written before the combined score: fall back to the
-        # likelihood tier. A file that carries an impact but no risk is
-        # malformed and is refused by the risk computation below.
-        if "impact" in threat:
-            try:
-                impact = Impact.model_validate(dict(threat.get("impact") or {}))
-            except Exception:  # noqa: BLE001 - a malformed impact is a refusal
-                return _refuse_threat(
-                    project_id, run_id, unit_name, threat_id,
-                    "its threat impact is unparseable",
-                )
-            risk = RISK_WEIGHTS[Likelihood(likelihood)] * impact_weight(impact)
-        else:
-            risk = RISK_WEIGHTS[Likelihood(likelihood)]
-    else:
-        try:
-            risk = int(raw_risk)
-        except (TypeError, ValueError):
-            return _refuse_threat(
-                project_id, run_id, unit_name, threat_id,
-                f"its risk {raw_risk!r} is not an integer",
-            )
+    risk = threat_risk(record)
+    if risk is None:
+        return _refuse_threat(
+            project_id, run_id, unit_name, threat_id,
+            "its combined risk is unreadable",
+        )
     bucket = risk_bucket(risk)
     if bucket == "none":
         return _refuse_threat(
@@ -784,11 +801,11 @@ class ProducedInbox:
     `items` are the dispatch candidates: this run's produced threat files (the
     dispatch grain, S2 8.4) and the pod family's produced specs. Each item already
     passed its own validity predicate, so nothing malformed and nothing from
-    another run is in here. `models_to_consume` maps a unit id to the threat file
-    stems the read REFUSED for it: a unit with no dispatchable threat left (no threat
-    file at all, or only refused ones) is consumed as the no-dispatch model
-    (S2 8.4), with its refused files left in place - they are never pending threats,
-    so they can never wedge the run (S2 10.5)."""
+    another run is in here. `models_to_consume` maps a unit id to the NON-PENDING
+    threat file stems the read refused or demoted for it: a unit with no promoted
+    threat left is consumed as the no-dispatch model (S2 8.4), with those files
+    left in place - they are never pending threats, so they can never wedge the
+    run (S2 10.5)."""
 
     items: tuple[ProducedItem, ...] = ()
     models_to_consume: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -805,6 +822,8 @@ def run_delivery_tick(
     coro_for: Callable[[ProducedItem], Any],
     live_threat_buckets: Mapping[str, str] | Iterable[str] = (),
     deferred_session_ids: AbstractSet[str] = frozenset(),
+    promotion_risk_threshold: int | None = None,
+    demoted_hunts: AbstractSet[str] = frozenset(),
     pre_filter: Callable[
         [Sequence[ProducedItem], AbstractSet[str]], Sequence[ProducedItem],
     ] | None = None,
@@ -835,16 +854,20 @@ def run_delivery_tick(
        registry-live items) and `to_retry` (refused - left in produced).
     6. Apply the moves through the stores' single-owner primitives, fail-open
        per record (a failed move warns and counts, never aborts the tick).
-    7. Consume the produced models whose threat files are all gone: a zero-threat
-       produced COMPLETED valid model is consumed here without a dispatch, and
-       `consume_threat` has already moved a model whose LAST threat file was
-       admitted (S2 8.4 - the model document moves with its last threat).
+    7. Consume the produced models whose promoted threat files are all gone: a
+       zero-threat produced COMPLETED valid model is consumed here without a
+       dispatch, a unit whose only remaining files are refused or demoted is
+       consumed here too, and `consume_threat` has already moved a model whose
+       LAST promoted threat file was admitted (S2 8.4 - the model document moves
+       with its last threat).
 
     Returns the `TickReport`. This function is synchronous: the runtime owns
     the threat (Q11); the mover never awaits, the control plane schedules."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
+        promotion_risk_threshold=promotion_risk_threshold,
+        demoted_hunts=demoted_hunts,
     )
     produced = inbox.items
     live = control.live_session_ids()
@@ -958,10 +981,10 @@ def _consume_finished_models(
     if threat_store is None:
         return 0
     consumed = 0
-    for unit_id, refused_threats in models_to_consume.items():
+    for unit_id, non_pending in models_to_consume.items():
         try:
             done = threat_store.consume_model_if_done(
-                project_id, unit_id, refused_threats=refused_threats)
+                project_id, unit_id, non_pending_threats=non_pending)
         except Exception as exc:  # noqa: BLE001 - fail-open per model
             logger.warning(
                 "mover: model consume of %s failed (%s); counted, tick continues",
@@ -1026,6 +1049,8 @@ def read_produced_inbox(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any = None,
+    promotion_risk_threshold: int | None = None,
+    demoted_hunts: AbstractSet[str] = frozenset(),
 ) -> ProducedInbox:
     """The produced inbox set for one tick.
 
@@ -1053,15 +1078,33 @@ def read_produced_inbox(
       the unit. A malformed consumed threat is refused once and never counted as
       work.
 
+    - A produced threat whose combined `risk` is below the frozen
+      `promotion_risk_threshold` is DEMOTED: it is not an item, it stays in
+      `produced/` as evidence, and it is named as non-pending on the unit's model
+      consume. The unit model moves once its promoted threats are consumed; the
+      demoted files remain. Recovered consumed threats are never demoted: they
+      were admitted under the frozen threshold.
+
     The config family retired in T4b (#387): there is no hunt-store read and no
     `HuntConfigItem` - a produced hunt config is not dispatch input at all.
 
     Each item carries its Q13 session id derived on the fly from the
     memory-item keys (Q13; ADR #169)."""
-    items: list[ProducedItem] = list(_spec_items(hunter_store, project_id, run_id))
+    items: list[ProducedItem] = [
+        item for item in _spec_items(hunter_store, project_id, run_id)
+        if item.hunt_key not in demoted_hunts
+    ]
     if pod_store is not None:
-        items.extend(_recoverable_spec_items(
-            hunter_store, project_id, run_id, pod_store=pod_store))
+        items.extend(
+            item for item in _recoverable_spec_items(
+                hunter_store, project_id, run_id, pod_store=pod_store)
+            if item.hunt_key not in demoted_hunts
+        )
+    # `pipeline_sync` imports this module at module scope; the promotion policy
+    # lives there by the sync-ownership rule, so this stays a call-time import.
+    from polymerhus.attack.hunting.pipeline_sync import (  # noqa: PLC0415
+        risk_is_promoted,
+    )
     models_to_consume: dict[str, tuple[str, ...]] = {}
     if threat_store is not None:
         for entry in threat_store.read_produced_threats(project_id):
@@ -1086,6 +1129,7 @@ def read_produced_inbox(
                     "counted as a pending threat", unit_name, threat_id,
                 )
             dispatchable = 0
+            demoted: list[str] = []
             if model is None:
                 # The threat file does not duplicate the model (S2 8.1): without
                 # the model there is no unit context to dispatch against. The
@@ -1108,17 +1152,23 @@ def read_produced_inbox(
                     threat_id=threat_id, record=entry_threat.get("record"),
                     run_id=run_id, model=model,
                 )
-                if item is not None:
+                if item is None:
+                    refused.append(threat_id)
+                elif not risk_is_promoted(
+                        item.risk, promotion_risk_threshold):
+                    # Demoted by the frozen promotion floor: evidence, not work.
+                    demoted.append(threat_id)
+                else:
                     dispatchable += 1
                     items.append(item)
-                else:
-                    refused.append(threat_id)
             if dispatchable == 0:
-                # No dispatchable threat left for this unit: the model document is
-                # the run's to consume (a zero-threat model, or a unit whose only
-                # threat files are refused). The refused files stay in produced/ -
-                # they are evidence, never pending threats.
-                models_to_consume[unit_id] = tuple(sorted(set(refused)))
+                # No promoted threat left for this unit: the model document is
+                # the run's to consume (a zero-threat model, a unit whose only
+                # threats are refused, or a unit whose threats are all below the
+                # promotion floor). The named non-pending files stay in
+                # produced/ as evidence.
+                models_to_consume[unit_id] = tuple(
+                    sorted(set(refused) | set(demoted)))
         items.extend(_recoverable_threat_items(
             project_id, run_id, threat_store=threat_store,
             hunter_store=hunter_store))
@@ -1444,4 +1494,5 @@ __all__ = [
     "run_delivery_tick",
     "sequence_dispatch",
     "threat_item",
+    "threat_risk",
 ]

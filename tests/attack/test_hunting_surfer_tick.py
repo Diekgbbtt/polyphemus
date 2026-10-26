@@ -767,3 +767,33 @@ def test_hunter_idle_loop_threads_the_project_as_usage_scope(tmp_path, monkeypat
         project_id=PROJECT, run_id=RUN, hunt_key=hunt_key,
         hunter_store=HunterMemoryStore(tmp_path / "hunter"), state=state))
     assert seen["usage_scope"] == PROJECT
+
+
+def test_is_run_quiesced_ignores_a_demoted_produced_threat(tmp_path):
+    """The frozen promotion floor reaches the quiesce predicate: a demoted
+    threat is evidence, not pending work, once the unit model is consumed."""
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    produce_model(
+        threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
+        threats=[threat_row(likelihood="low")],
+    )
+    state = RunDispatchState(promotion_risk_threshold=5)
+
+    # The model consume is work on the first read.
+    assert asyncio.run(is_run_quiesced(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        pod_store=None, control=RecordingControlPlane(), state=state,
+    )) is False
+
+    report = run_delivery_tick(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        pod_store=None, control=RecordingControlPlane(),
+        coro_for=lambda item: None, promotion_risk_threshold=5,
+    )
+    assert report.models_consumed == 1
+
+    assert asyncio.run(is_run_quiesced(
+        PROJECT, RUN, threat_store=threat, hunter_store=hunter,
+        pod_store=None, control=RecordingControlPlane(), state=state,
+    )) is True

@@ -670,6 +670,23 @@ The mitigation is the audit trail: the four factors, the rationale, the confiden
 The calibration set and the audit trail are implementation work items.
 The deterministic/LLM split is fixed: the LLM assigns the class and factors; the harness sums.
 
+## Amendment 2026-10-26: promotion threshold and pod batch size
+
+The dispatch contract gains a frozen per-threat promotion threshold and a configurable pod batch.
+The owning spec is `docs/design/hunting-batch-and-promotion-spec.md`.
+
+- A produced threat is promoted to a hunter only when its combined `risk` is at least the frozen `promotion_risk_threshold`.
+  The comparison is inclusive.
+  A `null` or 0 threshold promotes every valid threat.
+- A demoted threat stays in `produced/` as evidence.
+  It is not an item, is excluded from the hunter completion set and the quiesce, and is never dispatched.
+- The unit model moves to `consumed/` once its promoted threats are done; the demoted files remain in `produced/`.
+- The threat modeller is not aware of the threshold.
+  The unit risk budget and the queue order still use every stored threat.
+- The `batched` pod phase dispatches fixed blocks of `pod_batch_size` hunts in threat-rank order.
+  The default is 1.
+  The hunter phase is unchanged: every promoted threat of the unit dispatches concurrently.
+
 ## 8. Consumption and the hunter payload
 
 ### 8.1 The threat file
@@ -719,26 +736,31 @@ The hunter keeps the room to engineer its own procedure.
 
 ### 8.3 Dispatch sequencing
 
-`critical`, `high`, and `medium` threat files dispatch immediately.
-`low` threat files wait until no critical, high, or medium threat file is produced and no critical, high, or medium hunter session is live.
+`critical`, `high`, and `medium` promoted threat files dispatch immediately.
+`low` promoted threat files wait until no promoted critical, high, or medium threat file is produced and no promoted critical, high, or medium hunter session is live.
 `none` threats have no file.
+A threat below the frozen `promotion_risk_threshold` is not a dispatch item; it stays in `produced/` as evidence.
 
 The sequencing is cross-unit and run-scoped.
 A threat file from another run is not dispatched by this run.
 
 ### 8.4 Consumption and quiesce
 
-The mover's dispatch grain is the threat file.
+The mover's dispatch grain is the promoted threat file.
 The move to `consumed/` happens on dispatch admission.
-The model document moves when its last threat file is consumed.
+The model document moves when its last promoted threat file is consumed; if only demoted or refused files remain, the mover consumes it on the next tick.
+A demoted threat file stays in `produced/`; it is never moved.
 A zero-threat model is consumed by the mover on its next tick without a dispatch.
+A model whose only remaining produced threats are demoted is consumed on the next tick; the demoted files remain.
 
-The work read includes a produced `COMPLETED` model with `validation.valid` true and no threat files; the mover consumes it without a dispatch.
-The quiesce predicate is the existing `run_work_remaining` / `is_run_quiesced` seam, updated to the threat files:
+The work read includes a produced `COMPLETED` model with `validation.valid` true and no promoted threat files; the mover consumes it without a dispatch.
+The quiesce predicate is the existing `run_work_remaining` / `is_run_quiesced` seam, updated to the promoted threat files:
 
 - The modeller pass has settled.
-- No produced threat file is dispatchable now.
+- No promoted produced threat file is dispatchable now.
 - No hunter or pod session is live.
+
+The completion audit ignores demoted produced threats.
 
 The work read and the dispatch read share the one validity predicate.
 A stopped role gate pauses dispatch; it does not change the quiesce predicate.

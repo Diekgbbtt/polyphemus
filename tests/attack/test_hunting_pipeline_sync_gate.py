@@ -52,13 +52,17 @@ def _spec(hunt_key: str = "u1__threat-1", stem: str = "sqli__blind__boolean",
 
 
 class FakeThreatStore:
-    def __init__(self, models=None):
+    def __init__(self, models=None, produced=None):
         self.models = models or {}
+        self.produced = produced or []
         self.reads = 0
 
     def read_model(self, project_id, unit_id):
         self.reads += 1
         return self.models.get(unit_id)
+
+    def read_produced_threats(self, project_id):
+        return list(self.produced)
 
 
 class FakeHunterStore:
@@ -98,17 +102,20 @@ class FakePodStore:
 
 def _gate(mode: SyncMode, *, models=None, produced=None, consumed=None,
           bodies=None, exports=(), intake_order=None, terminals=None,
-          malformed=()) -> RunSyncGate:
+          malformed=(), threat_produced=None, pod_batch_size=1,
+          promotion_risk_threshold=None) -> RunSyncGate:
     return RunSyncGate(
         mode=mode,
         project_id=PROJECT,
         run_id=RUN,
-        threat_store=FakeThreatStore(models),
+        threat_store=FakeThreatStore(models, threat_produced),
         hunter_store=FakeHunterStore(
             produced, consumed, bodies, terminals=terminals,
             malformed=malformed),
         pod_store=FakePodStore(exports),
         intake_order=intake_order,
+        pod_batch_size=pod_batch_size,
+        promotion_risk_threshold=promotion_risk_threshold,
     )
 
 
@@ -498,3 +505,182 @@ def test_gate_parallel_returns_every_item_unchanged():
     gate = _gate(SyncMode.PARALLEL)
     items = [_threat("u1"), _threat("u2"), _spec()]
     assert gate.filter(items) == tuple(items)
+
+
+def test_gate_batched_admits_the_first_block_of_n_hunts():
+    first, second, third = "u1__threat-1", "u1__threat-2", "u1__threat-3"
+    bodies = {
+        (first, "a_first"): _spec_body(),
+        (second, "b_second"): _spec_body(),
+        (third, "c_third"): _spec_body(),
+    }
+    terminals = {
+        first: _terminal(first, a_first="ratified"),
+        second: _terminal(second, b_second="ratified"),
+        third: _terminal(third, c_third="ratified"),
+    }
+    gate = _gate(
+        SyncMode.BATCHED,
+        produced={
+            first: ["a_first"], second: ["b_second"], third: ["c_third"],
+        },
+        bodies=bodies,
+        terminals=terminals,
+        pod_batch_size=2,
+    )
+    items = [
+        _spec(first, "a_first"),
+        _spec(second, "b_second"),
+        _spec(third, "c_third"),
+    ]
+
+    admitted = gate.filter(items)
+
+    assert _ids(admitted) == (items[0].message_id, items[1].message_id)
+
+
+def test_gate_batched_holds_the_next_block_until_the_first_block_is_exported():
+    first, second, third = "u1__threat-1", "u1__threat-2", "u1__threat-3"
+    bodies = {
+        (first, "a_first"): _spec_body(),
+        (second, "b_second"): _spec_body(),
+        (third, "c_third"): _spec_body(),
+    }
+    terminals = {
+        first: _terminal(first, a_first="ratified"),
+        second: _terminal(second, b_second="ratified"),
+        third: _terminal(third, c_third="ratified"),
+    }
+    gate = _gate(
+        SyncMode.BATCHED,
+        consumed={
+            first: ["a_first"], second: ["b_second"], third: ["c_third"],
+        },
+        bodies=bodies,
+        terminals=terminals,
+        exports={("a_first", RUN)},
+        pod_batch_size=2,
+    )
+    items = [
+        _spec(first, "a_first"),
+        _spec(second, "b_second"),
+        _spec(third, "c_third"),
+    ]
+
+    admitted = gate.filter(items)
+
+    # Hunt 1 is exported, hunt 2 still holds the first block, and hunt 3 must
+    # not slide into its place.
+    assert _ids(admitted) == (items[1].message_id,)
+
+
+def test_gate_batched_does_not_slide_a_done_hunt_out_of_its_block():
+    first, second, third = "u1__threat-1", "u1__threat-2", "u1__threat-3"
+    model = {"Service:u1": {"state": "COMPLETED", "threats": [
+        {"id": "threat-1", "risk": 9},
+        {"id": "threat-2", "risk": 9},
+        {"id": "threat-3", "risk": 9},
+    ]}}
+    bodies = {
+        (second, "b_second"): _spec_body(),
+        (third, "c_third"): _spec_body(),
+    }
+    terminals = {
+        first: _terminal(first, a_first="ratified"),
+        second: _terminal(second, b_second="ratified"),
+        third: _terminal(third, c_third="ratified"),
+    }
+    gate = _gate(
+        SyncMode.BATCHED,
+        models=model,
+        consumed={
+            first: ["a_first"], second: ["b_second"], third: ["c_third"],
+        },
+        bodies=bodies,
+        terminals=terminals,
+        exports={("a_first", RUN)},
+        pod_batch_size=2,
+    )
+    items = [_spec(second, "b_second"), _spec(third, "c_third")]
+
+    admitted = gate.filter(items)
+
+    assert _ids(admitted) == (items[0].message_id,)
+
+
+def test_gate_ignores_a_demoted_hunt_with_a_stale_spec_folder():
+    first, second = "u1__threat-1", "u1__threat-2"
+    model = {"Service:u1": {"state": "COMPLETED", "threats": [
+        {"id": "threat-1", "risk": 9},
+        {"id": "threat-2", "risk": 1},
+    ]}}
+    demoted = [{
+        "run_id": RUN,
+        "unit_name": "u1",
+        "threats": [{"threat_id": "threat-2", "record": {"risk": 1}}],
+    }]
+    gate = _gate(
+        SyncMode.BATCHED,
+        models=model,
+        produced={first: ["a_first"], second: ["b_second"]},
+        bodies={
+            (first, "a_first"): _spec_body(),
+            (second, "b_second"): _spec_body(),
+        },
+        terminals={first: _terminal(first, a_first="ratified")},
+        threat_produced=demoted,
+        promotion_risk_threshold=5,
+    )
+    item = _spec(first, "a_first")
+
+    admitted = gate.filter([item])
+
+    assert _ids(admitted) == (item.message_id,)
+
+
+def test_gate_ignores_a_demoted_leftover_spec_after_the_model_moved():
+    """The gate half of the after-consume audit: a demoted hunt's leftover spec
+    folder must not block the pod phase once the unit model left produced/."""
+    first, second = "u1__threat-1", "u1__threat-2"
+    model = {"Service:u1": {
+        "state": "COMPLETED",
+        "run_id": RUN,
+        "threats": [
+            {"id": "threat-1", "risk": 9},
+            {"id": "threat-2", "risk": 1},
+        ],
+    }}
+    gate = _gate(
+        SyncMode.BATCHED,
+        models=model,
+        produced={first: ["a_first"], second: ["b_second"]},
+        bodies={
+            (first, "a_first"): _spec_body(),
+            (second, "b_second"): _spec_body(),
+        },
+        terminals={first: _terminal(first, a_first="ratified")},
+        promotion_risk_threshold=5,
+    )
+    item = _spec(first, "a_first")
+
+    assert _ids(gate.filter([item])) == (item.message_id,)
+
+
+def test_gate_ignores_an_unobservable_promoted_model_threat():
+    """A promoted model threat with no item, no spec, no graph, no pod, and no
+    terminal marker has no hunt artifact. It must not hold the pod phase."""
+    first, second = "u1__threat-1", "u1__threat-2"
+    model = {"Service:u1": {"state": "COMPLETED", "threats": [
+        {"id": "threat-1", "risk": 9},
+        {"id": "threat-2", "risk": 9},
+    ]}}
+    gate = _gate(
+        SyncMode.BATCHED,
+        models=model,
+        produced={first: ["a_first"]},
+        bodies={(first, "a_first"): _spec_body()},
+        terminals={first: _terminal(first, a_first="ratified")},
+    )
+    item = _spec(first, "a_first")
+
+    assert _ids(gate.filter([item])) == (item.message_id,)

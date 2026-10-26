@@ -1478,3 +1478,21 @@ def test_a_late_lower_gate_write_on_a_completed_model_keeps_the_threat_files(tmp
     assert model["state"] == "COMPLETED"  # the state never regresses
     assert model["technical_sharpening"]["data_flows"] == []  # content still merges
     assert threat_file.read_bytes() == before  # the committed threat set is untouched
+
+
+def test_consume_model_if_done_ignores_promotion_demoted_threat_files(tmp_path):
+    """The model consume treats a promotion-demoted file as non-pending: the
+    evidence stays in produced/, the model moves, and the run can quiesce."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store, threats=[_threat("high")])
+    unit_name = "Service-catalogue-and-discovery"
+    produced = (_threat_modeller_root(tmp_path) / "produced" / unit_name)
+    (produced / "threat-2.yaml").write_text(
+        "threat_id: threat-2\n", encoding="utf-8")
+
+    assert store.consume_model_if_done(PROJECT, UNIT) is False
+    assert store.consume_threat(PROJECT, UNIT, "threat-1") is True
+    assert store.consume_model_if_done(
+        PROJECT, UNIT, non_pending_threats=("threat-2",)) is True
+    assert store.read_completed_units(PROJECT) == [UNIT]
+    assert (produced / "threat-2.yaml").exists()

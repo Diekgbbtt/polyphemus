@@ -522,6 +522,7 @@ class ThreatModelStore(BoundedRecordStore):
         unit_id: str,
         *,
         refused_threats: Sequence[str] = (),
+        non_pending_threats: Sequence[str] = (),
     ) -> bool:
         """Move the unit's model document to consumed/ when it is complete,
         valid, and has no PENDING threat file left (S2 8.4). A zero-threat model is
@@ -531,12 +532,15 @@ class ThreatModelStore(BoundedRecordStore):
 
         `refused_threats` names the produced threat files the mover REFUSED (a
         malformed body it can neither dispatch nor consume as a threat record,
-        S2 10.5). Those are not pending threats: counting them would leave the
+        S2 10.5). `non_pending_threats` names the produced threat files the
+        frozen promotion floor DEMOTED: evidence that stays in produced/ and is
+        never work. Both sets are non-pending: counting them would leave the
         model in produced/ forever, so the run could never quiesce (T4a review
-        F1). A refused file is left in place - it is debugging evidence, never
+        F1). The files are left in place - they are debugging evidence, never
         silently deleted - and the model document moves as the ONE consumption
         marker."""
-        refused = frozenset(str(threat_id) for threat_id in refused_threats)
+        non_pending = frozenset(str(threat_id) for threat_id in refused_threats) \
+            | frozenset(str(threat_id) for threat_id in non_pending_threats)
         with self._lock_for(project_id):
             model_path = self._find_model_path(project_id, unit_id, "produced")
             if model_path is None:
@@ -548,17 +552,19 @@ class ThreatModelStore(BoundedRecordStore):
             raw = self._load_document(model_path)
             if raw is None or not self._consumable(raw):
                 return False
-            if self._pending_threat_files(model_path.parent, refused):
+            if self._pending_threat_files(model_path.parent, non_pending):
                 return False
             return self._move_model_if_ready(project_id, model_path.parent.name)
 
     @staticmethod
-    def _pending_threat_files(directory: Path, refused: frozenset[str]) -> list[Path]:
+    def _pending_threat_files(
+        directory: Path, non_pending: frozenset[str],
+    ) -> list[Path]:
         """The produced `threat-*.yaml` files that are still PENDING work: every
-        one except the mover-refused stems (S2 8.4/10.5)."""
+        one except the mover-refused and promotion-demoted stems (S2 8.4/10.5)."""
         return [
             path for path in directory.glob("threat-*.yaml")
-            if path.stem not in refused
+            if path.stem not in non_pending
         ]
 
     def _move_model_if_ready(self, project_id: str, unit_name: str) -> bool:

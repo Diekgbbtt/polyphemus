@@ -14,9 +14,12 @@ eagerly, keeping the dependency `project_management -> recon` lazy.
 """
 from __future__ import annotations
 
+import logging
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from polymerhus.app import data_root
 from polymerhus.app.clients import pg
@@ -24,6 +27,8 @@ from polymerhus.app.config import config
 from polymerhus.recon.control.jobs import JOBS, validate_job_subset
 from polymerhus.recon.control.scope import resolve_seed, seed_kind
 from polymerhus.recon.domain.graph_read import fetch_project_graph
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectNotFound(Exception):
@@ -161,15 +166,39 @@ def save_project_settings(project_id: str, recon: dict) -> None:
 # mean between the fully interleaved `parallel` and the strict `serial`).
 HUNTING_SYNC_MODES: tuple[str, ...] = ("serial", "batched", "parallel")
 HUNTING_SYNC_DEFAULT = "batched"
+HUNTING_POD_BATCH_DEFAULT = 1
+
+
+def _stored_int(
+    stored: Mapping[str, Any], key: str, *, minimum: int, default: Any,
+) -> Any:
+    """One stored integer setting, or the documented default with a warning.
+
+    The settings are written as strict integers by the config PUT. A
+    hand-edited row carrying a string, a boolean, a float, or a value below the
+    floor reads back the default and warns, so the operator can see the drift."""
+    value = stored.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        logger.warning(
+            "hunting config: %s=%r is not an integer >= %d; reading %r",
+            key, value, minimum, default,
+        )
+        return default
+    return value
 
 
 def read_hunting_config(project_id: str) -> dict:
-    """The project's hunting config (`{"pipeline_sync", "risk_threshold"}`).
+    """The project's hunting config (`{"pipeline_sync", "risk_threshold",
+    "pod_batch_size", "promotion_risk_threshold"}`).
 
     Unknown project -> ProjectNotFound; a known project that never stored a
-    blob reads back the documented defaults (mode `batched`, threshold None -
-    the env/default basis). A stored mode outside the enum (a hand-edited row)
-    reads back as the default rather than an error."""
+    blob reads back the documented defaults (mode `batched`, threshold None,
+    batch size 1, promotion threshold None - no filter). A stored mode outside
+    the enum (a hand-edited row) reads back as the default rather than an error.
+    A malformed or out-of-range batch size or promotion threshold reads back the
+    default with a warning."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
     stored = dict(pg.get_hunting_settings(project_id) or {})
@@ -179,17 +208,26 @@ def read_hunting_config(project_id: str) -> dict:
     return {
         "pipeline_sync": mode,
         "risk_threshold": stored.get("risk_threshold"),
+        "pod_batch_size": _stored_int(
+            stored, "pod_batch_size", minimum=1,
+            default=HUNTING_POD_BATCH_DEFAULT),
+        "promotion_risk_threshold": _stored_int(
+            stored, "promotion_risk_threshold", minimum=0, default=None),
     }
 
 
 def save_hunting_config(project_id: str, body: dict) -> None:
     """Persist a PARTIAL hunting config PUT (deep-merged into the stored blob).
 
-    Only the provided keys land (`pipeline_sync`, `risk_threshold`). The mode
-    must be a known enum value; the threshold must be a non-negative integer
-    (or an explicit None, which clears the DB override and falls back to the
-    env/default basis). Raises ProjectNotFound if unknown, ValueError on an
-    invalid value - nothing lands on a refusal."""
+    Only the provided keys land (`pipeline_sync`, `risk_threshold`,
+    `pod_batch_size`, `promotion_risk_threshold`). The mode must be a known enum
+    value; the risk threshold must be a non-negative integer (or an explicit
+    None, which clears the DB override and falls back to the env/default basis);
+    the batch size must be an integer at least 1 (or an explicit None, which
+    clears it to the default 1); the promotion threshold must be a non-negative
+    integer (or an explicit None, which clears it to no filter). Raises
+    ProjectNotFound if unknown, ValueError on an invalid value - nothing lands
+    on a refusal."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
     if "pipeline_sync" in body and body["pipeline_sync"] not in HUNTING_SYNC_MODES:
@@ -208,6 +246,28 @@ def save_hunting_config(project_id: str, body: dict) -> None:
             raise ValueError(
                 "risk_threshold must be a non-negative integer or null")
         body = {**body, "risk_threshold": threshold}
+    if "pod_batch_size" in body and body["pod_batch_size"] is not None:
+        raw_batch = body["pod_batch_size"]
+        if isinstance(raw_batch, bool) or not isinstance(raw_batch, int):
+            raise ValueError(
+                "pod_batch_size must be an integer at least 1 or null")
+        if raw_batch < 1:
+            raise ValueError(
+                "pod_batch_size must be an integer at least 1 or null")
+        body = {**body, "pod_batch_size": raw_batch}
+    if (
+        "promotion_risk_threshold" in body
+        and body["promotion_risk_threshold"] is not None
+    ):
+        raw_promotion = body["promotion_risk_threshold"]
+        if isinstance(raw_promotion, bool) or not isinstance(raw_promotion, int):
+            raise ValueError(
+                "promotion_risk_threshold must be a non-negative integer or null"
+            )
+        if raw_promotion < 0:
+            raise ValueError(
+                "promotion_risk_threshold must be a non-negative integer or null")
+        body = {**body, "promotion_risk_threshold": raw_promotion}
     pg.save_hunting_settings(project_id, body)
 
 

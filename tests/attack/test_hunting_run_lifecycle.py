@@ -147,7 +147,8 @@ def test_the_run_record_carries_every_fixed_key_and_the_accumulated_sum(
     ))
 
     record = fake.run_record(RUN)
-    assert set(record) == set(RUN_RECORD_KEYS) | {"pipeline_sync"}
+    assert set(record) == set(RUN_RECORD_KEYS) | {
+        "pipeline_sync", "pod_batch_size", "promotion_risk_threshold"}
     assert record["intake_order"] == [UNIT_A, UNIT_B]
     assert record["intake_position"] == 2
     assert record["intake_excluded"] == []
@@ -291,7 +292,8 @@ def test_a_resumed_run_re_enters_at_the_intake_position(tmp_path, monkeypatch):
 
     assert seen == [UNIT_B]                      # UNIT_A is never re-modelled
     record = fake.run_record(RUN)
-    assert set(record) == set(RUN_RECORD_KEYS) | {"pipeline_sync"}
+    assert set(record) == set(RUN_RECORD_KEYS) | {
+        "pipeline_sync", "pod_batch_size", "promotion_risk_threshold"}
     assert record["intake_order"] == [UNIT_A, UNIT_B]
     assert record["intake_position"] == 2
     assert record["risk_total"] == 6
@@ -856,3 +858,56 @@ def test_threshold_config_without_a_db_value_keeps_the_env_basis():
     from polymerhus.attack.hunting.run_lifecycle import threshold_config
 
     assert threshold_config({}, db_value=None)[1] == "default"
+
+
+def test_the_run_record_stamps_the_pod_batch_and_promotion_threshold(
+        tmp_path, monkeypatch):
+    """The frozen pipeline settings ride every run-record write, so a resume and
+    an audit use the policy the run booted with."""
+    fake = _FakePg(hunting_settings={
+        "pod_batch_size": 3, "promotion_risk_threshold": 5,
+    })
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 1)),
+        modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    record = fake.run_record(RUN)
+    assert record["pod_batch_size"] == 3
+    assert record["promotion_risk_threshold"] == 5
+
+
+def test_a_resume_prefers_the_recorded_pipeline_settings(tmp_path, monkeypatch):
+    """A mid-run PUT cannot change a resumed run: the run record wins over the
+    project setting."""
+    fake = _resume_fake(_seed_record(
+        intake_order=[UNIT_A], intake_position=1,
+        pod_batch_size=4, promotion_risk_threshold=7,
+    ))
+    fake.hunting_settings = {
+        "pod_batch_size": 2, "promotion_risk_threshold": 3,
+    }
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 1)),
+        modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    record = fake.run_record(RUN)
+    assert record["pod_batch_size"] == 4
+    assert record["promotion_risk_threshold"] == 7

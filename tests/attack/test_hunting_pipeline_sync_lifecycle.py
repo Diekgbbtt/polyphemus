@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.attack.hunting.mover import ThreatItem
+from polymerhus.attack.hunting.mover import TestSpecItem, ThreatItem
 from polymerhus.attack.hunting.pipeline_sync import (
     RunSyncGate, SyncMode, hunting_artifacts_terminal,
 )
@@ -405,3 +405,136 @@ def test_a_resume_cursor_does_not_count_as_a_terminal_export(tmp_path):
 
     assert complete is False
     assert any("no PodExport" in reason for reason in reasons)
+
+
+def test_demoted_produced_threat_is_not_pending_in_the_completion_audit(tmp_path):
+    from tests.hunting_fixtures import threat_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    produce_model(
+        threat, project_id=PROJECT, unit_id="Service:u1", run_id=RUN,
+        threats=[threat_row(likelihood="low")],
+    )
+
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+        threat_store=threat, promotion_risk_threshold=5,
+    )
+
+    assert complete is True
+    assert reasons == ()
+
+    # Without the frozen floor the same produced threat is pending work and
+    # the audit fails closed.
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+        threat_store=threat, promotion_risk_threshold=None,
+    )
+    assert complete is False
+    assert any("no terminal marker" in reason for reason in reasons)
+
+
+def test_real_store_batched_admits_the_first_block_of_n_hunts(tmp_path):
+    from tests.hunting_fixtures import threat_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    produce_model(
+        threat, project_id=PROJECT, unit_id="Service:u1", run_id=RUN,
+        threats=[threat_row(likelihood="high") for _ in range(3)],
+    )
+    hunts = [f"Service-u1__threat-{rank}" for rank in (1, 2, 3)]
+    for rank, hunt in enumerate(hunts, start=1):
+        _write_set(hunter, hunt, [_spec("f", f"s{rank}", "ratified")])
+        hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+
+    gate = RunSyncGate(
+        mode=SyncMode.BATCHED, project_id=PROJECT, run_id=RUN,
+        threat_store=threat, hunter_store=hunter, pod_store=pod,
+        pod_batch_size=2,
+    )
+    items = [
+        TestSpecItem(
+            message_id=f"{hunt}/spec__f__s{rank}",
+            session_id=f"hunting:{RUN}:pod:{hunt}:spec__f__s{rank}",
+            hunt_key=hunt,
+            spec_file=f"spec__f__s{rank}",
+            spec={"status": "ratified", "target": {"unit_id": "Service:u1"}},
+        )
+        for rank, hunt in enumerate(hunts, start=1)
+    ]
+
+    admitted = gate.filter(items)
+
+    assert tuple(item.message_id for item in admitted) == (
+        items[0].message_id, items[1].message_id)
+
+
+def test_zero_risk_model_threat_never_holds_the_pod_phase(tmp_path):
+    """A model threat with risk 0 has no threat file (S2 8.3) and is refused by
+    the dispatch predicate. It must not join the full hunt list and freeze the
+    pod phase under the default settings."""
+    from tests.hunting_fixtures import threat_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    produce_model(
+        threat, project_id=PROJECT, unit_id="Service:u1", run_id=RUN,
+        threats=[threat_row(likelihood="high"), threat_row(likelihood="none")],
+    )
+    hunt = "Service-u1__threat-1"
+    _write_set(hunter, hunt, [_spec("f", "s", "ratified")])
+    hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+    gate = RunSyncGate(
+        mode=SyncMode.BATCHED, project_id=PROJECT, run_id=RUN,
+        threat_store=threat, hunter_store=hunter, pod_store=pod,
+    )
+    item = TestSpecItem(
+        message_id=f"{hunt}/spec__f__s",
+        session_id=f"hunting:{RUN}:pod:{hunt}:spec__f__s",
+        hunt_key=hunt,
+        spec_file="spec__f__s",
+        spec=_spec("f", "s", "ratified"),
+    )
+
+    assert gate.filter([item]) == (item,)
+
+
+def test_demoted_hunt_leftover_spec_is_ignored_after_the_model_moves(tmp_path):
+    """The audit must still know a hunt is demoted after the unit model moves
+    to consumed/: a leftover spec folder cannot block the run terminal."""
+    from tests.hunting_fixtures import threat_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    produce_model(
+        threat, project_id=PROJECT, unit_id="Service:u1", run_id=RUN,
+        threats=[threat_row(likelihood="high"), threat_row(likelihood="low")],
+    )
+    promoted_hunt = "Service-u1__threat-1"
+    _write_set(hunter, promoted_hunt, [_spec("f", "s", "ratified")])
+    hunter.finalize_specs(PROJECT, promoted_hunt, run_id=RUN)
+    pod.write_pod_export(
+        "spec__f__s", RUN,
+        {"verdict": "successful", "evidence": {
+            "terminal_reason": "symptom-confirmed"}},
+    )
+    assert hunter.consume_spec(PROJECT, promoted_hunt, "spec__f__s") is True
+    assert threat.consume_threat(PROJECT, "Service:u1", "threat-1") is True
+    assert threat.consume_model_if_done(
+        PROJECT, "Service:u1", non_pending_threats=("threat-2",)) is True
+
+    demoted_hunt = "Service-u1__threat-2"
+    _write_set(hunter, demoted_hunt, [_spec("f", "leftover", "hypothesised")])
+
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+        threat_store=threat, promotion_risk_threshold=5,
+    )
+
+    assert complete is True, reasons

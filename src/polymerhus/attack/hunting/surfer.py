@@ -75,7 +75,7 @@ import logging
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import AbstractSet, Any, Awaitable, Callable
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
@@ -278,6 +278,9 @@ class RunDispatchState:
     # `batched`/`serial`. Consulted once per surfer tick; held items stay
     # produced (the mover's at-least-once rule).
     sync_gate: Any = None
+    # The frozen per-threat promotion floor (2026-10-26): a produced threat
+    # below it is evidence, not work. `None` means no filter.
+    promotion_risk_threshold: int | None = None
 
     def record_child_failure(
         self,
@@ -350,6 +353,20 @@ def tier_sequencing_enabled(sync_gate: Any) -> bool:
     return getattr(sync_gate, "mode", None) is not SyncMode.BATCHED
 
 
+def demoted_hunts_for(state: Any) -> AbstractSet[str]:
+    """The demoted hunt set of the run's sync gate, or empty when the gate has
+    no promotion surface (a test double or a legacy gate). Fail-open: a gate
+    read failure never stops the tick."""
+    gate = getattr(state, "sync_gate", None)
+    reader = getattr(gate, "demoted_hunts", None)
+    if reader is None:
+        return frozenset()
+    try:
+        return reader()
+    except Exception:  # noqa: BLE001 - a gate read failure is not work
+        return frozenset()
+
+
 def run_work_remaining(
     project_id: str,
     run_id: str,
@@ -359,6 +376,8 @@ def run_work_remaining(
     pod_store: Any = None,
     live_threat_buckets: Mapping[str, str] | Iterable[str] = (),
     sequence_tiers: bool = True,
+    promotion_risk_threshold: int | None = None,
+    demoted_hunts: AbstractSet[str] = frozenset(),
 ) -> bool:
     """True when a DISPATCHABLE-NOW produced item remains for this run.
 
@@ -369,8 +388,8 @@ def run_work_remaining(
     - a produced THREAT file of this run that is dispatchable now (a
       critical/high/medium threat; a `low` threat only when no higher-tier threat file
       is produced and no higher-tier hunter session is live, S2 8.3);
-    - a produced COMPLETED valid model with no threat file (the mover consumes it
-      on its next tick, S2 8.4) - the model document move IS work;
+    - a produced COMPLETED valid model whose promoted threats are gone (the mover
+      consumes it on its next tick, S2 8.4) - the model document move IS work;
     - a produced spec carrying the pod family's dispatch status.
 
     The config family retired in T4b (#387): there is no produced-config clause
@@ -378,12 +397,14 @@ def run_work_remaining(
 
     A malformed or foreign threat file contributes NOTHING (the validity
     predicate refuses it in the read), so it can never wedge the run's quiesce;
-    neither can a threat waiting on a live higher-tier session, because that
-    session's own threat file is already consumed and its hunter is mid-graph -
-    `is_run_quiesced` holds on the mid-graph clause in that window."""
+    neither can a threat below the frozen promotion floor, because the same
+    promotion filter runs in this read. A threat waiting on a live higher-tier
+    session is covered by the mid-graph clause in `is_run_quiesced`."""
     inbox = read_produced_inbox(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
+        promotion_risk_threshold=promotion_risk_threshold,
+        demoted_hunts=demoted_hunts,
     )
     if inbox.models_to_consume:
         # a produced COMPLETED valid model with no dispatchable threat left: the
@@ -433,6 +454,7 @@ async def is_run_quiesced(
         return False
     if state.hunters_in_graph:
         return False
+    demoted = demoted_hunts_for(state)
     if run_work_remaining(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
@@ -440,6 +462,8 @@ async def is_run_quiesced(
         # A batched run's lows are real work even while another unit's higher
         # threat is produced: the tier ordering does not order a batch.
         sequence_tiers=tier_sequencing_enabled(state.sync_gate),
+        promotion_risk_threshold=state.promotion_risk_threshold,
+        demoted_hunts=demoted,
     ):
         return False
     # Hard completion fail-safe: a malformed or stale artifact that the mover
@@ -454,6 +478,7 @@ async def is_run_quiesced(
         project_id, run_id,
         hunter_store=hunter_store, pod_store=pod_store,
         threat_store=threat_store,
+        promotion_risk_threshold=state.promotion_risk_threshold,
     )
     if not complete:
         log_refusal_once(
@@ -1140,6 +1165,8 @@ async def run_surfer_loop(
             control=control, coro_for=coro_for,
             live_threat_buckets=state.threat_buckets,
             deferred_session_ids=state.deferred_session_ids(),
+            promotion_risk_threshold=state.promotion_risk_threshold,
+            demoted_hunts=demoted_hunts_for(state),
             pre_filter=_pre_filter if state.sync_gate is not None else None,
             # A batched run admits the unit's WHOLE threat set: the low-tier
             # sequencing must not hold a threat behind another unit's produced
@@ -1175,6 +1202,7 @@ __all__ = [
     "SurferReport",
     "SURFER_SESSION_SEGMENT",
     "build_run_dispatch",
+    "demoted_hunts_for",
     "THREAT_MODELLER_ROLE",
     "derive_thread_role",
     "is_hunter_session_id",

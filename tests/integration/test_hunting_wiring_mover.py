@@ -770,3 +770,108 @@ def test_C39_the_real_store_body_reaches_the_real_init_gate_and_authors_a_probe(
     assert any("testing_pattern" in v for v in validate_spec(retired))
     with pytest.raises(ValidationError):
         TestImplementationSpec.model_validate(retired)
+
+
+def test_promotion_demotes_a_low_threat_and_the_run_still_reaches_terminal(
+    tmp_path,
+):
+    """Integration tier: a real model with one promoted and one demoted threat.
+    Only the promoted hunter dispatches; the demoted file stays in produced/;
+    the model consumes; the completion audit passes."""
+    from polymerhus.attack.hunting.pipeline_sync import (
+        hunting_artifacts_terminal,
+    )
+    from tests.hunting_fixtures import threat_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    produce_model(
+        threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
+        threats=[threat_row(likelihood="high"), threat_row(likelihood="low")],
+    )
+    control = RecordingControlPlane()
+
+    first = run_delivery_tick(
+        PROJECT, RUN,
+        threat_store=threat, hunter_store=hunter, pod_store=pod,
+        control=control, coro_for=_real_coro_for(threat, hunter, pod_store=pod),
+        promotion_risk_threshold=5,
+    )
+
+    assert first.dispatched == 1
+    assert len(control.calls) == 1
+    assert control.calls[0].endswith("threat-1")
+    hunt_key = control.calls[0].rsplit("hunt:", 1)[-1]
+    hunter.finalize_specs(PROJECT, hunt_key, run_id=RUN)
+
+    second = run_delivery_tick(
+        PROJECT, RUN,
+        threat_store=threat, hunter_store=hunter, pod_store=pod,
+        control=RecordingControlPlane(),
+        coro_for=lambda item: None,
+        promotion_risk_threshold=5,
+    )
+
+    assert second.dispatched == 0
+    assert second.models_consumed == 1
+    assert threat.read_produced_threats(PROJECT) == []
+    assert list((tmp_path / "threat").rglob("threat-2.yaml"))
+    complete, reasons = hunting_artifacts_terminal(
+        PROJECT, RUN, hunter_store=hunter, pod_store=pod,
+        threat_store=threat, promotion_risk_threshold=5,
+    )
+    assert complete is True, reasons
+
+
+def test_promotion_and_pod_batch_flow_through_the_gate_and_mover(tmp_path):
+    """Integration tier: one model, two promoted hunts and one demoted hunt.
+    The gate's pod block admits the first two hunts' specs; the mover dispatches
+    them; the demoted threat and the third hunt's spec stay produced."""
+    from polymerhus.attack.hunting.pipeline_sync import RunSyncGate, SyncMode
+    from tests.hunting_fixtures import threat_row
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    produce_model(
+        threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
+        threats=[
+            threat_row(likelihood="high"),
+            threat_row(likelihood="high"),
+            threat_row(likelihood="low"),
+        ],
+    )
+    hunts = [f"{UNIT_NAME}__threat-{rank}" for rank in (1, 2, 3)]
+    for rank, hunt in enumerate(hunts, start=1):
+        _write_spec(
+            hunter, hunt_key=hunt,
+            keyword=f"f{rank}", strategy=f"s{rank}")
+        hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+    assert threat.consume_threat(PROJECT, UNIT, "threat-1") is True
+    assert threat.consume_threat(PROJECT, UNIT, "threat-2") is True
+
+    gate = RunSyncGate(
+        mode=SyncMode.BATCHED, project_id=PROJECT, run_id=RUN,
+        threat_store=threat, hunter_store=hunter, pod_store=pod,
+        pod_batch_size=2, promotion_risk_threshold=5,
+    )
+    control = RecordingControlPlane()
+    report = run_delivery_tick(
+        PROJECT, RUN,
+        threat_store=threat, hunter_store=hunter, pod_store=pod,
+        control=control, coro_for=_real_coro_for(threat, hunter, pod_store=pod),
+        promotion_risk_threshold=5,
+        demoted_hunts=gate.demoted_hunts(),
+        pre_filter=lambda items, live: gate.filter(
+            items, live_session_ids=live, hunts_in_graph=frozenset()),
+        sequence_tiers=False,
+    )
+
+    pod_calls = [call for call in control.calls if ":pod:" in call]
+    assert len(pod_calls) == 2
+    assert report.dispatched == 2
+    assert report.moved == 2
+    assert hunter.produced_spec_files(PROJECT, hunts[2]) != []
+    assert list((tmp_path / "threat").rglob("threat-3.yaml"))
+    assert threat.read_produced_threats(PROJECT) == []

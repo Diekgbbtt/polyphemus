@@ -7,6 +7,8 @@ accessors are faked, exactly like the hunting run endpoints' test tier.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi.testclient import TestClient
 
 import polymerhus.app.clients.pg as pg
@@ -44,15 +46,28 @@ def test_get_reads_the_default_batched_mode(monkeypatch):
     response = client.get("/projects/p1/hunting/config")
     assert response.status_code == 200
     assert response.json() == {
-        "pipeline_sync": "batched", "risk_threshold": None}
+        "pipeline_sync": "batched",
+        "risk_threshold": None,
+        "pod_batch_size": 1,
+        "promotion_risk_threshold": None,
+    }
 
 
 def test_get_reads_the_stored_config(monkeypatch):
     fake = FakeHuntingSettings(stored={
-        "p1": {"pipeline_sync": "serial", "risk_threshold": 250}})
+        "p1": {
+            "pipeline_sync": "serial",
+            "risk_threshold": 250,
+            "pod_batch_size": 3,
+            "promotion_risk_threshold": 5,
+        }})
     _install(monkeypatch, fake)
     assert client.get("/projects/p1/hunting/config").json() == {
-        "pipeline_sync": "serial", "risk_threshold": 250}
+        "pipeline_sync": "serial",
+        "risk_threshold": 250,
+        "pod_batch_size": 3,
+        "promotion_risk_threshold": 5,
+    }
 
 
 def test_put_merges_a_pipeline_sync_update(monkeypatch):
@@ -63,7 +78,58 @@ def test_put_merges_a_pipeline_sync_update(monkeypatch):
     assert response.status_code == 200
     assert fake.saves == [("p1", {"pipeline_sync": "serial"})]
     assert client.get("/projects/p1/hunting/config").json() == {
-        "pipeline_sync": "serial", "risk_threshold": 250}
+        "pipeline_sync": "serial",
+        "risk_threshold": 250,
+        "pod_batch_size": 1,
+        "promotion_risk_threshold": None,
+    }
+
+
+def test_put_accepts_the_pod_batch_size_and_promotion_threshold(monkeypatch):
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config",
+        json={"pod_batch_size": 3, "promotion_risk_threshold": 5},
+    )
+    assert response.status_code == 200
+    assert fake.saves == [
+        ("p1", {"pod_batch_size": 3, "promotion_risk_threshold": 5})]
+
+
+def test_put_rejects_a_zero_pod_batch_size(monkeypatch):
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config", json={"pod_batch_size": 0})
+    assert response.status_code == 422
+    assert fake.saves == []
+
+
+def test_put_rejects_a_negative_promotion_threshold(monkeypatch):
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config", json={"promotion_risk_threshold": -1})
+    assert response.status_code == 422
+    assert fake.saves == []
+
+
+def test_put_clears_both_settings_with_an_explicit_null(monkeypatch):
+    fake = FakeHuntingSettings(stored={
+        "p1": {"pod_batch_size": 3, "promotion_risk_threshold": 5}})
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config",
+        json={"pod_batch_size": None, "promotion_risk_threshold": None},
+    )
+    assert response.status_code == 200
+    assert client.get("/projects/p1/hunting/config").json() == {
+        "pipeline_sync": "batched",
+        "risk_threshold": None,
+        "pod_batch_size": 1,
+        "promotion_risk_threshold": None,
+    }
 
 
 def test_put_accepts_the_risk_threshold(monkeypatch):
@@ -106,3 +172,35 @@ def test_get_on_an_unknown_project_is_404(monkeypatch):
     fake = FakeHuntingSettings()
     _install(monkeypatch, fake)
     assert client.get("/projects/nope/hunting/config").status_code == 404
+
+def test_put_rejects_a_boolean_pod_batch_size(monkeypatch):
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config", json={"pod_batch_size": True})
+    assert response.status_code == 422
+    assert fake.saves == []
+
+
+def test_put_rejects_a_boolean_promotion_threshold(monkeypatch):
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config", json={"promotion_risk_threshold": True})
+    assert response.status_code == 422
+    assert fake.saves == []
+
+
+def test_get_warns_on_a_malformed_stored_value(monkeypatch, caplog):
+    fake = FakeHuntingSettings(stored={
+        "p1": {"pod_batch_size": "three", "promotion_risk_threshold": -1}})
+    _install(monkeypatch, fake)
+
+    with caplog.at_level(logging.WARNING, logger="polymerhus.project_management"):
+        response = client.get("/projects/p1/hunting/config")
+
+    assert response.status_code == 200
+    assert response.json()["pod_batch_size"] == 1
+    assert response.json()["promotion_risk_threshold"] is None
+    assert "pod_batch_size" in caplog.text
+    assert "promotion_risk_threshold" in caplog.text
