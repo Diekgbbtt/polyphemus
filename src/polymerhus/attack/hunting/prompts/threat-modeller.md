@@ -99,13 +99,9 @@ Ask which downstream component re-establishes the identity, and which one merely
 ### Spatial
 
 Every attribute that can extend the artifact in breadth or depth, and the mutation and lifecycle of the objects that carry or target it.
-Enumerate the spatially significant variables exposed at each interface and introduced during later processing:
-
-- HTTP headers, URL schemes, hosts, ports, paths, fragments, query and positional parameters;
-- cookies, request-body fields, multipart fields, resource identifiers;
-- attributes introduced by middleware or downstream transformations.
-
-Determine how those variables select, reference, or expand the scope of persisted and runtime objects, users, filesystem locations, hosts, tenants, and other resource domains.
+Read the data attributes of the data contracts and the application contexts they cross: the fields, identifiers, selectors, and state each contract carries; the principal and privilege each context establishes; and the origin, transformation, and persistence of every value.
+Treat every attribute of every data type as written, including the request and response attributes that carry it, the cookies and body fields that transport it, and the middleware and downstream transformations that rewrite it.
+Determine how those attributes select, reference, or expand the scope of persisted and runtime objects, users, filesystem locations, hosts, tenants, and other resource domains.
 Examine value domains, hierarchy, cardinality, reachability, and mutability, including object substitution, path traversal, aliases, symbolic links, redirects, DNS resolution, indirect references, and cross-tenant or cross-namespace access.
 Identify the content representations they carry or resolve into: scripts, queries, filesystem paths, URLs, network addresses, templates, serialized objects, and resource identifiers.
 Trace how the effective scope changes through embedding, concatenation, substitution, decoding, normalization, canonicalization, or wrapped encodings.
