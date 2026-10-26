@@ -28,10 +28,11 @@ from typing import Callable, Sequence
 from polymerhus.app.llm.provider_failure import as_provider_error
 from polymerhus.attack.hunting.pod.config import PodTimeouts
 from polymerhus.attack.hunting.pod.failures import classify_pod_failure
+from polymerhus.attack.hunting.pod.finalize import PodTerminal, finalize_pod
 from polymerhus.attack.hunting.pod.graph import RECURSION_LIMIT, build_pod_graph
 from polymerhus.attack.hunting.pod.llm import POD_DEFAULT_RUN_ID
 from polymerhus.attack.hunting.pod.tools import default_exec_fn
-from polymerhus.attack.hunting.pod.types import PodExport, TECHNICAL_INFEASIBILITY
+from polymerhus.attack.hunting.pod.types import TECHNICAL_INFEASIBILITY
 
 logger = logging.getLogger(__name__)
 
@@ -161,22 +162,18 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
             init_v = validate_spec(dict(spec or {}))
         except Exception:  # noqa: BLE001 - the degrade path never raises
             init_v = []
-        export = PodExport(
-            verdict="unsuccessful", terminal_reason=reason,
-            iterations=0, clean=False, error=detail,
-            init_validation=init_v).to_envelope()
-        # T7 (#183): the degrade path is a REAL terminal result - persist it too
-        # (idempotent overwrite, GP1). The fail-closed spec_id gate is respected:
-        # no spec_id means no export is persisted (the graph's init already
-        # failed on it), and a write failure degrades fail-open (O3/IA-4), never
-        # raising into the parent.
-        if memory_store is not None and spec_id:
-            try:
-                memory_store.write_pod_export(spec_id, run_id, export)
-                clear = getattr(memory_store, "clear_resume", None)
-                if clear is not None:
-                    clear(spec_id, run_id)
-            except Exception:  # noqa: BLE001 - fail-open (O3/IA-4)
-                logger.warning("pod export persistence failed on the degrade "
-                               "path (%s)", exc)
-        return export
+        if typed is not None:
+            terminal = PodTerminal.infrastructure(
+                reason=typed.reason, error=typed.detail,
+                init_validation=init_v)
+        else:
+            terminal = PodTerminal.domain(
+                verdict="unsuccessful", reason=TECHNICAL_INFEASIBILITY,
+                clean=False, error=detail, init_validation=init_v)
+        # T7 (#183): the degrade path is a REAL terminal result. The ONE
+        # finalizer assembles the durable trail and writes the export; a store
+        # or spec_id absence is handled fail-open by the finalizer.
+        return finalize_pod(
+            store=memory_store, spec_id=spec_id or "", run_id=run_id,
+            terminal=terminal, replace_existing=True,
+        )

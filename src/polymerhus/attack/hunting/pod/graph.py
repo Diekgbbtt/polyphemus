@@ -88,6 +88,7 @@ from polymerhus.attack.hunting.pod.config import (
     PodTimeouts,
 )
 from polymerhus.attack.hunting.pod.failures import classify_pod_failure
+from polymerhus.attack.hunting.pod.finalize import PodTerminal, finalize_pod
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
@@ -114,10 +115,10 @@ from polymerhus.attack.hunting.pod.tools import (
 )
 from polymerhus.attack.hunting.pod.types import (
     BUDGET_TIMEOUT,
+    HARNESS_TERMINAL_REASONS,
     INFEASIBILITY_SIGNAL_CLASS,
     Interpretation,
     NO_SYMPTOM_EVIDENCE,
-    PodExport,
     PodState,
     RawObservation,
     RunnerStep,
@@ -347,49 +348,30 @@ def _persist_resume(state: PodState, *, feedback: str | None = None,
         logger.warning("pod resume cursor write failed (%s)", exc)
 
 
-def _persist_pod_export(state: PodState, log: ExperimentLog,
-                        envelope: dict) -> None:
-    """The deterministic terminal persistence of the `PodExport` envelope
-    (T7/#183, GP1/GP4): `<spec_id>/<run_id>.yaml`, idempotent overwrite, written
-    by the terminal node - never an LLM seam (the pure-log invariant extends to
-    the export). Only happens when a store is bound (the log carries it) with a
-    spec_id (fail-closed). Fail-open (O3/IA-4): a write failure degrades to the
-    in-memory envelope - the run still returns it, never raising into the parent."""
-    store = getattr(log, "store", None)
-    spec_id = getattr(log, "spec_id", None)
-    if store is None or not spec_id:
-        return
-    run_id = state.get("run_id") or POD_DEFAULT_RUN_ID
-    try:
-        store.write_pod_export(spec_id, run_id, envelope)
-    except Exception as exc:  # noqa: BLE001 - fail-open (O3/IA-4)
-        logger.warning("pod export persistence failed, returning the in-memory "
-                       "envelope (%s)", exc)
-        return
-    clear = getattr(store, "clear_resume", None)
-    if clear is not None:
-        try:
-            clear(spec_id, run_id)
-        except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
-            logger.warning("pod resume cursor cleanup failed (%s)", exc)
-
-
 def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
             init_validation=None, error=None) -> dict:
-    log: ExperimentLog = state["log"]
-    export = PodExport(
-        verdict=verdict, terminal_reason=reason,
-        iterations=state.get("iteration", 0), clean=clean,
-        init_validation=list(init_validation or []),
-        variant_specs=[v.model_dump() for v in log.variant_specs],
-        raw_observations=[o.model_dump() for o in log.raw_observations],
-        interpretations=[i.model_dump() for i in log.interpretations],
-        error=error)
-    envelope = export.to_envelope()
-    # T7 (#183): the pod OWNS the persistence of its OWN terminal result - the
-    # `PodExport` envelope - written here by this deterministic terminal node.
-    # The persisted record EQUALS the envelope returned to the parent.
-    _persist_pod_export(state, log, envelope)
+    """Render a terminal through the ONE pod finalizer.
+
+    The finalizer owns the evidence assembly, the write, and the cursor clear.
+    The graph only selects the terminal fields.
+    """
+    log = state.get("log")
+    store = getattr(log, "store", None)
+    spec_id = getattr(log, "spec_id", "")
+    iterations = state.get("iteration", 0)
+    if reason in HARNESS_TERMINAL_REASONS:
+        terminal = PodTerminal.infrastructure(
+            reason=reason, error=error, iterations=iterations,
+            init_validation=init_validation or ())
+    else:
+        terminal = PodTerminal.domain(
+            verdict=verdict, reason=reason, clean=clean, error=error,
+            iterations=iterations, init_validation=init_validation or ())
+    envelope = finalize_pod(
+        store=store, spec_id=spec_id,
+        run_id=state.get("run_id") or POD_DEFAULT_RUN_ID,
+        terminal=terminal, log=log, replace_existing=True,
+    )
     return {"export": envelope, "verdict": verdict, "terminal_reason": reason}
 
 
@@ -528,14 +510,6 @@ def _degraded_terminal(state: PodState) -> dict:
     """Write the typed failure terminal from the pod's durable trail."""
     reason = state.get("terminal_reason") or TECHNICAL_INFEASIBILITY
     error = state.get("error")
-    log = state.get("log")
-    if log is None:
-        export = PodExport(
-            verdict="unsuccessful", terminal_reason=reason, iterations=0,
-            clean=False, error=error,
-        ).to_envelope()
-        return {"export": export, "verdict": "unsuccessful",
-                "terminal_reason": reason}
     return _export(
         state, verdict="unsuccessful", reason=reason, clean=False, error=error)
 

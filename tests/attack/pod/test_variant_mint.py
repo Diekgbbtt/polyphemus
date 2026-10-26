@@ -247,7 +247,8 @@ def test_the_terminal_vocabulary_separates_domain_and_harness_reasons():
         "specific-defence-prevention", "no-symptom-evidence"}
     assert HARNESS_TERMINAL_REASONS == {
         "budget-timeout", "node-timeout", "context-window-exceeded",
-        "graph-limit", "tool-timeout", "pod-watchdog-timeout"}
+        "graph-limit", "tool-timeout", "pod-watchdog-timeout",
+        "surfer-dispatch-degraded"}
     assert TERMINAL_REASONS == DOMAIN_TERMINAL_REASONS | HARNESS_TERMINAL_REASONS
 
 

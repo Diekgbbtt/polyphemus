@@ -79,6 +79,7 @@ from typing import Any, Awaitable, Callable
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
+from polymerhus.attack.hunting.pod.finalize import PodTerminal, finalize_pod
 from polymerhus.attack.hunting.pod.types import POD_WATCHDOG_TIMEOUT
 from polymerhus.attack.hunting.mover import (
     MODELLER_SESSION_SEGMENT,
@@ -1031,15 +1032,11 @@ async def run_pod_session(
             return None
         except Exception as exc:  # noqa: BLE001 - fail-open: the pod never raises into the run
             logger.warning("surfer: pod %s degraded (%s)", spec_id, exc)
-            return {
-                "verdict": "unsuccessful",
-                "evidence": {
-                    "terminal_reason": "surfer-dispatch-degraded",
-                    "iterations": 0,
-                    "clean": False,
-                    "error": str(exc),
-                },
-            }
+            return finalize_pod(
+                store=pod_store, spec_id=spec_id, run_id=run_id,
+                terminal=PodTerminal.infrastructure(
+                    reason="surfer-dispatch-degraded", error=str(exc)),
+            )
 
     async with _gate_or_null(gate):
         async with _gate_or_null(role_gate):
@@ -1048,34 +1045,22 @@ async def run_pod_session(
                     _run(), timeout=session_timeout_s)
             except asyncio.TimeoutError:
                 logger.warning(
-                    "surfer: pod %s exceeded the %.0fs session window; writing "
-                    "a degraded export", spec_id, session_timeout_s)
-                export = {
-                    "verdict": "unsuccessful",
-                    "evidence": {
-                        "terminal_reason": POD_WATCHDOG_TIMEOUT,
-                        "iterations": 0,
-                        "clean": False,
-                        "error": "the pod session exceeded its watchdog window",
-                    },
-                }
+                    "surfer: pod %s exceeded the %.0fs session window; "
+                    "finalizing it from its durable trail",
+                    spec_id, session_timeout_s)
+                export = finalize_pod(
+                    store=pod_store, spec_id=spec_id, run_id=run_id,
+                    terminal=PodTerminal.infrastructure(
+                        reason=POD_WATCHDOG_TIMEOUT,
+                        error="the pod session exceeded its watchdog window"),
+                )
 
     if export is None:
         return None
-    # The ADR's completion signal is the durable PodExport. `arun_pod` writes
-    # one on its own terminal paths, but the surfer's degraded path (a builder
-    # exception) only returns the envelope. Persist it here so the serial gate
-    # sees a failed/degraded execution as terminal instead of re-dispatching
-    # the same consumed spec forever. Idempotent overwrite on the normal path.
-    if pod_store is not None and spec_id:
-        try:
-            pod_store.write_pod_export(spec_id, run_id, export)
-            clear = getattr(pod_store, "clear_resume", None)
-            if clear is not None:
-                clear(spec_id, run_id)
-        except Exception as exc:  # noqa: BLE001 - O3/IA-4 fail-open
-            logger.warning(
-                "surfer: pod %s export persistence failed (%s)", spec_id, exc)
+    # The ADR's completion signal is the durable PodExport. The ONE finalizer
+    # owns the write; a normal `arun_pod` return is only ensured durable here.
+    export = finalize_pod(
+        store=pod_store, spec_id=spec_id, run_id=run_id, envelope=export)
     if state is not None:
         state.record_child_success(source)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the

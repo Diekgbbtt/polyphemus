@@ -149,3 +149,77 @@ def test_the_pod_timeout_hierarchy_is_progress_first():
     assert timeouts.node_run_s is None
     assert timeouts.tool_idle_s == 300.0
     assert DEFAULT_POD_SESSION_TIMEOUT_S == 3600.0
+
+
+def _seed_pod_trail(pod: PodMemoryStore) -> None:
+    pod.write_variant(SPEC_ID, "v0", {
+        "ref": "v0", "parent_ref": None, "declined_attribute": "",
+        "spec": {"rationale": "seeded for the backstop"},
+    })
+    pod.write_experiment_log(SPEC_ID, 0, {
+        "order": 0,
+        "variant_ref": "v0",
+        "raw_observations": [{
+            "probe_ref": "sig-a", "variant_ref": "v0", "status": 200,
+            "body": "observed",
+        }],
+        "kb_observations": [],
+        "interpretations": [],
+        "executed": ["sig-a"],
+    })
+    pod.write_resume(SPEC_ID, RUN, {
+        "schema_version": 1,
+        "last_order": 0,
+        "current_variant_ref": "v0",
+        "iteration": 1,
+        "feedback": "",
+        "executed": ["sig-a"],
+    })
+
+
+def test_the_watchdog_backstop_preserves_the_durable_trail(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    _seed_pod_trail(pod)
+    spec = {**_draft(), "status": "ratified"}
+
+    async def _hang(*args, **kwargs):
+        await asyncio.sleep(30)
+
+    asyncio.run(run_pod_session(
+        spec=spec, project_id=PROJECT, run_id=RUN, hunt_key=HUNT,
+        spec_id=SPEC_ID, inbox=None, hunter_store=hunter, gate=None,
+        pod_builder=_hang, pod_store=pod, state=RunDispatchState(),
+        session_timeout_s=0.01,
+    ))
+
+    export = pod.read_pod_export(SPEC_ID, RUN)
+    evidence = export["evidence"]
+    assert evidence["terminal_reason"] == "pod-watchdog-timeout"
+    assert evidence["clean"] is False
+    assert evidence["variant_specs"][0]["ref"] == "v0"
+    assert evidence["raw_observations"][0]["probe_ref"] == "sig-a"
+    assert pod.read_resume(SPEC_ID, RUN) == {}
+
+
+def test_the_watchdog_backstop_does_not_overwrite_an_execution_terminal(tmp_path):
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod = PodMemoryStore(tmp_path / "pod")
+    existing = {
+        "verdict": "successful",
+        "evidence": {"terminal_reason": "symptom-confirmed", "clean": True},
+    }
+    pod.write_pod_export(SPEC_ID, RUN, existing)
+    spec = {**_draft(), "status": "ratified"}
+
+    async def _hang(*args, **kwargs):
+        await asyncio.sleep(30)
+
+    asyncio.run(run_pod_session(
+        spec=spec, project_id=PROJECT, run_id=RUN, hunt_key=HUNT,
+        spec_id=SPEC_ID, inbox=None, hunter_store=hunter, gate=None,
+        pod_builder=_hang, pod_store=pod, state=RunDispatchState(),
+        session_timeout_s=0.01,
+    ))
+
+    assert pod.read_pod_export(SPEC_ID, RUN) == existing

@@ -42,6 +42,7 @@ CONTEXT_WINDOW_EXCEEDED = "context-window-exceeded"
 GRAPH_LIMIT = "graph-limit"
 TOOL_TIMEOUT = "tool-timeout"
 POD_WATCHDOG_TIMEOUT = "pod-watchdog-timeout"
+SURFER_DISPATCH_DEGRADED = "surfer-dispatch-degraded"
 
 # The domain terminals a triager may choose.
 DOMAIN_TERMINAL_REASONS = frozenset({
@@ -54,7 +55,7 @@ DOMAIN_TERMINAL_REASONS = frozenset({
 # surfer's last-resort backstop.
 HARNESS_TERMINAL_REASONS = frozenset({
     BUDGET_TIMEOUT, NODE_TIMEOUT, CONTEXT_WINDOW_EXCEEDED, GRAPH_LIMIT,
-    TOOL_TIMEOUT, POD_WATCHDOG_TIMEOUT,
+    TOOL_TIMEOUT, POD_WATCHDOG_TIMEOUT, SURFER_DISPATCH_DEGRADED,
 })
 
 # The whole PodExport vocabulary. `validate_decision` deliberately reads the
