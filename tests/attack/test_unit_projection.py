@@ -26,6 +26,8 @@ from polymerhus.attack.hunting.unit_projection import (
     DataItem,
     DataRelationship,
     EdgeInfo,
+    HeaderInfo,
+    ParameterInfo,
     SystemInfo,
     UnitProjection,
     build_projection,
@@ -61,6 +63,10 @@ class FakeL1:
         self.calls.append(cypher)
         if "AGGREGATES" in cypher:
             return self._aggregated_rows(params)
+        if "HAS_HEADER" in cypher:
+            return self._header_rows(params)
+        if "HAS_PARAMETER" in cypher:
+            return self._param_rows(params)
         if "cooperating_outs" in cypher:
             return self._adj_rows(params)
         if "type(dr) AS family" in cypher:
@@ -93,6 +99,24 @@ class FakeL1:
         if rows is not None:
             return rows
         return [{"family": f} for f in (unit or {}).get("data_rel_families", [])]
+
+    def _header_rows(self, params):
+        baseurls = set(params.get("baseurls") or [])
+        return [
+            row
+            for unit in self.units.values()
+            for row in (unit.get("headers") or [])
+            if row.get("baseurl") in baseurls
+        ]
+
+    def _param_rows(self, params):
+        baseurls = set(params.get("baseurls") or [])
+        return [
+            row
+            for unit in self.units.values()
+            for row in (unit.get("params") or [])
+            if row.get("baseurl") in baseurls
+        ]
 
     def _adj_rows(self, params):
         unit_id = f"{params['kind']}:{params['key']}"
@@ -565,3 +589,62 @@ def test_absent_data_rel_chains_degrade_to_empty():
     projection = _projection("Service:orders", fake)
     assert projection.data_rel_kinds == frozenset()
     assert projection.data_relationships == ()
+
+
+def test_build_projection_reads_unique_baseurl_headers():
+    fake = FakeL1({
+        "System:api": {
+            "labels": ["L1System"],
+            "props": {"kind": "RESTApi", "discriminator": "api"},
+            "edges": [],
+            "aggregated": [
+                {"slug": "svc",
+                 "props": {"method": "GET", "path": "/api/a",
+                           "baseurl": "http://t"}},
+                {"slug": "svc",
+                 "props": {"method": "GET", "path": "/api/b",
+                           "baseurl": "http://t"}},
+            ],
+            "headers": [
+                {"baseurl": "http://t", "name": "server", "value": "nginx",
+                 "direction": "response"},
+                {"baseurl": "http://t", "name": "server", "value": "nginx",
+                 "direction": "response"},
+                {"baseurl": "http://t", "name": "vary", "value": "accept-encoding",
+                 "direction": "response"},
+            ],
+        },
+    })
+
+    projection = _projection("System:api", fake)
+
+    assert projection.baseurl_headers == {
+        "http://t": (
+            HeaderInfo(name="server", value="nginx", direction="response"),
+            HeaderInfo(name="vary", value="accept-encoding", direction="response"),
+        ),
+    }
+
+
+def test_build_projection_reads_endpoint_parameters():
+    fake = FakeL1({
+        "Service:svc": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "svc"},
+            "edges": [],
+            "aggregated": [
+                {"props": {"method": "GET", "path": "/api/a",
+                           "baseurl": "http://t"}},
+            ],
+            "params": [
+                {"baseurl": "http://t", "path": "/api/a", "method": "GET",
+                 "name": "q", "position": "query"},
+            ],
+        },
+    })
+
+    projection = _projection("Service:svc", fake)
+
+    assert projection.aggregated_endpoints[0].parameters == (
+        ParameterInfo(name="q", position="query"),
+    )
