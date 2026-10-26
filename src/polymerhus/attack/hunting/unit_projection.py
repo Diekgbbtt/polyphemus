@@ -166,6 +166,9 @@ class AggregatedEndpoint:
     path: str | None = None
     baseurl: str | None = None
     service_slug: str | None = None
+    status_code: int | None = None
+    content_type: str | None = None
+    content_length: int | None = None
     parameters: tuple[ParameterInfo, ...] = ()
 
 
@@ -269,6 +272,9 @@ def _aggregated_endpoint_from(tprops: dict) -> AggregatedEndpoint:
         method=props.get("method"),
         path=props.get("path"),
         baseurl=props.get("baseurl"),
+        status_code=props.get("status_code"),
+        content_type=props.get("content_type"),
+        content_length=props.get("content_length"),
     )
 
 
@@ -456,6 +462,9 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
                     path=props.get("path"),
                     baseurl=props.get("baseurl"),
                     service_slug=row.get("slug"),
+                    status_code=props.get("status_code"),
+                    content_type=props.get("content_type"),
+                    content_length=props.get("content_length"),
                 )
                 for row in agg_rows
                 for props in [dict(row.get("props") or {})]

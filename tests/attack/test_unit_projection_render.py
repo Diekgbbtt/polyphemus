@@ -91,6 +91,80 @@ def test_render_never_cuts_an_endpoint():
     assert "..." not in rendered
 
 
+def test_render_redacts_a_session_cookie_value_but_keeps_its_attributes():
+    projection = UnitProjection(
+        unit_id="Service:svc",
+        kind="Service",
+        spine={},
+        edges={},
+        data_edges={},
+        data_rel_kinds=frozenset(),
+        aggregated_endpoints=(
+            AggregatedEndpoint(method="GET", path="/api/a", baseurl="http://t"),
+        ),
+        baseurl_headers={
+            "http://t": (
+                HeaderInfo(name="set-cookie",
+                           value="JSESSIONID=abcdef; Path=/; HttpOnly",
+                           direction="response"),
+            ),
+        },
+    )
+
+    rendered = render_unit_projection(projection)
+
+    assert "JSESSIONID=abcdef" not in rendered
+    assert "<redacted>; Path=/; HttpOnly" in rendered
+
+
+def test_render_shows_cooperating_systems_for_a_service_unit():
+    projection = UnitProjection(
+        unit_id="Service:svc",
+        kind="Service",
+        spine={},
+        edges={},
+        data_edges={},
+        data_rel_kinds=frozenset(),
+        cooperating_systems={
+            "AUTHORIZED_BY": (
+                SystemInfo(kind="AuthorizationSystem",
+                           discriminator="__singleton__",
+                           description="Role and path-prefix gate."),
+            ),
+        },
+        aggregated_endpoints=(
+            AggregatedEndpoint(method="GET", path="/api/a", baseurl="http://t"),
+        ),
+    )
+
+    rendered = render_unit_projection(projection)
+
+    assert "### System: AuthorizationSystem:__singleton__" in rendered
+    assert "Role and path-prefix gate." in rendered
+    assert "GET /api/a" in rendered
+
+
+def test_render_shows_endpoint_status_and_content_type():
+    projection = UnitProjection(
+        unit_id="Service:svc",
+        kind="Service",
+        spine={},
+        edges={},
+        data_edges={},
+        data_rel_kinds=frozenset(),
+        aggregated_endpoints=(
+            AggregatedEndpoint(method="GET", path="/api/library",
+                               baseurl="http://t", status_code=200,
+                               content_type="application/json",
+                               content_length=1043),
+        ),
+    )
+
+    rendered = render_unit_projection(projection)
+
+    assert "GET /api/library (200, application/json, 1043 B)" in rendered
+
+
 def test_render_shows_orphan_endpoints_on_a_system_unit():
     projection = UnitProjection(
         unit_id="RESTApi:api",
