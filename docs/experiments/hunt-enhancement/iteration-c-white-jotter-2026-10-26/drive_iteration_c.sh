@@ -147,5 +147,5 @@ EVAL_REPO="$EVAL_REPO" EVAL_WEB_DIR="$EVAL_WEB_DIR" EVAL_CORPUS=/root/utm-ground
 MEASURE_CODE=$?
 echo "== measurement exit $MEASURE_CODE $(date -u +%FT%TZ)"
 
-echo "== iteration B.a driver done $(date -u +%FT%TZ)"
+echo "== iteration C driver done $(date -u +%FT%TZ)"
 exit "$TRIAL_CODE"

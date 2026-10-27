@@ -727,6 +727,14 @@ Width has to be inferred from pod directory mtimes or resume files, which is wha
 
 A status surface that reports zero live work while a batch is in flight also hides a stuck batch from an operator.
 
+### Recording and coupling defects
+
+Three smaller defects were found while measuring the arm:
+
+- the driver's completion marker printed `iteration B.a driver done` for iteration C, because the line was copied from the B.a driver; it is corrected in `drive_iteration_c.sh`;
+- 69 of 69 specs store `provenance.threat_id` as a bare `threat-1` instead of the qualified `ReverseProxy__threat-1`, so the threat-to-spec join exists only in the directory path;
+- only 2 pod note records exist for 55 pods, and several modeller phase notes are missing, which forces the measurement to reconstruct phase order from the artifacts.
+
 ### The batch width is not asserted anywhere
 
 `pod_batch_size: 3` is frozen into the run record and honoured by the hunter, but no component checks the resulting concurrency against the host capacity.
