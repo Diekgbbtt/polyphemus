@@ -204,6 +204,22 @@ The total went from 138 to **185** on `Service:operations-telemetry`, so the hal
 
 The lesson is about the intake ordering, not the threshold: a risk-descending order that puts page presentations before the actuator and telemetry surfaces makes the intermediate total look saturated long before the real crossing.
 
+### Batch width three overloads the pod host
+
+`pod_batch_size: 3` dispatches three hunts' pod sets together.
+On `ReverseProxy` that produced 25 pods in two shells: 14 at dispatch, then 11.
+
+| Arm | Batch | Concurrent pods | Watchdog terminals |
+|---|---:|---:|---:|
+| B.a | 1 hunt | at most 5 | 1 of 33 |
+| C | 3 hunts | 14 | **16 of 25** |
+
+The timeout exports carry `iterations: 1`, `clean: false`, and no interpretation, so the pods hit the watchdog during their first variant and returned nothing.
+The second shell was worse (9 of 11) than the first (7 of 14), which is consistent with accumulating load on the agent container rather than a per-spec defect.
+
+The batch therefore buys wall-clock parallelism at a 64% pod failure rate on the first unit, and every failed pod still spends its budget.
+This is the clearest configuration regression in the arm and it is independent of the impact system.
+
 ### Coverage is the dominant cost
 
 The arm modelled 23 units against 5 in iteration B and 5 in iteration B.a.
