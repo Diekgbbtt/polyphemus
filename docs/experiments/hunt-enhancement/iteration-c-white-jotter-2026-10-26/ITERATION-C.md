@@ -490,6 +490,100 @@ Three of the four needed knowledge the suite already carries or could carry: a c
 The fourth (`003`) needed no new knowledge at all.
 It needed the hunt to reach the threat, and the budget did not.
 
+## The promotion queue was the binding constraint
+
+The stored threats carry a risk score, and the floor of 0 promoted all 28 of them from 14 units.
+The budget drained 16 of them across 5 units.
+
+| Floor | Threats kept | Units kept | Dropped |
+|---:|---:|---:|---:|
+| 0 (as run) | 28 | 14 | 0 |
+| 2 | 25 | 11 | 3 |
+| 3 | 24 | 10 | 4 |
+| 4 | 18 | 9 | 10 |
+| 5 | 16 | 8 | 12 |
+| 8 | 13 | 8 | 15 |
+
+Risk histogram across the 28 threats: 1 (x3), 2 (x1), 3 (x6), 4 (x2), 6 (x3), 8 (x4), 9 (x4), 12 (x3), 16 (x2).
+
+`white-jotter-003`'s stored-XSS threat sits at **risk 9**.
+Every floor up to 9 keeps it.
+A floor of 5 would have kept 16 threats over 8 units, which is exactly the spec volume the budget did drain, and it would have dropped 12 threats at risk 4 or below.
+
+So the arm did not fail for lack of budget or lack of modelling.
+It failed because the queue was unfiltered: the hunter spent its whole allocation on 16 of 28 threats, and the highest-value undrained one was the ground truth the arm was meant to test.
+
+The arm therefore supplies the missing half of the promotion argument.
+Iteration C proves that coverage at the modeller is cheap and that an inert floor converts coverage into an undrainable queue.
+
+## Learnings
+
+1. **Coverage is the discovery variable, and it works.**
+   Raising the halt from 110 to 180 took the modelled surface from 5 to 23 units and discovery from 1 to 3 identified.
+   Two of the three identifications sit in units the 110 halt never reached.
+   The discovery gain is a coverage effect, not a per-threat quality effect.
+
+2. **Coverage without a promotion floor cannot be converted.**
+   The 28 promoted threats exceeded the budget by 12.
+   `003` was correctly modelled and never specced, so the arm lost a likely fourth identification to queue length rather than to knowledge.
+   This is the first direct evidence for the promotion gate: the floor is not a cost optimisation, it is what lets the queue fit the budget.
+
+3. **`green_share` measures placeholder dilution, not impact quality.**
+   All 28 damage-bearing rows are green by the schema invariant, so `green_share` equals 1 minus the placeholder rate.
+   On a full-surface run the placeholder rate is 45.1%, and the 90% gate is unreachable because 10 of 23 units carry no damage of their own.
+   The metric cannot separate "this unit has no damage surface" from "the modeller evaded the impact question", and the gate punishes the honest case.
+   Recommendation: keep `severe_share` as the quality gate and report the placeholder rate separately with per-unit justification, or scope `green_share` to units that declare a damage surface.
+
+4. **Batch width 3 is unsafe on one agent container.**
+   41 of 55 pods returned `pod-watchdog-timeout` (74.5%) against 1 of 33 at batch 1.
+   The failures carry `iterations: 1` and no interpretation, so each one spends budget and yields nothing.
+   Throughput was lower than batch 1 despite the wider dispatch.
+
+5. **The risk halt is sensitive to intake ordering.**
+   The page layer ran before the back-office REST surfaces and made the intermediate total look saturated at 124.
+   The crossing came from `RESTApi:actuator-management` (23) and `Service:operations-telemetry` (24), which sit late in the order.
+   A halt that is meant to bound cost should not depend on which layer happens to sort earlier.
+
+6. **The wall clock, not the token cap, is the real bound at this burn.**
+   C spent 98.8% of its cap only because it was stopped 7 minutes before the deadline.
+   The projected spend at the deadline was 6.6M to 6.7M, and a deadline terminal is `timeout`, which the monitor will not assess.
+
+7. **Three of the four failures are fault-binding, and two of those had the knowledge available.**
+   `001` and `006` are discipline failures: a class that exists but was not loaded, and a namespace closed on single-decode negative evidence.
+   Only `004` is a genuine knowledge-base gap.
+
+## Recommendation
+
+**Do not adopt iteration C as the new default.**
+Adopt its analysis block and the higher risk halt, and keep its impact schema.
+Change the promotion floor and the batch width before the next arm.
+
+Iteration D should be a single-variable arm:
+
+| Knob | C | D |
+|---|---|---|
+| `risk_threshold` | 180 | 180 |
+| `promotion_risk_threshold` | 0 | **4** |
+| `pod_batch_size` | 3 | **1** |
+| Token cap | 7M | 7M |
+| Analysis thinking | max | max |
+
+Rationale:
+
+- The floor of 4 keeps 18 threats over 9 units, which is within the volume the budget drained, and it keeps `003` at risk 9.
+- Batch 1 removes the 74.5% pod failure mode and restores the confirmation rate B.a measured at 69.7%.
+- Holding the halt at 180 preserves the coverage that produced the discovery gain, so D isolates the gate.
+
+If D identifies `003`, the promotion gate is proven end to end.
+If D misses `003` with the threat still drained, the failure is in the hunter's payload work, not in the budget.
+
+Before D, repair the four harness defects recorded above, in this order:
+
+1. the deadline terminal contract (`timeout` is not assessable);
+2. the prompt-path lineage split;
+3. the `live_hunts` status field;
+4. a concurrency assertion against host capacity.
+
 ## Workflow and contract findings
 
 Four defects surfaced in the harness while C ran.
