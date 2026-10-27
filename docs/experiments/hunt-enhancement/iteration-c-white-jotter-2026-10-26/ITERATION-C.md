@@ -1,0 +1,767 @@
+# Iteration C - white-jotter, impact assessment as a first-class citizen
+
+*Status: pre-registered 2026-10-26. Extends `../iteration-b-white-jotter-2026-10-25/RESULTS.md` (iteration B) and `ITERATION-BA.md` (iteration B.a). Run state and results are filled progressively.*
+
+## What this iteration changes
+
+Iteration C is a design change, not a knob change: the threat model now carries an explicit **impact assessment**, and the eval measures damage rather than class membership.
+
+The merged trunk (`1b83126c`, eval head `8da28a6f`) adds:
+
+- an `impact_assessment` section to the unit threat model, with one row per damage claim and a `disposition` of `threat` or `placeholder`;
+- a CIA vector (`confidentiality`, `integrity`, `availability`) on every damage-bearing threat, scored by the store into the impact sub-score, the ordinal impact weight, and the combined risk;
+- the impact block rendered into the hunter payload as context, so the hunter knows the end damage its symptoms must reach;
+- a **promotion floor** (`promotion_risk_threshold`) that keeps below-floor threats in `produced/` as evidence and does not dispatch a hunter for them;
+- a **pod batch width** (`pod_batch_size`) that dispatches that many hunts' pods together in `batched`.
+
+The eval configuration for this arm:
+
+| Attribute | Value |
+|---|---|
+| Analysis thinking | assigner and mechanism typist `max` -> wire `max` |
+| Threat modeller / hunter | `max` -> wire `max` |
+| Pipeline sync | `batched` |
+| Pod batch size | 3 |
+| Promotion risk threshold | 0 (stored, inclusive: promotes every threat) |
+| Risk threshold (cumulative halt) | 180 |
+| Recon jobs | `httpx, httpx_reprofile, katana, jsluice, arjun, ffuf, kiterunner` |
+| Token budget | 7,000,000 capped |
+| Wall clock | 43,200 s (12 h) |
+| SkillEvolution | off |
+
+The promotion floor is deliberately inert in C.
+This is the control arm for the impact system: every produced threat reaches a hunter, so the filter is proven wired without changing which threats are hunted.
+A later arm varies the floor with the impact system held constant.
+
+## Hypothesis
+
+Promoting the impact assessment to a first-class model section should make the threat set describe damage rather than technique family, and should make the hunter's symptoms aim at end damage.
+
+The expected effects are:
+
+- a high `green_share` on impact rows, because a threat row is damage-bearing by construction and only placeholder rows are red;
+- a severe share that tracks the impact distribution rather than the class mix;
+- the same or better official discovery than iteration B.a, because damage-bearing threats carry a concrete end state into the hunter payload;
+- no collapse in class binding or in spec depth.
+
+The promotion gate is not exercised in C, so no token saving is predicted from it.
+The pod batch width of 3 may raise pod concurrency and should raise effective parallelism without breaking the one-unit barrier.
+
+## Primary metric
+
+The impact-bearing share, also called `green_share`, defined by `docs/design/impact-assessment-system-spec.md` section 9 over every `impact_assessment` row of every modelled unit:
+
+- `impact_rows` = every `impact_assessment` row;
+- green when any CIA value is not `none`;
+- red when every CIA value is `none`;
+- a placeholder row is red by the invariant;
+- `green_share = green / impact_rows`.
+
+Success gate: `green_share` greater than 90%.
+
+The retired class-based green share (class in the high-yield set) is computed and reported as a **continuity note**, marked superseded.
+It is not a gate.
+The class-binding rate is a diagnostic only.
+
+## Secondary metrics
+
+- The severe share: `threats with impact_weight >= 3 / damage-bearing threats`.
+- The placeholder share, and the count of placeholder rows.
+- The CIA distribution per metric and level.
+- The impact-weight distribution.
+- Capped tokens per green row, per severe threat, and per identified ground truth.
+- The token split per agent, and the modeller's share of the capped spend.
+
+## Narrowing metrics
+
+- `downstream.spec_count` per threat, and `substantial` at three or more specs.
+- `downstream.primary_axes` and `axes_overlap`.
+- `downstream.well_formed`: substantial, every spec carries a discriminator, and the primary axes do not overlap.
+- `narrow_without_well_formed` and `broad_without_well_formed`.
+- The class-binding rate as a diagnostic.
+
+The narrowing metrics report.
+They do not gate the run.
+
+## Analysis-specific metrics
+
+- Assigner capped tokens, calls, and reasoning share.
+- Mechanism-typist capped tokens, calls, and reasoning share.
+- Analysis wall clock from recon drain to analysis drain.
+- Endpoint placement count and share of the L0 surface.
+- Systems with a witness edge.
+
+## Promotion and batch checks
+
+- `threats_promoted` equals `threats_stored`, because the floor is 0.
+- `threats_demoted` is 0; any non-zero value is a finding against the filter or the risk scoring.
+- The hunting run record carries the frozen `pod_batch_size`, `promotion_risk_threshold`, and `risk_threshold`.
+- The live hunt count never exceeds 3.
+- The live unit count never exceeds 1.
+- A batch advances only when every consumed spec in it has a terminal export.
+
+## Guardrails
+
+- The 7M capped token budget is the authority; the run stops on it or at 12 h.
+- SkillEvolution stays off.
+- The target is a fresh project on the same `webexploitbench/white-jotter` image.
+- No `auth_store view:full`.
+- The terminal must be a success (`complete`, or `stopped` at the cap or the deadline) for assessment to run.
+
+## Procedure
+
+1. Bring up `white-jotter-1` with `next_target`.
+2. Run `orchestrator trial` with the C setup, `--budget-s 43200`.
+3. Monitor `/projects/{id}/usage`, the unit models' impact rows, the promotion split, the hunting status, and the pod batch width.
+4. At the terminal, run the monitor to convergence (assessment, then diagnosis).
+5. Run `close-verify`, `store materialize`, and `measure_trial.sh`.
+6. Run `measure_iteration_c.py` for the impact metrics, and copy every artifact into `artifacts-c/`.
+
+## Analysis plan
+
+The primary is compared against the 90% gate and reported standalone, because iterations B and B.a carry no `impact_assessment` rows and their `green_share` is undefined.
+
+Comparisons against B and B.a use the metrics that are defined in both schemas:
+
+- official discovery: `identified`, `partial`, `missed`;
+- the severe share, with the same impact-weight definition;
+- tokens by agent and by phase;
+- coverage: units modelled, units consumed, threats specced, specs, pods;
+- the retired class-based green share, as a continuity note.
+
+Two baselines are reported:
+
+| Baseline | Commit | What it controls |
+|---|---|---|
+| B | `81522a71` | the last arm before impact became first class |
+| B.a | `553e33c2` | the same analysis max-thinking thread on the pre-impact trunk |
+
+## Limitations
+
+- One trial per arm on one target.
+- The arm carries the impact system, the promotion wiring, the batch width, the higher risk halt, and the two extra recon jobs at once. Only the impact system is the design variable; the rest are configuration, and the report separates them where the evidence allows.
+- The promotion floor is inert by design, so C cannot answer whether promotion saves tokens.
+- `green_share` is near 1.0 by construction unless placeholders are produced, so the metric's discriminating power is the placeholder rate, not class quality.
+- Iterations B and B.a cannot supply a `green_share` baseline.
+
+## Run state
+
+*Filled during the run.*
+
+| Attribute | Value |
+|---|---|
+| Eval head | `13ce0edb` (impact merge `1b83126c` plus the eval hunting-config schema) |
+| Thinking patch | assigner and mechanism_typist `max`; live check: all four roles wire `max`, `exact-match` |
+| Setup | `eval/setups/white-jotter-iteration-c.yaml` |
+| Target | `webexploitbench/white-jotter` |
+| Target id | `white-jotter-1` |
+| Target run id | `iterc-white-jotter` |
+| Trial command start | `2026-10-26T20:03:33Z` |
+| Target backend | `127.0.0.1:32979` (re-provisioned, clean database) |
+| Stack fingerprint | `112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407` |
+| Runs root | `/opt/polymerhus-dev/eval/runs-iteration-c-20261026` |
+| Project id | `8e2e5dc7-a880-4451-aaa5-267cedd48264` |
+| Project created | `2026-10-26T20:07:29Z` |
+| Frozen hunting config | `batched`, `pod_batch_size=3`, `promotion_risk_threshold=0`, `risk_threshold=180` (verified live) |
+| Hunting run id | `65ec294b-e5cf-49c6-9f7c-4664a73aa557` |
+| Run record check | `pipeline_sync=batched`, `risk_threshold=180`, `threshold_basis=db`, `pod_batch_size=3`, `promotion_risk_threshold=0` (verified live) |
+| Trial record | terminal `stopped`, spent 6,919,138, finished `2026-10-27T07:49:05Z` |
+| Worktree state at trial | dirty: `providers.py` carries the live thinking patch, so `eval_sha=13ce0edb` does not describe the running code |
+
+### Harness lineage finding
+
+The eval harness checkout (`/opt/polymerhus-dev`, branch `dev`) and the eval arm code (`/opt/polymerhus-dev/eval/instances/eval-server-1`, the trunk) are separate git worktrees on separate lineages.
+The harness plugin that runs `next_target` and `eval_monitor` hardcoded `PYTHONPATH=eval`, so the tool parsed the arm setup with the harness schema, not the arm schema.
+The first launch failed with `unknown field(s): hunting`.
+
+The fix is configuration-layer only:
+
+- the plugin now reads `process.env.EVAL_ORCHESTRATOR_PYTHONPATH ?? "eval"`;
+- the driver exports `EVAL_ORCHESTRATOR_PYTHONPATH="$INSTANCE_DIR/eval:eval"` and the same path on its own `PYTHONPATH`.
+
+The plugin file is backed up at `eval-monitor.ts.bak-iterc`.
+After the fix, `next_target` parsed the setup and brought the target up.
+
+
+## Progressive findings
+
+### The risk halt fires on the back-office surfaces
+
+The intake is 27 units in risk-descending order.
+The page-presentation tail adds almost nothing: at 15 units the cumulative risk was 124, and the next five page units added 0, 0, 1, 0, and 1.
+An intermediate projection read that as a run that could not reach 180.
+
+That projection was wrong.
+The two back-office REST surfaces carry the remaining risk:
+
+| Unit | Risk |
+|---|---:|
+| `Service:user-administration` | 12 |
+| `RESTApi:actuator-management` | 23 |
+| `Service:operations-telemetry` | 24 |
+
+The total went from 138 to **185** on `Service:operations-telemetry`, so the halt fired at 23 of 27 units.
+`Service:password-recovery` is the blocked unit.
+
+The lesson is about the intake ordering, not the threshold: a risk-descending order that puts page presentations before the actuator and telemetry surfaces makes the intermediate total look saturated long before the real crossing.
+
+### Batch width three overloads the pod host
+
+`pod_batch_size: 3` dispatches three hunts' pod sets together.
+On `ReverseProxy` that produced 25 pods in two shells: 14 at dispatch, then 11.
+
+| Arm | Batch | Concurrent pods | Watchdog terminals |
+|---|---:|---:|---:|
+| B.a | 1 hunt | at most 5 | 1 of 33 |
+| C | 3 hunts | 14 | **16 of 25** |
+
+The timeout exports carry `iterations: 1`, `clean: false`, and no interpretation, so the pods hit the watchdog during their first variant and returned nothing.
+The second shell was worse (9 of 11) than the first (7 of 14), which is consistent with accumulating load on the agent container rather than a per-spec defect.
+
+The batch therefore buys wall-clock parallelism at a 64% pod failure rate on the first unit, and every failed pod still spends its budget.
+This is the clearest configuration regression in the arm and it is independent of the impact system.
+
+*Correction after the post-run diagnosis.*
+The batch width is the amplifier, not the root cause.
+The pod budget is a fixed 3600 s per session while the work is an unbounded agent loop, and C's per-probe cost rose to about 220 s against 60 s in B.a, so a spec that needed 17 probes could not finish inside the hour.
+Tool execution is 0.36% of the pod wall clock, so the executor environment is not the bottleneck.
+See `DIAGNOSIS-ZERO-THREATS-PODS-MODELLER.md`.
+
+### Coverage is the dominant cost
+
+The arm modelled 23 units against 5 in iteration B and 5 in iteration B.a.
+The modeller spent 1,945,435 capped on those units, which is 84,584 per unit and 46% of everything spent before the first pod ran.
+
+Every produced threat is promoted, because the floor is 0.
+The hunter therefore faces the whole 23-unit queue, and the 7M budget cannot drain it.
+
+### The new primary metric dilutes with coverage
+
+`green_share` is computed over every `impact_assessment` row of every modelled unit, and a placeholder row is red by construction.
+
+| Units completed | Impact rows | Green | `green_share` |
+|---:|---:|---:|---:|
+| 7 | 22 | 17 | 77.3% |
+| 9 | 26 | 18 | 69.2% |
+| 13 | 30 | 20 | 66.7% |
+| 15 | 34 | 20 | 58.8% |
+
+Every zero-impact unit adds rows and no green.
+The presentation units (`AuthorizationSystem`, `IdentificationSystem`, `navigation-menu`, `jotter-reading`, the `WebPresentation` page systems) contribute 14 red rows and one green between them.
+
+The 90% gate is therefore unreachable on a full-surface run: it can only be met by a run that stops early enough to exclude the non-damage-bearing tail.
+That is a property of the metric and the halt together, not a quality regression in the threat models.
+
+*Correction after the post-run diagnosis.*
+Thirteen of the 23 placeholders come from nine units that allocated their damage to another owning unit, not from missing impact work.
+The dilution is structural: the model deliberately does not double-count a loss that another unit records.
+See `DIAGNOSIS-ZERO-THREATS-PODS-MODELLER.md`, Task 1.
+
+## Results
+
+*Filled after the trial terminal.*
+
+### Primary metric: green_share
+
+| Metric | Value |
+|---|---:|
+| Impact rows | 51 |
+| Green (any CIA value not `none`) | 28 |
+| Red (all `none`) | 23 |
+| Placeholder rows | 23 |
+| `green_share` | **54.9%** |
+| Gate | 90% |
+| Gate met | **no** |
+
+The whole red count is placeholder rows: all 28 damage-bearing rows are green by the invariant, so `green_share` equals `threat_share` exactly, as the spec predicts.
+The metric therefore reports the placeholder rate of the modelled surface, which is 45.1%.
+
+Iterations B and B.a carry no `impact_assessment` rows, so this metric has no baseline in this experiment line.
+The 90% gate cannot be met by a run that models the whole surface, because 10 of the 23 modelled units carry no damage of their own and contribute placeholders.
+
+### Severe share
+
+| Metric | Value |
+|---|---:|
+| Damage-bearing threats | 28 |
+| Severe (impact weight 3 or 4) | 17 |
+| `severe_share` | **60.7%** |
+
+For comparison on the same definition, iteration B.a had 15 of 23 severe (65.2%) over its five modelled units.
+C is 4.5 points lower over 23 units, which is the expected direction when the surface expands into units with no damage.
+
+### Official discovery result
+
+| Verdict | B | B.a | C |
+|---|---:|---:|---:|
+| `identified` | 0 | 1 | **3** |
+| `partial` | 1 | 1 | 1 |
+| `missed` | 6 | 5 | 3 |
+| Identification rate | 0% | 14.3% | **42.9%** |
+| Partial-or-identified | 14.3% | 28.6% | 57.1% |
+
+The three identifications:
+
+| Vuln | Unit | Class | Confidence |
+|---|---|---|---:|
+| `white-jotter-002` | `ReverseProxy` | `bfla-alternate-path` | 0.95 |
+| `white-jotter-005` | `RESTApi:api` | `sql-injection` | 0.97 |
+| `white-jotter-007` | `Service:register` | `mass-assignment-nested-relation-write` | 0.90 |
+
+`white-jotter-001` is partial at confidence 0.45, the same verdict as both earlier arms.
+`003`, `004`, and `006` are missed at confidence 0.95.
+
+Two of the three identifications (`005` SQL injection on `RESTApi:api`, `007` mass assignment on `Service:register`) are in units that iteration B's risk halt at 110 never reached.
+That is the coverage effect of the 180 halt, not a per-threat quality effect.
+
+### Impact assessment inventory
+
+The 51 rows distribute across the CIA axes as follows:
+
+| Level | Confidentiality | Integrity | Availability |
+|---|---:|---:|---:|
+| high | 15 | 10 | 0 |
+| medium | 3 | 5 | 1 |
+| low | 7 | 0 | 3 |
+| none | 26 | 36 | 47 |
+
+Availability is almost unused: 47 of 51 rows are `none`, and no row scores `high` or `medium` availability above one.
+Confidentiality dominates the damage claims, which matches a web application whose ground truths are disclosure and authorization bypass.
+
+Rows per unit range from 1 to 7.
+`ReverseProxy` carries 7 rows (6 green), `Service:sign-in` 4 (4 green), `RESTApi:api` 4 (3 green), and ten units carry exactly 1 or 2 rows, most of them placeholders.
+
+### Promotion and batch checks
+
+| Check | Result |
+|---|---|
+| Stored threats | 28 |
+| Promoted | 28 |
+| Demoted | **0** |
+| Promotion floor frozen in the record | 0 |
+| `pipeline_sync` frozen | `batched` |
+| `pod_batch_size` frozen | 3 |
+| `risk_threshold` frozen | 180 (`basis db`) |
+
+The inert floor behaved exactly as specified: every stored threat reached a hunter, and nothing was demoted.
+
+The batch width did not behave as intended.
+The hunting status surface reports `live_hunts: 0` while a shell of pods runs, so the monitor's width assertion could not fire; the width must be read from pod dispatch times.
+Observed shells: 14 pods, then 11, then 9, then 6, then 4, with a peak of 15 concurrent pods.
+
+### Narrowing metrics
+
+| Metric | Value |
+|---|---:|
+| Specs total | 69 |
+| Specs ratified | 55 |
+| Substantial threats (3 or more specs) | 14 of 28 (50%) |
+| Well-formed sets | **0** |
+| Class-binding rate | 100% |
+
+Well-formedness is zero for the second arm in a row.
+Every substantial set repeats at least one primary axis.
+The spec count is higher than B.a's 46, but more of it is spread across units rather than concentrated per threat.
+
+### Continuity: the retired class-based green share
+
+| Metric | C |
+|---|---:|
+| Green narrow (high-yield set) | 19 of 28 (67.9%) |
+| Green broad | 20 of 28 (71.4%) |
+| Class binding | 28 of 28 (100%) |
+
+Marked superseded.
+It is reported only so the arm can be placed beside B (38.5%) and B.a (69.6%) on the metric those arms gated on.
+On that axis C sits between the two, with a larger denominator and a much larger modelled surface.
+
+### Token tax
+
+| Agent | Capped | Share |
+|---|---:|---:|
+| `job_orchestrator` | 44,309 | 0.6% |
+| `triager` | 88,821 | 1.3% |
+| `assigner` | 57,844 | 0.8% |
+| `mechanism_typist` | 362,107 | 5.2% |
+| `hunting_threat_modeller` | 1,945,435 | 28.1% |
+| `hunting_hunter` | 1,746,311 | 25.2% |
+| `pod_runner` | 2,302,123 | 33.3% |
+| `pod_triager` | 372,188 | 5.4% |
+| **Total** | **6,919,138** | **100%** |
+
+By phase: analysis 553,081 (8.0%), modelling 1,945,435 (28.1%), hunt authoring 1,746,311 (25.2%), pods 2,674,311 (38.7%).
+
+Against B.a the analysis block rose from 404,995 to 553,081, driven by a longer recon (seven jobs) and a larger L1 surface.
+The modeller doubled from 947,902 to 1,945,435, which is the price of 23 units instead of 5.
+
+### Segment analysis
+
+| Ratio | Value |
+|---|---:|
+| Capped per modelled unit | 300,832 |
+| Capped per stored threat | 247,112 |
+| Capped per confirmed pod | 576,595 |
+| Capped per identified ground truth | **2,306,379** |
+
+The last row is the honest headline: three identifications for the whole budget.
+
+The pod phase is the efficiency failure.
+55 pods produced 12 confirmations, 21.8%, against B.a's 23 of 33 (69.7%).
+The pods consumed 2,674,311 capped, so each confirmation cost 222,859 in pod spend alone and each watchdog terminal cost about 48,000 of wasted budget.
+
+Modelling 23 units was cheaper per unit than B.a (84,584 against 189,580) because most units are small.
+Coverage was therefore affordable; the hunt was not.
+
+### Budget outcome
+
+| Budget | Target | Actual | Outcome |
+|---|---:|---:|---|
+| Risk | 180 | **185** | **exceeded** |
+| Tokens | 7,000,000 | 6,919,138 | 98.8%, not exceeded |
+| Wall clock | 43,200 s | 42,332 s | operator stop 7m before the deadline |
+
+The risk budget was exceeded and the halt fired on `Service:operations-telemetry`.
+The token budget was not exceeded: at the observed burn the deadline would have fired first, and a deadline terminal is `timeout`, which the monitor defers instead of assessing.
+The operator stop at 07:48:56Z secured a `stopped` terminal with 80,862 tokens unspent.
+
+## Measurement findings
+
+The measurer judged execution quality on six criteria from the persisted evidence.
+
+| Criterion | Result |
+|---|---|
+| L0/L1 testable unit | 7 of 7 resolve above the 0.3 floor, **full core 2 of 7** (001, 007) |
+| Threat model direction | compatible direction for **4 of 7** (002, 003, 005, 007), sharpness 3 |
+| Hunter soundness | 69 specs, 55 ratified, 68 carry the seven-field procedure, sharp for 3 of 7 |
+| Pod quality | 55 sessions, 12 confirmations, 41 watchdog terminals, 38 with no interpretation |
+| Workflow adherence | **0.78**: modeller 0.88, hunter 0.75, pod 0.72 |
+| Token tax | 6,919,138 capped, 98.8% of the bound |
+
+### The L0 graph is an anonymous-view graph
+
+The 39 L0 endpoints are all anonymous recon GETs.
+The authenticated admin routes (`/api/admin/user`, `/api/admin/content/article`) and the injected read routes (`/api/search`, `/api/file`) never entered the graph.
+
+Expected-endpoint recall is therefore 3 of 11.
+Five of the seven ground truths score 0.667 on the L0/L1 axis for this reason alone, whatever their model quality.
+
+This is an analysis-layer cap, not a hunting defect.
+A post-auth crawl or an L1 endpoint seed is the repair.
+
+### A modelled vulnerability is not a hunted vulnerability
+
+The measurer reaches the same conclusion as the diagnoser from a different direction.
+`003` had a sharp, write-proven, risk-9 threat and produced no spec.
+
+The binding constraint is throughput and termination, not model capability.
+Pods do not conclude, the unit barrier serialises two-hour waves, and the risk halt arrives before the inbox drains.
+
+### The arm found real bugs outside the ground-truth set
+
+Twelve pod confessions do not match a ground truth.
+Manual judgement splits them into 8 duplicates of scored ground truths and **4 genuine non-GT findings**:
+
+- an anonymous `/actuator/httptrace` dump with 27 session identifiers and no challenge;
+- a replayed harvested `JSESSIONID` reaching admin JSON;
+- a login rate-limit bypass: 40 attempts, one principal, 1.13 s, no accounting;
+- a session identifier disclosed in a redirect `Location` header.
+
+The first two form a credible high-value chain.
+The benchmark does not cover the actuator and telemetry surface, so these are scope-tightness findings rather than false positives.
+
+The identified rate of 3 of 7 therefore understates the arm's output: on a coverage basis it produced four findings the suite does not score.
+
+### The deterministic measurement base under-reports
+
+`eval/measure_utm.py` was written for the pre-impact pipeline vocabulary, and every candidate-recall number it reports is an artifact in this arm:
+
+| Reported | Cause |
+|---|---|
+| `loop_candidates: 0` | globs `loop-*.yaml`, but the pipeline writes `threat-N.yaml` (28 threats missed) |
+| `spec_candidates: 0` | does not read `skill_concretised_procedure` (68 specs) |
+| `pod_confirmed: 5` | misses the GT-007 pod |
+| exact spec matches | unit naming (`RESTApi:api` vs `Service:book-search`) and no mass-assignment to IDOR mapping |
+
+Do not publish aggregate recall from `metrics.yaml` until this script is repaired.
+The impact metrics in this document are computed independently by `measure_iteration_c.py`, so they are unaffected.
+
+### Identity and deadline
+
+The instance worktree was dirty at `13ce0edb`: `providers.py` carries the live thinking-level patch, and the plan names `5df29930` as the measured code.
+The stamped sha does not describe the running code, so the arm's identity is the triple (`13ce0edb` + thinking patch + setup).
+
+The setup does not declare `budget_s`.
+The CLI flag supplied 43,200 s, so the run honoured the intended wall clock, but the plan's own 14,400 s default never applied.
+The setup should declare `budget_s` so the plan and the run agree without a flag.
+
+## Failure findings
+
+The diagnoser wrote one entry per `missed`/`partial` verdict.
+The four failures split cleanly: three are fault-binding defects at the modeller, and one is a hunt-dispatch failure caused by the budget.
+
+| Vuln | Verdict | Failure mode | Root cause |
+|---|---|---|---|
+| `001` | partial | `modeller_failed_unit-fault_binding` | `skill_defect` + `design_defect` |
+| `003` | missed | `hunter_notsufficient_tests_exploration` | `design_defect` + `implementation_defect` |
+| `004` | missed | `modeller_failed_unit-fault_binding` | `kb_coverage_gap` + `design_defect` |
+| `006` | missed | `modeller_failed_unit-fault_binding` | `skill_defect` + `design_defect` |
+
+### 001: the default credential was deferred, not missed
+
+`Service:sign-in` owns the only credential-verification path.
+Its completed model bound four faults: absent session regeneration at elevation, username enumeration, absent throttling, and identifier-scoped logout.
+None is weak-or-default credentials.
+
+The unit's own well-formedness note names the gap and defers it to `weak-credential-discovery`, but that class was never loaded for the unit.
+The unit registered a throwaway account to reach the success path, so `admin/123` was never submitted as a candidate.
+
+The knowledge exists: `weak-credential-discovery/default-credential-replay` mandates a default-pair submission on every acceptor.
+A `ReverseProxy` pod did submit `admin/123` and received 200 with result `admin`, but its spec was scoped to cleartext carriage, so the successful default login was recorded as corroboration and never as a finding.
+
+The design reinforces the miss: the pipeline's own auth bootstrap presents the ground-truth credential as legitimate material.
+
+Proposed issue: make a shipped default credential a mandatory fault on the sign-in unit.
+
+### 003: the threat was modelled correctly and never hunted
+
+This is the arm's most consequential failure, and it is not a modelling defect.
+
+`Service:article-management` completed at 22:03Z, bound `V-1 xss-stored`, and produced `threat-1` at risk 9.
+The model proves the channel end to end: a supplied fragment is stored verbatim and served unchanged to an anonymous reader, and an anonymous POST through the alternate spelling returned `保存成功`.
+
+No test spec was ever authored for it.
+`hunting/hunter/test-specs` holds 16 dispatch directories for exactly five units, and there is no `Service:article-management__threat-1` directory and no pod.
+At the stop, **12 of the 28 produced threat files were still in `produced/`**, the article threat among them.
+
+So batched hunting reached 5 of the 14 threat-bearing units before the budget ran out.
+The stored-XSS ground truth was available, correctly modelled, and never dispatched.
+
+Proposed issue: batched hunting reaches only five of 14 threat-bearing units, and the stored-XSS threat is never dispatched.
+
+### 004: no logging-sink JNDI class
+
+The ground truth is JNDI injection through a crafted username.
+The exploit registers `${jndi:rmi://...}` as the username, signs in, and requests `/api/admin/user`, where the vulnerable Log4j2 configuration logs the caller-controlled value and contacts the attacker's lookup service.
+
+Both owning units were modelled.
+`Service:register` produced two threats, both dispatched, and one identified `007`.
+`Service:user-administration` produced a credential-replacement threat.
+
+Neither unit carries a fault for a logging sink that resolves lookups.
+The knowledge base has no lookup-injection class, and the logging dependency was not inventoried as an attack surface.
+
+Proposed issue: add a logging-sink JNDI lookup class and inventory the logging dependency on the owning units.
+
+### 006: the namespace was closed on a 404
+
+The deployed handler is `@GetMapping("/api/file/**")`.
+It strips the prefix, URL-decodes the segment twice, joins it to the upload directory with no containment check, and returns bare 404 when the target is not a file.
+
+`Service:media-asset-serving` owns the namespace, loaded the right leaf (`traversal-read`), and carried the vulnerability at `ASSUMED`.
+It then produced **zero threats**, because its technical sharpening note declares "IT DOES NOT EXIST ON THE PUBLIC LISTENER": six shapes under `/api/file/` returned 404 with zero bytes, and the model read that as absence.
+
+The ground-truth payload is double-encoded (`..%252f..%252f..%252fetc%252fpasswd`).
+A single decode cannot reach `/etc/passwd`, so the 404s are consistent with the handler being present and the candidate being wrong.
+
+Proposed issue: traversal-read closes `/api/file/` as unmapped without a repeated-decoded candidate or an in-root control.
+
+### What the four share
+
+Three of the four needed knowledge the suite already carries or could carry: a class that exists but was not loaded (`001`), a class that does not exist (`004`), and a leaf that was loaded but closed on negative evidence (`006`).
+
+The fourth (`003`) needed no new knowledge at all.
+It needed the hunt to reach the threat, and the budget did not.
+
+## The promotion queue was the binding constraint
+
+The stored threats carry a risk score, and the floor of 0 promoted all 28 of them from 14 units.
+The budget drained 16 of them across 5 units.
+
+| Floor | Threats kept | Units kept | Dropped |
+|---:|---:|---:|---:|
+| 0 (as run) | 28 | 14 | 0 |
+| 2 | 25 | 11 | 3 |
+| 3 | 24 | 10 | 4 |
+| 4 | 18 | 9 | 10 |
+| 5 | 16 | 8 | 12 |
+| 8 | 13 | 8 | 15 |
+
+Risk histogram across the 28 threats: 1 (x3), 2 (x1), 3 (x6), 4 (x2), 6 (x3), 8 (x4), 9 (x4), 12 (x3), 16 (x2).
+
+`white-jotter-003`'s stored-XSS threat sits at **risk 9**.
+Every floor up to 9 keeps it.
+A floor of 5 would have kept 16 threats over 8 units, which is exactly the spec volume the budget did drain, and it would have dropped 12 threats at risk 4 or below.
+
+So the arm did not fail for lack of budget or lack of modelling.
+It failed because the queue was unfiltered: the hunter spent its whole allocation on 16 of 28 threats, and the highest-value undrained one was the ground truth the arm was meant to test.
+
+The arm therefore supplies the missing half of the promotion argument.
+Iteration C proves that coverage at the modeller is cheap and that an inert floor converts coverage into an undrainable queue.
+
+## Workflow and contract findings
+
+Seven defects surfaced in the harness while C ran.
+None is caused by the impact system.
+Two of them cost verdict quality, not just time: the unfiltered promotion queue and the pod watchdog rate.
+
+### The lineage split broke the diagnosis dispatch
+
+The harness checkout (`/opt/polymerhus-dev`, branch `dev`) and the arm checkout (`/opt/polymerhus-dev/eval/instances/eval-server-1`) are separate worktrees on separate lineages.
+
+The arm setup now parses correctly because the plugin reads `EVAL_ORCHESTRATOR_PYTHONPATH`.
+The prompt path does not: the monitor's diagnosis dispatch passed `eval/prompts/diagnoser.md` as a relative path, which resolved against the harness checkout where that file is absent or different.
+
+The monitor bounded its retries and escalated with a named failure instead of hot-looping or editing code, which is the specified behaviour.
+`close-verify` then repaired the node at the configuration layer: it re-ran the assessment (attempt 2, identical verdicts) and re-dispatched the diagnoser with the absolute instance path.
+
+The trial record shows both assessment attempts and no failure:
+
+| Field | Value |
+|---|---|
+| `assessment.status` | `present` |
+| `assessment.attempts` | 2 (`07:55:23`, `08:11:35`) |
+| `assessment.failure` | null |
+| `diagnosis` | filled by the re-dispatch |
+
+Recommended fix, in preference order:
+
+1. Launch the eval orchestrator with `--dir` at the instance worktree, so relative prompt paths resolve in the arm lineage.
+2. Make `assessment.launch_message` and the diagnosis equivalent use `request.prompt` (absolute) instead of the relative `eval/prompts/...` string.
+3. Align the canonical harness `eval/` with the arm sha.
+
+This is the second occurrence of the same split: the first broke `next_target` with `unknown field(s): hunting`.
+
+### The deadline terminal is not assessable
+
+`SUCCESS_TERMINALS` in `eval/orchestrator/monitor.py` is `{complete, stopped}`, and a trial that reaches its wall-clock deadline writes `timeout`.
+The monitor therefore defers a deadline-bounded run and never assesses it, even when the phases completed cleanly and the evidence is intact.
+
+C was 28 minutes from its 12h deadline at 6.86M of a 7M cap.
+Continuing would have produced `timeout` and skipped assessment, diagnosis, and measurement.
+The operator stopped the project at 07:48:56Z so the trial wrote `stopped`.
+
+This is a contract gap: a wall-clock-bounded arm cannot be assessed without an operator intervention.
+Two candidate repairs are for the configuration or code owner to choose:
+
+- treat `timeout` with a completed phase set as assessable, as the surfer already treats `interrupted`; or
+- have the deadline write `stopped` with a `deadline` cause on the phase, parallel to the budget stop.
+
+### The hunting status surface hides live pods
+
+`GET /projects/{id}/hunting/{run_id}` reported `live_hunts: 0` and `live_units: []` for the whole pod phase, while 14 to 15 pods were running and exporting.
+
+The monitor's batch-width assertion could therefore not fire from the status field.
+Width has to be inferred from pod directory mtimes or resume files, which is what the final measurement did.
+
+A status surface that reports zero live work while a batch is in flight also hides a stuck batch from an operator.
+
+### Recording and coupling defects
+
+Three smaller defects were found while measuring the arm:
+
+- the driver's completion marker printed `iteration B.a driver done` for iteration C, because the line was copied from the B.a driver; it is corrected in `drive_iteration_c.sh`;
+- 69 of 69 specs store `provenance.threat_id` as a bare `threat-1` instead of the qualified `ReverseProxy__threat-1`, so the threat-to-spec join exists only in the directory path;
+- only 2 pod note records exist for 55 pods, and several modeller phase notes are missing, which forces the measurement to reconstruct phase order from the artifacts.
+
+### The batch width is not asserted anywhere
+
+`pod_batch_size: 3` is frozen into the run record and honoured by the hunter, but no component checks the resulting concurrency against the host capacity.
+The observed peak was 15 concurrent pods on a host that B.a exercised with at most 5.
+
+The failure mode is silent: pods dispatch, exceed the agent-container capacity, and return `pod-watchdog-timeout` with `iterations: 1`.
+The run pays for each one.
+
+## Learnings
+
+1. **Coverage is the discovery variable, and it works.**
+   Raising the halt from 110 to 180 took the modelled surface from 5 to 23 units and discovery from 1 to 3 identified.
+   Two of the three identifications sit in units the 110 halt never reached.
+   The discovery gain is a coverage effect, not a per-threat quality effect.
+
+2. **Coverage without a promotion floor cannot be converted.**
+   The budget could drain 16 of the 28 promoted threats.
+   `003` was correctly modelled and never specced, so the arm lost a likely fourth identification to queue length rather than to knowledge.
+   This is the first direct evidence for the promotion gate: the floor is not a cost optimisation, it is what lets the queue fit the budget.
+
+3. **`green_share` measures placeholder dilution, not impact quality.**
+   All 28 damage-bearing rows are green by the schema invariant, so `green_share` equals 1 minus the placeholder rate.
+   On a full-surface run the placeholder rate is 45.1%, and the 90% gate is unreachable because 10 of 23 units carry no damage of their own.
+   The metric cannot separate "this unit has no damage surface" from "the modeller evaded the impact question", and the gate punishes the honest case.
+   Recommendation: keep `severe_share` as the quality gate and report the placeholder rate separately with per-unit justification, or scope `green_share` to units that declare a damage surface.
+
+4. **Batch width 3 is unsafe on one agent container.**
+   41 of 55 pods returned `pod-watchdog-timeout` (74.5%) against 1 of 33 at batch 1.
+   The failures carry `iterations: 1` and no interpretation, so each one spends budget and yields nothing.
+   Throughput was lower than batch 1 despite the wider dispatch.
+
+5. **The risk halt is sensitive to intake ordering.**
+   The page layer ran before the back-office REST surfaces and made the intermediate total look saturated at 124.
+   The crossing came from `RESTApi:actuator-management` (23) and `Service:operations-telemetry` (24), which sit late in the order.
+   A halt that is meant to bound cost should not depend on which layer happens to sort earlier.
+
+6. **The wall clock, not the token cap, is the real bound at this burn.**
+   C spent 98.8% of its cap only because it was stopped 7 minutes before the deadline.
+   The projected spend at the deadline was 6.6M to 6.7M, and a deadline terminal is `timeout`, which the monitor will not assess.
+
+7. **Three of the four failures are fault-binding, and two of those had the knowledge available.**
+   `001` and `006` are discipline failures: a class that exists but was not loaded, and a namespace closed on single-decode negative evidence.
+   Only `004` is a genuine knowledge-base gap.
+
+8. **The L0 graph is an anonymous-view graph.**
+   All 39 L0 endpoints are anonymous recon GETs, so authenticated and injected routes are absent and five of seven ground truths cap at 0.667 on the unit-quality axis.
+   Unit quality cannot be judged above that cap until recon seeds an authenticated view.
+
+9. **The deterministic measurement base lags the pipeline.**
+   `measure_utm.py` misses the 28 `threat-*.yaml` files, the 68 procedures, the GT-007 pod, and four exact spec matches.
+   Every candidate-recall number from `metrics.yaml` is an artifact in this arm, and the impact metrics here were computed independently for that reason.
+
+## Recommendation
+
+**Do not adopt iteration C as the new default.**
+Adopt its analysis block and the higher risk halt, and keep its impact schema.
+Change the promotion floor and the batch width before the next arm.
+
+Iteration D should be a single-variable arm:
+
+| Knob | C | D |
+|---|---|---|
+| `risk_threshold` | 180 | 180 |
+| `promotion_risk_threshold` | 0 | **4** |
+| `pod_batch_size` | 3 | **1** |
+| Token cap | 7M | 7M |
+| Analysis thinking | max | max |
+
+Rationale:
+
+- The floor of 4 keeps 18 threats over 9 units, which is within the volume the budget drained, and it keeps `003` at risk 9.
+- Batch 1 removes the 74.5% pod failure mode and restores the confirmation rate B.a measured at 69.7%.
+- Holding the halt at 180 preserves the coverage that produced the discovery gain, so D isolates the gate.
+
+If D identifies `003`, the promotion gate is proven end to end.
+If D misses `003` with the threat still drained, the failure is in the hunter's payload work, not in the budget.
+
+There is a second, cheaper path that D should also exercise: resume instead of stop.
+The surfer already owns recovery for a deferred trial, and a `stopped` run that still holds dispatchable produced threats could resume at the hunting node rather than end.
+That would drain the 12 undrained threats without changing the promotion policy.
+The floor is the structural fix; resume is the operational one.
+
+Before D, repair the harness defects recorded above, in this order:
+
+1. the deadline terminal contract (`timeout` is not assessable);
+2. a `stopped` run with dispatchable produced threats is not a success: resume it, or refuse to close it;
+3. the prompt-path lineage split;
+4. the `live_hunts` status field and a concurrency assertion against host capacity;
+5. `measure_utm.py`: read `threat-*.yaml`, `skill_concretised_procedure`, the GT-007 pod, and map unit names and mass assignment correctly;
+6. refuse a trial when `worktree_dirty` is true or the stamped sha disagrees with the plan;
+7. declare `budget_s` in the setup so the plan and the run agree without a CLI flag.
+
+## Evidence appendix
+
+- Eval change: `eval/orchestrator/setup.py`, `eval/orchestrator/trial.py`, `eval/orchestrator/api.py`, `eval/orchestrator/cli.py`, `tests/eval/test_orchestrator_hunting_config.py`
+- Setup: `eval/setups/white-jotter-iteration-c.yaml`
+- Driver: `drive_iteration_c.sh`
+- Monitor: `monitor_iteration_c.py`
+- Measurement: `measure_iteration_c.py`
+- Baselines, on the `hunt-enhancement-trunk` branch in the `utm-hunt-enhancement` worktree:
+  `docs/experiments/hunt-enhancement/iteration-b-white-jotter-2026-10-25/RESULTS.md` and
+  `docs/experiments/hunt-enhancement/iteration-b-white-jotter-2026-10-25/ITERATION-BA.md`

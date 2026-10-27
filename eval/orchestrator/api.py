@@ -189,6 +189,13 @@ def put_settings(project_id: str, recon: Mapping) -> ApiCall:
     return ApiCall("PUT", f"/projects/{project_id}/settings", {"recon": dict(recon)})
 
 
+def put_hunting_config(project_id: str, hunting: Mapping) -> ApiCall:
+    """The project's frozen hunting policy (pipeline sync, pod batch, promotion
+    floor, cumulative risk halt). A partial body deep-merges, so only the keys
+    the setup set are sent."""
+    return ApiCall("PUT", f"/projects/{project_id}/hunting/config", dict(hunting))
+
+
 def read_auth(project_id: str) -> ApiCall:
     return ApiCall("GET", f"/projects/{project_id}/auth")
 

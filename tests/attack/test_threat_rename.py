@@ -36,7 +36,7 @@ def test_a_completed_model_stores_threats_and_emits_threat_files(tmp_path):
     )
 
     model = store.read_model(PROJECT, UNIT)
-    assert model["schema_version"] == 3
+    assert model["schema_version"] == 4
     assert [threat["id"] for threat in model["threats"]] == ["threat-1"]
     assert "loops" not in model
 

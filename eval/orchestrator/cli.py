@@ -671,6 +671,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         data_dir=data_dir,
         auth_surface=auth_surface,
         recon_jobs=run.target_config.recon_jobs,
+        hunting=run.hunting.payload(),
         preloaded_hunting_artifacts=run.preloaded_hunting_artifacts,
         token_budget=run.token_budget,
         target_run_id=target_run_id,
@@ -822,6 +823,13 @@ def _assessment_data_root(args) -> Path:
     return _resolve_data_root(args)
 
 
+def _require_impact_review() -> bool:
+    """The assessment's review gate, configurable without a code change."""
+    return os.environ.get("EVAL_REQUIRE_IMPACT_REVIEW", "").lower() in (
+        "1", "true", "yes",
+    )
+
+
 def _plan_request(args, trial_dir: Path) -> assessment.AssessmentRequest:
     """A read-free request for plan mode: explicit paths or placeholders."""
     return assessment.AssessmentRequest(
@@ -830,6 +838,7 @@ def _plan_request(args, trial_dir: Path) -> assessment.AssessmentRequest:
         ground_truth=Path(args.ground_truth) if args.ground_truth else Path("<ground-truth>"),
         data_root=Path(args.data_root) if args.data_root else Path("<data-root>"),
         destination=trial_dir / verdicts.VERDICTS_FILENAME,
+        require_impact_review=_require_impact_review(),
     )
 
 
@@ -843,6 +852,7 @@ def _assessment_request(
         data_root=_assessment_data_root(args),
         destination=trial_dir / verdicts.VERDICTS_FILENAME,
         trace_id=trace_id,
+        require_impact_review=_require_impact_review(),
     )
 
 

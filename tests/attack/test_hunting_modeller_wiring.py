@@ -650,9 +650,6 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
                     "note_name": "wellformedness", "kind": "wellformedness",
                     "body": "every threat checked",
                 })
-                self._surface["hunts_store"].invoke({
-                    "cmd": "write", "state": ModelState.IMPACT_ASSESSED.value,
-                    "sections": modeller_gate_payloads()[ModelState.IMPACT_ASSESSED]})
                 return None
             self._surface["hunts_store"].invoke({
                 "cmd": "write", "state": turn_input.state.value,

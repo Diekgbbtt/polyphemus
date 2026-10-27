@@ -1,0 +1,66 @@
+# Iteration C - white-jotter, impact assessment promoted to a first-class citizen.
+#
+# One target, one fresh project, 7M capped tokens, full recon -> analysis ->
+# hunting. The recon subset is the documented single-host contract plus the two
+# active-parameter brute-force jobs the arm adds.
+#
+# The arm changes the design, not just a knob:
+#   - the threat modeller writes an explicit `impact_assessment` section with a
+#     disposition per row and a CIA vector per damage-bearing threat;
+#   - the primary metric is the CIA red/green share over impact rows, and the
+#     retired class-based green share is a continuity note only;
+#   - the hunter receives the impact block as context.
+#
+# The frozen hunting policy this arm pins:
+#   pipeline_sync            batched
+#   pod_batch_size           3
+#   promotion_risk_threshold 0     (stored, inclusive; 0 promotes every threat)
+#   risk_threshold           180   (cumulative halt, up from 110 in iteration B)
+#
+# The promotion floor is deliberately inert: this is the control arm for the
+# impact system, so every produced threat reaches a hunter and the promotion
+# filter is proven wired without being exercised.
+#
+# Instance `.env` for this arm:
+#   HUNT_RISK_THRESHOLD=180
+#   SKILL_EVOLUTION_ENABLED=0
+#   LLM_HUNTING_THREAT_MODELLER=opencode-go:deepseek-v4.1-flash
+#   LLM_HUNTING_HUNTER=opencode-go:deepseek-v4.1-flash
+#   LLM_ANALYSER=opencode-go:deepseek-v4.1-flash
+#
+# The comparison baselines are iteration B and iteration B.a under
+# docs/experiments/hunt-enhancement/iteration-b-white-jotter-2026-10-25/.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: auth-bootstrap
+    status: incomplete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-1
+    env_file: eval-server-1/.env
+    targets:
+      - target_key: webexploitbench/white-jotter
+        target_id: white-jotter-1
+        target_run_id: iterc-white-jotter
+        token_budget: 7000000
+        target_config:
+          operator_kb: /root/eval-dd/data/white-jotter/operator_kb.md
+          data_dir: /root/eval-dd/data/white-jotter
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun, ffuf, kiterunner]
+        hunting:
+          pipeline_sync: batched
+          pod_batch_size: 3
+          promotion_risk_threshold: 0
+          risk_threshold: 180

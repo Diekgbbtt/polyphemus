@@ -164,6 +164,10 @@ class TrialConfig:
     auth_surface: bool = False
     # The optional recon job subset; empty means the platform default phase plan.
     recon_jobs: tuple[str, ...] = ()
+    # The frozen hunting policy applied to the project at bootstrap, before recon
+    # launches: `pipeline_sync`, `pod_batch_size`, `promotion_risk_threshold`,
+    # `risk_threshold`. Empty means every project default stands.
+    hunting: Mapping[str, object] | None = None
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     # The trial-wide token budget (capped tokens: new output + uncached input)
     # and its carried baseline: None budget means no usage call at all; None
@@ -468,6 +472,14 @@ class Trial:
             steps.append(
                 TrialPlanStep("settings", calls=(api.put_settings(project, settings),))
             )
+            if cfg.hunting:
+                steps.append(
+                    TrialPlanStep(
+                        "hunting config",
+                        calls=(api.put_hunting_config(project, cfg.hunting),),
+                        note="frozen before the hunting run opens",
+                    )
+                )
             if cfg.auth_surface and cfg.data_dir is not None:
                 steps.append(
                     TrialPlanStep(
@@ -694,6 +706,10 @@ class Trial:
                 # the batched/post-recon path is obsolete, so it is always on.
                 settings["streaming_analysis"] = cfg.streaming_analysis
                 self._call(api.put_settings(project_id, settings))
+                # The hunting policy is frozen at the hunting run's start, so it
+                # must land before recon launches; a partial body deep-merges.
+                if cfg.hunting:
+                    self._call(api.put_hunting_config(project_id, cfg.hunting))
 
             # The pre-built data dependencies land by direct file write through
             # the multipart endpoints (a MOUNT the agent finds at startup), then

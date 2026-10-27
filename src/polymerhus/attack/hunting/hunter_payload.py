@@ -167,6 +167,20 @@ def materialise_hunter_payload(
     vulnerability = _by_id(model.get("vulnerabilities"), threat.get("vulnerability_ref")) or {}
     unit_id = str(model.get("unit_id") or threat_file.get("unit_id") or "")
     unit_kind = str(model.get("unit_kind") or threat_file.get("unit_kind") or "")
+    impact_block = dict(threat_file.get("impact") or {})
+    capability_chain = []
+    for step in impact_block.get("chain") or []:
+        if not isinstance(step, Mapping):
+            continue
+        resolved = step.get("resolved") or {}
+        row = resolved.get("row") or {}
+        capability_chain.append({
+            "capability": step.get("capability"),
+            "precursor": step.get("precursor"),
+            "unit_id": resolved.get("unit_id"),
+            "capability_text": row.get("capability"),
+            "damage": row.get("damage"),
+        })
     return {
         "dispatch_id": dispatch_id,
         "run_id": str(threat_file.get("run_id") or model.get("run_id") or ""),
@@ -174,7 +188,8 @@ def materialise_hunter_payload(
         "unit_id": unit_id,
         "unit_kind": unit_kind,
         "threat": threat,
-        "impact": dict(threat_file.get("impact") or {}),
+        "impact": impact_block,
+        "capability_chain": capability_chain,
         "technical_sharpening": {
             "interface_agreements": interface_agreements,
             "control_flows": _as_list(sharpening.get("control_flows")),

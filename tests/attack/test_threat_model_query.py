@@ -65,7 +65,7 @@ def _seed_in_progress(
     web_vulnerability_class: str = "session-management",
     statement: str = "The handler assumes the session is fresh after login.",
     fault_label: str = "session reuse across the login boundary",
-    disposition: str = "threat",
+    disposition: str = "precursor",
     damage: str = (
         "The attacker reads live session material from the process dump."),
 ) -> None:
@@ -73,19 +73,14 @@ def _seed_in_progress(
     gate writes carry the assumptions, the vulnerabilities, and the impact rows
     with their precursor entities. A produced model may be partial, and the
     query must still read it."""
-    precursor = {
-        "id": "p-1",
-        "capability": capability,
-        "procedure": procedure,
-        "evidence_refs": list(evidence_refs),
-    }
     row = {
         "id": "ia-1",
         "vulnerability_ref": "v-1",
         "disposition": disposition,
         "damage": damage,
-        "precursor_refs": ["p-1"],
-        "capability_path": ["p-1"] if disposition == "threat" else [],
+        "capability": capability,
+        "capability_id": "p-1",
+        "capability_path": [],
         "evidence_refs": list(evidence_refs),
     }
     store.write_sections(project, unit, ModelState.TRUST_ASSUMPTIONS_WRITTEN, {
@@ -115,7 +110,6 @@ def _seed_in_progress(
     }, run_id=PRIOR_RUN)
     store.write_sections(project, unit, ModelState.IMPACT_ASSESSED, {
         "impact_assessment": [row],
-        "precursors": [precursor],
     }, run_id=PRIOR_RUN)
 
 
@@ -171,17 +165,17 @@ def test_the_query_applies_and_across_filters_and_matches_each_value(tmp_path):
 
     result = _query(store, kind="precursor", filters=[
         {"path": "capability", "regex": "SESSION|CREDENTIAL", "flags": "i"},
-        {"path": "procedure", "regex": "dump", "flags": ""},
+        {"path": "damage", "regex": "dump", "flags": ""},
     ])
 
     assert result["count"] == 1
     assert result["truncated"] is False
     match = result["matches"][0]
     assert match["unit_id"] == SIGN_IN
-    assert match["record_id"] == "p-1"
+    assert match["record_id"] == "ia-1"
     assert match["matched"] == [
         {"path": "capability", "value": SESSION_CAPABILITY},
-        {"path": "procedure", "value": SESSION_PROCEDURE},
+        {"path": "damage", "value": "The attacker reads live session material from the process dump."},
     ]
 
 
@@ -200,22 +194,18 @@ def test_the_flags_select_case_sensitivity(tmp_path):
 
 
 def test_the_star_traverses_a_list_of_records(tmp_path):
-    """`impact.precursors` is a list of dicts; `*` iterates it and the filter
-    matches the capability of the one element that carries it."""
+    """`impact.evidence_refs` is a list; `*` iterates it and matches one ref."""
     store = ThreatModelStore(root_dir=tmp_path)
     _seed_completed(store)
 
     result = _query(store, kind="threat", filters=[
-        {"path": "impact.precursors.*.capability", "regex": "tenant",
-         "flags": "i"}])
+        {"path": "threat.evidences.*.ref", "regex": "catalogue", "flags": "i"}])
 
     assert result["count"] == 1
     match = result["matches"][0]
     assert match["unit_id"] == CATALOGUE
     assert match["record_id"] == "threat-1"
-    assert match["matched"] == [{
-        "path": "impact.precursors.*.capability", "value": ITEM_CAPABILITY,
-    }]
+    assert match["matched"][0]["path"] == "threat.evidences.*.ref"
 
 
 def test_a_missing_path_is_no_match_not_a_rejection(tmp_path):
@@ -356,7 +346,7 @@ def test_the_query_excludes_the_bound_unit_unless_a_unit_id_filter_names_it(
 
     assert [match["unit_id"] for match in excluded["matches"]] == [ADMIN]
     assert [match["unit_id"] for match in named["matches"]] == [SIGN_IN]
-    assert named["matches"][0]["record_id"] == "p-1"
+    assert named["matches"][0]["record_id"] == "ia-1"
 
 
 def test_the_query_reads_produced_and_consumed_and_returns_the_state(tmp_path):
@@ -369,12 +359,15 @@ def test_the_query_reads_produced_and_consumed_and_returns_the_state(tmp_path):
     _seed_completed(store)
     assert store.consume_threat(PROJECT, CATALOGUE, "threat-1") is True
 
-    result = _query(store, kind="precursor", filters=[
-        {"path": "capability", "regex": "session|item", "flags": "i"}])
+    precursor = _query(store, kind="precursor", filters=[
+        {"path": "capability", "regex": "session", "flags": "i"}])
+    threat = _query(store, kind="threat", filters=[
+        {"path": "impact.capability", "regex": "item", "flags": "i"}])
 
-    states = {match["unit_id"]: match["state"] for match in result["matches"]}
-    assert states == {
+    assert {match["unit_id"]: match["state"] for match in precursor["matches"]} == {
         SIGN_IN: ModelState.IMPACT_ASSESSED.value,
+    }
+    assert {match["unit_id"]: match["state"] for match in threat["matches"]} == {
         CATALOGUE: ModelState.COMPLETED.value,
     }
 
@@ -402,7 +395,8 @@ def test_the_matched_pairs_and_the_summary_shape(tmp_path):
     the disposition, the summary, the state, the evidence refs, and the
     matched path/value pairs - never a full model."""
     store = ThreatModelStore(root_dir=tmp_path)
-    _seed_completed(store)
+    _seed_in_progress(store, unit=SIGN_IN, capability=ITEM_CAPABILITY,
+                      procedure=ITEM_PROCEDURE)
 
     result = _query(store, kind="precursor", filters=[
         {"path": "capability", "regex": f"^{ITEM_CAPABILITY}$"}])
@@ -414,10 +408,10 @@ def test_the_matched_pairs_and_the_summary_shape(tmp_path):
     }
     assert match["kind"] == "precursor"
     assert match["label"] == ITEM_CAPABILITY
-    assert match["summary"] == ITEM_PROCEDURE
-    assert match["disposition"] is None
+    assert match["summary"] == "The attacker reads live session material from the process dump."
+    assert match["disposition"] == "precursor"
     assert match["web_vulnerability_class"] == ""
-    assert match["evidence_refs"] == ["GET /catalogue?id=2"]
+    assert match["evidence_refs"] == ["exec:api-35"]
     assert match["matched"] == [
         {"path": "capability", "value": ITEM_CAPABILITY}]
     assert "precursors" not in match
@@ -452,17 +446,15 @@ def test_each_kind_reads_its_view(tmp_path):
     assert impact["summary"] == ITEM_DAMAGE
 
 
-def test_the_threat_view_merges_the_threat_file_with_the_impact_row_and_the_precursors(
-        tmp_path):
-    """The threat view is the threat file plus the model's impact row
-    (`precursor_refs`) and its precursor entities, so a filter can name any of
-    the three sources."""
+def test_the_threat_view_merges_the_threat_file_with_the_impact_row(tmp_path):
+    """The threat view is the threat file plus the model's impact row, so a
+    filter can name the capability, its key, and the damage."""
     store = ThreatModelStore(root_dir=tmp_path)
     _seed_completed(store)
 
     result = _query(store, kind="threat", filters=[
-        {"path": "impact.precursor_refs", "regex": "^p-1$"},
-        {"path": "impact.precursors.*.procedure", "regex": "identifier"},
+        {"path": "impact.capability", "regex": "tenant"},
+        {"path": "impact.capability_id", "regex": "::p-1$"},
         {"path": "impact.damage", "regex": "another tenant's item"},
     ])
 
@@ -473,8 +465,8 @@ def test_the_threat_view_merges_the_threat_file_with_the_impact_row_and_the_prec
     assert match["disposition"] == "threat"
     assert match["summary"] == ITEM_DAMAGE
     assert [pair["path"] for pair in match["matched"]] == [
-        "impact.precursor_refs",
-        "impact.precursors.*.procedure",
+        "impact.capability",
+        "impact.capability_id",
         "impact.damage",
     ]
 
@@ -492,6 +484,6 @@ def test_the_limit_truncates_and_reports_it(tmp_path):
     assert capped["count"] == 1
     assert capped["truncated"] is True
     assert len(capped["matches"]) == 1
-    assert full["count"] == 3
+    assert full["count"] == 2
     assert full["truncated"] is False
-    assert len(full["matches"]) == 3
+    assert len(full["matches"]) == 2

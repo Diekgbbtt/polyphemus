@@ -90,13 +90,16 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
         "programming_fault", "canonical_class", "web_vulnerability_class",
         "evidence", "likelihood", "likelihood_rationale",
         "vulnerability_rationale", "confidence", "target_context", "impact",
+        "capability_chain",
     }
     assert payload["dispatch_id"] == f"{UNIT_NAME}__threat-1"
     assert payload["threat_id"] == "threat-1"
     assert payload["impact"]["damage"] == (
         "An anonymous caller reads another tenant's item from the catalogue database."
     )
-    assert payload["impact"]["capability_path"] == ["p-1"]
+    assert payload["impact"]["capability_path"] == []
+    assert payload["impact"]["capability"] == "read another tenant's item"
+    assert payload["capability_chain"] == []
     assert payload["unit_id"] == UNIT
     assert payload["unit_kind"] == "service"
     assert payload["threat"]["id"] == "threat-1"
@@ -1091,9 +1094,7 @@ def _zero_threat_turns():
         "drop_probe": "a second tenant's item id returning that item",
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
-    payloads[ModelState.IMPACT_ASSESSED] = {
-        "impact_assessment": [], "precursors": [],
-    }
+    payloads[ModelState.IMPACT_ASSESSED] = {"impact_assessment": []}
     return ScriptedModellerTurns(payloads=payloads)
 
 
@@ -1113,7 +1114,7 @@ def _produce_zero_threat_model(store, *, unit_id=UNIT):
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
     payloads[ModelState.IMPACT_ASSESSED] = {
-        "impact_assessment": [], "precursors": [],
+        "impact_assessment": [],
     }
     for state in ModelState:
         store.write_sections(PROJECT, unit_id, state, payloads[state], run_id=RUN)

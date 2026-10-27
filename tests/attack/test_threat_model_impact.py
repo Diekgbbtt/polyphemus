@@ -81,13 +81,13 @@ def threat(*, likelihood=Likelihood.MEDIUM, impact_value=None,
 
 def test_the_seven_states_wire_their_gate_sections():
     """S2 section 5: seven states, each with the section(s) its gate writes."""
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION == 4
     assert [state.value for state in ModelState] == [
         "UNIT_TECHNICAL_SHARP",
-        "PRIOR_ART",
         "TRUST_MODELLED",
         "TRUST_ASSUMPTIONS_WRITTEN",
         "VULNERABILITIES_WRITTEN",
+        "PRIOR_ART",
         "IMPACT_ASSESSED",
         "COMPLETED",
     ]
@@ -97,14 +97,15 @@ def test_the_seven_states_wire_their_gate_sections():
         ModelState.TRUST_MODELLED: ("trust_model",),
         ModelState.TRUST_ASSUMPTIONS_WRITTEN: ("assumptions",),
         ModelState.VULNERABILITIES_WRITTEN: ("vulnerabilities",),
-        ModelState.IMPACT_ASSESSED: ("impact_assessment", "precursors"),
+        ModelState.IMPACT_ASSESSED: ("impact_assessment",),
         ModelState.COMPLETED: ("threats",),
     }
 
 
-def test_the_model_carries_the_assessment_the_precursors_and_the_prior_art():
-    """S2 section 3: the sections exist on the model and the row holds exactly
-    the ratified fields; the damage text moved off the CIA vector."""
+def test_the_row_carries_a_first_class_capability_and_the_disposition_is_precursor():
+    """The capability is first class on every row; the placeholder disposition
+    is retired and a legacy document still reads."""
+    assert SCHEMA_VERSION == 4
     assert set(UnitThreatModel.model_fields) >= {
         "prior_art", "impact_assessment", "precursors",
     }
@@ -117,12 +118,25 @@ def test_the_model_carries_the_assessment_the_precursors_and_the_prior_art():
         "vulnerability_ref",
         "disposition",
         "damage",
-        "precursor_refs",
+        "capability",
+        "capability_id",
         "capability_path",
         "evidence_refs",
+        "precursor_refs",
     }
     assert ImpactDisposition.THREAT.value == "threat"
-    assert ImpactDisposition.PLACEHOLDER.value == "placeholder"
+    assert ImpactDisposition.PRECURSOR.value == "precursor"
+    assert "PLACEHOLDER" not in ImpactDisposition.__members__
+    row = ImpactAssessment(
+        id="IA-1",
+        vulnerability_ref="V-1",
+        disposition="placeholder",
+        damage="no end damage",
+        capability="read the upload directory",
+        capability_id="P-1",
+    )
+    assert row.disposition is ImpactDisposition.PRECURSOR
+    assert row.capability == "read the upload directory"
 
 
 def test_the_threat_references_one_assessment_and_its_precursors():
@@ -132,6 +146,41 @@ def test_the_threat_references_one_assessment_and_its_precursors():
     assert set(Impact.model_fields) == {
         "confidentiality", "integrity", "availability",
     }
+
+
+def test_the_threat_maps_each_required_capability_to_its_precursor():
+    """The enabling list is an ordered pair: required capability, provider."""
+    entity = Threat(
+        fault_ref="F-1",
+        vulnerability_ref="V-1",
+        canonical_class="fixation",
+        web_vulnerability_class="session-management",
+        likelihood=Likelihood.HIGH,
+        likelihood_rationale="proven write",
+        risk_factors=RiskFactors(
+            attack_vector=AttackVector.NETWORK,
+            attack_requirements=AttackRequirements.NONE,
+            privileges_required=PrivilegesRequired.NONE,
+            complexity=Complexity.LOW,
+        ),
+        confidence=Confidence.OBSERVED,
+        evidences=[Evidence(kind=EvidenceKind.PROBE, ref="probe:1", detail="")],
+        impact_ref="IA-1",
+        enabling_precursors=[
+            ("ReverseProxy::P-5", "ReverseProxy::P-5"),
+            ("Service:sign-in::P-8", None),
+        ],
+        impact=impact(ImpactLevel.HIGH, ImpactLevel.HIGH),
+    )
+    assert entity.enabling_precursors == [
+        ("ReverseProxy::P-5", "ReverseProxy::P-5"),
+        ("Service:sign-in::P-8", None),
+    ]
+
+
+def test_a_legacy_enabling_id_list_reads_as_a_self_provided_chain():
+    entity = threat()
+    assert entity.enabling_precursors == [("P-1", "P-1")]
 
 
 def test_the_metric_weights_are_the_ratified_values():
