@@ -589,6 +589,7 @@ def test_the_measurement_writes_the_impact_block_beside_the_existing_fields(
 def test_the_v4_impact_block_counts_capabilities_and_applies_the_review():
     models = [{
         "schema_version": 4,
+        "unit_id": "Service:test",
         "impact_assessment": [
             {
                 "id": "IA-1",
@@ -613,8 +614,11 @@ def test_the_v4_impact_block_counts_capabilities_and_applies_the_review():
         }],
     }]
     review = {
-        "scope": {"IA-1": "in", "IA-2": "in"},
-        "rows": {"IA-1": "sufficient", "IA-2": "under_mined"},
+        "scope": {"Service:test::IA-1": "in", "Service:test::IA-2": "in"},
+        "rows": {
+            "Service:test::IA-1": "sufficient",
+            "Service:test::IA-2": "under_mined",
+        },
     }
 
     metric = measure_utm.impact_metric(models, [], impact_review=review)
@@ -625,3 +629,40 @@ def test_the_v4_impact_block_counts_capabilities_and_applies_the_review():
     assert metric["red"] == 1
     assert metric["capability_rows"] == 2
     assert metric["green_share"] == 0.5
+
+
+def test_the_review_labels_do_not_collide_across_units():
+    """Two units both name a row IA-1; the label must resolve by unit."""
+    def unit(name, label):
+        return {
+            "schema_version": 4,
+            "unit_id": name,
+            "impact_assessment": [{
+                "id": "IA-1",
+                "disposition": "threat",
+                "capability": "read",
+                "capability_id": "P-1",
+            }],
+            "threats": [{
+                "impact_ref": "IA-1",
+                "impact": {
+                    "confidentiality": "high",
+                    "integrity": "none",
+                    "availability": "none",
+                },
+            }],
+        }
+
+    review = {
+        "scope": {"Service:a::IA-1": "in", "Service:b::IA-1": "out"},
+        "rows": {"Service:a::IA-1": "sufficient", "Service:b::IA-1": "sufficient"},
+    }
+
+    metric = measure_utm.impact_metric(
+        [unit("Service:a", "in"), unit("Service:b", "out")], [],
+        impact_review=review,
+    )
+
+    assert metric["green"] == 2
+    assert metric["red"] == 1
+    assert abs(metric["green_share"] - 2 / 3) < 1e-4

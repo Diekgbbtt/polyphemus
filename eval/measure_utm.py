@@ -766,8 +766,8 @@ def impact_block(
         scope = as_dict(review).get("scope") or {}
         red = sum(
             1 for row in rows
-            if scope.get(row["id"]) == "out"
-            or labels.get(row["id"]) == "under_mined"
+            if scope.get(row.get("key") or row["id"]) == "out"
+            or labels.get(row.get("key") or row["id"]) == "under_mined"
         )
         denominator = green + red
         green_share = share(green, denominator) if denominator else None
@@ -830,8 +830,11 @@ def v3_impact(
             disposition = norm(assessment.get("disposition"))
             if disposition == "placeholder":
                 disposition = "precursor"
+            unit_id = str(model.get("unit_id") or "")
+            assessment_id = str(assessment.get("id") or "")
             rows.append({
-                "id": str(assessment.get("id") or ""),
+                "id": assessment_id,
+                "key": f"{unit_id}::{assessment_id}",
                 "disposition": disposition,
                 "capability": str(assessment.get("capability") or ""),
                 "cia": cia_levels(threat.get("impact")),
@@ -954,8 +957,9 @@ def load_impact_review(path: Path) -> dict | None:
             row = as_dict(row)
             row_id = str(row.get("id") or "")
             if row_id:
-                rows[row_id] = str(row.get("mining") or "")
-                scope[row_id] = unit_scope
+                key = f"{unit.get('unit') or ''}::{row_id}"
+                rows[key] = str(row.get("mining") or "")
+                scope[key] = unit_scope
     return {"rows": rows, "scope": scope}
 
 
