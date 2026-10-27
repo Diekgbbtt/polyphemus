@@ -251,55 +251,166 @@ That is a property of the metric and the halt together, not a quality regression
 
 ### Primary metric: green_share
 
-Pending.
+| Metric | Value |
+|---|---:|
+| Impact rows | 51 |
+| Green (any CIA value not `none`) | 28 |
+| Red (all `none`) | 23 |
+| Placeholder rows | 23 |
+| `green_share` | **54.9%** |
+| Gate | 90% |
+| Gate met | **no** |
+
+The whole red count is placeholder rows: all 28 damage-bearing rows are green by the invariant, so `green_share` equals `threat_share` exactly, as the spec predicts.
+The metric therefore reports the placeholder rate of the modelled surface, which is 45.1%.
+
+Iterations B and B.a carry no `impact_assessment` rows, so this metric has no baseline in this experiment line.
+The 90% gate cannot be met by a run that models the whole surface, because 10 of the 23 modelled units carry no damage of their own and contribute placeholders.
 
 ### Severe share
 
-Pending.
+| Metric | Value |
+|---|---:|
+| Damage-bearing threats | 28 |
+| Severe (impact weight 3 or 4) | 17 |
+| `severe_share` | **60.7%** |
+
+For comparison on the same definition, iteration B.a had 15 of 23 severe (65.2%) over its five modelled units.
+C is 4.5 points lower over 23 units, which is the expected direction when the surface expands into units with no damage.
 
 ### Official discovery result
 
-Pending.
+| Verdict | B | B.a | C |
+|---|---:|---:|---:|
+| `identified` | 0 | 1 | **3** |
+| `partial` | 1 | 1 | 1 |
+| `missed` | 6 | 5 | 3 |
+| Identification rate | 0% | 14.3% | **42.9%** |
+| Partial-or-identified | 14.3% | 28.6% | 57.1% |
+
+The three identifications:
+
+| Vuln | Unit | Class | Confidence |
+|---|---|---|---:|
+| `white-jotter-002` | `ReverseProxy` | `bfla-alternate-path` | 0.95 |
+| `white-jotter-005` | `RESTApi:api` | `sql-injection` | 0.95 |
+| `white-jotter-007` | `Service:register` | `mass-assignment-nested-relation-write` | 0.95 |
+
+`white-jotter-001` is partial at confidence 0.45, the same verdict as both earlier arms.
+`003`, `004`, and `006` are missed at confidence 0.95.
+
+Two of the three identifications (`005` SQL injection on `RESTApi:api`, `007` mass assignment on `Service:register`) are in units that iteration B's risk halt at 110 never reached.
+That is the coverage effect of the 180 halt, not a per-threat quality effect.
 
 ### Impact assessment inventory
 
-Pending.
+The 51 rows distribute across the CIA axes as follows:
+
+| Level | Confidentiality | Integrity | Availability |
+|---|---:|---:|---:|
+| high | 15 | 10 | 0 |
+| medium | 3 | 5 | 1 |
+| low | 7 | 0 | 3 |
+| none | 26 | 36 | 47 |
+
+Availability is almost unused: 47 of 51 rows are `none`, and no row scores `high` or `medium` availability above one.
+Confidentiality dominates the damage claims, which matches a web application whose ground truths are disclosure and authorization bypass.
+
+Rows per unit range from 1 to 7.
+`ReverseProxy` carries 7 rows (6 green), `Service:sign-in` 4 (4 green), `RESTApi:api` 4 (3 green), and ten units carry exactly 1 or 2 rows, most of them placeholders.
 
 ### Promotion and batch checks
 
-Pending.
+| Check | Result |
+|---|---|
+| Stored threats | 28 |
+| Promoted | 28 |
+| Demoted | **0** |
+| Promotion floor frozen in the record | 0 |
+| `pipeline_sync` frozen | `batched` |
+| `pod_batch_size` frozen | 3 |
+| `risk_threshold` frozen | 180 (`basis db`) |
+
+The inert floor behaved exactly as specified: every stored threat reached a hunter, and nothing was demoted.
+
+The batch width did not behave as intended.
+The hunting status surface reports `live_hunts: 0` while a shell of pods runs, so the monitor's width assertion could not fire; the width must be read from pod dispatch times.
+Observed shells: 14 pods, then 11, then 9, then 6, then 4, with a peak of 15 concurrent pods.
 
 ### Narrowing metrics
 
-Pending.
+| Metric | Value |
+|---|---:|
+| Specs total | 69 |
+| Specs ratified | 55 |
+| Substantial threats (3 or more specs) | 14 of 28 (50%) |
+| Well-formed sets | **0** |
+| Class-binding rate | 100% |
+
+Well-formedness is zero for the second arm in a row.
+Every substantial set repeats at least one primary axis.
+The spec count is higher than B.a's 46, but more of it is spread across units rather than concentrated per threat.
 
 ### Continuity: the retired class-based green share
 
-Pending.
+| Metric | C |
+|---|---:|
+| Green narrow (high-yield set) | 19 of 28 (67.9%) |
+| Green broad | 20 of 28 (71.4%) |
+| Class binding | 28 of 28 (100%) |
+
+Marked superseded.
+It is reported only so the arm can be placed beside B (38.5%) and B.a (69.6%) on the metric those arms gated on.
+On that axis C sits between the two, with a larger denominator and a much larger modelled surface.
 
 ### Token tax
 
-Pending.
+| Agent | Capped | Share |
+|---|---:|---:|
+| `job_orchestrator` | 44,309 | 0.6% |
+| `triager` | 88,821 | 1.3% |
+| `assigner` | 57,844 | 0.8% |
+| `mechanism_typist` | 362,107 | 5.2% |
+| `hunting_threat_modeller` | 1,945,435 | 28.1% |
+| `hunting_hunter` | 1,746,311 | 25.2% |
+| `pod_runner` | 2,302,123 | 33.3% |
+| `pod_triager` | 372,188 | 5.4% |
+| **Total** | **6,919,138** | **100%** |
+
+By phase: analysis 553,081 (8.0%), modelling 1,945,435 (28.1%), hunt authoring 1,746,311 (25.2%), pods 2,674,311 (38.7%).
+
+Against B.a the analysis block rose from 404,995 to 553,081, driven by a longer recon (seven jobs) and a larger L1 surface.
+The modeller doubled from 947,902 to 1,945,435, which is the price of 23 units instead of 5.
 
 ### Segment analysis
 
-Pending.
+| Ratio | Value |
+|---|---:|
+| Capped per modelled unit | 300,832 |
+| Capped per stored threat | 247,112 |
+| Capped per confirmed pod | 576,595 |
+| Capped per identified ground truth | **2,306,379** |
 
-### Workflow and contract findings
+The last row is the honest headline: three identifications for the whole budget.
 
-Pending.
+The pod phase is the efficiency failure.
+55 pods produced 12 confirmations, 21.8%, against B.a's 23 of 33 (69.7%).
+The pods consumed 2,674,311 capped, so each confirmation cost 222,859 in pod spend alone and each watchdog terminal cost about 48,000 of wasted budget.
 
-### Failure and error findings
+Modelling 23 units was cheaper per unit than B.a (84,584 against 189,580) because most units are small.
+Coverage was therefore affordable; the hunt was not.
 
-Pending.
+### Budget outcome
 
-### Learnings
+| Budget | Target | Actual | Outcome |
+|---|---:|---:|---|
+| Risk | 180 | **185** | **exceeded** |
+| Tokens | 7,000,000 | 6,919,138 | 98.8%, not exceeded |
+| Wall clock | 43,200 s | 42,332 s | operator stop 7m before the deadline |
 
-Pending.
-
-### Recommendation
-
-Pending.
+The risk budget was exceeded and the halt fired on `Service:operations-telemetry`.
+The token budget was not exceeded: at the observed burn the deadline would have fired first, and a deadline terminal is `timeout`, which the monitor defers instead of assessing.
+The operator stop at 07:48:56Z secured a `stopped` terminal with 80,862 tokens unspent.
 
 ## Evidence appendix
 
