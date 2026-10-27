@@ -412,6 +412,70 @@ The risk budget was exceeded and the halt fired on `Service:operations-telemetry
 The token budget was not exceeded: at the observed burn the deadline would have fired first, and a deadline terminal is `timeout`, which the monitor defers instead of assessing.
 The operator stop at 07:48:56Z secured a `stopped` terminal with 80,862 tokens unspent.
 
+## Workflow and contract findings
+
+Four defects surfaced in the harness while C ran.
+None is caused by the impact system, and all four cost time rather than verdict quality.
+
+### The lineage split broke the diagnosis dispatch
+
+The harness checkout (`/opt/polymerhus-dev`, branch `dev`) and the arm checkout (`/opt/polymerhus-dev/eval/instances/eval-server-1`) are separate worktrees on separate lineages.
+
+The arm setup now parses correctly because the plugin reads `EVAL_ORCHESTRATOR_PYTHONPATH`.
+The prompt path does not: the monitor's diagnosis dispatch passed `eval/prompts/diagnoser.md` as a relative path, which resolved against the harness checkout where that file is absent or different.
+
+The monitor bounded its retries and escalated with a named failure instead of hot-looping or editing code, which is the specified behaviour.
+`close-verify` then repaired the node at the configuration layer: it re-ran the assessment (attempt 2, identical verdicts) and re-dispatched the diagnoser with the absolute instance path.
+
+The trial record shows both assessment attempts and no failure:
+
+| Field | Value |
+|---|---|
+| `assessment.status` | `present` |
+| `assessment.attempts` | 2 (`07:55:23`, `08:11:35`) |
+| `assessment.failure` | null |
+| `diagnosis` | filled by the re-dispatch |
+
+Recommended fix, in preference order:
+
+1. Launch the eval orchestrator with `--dir` at the instance worktree, so relative prompt paths resolve in the arm lineage.
+2. Make `assessment.launch_message` and the diagnosis equivalent use `request.prompt` (absolute) instead of the relative `eval/prompts/...` string.
+3. Align the canonical harness `eval/` with the arm sha.
+
+This is the second occurrence of the same split: the first broke `next_target` with `unknown field(s): hunting`.
+
+### The deadline terminal is not assessable
+
+`SUCCESS_TERMINALS` in `eval/orchestrator/monitor.py` is `{complete, stopped}`, and a trial that reaches its wall-clock deadline writes `timeout`.
+The monitor therefore defers a deadline-bounded run and never assesses it, even when the phases completed cleanly and the evidence is intact.
+
+C was 28 minutes from its 12h deadline at 6.86M of a 7M cap.
+Continuing would have produced `timeout` and skipped assessment, diagnosis, and measurement.
+The operator stopped the project at 07:48:56Z so the trial wrote `stopped`.
+
+This is a contract gap: a wall-clock-bounded arm cannot be assessed without an operator intervention.
+Two candidate repairs are for the configuration or code owner to choose:
+
+- treat `timeout` with a completed phase set as assessable, as the surfer already treats `interrupted`; or
+- have the deadline write `stopped` with a `deadline` cause on the phase, parallel to the budget stop.
+
+### The hunting status surface hides live pods
+
+`GET /projects/{id}/hunting/{run_id}` reported `live_hunts: 0` and `live_units: []` for the whole pod phase, while 14 to 15 pods were running and exporting.
+
+The monitor's batch-width assertion could therefore not fire from the status field.
+Width has to be inferred from pod directory mtimes or resume files, which is what the final measurement did.
+
+A status surface that reports zero live work while a batch is in flight also hides a stuck batch from an operator.
+
+### The batch width is not asserted anywhere
+
+`pod_batch_size: 3` is frozen into the run record and honoured by the hunter, but no component checks the resulting concurrency against the host capacity.
+The observed peak was 15 concurrent pods on a host that B.a exercised with at most 5.
+
+The failure mode is silent: pods dispatch, exceed the agent-container capacity, and return `pod-watchdog-timeout` with `iterations: 1`.
+The run pays for each one.
+
 ## Evidence appendix
 
 - Eval change: `eval/orchestrator/setup.py`, `eval/orchestrator/trial.py`, `eval/orchestrator/api.py`, `eval/orchestrator/cli.py`, `tests/eval/test_orchestrator_hunting_config.py`

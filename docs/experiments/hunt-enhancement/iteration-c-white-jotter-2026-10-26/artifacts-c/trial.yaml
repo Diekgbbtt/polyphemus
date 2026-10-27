@@ -1,0 +1,330 @@
+trial_id: white-jotter-1-20261027T074905-1618c524
+instance_id: eval-server-1
+target_id: white-jotter-1
+project_id: 8e2e5dc7-a880-4451-aaa5-267cedd48264
+start_phase: recon
+terminal: stopped
+phases:
+- phase: recon
+  entered: true
+  status: complete
+  run_id: 742af9d5-af52-4a6a-b575-c8597d07dc75
+  stop_run_id: 742af9d5-af52-4a6a-b575-c8597d07dc75
+  blocks: []
+  notes: []
+  failure: null
+- phase: analysis
+  entered: true
+  status: drained
+  run_id: 742af9d5-af52-4a6a-b575-c8597d07dc75:3839f4a4
+  stop_run_id: 742af9d5-af52-4a6a-b575-c8597d07dc75
+  blocks: []
+  notes: []
+  failure: null
+- phase: hunting
+  entered: true
+  status: stopped
+  run_id: 65ec294b-e5cf-49c6-9f7c-4664a73aa557
+  stop_run_id: 65ec294b-e5cf-49c6-9f7c-4664a73aa557
+  blocks: []
+  notes: []
+  failure: null
+started_at: '2026-10-26T20:03:33+00:00'
+finished_at: '2026-10-27T07:49:05+00:00'
+token_budget: 7000000
+spent_tokens: 6919138
+spend_overshoot: null
+spend_baseline: 0
+spend_by_agent:
+  job_orchestrator:
+    context_tokens:
+      cached: 263424
+      uncached: 29663
+    generated_tokens:
+      reasoning: 4710
+      visible: 9936
+    total_tokens: 307733
+    capped_tokens: 44309
+    calls: 17
+    cache_detail_omitted: 0
+  triager:
+    context_tokens:
+      cached: 26112
+      uncached: 78374
+    generated_tokens:
+      reasoning: 6080
+      visible: 4367
+    total_tokens: 114933
+    capped_tokens: 88821
+    calls: 11
+    cache_detail_omitted: 0
+  assigner:
+    context_tokens:
+      cached: 129152
+      uncached: 41507
+    generated_tokens:
+      reasoning: 11155
+      visible: 5182
+    total_tokens: 186996
+    capped_tokens: 57844
+    calls: 13
+    cache_detail_omitted: 0
+  mechanism_typist:
+    context_tokens:
+      cached: 2496384
+      uncached: 261323
+    generated_tokens:
+      reasoning: 58675
+      visible: 42109
+    total_tokens: 2858491
+    capped_tokens: 362107
+    calls: 56
+    cache_detail_omitted: 0
+  hunting_threat_modeller:
+    context_tokens:
+      cached: 161740160
+      uncached: 1275943
+    generated_tokens:
+      reasoning: 205457
+      visible: 464035
+    total_tokens: 163685595
+    capped_tokens: 1945435
+    calls: 700
+    cache_detail_omitted: 0
+  hunting_hunter:
+    context_tokens:
+      cached: 24074880
+      uncached: 1263117
+    generated_tokens:
+      reasoning: 275264
+      visible: 207930
+    total_tokens: 25821191
+    capped_tokens: 1746311
+    calls: 418
+    cache_detail_omitted: 0
+  pod_runner:
+    context_tokens:
+      cached: 21998976
+      uncached: 1699168
+    generated_tokens:
+      reasoning: 327682
+      visible: 275273
+    total_tokens: 24301099
+    capped_tokens: 2302123
+    calls: 1095
+    cache_detail_omitted: 0
+  pod_triager:
+    context_tokens:
+      cached: 215424
+      uncached: 337050
+    generated_tokens:
+      reasoning: 23791
+      visible: 11347
+    total_tokens: 587612
+    capped_tokens: 372188
+    calls: 44
+    cache_detail_omitted: 0
+usage:
+  project_id: 8e2e5dc7-a880-4451-aaa5-267cedd48264
+  context_tokens:
+    cached: 210944512
+    uncached: 4986145
+  generated_tokens:
+    reasoning: 912814
+    visible: 1020179
+  total_tokens: 217863650
+  capped_tokens: 6919138
+  calls: 2354
+  cache_detail_omitted: 0
+  by_agent:
+    job_orchestrator:
+      context_tokens:
+        cached: 263424
+        uncached: 29663
+      generated_tokens:
+        reasoning: 4710
+        visible: 9936
+      total_tokens: 307733
+      capped_tokens: 44309
+      calls: 17
+      cache_detail_omitted: 0
+    triager:
+      context_tokens:
+        cached: 26112
+        uncached: 78374
+      generated_tokens:
+        reasoning: 6080
+        visible: 4367
+      total_tokens: 114933
+      capped_tokens: 88821
+      calls: 11
+      cache_detail_omitted: 0
+    assigner:
+      context_tokens:
+        cached: 129152
+        uncached: 41507
+      generated_tokens:
+        reasoning: 11155
+        visible: 5182
+      total_tokens: 186996
+      capped_tokens: 57844
+      calls: 13
+      cache_detail_omitted: 0
+    mechanism_typist:
+      context_tokens:
+        cached: 2496384
+        uncached: 261323
+      generated_tokens:
+        reasoning: 58675
+        visible: 42109
+      total_tokens: 2858491
+      capped_tokens: 362107
+      calls: 56
+      cache_detail_omitted: 0
+    hunting_threat_modeller:
+      context_tokens:
+        cached: 161740160
+        uncached: 1275943
+      generated_tokens:
+        reasoning: 205457
+        visible: 464035
+      total_tokens: 163685595
+      capped_tokens: 1945435
+      calls: 700
+      cache_detail_omitted: 0
+    hunting_hunter:
+      context_tokens:
+        cached: 24074880
+        uncached: 1263117
+      generated_tokens:
+        reasoning: 275264
+        visible: 207930
+      total_tokens: 25821191
+      capped_tokens: 1746311
+      calls: 418
+      cache_detail_omitted: 0
+    pod_runner:
+      context_tokens:
+        cached: 21998976
+        uncached: 1699168
+      generated_tokens:
+        reasoning: 327682
+        visible: 275273
+      total_tokens: 24301099
+      capped_tokens: 2302123
+      calls: 1095
+      cache_detail_omitted: 0
+    pod_triager:
+      context_tokens:
+        cached: 215424
+        uncached: 337050
+      generated_tokens:
+        reasoning: 23791
+        visible: 11347
+      total_tokens: 587612
+      capped_tokens: 372188
+      calls: 44
+      cache_detail_omitted: 0
+token_spectrum:
+  job_orchestrator:
+    visible: 9936
+    reasoning: 4710
+    cached_input: 263424
+    uncached_input: 29663
+    generated: 14646
+    total: 307733
+    capped: 44309
+    calls: 17
+    cache_detail_omitted: 0
+  triager:
+    visible: 4367
+    reasoning: 6080
+    cached_input: 26112
+    uncached_input: 78374
+    generated: 10447
+    total: 114933
+    capped: 88821
+    calls: 11
+    cache_detail_omitted: 0
+  assigner:
+    visible: 5182
+    reasoning: 11155
+    cached_input: 129152
+    uncached_input: 41507
+    generated: 16337
+    total: 186996
+    capped: 57844
+    calls: 13
+    cache_detail_omitted: 0
+  mechanism_typist:
+    visible: 42109
+    reasoning: 58675
+    cached_input: 2496384
+    uncached_input: 261323
+    generated: 100784
+    total: 2858491
+    capped: 362107
+    calls: 56
+    cache_detail_omitted: 0
+  hunting_threat_modeller:
+    visible: 464035
+    reasoning: 205457
+    cached_input: 161740160
+    uncached_input: 1275943
+    generated: 669492
+    total: 163685595
+    capped: 1945435
+    calls: 700
+    cache_detail_omitted: 0
+  hunting_hunter:
+    visible: 207930
+    reasoning: 275264
+    cached_input: 24074880
+    uncached_input: 1263117
+    generated: 483194
+    total: 25821191
+    capped: 1746311
+    calls: 418
+    cache_detail_omitted: 0
+  pod_runner:
+    visible: 275273
+    reasoning: 327682
+    cached_input: 21998976
+    uncached_input: 1699168
+    generated: 602955
+    total: 24301099
+    capped: 2302123
+    calls: 1095
+    cache_detail_omitted: 0
+  pod_triager:
+    visible: 11347
+    reasoning: 23791
+    cached_input: 215424
+    uncached_input: 337050
+    generated: 35138
+    total: 587612
+    capped: 372188
+    calls: 44
+    cache_detail_omitted: 0
+notes: []
+trial_dir: /opt/polymerhus-dev/eval/runs-iteration-c-20261026/white-jotter-1/white-jotter-1-20261027T074905-1618c524
+target_run_id: iterc-white-jotter
+seeded: false
+eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+worktree_dirty: true
+stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407
+trace_id: null
+assessment:
+  status: present
+  attempts:
+  - attempt: 1
+    outcome: dispatched
+    detail: ''
+    at: '2026-10-27T07:55:23+00:00'
+  - attempt: 2
+    outcome: dispatched
+    detail: null
+    at: '2026-10-27T08:11:35+00:00'
+  verdicts_path: /opt/polymerhus-dev/eval/runs-iteration-c-20261026/white-jotter-1/white-jotter-1-20261027T074905-1618c524/verdicts.yaml
+  failure: null
+diagnosis: null
