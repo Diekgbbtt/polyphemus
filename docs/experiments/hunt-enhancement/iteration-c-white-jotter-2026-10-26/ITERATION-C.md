@@ -412,6 +412,84 @@ The risk budget was exceeded and the halt fired on `Service:operations-telemetry
 The token budget was not exceeded: at the observed burn the deadline would have fired first, and a deadline terminal is `timeout`, which the monitor defers instead of assessing.
 The operator stop at 07:48:56Z secured a `stopped` terminal with 80,862 tokens unspent.
 
+## Failure findings
+
+The diagnoser wrote one entry per `missed`/`partial` verdict.
+The four failures split cleanly: three are fault-binding defects at the modeller, and one is a hunt-dispatch failure caused by the budget.
+
+| Vuln | Verdict | Failure mode | Root cause |
+|---|---|---|---|
+| `001` | partial | `modeller_failed_unit-fault_binding` | `skill_defect` + `design_defect` |
+| `003` | missed | `hunter_notsufficient_tests_exploration` | `design_defect` + `implementation_defect` |
+| `004` | missed | `modeller_failed_unit-fault_binding` | `kb_coverage_gap` + `design_defect` |
+| `006` | missed | `modeller_failed_unit-fault_binding` | `skill_defect` + `design_defect` |
+
+### 001: the default credential was deferred, not missed
+
+`Service:sign-in` owns the only credential-verification path.
+Its completed model bound four faults: absent session regeneration at elevation, username enumeration, absent throttling, and identifier-scoped logout.
+None is weak-or-default credentials.
+
+The unit's own well-formedness note names the gap and defers it to `weak-credential-discovery`, but that class was never loaded for the unit.
+The unit registered a throwaway account to reach the success path, so `admin/123` was never submitted as a candidate.
+
+The knowledge exists: `weak-credential-discovery/default-credential-replay` mandates a default-pair submission on every acceptor.
+A `ReverseProxy` pod did submit `admin/123` and received 200 with result `admin`, but its spec was scoped to cleartext carriage, so the successful default login was recorded as corroboration and never as a finding.
+
+The design reinforces the miss: the pipeline's own auth bootstrap presents the ground-truth credential as legitimate material.
+
+Proposed issue: make a shipped default credential a mandatory fault on the sign-in unit.
+
+### 003: the threat was modelled correctly and never hunted
+
+This is the arm's most consequential failure, and it is not a modelling defect.
+
+`Service:article-management` completed at 22:03Z, bound `V-1 xss-stored`, and produced `threat-1` at risk 9.
+The model proves the channel end to end: a supplied fragment is stored verbatim and served unchanged to an anonymous reader, and an anonymous POST through the alternate spelling returned `保存成功`.
+
+No test spec was ever authored for it.
+`hunting/hunter/test-specs` holds 16 dispatch directories for exactly five units, and there is no `Service:article-management__threat-1` directory and no pod.
+At the stop, **12 of the 28 produced threat files were still in `produced/`**, the article threat among them.
+
+So batched hunting reached 5 of the 14 threat-bearing units before the budget ran out.
+The stored-XSS ground truth was available, correctly modelled, and never dispatched.
+
+Proposed issue: batched hunting reaches only five of 14 threat-bearing units, and the stored-XSS threat is never dispatched.
+
+### 004: no logging-sink JNDI class
+
+The ground truth is JNDI injection through a crafted username.
+The exploit registers `${jndi:rmi://...}` as the username, signs in, and requests `/api/admin/user`, where the vulnerable Log4j2 configuration logs the caller-controlled value and contacts the attacker's lookup service.
+
+Both owning units were modelled.
+`Service:register` produced two threats, both dispatched, and one identified `007`.
+`Service:user-administration` produced a credential-replacement threat.
+
+Neither unit carries a fault for a logging sink that resolves lookups.
+The knowledge base has no lookup-injection class, and the logging dependency was not inventoried as an attack surface.
+
+Proposed issue: add a logging-sink JNDI lookup class and inventory the logging dependency on the owning units.
+
+### 006: the namespace was closed on a 404
+
+The deployed handler is `@GetMapping("/api/file/**")`.
+It strips the prefix, URL-decodes the segment twice, joins it to the upload directory with no containment check, and returns bare 404 when the target is not a file.
+
+`Service:media-asset-serving` owns the namespace, loaded the right leaf (`traversal-read`), and carried the vulnerability at `ASSUMED`.
+It then produced **zero threats**, because its technical sharpening note declares "IT DOES NOT EXIST ON THE PUBLIC LISTENER": six shapes under `/api/file/` returned 404 with zero bytes, and the model read that as absence.
+
+The ground-truth payload is double-encoded (`..%252f..%252f..%252fetc%252fpasswd`).
+A single decode cannot reach `/etc/passwd`, so the 404s are consistent with the handler being present and the candidate being wrong.
+
+Proposed issue: traversal-read closes `/api/file/` as unmapped without a repeated-decoded candidate or an in-root control.
+
+### What the four share
+
+Three of the four needed knowledge the suite already carries or could carry: a class that exists but was not loaded (`001`), a class that does not exist (`004`), and a leaf that was loaded but closed on negative evidence (`006`).
+
+The fourth (`003`) needed no new knowledge at all.
+It needed the hunt to reach the threat, and the budget did not.
+
 ## Workflow and contract findings
 
 Four defects surfaced in the harness while C ran.
