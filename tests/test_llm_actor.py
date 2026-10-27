@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 
+import polymerhus.app.llm.actor as actor_module
 from polymerhus.app.llm.actor import (
     STOP,
     AgentInbox,
@@ -361,6 +362,68 @@ def test_build_inbox_delivery_is_inert_without_an_inbox():
     assert build_inbox_delivery(None) == (None, None)
 
 
+def test_a_delivered_turn_never_posts_a_duplicate_degraded_reply():
+    """The live E2 defect: the real GatewayVerdict was delivered, then a
+    post-delivery `connection is closed` error posted a no-decision reply for
+    the same turn. One logical turn has exactly one reply."""
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+    token = actor_module._CURRENT_TURN_ID.set("turn-1")
+    try:
+        middleware.after_agent(
+            {"messages": [], "structured_response": "verdict"}, None
+        )
+        degraded("thread-1", RuntimeError("the connection is closed"))
+    finally:
+        actor_module._CURRENT_TURN_ID.reset(token)
+
+    first = replies.try_get_nowait()
+    assert first is not None
+    assert first.payload["content"] == "verdict"
+    assert first.payload["turn_id"] == "turn-1"
+    assert replies.try_get_nowait() is None
+
+
+def test_a_retried_turn_delivers_its_real_result_once():
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+    token = actor_module._CURRENT_TURN_ID.set("turn-1")
+    try:
+        state = {"messages": [], "structured_response": "verdict"}
+        middleware.after_agent(state, None)
+        middleware.after_agent(state, None)
+        degraded("thread-1", RuntimeError("the connection is closed"))
+    finally:
+        actor_module._CURRENT_TURN_ID.reset(token)
+
+    assert replies.try_get_nowait().payload["content"] == "verdict"
+    assert replies.try_get_nowait() is None
+
+
+def test_a_new_turn_posts_its_degraded_reply_after_an_earlier_delivery():
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+    first_turn = actor_module._CURRENT_TURN_ID.set("turn-1")
+    try:
+        middleware.after_agent(
+            {"messages": [], "structured_response": "verdict"}, None
+        )
+    finally:
+        actor_module._CURRENT_TURN_ID.reset(first_turn)
+    second_turn = actor_module._CURRENT_TURN_ID.set("turn-2")
+    try:
+        degraded("thread-1", RuntimeError("llm down"))
+    finally:
+        actor_module._CURRENT_TURN_ID.reset(second_turn)
+
+    assert replies.try_get_nowait().payload["content"] == "verdict"
+    second = replies.try_get_nowait()
+    assert second.payload["content"] is None
+    assert second.payload["turn_id"] == "turn-2"
+    assert second.payload["degraded"] is True
+    assert replies.try_get_nowait() is None
+
+
 def test_actor_survives_a_raising_turn_then_serves_the_next():
     """#186 - per-turn isolation: one raising turn must NOT kill the mailbox
     actor. The failed turn degrades (a no-decision reply wakes the parent so its
@@ -454,6 +517,35 @@ def test_actor_retries_a_transient_turn_then_serves_the_next(monkeypatch):
     trail = [m.content for m in result.turns[1].messages]
     assert trail.count("start") == 1               # idempotent against the committed trail
     assert trail.count("again") == 1
+
+
+def test_the_first_attempt_is_bounded_by_the_schedule(monkeypatch):
+    """The first model call must carry the first schedule budget. An unbounded
+    first attempt can hold the actor and the gateway await past the harness
+    deadline even though every later attempt is bounded."""
+    seen: list[float | None] = []
+
+    async def fake_turn(*args, **kwargs):
+        seen.append(kwargs.get("read_timeout_s"))
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(actor_module, "arun_session_turn", fake_turn)
+    monkeypatch.setattr(actor_module, "attempt_timeouts", lambda: (7.0,))
+
+    async def _drive():
+        inbox = AgentInbox()
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_threat_modeller", "run1:orch",
+            [HumanMessage(content="start")],
+            checkpointer=InMemorySaver(), inbox=inbox, max_turns=1,
+            observe=False,
+        ))
+        await asyncio.sleep(0)
+        await inbox.post(AgentMessage(kind="stop"))
+        return await task
+
+    asyncio.run(_drive())
+    assert seen == [7.0]
 
 
 def test_actor_degrades_after_retry_budget_exhaustion_then_serves_the_next(monkeypatch):

@@ -58,8 +58,11 @@ the middleware base class is imported lazily inside the factory, never at import
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import logging
+import threading
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Sequence
 
@@ -69,6 +72,13 @@ from polymerhus.app.llm.providers import attempt_timeouts, resolve_fallback
 from polymerhus.app.llm.session import SessionTurn, arun_session_turn
 
 logger = logging.getLogger(__name__)
+
+# The logical turn currently executing in this actor task. The delivery
+# middleware and the degraded hook share it, so a real reply and a no-decision
+# reply for the same turn are one delivery, not two.
+_CURRENT_TURN_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "polymerhus_actor_turn_id", default=None
+)
 
 
 async def _sleep(seconds: float) -> None:
@@ -311,12 +321,19 @@ async def run_session_agent(
         schedule = attempt_timeouts()
         attempt = 0
         last_exc: Exception | None = None
+        # One logical turn spans every retry attempt. The delivery middleware
+        # and the degraded hook share this id, so a turn that delivered a real
+        # reply and then failed (or retried) never posts a second reply.
+        _CURRENT_TURN_ID.set(uuid.uuid4().hex)
         while attempt < len(schedule):
             rotated = rotate_conversation(thread_id, attempt)
             try:
                 turn = await _run_turn_attempt(
                     messages,
-                    read_timeout_s=(None if attempt == 0 else schedule[attempt]),
+                    # Every attempt, including the first, is bounded. An
+                    # unbounded first attempt can hold the actor (and the
+                    # gateway await) far past the harness deadline.
+                    read_timeout_s=schedule[attempt],
                     conversation_id=rotated,
                 )
                 result.turns.append(turn)
@@ -439,17 +456,42 @@ def subagent_completion_hook(
     return hook
 
 
-def _turn_result_payload(state: dict, thread_id: str | None) -> dict:
+def _turn_result_payload(
+    state: dict,
+    thread_id: str | None,
+    turn_id: str | None = None,
+    *,
+    degraded: bool = False,
+) -> dict:
     """Shape the agent state at a post-call hook into a delivery payload: the `content`
     mirroring `SessionTurn` (the parsed `structured_response` when a schema is set, else
     the last message's text), the full post-turn `messages` trail, and the `thread_id`
     the session ran on - the same shape `arun_session_turn` reports, so a parent that
-    receives this can route on the agent's actual answer."""
+    receives this can route on the agent's actual answer. ``turn_id`` lets the inbox
+    dedupe a real reply and a degraded reply for one logical turn."""
     messages = state.get("messages") or []
     content = state.get("structured_response")
     if content is None and messages:
         content = messages[-1].content
-    return {"content": content, "messages": list(messages), "thread_id": thread_id}
+    payload = {
+        "content": content,
+        "messages": list(messages),
+        "thread_id": thread_id,
+    }
+    if turn_id is not None:
+        payload["turn_id"] = turn_id
+    if degraded:
+        payload["degraded"] = True
+    return payload
+
+
+@dataclass
+class _DeliveryState:
+    """Per delivery-pair record of turn ids already posted. The middleware and
+    the degraded hook share it; the lock covers a thread-safe hook call."""
+
+    delivered: set[str] = field(default_factory=set)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def build_inbox_middleware(
@@ -458,6 +500,7 @@ def build_inbox_middleware(
     kind: str = "subagent_update",
     source: str | None = None,
     on: str = "after_agent",
+    delivery_state: _DeliveryState | None = None,
 ):
     """Build a `create_agent` middleware that posts the sub-agent's result to a parent's
     inbox at the post-call hook point: `after_agent` (once, when the whole session turn
@@ -474,14 +517,20 @@ def build_inbox_middleware(
 
     hook = inbox_post_hook(inbox, kind=kind, source=source)
 
-    def _deliver(state) -> None:
+    def _deliver(agent_state) -> None:
         config = {}
         try:
             config = get_config()
         except Exception:
             pass  # not inside a graph run: no thread id to report
         thread_id = (config.get("configurable") or {}).get("thread_id")
-        hook(_turn_result_payload(state, thread_id))
+        turn_id = _CURRENT_TURN_ID.get()
+        if delivery_state is not None and turn_id is not None:
+            with delivery_state.lock:
+                if turn_id in delivery_state.delivered:
+                    return
+                delivery_state.delivered.add(turn_id)
+        hook(_turn_result_payload(agent_state, thread_id, turn_id))
 
     class InboxDispatchMiddleware(AgentMiddleware):
         """Notifies a parent inbox with the sub-agent's turn result at the post-call
@@ -519,12 +568,24 @@ def build_inbox_delivery(
     is wired."""
     if inbox is None:
         return None, None
-    middleware = build_inbox_middleware(inbox, kind=kind, source=source, on=on)
+    delivery_state = _DeliveryState()
+    middleware = build_inbox_middleware(
+        inbox, kind=kind, source=source, on=on, delivery_state=delivery_state
+    )
     hook = inbox_post_hook(inbox, kind=kind, source=source)
 
     def degraded_hook(thread_id: str | None, exc: Exception) -> None:
+        turn_id = _CURRENT_TURN_ID.get()
+        if turn_id is not None:
+            with delivery_state.lock:
+                if turn_id in delivery_state.delivered:
+                    # The turn already delivered its real result; a later
+                    # checkpointer/transport failure must not post a second
+                    # reply for the same logical turn.
+                    return
+                delivery_state.delivered.add(turn_id)
         logger.warning("actor turn degraded on %s (%s); posting a no-decision reply",
                        thread_id, exc)
-        hook(_turn_result_payload({}, thread_id))
+        hook(_turn_result_payload({}, thread_id, turn_id, degraded=True))
 
     return middleware, degraded_hook

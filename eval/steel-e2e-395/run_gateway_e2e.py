@@ -277,6 +277,12 @@ async def run(args: argparse.Namespace) -> int:
         if actor is not None:
             try:
                 await asyncio.wait_for(actor.stop(), timeout=120)
+            except asyncio.TimeoutError:
+                # A graceful stop waits for the in-flight turn. Once the
+                # harness deadline is gone, a model call that ignores
+                # cancellation must not hold the whole controller open.
+                await actor.cancel()
+                stop_error = "actor stop timed out after 120s; actor cancelled"
             except Exception as exc:  # noqa: BLE001 - teardown best-effort
                 stop_error = f"{type(exc).__name__}: {exc}"
 

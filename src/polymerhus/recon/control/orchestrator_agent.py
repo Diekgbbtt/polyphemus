@@ -578,6 +578,22 @@ class ReconOrchestratorActor:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
 
+    async def cancel(self) -> None:
+        """Force-retire a stuck actor task.
+
+        ``stop`` is graceful: it posts the terminal message and waits for the
+        current turn. A harness hard deadline cannot wait forever for a model
+        call that ignores cancellation. The caller invokes this only after the
+        graceful stop has itself timed out.
+        """
+        if self._task is None or self._task.done():
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
 
 __all__ = [
     "GatewayStop",
