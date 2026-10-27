@@ -59,6 +59,11 @@ The guard:
 - records one JSON event per invocation, including the true exit code and output tails;
 - classifies the real result with the same classifier.
 
+The guard owns the full tool budget.
+Only the outer runner adds a one-second reporting grace, and only for a command that actually carries a Steel invocation.
+A legitimate Steel wait just below the tool budget is therefore not cut.
+A non-Steel command keeps the exact requested timeout.
+
 `kali/mcp_server._run` and `kali/http_history.service.default_runner` set `KALI_STEEL_TRACE` per exec.
 The MCP layer merges the trace events into the tool result.
 `kali/steel_guard.py` is also the chokepoint for `steel_exec` script mode.
@@ -254,7 +259,7 @@ The first suite run failed for two harness reasons, both fixed:
 
 ## 8. Verification totals
 
-The final targeted suite passes 628 tests:
+The final targeted suite passes 630 tests:
 
 - `tests/kali`
 - `tests/attack/pod`
@@ -336,6 +341,7 @@ Live verification:
 - `33a59eba` `fix: redact auth store secrets from the model view`
 - `692de1f2` `chore: mark the steel guard executable`
 - `d7bbba2e` `test: isolate the runner tier from the deployed guard`
+- `f1c7cfe5` `fix: keep the full steel budget and grace only the outer runner`
 
 The branch is local only.
 No remote was pushed.
