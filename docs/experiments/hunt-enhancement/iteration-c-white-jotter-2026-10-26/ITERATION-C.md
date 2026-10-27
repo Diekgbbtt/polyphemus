@@ -750,4 +750,6 @@ The run pays for each one.
 - Driver: `drive_iteration_c.sh`
 - Monitor: `monitor_iteration_c.py`
 - Measurement: `measure_iteration_c.py`
-- Baselines: `../iteration-b-white-jotter-2026-10-25/RESULTS.md`, `../iteration-b-white-jotter-2026-10-25/ITERATION-BA.md`
+- Baselines, on the `hunt-enhancement-trunk` branch in the `utm-hunt-enhancement` worktree:
+  `docs/experiments/hunt-enhancement/iteration-b-white-jotter-2026-10-25/RESULTS.md` and
+  `docs/experiments/hunt-enhancement/iteration-b-white-jotter-2026-10-25/ITERATION-BA.md`
