@@ -1049,4 +1049,4 @@ Deviations:
 - The core capability row keeps the CIA vector on the threat, so a precursor row's effective vector is all-none; a partial low effect is described in the damage text.
 - The legacy `precursors[]` field remains on the model for read compatibility, excluded from the gate sections and the tool schema.
 
-Verification: `tests/attack` and `tests/eval` pass, 2,136 tests. The e2e suite was not run to completion in this session (it exceeded the 10-minute bound).
+Verification: `tests/attack` and `tests/eval` pass, 2,138 tests. The review labels are keyed by unit so a repeated `IA-1` cannot collide. The e2e suite was not run to completion in this session (it exceeded the 10-minute bound).
