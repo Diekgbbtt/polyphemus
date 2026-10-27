@@ -21,11 +21,16 @@ from kali.process_group import ProcessOutcome
 
 @pytest.fixture(autouse=True)
 def _no_workdir_io(monkeypatch):
-    """The runner mkdir's its per-session workdir under /work (container-only)."""
+    """The runner mkdir's its per-session workdir under /work (container-only).
+
+    The executable in-repo guard would otherwise make the runner create a
+    trace file under that fake workdir, so this unit tier isolates the launch
+    shape from the deployed guard."""
     created: list[str] = []
     monkeypatch.setattr(
         service_module.os, "makedirs", lambda path, **kwargs: created.append(path)
     )
+    monkeypatch.setattr(service_module, "resolve_guard_path", lambda: None)
     return created
 
 
