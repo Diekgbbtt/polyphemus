@@ -589,8 +589,9 @@ Iteration C proves that coverage at the modeller is cheap and that an inert floo
 
 ## Workflow and contract findings
 
-Four defects surfaced in the harness while C ran.
-None is caused by the impact system, and all four cost time rather than verdict quality.
+Seven defects surfaced in the harness while C ran.
+None is caused by the impact system.
+Two of them cost verdict quality, not just time: the unfiltered promotion queue and the pod watchdog rate.
 
 ### The lineage split broke the diagnosis dispatch
 
@@ -667,7 +668,7 @@ The run pays for each one.
    The discovery gain is a coverage effect, not a per-threat quality effect.
 
 2. **Coverage without a promotion floor cannot be converted.**
-   The 28 promoted threats exceeded the budget by 12.
+   The budget could drain 16 of the 28 promoted threats.
    `003` was correctly modelled and never specced, so the arm lost a likely fourth identification to queue length rather than to knowledge.
    This is the first direct evidence for the promotion gate: the floor is not a cost optimisation, it is what lets the queue fit the budget.
 
