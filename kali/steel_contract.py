@@ -445,6 +445,10 @@ def classify_result(
     are preserved. The caller executes any recovery command in ``error``.
     """
     out = dict(result)
+    # The binary guard already classified the real invocation. Keep its
+    # authoritative error rather than re-deriving one from composed shell text.
+    if isinstance(out.get("error"), dict) and out["error"].get("code"):
+        return out
     stdout = str(out.get("stdout") or "")
     stderr = str(out.get("stderr") or "")
     returncode = int(out.get("returncode") or 0)
@@ -627,7 +631,7 @@ def classify_result(
         if isinstance(data, dict):
             text_value = data.get("text")
             blank = text_value in ("", None) if text_value is not None else False
-        if blank:
+        if blank and "warning" not in out:
             out["warning"] = {
                 "code": "empty_target",
                 "message": "the page read returned no target content",

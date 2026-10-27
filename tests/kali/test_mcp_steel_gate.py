@@ -8,6 +8,7 @@ directive.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import kali.mcp_server as m
 
@@ -153,3 +154,115 @@ def test_execute_command_rejects_mixed_sessions_before_running(monkeypatch):
 
     assert out["error"]["code"] == "ambiguous_session"
     assert service.calls == 0
+
+
+def test_apply_steel_events_prefers_the_first_guard_error():
+    result = _result(stdout="echo output\n")
+    events = [
+        {"verb": "get", "session": "wj-live", "decision": "allow",
+         "returncode": 0, "error": None},
+        {"verb": "eval", "session": "wj-live", "decision": "allow",
+         "returncode": 1,
+         "error": {"code": "target_lost", "message": "target gone",
+                   "recovery": {"action": "tab_new"}}},
+    ]
+
+    out = m._apply_steel_events(result, events)
+
+    assert out["error"]["code"] == "target_lost"
+    assert out["returncode"] == 2
+    assert out["stdout"] == "echo output\n"
+    assert len(out["steel_events"]) == 2
+
+
+def test_run_merges_a_guard_denial_even_when_the_shell_returns_zero(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("KALI_WORKDIR", str(tmp_path))
+    events = [
+        {"verb": "eval", "session": "wj-typo", "decision": "deny",
+         "returncode": 2,
+         "error": {"code": "unknown_session", "message": "not live",
+                   "recovery": {"action": "use_live"}}},
+    ]
+
+    class Proc:
+        returncode = 0
+        stdout = "echo survived\n"
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        with open(kwargs["env"]["KALI_STEEL_TRACE"], "a", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(json.dumps(event) + "\n")
+        return Proc()
+
+    monkeypatch.setattr(m.subprocess, "run", fake_run)
+
+    out = m._run("echo survived; bash -c 'steel browser eval 1 --session wj-typo --json'",
+                 "gate", 30)
+
+    assert out["stdout"] == "echo survived\n"
+    assert out["returncode"] == 2
+    assert out["error"]["code"] == "unknown_session"
+    assert out["error"]["recovery"]["action"] == "use_live"
+
+
+def test_run_without_events_keeps_the_legacy_shape(tmp_path, monkeypatch):
+    monkeypatch.setenv("KALI_WORKDIR", str(tmp_path))
+
+    class Proc:
+        returncode = 0
+        stdout = "ok\n"
+        stderr = ""
+
+    monkeypatch.setattr(m.subprocess, "run", lambda *args, **kwargs: Proc())
+
+    out = m._run("echo ok", "gate", 30)
+
+    assert out == {"stdout": "ok\n", "stderr": "", "returncode": 0,
+                   "duration_ms": out["duration_ms"]}
+    assert "steel_events" not in out
+
+
+def test_execute_command_merges_the_service_guard_events(monkeypatch):
+    service = _Service(_result(stdout="echo survived\n"))
+    service.result["steel_events"] = [
+        {"verb": "eval", "session": "wj-typo", "decision": "deny",
+         "returncode": 2,
+         "error": {"code": "unknown_session", "message": "not live",
+                   "recovery": {"action": "use_live"}}},
+    ]
+    monkeypatch.setattr(m, "_get_service", lambda: service)
+    monkeypatch.setattr(m, "_live_session_names", lambda: {"wj-live"})
+
+    out = asyncio.run(m.execute_command(
+        "echo pre; bash -c 'steel browser eval 1 --session wj-typo --json'",
+        "pod",
+    ))
+
+    assert service.calls == 1
+    assert out["error"]["code"] == "unknown_session"
+    assert out["returncode"] == 2
+
+
+def test_steel_exec_preserves_a_guard_error_without_reclassifying(monkeypatch):
+    monkeypatch.setattr(m, "_steel_version_ok", lambda: True)
+    monkeypatch.setattr(m, "_live_session_names", lambda: {"wj-live"})
+    guard_error = {"code": "target_lost", "message": "target gone",
+                   "retryable": False, "fatal": False,
+                   "recovery": {"action": "tab_new"}}
+    monkeypatch.setattr(
+        m, "_run",
+        lambda *args, **kwargs: _result(stdout="") | {
+            "error": guard_error,
+            "steel_events": [{"verb": "eval", "decision": "allow",
+                              "error": guard_error}],
+        },
+    )
+
+    out = m._steel_exec_sync(
+        command='steel browser eval "1" --session wj-live --json',
+        session_id="gate", timeout_s=30)
+
+    assert out["error"]["code"] == "target_lost"
+    assert out["error"]["recovery"]["action"] == "tab_new"

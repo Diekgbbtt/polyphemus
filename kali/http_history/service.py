@@ -10,13 +10,15 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from kali.steel_guard import guard_env, read_events, resolve_guard_path
 from kali.http_history.addon import UNSCOPED_PROJECT
 from kali.http_history.config import HttpHistoryConfig, load_config
 from kali.http_history.ids import new_ulid
@@ -46,6 +48,9 @@ class ExecOutcome:
     stderr: str
     returncode: int
     duration_ms: int
+    # One event per real Steel invocation, written by the binary guard. The
+    # default keeps every existing runner and test working unchanged.
+    steel_events: list[dict] = field(default_factory=list)
 
 
 def default_runner(
@@ -67,24 +72,42 @@ def default_runner(
     argv = ["bash", "-c", command]
     if namespace:
         argv = ["ip", "netns", "exec", namespace, *argv]
+    # The binary guard writes one JSON event per real Steel invocation. The
+    # trace path is per exec, so concurrent sessions cannot mix events. Without
+    # a deployed guard this is a no-op and the legacy result shape is unchanged.
+    trace_path = None
+    env = None
+    if resolve_guard_path() is not None:
+        descriptor, trace_path = tempfile.mkstemp(
+            prefix="steel-trace-", suffix=".jsonl", dir=workdir
+        )
+        os.close(descriptor)
+        env = guard_env(trace_path=trace_path, timeout_s=timeout_s)
     start = time.time()
     try:
         proc = subprocess.run(
-            argv, cwd=workdir, capture_output=True, text=True, timeout=timeout_s
+            argv,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            env=env,
         )
-        return ExecOutcome(
+        outcome = ExecOutcome(
             stdout=proc.stdout,
             stderr=proc.stderr,
             returncode=proc.returncode,
             duration_ms=int((time.time() - start) * 1000),
         )
     except subprocess.TimeoutExpired as exc:
-        return ExecOutcome(
+        outcome = ExecOutcome(
             stdout=(exc.stdout or "") if isinstance(exc.stdout, str) else "",
             stderr=f"timeout after {timeout_s}s",
             returncode=124,
             duration_ms=int((time.time() - start) * 1000),
         )
+    outcome.steel_events = read_events(trace_path)
+    return outcome
 
 
 class HttpHistoryService:
@@ -280,7 +303,7 @@ class HttpHistoryService:
             if project_id:
                 self._enforce_limits_throttled(project_id)
 
-        return {
+        payload = {
             "stdout": outcome.stdout,
             "stderr": outcome.stderr,
             "returncode": outcome.returncode,
@@ -289,6 +312,9 @@ class HttpHistoryService:
             "http_artifact_refs": refs,
             "capture_warning": capture_warning,
         }
+        if outcome.steel_events:
+            payload["steel_events"] = outcome.steel_events
+        return payload
 
     def _enforce_limits_throttled(self, project_id: str) -> None:
         """Run `enforce_limits` at most once per project per interval.
