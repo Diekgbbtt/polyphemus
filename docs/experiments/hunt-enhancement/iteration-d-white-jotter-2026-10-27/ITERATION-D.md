@@ -64,25 +64,26 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-27T23:26Z)
+## Live state (2026-10-27T23:57Z)
 
 | Metric | Value |
 |---|---|
 | State | running |
-| Intake | 8 of 27 units entered (9 model files) |
-| Impact rows | 28 (19 threat, 9 precursor) |
-| Capability rows | 28 of 28 |
-| Threats | 19 |
+| Intake | 12 of 27 units entered |
+| Impact rows | 33 (23 threat, 10 precursor) |
+| Capability rows | 33 of 33 |
+| Threats | 23 |
 | Chain pairs | 4 |
-| Risk | 107 / 180 |
-| Capped tokens | 1,113,383 / 7,000,000 |
-| Modeller calls | 155+ |
+| Risk | 132 / 180 |
+| Capped tokens | 1,371,694 / 7,000,000 |
 | Hunter calls | 0 (phase barrier) |
 | Fence hits | 0 |
 
 Per-unit risk sums: ReverseProxy 33, Service:sign-in 19, RESTApi:api 21,
 Service:library-catalog 11, Service:navigation-menu 2, Service:register 11,
-IdentificationSystem 6, AuthorizationSystem 4.
+IdentificationSystem 6, AuthorizationSystem 4, Service:article-management 6,
+Service:jotter-reading 6, AuthenticationMechanism 10,
+IntegrationSystem:cross-origin-policy 3.
 
 Four cross-unit chains are real:
 
