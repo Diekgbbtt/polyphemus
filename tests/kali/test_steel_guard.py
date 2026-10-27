@@ -32,11 +32,13 @@ def _isolated_registry(tmp_path, monkeypatch):
     )
 
 
-def test_guard_file_starts_with_a_python_shebang():
+def test_guard_file_is_executable_with_a_python_shebang():
     """The wrapper executes the guard directly. A missing shebang makes the
-    kernel run it as a shell script, which hides every guard decision."""
+    kernel run it as a shell script; a missing executable bit makes the
+    wrapper fail before every Steel command. Both are release invariants."""
     from pathlib import Path
 
+    assert os.access(guard_module.__file__, os.X_OK)
     first_line = Path(guard_module.__file__).read_text(encoding="utf-8").splitlines()[0]
     assert first_line.startswith("#!")
     assert "python" in first_line
