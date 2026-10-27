@@ -63,7 +63,7 @@ The guard:
 The MCP layer merges the trace events into the tool result.
 `kali/steel_guard.py` is also the chokepoint for `steel_exec` script mode.
 The first deployment failed because the guard file had no shebang; the wrapper executed it as a shell script.
-A regression test now asserts the shebang.
+A regression test now asserts the shebang and the executable bit.
 
 ### Verification
 
@@ -334,6 +334,8 @@ Live verification:
 - `20e1db78` `test: refresh the SpecWrite required-field fixture`
 - `9a3b3615` `fix: bound the first model turn and retire a stuck actor`
 - `33a59eba` `fix: redact auth store secrets from the model view`
+- `692de1f2` `chore: mark the steel guard executable`
+- `d7bbba2e` `test: isolate the runner tier from the deployed guard`
 
 The branch is local only.
 No remote was pushed.
