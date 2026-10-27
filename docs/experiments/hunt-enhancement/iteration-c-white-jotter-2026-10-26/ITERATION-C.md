@@ -184,20 +184,33 @@ After the fix, `next_target` parsed the setup and brought the target up.
 
 ## Progressive findings
 
-### The risk halt never fires
+### The risk halt fires on the back-office surfaces
 
 The intake is 27 units in risk-descending order.
-At 15 completed units the cumulative risk is 124 against a threshold of 180, and the last three units added zero.
+The page-presentation tail adds almost nothing: at 15 units the cumulative risk was 124, and the next five page units added 0, 0, 1, 0, and 1.
+An intermediate projection read that as a run that could not reach 180.
 
-The tail is the page-presentation layer: `WebPresentation:library-catalog`, `WebPresentation:sign-in`, and their siblings carry no damage of their own.
-The projected total is about 125 to 130, so the run cannot cross 180.
-`RunState.next_unit` returns `None` on either a halt or an exhausted intake, so the arm will model all 27 units and start hunting only when the intake empties.
+That projection was wrong.
+The two back-office REST surfaces carry the remaining risk:
 
-That makes iteration C a **coverage arm**, not a halt arm:
+| Unit | Risk |
+|---|---:|
+| `Service:user-administration` | 12 |
+| `RESTApi:actuator-management` | 23 |
+| `Service:operations-telemetry` | 24 |
 
-- the modeller price is paid for the whole 27-unit surface;
-- `promotion_risk_threshold = 0` then promotes every threat from every unit;
-- the hunter faces a queue far larger than B or B.a ever produced.
+The total went from 138 to **185** on `Service:operations-telemetry`, so the halt fired at 23 of 27 units.
+`Service:password-recovery` is the blocked unit.
+
+The lesson is about the intake ordering, not the threshold: a risk-descending order that puts page presentations before the actuator and telemetry surfaces makes the intermediate total look saturated long before the real crossing.
+
+### Coverage is the dominant cost
+
+The arm modelled 23 units against 5 in iteration B and 5 in iteration B.a.
+The modeller spent 1,945,435 capped on those units, which is 84,584 per unit and 46% of everything spent before the first pod ran.
+
+Every produced threat is promoted, because the floor is 0.
+The hunter therefore faces the whole 23-unit queue, and the 7M budget cannot drain it.
 
 ### The new primary metric dilutes with coverage
 
