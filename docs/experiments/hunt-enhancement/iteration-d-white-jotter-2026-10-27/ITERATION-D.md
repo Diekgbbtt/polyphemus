@@ -64,21 +64,31 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-27T22:46Z)
+## Live state (2026-10-27T22:54Z)
 
 | Metric | Value |
 |---|---|
 | State | running |
-| Units completed | 4 |
-| Impact rows | 20 (13 threat, 7 precursor) |
-| Capability rows | 20 of 20 |
-| Threats | 13 |
+| Intake | 5 of 27 units |
+| Units completed | 5 |
+| Impact rows | 22 (14 threat, 8 precursor) |
+| Capability rows | 22 of 22 |
+| Threats | 14 |
 | Chain pairs | 2 |
 | Promoted / demoted | 9 / 4 |
-| Risk | 84 / 180 |
-| Capped tokens | 776,784 / 7,000,000 |
-| Calls | 129+ |
+| Risk | 86 / 180 |
+| Capped tokens | 849,349 / 7,000,000 |
+| Modeller calls | 155 |
+| Hunter calls | 0 (phase barrier) |
 | Fence hits | 0 (after the narrowed channel regex) |
+
+### Why the hunter has no calls yet
+
+`pipeline_sync: batched` is a phase barrier, not an interleave (pipeline-sync ADR
+section 2). The modeller pass runs the intake one unit at a time until the risk budget is
+consumed or the intake is exhausted. Nothing downstream dispatches while the pass session
+is live. The surfer then builds the queue by each unit's model risk sum, descending. Zero
+hunter calls and zero test specs at this point are the contract, not a stall.
 
 Two cross-unit chains are real:
 
