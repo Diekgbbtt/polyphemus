@@ -2,9 +2,11 @@
 """Poll the iteration D hunting run: spend, risk, artefacts, fence compliance.
 
 Read-only. One JSON line per poll to MONITOR_OUT, and one compact line to
-stdout. The run is bounded by the token cap and the risk halt, so this monitor
-stops itself when the usage read reaches the cap, the run row reports a
-terminal status, or `--max-minutes` elapses.
+stdout. The run is bounded by the token cap, so this monitor stops itself when
+the usage read reaches the cap, the run row reports a terminal status, or
+`--max-minutes` elapses. The risk halt is recorded but does NOT stop the
+monitor: the batched phase barrier lifts at the halt and the hunt phase runs
+afterwards, so the spend can still reach the cap.
 
 The fence check is observational: a match is recorded with its unit and field,
 never repaired. It looks for the three forbidden characterisations the project
@@ -263,10 +265,7 @@ def main() -> int:
         )
         terminal = record["status"] in TERMINAL
         capped = (record["capped_tokens"] or 0) >= args.token_budget
-        halted = bool(record["halt"]) or (
-            (record["risk_total"] or 0) >= args.risk_threshold
-        )
-        if terminal or capped or halted or elapsed >= args.max_minutes * 60:
+        if terminal or capped or elapsed >= args.max_minutes * 60:
             break
         time.sleep(args.interval)
     return 0
