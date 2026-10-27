@@ -118,17 +118,17 @@ Use the deterministic `metrics.impact` block.
 It is the primary impact metric.
 
 - `impact_rows` is every impact-assessment row.
-- `threats` is the rows with `disposition=threat`. `placeholders` is the rows with `disposition=placeholder`.
+- `threats` is the rows with `disposition=threat`. `precursor_rows` is the rows with `disposition=precursor`. `capability_rows` is the rows with a non-empty `capability`.
 - `red` is a row with all CIA values none. `green` is a row with any CIA value not none.
-- `green_share` is `green / impact_rows`. `threat_share` is `threats / impact_rows`. `placeholder_share` is `placeholders / impact_rows`.
+- `green_share` is `green / (green + red)` when an `impact_review.yaml` exists, else `green / impact_rows`. `threat_share` is `threats / impact_rows`. `precursor_share` is `precursor_rows / impact_rows`.
 - `cia` is the distribution of each metric over `none / low / medium / high`.
-- `precursors` is the number of capability entities. `prior_art_reused` is the number of prior-art records the modeller reused.
+- `capability_rows` is the number of rows that carry a capability. `prior_art_reused` is the number of prior-art records the modeller reused.
 - `class_binding_rate` is a diagnostic, never a gate.
 
 A `threat` row must name a concrete victim and damaged property in its `damage` field.
-A `placeholder` must state that no concrete victim or property is affected.
+A `precursor` row states why no end damage follows and still names the capability gained.
 Read the damage text and judge whether it is concrete.
-A row whose damage names only a capability or a route is a placeholder at best.
+A row whose damage names only a capability or a route, while a concrete end damage was achievable, is a precursor row marked `under_mined` by the assessor.
 The class-based green gate is retired.
 The old class figure may be quoted beside the impact figure, marked superseded.
 A v2 block is a legacy recomputation: report it separately and never mix it with a v3 result.
@@ -210,12 +210,13 @@ impact:
   legacy_recomputation: bool
   impact_rows: int
   threats: int | null
-  placeholders: int | null
+  precursor_rows: int | null
+  capability_rows: int
   red: int
   green: int
   green_share: number | null
   threat_share: number | null
-  placeholder_share: number | null
+  precursor_share: number | null
   cia:
     confidentiality: {none: int, low: int, medium: int, high: int}
     integrity: {none: int, low: int, medium: int, high: int}
@@ -353,7 +354,7 @@ Use the experiment-results structure from the measure-experiment-results skill.
 Include:
 - the trial summary and identity;
 - the official discovery result;
-- the impact assessment: the red/green share, the threat and placeholder split, the CIA distribution, the precursor count, and the prior-art reuse;
+- the impact assessment: the red/green share, the threat and precursor split, the capability count, the CIA distribution, and the prior-art reuse;
 - the quality results by the six criteria;
 - the narrowing table: threat breadth, the spec count per threat, the primary axes, and whether the set is substantial and well-formed;
 - the token tax;

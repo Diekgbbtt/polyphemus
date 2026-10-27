@@ -142,6 +142,7 @@ Characterize the constraints apparently applied across all relevant data dimensi
 - strict deserialization against fixed schemas, type and range constraints, allowlists, strict enum comparisons;
 - context-sensitive sanitization and encoding, canonicalization, cross-field dependency validation;
 - binding of resource references to caller authority, ownership, tenant scope, and hierarchical relationships;
+- for a system unit: every observed object and function reference across the surface, and the ownership check that binds it to the caller; a reference whose check cannot be named is an inferred assumption, not an absent fault;
 - independent establishment of security-sensitive identities and claims versus reliance on supplied values;
 - constraints on network destinations derived from request parameters, hostname construction, DNS resolution, and redirects.
 
@@ -210,7 +211,7 @@ Compile the missed assumptions.
 A gap is **local** when it belongs to a trust boundary the model already has: patch the affected trust agreement, assumption, or vulnerability and re-check.
 A gap is **structural** when it belongs to a trust boundary absent from the model, or when the same axis is missing across two or more vulnerabilities: return to the undermodelled part and re-run the trust agreements, the assumptions, and the vulnerabilities there.
 
-When a full pass yields no new assumption and every vulnerability has a bound suite class, write ONE `wellformedness` note and then write the IMPACT_ASSESSED gate with the impact rows and the precursors.
+When a full pass yields no new assumption and every vulnerability has a bound suite class, write ONE `wellformedness` note, then run the PRIOR_ART gate, then write the IMPACT_ASSESSED rows.
 The note is the exit memory.
 It records the vulnerabilities checked, the skills loaded, the assumptions added, the absent Trust Assumptions sections, whether the gap was structural, and the final action.
 

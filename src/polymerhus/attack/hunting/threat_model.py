@@ -1123,16 +1123,35 @@ def _check_closure(model: UnitThreatModel) -> list[str]:
     return unclosed
 
 
-def _capability_cycle(model: UnitThreatModel) -> str | None:
-    """A cycle over the unit's capability requirements, if one exists.
+def _capability_cycle(
+    model: UnitThreatModel,
+    capability_index: Mapping[str, Any] | None = None,
+) -> str | None:
+    """A cycle over the capability graph, local or across units.
 
     A kill chain cannot revisit a capability it needs; a cycle means the model
     has not reached an end damage.
     """
     edges: dict[str, list[str]] = {}
+
+    def qualify(unit: str, ref: str) -> str:
+        return ref if "::" in ref else f"{unit}::{ref}"
+
+    def add(unit: str, row: Mapping[str, Any]) -> None:
+        capability_id = str(row.get("capability_id") or "")
+        if not capability_id:
+            return
+        key = f"{unit}::{capability_id}"
+        edges.setdefault(key, []).extend(
+            qualify(unit, str(ref)) for ref in (row.get("capability_path") or [])
+        )
+
     for row in model.impact_assessment:
-        if row.capability_id:
-            edges.setdefault(row.capability_id, []).extend(row.capability_path)
+        add(model.unit_id, row.model_dump(mode="json"))
+    for entry in (capability_index or {}).values():
+        if isinstance(entry, Mapping):
+            add(str(entry.get("unit_id") or ""), entry.get("row") or {})
+
     visiting: set[str] = set()
     done: set[str] = set()
 
@@ -1206,7 +1225,7 @@ def check_completion(
     missing = _check_necessary(model)
     referential_errors = _check_references(model, capability_index)
     unclosed = _check_closure(model)
-    cycle = _capability_cycle(model)
+    cycle = _capability_cycle(model, capability_index)
     if cycle is not None:
         unclosed.append(cycle)
     class_findings = _check_classes(model, class_names)
