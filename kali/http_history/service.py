@@ -84,12 +84,18 @@ def default_runner(
         )
         os.close(descriptor)
         env = guard_env(trace_path=trace_path, timeout_s=timeout_s)
+    steel_invoked = "steel" in command
+    outer_timeout = (
+        timeout_s + 1
+        if steel_invoked and env and env.get("STEEL_REAL_BINARY")
+        else timeout_s
+    )
     result = run_in_process_group(
         argv,
         shell=False,
         cwd=workdir,
         env=env,
-        timeout_s=timeout_s,
+        timeout_s=outer_timeout,
         text=True,
     )
     outcome = ExecOutcome(

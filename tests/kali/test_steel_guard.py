@@ -204,7 +204,7 @@ def test_guard_env_sets_the_wrapper_and_the_real_binary(tmp_path, monkeypatch):
     assert env["STEEL_REAL_BINARY"].endswith("steel_guard.py")
     assert env["STEEL_REAL_BINARY_REAL"].endswith("steel-real")
     assert env["KALI_STEEL_TRACE"] == "/tmp/trace.jsonl"
-    assert env["KALI_STEEL_TIMEOUT_S"] == "29"
+    assert env["KALI_STEEL_TIMEOUT_S"] == "30"
 
 
 def test_resolve_guard_path_prefers_the_override(tmp_path, monkeypatch):

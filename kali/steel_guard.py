@@ -102,7 +102,11 @@ def guard_env(
     if trace_path:
         env[TRACE_ENV] = trace_path
     if timeout_s is not None:
-        env[TIMEOUT_ENV] = str(max(1, int(timeout_s) - 1))
+        # The guard owns the browser command's budget. It must not reserve a
+        # second here: the MCP pre-check allows a Steel wait just below
+        # timeout_s, and a one-second reserve would cut that legitimate wait.
+        # The outer runner adds a small reporting grace instead.
+        env[TIMEOUT_ENV] = str(max(1, int(timeout_s)))
     return env
 
 

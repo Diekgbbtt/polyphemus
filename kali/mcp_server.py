@@ -398,8 +398,19 @@ def _run(command: str, session_id: str, timeout_s: int) -> dict:
     workdir = _workdir(session_id)
     trace_path = _new_trace(workdir)
     env = guard_env(trace_path=trace_path, timeout_s=timeout_s)
+    # The guard times out the browser command at timeout_s and writes its
+    # event. The outer runner needs one more second to reap and report; it
+    # never shortens the guard's own budget. A command with no Steel token
+    # keeps the requested timeout exactly.
+    steel_invoked = bool(_STEEL_TOKEN.search(command))
+    outer_timeout = (
+        timeout_s + 1
+        if steel_invoked and env.get("STEEL_REAL_BINARY")
+        else timeout_s
+    )
     outcome = run_in_process_group(
-        command, shell=True, cwd=workdir, env=env, timeout_s=timeout_s, text=True
+        command, shell=True, cwd=workdir, env=env,
+        timeout_s=outer_timeout, text=True
     )
     events = read_events(trace_path)
     result = {"stdout": _ANSI.sub("", outcome.stdout),

@@ -237,6 +237,44 @@ def test_run_merges_a_guard_denial_even_when_the_shell_returns_zero(
     assert out["error"]["recovery"]["action"] == "use_live"
 
 
+def test_run_gives_the_guard_a_one_second_reporting_grace(tmp_path, monkeypatch):
+    guard = tmp_path / "steel_guard.py"
+    guard.write_text("#!/bin/sh\n", encoding="utf-8")
+    guard.chmod(guard.stat().st_mode | 0o100)
+    monkeypatch.setenv("KALI_STEEL_GUARD", str(guard))
+    monkeypatch.setenv("KALI_WORKDIR", str(tmp_path))
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["timeout_s"] = kwargs["timeout_s"]
+        return ProcessOutcome(stdout="ok\n", stderr="", returncode=0, duration_ms=1)
+
+    monkeypatch.setattr(m, "run_in_process_group", fake_run)
+
+    m._run("steel browser sessions --json", "gate", 30)
+
+    assert seen["timeout_s"] == 31
+
+
+def test_run_keeps_the_exact_timeout_for_a_non_steel_command(tmp_path, monkeypatch):
+    guard = tmp_path / "steel_guard.py"
+    guard.write_text("#!/bin/sh\n", encoding="utf-8")
+    guard.chmod(guard.stat().st_mode | 0o100)
+    monkeypatch.setenv("KALI_STEEL_GUARD", str(guard))
+    monkeypatch.setenv("KALI_WORKDIR", str(tmp_path))
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["timeout_s"] = kwargs["timeout_s"]
+        return ProcessOutcome(stdout="ok\n", stderr="", returncode=0, duration_ms=1)
+
+    monkeypatch.setattr(m, "run_in_process_group", fake_run)
+
+    m._run("echo ok", "gate", 30)
+
+    assert seen["timeout_s"] == 30
+
+
 def test_run_without_events_keeps_the_legacy_shape(tmp_path, monkeypatch):
     monkeypatch.setenv("KALI_WORKDIR", str(tmp_path))
     monkeypatch.setattr(
