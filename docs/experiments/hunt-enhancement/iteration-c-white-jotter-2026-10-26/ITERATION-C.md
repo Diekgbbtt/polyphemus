@@ -623,6 +623,14 @@ Iteration C proves that coverage at the modeller is cheap and that an inert floo
    `001` and `006` are discipline failures: a class that exists but was not loaded, and a namespace closed on single-decode negative evidence.
    Only `004` is a genuine knowledge-base gap.
 
+8. **The L0 graph is an anonymous-view graph.**
+   All 39 L0 endpoints are anonymous recon GETs, so authenticated and injected routes are absent and five of seven ground truths cap at 0.667 on the unit-quality axis.
+   Unit quality cannot be judged above that cap until recon seeds an authenticated view.
+
+9. **The deterministic measurement base lags the pipeline.**
+   `measure_utm.py` misses the 28 `threat-*.yaml` files, the 68 procedures, the GT-007 pod, and four exact spec matches.
+   Every candidate-recall number from `metrics.yaml` is an artifact in this arm, and the impact metrics here were computed independently for that reason.
+
 ## Recommendation
 
 **Do not adopt iteration C as the new default.**
@@ -648,12 +656,20 @@ Rationale:
 If D identifies `003`, the promotion gate is proven end to end.
 If D misses `003` with the threat still drained, the failure is in the hunter's payload work, not in the budget.
 
-Before D, repair the four harness defects recorded above, in this order:
+There is a second, cheaper path that D should also exercise: resume instead of stop.
+The surfer already owns recovery for a deferred trial, and a `stopped` run that still holds dispatchable produced threats could resume at the hunting node rather than end.
+That would drain the 12 undrained threats without changing the promotion policy.
+The floor is the structural fix; resume is the operational one.
+
+Before D, repair the harness defects recorded above, in this order:
 
 1. the deadline terminal contract (`timeout` is not assessable);
-2. the prompt-path lineage split;
-3. the `live_hunts` status field;
-4. a concurrency assertion against host capacity.
+2. a `stopped` run with dispatchable produced threats is not a success: resume it, or refuse to close it;
+3. the prompt-path lineage split;
+4. the `live_hunts` status field and a concurrency assertion against host capacity;
+5. `measure_utm.py`: read `threat-*.yaml`, `skill_concretised_procedure`, the GT-007 pod, and map unit names and mass assignment correctly;
+6. refuse a trial when `worktree_dirty` is true or the stamped sha disagrees with the plan;
+7. declare `budget_s` in the setup so the plan and the run agree without a CLI flag.
 
 ## Workflow and contract findings
 
