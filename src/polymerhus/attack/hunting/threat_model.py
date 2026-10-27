@@ -1001,6 +1001,8 @@ def _check_references(
     foreign_capabilities = capability_index or {}
 
     def resolve_capability(ref: str) -> dict | None:
+        if ref.startswith(f"{model.unit_id}::"):
+            return local_capabilities.get(ref.split("::", 1)[1])
         if "::" in ref:
             return foreign_capabilities.get(ref)
         return local_capabilities.get(ref)

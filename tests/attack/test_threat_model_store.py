@@ -2167,3 +2167,28 @@ def test_a_capability_from_another_unit_resolves_and_lands_in_the_chain(tmp_path
     assert chain[0]["capability"] == "First::p-1"
     assert chain[0]["precursor"] == "First::p-1"
     assert chain[0]["resolved"]["row"]["capability_id"] == "p-1"
+
+
+def test_a_self_qualified_capability_resolves_locally(tmp_path):
+    """A model may qualify its own capability; resolution stays local."""
+    store = ThreatModelStore(tmp_path)
+    precursor = {**_precursor_row("p-1"), "id": "ia-1"}
+    threat_row = {
+        **_impact_assessment()[0],
+        "id": "ia-2",
+        "capability_id": "p-2",
+        "capability_path": [f"{UNIT}::p-1"],
+    }
+    _write_to_completed(
+        store,
+        impact_assessment=[precursor, threat_row],
+        threats=[{
+            **_threat(),
+            "impact_ref": "ia-2",
+            "enabling_precursors": [[f"{UNIT}::p-1", f"{UNIT}::p-1"]],
+        }],
+    )
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["validation"]["valid"] is True
+    assert model["validation"]["referential_errors"] == []
