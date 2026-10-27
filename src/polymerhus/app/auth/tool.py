@@ -460,8 +460,13 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
         at = path or ""
         if command == "read":
             try:
-                state = _resolve_canonical_origin(seam.read(project_id, ""),
-                                                  _origin_once())
+                # The model-facing view never carries a secret value, even on
+                # the read/write binding. The gateway and specialised agents
+                # use the store object internally for replay; the model only
+                # needs names, shapes, and statuses. Redact BEFORE the dotted
+                # projection, so a narrow read cannot address a raw leaf.
+                state = redact_auth_state(seam.read(project_id, ""))
+                state = _resolve_canonical_origin(state, _origin_once())
                 return {"ok": True, "command": "read", "path": at,
                         "value": AuthStore._project(state, at)}
             except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
