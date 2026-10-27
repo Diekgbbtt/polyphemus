@@ -165,7 +165,8 @@ Two baselines are reported:
 | Frozen hunting config | `batched`, `pod_batch_size=3`, `promotion_risk_threshold=0`, `risk_threshold=180` (verified live) |
 | Hunting run id | `65ec294b-e5cf-49c6-9f7c-4664a73aa557` |
 | Run record check | `pipeline_sync=batched`, `risk_threshold=180`, `threshold_basis=db`, `pod_batch_size=3`, `promotion_risk_threshold=0` (verified live) |
-| Trial record | pending |
+| Trial record | terminal `stopped`, spent 6,919,138, finished `2026-10-27T07:49:05Z` |
+| Worktree state at trial | dirty: `providers.py` carries the live thinking patch, so `eval_sha=13ce0edb` does not describe the running code |
 
 ### Harness lineage finding
 
@@ -293,8 +294,8 @@ The three identifications:
 | Vuln | Unit | Class | Confidence |
 |---|---|---|---:|
 | `white-jotter-002` | `ReverseProxy` | `bfla-alternate-path` | 0.95 |
-| `white-jotter-005` | `RESTApi:api` | `sql-injection` | 0.95 |
-| `white-jotter-007` | `Service:register` | `mass-assignment-nested-relation-write` | 0.95 |
+| `white-jotter-005` | `RESTApi:api` | `sql-injection` | 0.97 |
+| `white-jotter-007` | `Service:register` | `mass-assignment-nested-relation-write` | 0.90 |
 
 `white-jotter-001` is partial at confidence 0.45, the same verdict as both earlier arms.
 `003`, `004`, and `006` are missed at confidence 0.95.
@@ -411,6 +412,76 @@ Coverage was therefore affordable; the hunt was not.
 The risk budget was exceeded and the halt fired on `Service:operations-telemetry`.
 The token budget was not exceeded: at the observed burn the deadline would have fired first, and a deadline terminal is `timeout`, which the monitor defers instead of assessing.
 The operator stop at 07:48:56Z secured a `stopped` terminal with 80,862 tokens unspent.
+
+## Measurement findings
+
+The measurer judged execution quality on six criteria from the persisted evidence.
+
+| Criterion | Result |
+|---|---|
+| L0/L1 testable unit | 7 of 7 resolve above the 0.3 floor, **full core 2 of 7** (001, 007) |
+| Threat model direction | compatible direction for **4 of 7** (002, 003, 005, 007), sharpness 3 |
+| Hunter soundness | 69 specs, 55 ratified, 68 carry the seven-field procedure, sharp for 3 of 7 |
+| Pod quality | 55 sessions, 12 confirmations, 41 watchdog terminals, 38 with no interpretation |
+| Workflow adherence | **0.78**: modeller 0.88, hunter 0.75, pod 0.72 |
+| Token tax | 6,919,138 capped, 98.8% of the bound |
+
+### The L0 graph is an anonymous-view graph
+
+The 39 L0 endpoints are all anonymous recon GETs.
+The authenticated admin routes (`/api/admin/user`, `/api/admin/content/article`) and the injected read routes (`/api/search`, `/api/file`) never entered the graph.
+
+Expected-endpoint recall is therefore 3 of 11.
+Five of the seven ground truths score 0.667 on the L0/L1 axis for this reason alone, whatever their model quality.
+
+This is an analysis-layer cap, not a hunting defect.
+A post-auth crawl or an L1 endpoint seed is the repair.
+
+### A modelled vulnerability is not a hunted vulnerability
+
+The measurer reaches the same conclusion as the diagnoser from a different direction.
+`003` had a sharp, write-proven, risk-9 threat and produced no spec.
+
+The binding constraint is throughput and termination, not model capability.
+Pods do not conclude, the unit barrier serialises two-hour waves, and the risk halt arrives before the inbox drains.
+
+### The arm found real bugs outside the ground-truth set
+
+Twelve pod confessions do not match a ground truth.
+Manual judgement splits them into 8 duplicates of scored ground truths and **4 genuine non-GT findings**:
+
+- an anonymous `/actuator/httptrace` dump with 27 session identifiers and no challenge;
+- a replayed harvested `JSESSIONID` reaching admin JSON;
+- a login rate-limit bypass: 40 attempts, one principal, 1.13 s, no accounting;
+- a session identifier disclosed in a redirect `Location` header.
+
+The first two form a credible high-value chain.
+The benchmark does not cover the actuator and telemetry surface, so these are scope-tightness findings rather than false positives.
+
+The identified rate of 3 of 7 therefore understates the arm's output: on a coverage basis it produced four findings the suite does not score.
+
+### The deterministic measurement base under-reports
+
+`eval/measure_utm.py` was written for the pre-impact pipeline vocabulary, and every candidate-recall number it reports is an artifact in this arm:
+
+| Reported | Cause |
+|---|---|
+| `loop_candidates: 0` | globs `loop-*.yaml`, but the pipeline writes `threat-N.yaml` (28 threats missed) |
+| `spec_candidates: 0` | does not read `skill_concretised_procedure` (68 specs) |
+| `pod_confirmed: 5` | misses the GT-007 pod |
+| exact spec matches | unit naming (`RESTApi:api` vs `Service:book-search`) and no mass-assignment to IDOR mapping |
+
+Do not publish aggregate recall from `metrics.yaml` until this script is repaired.
+The impact metrics in this document are computed independently by `measure_iteration_c.py`, so they are unaffected.
+
+### Identity and deadline
+
+The instance worktree was dirty at `13ce0edb`: `providers.py` carries the live thinking-level patch, and the plan names `5df29930` as the measured code.
+The stamped sha does not describe the running code, so the arm's identity is the triple (`13ce0edb` + thinking patch + setup).
+
+The setup does not declare `budget_s`.
+The CLI flag supplied 43,200 s, so the run honoured the intended wall clock, but the plan's own 14,400 s default never applied.
+The setup should declare `budget_s` so the plan and the run agree without a flag.
 
 ## Failure findings
 
