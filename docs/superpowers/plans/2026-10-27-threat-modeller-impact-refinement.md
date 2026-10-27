@@ -1040,13 +1040,13 @@ Done and committed in this branch:
 - Workflow: `PRIOR_ART` moved after `VULNERABILITIES_WRITTEN`; well-formedness runs before it; hints and per-turn instructions updated.
 - Prompt: capability-chain impact procedure, precursor contrast, resolved tuple example, negative-evidence rule, white-jotter-006 worked failure, role-permission stub, reduced probing instruction.
 - Metric: v4 capability and precursor counts, review labels, `green_share = green / (green + red)`, `impact_review.yaml` loader.
-- Assessor prompt: `impact_review.yaml` second output.
+- Assessor prompt: `impact_review.yaml` second output; `impact_review.py` validates it; the assessment gate reads it and honors `EVAL_REQUIRE_IMPACT_REVIEW=1`.
 - Docs: impact spec, module CONTEXT, unit-threat-model impact map.
 
 Deviations:
 
-- The monitor does not yet verify `impact_review.yaml`; the assessor prompt requires it and `measure_utm` consumes it when present. This is the one plan item left open.
+- The review is required only when `EVAL_REQUIRE_IMPACT_REVIEW=1`; a legacy run without the file still passes the assessment gate.
 - The core capability row keeps the CIA vector on the threat, so a precursor row's effective vector is all-none; a partial low effect is described in the damage text.
 - The legacy `precursors[]` field remains on the model for read compatibility, excluded from the gate sections and the tool schema.
 
-Verification: `tests/attack` and `tests/eval` pass, 2,138 tests. The review labels are keyed by unit so a repeated `IA-1` cannot collide. The e2e suite was not run to completion in this session (it exceeded the 10-minute bound).
+Verification: `tests/attack` and `tests/eval` pass, 2,141 tests. The review labels are keyed by unit so a repeated `IA-1` cannot collide. The e2e suite was not run to completion in this session (it exceeded the 10-minute bound).

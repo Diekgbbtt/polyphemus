@@ -15,7 +15,7 @@ You receive four paths:
 
 ## Write-only discipline
 
-Write the destination file and nothing else.
+Write the destination file and its sibling `impact_review.yaml`; write nothing else.
 Do not create, modify, delete, or move any other file, directory, or artifact.
 Do not touch the target, the pipeline, or the data root.
 You are out-of-band scoring, isolated from the run.
