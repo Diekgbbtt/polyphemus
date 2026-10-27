@@ -12,12 +12,11 @@ command. Both regressions are pinned here without spawning a process.
 """
 from __future__ import annotations
 
-import subprocess
-
 import pytest
 
 from kali.http_history import service as service_module
 from kali.http_history.service import ExecOutcome, default_runner
+from kali.process_group import ProcessOutcome
 
 
 @pytest.fixture(autouse=True)
@@ -30,18 +29,28 @@ def _no_workdir_io(monkeypatch):
     return created
 
 
-def _fake_run(monkeypatch, *, stdout="", stderr="", returncode=0):
-    """Capture the argv and return a CompletedProcess-shaped result."""
+def _fake_run(
+    monkeypatch,
+    *,
+    stdout="",
+    stderr="",
+    returncode=0,
+    duration_ms=1,
+):
+    """Capture the launch shape and return the process-group outcome."""
     seen: dict[str, object] = {}
 
     def fake_run(argv, **kwargs):
         seen["argv"] = argv
         seen["kwargs"] = kwargs
-        return subprocess.CompletedProcess(
-            argv, returncode, stdout=stdout, stderr=stderr
+        return ProcessOutcome(
+            stdout=stdout,
+            stderr=stderr,
+            returncode=returncode,
+            duration_ms=duration_ms,
         )
 
-    monkeypatch.setattr(service_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(service_module, "run_in_process_group", fake_run)
     return seen
 
 
@@ -89,19 +98,21 @@ def test_default_runner_returns_stdout_and_returncode(monkeypatch, _no_workdir_i
         stdout='{"url":"http://t/"}\n',
         stderr="warn\n",
         returncode=3,
-        duration_ms=outcome.duration_ms,
+        duration_ms=1,
     )
     assert seen["kwargs"]["cwd"] == "/work/s3"
-    assert seen["kwargs"]["timeout"] == 30
-    assert seen["kwargs"]["capture_output"] is True
+    assert seen["kwargs"]["timeout_s"] == 30
+    assert seen["kwargs"]["shell"] is False
     assert seen["kwargs"]["text"] is True
 
 
 def test_default_runner_maps_timeout_to_124(monkeypatch, _no_workdir_io):
-    def fake_run(argv, **kwargs):
-        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 0), output="partial\n")
-
-    monkeypatch.setattr(service_module.subprocess, "run", fake_run)
+    _fake_run(
+        monkeypatch,
+        stdout="partial\n",
+        stderr="timeout after 7s",
+        returncode=124,
+    )
 
     outcome = default_runner("katana -u t", session_id="s4", timeout_s=7)
 

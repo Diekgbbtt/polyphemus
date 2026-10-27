@@ -11,6 +11,7 @@ import asyncio
 import json
 
 import kali.mcp_server as m
+from kali.process_group import ProcessOutcome
 
 
 def _result(stdout: str = "", stderr: str = "", returncode: int = 0) -> dict:
@@ -217,18 +218,15 @@ def test_run_merges_a_guard_denial_even_when_the_shell_returns_zero(
                    "recovery": {"action": "use_live"}}},
     ]
 
-    class Proc:
-        returncode = 0
-        stdout = "echo survived\n"
-        stderr = ""
-
     def fake_run(command, **kwargs):
         with open(kwargs["env"]["KALI_STEEL_TRACE"], "a", encoding="utf-8") as handle:
             for event in events:
                 handle.write(json.dumps(event) + "\n")
-        return Proc()
+        return ProcessOutcome(
+            stdout="echo survived\n", stderr="", returncode=0, duration_ms=1
+        )
 
-    monkeypatch.setattr(m.subprocess, "run", fake_run)
+    monkeypatch.setattr(m, "run_in_process_group", fake_run)
 
     out = m._run("echo survived; bash -c 'steel browser eval 1 --session wj-typo --json'",
                  "gate", 30)
@@ -241,13 +239,13 @@ def test_run_merges_a_guard_denial_even_when_the_shell_returns_zero(
 
 def test_run_without_events_keeps_the_legacy_shape(tmp_path, monkeypatch):
     monkeypatch.setenv("KALI_WORKDIR", str(tmp_path))
-
-    class Proc:
-        returncode = 0
-        stdout = "ok\n"
-        stderr = ""
-
-    monkeypatch.setattr(m.subprocess, "run", lambda *args, **kwargs: Proc())
+    monkeypatch.setattr(
+        m,
+        "run_in_process_group",
+        lambda *args, **kwargs: ProcessOutcome(
+            stdout="ok\n", stderr="", returncode=0, duration_ms=1
+        ),
+    )
 
     out = m._run("echo ok", "gate", 30)
 

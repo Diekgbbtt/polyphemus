@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from kali.steel_guard import guard_env, read_events, resolve_guard_path
+from kali.process_group import run_in_process_group
 from kali.http_history.addon import UNSCOPED_PROJECT
 from kali.http_history.config import HttpHistoryConfig, load_config
 from kali.http_history.ids import new_ulid
@@ -83,29 +84,20 @@ def default_runner(
         )
         os.close(descriptor)
         env = guard_env(trace_path=trace_path, timeout_s=timeout_s)
-    start = time.time()
-    try:
-        proc = subprocess.run(
-            argv,
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            env=env,
-        )
-        outcome = ExecOutcome(
-            stdout=proc.stdout,
-            stderr=proc.stderr,
-            returncode=proc.returncode,
-            duration_ms=int((time.time() - start) * 1000),
-        )
-    except subprocess.TimeoutExpired as exc:
-        outcome = ExecOutcome(
-            stdout=(exc.stdout or "") if isinstance(exc.stdout, str) else "",
-            stderr=f"timeout after {timeout_s}s",
-            returncode=124,
-            duration_ms=int((time.time() - start) * 1000),
-        )
+    result = run_in_process_group(
+        argv,
+        shell=False,
+        cwd=workdir,
+        env=env,
+        timeout_s=timeout_s,
+        text=True,
+    )
+    outcome = ExecOutcome(
+        stdout=result.stdout,
+        stderr=result.stderr,
+        returncode=result.returncode,
+        duration_ms=result.duration_ms,
+    )
     outcome.steel_events = read_events(trace_path)
     return outcome
 

@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import subprocess
 import sys
 import tempfile
 import time
@@ -42,6 +41,7 @@ try:
         classify_result,
         sanitize_steel_command,
     )
+    from kali.process_group import run_in_process_group
 except ImportError:  # flat deployment beside mcp_server.py
     from steel_contract import (  # type: ignore[no-redef]
         BrowserCommand,
@@ -49,6 +49,7 @@ except ImportError:  # flat deployment beside mcp_server.py
         classify_result,
         sanitize_steel_command,
     )
+    from process_group import run_in_process_group  # type: ignore[no-redef]
 
 DEFAULT_REAL_BINARY = "/opt/localbin/steel-real"
 GUARD_ENV = "KALI_STEEL_GUARD"
@@ -273,13 +274,13 @@ def _query_live_sessions(argv: list[str], real_binary: str) -> set[str] | None:
     """
     mode = ["--local"] if ("--local" in argv or os.environ.get("STEEL_BROWSER_API_URL")) else []
     try:
-        proc = subprocess.run(
+        outcome = run_in_process_group(
             [real_binary, *mode, "browser", "sessions", "--json"],
-            capture_output=True,
+            shell=False,
+            timeout_s=CATALOGUE_TIMEOUT_S,
             text=True,
-            timeout=CATALOGUE_TIMEOUT_S,
         )
-        data = json.loads(proc.stdout or "").get("data")
+        data = json.loads(outcome.stdout or "").get("data")
         if not isinstance(data, list):
             return None
         names = {
@@ -296,22 +297,13 @@ def _query_live_sessions(argv: list[str], real_binary: str) -> set[str] | None:
 def _run_real(
     argv: list[str], real_binary: str, timeout_s: int | None
 ) -> tuple[str, str, int, int]:
-    start = time.monotonic()
-    try:
-        proc = subprocess.run(
-            [real_binary, *argv],
-            capture_output=True,
-            timeout=max(1, timeout_s) if timeout_s else None,
-        )
-        stdout = proc.stdout.decode("utf-8", "replace")
-        stderr = proc.stderr.decode("utf-8", "replace")
-        return stdout, stderr, proc.returncode, int((time.monotonic() - start) * 1000)
-    except subprocess.TimeoutExpired as exc:
-        stdout = (exc.stdout or b"").decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        stderr = (exc.stderr or b"").decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-        message = f"timeout after {timeout_s}s"
-        stderr = f"{stderr}\n{message}".strip()
-        return stdout, stderr, 124, int((time.monotonic() - start) * 1000)
+    outcome = run_in_process_group(
+        [real_binary, *argv],
+        shell=False,
+        timeout_s=timeout_s,
+        text=True,
+    )
+    return outcome.stdout, outcome.stderr, outcome.returncode, outcome.duration_ms
 
 
 def run_guarded(

@@ -29,6 +29,7 @@ try:
         read_events,
         record_live_sessions,
     )
+    from kali.process_group import run_in_process_group
 except ImportError:  # the deployed flat layout beside mcp_server.py
     from steel_contract import (  # type: ignore[no-redef]
         BrowserCommand,
@@ -43,6 +44,7 @@ except ImportError:  # the deployed flat layout beside mcp_server.py
         read_events,
         record_live_sessions,
     )
+    from process_group import run_in_process_group  # type: ignore[no-redef]
 
 os.environ["PATH"] = ":".join([
     "/opt/localbin", "/root/go/bin", "/opt/venv/bin", "/usr/local/go/bin", os.environ.get("PATH", ""),
@@ -396,19 +398,14 @@ def _run(command: str, session_id: str, timeout_s: int) -> dict:
     workdir = _workdir(session_id)
     trace_path = _new_trace(workdir)
     env = guard_env(trace_path=trace_path, timeout_s=timeout_s)
-    start = time.time()
-    try:
-        proc = subprocess.run(command, shell=True, cwd=workdir,
-                              capture_output=True, text=True, timeout=timeout_s,
-                              env=env)
-        rc, out, err = proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as e:
-        rc, out, err = 124, (e.stdout or ""), f"timeout after {timeout_s}s"
-    finally:
-        events = read_events(trace_path)
-    result = {"stdout": _ANSI.sub("", out), "stderr": _ANSI.sub("", err),
-              "returncode": rc,
-              "duration_ms": int((time.time() - start) * 1000)}
+    outcome = run_in_process_group(
+        command, shell=True, cwd=workdir, env=env, timeout_s=timeout_s, text=True
+    )
+    events = read_events(trace_path)
+    result = {"stdout": _ANSI.sub("", outcome.stdout),
+              "stderr": _ANSI.sub("", outcome.stderr),
+              "returncode": outcome.returncode,
+              "duration_ms": outcome.duration_ms}
     return _apply_steel_events(result, events)
 
 def _live_session_names() -> set[str] | None:
