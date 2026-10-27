@@ -64,7 +64,7 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-27T22:45Z)
+## Live state (2026-10-27T22:46Z)
 
 | Metric | Value |
 |---|---|
@@ -76,18 +76,22 @@ Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 | Chain pairs | 2 |
 | Promoted / demoted | 9 / 4 |
 | Risk | 84 / 180 |
-| Capped tokens | 759,159 / 7,000,000 |
-| Calls | 129 |
-| Fence hits | 1, adjudicated false positive |
+| Capped tokens | 776,784 / 7,000,000 |
+| Calls | 129+ |
+| Fence hits | 0 (after the narrowed channel regex) |
 
-The first cross-unit chain is real: `Service:sign-in` row `IA-26` requires
-`ReverseProxy::P-3` (the actuator dump capability) and closes to threat 3 with the pair
-`[ReverseProxy::P-3, ReverseProxy::P-3]`.
+Two cross-unit chains are real:
 
-The one fence hit was `Service-library-catalog` trust agreement: "fourteen rows hold a
-JSON-array-shaped string and six hold plain text". It describes the author field's data
-shape, not a communication channel. The monitor's channel regex was narrowed to
-`plain text channel|communication|transport|connection`, so this is not a violation.
+- `Service:sign-in` row `IA-26` requires `ReverseProxy::P-3` (the actuator dump capability)
+  and closes to threat 3 with the pair `[ReverseProxy::P-3, ReverseProxy::P-3]`.
+- `Service:library-catalog` row `IA-21` requires `ReverseProxy::P-2` (the back-office write
+  capability) and closes to a browser-steering threat.
+
+The earlier single fence hit was `Service-library-catalog` trust agreement: "fourteen rows
+hold a JSON-array-shaped string and six hold plain text". It describes the author field's
+data shape, not a communication channel. The monitor's channel regex was narrowed to
+`plain text channel|communication|transport|connection` and restarted, so this is not a
+violation.
 
 ## Open issue
 
