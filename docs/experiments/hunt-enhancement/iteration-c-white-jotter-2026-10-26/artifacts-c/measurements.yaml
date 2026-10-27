@@ -1,0 +1,862 @@
+schema_version: 1
+trial:
+  trial_id: white-jotter-1-20261027T074905-1618c524
+  target: white-jotter
+  project_id: 8e2e5dc7-a880-4451-aaa5-267cedd48264
+  eval_sha: 13ce0edb1a44a1ce99f60841812cdb56a824262d
+  stack_fingerprint: 112e9c3b05bc155d8a087d4131764d6ffc532af8c8a47bc645ddb053babd2407
+  terminal: stopped
+official:
+  total: 7
+  identified: 3
+  partial: 1
+  missed: 3
+  identification_rate: 0.4286
+per_vuln:
+  - vuln_id: white-jotter-001
+    type: Weak or Default Credentials
+    location: http://wj:8443/api/login
+    discovery: partial
+    confidence: 0.45
+    l0_l1:
+      core_score: 1.0
+      enriched_score: 1.0
+      floor_met: true
+      full_core: true
+      notes: >-
+        The graph resolves the corpus unit through its alias: Service:account-sign-in is present as the
+        sign-in L1 service. /api/login and /api/authentication exist as L0 endpoints on the synthetic
+        BaseURL; /api/logout is absent, so endpoint recall is 2 of 3. The typed backbone is 2 of 2 and
+        all three service-to-system edges resolve.
+      evidence:
+        - /opt/polymerhus-dev/eval/runs-iteration-c-20261026/white-jotter-1/white-jotter-1-20261027T074905-1618c524/metrics.yaml (per_vuln.white-jotter-001.graph)
+        - http://localhost:8080/projects/8e2e5dc7-a880-4451-aaa5-267cedd48264/graph (39 Endpoint nodes; L1 service sign-in)
+        - /root/utm-groundtruth/white-jotter/white-jotter-001/unit-spec.yaml (judge-only)
+    threat_model:
+      loop_candidate: false
+      sharpness: 0
+      direction_diversity: >-
+        Four threats on Service:sign-in, all on adjacent classes (session-management fixation and
+        identifier-scoped logout, username-enumeration-oracle, rate-limit-bypass); none binds
+        weak-or-default credentials.
+      failure_mode_coverage: >-
+        0 of 1 expected class. The wellformedness note explicitly defers "default-credential state
+        (belongs to weak-credential-discovery)" and the prior_art note warns cleartext carriage must
+        not be re-counted as a sign-in fault, so the gate closed with the expected fault unbound.
+      notes: >-
+        Deterministic loop_candidate is false and agrees with the semantic reading here: no threat
+        binds the expected unit and class. The unit model is sharp on four different faults but the
+        ground-truth direction is absent. The auth bootstrap holds the same admin/123 pair, which
+        the model reads as legitimate material.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced/Service-sign-in/Service-sign-in.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced/Service-sign-in/threat-1.yaml (threat-4 are the four bound faults)
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/notes.yaml (Service-sign-in:wellformedness, Service-sign-in:prior_art)
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/auth/credentials.yaml
+    hunter:
+      spec_candidate: false
+      sharpness: 0
+      completeness: >-
+        No spec targets Service:sign-in. The 25 specs that match this vulnerability by class all
+        execute from system-level units (ReverseProxy, RESTApi:actuator-management, and others); they
+        are complete (5 of 5 reduced-D4 fields) but none tests a default pair.
+      procedure_grounding: >-
+        The specs that exist carry the typed seven-field procedure (68 of 69 project-wide) and the
+        skill list, but no weak-credential-discovery / default-credential-replay procedure was ever
+        instantiated.
+      symptom_discrimination: >-
+        The class-matching session-management specs carry paired controls (cleartext carriage, HSTS
+        and Secure-attribute absence), not an authentication-success signal after a default-pair
+        submission.
+      verify_claims: >-
+        No verify-claims drop for this unit. All four Service:sign-in threats were still in produced/
+        at the stop, so the unit's own work never reached a spec.
+      notes: >-
+        The nearest artifact is session-management__login-body__at-auth under ReverseProxy__threat-6,
+        which used the stored admin account as ambient authentication material and never asked
+        whether it was shipped.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/ReverseProxy__threat-6/consumed/session-management__login-body__at-auth.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/notes.yaml (no Service-sign-in__threat-* hunt key)
+        - metrics.yaml (per_vuln.white-jotter-001.specs, 25 class-matching rows, 0 unit-matching rows)
+    pod:
+      run: true
+      confirmed: false
+      runner_quality: 3
+      triager_quality: 1
+      variant_quality: >-
+        One v0 variant derived from the spec; the discriminators and symptoms are coherent, but the
+        variant is scoped to cleartext carriage (F-5) and never to default credentials.
+      notes: >-
+        The login-body pod submitted {"username":"admin","password":"123"} and read HTTP 200
+        {"code":200,"message":"成功","result":"admin"} with a JSESSIONID, repeated, plus a
+        wrong-password control that returned the failure envelope. The triager classified the slice
+        as cleartext carriage and recorded "the login response body itself is not shown", so the
+        confirmed default-pair acceptance was never adjudicated as the symptom.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/session-management__login-body__at-auth/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/session-management__login-body__at-auth/experiment-log/0.yaml
+  - vuln_id: white-jotter-002
+    type: Access Control Bypass / Unauthorized Read or Write
+    location: http://wj:8443/api/
+    discovery: identified
+    confidence: 0.95
+    l0_l1:
+      core_score: 0.6667
+      enriched_score: 0.6
+      floor_met: true
+      full_core: false
+      notes: >-
+        AuthorizationSystem:__singleton__ resolves, and an AUTHORIZED_BY-style link anchors the
+        system to the service set, but none of the three expected /api/admin/* paths exists as an
+        L0 endpoint (0 of 3). The enriched score is dragged down by the two AUTHORIZED_BY rows whose
+        target-kind property does not match.
+      evidence:
+        - metrics.yaml (per_vuln.white-jotter-002.graph)
+        - http://localhost:8080/projects/8e2e5dc7-a880-4451-aaa5-267cedd48264/graph (no /api/admin/user Endpoint)
+        - /root/utm-groundtruth/white-jotter/white-jotter-002/unit-spec.yaml (judge-only)
+    threat_model:
+      loop_candidate: true
+      sharpness: 3
+      direction_diversity: >-
+        Six threats on ReverseProxy; six distinct faults/classes. Exactly one (threat-1) reaches the
+        ground-truth path-confusion BFLA; the others cover cleartext carriage, synthesized-stub
+        masking, anti-automation, session replay and identifier scope.
+      failure_mode_coverage: >-
+        1 of 1 expected class. threat-1 names the classifier-versus-dispatcher disagreement on the
+        literal URI, the /api/;/admin/user carrier, and the bodyless-200 control.
+      notes: >-
+        The deterministic metrics report loop_candidate false because either measure_utm globs
+        loop-*.yaml while this pipeline writes threat-*.yaml, or its unit text does not carry the
+        corpus identity. The artifact is a first-class direction: interface named, failure slice
+        explicit, probes cited, confidence OBSERVED, risk 9, non-duplicative.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/ReverseProxy/threat-1.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/ReverseProxy/ReverseProxy.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/notes.yaml (ReverseProxy:trust_modelled)
+    hunter:
+      spec_candidate: true
+      sharpness: 3
+      completeness: >-
+        Five ratified specs under ReverseProxy__threat-1, all 5 of 5 reduced-D4 fields, no retired
+        field, 3 verification symptoms each.
+      procedure_grounding: >-
+        seven-field skill procedure populated in all five (bfla-alternate-path plus
+        broken-function-level-authorization), grounded on the live nginx/Spring envelope.
+      symptom_discrimination: >-
+        Strong: each spec carries a bodyless-200 plain-form control, the 662-byte SPA route-miss
+        discriminator, and a non-existent-mapping control.
+      verify_claims: >-
+        No drop; all five ratified. The empty-segment-inside-namespace spec carried the GT read and
+        the role-catalogue spec carried a second impact.
+      notes: >-
+        Deterministic spec_candidate is false only because the spec unit_id is ReverseProxy, not the
+        corpus AuthorizationSystem:__singleton__; the content is an exact match.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/ReverseProxy__threat-1/consumed/bfla-alternate-path__account-roster__empty-segment-inside-namespace__get-read.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/ReverseProxy__threat-1/terminal.yaml
+    pod:
+      run: true
+      confirmed: true
+      runner_quality: 3
+      triager_quality: 3
+      variant_quality: >-
+        One v0 variant minted from the spec; the pod added the exact path flattening spellings and a
+        no-such-mapping 404 control, so the variant basis is valid and non-duplicative.
+      notes: >-
+        Anonymous GET /api/;/admin/user returned the 45-record roster with role assignments while the
+        plain form returned a bodyless 200; the runner also showed /;/api/admin/nosuchroute is a
+        404 text/html shell. The triager wrote the full control/differential.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-roster__empty-segment-inside-namespace__get-read/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-mutation__put/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+  - vuln_id: white-jotter-003
+    type: Stored XSS
+    location: http://wj:8443/api/admin/content/article
+    discovery: missed
+    confidence: 0.95
+    l0_l1:
+      core_score: 0.6667
+      enriched_score: 0.7333
+      floor_met: true
+      full_core: false
+      notes: >-
+        The graph resolves Service:article-publishing through its article-management alias with the
+        authenticated exposure and service contract. No L0 endpoint exists for
+        /api/admin/content/article (0 of 1), and one of three service-to-system edges is missing.
+      evidence:
+        - metrics.yaml (per_vuln.white-jotter-003.graph)
+        - http://localhost:8080/projects/8e2e5dc7-a880-4451-aaa5-267cedd48264/graph (no /api/admin/content/article Endpoint)
+        - /root/utm-groundtruth/white-jotter/white-jotter-003/unit-spec.yaml (judge-only)
+    threat_model:
+      loop_candidate: true
+      sharpness: 3
+      direction_diversity: >-
+        One threat on the owning unit (Service:article-management) plus WebPresentation and
+        library-catalogue threats elsewhere. Inside the owning unit the stored-XSS direction is the
+        only one, and it names the write channel, the raw-body bind, the anonymous read and the
+        filter gap.
+      failure_mode_coverage: >-
+        1 of 1 expected class: xss-stored, F-1, likelihood high, risk 9, with the surviving-payload
+        sweep explicitly handed to the hunter.
+      notes: >-
+        The deterministic 0-loop result is a naming artifact: the direction exists as threat-1.yaml.
+        The model even records that one script-bearing shape was filtered and leaves the browser
+        execution clause as a falsifiable hunter task.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced/Service-article-management/threat-1.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced/Service-article-management/Service-article-management.yaml
+    hunter:
+      spec_candidate: false
+      sharpness: 0
+      completeness: >-
+        No spec exists. hunting/hunter/test-specs holds 16 dispatch directories for five units; there
+        is no Service-article-management__threat-1 directory and no pod for it.
+      procedure_grounding: none
+      symptom_discrimination: none
+      verify_claims: >-
+        The threat was never dispatched, so it never reached GENERATE or VERIFY-CLAIMS; it sat in
+        produced/ for 9h45m until the run was stopped.
+      notes: >-
+        This is a hunter coverage failure, not a modelling failure: the threat was modelled at
+        2026-10-26T22:03:23Z and was never admitted by the batched unit barrier.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced/Service-article-management/threat-1.yaml (created 2026-10-26T22:03:22Z)
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs (16 directories; five units only)
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/notes.yaml (no Service-article-management hunt key)
+    pod:
+      run: false
+      confirmed: false
+      runner_quality: 0
+      triager_quality: 0
+      variant_quality: none
+      notes: >-
+        No pod directory references any article-management spec. Of the 55 pod exports, 41 are
+        watchdog timeouts; the nearest differential-oracle pods target the article read, not the
+        write-then-render chain.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod (no article-management directory)
+  - vuln_id: white-jotter-004
+    type: Remote Code Execution
+    location: http://wj:8443/api/admin/user
+    discovery: missed
+    confidence: 0.95
+    l0_l1:
+      core_score: 0.6667
+      enriched_score: 0.6
+      floor_met: true
+      full_core: false
+      notes: >-
+        The resolved unit is the corpus AuthorizationSystem:__singleton__, the same node as for
+        white-jotter-002. /api/admin/user is absent from L0 (0 of 1) and the two AUTHORIZED_BY rows do
+        not resolve to their expected target kind, so enriched is 0.6.
+      evidence:
+        - metrics.yaml (per_vuln.white-jotter-004.graph)
+        - /root/utm-groundtruth/white-jotter/white-jotter-004/unit-spec.yaml (judge-only)
+    threat_model:
+      loop_candidate: false
+      sharpness: 0
+      direction_diversity: >-
+        The two owning units were both modelled (Service:register with identifier substitution and
+        nested role write; Service:user-administration with credential replacement by name). Neither
+        direction touches a logging sink, a lookup evaluation, or caller-controlled log fields.
+      failure_mode_coverage: >-
+        0 of 1 expected class. No model, threat, spec, pod, or note mentions JNDI, log4j or
+        Log4Shell. The corpus itself records this as a known gap (G004-05: no unspurious skill covers
+        JNDI/Log4Shell data-to-logger resolution), so it is not scored as a new regression.
+      notes: >-
+        The miss is a known KB coverage gap plus a design gap that never inventories the logging
+        dependency. The exact diagnosis was also filed as a proposed issue.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/Service-register/Service-register.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced/Service-user-administration/threat-1.yaml
+        - /root/utm-groundtruth/white-jotter/white-jotter-004/gaps.md (G004-05, judge-only)
+    hunter:
+      spec_candidate: false
+      sharpness: 0
+      completeness: >-
+        No spec tests a JNDI-shaped username at registration or login. The 20 class-matching specs
+        are unrelated actuator/authorization work.
+      procedure_grounding: none
+      symptom_discrimination: none
+      verify_claims: no drop applicable
+      notes: >-
+        Even had the unit's one produced threat been dispatched it would not have sought a lookup
+        sink; the miss is upstream of the hunter.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs (no JNDI spec)
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced/Service-user-administration/threat-1.yaml
+    pod:
+      run: false
+      confirmed: false
+      runner_quality: 0
+      triager_quality: 0
+      variant_quality: none
+      notes: >-
+        No pod registers a JNDI-shaped username. The 17 class-matching pods are authorization and
+        telemetry work under other units.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod (no JNDI pod)
+  - vuln_id: white-jotter-005
+    type: SQL Injection
+    location: http://wj:8443/api/search
+    discovery: identified
+    confidence: 0.97
+    l0_l1:
+      core_score: 0.6667
+      enriched_score: 0.8
+      floor_met: true
+      full_core: false
+      notes: >-
+        Service:book-search resolves with its public exposure and contract, and both EXPOSED_VIA
+        edges resolve. /api/search is absent from L0 (0 of 1), so the unit fails full core.
+      evidence:
+        - metrics.yaml (per_vuln.white-jotter-005.graph)
+        - http://localhost:8080/projects/8e2e5dc7-a880-4451-aaa5-267cedd48264/graph (no /api/search Endpoint)
+        - /root/utm-groundtruth/white-jotter/white-jotter-005/unit-spec.yaml (judge-only)
+    threat_model:
+      loop_candidate: true
+      sharpness: 3
+      direction_diversity: >-
+        Three threats on RESTApi:api (SQL injection through the LIKE filter, differential oracle
+        disclosure, and a cache-directive latent gap). One direction reaches the GT.
+      failure_mode_coverage: >-
+        1 of 1 expected class. The threat names the caller-controlled keyword inside the SQL LIKE
+        literal, the true/false pair, and the collapsed code-200 envelope.
+      notes: >-
+        Concrete and probeable, with cited probes; risk-scored. The deterministic 0 is the same
+        threat-vs-loop naming artifact.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/RESTApi-api/threat-2.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/notes.yaml (RESTApi-api:vulnerabilities)
+    hunter:
+      spec_candidate: true
+      sharpness: 3
+      completeness: >-
+        Six ratified specs under RESTApi-api__threat-2, all 5 of 5 reduced-D4 fields and a populated
+        seven-field procedure.
+      procedure_grounding: >-
+        Fully grounded: the MyBatis LIKE concatenation, the code-200 envelope, the 22-row saturation
+        baseline, and the sql-injection plus sqli-boolean-blind-extraction skills.
+      symptom_discrimination: >-
+        Strong: the false/true predicate pair, a third marker predicate, and the /api/books id-set
+        intersection as the normaliser, with an explicit note that a 20-row answer is not proof.
+      verify_claims: >-
+        No drop among the six; the one project-wide drop is in RESTApi-api__threat-3 with a recorded
+        falsification trail.
+      notes: >-
+        Deterministic spec_candidate is false because the unit is RESTApi:api rather than
+        Service:book-search; the class and content match.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/RESTApi-api__threat-2/consumed/sql-injection__boolean-differential__book-rowset.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/RESTApi-api__threat-3/produced/differential-oracle-disclosure__identifier-presence__gated-admin__alternate-path-prefix.yaml (dropped, with reason)
+    pod:
+      run: true
+      confirmed: true
+      runner_quality: 3
+      triager_quality: 3
+      variant_quality: >-
+        One v0 variant; the runner repeated the pair twice and normalised the id set against
+        /api/books, so the basis is valid and the variant is non-duplicative.
+      notes: >-
+        The false pair returned 0 rows, the true pair returned the saturated 22-row set equal to the
+        /api/books set, and the marker predicate returned the identical set. One transport-level
+        UnicodeDecodeError on the first probe was retried and did not affect the result. The triager
+        also noted the spec's 21-row assumption was stale (22 rows) without weakening the symptom.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/sql-injection__boolean-differential__book-rowset/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+  - vuln_id: white-jotter-006
+    type: Arbitrary File Read
+    location: http://wj:8443/api/file/
+    discovery: missed
+    confidence: 0.95
+    l0_l1:
+      core_score: 0.3333
+      enriched_score: 0.4
+      floor_met: true
+      full_core: false
+      notes: >-
+        Service:book-cover-serving resolves through the media-asset-serving alias with both typed
+        fields, but there is no AGGREGATES link (link_present false), no L0 endpoint for
+        /api/file/cover.png, and no EXPOSED_VIA edge. The unit is at the loose 0.3 floor only.
+      evidence:
+        - metrics.yaml (per_vuln.white-jotter-006.graph)
+        - http://localhost:8080/projects/8e2e5dc7-a880-4451-aaa5-267cedd48264/graph (no /api/file Endpoint)
+        - /root/utm-groundtruth/white-jotter/white-jotter-006/unit-spec.yaml (judge-only)
+    threat_model:
+      loop_candidate: false
+      sharpness: 0
+      direction_diversity: >-
+        The owning unit produced zero threats. V-2 traversal-read is carried only as an ASSUMED
+        placeholder, and the three catalogue/presentation threats that mention the namespace treat
+        it as route-unreachable information disclosure.
+      failure_mode_coverage: >-
+        0 of 1 expected class. The model declares "IT DOES NOT EXIST ON THE PUBLIC LISTENER" from six
+        bare/empty 404s and records that the resolver internals are unobservable.
+      notes: >-
+        The bare 404 is exactly what the double-decoding handler returns for a non-file target, so
+        the route-absence inference is unfalsified by the observation the model used. The loaded
+        traversal-read leaf requires repeated-decoding shapes; only plain dot segments and one
+        single-encoded traversal (400) were tried. The GT payload needs %252f.
+      evidence:
+        - 'eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/Service-media-asset-serving/Service-media-asset-serving.yaml (threats: [])'
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/notes.yaml (Service-media-asset-serving:technical_sharpening, wellformedness)
+        - /root/utm-groundtruth/white-jotter/white-jotter-006/exploits/exploit.py (judge-only; GT payload shape)
+    hunter:
+      spec_candidate: false
+      sharpness: 0
+      completeness: >-
+        No spec exists, because the unit emitted no threat. No pod ever tested /api/file/.
+      procedure_grounding: none
+      symptom_discrimination: none
+      verify_claims: no drop applicable
+      notes: >-
+        The hunter cannot compensate for a zero-threat unit; the coverage loss originates in the
+        modeller's route-absence closure.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs (no Service-media-asset-serving dispatch)
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/notes.yaml (no media hunt key)
+    pod:
+      run: false
+      confirmed: false
+      runner_quality: 0
+      triager_quality: 0
+      variant_quality: none
+      notes: no pod references any media-asset-serving spec
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod (no media-asset-serving directory)
+  - vuln_id: white-jotter-007
+    type: IDOR / Unauthorized Write or Overwrite
+    location: http://wj:8443/api/register
+    discovery: identified
+    confidence: 0.9
+    l0_l1:
+      core_score: 1.0
+      enriched_score: 1.0
+      floor_met: true
+      full_core: true
+      notes: >-
+        Service:account-registration resolves through the register alias, /api/register exists as an
+        L0 endpoint, the AGGREGATES link is present, both typed fields are correct and all three
+        service-to-system edges resolve.
+      evidence:
+        - metrics.yaml (per_vuln.white-jotter-007.graph)
+        - http://localhost:8080/projects/8e2e5dc7-a880-4451-aaa5-267cedd48264/graph (Endpoint GET /api/register, L1 service register)
+        - /root/utm-groundtruth/white-jotter/white-jotter-007/unit-spec.yaml (judge-only)
+    threat_model:
+      loop_candidate: true
+      sharpness: 3
+      direction_diversity: >-
+        Two threats on Service:register (identifier substitution through the registration identifier
+        member, and nested role-array write). The nested-role direction reaches the GT.
+      failure_mode_coverage: >-
+        1 of 1 expected class. The threat names the unbound role member, the self-minted read-back
+        session and the authority-bearing role set, with live probe evidence.
+      notes: >-
+        The deterministic 0 is again the naming artifact; the depth and specificity are at rubric 3.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/Service-register/threat-2.yaml
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/Service-register/Service-register.yaml
+    hunter:
+      spec_candidate: true
+      sharpness: 3
+      completeness: >-
+        Five ratified specs under Service-register__threat-2, all 5 of 5 required fields and a
+        populated seven-field procedure.
+      procedure_grounding: >-
+        Grounded on the mass-assignment-nested-relation-write skill with the JSON binder, the nested
+        role object, and the registration/login/menu chain.
+      symptom_discrimination: >-
+        Strong: the control registration omitting roles, the sysAdmin role on the minted account, and
+        the administrative menu tree versus an empty control menu.
+      verify_claims: no drop
+      notes: >-
+        Deterministic spec_candidate is false because its class matcher does not map "mass
+        assignment" to the GT type "IDOR / Unauthorized Write or Overwrite", even though unit_match
+        is true. This is a measurement defect, not a hunter defect.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs/Service-register__threat-2/consumed/mass-assignment-nested-relation-write__single-hop-role-select__sysadmin.yaml
+        - metrics.yaml (per_vuln.white-jotter-007.specs: 9 unit matches, 0 candidates)
+    pod:
+      run: true
+      confirmed: true
+      runner_quality: 3
+      triager_quality: 3
+      variant_quality: >-
+        One v0 variant; it registers with and without the nested roles member as a paired control and
+        re-reads the anonymous roster, so the basis is valid and non-duplicative.
+      notes: >-
+        The GT-identifying pod is mass-assignment-nested-relation-write__single-hop-role-select__sysadmin,
+        not one of the 15 bfla pods that metrics attaches to this vuln. It created l1tst_7f with
+        role sysAdmin and showed the control l1ctl_7f with roles=[]. The metrics per-vuln pod rows
+        miss it because of the class matcher.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/mass-assignment-nested-relation-write__single-hop-role-select__sysadmin/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+workflow:
+  modeller:
+    order: >-
+      Observed sequence per unit: technical_sharpening, prior_art, trust_modelled, assumptions,
+      vulnerabilities, wellformedness, impact_assessed, completed. The live prompt defines seven
+      states; PLAN.md still lists five. All 23 unit models reached COMPLETED with validation valid
+      and no referential errors. Five units had a first COMPLETED write rejected by the validation
+      gate and then corrected it (WebPresentation:library-catalog, WebPresentation:register,
+      Service:book-management, Service:role-permission-administration,
+      Service:operations-telemetry); four of those are the same interface_agreement_refs IA-only
+      mistake with a DF or CF reference.
+    defects:
+      - 7 threat-bearing units have no vulnerabilities phase note (Service:register, Service:operations-telemetry, Service:article-management, Service:role-permission-administration, Service:user-administration, IntegrationSystem:cross-origin-policy, WebPresentation:article-management::console-pages)
+      - 8 units have no assumptions phase note
+      - ReverseProxy has two wellformedness notes for one unit (repeated gate)
+      - '5 units needed a validation round trip; 4 share the same interface_agreement_refs IA-only mistake (a DF or CF reference in an IA field)'
+      - 'Service:media-asset-serving closed COMPLETED with zero threats on an inferred route absence'
+    score: 0.88
+  hunter:
+    order: >-
+      Observed sequence per dispatch: grounding, slice, collect, discriminate, well_formedness, then
+      specs (generate) and verify-claims probe trails. 16 dispatch directories exist; 13 have a
+      terminal.yaml; the three RESTApi-actuator-management dispatches stop after discriminate with
+      no terminal. Only 4 to 5 of the 8 named states have a phase summary note.
+    defects:
+      - 3 actuator dispatches left 13 specs at status hypothesised with no terminal.yaml
+      - 12 produced threats were never dispatched (including Service:article-management and Service:media-asset-serving)
+      - only 5 of 14 threat-bearing units ever reached a hunt key
+      - 15 of 16 dispatches have a grounding phase note; RESTApi-api__threat-2 has none
+      - 'provenance.threat_id is the bare threat id (threat-1), not the composite dispatch id'
+    score: 0.75
+  pod:
+    order: >-
+      Runner then triager within one pod session. 12 of 55 exports reach a triager verdict
+      (symptom-confirmed); 41 are finalized by the 3600 s watchdog with no interpretation; one ends
+      no-symptom-evidence; one ends space-exhausted. The pod triager made 44 calls for 55 pods.
+    defects:
+      - 41 of 55 exports are pod-watchdog-timeout; 38 of 55 carry no interpretation
+      - 1 triager crash (dict object has no attribute model_dump) turned a confirmed symptom into unsuccessful
+      - 2 successful pods are clean=false because a KB query degraded
+      - only 2 of 55 pods wrote a note in test-executor-pod/notes.yaml
+    score: 0.72
+  tool_contract:
+    violations: 1
+    notes: >-
+      One hunts_store query was rejected for using a bare canonical_class path (the recorded correct
+      form is kind-scoped), and the modeller corrected it. Separately, 36 of 936 pod raw observations
+      carry a tool failure: 13 UnicodeDecodeError from execute_command on non-UTF-8 responses, two
+      missing xxd, two missing jq, and several shell-quoting errors. No call outside the bound tool
+      surface was observed in the sampled traces.
+    evidence:
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/notes.yaml (ReverseProxy:prior_art)
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod (raw_observations across 55 exports)
+  prompt:
+    defects:
+      - 'PLAN.md Criterion 5 lists five modeller states; the live prompt and the notes implement seven (PRIOR_ART and IMPACT_ASSESSED added, plus a well-formedness retrospective)'
+      - 'the modeller input observed in Langfuse is truncated at 261305 characters (370714 bytes omitted), so a full prompt-section audit is impossible from the trace'
+    notes: >-
+      The visible modeller prompt is current vocabulary: unit threat model, trust model, seven
+      states, no fault-hypothesis or hunt-config terms. The pod runner prompt is the actor-critic
+      contract. No duplicated section was observed; the apparent repeats are the same grounding
+      block repeated across turns in one conversation input.
+    evidence:
+      - Langfuse v2 observation generation input, 2026-10-26T20:39:51Z (trace captured in /tmp/lf_gen_sample.json during measurement)
+      - docs/experiments/unit-threat-model-eval-2026-10-20/PLAN.md lines 180-183
+  bound_tools:
+    defects: []
+    notes: >-
+      The modeller used exec, hunts_store, load_skill and graph_view; the hunter used skill and KB
+      queries; the pod used execute_command, exec, graph_view and history reads. No unbound tool call
+      was found, but Langfuse coverage was a bounded sample, so this is "no evidence of violation",
+      not proof.
+  structured_output:
+    defects:
+      - 'pod triager: 1 crash, dict object has no attribute model_dump (bfla-alternate-path__permission-map__empty-segment-inside-namespace__get-read)'
+      - 'modeller: 5 first COMPLETED writes failed validation and needed a round trip; 4 are the same IA-only reference mistake'
+      - '9 CHAIN model/LangGraph ERROR observations at 07:45-07:48 with output=None on the actuator hunter subgraphs'
+      - '2 generation SPAN ReadTimeout observations (06:54:45Z, 07:01:29Z)'
+    notes: >-
+      The parsing-recovery middleware recorded a DEFAULT status on every sampled model turn, so
+      there is no evidence of a schema-bound structured-output failure outside the one triager
+      crash and the modeller's repeated interface_agreement_refs mistake. The late ERROR chains
+      coincide with the project stop at 07:48:56Z and left the three actuator hunts without a
+      terminal.
+  coupling:
+    defects:
+      - 'the spec carries provenance.threat_id as a bare id; the composite dispatch key exists only in the directory path'
+    notes: >-
+      Coupling otherwise holds: all 55 pod spec_dir values resolve to a spec file stem (the only
+      extra entry is test-executor-pod/notes.yaml), 69 of 69 specs have target_identity.unit_id equal
+      to provenance.unit_id, and each dispatch directory name is <unit>__threat-N.
+  schemas:
+    artifact_defects:
+      - 'threat model writes threat-N.yaml; measure_utm reads loop-*.yaml, so metrics reports loops_total 0 for 28 existing threat files'
+      - 'specs write the seven-field procedure at skill_concretised_procedure; measure_utm reads provenance.skill_procedure, so it reports procedure_fields 0 for 68 populated specs'
+      - 'test-executor-pod/notes.yaml holds 2 notes for 55 pods'
+      - 'trial.yaml notes is empty although the terminal came from a risk-threshold halt'
+      - 'hunter notes: phase summaries exist for 4 or 5 of the 8 named states; 13 of 16 dispatches have well-formedness'
+      - 'modeller notes: 7 threat-bearing units lack a vulnerabilities note, 8 units lack an assumptions note, ReverseProxy has a duplicate wellformedness note'
+    lesson_defects:
+      - 'no skill-usage lesson records were found in the data root (SKILL_EVOLUTION_ENABLED=0 in the instance env, so none were expected for this arm)'
+    notes: >-
+      No retired D4 field (testing_pattern, payload_vector_space, interpretation_guidance) appears
+      in any of the 69 specs. Spec status distribution is 55 ratified, 13 hypothesised, 1 dropped.
+  memory:
+    defects:
+      - 'no episodic memory write artifact was found under the instance data root'
+    notes: >-
+      Memory may be persisted in the project store or database rather than the host data root, so
+      absence here is not proof the phase did not run.
+  adherence_score: 0.78
+token_tax:
+  source: >-
+    trial.yaml token_spectrum and usage snapshots, cross-checked against
+    GET http://localhost:8080/projects/8e2e5dc7-a880-4451-aaa5-267cedd48264/usage (identical:
+    capped 6919138, calls 2354, cached 210944512, uncached 4986145, reasoning 912814, visible
+    1020179)
+  per_agent:
+    job_orchestrator: {visible: 9936, reasoning: 4710, cached_input: 263424, uncached_input: 29663, generated: 14646, total: 307733, capped: 44309, calls: 17, cache_detail_omitted: 0}
+    triager: {visible: 4367, reasoning: 6080, cached_input: 26112, uncached_input: 78374, generated: 10447, total: 114933, capped: 88821, calls: 11, cache_detail_omitted: 0}
+    assigner: {visible: 5182, reasoning: 11155, cached_input: 129152, uncached_input: 41507, generated: 16337, total: 186996, capped: 57844, calls: 13, cache_detail_omitted: 0}
+    mechanism_typist: {visible: 42109, reasoning: 58675, cached_input: 2496384, uncached_input: 261323, generated: 100784, total: 2858491, capped: 362107, calls: 56, cache_detail_omitted: 0}
+    hunting_threat_modeller: {visible: 464035, reasoning: 205457, cached_input: 161740160, uncached_input: 1275943, generated: 669492, total: 163685595, capped: 1945435, calls: 700, cache_detail_omitted: 0}
+    hunting_hunter: {visible: 207930, reasoning: 275264, cached_input: 24074880, uncached_input: 1263117, generated: 483194, total: 25821191, capped: 1746311, calls: 418, cache_detail_omitted: 0}
+    pod_runner: {visible: 275273, reasoning: 327682, cached_input: 21998976, uncached_input: 1699168, generated: 602955, total: 24301099, capped: 2302123, calls: 1095, cache_detail_omitted: 0}
+    pod_triager: {visible: 11347, reasoning: 23791, cached_input: 215424, uncached_input: 337050, generated: 35138, total: 587612, capped: 372188, calls: 44, cache_detail_omitted: 0}
+  totals:
+    capped: 6919138
+    generated: 1932993
+    uncached_input: 4986145
+    cached_input: 210944512
+  notes: >-
+    Budget spend is 98.8 percent of the 7000000 bound, but the run was not ended by the token
+    budget: spend_overshoot is null and the hunting run halted on the configured risk threshold
+    (risk_total 185 against 180) at 07:48:56Z. Capped shares: pod_runner 33.3 percent,
+    hunting_threat_modeller 28.1 percent, hunting_hunter 25.2 percent, pod_triager 5.4 percent,
+    mechanism_typist 5.2 percent, triager 1.3 percent, assigner 0.8 percent, job_orchestrator 0.6
+    percent. Output is 27.9 percent of capped (reasoning 13.2, visible 14.7) and uncached input is
+    72.1 percent. Cached reads are 96.8 percent of the 217863650 raw total and are excluded from the
+    budget axis. Cache detail omitted is 0 for every agent. Capped tokens per GT vulnerability is
+    988448; per identified vuln 2306379. Per-phase split is not recoverable from the ledger.
+benchmark_scope_tightness:
+  confirmed_non_gt: 12
+  rows:
+    - spec_id: bfla-alternate-path__account-roster__empty-segment-inside-namespace__get-read
+      judgement: duplicate
+      notes: >-
+        Confirms the GT-002 semicolon-segment BFLA read; this is the pod the official verdict cites
+        for white-jotter-002.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-roster__empty-segment-inside-namespace__get-read/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: bfla-alternate-path__account-roster__empty-segment-before-prefix__get-read
+      judgement: duplicate
+      notes: Same GT-002 path-confusion fault with a second spelling; corroborates, adds no new fault.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-roster__empty-segment-before-prefix__get-read/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: bfla-alternate-path__account-roster-read__get
+      judgement: duplicate
+      notes: GT-002 class; a matrix-parameter spelling on the same roster mapping.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-roster-read__get/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: bfla-alternate-path__account-mutation__put
+      judgement: duplicate
+      notes: >-
+        Same GT-002 fault carried into the write half; persisted a targeted change to account id 1.
+        It is the strongest additional impact but the same class and locus.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-mutation__put/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: bfla-alternate-path__role-catalogue__empty-segment-inside-namespace__get-read
+      judgement: duplicate
+      notes: >-
+        GT-002 path-confusion applied to the role/permission catalogue; additional data exposure but
+        the same fault. Recorded clean=false because one KB query degraded.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__role-catalogue__empty-segment-inside-namespace__get-read/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: mass-assignment-nested-relation-write__single-hop-role-select__sysadmin
+      judgement: duplicate
+      notes: >-
+        The pod that actually confirms GT-007 (mass-assignment privilege escalation). It is absent
+        from the metrics per-vuln pod rows because the class matcher does not link mass assignment to
+        the GT "IDOR" type.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/mass-assignment-nested-relation-write__single-hop-role-select__sysadmin/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: sql-injection__boolean-differential__book-rowset
+      judgement: duplicate
+      notes: The pod the official verdict cites for GT-005.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/sql-injection__boolean-differential__book-rowset/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: session-management__login-body__at-auth
+      judgement: duplicate
+      notes: >-
+        The raw evidence carries GT-001: admin/123 returned code 200 result "admin" plus a JSESSIONID,
+        with a wrong-password control. The pod's own classification is cleartext carriage (F-5), so
+        the duplicate is only visible on the experiment log, not in the triager verdict.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/session-management__login-body__at-auth/experiment-log/0.yaml
+    - spec_id: information-disclosure__httptrace-buffer__request-metadata__anonymous
+      judgement: novel
+      notes: >-
+        Anonymous GET /actuator/httptrace returned 100 traces including 29 Cookie-bearing records
+        (27 non-empty JSESSIONID) with no challenge. This is a real information-disclosure finding
+        outside the seven GT vulnerabilities, not a duplicate.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/information-disclosure__httptrace-buffer__request-metadata__anonymous/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: session-management__cookie-request-header__role-granted
+      judgement: novel
+      notes: >-
+        Replayed a JSESSIONID harvested from an anonymous httptrace request record against
+        /api/admin/user and returned authenticated admin JSON; a garbage value returned an empty
+        body. Real chained finding outside GT.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/session-management__cookie-request-header__role-granted/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: rate-limit-bypass__principal-spread__login-json-verification
+      judgement: novel
+      notes: >-
+        40 wrong-password attempts on one principal in 1.13 s all returned the wrong-password
+        envelope, and a known-good credential at the end still succeeded. Real absent-accounting
+        finding (CWE-307 class) outside GT.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/rate-limit-bypass__principal-spread__login-json-verification/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+    - spec_id: session-management__url-path-parameter__pre-auth
+      judgement: novel
+      notes: >-
+        Unauthenticated GET /api/authentication answers 302 with Location
+        http://t-1618c524.target/nowhere;jsessionid=<32 hex>, disclosing a session identifier in a URL.
+        Real finding outside GT.
+      evidence:
+        - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/session-management__url-path-parameter__pre-auth/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+failures:
+  - domain: evaluation_integrity
+    severity: high
+    signal: >-
+      The instance worktree is dirty at eval_sha 13ce0ed with an uncommitted change to
+      src/polymerhus/app/llm/providers.py that raises analysis proposers to max thinking and the
+      design roles from xhigh to max. PLAN.md names 5df29930 as the measured code. The stamped
+      eval_sha and the stack fingerprint do not capture the source diff.
+    evidence:
+      - eval/instances/eval-server-1 git status (M src/polymerhus/app/llm/providers.py) and git diff
+      - 'trial.yaml (worktree_dirty: true, eval_sha: 13ce0edb...)'
+      - docs/experiments/unit-threat-model-eval-2026-10-20/PLAN.md lines 46-49
+  - domain: harness_terminal
+    severity: high
+    signal: >-
+      Hunting was ended by the configured cumulative risk halt (risk_total 185 vs threshold 180) at
+      2026-10-27T07:48:56Z. The trial stamps terminal stopped with empty notes, and the orchestrator
+      treats stopped as a successful execution, although 12 dispatchable threats remained in
+      produced/ and 5 of 14 threat-bearing units had been reached.
+    evidence:
+      - http://localhost:8080/projects/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/65ec294b-e5cf-49c6-9f7c-4664a73aa557 (status stopped, stats.halt true)
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced (12 threat files left)
+      - trial.yaml (terminal stopped, notes [])
+  - domain: pod_lifecycle
+    severity: high
+    signal: >-
+      41 of 55 pod exports end pod-watchdog-timeout at the 3600 s session ceiling and 38 of 55 carry
+      no interpretation. The triager therefore never judged most pods, including pods whose raw
+      logs already contained the confirming observation (for example the account-roster bodyless-get
+      export).
+    evidence:
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod (55 exports)
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__account-roster__bodyless-get/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+  - domain: hunter_coverage
+    severity: high
+    signal: >-
+      Only the five highest-risk threat-bearing units were dispatched. Service:article-management
+      (stored XSS, GT-003) and Service:media-asset-serving (GT-006) were never dispatched, and the
+      three actuator dispatches were cut before terminal. The batched unit barrier plus pods that
+      consume the watchdog limited throughput to about two hours per unit.
+    evidence:
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/test-specs (16 directories, 5 units)
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/produced/Service-article-management/threat-1.yaml (never consumed)
+      - src/polymerhus/attack/hunting/pipeline_sync.py (batched unit barrier)
+  - domain: modeller_binding
+    severity: medium
+    signal: >-
+      GT-001's default-credential class was never loaded even though the weak-credential-discovery
+      leaf exists and the unit explicitly deferred it; the model registered a throwaway account
+      instead of submitting the shipped seed. GT-006's traversal-read closed as a zero-threat
+      COMPLETED unit on a 404 that the handler itself returns, without the repeated-decoded shape or
+      an in-root control.
+    evidence:
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/notes.yaml (Service-sign-in:wellformedness, Service-media-asset-serving:technical_sharpening)
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/consumed/Service-media-asset-serving/Service-media-asset-serving.yaml
+  - domain: triager
+    severity: medium
+    signal: >-
+      The triager for bfla-alternate-path__permission-map__empty-segment-inside-namespace__get-read
+      crashed with "dict object has no attribute model_dump" and the export recorded unsuccessful /
+      no-symptom-evidence, while the pod note later recorded the same pod as successful /
+      symptom-confirmed / clean=true. The stored symptom was real (role/permission catalogue).
+    evidence:
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/bfla-alternate-path__permission-map__empty-segment-inside-namespace__get-read/65ec294b-e5cf-49c6-9f7c-4664a73aa557.yaml
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/notes.yaml
+  - domain: knowledge_retrieval
+    severity: medium
+    signal: >-
+      Eight hunter phase notes record the KB/LightRAG query as degraded with no model answer, so
+      methodology retrieval fell back to class skills and surfaces for at least five hunts. Two
+      generation observations also failed with ReadTimeout at 06:54:45Z and 07:01:29Z.
+    evidence:
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/hunter/notes.yaml (8 notes with "KB degraded")
+      - Langfuse v2 observations (SPAN generation, ReadTimeout, 2026-10-27T06:54:45Z and 07:01:29Z)
+  - domain: measurement
+    severity: high
+    signal: >-
+      metrics.yaml disagrees with the artifacts on four counts. It reports loops_total 0 and
+      loop_candidate 0 for 28 threat-*.yaml directions because measure_utm globs loop-*.yaml. It
+      reports procedure_fields 0 for 68 specs that populate skill_concretised_procedure, because it
+      reads provenance.skill_procedure. Its class matcher does not link mass assignment to the GT
+      IDOR type, so GT-007's identifying spec and pod are absent from its per-vuln rows. Its unit
+      matching uses corpus slugs and system identities that the live specs do not carry
+      (Service:register vs account-registration, RESTApi:api vs book-search, ReverseProxy vs the
+      AuthorizationSystem), so spec_candidate_recall is 0 despite four exact GT matches.
+    evidence:
+      - metrics.yaml (counts.loops_total 0, counts.spec_candidates 0, per_vuln.*.specs procedure_fields 0)
+      - eval/measure_utm.py (load_models globs loop-*.yaml; spec_metrics reads provenance.skill_procedure)
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller (28 threat files)
+  - domain: trial_deadline
+    severity: medium
+    signal: >-
+      The trial ran 11h45m32s (2026-10-26T20:03:33Z to 2026-10-27T07:49:05Z) against a plan deadline
+      of 14400 s. The iteration C setup declares no budget_s, so no wall-clock timeout fired; the
+      hunting phase alone was 11h22m.
+    evidence:
+      - trial.yaml (started_at, finished_at, phases[2].run_id)
+      - eval/instances/eval-server-1/eval/setups/white-jotter-iteration-c.yaml (no budget_s)
+      - docs/experiments/unit-threat-model-eval-2026-10-20/PLAN.md line 78
+  - domain: tool_execution
+    severity: low
+    signal: >-
+      36 of 936 pod raw observations carry a tool failure: 13 UnicodeDecodeError from
+      execute_command on non-UTF-8 responses, 2 missing xxd, 2 missing jq, and several shell
+      path/quoting errors. Most were retried successfully.
+    evidence:
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod (raw_observations across 55 exports)
+  - domain: observability
+    severity: low
+    signal: >-
+      The trial record has trace_id null, so no trace-backed evidence chain exists. Langfuse
+      truncates the generation input at 261305 characters, and the trace-list API is 410 Gone, so
+      only a bounded observation-window sweep was possible. One ERROR chain carries an unprintable
+      statusMessage ("<object object at 0x...>").
+    evidence:
+      - trial.yaml (trace_id: null)
+      - Langfuse v2 observations 2026-10-27T07:48:01Z (CHAIN model, statusMessage object repr)
+      - Langfuse generation input truncation marker "[truncated 370714 bytes]"
+  - domain: notes_schema
+    severity: low
+    signal: >-
+      Only 2 of 55 pods wrote a note; 7 threat-bearing units lack a vulnerabilities phase note and 8
+      lack an assumptions note; ReverseProxy has two wellformedness notes. The trial record's notes
+      list is empty.
+    evidence:
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/test-executor-pod/notes.yaml (2 entries)
+      - eval/instances/data/eval-server-1/8e2e5dc7-a880-4451-aaa5-267cedd48264/hunting/threat_modeller/notes.yaml
+      - trial.yaml (notes [])
+open_questions:
+  - The iteration C setup pins risk_threshold 180, so the risk halt is intended configuration; should a stopped run with dispatchable threats still count as a successful execution for assessment, or must it be resumed first?
+  - >-
+    Which source identity is authoritative: the plan's 5df29930, the instance's 13ce0ed, or the
+    current dev 9e9e852, and should an uncommitted providers.py thinking-level change invalidate a
+    measured trial?
+  - Should measure_utm be updated to read threat-*.yaml and skill_concretised_procedure, and to map mass assignment to the IDOR GT type, before the aggregate report uses its recall numbers?
+  - Are the operator-seeded L1 unit names (sign-in, register, media-asset-serving) intended to be the canonical identity, with the corpus slugs (account-sign-in, account-registration, book-cover-serving) only aliases?
+  - Where are the skill-usage lesson records and episodic memory writes persisted for this arm, given SKILL_EVOLUTION_ENABLED=0?
+  - Was the default-pair acceptance in the login-body pod expected to be harvested as GT-001, or is cleartext-carriage scoping the intended boundary?
+  - Why do 41 of 55 pods run to the 3600 s watchdog instead of concluding on their own, and is the watchdog meant to be the normal terminator?
+  - What caused the two generation ReadTimeout failures, and did they change any hunt outcome?
