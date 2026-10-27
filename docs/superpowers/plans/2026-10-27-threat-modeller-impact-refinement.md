@@ -1028,3 +1028,25 @@ git commit -m "docs: describe the capability-first impact model"
 git add -A
 git commit -m "test: verify the capability-first impact model"
 ```
+
+---
+
+## Execution status (2026-10-27)
+
+Done and committed in this branch:
+
+- Domain model: schema 4, `precursor` disposition, first-class `capability` and `capability_id`, ordered `[capability, provider]` pairs, code-derived capability cycle check, v3 read normaliser.
+- Store: `kind=precursor` reads impact rows with `disposition=precursor`; qualified `Unit::P-*` resolution; threat-file chain denormalisation; payload `capability_chain`.
+- Workflow: `PRIOR_ART` moved after `VULNERABILITIES_WRITTEN`; well-formedness runs before it; hints and per-turn instructions updated.
+- Prompt: capability-chain impact procedure, precursor contrast, resolved tuple example, negative-evidence rule, white-jotter-006 worked failure, role-permission stub, reduced probing instruction.
+- Metric: v4 capability and precursor counts, review labels, `green_share = green / (green + red)`, `impact_review.yaml` loader.
+- Assessor prompt: `impact_review.yaml` second output.
+- Docs: impact spec, module CONTEXT, unit-threat-model impact map.
+
+Deviations:
+
+- The monitor does not yet verify `impact_review.yaml`; the assessor prompt requires it and `measure_utm` consumes it when present. This is the one plan item left open.
+- The core capability row keeps the CIA vector on the threat, so a precursor row's effective vector is all-none; a partial low effect is described in the damage text.
+- The legacy `precursors[]` field remains on the model for read compatibility, excluded from the gate sections and the tool schema.
+
+Verification: `tests/attack` and `tests/eval` pass, 2,136 tests. The e2e suite was not run to completion in this session (it exceeded the 10-minute bound).

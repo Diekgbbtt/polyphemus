@@ -99,17 +99,18 @@ TOOL_SURFACE: tuple[str, ...] = (
 # hint only tells the model what the next state expects.
 GATE_HINTS: dict[ModelState, str] = {
     ModelState.UNIT_TECHNICAL_SHARP: (
-        "Proceed to prior art: query the store for the earlier threats, "
-        "vulnerabilities, and precursors that bear on this unit, and record the "
-        "queries and the reused records in the prior_art section. Write the "
-        "outcomes with a hunts_store write for state PRIOR_ART."
-    ),
-    ModelState.PRIOR_ART: (
         "Proceed to trust mapping: work the four axes in order - identity, "
         "spatial, temporal, controls_semantics. Name the artifact, the "
         "controlling principal, the security-sensitive decision, and the "
         "worst-case damage for each trust agreement. Write the outcomes "
         "with a hunts_store write for state TRUST_MODELLED."
+    ),
+    ModelState.PRIOR_ART: (
+        "Proceed to the impact assessment: for each vulnerability, assess the "
+        "impact of exploiting it alone, then use the prior art to fill the "
+        "capability gaps and either write a threat row with its enabling pairs "
+        "or a precursor row. Write the outcomes with a hunts_store write for "
+        "state IMPACT_ASSESSED."
     ),
     ModelState.TRUST_MODELLED: (
         "Proceed to assumptions: enumerate the security-relevant artifacts and "
@@ -132,8 +133,8 @@ GATE_HINTS: dict[ModelState, str] = {
         "overview, Trust Assumptions section, and closing summary, and add the "
         "missed assumptions. Patch a local gap or return to the "
         "undermodelled part for a structural gap. When the pass yields no new "
-        "assumption, write the wellformedness note and then the IMPACT_ASSESSED "
-        "write with the impact rows and the precursors."
+        "assumption, write the wellformedness note, then run the PRIOR_ART "
+        "gate, then write the IMPACT_ASSESSED rows."
     ),
     ModelState.IMPACT_ASSESSED: (
         "Proceed to completion: score each threat's CIA vector AFTER its damage "
@@ -158,15 +159,15 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "the technical_sharpening section."
     ),
     ModelState.PRIOR_ART: (
-        "Query the store before you commit to a trust model. Use `hunts_store` "
+        "Query the store after the vulnerability phase, before you assess the impacts. Use `hunts_store` "
         "with cmd='query', a `kind` (threat, vulnerability, precursor, "
         "assumption, or impact), a non-empty AND list of {path, regex, flags} "
         "filters, and a limit. Search the other units' produced and consumed "
-        "models for the threats, vulnerabilities, and precursors that bear on "
-        "this unit. Record at least one query per kind (threat, vulnerability, "
-        "precursor) with its filters and its match count, every record you reuse "
-        "with the reason, and a prior_art note as the phase exit. Write the "
-        "prior_art section."
+        "models for the threats, vulnerabilities, and precursor capabilities "
+        "that bear on this unit. Record at least one query per kind (threat, "
+        "vulnerability, precursor) with its filters and its match count, every "
+        "record you reuse with the reason, and a prior_art note as the phase "
+        "exit. Write the prior_art section."
     ),
     ModelState.TRUST_MODELLED: (
         "Work the four trust axes in order: identity, spatial, temporal, "
@@ -193,15 +194,13 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
     ),
     ModelState.IMPACT_ASSESSED: (
         "Assess the damage BEFORE you score it. For every vulnerability that is "
-        "not dropped, write one impact_assessment row per damage claim and every "
-        "precursor entity through the precursors section. The damage field names "
-        "the victim and the damaged property in one concise sentence. A row with "
-        "a concrete victim and property is a threat row and carries its "
-        "precursor_refs and its ordered capability_path; a row without one is a "
-        "placeholder, carries an empty capability_path, and has no threat. The "
-        "procedure on a precursor is the abstract trust-boundary mechanism, "
-        "never a request, a payload, or a tool. Write ONLY the impact_assessment "
-        "and precursors sections."
+        "not dropped, write one impact_assessment row per exploitation manner. "
+        "The damage field names the victim and the damaged property for a threat "
+        "row, and states why no end damage follows for a precursor row. Every "
+        "row carries its capability and its capability_id; capability_path lists "
+        "the required capability keys in order. A row with a concrete end damage "
+        "is a threat; a row without one is a precursor and has no threat. Write "
+        "ONLY the impact_assessment section."
     ),
     ModelState.COMPLETED: (
         "Rank the threats: apply the two-clause drop rule, reference each "
@@ -229,7 +228,7 @@ WELLFORMEDNESS_INSTRUCTION = (
     "assumptions. Patch a local gap or return to the undermodelled part "
     "for a structural gap. When the pass yields no new assumption and every "
     "vulnerability has a bound suite class, write ONE wellformedness note and "
-    "then the IMPACT_ASSESSED write with the impact rows and the precursors."
+    "then the PRIOR_ART gate, then the IMPACT_ASSESSED rows."
 )
 
 # The last gate carries no hint: the model is published (S1 9.3).

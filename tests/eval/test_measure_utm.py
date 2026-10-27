@@ -584,3 +584,44 @@ def test_the_measurement_writes_the_impact_block_beside_the_existing_fields(
     assert metrics["counts"]["threats_total"] == 1
     assert metrics["narrowing"]["threats_total"] == 0
     assert metrics["rates"]["identification_rate"] is None
+
+
+def test_the_v4_impact_block_counts_capabilities_and_applies_the_review():
+    models = [{
+        "schema_version": 4,
+        "impact_assessment": [
+            {
+                "id": "IA-1",
+                "disposition": "threat",
+                "capability": "read the roster",
+                "capability_id": "P-1",
+            },
+            {
+                "id": "IA-2",
+                "disposition": "precursor",
+                "capability": "probe the handler",
+                "capability_id": "P-2",
+            },
+        ],
+        "threats": [{
+            "impact_ref": "IA-1",
+            "impact": {
+                "confidentiality": "high",
+                "integrity": "none",
+                "availability": "none",
+            },
+        }],
+    }]
+    review = {
+        "scope": {"IA-1": "in", "IA-2": "in"},
+        "rows": {"IA-1": "sufficient", "IA-2": "under_mined"},
+    }
+
+    metric = measure_utm.impact_metric(models, [], impact_review=review)
+
+    assert metric["schema"] == "v4"
+    assert metric["reviewed"] is True
+    assert metric["green"] == 1
+    assert metric["red"] == 1
+    assert metric["capability_rows"] == 2
+    assert metric["green_share"] == 0.5

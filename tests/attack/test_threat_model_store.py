@@ -192,62 +192,69 @@ def _precursors(index: int = 1) -> list[dict]:
 
 
 def _impact_assessment(index: int = 1) -> list[dict]:
-    """One damage-bearing row: the victim is the tenant user, the property is
-    the confidentiality of the persisted item data."""
+    """One damage-bearing row with no prerequisite capability."""
     return [{
         "id": f"ia-{index}",
         "vulnerability_ref": "v-1",
         "disposition": "threat",
         "damage": "An anonymous caller reads another tenant's item from the catalogue database.",
-        "precursor_refs": [f"p-{index}"],
-        "capability_path": [f"p-{index}"],
+        "capability": "read another tenant's item",
+        "capability_id": f"p-{index}",
+        "capability_path": [],
         "evidence_refs": ["GET /catalogue?id=2"],
     }]
 
 
 def _impact_row_for(threat: dict) -> dict:
-    """The `threat` row a supplied threat row declares (`_write_to_completed`'s
-    coherence rule: one threat, one damage row, one capability path)."""
+    """The row a supplied threat declares: one threat, one row, one path."""
     ref = threat.get("impact_ref") or "ia-1"
-    path = list(threat.get("enabling_precursors") or [])
+    pairs = list(threat.get("enabling_precursors") or [])
+    path = [pair[0] if isinstance(pair, (list, tuple)) else pair for pair in pairs]
     return {
         "id": ref,
         "vulnerability_ref": threat["vulnerability_ref"],
         "disposition": "threat",
         "damage": "An anonymous caller reads another tenant's item from the catalogue database.",
-        "precursor_refs": path,
+        "capability": "read another tenant's item",
+        "capability_id": ref.replace("ia-", "p-"),
         "capability_path": path,
         "evidence_refs": ["GET /catalogue?id=2"],
     }
 
 
 def _precursors_for(rows: list[dict]) -> list[dict]:
-    """One precursor per id the rows yield or reach, in first-seen order."""
-    refs: list[str] = []
-    for row in rows:
-        for ref in [*row["capability_path"], *row["precursor_refs"]]:
-            if ref not in refs:
-                refs.append(ref)
-    return [{
-        "id": ref,
-        "capability": "read another tenant's item",
-        "procedure": "resolve the item by the identifier the caller supplies",
-        "evidence_refs": ["GET /catalogue?id=2"],
-    } for ref in refs]
+    """Legacy only: the retired precursor entities for the rows' ids."""
+    return []
 
 
 def _placeholder_assessment() -> list[dict]:
-    """One placeholder row: the vulnerability yields a precursor but reaches no
-    concrete victim or damaged property."""
+    """One precursor row: a capability with no end damage."""
     return [{
         "id": "ia-1",
         "vulnerability_ref": "v-1",
-        "disposition": "placeholder",
+        "disposition": "precursor",
         "damage": "No user, application, or infrastructure property is affected; the handler returns a generic envelope.",
-        "precursor_refs": ["p-1"],
+        "capability": "distinguish an unmapped handler from an unmapped route",
+        "capability_id": "p-1",
         "capability_path": [],
         "evidence_refs": ["GET /catalogue?id=2"],
     }]
+
+
+def _precursor_row(
+    capability_id: str = "p-1",
+    capability: str = "distinguish an unmapped handler from an unmapped route",
+) -> dict:
+    return {
+        "id": "ia-1",
+        "vulnerability_ref": "v-1",
+        "disposition": "precursor",
+        "damage": "No user, application, or infrastructure property is affected.",
+        "capability": capability,
+        "capability_id": capability_id,
+        "capability_path": [],
+        "evidence_refs": ["GET /catalogue?id=2"],
+    }
 
 
 def _legacy_failure_modes() -> list[dict]:
@@ -280,7 +287,7 @@ def _threat(likelihood: str = "high", *, index: int = 1) -> dict:
             "complexity": "low",
         },
         "impact_ref": f"ia-{index}",
-        "enabling_precursors": [f"p-{index}"],
+        "enabling_precursors": [],
         "impact": {
             "confidentiality": "low",
             "integrity": "none",
@@ -299,13 +306,12 @@ def _sections_below_completed(
     entities = precursors if precursors is not None else _precursors()
     return [
         ("UNIT_TECHNICAL_SHARP", {"technical_sharpening": _sharpening()}),
-        ("PRIOR_ART", {"prior_art": _prior_art()}),
         ("TRUST_MODELLED", {"trust_model": _trust_model()}),
         ("TRUST_ASSUMPTIONS_WRITTEN", {"assumptions": _assumptions()}),
         ("VULNERABILITIES_WRITTEN", {"vulnerabilities": _vulnerabilities()}),
+        ("PRIOR_ART", {"prior_art": _prior_art()}),
         ("IMPACT_ASSESSED", {
             "impact_assessment": rows,
-            "precursors": entities,
         }),
     ]
 
@@ -375,7 +381,7 @@ def test_write_sections_persists_a_partial_model_and_reads_it_back(tmp_path):
     )
     assert path.exists()
     model = store.read_model(PROJECT, UNIT)
-    assert model["schema_version"] == 3
+    assert model["schema_version"] == 4
     assert model["unit_id"] == UNIT
     assert model["unit_kind"] == "service"
     assert model["run_id"] == RUN
@@ -397,7 +403,7 @@ def test_gate_writes_merge_sections_into_one_document(tmp_path):
     assert model["assumptions"][0]["fault"]["id"] == "fault-1"
     assert model["vulnerabilities"][0]["canonical_class"] == "IDOR"
     assert model["impact_assessment"][0]["id"] == "ia-1"
-    assert model["precursors"][0]["id"] == "p-1"
+    assert model["impact_assessment"][0]["capability_id"] == "p-1"
     assert model["prior_art"]["queries"][0]["kind"] == "precursor"
     assert "failure_modes" not in model
     assert model["threats"] == []
@@ -512,7 +518,7 @@ def test_an_unknown_schema_version_refuses_to_load_and_never_migrates(tmp_path):
     unit_dir.mkdir(parents=True)
     document = unit_dir / f"{name}.yaml"
     document.write_text(
-        yaml.safe_dump({"schema_version": 4, "unit_id": UNIT, "state": "COMPLETED"}),
+        yaml.safe_dump({"schema_version": 5, "unit_id": UNIT, "state": "COMPLETED"}),
         encoding="utf-8",
     )
     before = document.read_bytes()
@@ -681,8 +687,7 @@ def test_read_threat_files_is_empty_for_an_invalid_completed_model(tmp_path):
     )
     store.write_sections(
         PROJECT, UNIT, "IMPACT_ASSESSED",
-        {"impact_assessment": _impact_assessment(),
-         "precursors": _precursors()}, run_id=RUN,
+        {"impact_assessment": _impact_assessment()}, run_id=RUN,
     )
     store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
@@ -742,8 +747,7 @@ def test_completion_reports_missing_necessary_attributes(tmp_path):
     )
     store.write_sections(
         PROJECT, UNIT, "IMPACT_ASSESSED",
-        {"impact_assessment": _impact_assessment(),
-         "precursors": _precursors()}, run_id=RUN,
+        {"impact_assessment": _impact_assessment()}, run_id=RUN,
     )
 
     store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
@@ -760,7 +764,6 @@ def test_write_sections_accepts_typed_section_objects(tmp_path):
     # T2 may bind either plain payloads or the schema's typed section objects
     from polymerhus.attack.hunting.threat_model import (
         ImpactAssessment,
-        Precursor,
         PriorArt,
         Threat,
         TechnicalSharpening,
@@ -793,12 +796,8 @@ def test_write_sections_accepts_typed_section_objects(tmp_path):
     )
     store.write_sections(
         PROJECT, UNIT, "IMPACT_ASSESSED",
-        {
-            "impact_assessment": [
-                ImpactAssessment.model_validate(_impact_assessment()[0])],
-            "precursors": [
-                Precursor.model_validate(_precursors()[0])],
-        },
+        {"impact_assessment": [
+            ImpactAssessment.model_validate(_impact_assessment()[0])]},
         run_id=RUN,
     )
 
@@ -1054,66 +1053,51 @@ def _completed_document(store) -> dict:
     return store.read_model(PROJECT, UNIT)
 
 
-def test_completion_reports_a_missing_damage_and_a_missing_capability_path(tmp_path):
-    """A `threat` row names the damage and the capability path that reaches it."""
+def test_completion_reports_a_missing_damage_and_a_missing_capability(tmp_path):
+    """Every row names its damage, its capability, and the capability key."""
     store = ThreatModelStore(tmp_path)
     document = _completed_document(store)
     document["impact_assessment"][0]["damage"] = ""
-    document["impact_assessment"][0]["capability_path"] = []
+    document["impact_assessment"][0]["capability"] = ""
+    document["impact_assessment"][0]["capability_id"] = ""
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
     assert "impact_assessment:ia-1.damage" in validation.missing
-    assert "impact_assessment:ia-1.capability_path" in validation.missing
+    assert "impact_assessment:ia-1.capability" in validation.missing
+    assert "impact_assessment:ia-1.capability_id" in validation.missing
 
 
-def test_completion_reports_a_placeholder_with_a_capability_path(tmp_path):
-    """A placeholder reaches no damage: its capability path is empty."""
+def test_completion_accepts_a_precursor_row_with_a_capability_path(tmp_path):
+    """A precursor may name the capabilities it leveraged to gain its own."""
     store = ThreatModelStore(tmp_path)
-    _write_to_completed(
-        store,
-        impact_assessment=[{
-            **_placeholder_assessment()[0],
-            "capability_path": ["p-1"],
-        }],
-        threats=[],
-    )
+    first = {**_precursor_row(), "capability_id": "p-1"}
+    second = {
+        **_precursor_row(),
+        "id": "ia-2",
+        "capability_id": "p-2",
+        "capability_path": ["p-1"],
+    }
+    _write_to_completed(store, impact_assessment=[first, second], threats=[])
 
     validation = check_completion(
         UnitThreatModel.model_validate(store.read_model(PROJECT, UNIT)))
 
-    assert validation.valid is False
-    assert "impact_assessment:ia-1.capability_path" in validation.missing
-    assert "impact_assessment:ia-1.damage" not in validation.missing
+    assert validation.valid is True
 
 
-def test_completion_reports_a_threat_without_its_assessment_links(tmp_path):
-    """The threat's two assessment links are necessary attributes."""
+def test_completion_reports_a_threat_without_its_assessment_link(tmp_path):
+    """The impact_ref is a necessary attribute; an empty enabling list is valid."""
     store = ThreatModelStore(tmp_path)
     document = _completed_document(store)
     document["threats"][0]["impact_ref"] = ""
-    document["threats"][0]["enabling_precursors"] = []
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
     assert "threat:threat-1.impact_ref" in validation.missing
-    assert "threat:threat-1.enabling_precursors" in validation.missing
-
-
-def test_completion_reports_a_precursor_without_its_capability_or_procedure(tmp_path):
-    """A precursor names the capability and the abstract procedure that gains it."""
-    store = ThreatModelStore(tmp_path)
-    document = _completed_document(store)
-    document["precursors"][0]["capability"] = ""
-    document["precursors"][0]["procedure"] = ""
-
-    validation = check_completion(UnitThreatModel.model_validate(document))
-
-    assert validation.valid is False
-    assert "precursor:p-1.capability" in validation.missing
-    assert "precursor:p-1.procedure" in validation.missing
+    assert "threat:threat-1.enabling_precursors" not in validation.missing
 
 
 # --- the one-threat-one-damage closure (ticket 436) --------------------------
@@ -1223,63 +1207,57 @@ def test_completion_reports_a_capability_path_mismatch(tmp_path):
     assert "threat:threat-1.enabling_precursors" in validation.unclosed
 
 
-def test_completion_reports_duplicate_assessment_and_precursor_ids(tmp_path):
-    """The assessment and precursor ids are unique in the unit."""
+def test_completion_reports_duplicate_assessment_and_capability_ids(tmp_path):
+    """The assessment and capability ids are unique in the unit."""
     store = ThreatModelStore(tmp_path)
     document = _completed_document(store)
     document["impact_assessment"].append(
         {**document["impact_assessment"][0]})
-    document["precursors"].append(
-        {**document["precursors"][0], "capability": "a second capability"})
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
     assert "impact_assessment.ids" in validation.missing
-    assert "precursors.ids" in validation.missing
+    assert "impact_assessment.capability_ids" in validation.missing
 
 
-def test_completion_accepts_a_path_that_uses_another_vulnerabilitys_precursor(
-    tmp_path,
-):
-    """A path may chain a capability yielded by another vulnerability; the
-    row's `precursor_refs` names only the capabilities this vulnerability
-    yields."""
+def test_completion_accepts_a_capability_from_another_row(tmp_path):
+    """A path may chain a capability yielded by another row."""
     store = ThreatModelStore(tmp_path)
-    document = _completed_document(store)
-    document["precursors"].append({
-        "id": "p-2",
-        "capability": "reuse a session recovered elsewhere",
-        "procedure": "apply the recovered session to the item lookup",
-        "evidence_refs": ["GET /catalogue?id=3"],
-    })
-    document["impact_assessment"][0]["precursor_refs"] = ["p-1"]
-    document["impact_assessment"][0]["capability_path"] = ["p-1", "p-2"]
-    document["threats"][0]["enabling_precursors"] = ["p-1", "p-2"]
+    precursor = {**_precursor_row("p-2"), "id": "ia-2"}
+    row = {
+        **_impact_assessment()[0],
+        "capability_path": ["p-2"],
+    }
+    _write_to_completed(
+        store,
+        impact_assessment=[row, precursor],
+        threats=[{
+            **_threat(),
+            "enabling_precursors": [["p-2", "p-2"]],
+        }],
+    )
 
-    validation = check_completion(UnitThreatModel.model_validate(document))
+    validation = check_completion(
+        UnitThreatModel.model_validate(store.read_model(PROJECT, UNIT)))
 
     assert validation.valid is True
-    assert "impact_assessment:ia-1.precursor_refs" not in validation.missing
 
 
-def test_completion_reports_unresolved_assessment_and_precursor_references(tmp_path):
-    """Every row and precursor reference resolves inside the same model."""
+def test_completion_reports_unresolved_capability_references(tmp_path):
+    """Every capability reference resolves inside the project."""
     store = ThreatModelStore(tmp_path)
     document = _completed_document(store)
-    document["impact_assessment"][0]["precursor_refs"] = ["p-missing"]
     document["impact_assessment"][0]["capability_path"] = ["p-missing"]
-    document["threats"][0]["enabling_precursors"] = ["p-missing"]
+    document["threats"][0]["enabling_precursors"] = [["p-missing", None]]
     document["threats"][0]["impact_ref"] = "ia-missing"
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
-    assert "impact_assessment:ia-1.precursor_refs='p-missing'" in \
-        validation.referential_errors
     assert "impact_assessment:ia-1.capability_path='p-missing'" in \
         validation.referential_errors
-    assert "threat:threat-1.enabling_precursors='p-missing'" in \
+    assert "threat:threat-1.enabling_precursors.capability='p-missing'" in \
         validation.referential_errors
     assert "threat:threat-1.impact_ref='ia-missing'" in \
         validation.referential_errors
@@ -1292,28 +1270,20 @@ def test_a_vulnerability_may_yield_several_threats_one_per_manner(tmp_path):
     second_row = {
         **_impact_assessment()[0],
         "id": "ia-2",
+        "capability_id": "p-2",
+        "capability": "change another tenant's item through the enumeration path",
         "damage": "An anonymous caller changes another tenant's item through the enumeration path.",
-        "precursor_refs": ["p-2"],
-        "capability_path": ["p-2"],
+        "capability_path": ["p-1"],
     }
     _write_to_completed(
         store,
         impact_assessment=[_impact_assessment()[0], second_row],
-        precursors=[
-            *_precursors(),
-            {
-                "id": "p-2",
-                "capability": "enumerate the item identifiers",
-                "procedure": "walk the item identifier space",
-                "evidence_refs": ["GET /catalogue?id=3"],
-            },
-        ],
         threats=[
             _threat("high"),
             {
                 **_threat("high"),
                 "impact_ref": "ia-2",
-                "enabling_precursors": ["p-2"],
+                "enabling_precursors": [["p-1", "p-1"]],
                 "likelihood_rationale": "the second exploitation manner",
             },
         ],
@@ -1456,7 +1426,7 @@ def test_the_three_prior_art_queries_and_the_note_close_the_check(tmp_path):
     assert model["prior_art"]["notes"]
 
 
-def test_the_impact_assessed_gate_writes_the_rows_and_the_precursors(tmp_path):
+def test_the_impact_assessed_gate_writes_the_rows_only(tmp_path):
     store = ThreatModelStore(tmp_path)
     for state, sections in _sections_below_completed():
         store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
@@ -1465,7 +1435,7 @@ def test_the_impact_assessed_gate_writes_the_rows_and_the_precursors(tmp_path):
 
     assert model["state"] == "IMPACT_ASSESSED"
     assert model["impact_assessment"] == _impact_assessment()
-    assert model["precursors"] == _precursors()
+    assert model["precursors"] == []
 
 
 def test_the_threat_file_carries_the_denormalised_impact_block(tmp_path):
@@ -1480,21 +1450,17 @@ def test_the_threat_file_carries_the_denormalised_impact_block(tmp_path):
         "impact_ref": "ia-1",
         "damage": "An anonymous caller reads another tenant's item from the catalogue database.",
         "disposition": "threat",
-        "precursors": [{
-            "id": "p-1",
-            "capability": "read another tenant's item",
-            "procedure": "resolve the item by the identifier the caller supplies",
-            "evidence_refs": ["GET /catalogue?id=2"],
-        }],
-        "capability_path": ["p-1"],
+        "capability": "read another tenant's item",
+        "capability_id": f"{UNIT}::p-1",
+        "capability_path": [],
+        "chain": [],
     }
     assert record["threat"]["impact_ref"] == "ia-1"
-    assert record["threat"]["enabling_precursors"] == ["p-1"]
+    assert record["threat"]["enabling_precursors"] == []
 
 
-def test_a_placeholder_produces_no_threat_file(tmp_path):
-    """A placeholder row stays in the model; only a `threat` row is dispatched.
-    The model is a valid COMPLETED model, so it is consumable without a hunt."""
+def test_a_precursor_produces_no_threat_file(tmp_path):
+    """A precursor row stays in the model; only a `threat` row is dispatched."""
     store = ThreatModelStore(tmp_path)
     _write_to_completed(
         store, impact_assessment=_placeholder_assessment(), threats=[])
@@ -1503,7 +1469,7 @@ def test_a_placeholder_produces_no_threat_file(tmp_path):
     assert model["state"] == "COMPLETED"
     assert model["validation"]["valid"] is True
     assert model["validation"]["missing"] == []
-    assert model["impact_assessment"][0]["disposition"] == "placeholder"
+    assert model["impact_assessment"][0]["disposition"] == "precursor"
     assert store.read_threat_files(PROJECT, UNIT) == []
 
     unit_name = "Service-catalogue-and-discovery"
@@ -1822,8 +1788,7 @@ def test_an_invalid_completed_model_is_not_consumable_and_is_archived(tmp_path):
     )
     store.write_sections(
         PROJECT, UNIT, "IMPACT_ASSESSED",
-        {"impact_assessment": _impact_assessment(),
-         "precursors": _precursors()}, run_id=RUN,
+        {"impact_assessment": _impact_assessment()}, run_id=RUN,
     )
     store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
@@ -2127,3 +2092,78 @@ def test_a_v2_model_is_readable_for_intake_but_not_dispatched(tmp_path):
     assert store.read_threat_files(PROJECT, UNIT) == []
     assert store.read_consumed_threats(PROJECT) == []
     assert store.read_produced_threats(PROJECT) == []
+
+
+# --- the capability-first query and cross-unit chain (schema 4) ---------------
+
+def test_the_precursor_query_returns_precursor_rows_with_the_capability(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(
+        store, impact_assessment=_placeholder_assessment(), threats=[])
+
+    result = store.query_prior_art(
+        PROJECT,
+        kind="precursor",
+        filters=[{"path": "capability", "regex": "unmapped"}],
+    )
+
+    assert len(result["matches"]) == 1
+    match = result["matches"][0]
+    assert match["record_id"] == "ia-1"
+    assert match["label"].startswith("distinguish an unmapped")
+    assert match["disposition"] == "precursor"
+
+
+def test_the_impact_query_returns_threat_rows_too(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+
+    result = store.query_prior_art(
+        PROJECT,
+        kind="impact",
+        filters=[{"path": "capability", "regex": "read another"}],
+    )
+
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["disposition"] == "threat"
+
+
+def _write_unit(store, unit_id, rows, threats):
+    for state, sections in _sections_below_completed():
+        if state == "IMPACT_ASSESSED":
+            sections = {"impact_assessment": rows}
+        store.write_sections(PROJECT, unit_id, state, sections, run_id=RUN)
+    store.write_sections(
+        PROJECT, unit_id, "COMPLETED", {"threats": threats}, run_id=RUN)
+
+
+def test_a_capability_from_another_unit_resolves_and_lands_in_the_chain(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_unit(
+        store,
+        "First",
+        rows=[_precursor_row("p-1")],
+        threats=[],
+    )
+    second_row = {
+        **_impact_assessment()[0],
+        "capability_path": ["First::p-1"],
+    }
+    _write_unit(
+        store,
+        "Second",
+        rows=[second_row],
+        threats=[{
+            **_threat(),
+            "enabling_precursors": [["First::p-1", "First::p-1"]],
+        }],
+    )
+
+    model = store.read_model(PROJECT, "Second")
+    assert model["validation"]["valid"] is True
+    record = store.read_threat_files(PROJECT, "Second")[0]
+    assert record["impact"]["capability_path"] == ["First::p-1"]
+    chain = record["impact"]["chain"]
+    assert chain[0]["capability"] == "First::p-1"
+    assert chain[0]["precursor"] == "First::p-1"
+    assert chain[0]["resolved"]["row"]["capability_id"] == "p-1"

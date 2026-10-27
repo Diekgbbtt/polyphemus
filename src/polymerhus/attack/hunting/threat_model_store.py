@@ -290,7 +290,7 @@ class ThreatModelDocumentError(ValueError):
 # threat file merged with these sections, so it is built separately.
 _QUERY_SECTION_BY_KIND: dict[PriorArtKind, str] = {
     PriorArtKind.IMPACT: "impact_assessment",
-    PriorArtKind.PRECURSOR: "precursors",
+    PriorArtKind.PRECURSOR: "impact_assessment",
     PriorArtKind.VULNERABILITY: "vulnerabilities",
     PriorArtKind.ASSUMPTION: "assumptions",
 }
@@ -525,6 +525,8 @@ def _section_query_views(
     for item in document.get(_QUERY_SECTION_BY_KIND[kind]) or []:
         if not isinstance(item, Mapping):
             continue
+        if kind is PriorArtKind.PRECURSOR and item.get("disposition") != "precursor":
+            continue
         view = dict(item)
         view["unit_id"] = str(document.get("unit_id") or "")
         if kind is PriorArtKind.ASSUMPTION and "description" not in view:
@@ -565,8 +567,8 @@ def _query_match(
     elif kind is PriorArtKind.PRECURSOR:
         label = str(view.get("capability") or "")
         web_vulnerability_class = ""
-        disposition = None
-        summary = str(view.get("procedure") or "")
+        disposition = _optional_text(view.get("disposition"))
+        summary = str(view.get("damage") or "")
         evidence_refs = _evidence_refs(view.get("evidence_refs"))
     elif kind is PriorArtKind.ASSUMPTION:
         fault = view.get("fault")
@@ -594,6 +596,28 @@ def _query_match(
         evidence_refs=evidence_refs,
         matched=matched,
     )
+
+
+def _normalise_v3(raw: dict) -> dict:
+    """Lift a v3 document into the v4 shape without inventing capabilities.
+
+    The `placeholder` disposition becomes `precursor`; a legacy
+    `enabling_precursors` id list becomes a self-provided pair chain; a row's
+    missing `capability` and `capability_id` stay empty (never synthesised).
+    """
+    doc = json.loads(json.dumps(raw))
+    doc["schema_version"] = SCHEMA_VERSION
+    for row in doc.get("impact_assessment") or []:
+        if row.get("disposition") == "placeholder":
+            row["disposition"] = "precursor"
+        row.setdefault("capability", "")
+        row.setdefault("capability_id", "")
+    for threat in doc.get("threats") or []:
+        enabling = threat.get("enabling_precursors") or []
+        threat["enabling_precursors"] = [
+            [item, item] if isinstance(item, str) else item for item in enabling
+        ]
+    return doc
 
 
 class ThreatModelStore(BoundedRecordStore):
@@ -670,6 +694,8 @@ class ThreatModelStore(BoundedRecordStore):
         version = raw.get("schema_version")
         if version == SCHEMA_VERSION:
             return raw
+        if version == 3:
+            return _normalise_v3(raw)
         if allow_legacy and version == LEGACY_SCHEMA_VERSION:
             return raw
         logger.error(
@@ -1407,7 +1433,10 @@ class ThreatModelStore(BoundedRecordStore):
                 # unreadable body): never merge into a document we cannot read.
                 raise ThreatModelSchemaVersionError(model_path, self._raw_version(model_path))
             now = datetime.now(timezone.utc)
-            doc = self._merged_document(existing, unit_id, run_id, gate, sections, now, model_path)
+            doc = self._merged_document(
+                existing, unit_id, run_id, gate, sections, now, model_path,
+                project_id=project_id,
+            )
             self._commit(project_id, unit_name, doc, gate, now)
             return model_path
 
@@ -1428,6 +1457,8 @@ class ThreatModelStore(BoundedRecordStore):
         sections: Mapping[str, Any],
         now: datetime,
         path: Path,
+        *,
+        project_id: str,
     ) -> PartialThreatModel:
         """The merged, parsed document: identity bound, sections applied, the
         state kept monotonic, and - at COMPLETED - the threats normalised and
@@ -1459,6 +1490,7 @@ class ThreatModelStore(BoundedRecordStore):
             model.validation = check_completion(
                 UnitThreatModel.model_validate(model.model_dump()),
                 class_names=self._class_names,
+                capability_index=self._capability_index(project_id),
             )
         return model
 
@@ -1488,6 +1520,31 @@ class ThreatModelStore(BoundedRecordStore):
             self._delete_threat_files(produced_dir)
         self._dump_yaml_atomic(model_path, model.model_dump(mode="json"))
 
+    def _capability_index(self, project_id: str) -> dict[str, dict]:
+        """Every capability id in the project, keyed `Unit::P-*`.
+
+        The index is the cross-unit resolution seam for a threat's chain. A
+        malformed or unreadable document is skipped fail-open.
+        """
+        index: dict[str, dict] = {}
+        for family in _READ_FAMILIES:
+            for _directory, document in self._query_documents(
+                project_id, family, produced_fallback=False
+            ):
+                unit_id = str(document.get("unit_id") or "")
+                if not unit_id:
+                    continue
+                for row in document.get("impact_assessment") or []:
+                    if not isinstance(row, Mapping):
+                        continue
+                    capability_id = str(row.get("capability_id") or "")
+                    if capability_id:
+                        index[f"{unit_id}::{capability_id}"] = {
+                            "unit_id": unit_id,
+                            "row": dict(row),
+                        }
+        return index
+
     def _write_threat_files(
         self,
         project_id: str,
@@ -1509,7 +1566,17 @@ class ThreatModelStore(BoundedRecordStore):
         assessments = {
             assessment.id: assessment for assessment in model.impact_assessment
         }
-        precursors = {precursor.id: precursor for precursor in model.precursors}
+        index = self._capability_index(project_id)
+        for assessment in model.impact_assessment:
+            if assessment.capability_id:
+                index[f"{model.unit_id}::{assessment.capability_id}"] = {
+                    "unit_id": model.unit_id,
+                    "row": assessment.model_dump(mode="json"),
+                }
+
+        def qualify(ref: str, unit: str) -> str:
+            return ref if "::" in ref else f"{unit}::{ref}"
+
         written: set[str] = set()
         for threat in model.threats:
             # A threat with zero combined risk is stored in the model but never
@@ -1531,13 +1598,27 @@ class ThreatModelStore(BoundedRecordStore):
                     "impact_ref": assessment.id,
                     "damage": assessment.damage,
                     "disposition": assessment.disposition.value,
-                    # only the precursors that resolve, in capability-path order
-                    "precursors": [
-                        precursors[ref].model_dump(mode="json")
+                    "capability": assessment.capability,
+                    "capability_id": qualify(
+                        assessment.capability_id, model.unit_id
+                    ),
+                    "capability_path": [
+                        qualify(ref, model.unit_id)
                         for ref in assessment.capability_path
-                        if ref in precursors
                     ],
-                    "capability_path": list(assessment.capability_path),
+                    "chain": [
+                        {
+                            "capability": qualify(capability, model.unit_id),
+                            "precursor": (
+                                qualify(provider, model.unit_id)
+                                if provider is not None else None
+                            ),
+                            "resolved": index.get(
+                                qualify(capability, model.unit_id)
+                            ),
+                        }
+                        for capability, provider in threat.enabling_precursors
+                    ],
                 },
                 "created_at": now,
             }

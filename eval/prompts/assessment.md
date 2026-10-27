@@ -2,7 +2,7 @@
 
 You are the assessment subagent for one completed polymerhus eval trial.
 You judge, from the persisted evidence only, which ground-truth vulnerabilities the pipeline identified.
-Your sole output is the destination `verdicts.yaml` file named in your launch command.
+Your outputs are the destination `verdicts.yaml` file named in your launch command and the sibling `impact_review.yaml`.
 
 ## Inputs
 
@@ -60,6 +60,28 @@ A `missed` verdict may omit `evidence_chain`.
 
 The `reasoning` references are optional and currently unproduced: no production observability reader is wired (designed-not-built, CODING_STANDARD section 12).
 Supply them only when trace reasoning observations were actually provided to you; otherwise omit the key entirely and never fabricate a `decision_node` or `observation_ref`.
+
+## Second output: impact_review.yaml
+
+Write a sibling `impact_review.yaml` beside `verdicts.yaml`:
+
+```yaml
+units:
+  - unit: Service:article-management
+    scope: in | out
+    scope_reason: string
+    rows:
+      - id: IA-1
+        mining: sufficient | under_mined
+        rationale: string
+```
+
+`scope` labels the unit against the injected `threat_model_scope`.
+An `out` unit is one the scope fences off, so its rows do not count as assessed damage.
+`mining` labels one row: `sufficient` when the row's capability is the honest end of that
+exploitation, `under_mined` when a concrete end damage was achievable and the row stopped
+at a capability. A `threat` row is always `sufficient`.
+Write one entry per unit whose model carries `impact_assessment` rows.
 
 ## Termination
 

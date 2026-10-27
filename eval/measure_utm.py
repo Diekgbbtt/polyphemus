@@ -738,6 +738,7 @@ def impact_block(
     prior_art_reused: int | None,
     classes: list[str],
     class_index: dict[str, int] | None,
+    review: dict | None = None,
 ) -> dict:
     """The impact block: the red/green share, the split, the distribution.
 
@@ -756,19 +757,39 @@ def impact_block(
             distribution[metric][row["cia"][metric]] += 1
     total = len(rows)
     threat_rows = sum(1 for row in rows if row["disposition"] == "threat")
-    placeholder_rows = sum(1 for row in rows if row["disposition"] == "placeholder")
-    split = schema == "v3"
+    precursor_rows = sum(1 for row in rows if row["disposition"] == "precursor")
+    capability_rows = sum(1 for row in rows if row.get("capability"))
+    split = schema in ("v3", "v4")
+    reviewed = review is not None
+    if reviewed:
+        labels = as_dict(review).get("rows") or {}
+        scope = as_dict(review).get("scope") or {}
+        red = sum(
+            1 for row in rows
+            if scope.get(row["id"]) == "out"
+            or labels.get(row["id"]) == "under_mined"
+        )
+        denominator = green + red
+        green_share = share(green, denominator) if denominator else None
+    else:
+        red = total - green
+        green_share = share(green, total)
     return {
         "schema": schema,
         "legacy_recomputation": legacy_recomputation,
+        "reviewed": reviewed,
         "impact_rows": total,
         "threats": threat_rows if split else None,
-        "placeholders": placeholder_rows if split else None,
-        "red": total - green,
+        "precursor_rows": precursor_rows if split else None,
+        "placeholders": precursor_rows if split else None,
+        "capability_rows": capability_rows,
+        "red": red,
         "green": green,
-        "green_share": share(green, total),
+        "green_share": green_share,
         "threat_share": share(threat_rows, total) if split else None,
-        "placeholder_share": share(placeholder_rows, total) if split else None,
+        "precursor_share": share(precursor_rows, total) if split else None,
+        "placeholder_share": share(precursor_rows, total) if split else None,
+        "capability_share": share(capability_rows, total),
         "cia": distribution,
         "precursors": precursors,
         "prior_art_reused": prior_art_reused,
@@ -776,20 +797,26 @@ def impact_block(
     }
 
 
-def v3_impact(models: list[dict], class_index: dict[str, int] | None) -> dict:
-    """The v3 impact metric: one row per `impact_assessment` row.
+def v3_impact(
+    models: list[dict],
+    class_index: dict[str, int] | None,
+    review: dict | None = None,
+) -> dict:
+    """The v3/v4 impact metric: one row per `impact_assessment` row.
 
     The CIA vector lives on the threat that references the row through
-    `impact_ref`, in the model document; the threat file is the published
-    denormalisation and may be absent for a zero-risk threat, so the metric
-    reads the model. A row whose reference does not resolve reads all-none.
+    `impact_ref`; a precursor row has no threat, so its vector is all-none. A
+    v3 `placeholder` reads as `precursor`.
     """
     rows: list[dict] = []
     classes: list[str] = []
     precursors = 0
     prior_art_reused = 0
+    schema = "v3"
     for model in models:
         model = as_dict(model)
+        if int(model.get("schema_version") or 0) >= 4:
+            schema = "v4"
         threats_by_ref: dict[str, dict] = {}
         for threat in as_list(model.get("threats")):
             threat = as_dict(threat)
@@ -800,8 +827,13 @@ def v3_impact(models: list[dict], class_index: dict[str, int] | None) -> dict:
         for assessment in as_list(model.get("impact_assessment")):
             assessment = as_dict(assessment)
             threat = threats_by_ref.get(str(assessment.get("id") or ""), {})
+            disposition = norm(assessment.get("disposition"))
+            if disposition == "placeholder":
+                disposition = "precursor"
             rows.append({
-                "disposition": norm(assessment.get("disposition")),
+                "id": str(assessment.get("id") or ""),
+                "disposition": disposition,
+                "capability": str(assessment.get("capability") or ""),
                 "cia": cia_levels(threat.get("impact")),
             })
         precursors += len(as_list(model.get("precursors")))
@@ -809,12 +841,13 @@ def v3_impact(models: list[dict], class_index: dict[str, int] | None) -> dict:
             as_list(as_dict(model.get("prior_art")).get("reused")))
     return impact_block(
         rows,
-        schema="v3",
+        schema=schema,
         legacy_recomputation=False,
         precursors=precursors,
         prior_art_reused=prior_art_reused,
         classes=classes,
         class_index=class_index,
+        review=review,
     )
 
 
@@ -850,6 +883,7 @@ def impact_metric(
     models: list[dict],
     threats: list[dict],
     class_index: dict[str, int] | None = None,
+    impact_review: dict | None = None,
 ) -> dict:
     """The impact metric of one trial over the files the loader read.
 
@@ -875,7 +909,7 @@ def impact_metric(
         model for model in models
         if as_list(as_dict(model).get("impact_assessment"))
     ]
-    v3 = v3_impact(v3_models, class_index) if v3_models else None
+    v3 = v3_impact(v3_models, class_index, impact_review) if v3_models else None
     v2_threats = [
         threat for threat in threats
         if as_dict(threat).get("_schema") == 2
@@ -903,6 +937,26 @@ def impact_metric(
 
 
 # --- official records ---------------------------------------------------------
+
+
+def load_impact_review(path: Path) -> dict | None:
+    """The assessor's per-row mining labels and per-unit scope labels."""
+    raw = load_mapping(path)
+    units = as_list(as_dict(raw).get("units")) if raw else []
+    if not units:
+        return None
+    rows: dict[str, str] = {}
+    scope: dict[str, str] = {}
+    for unit in units:
+        unit = as_dict(unit)
+        unit_scope = str(unit.get("scope") or "in")
+        for row in as_list(unit.get("rows")):
+            row = as_dict(row)
+            row_id = str(row.get("id") or "")
+            if row_id:
+                rows[row_id] = str(row.get("mining") or "")
+                scope[row_id] = unit_scope
+    return {"rows": rows, "scope": scope}
 
 
 def load_verdicts(path: Path) -> list[dict]:
@@ -994,7 +1048,10 @@ def main() -> int:
     models, threats = load_models(project_root / "threat_modeller")
     specs = load_specs(project_root / "hunter" / "test-specs")
     pods = load_pods(project_root / "test-executor-pod")
-    impact = impact_metric(models, threats, class_index)
+    impact = impact_metric(
+        models, threats, class_index,
+        impact_review=load_impact_review(trial_dir / "impact_review.yaml"),
+    )
 
     per_vuln: list[dict] = []
     for vuln in ground_truth:

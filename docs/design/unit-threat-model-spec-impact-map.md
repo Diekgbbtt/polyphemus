@@ -20,6 +20,25 @@ The authoritative spec is `docs/design/impact-assessment-system-spec.md`.
 The prototype is `docs/design/impact-assessment-system-prototype.md`.
 Where this document and the new spec disagree, the new spec wins.
 
+## Amendment 2026-10-27: capability-first impact model
+
+- Every impact row carries `capability` (the adversarial capability gained) and `capability_id` (`P-*`).
+- The `placeholder` disposition is renamed `precursor`.
+  A precursor row has no end damage, no threat file, and still yields its capability.
+- `precursor_refs` and the `precursors[]` section are legacy read-only.
+  The capability lives on the row.
+- `capability_path` is the ordered set of required capability ids (`P-*` or `Unit::P-*`).
+  It may be empty for a direct impact.
+- `Threat.enabling_precursors` is an ordered list of `[capability, provider]` pairs.
+  A `null` provider is an unfilled gap.
+- The gate order moves `PRIOR_ART` after `VULNERABILITIES_WRITTEN`.
+  The well-formedness phase runs between the vulnerability write and prior art.
+- `kind=precursor` returns the impact rows with `disposition=precursor`.
+- The threat file and the hunter payload carry the capability and the resolved capability chain.
+- Red is assessor-labelled: a unit out of scope or a precursor row marked under-mined.
+  `green_share = green / (green + red)`; legitimate capability rows are a third bucket.
+- `SCHEMA_VERSION` becomes 4; a v3 document reads as v4 without capability synthesis.
+
 - The impact assessment is a first-class model section.
   A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
 - A `precursor` is a capability entity, not a row.

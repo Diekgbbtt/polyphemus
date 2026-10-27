@@ -439,7 +439,6 @@ def modeller_gate_payloads() -> dict:
         },
         ModelState.IMPACT_ASSESSED: {
             "impact_assessment": [_damage_row()],
-            "precursors": [_precursor()],
         },
         ModelState.COMPLETED: {
             "threats": [{
@@ -456,7 +455,7 @@ def modeller_gate_payloads() -> dict:
                     "complexity": "low",
                 },
                 "impact_ref": "ia-1",
-                "enabling_precursors": ["p-1"],
+                "enabling_precursors": [],
                 "impact": {
                     "confidentiality": "low",
                     "integrity": "none",
@@ -492,8 +491,9 @@ def _damage_row(index: int = 1) -> dict:
         "vulnerability_ref": "v-1",
         "disposition": "threat",
         "damage": DAMAGE,
-        "precursor_refs": [f"p-{index}"],
-        "capability_path": [f"p-{index}"],
+        "capability": "read another tenant's item",
+        "capability_id": f"p-{index}",
+        "capability_path": [],
         "evidence_refs": ["GET /catalogue?id=2"],
     }
 
@@ -506,7 +506,7 @@ def _coherent_threats(threats):
         {
             **row,
             "impact_ref": f"ia-{index}",
-            "enabling_precursors": [f"p-{index}"],
+            "enabling_precursors": [],
         }
         for index, row in enumerate(threats, start=1)
     ]
@@ -546,9 +546,6 @@ def produce_model(
                 sections = {
                     "impact_assessment": [
                         _damage_row(index) for index in range(1, len(rows) + 1)
-                    ],
-                    "precursors": [
-                        _precursor(index) for index in range(1, len(rows) + 1)
                     ],
                 }
             elif state is ModelState.COMPLETED:
@@ -670,12 +667,8 @@ class ScriptedModellerTurns:
                 "note_name": "wellformedness", "kind": "wellformedness",
                 "body": "every threat checked; no new assumption",
             })
-            from polymerhus.attack.hunting.threat_model import ModelState
-            payload = self.payloads[ModelState.IMPACT_ASSESSED]
-            self.responses.append(self.store_tool(turn).invoke({
-                "cmd": "write", "state": ModelState.IMPACT_ASSESSED.value,
-                "sections": payload,
-            }))
+            # The well-formedness note is the phase exit; PRIOR_ART and
+            # IMPACT_ASSESSED follow as their own turns.
             return None
         if turn.state not in self.states:
             return None

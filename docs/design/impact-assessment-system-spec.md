@@ -27,7 +27,7 @@ The metric must move to the CIA values the impact assessment produces.
 ## Solution
 
 A `threat` is a row with a concrete end damage to a victim.
-A `placeholder` is a row with no concrete end damage.
+A `precursor` is a row with no concrete end damage that still yields its capability.
 A `precursor` is a capability entity, not a row.
 The modeller writes one `impact_assessment` section at a new `IMPACT_ASSESSED` gate.
 Each assessment names the victim and the damaged property in one `damage` field, the precursors the vulnerability yields, and the capability path.
@@ -36,7 +36,7 @@ One vulnerability may yield several threats, one per complementary exploitation 
 Each threat carries its own damage row and its own capability path.
 The threat stays broad: it names the exploitation manner and the damage, never the request, payload, or procedure.
 The CIA score is authored after the assessment.
-A threat row carries at least one non-none CIA value; a placeholder row carries all none.
+A threat row carries at least one non-none CIA value; a precursor row carries no end damage and still yields a capability.
 
 The project gains a `threat_model_scope` string.
 The hunting module appends it verbatim to the modeller prompt.
@@ -60,17 +60,17 @@ The class-based green gate is retired.
 ## User Stories
 
 1. As an operator, I want a threat to require a concrete victim and damaged property, so that a latent capability is not dispatched as a damage claim.
-2. As an operator, I want a placeholder for a direction with no concrete end damage, so that the modelling work is kept without inflating the threat set.
-3. As an operator, I want a precursor entity for a capability that another threat can leverage, so that the capability is not lost when it does not reach damage by itself.
+2. As an operator, I want a precursor row for a direction with no concrete end damage, so that the capability is kept without inflating the threat set.
+3. As an operator, I want every row to carry the capability its exploitation gains, so that a later unit can chain it whether the row is a threat or a precursor.
 4. As an operator, I want the impact assessment to be a first-class model section, so that the damage reasoning is auditable apart from the CIA score.
 5. As an operator, I want the CIA score authored after the damage assessment, so that the score reflects the victim and the property.
 6. As an operator, I want a threat row to carry at least one non-none CIA value, so that a threat is damage-bearing by construction.
-7. As an operator, I want a placeholder row to carry all-none CIA values, so that the impact metric can separate placeholders from threats.
+7. As an operator, I want a precursor row to carry no end damage, so that the metric can separate capabilities from damage.
 8. As an operator, I want the damage field to name the victim and the property in one concise sentence, so that the assessment is readable without a taxonomy lookup.
 9. As an operator, I want the victim and property catalog in the prompt, so that the model reasons over users, the application, and the infrastructure.
 10. As an operator, I want the capability path to list the precursors that reach the damage, so that the hunter sees the attacker's position.
-11. As an operator, I want every precursor to live in the store after completion, so that a later unit can query it.
-12. As an operator, I want a prior-art phase before the trust model, so that the modeller reuses existing threats, vulnerabilities, and precursors.
+11. As an operator, I want every capability to live in the store after completion, so that a later unit can query it by its id.
+12. As an operator, I want a prior-art phase after the vulnerability phase, so that the modeller forms its own classes before the store can bias them.
 13. As an operator, I want at least one prior-art query for threats, one for vulnerabilities, and one for precursors, so that the reuse is deliberate.
 14. As an operator, I want the prior-art queries recorded in the model, so that the reuse is auditable.
 15. As an operator, I want a typed query contract with field filters, so that the modeller does not dump the store.
@@ -82,25 +82,25 @@ The class-based green gate is retired.
 21. As an operator, I want the posture applied at the assumptions layer, so that the excluded boundary never becomes an assumption or a fault.
 22. As an operator, I want the run record to stay lean, so that it does not duplicate data that lives in the project settings or the files.
 23. As an operator, I want the impact metric based on CIA values, so that it measures damage rather than class membership.
-24. As an operator, I want the red/green share over all impact rows, so that placeholders count as red.
+24. As an operator, I want red to mean an out-of-scope unit or an under-mined precursor row, so that the gate measures missed damage rather than capability rows.
 25. As an operator, I want the class-binding rate kept as a diagnostic, so that the class guard remains visible.
 26. As an operator, I want the old class-based green gate retired, so that a green class cannot mask a damage-less row.
 27. As the threat modeller, I want a `PRIOR_ART` gate, so that I query the store before I commit to a trust model.
 28. As the threat modeller, I want the query filters, so that I can narrow by unit, kind, class, disposition, and text.
 29. As the threat modeller, I want to read a full model after a query, so that a summary that looks relevant can be inspected.
-30. As the threat modeller, I want a precursor to name the capability and the abstract procedure, so that I can reuse it without copying a payload.
+30. As the threat modeller, I want a row to name its capability and its capability key, so that I can chain it without copying a payload.
 31. As the threat modeller, I want the impact assessment to name the victim and the property, so that the CIA score is grounded.
 32. As the threat modeller, I want the CIA score after the assessment, so that the score acknowledges the damage.
 33. As the threat modeller, I want the project posture verbatim, so that I know which boundaries not to model.
 34. As the threat modeller, I want the prior-art results as evidence, so that a reused capability is not a guess.
 35. As the hunter, I want the impact assessment in the payload, so that I know the shared end damage.
-36. As the hunter, I want the precursors in the payload, so that I know the attacker's position.
+36. As the hunter, I want the resolved capability chain in the payload, so that I know the attacker's position.
 37. As the hunter, I want the spec contract unchanged, so that the variant-specific verification symptoms stay the pod's ground truth.
 38. As the hunter, I want the shared damage stated once, so that I do not duplicate it into every spec.
 39. As the pod, I want the spec contract unchanged, so that the verdict remains the variant-specific symptom.
 40. As the measurement, I want the CIA values per row, so that I can report the distribution and the red/green share.
-41. As the measurement, I want the disposition per row, so that I can separate threats from placeholders.
-42. As the measurement, I want the precursor count and the prior-art reuse, so that I can report the capability reuse.
+41. As the measurement, I want the disposition per row, so that I can separate threats from precursors.
+42. As the measurement, I want the capability count, the review labels, and the prior-art reuse, so that I can report the capability reuse.
 43. As a reviewer, I want the old class-based green figure beside the new impact figure, so that the change is visible.
 44. As a reviewer, I want the new spec to supersede the old amendment, so that the docs do not describe two models.
 45. As a reviewer, I want the workflow to stay passive, so that a forward gate jump is recorded and never blocked.
@@ -111,23 +111,24 @@ The class-based green gate is retired.
 ### 1. Domain terms and dispositions
 
 - `threat`: a unit-model row with a concrete end damage to a victim.
-  It carries the fault, the web-vulnerability class, the impact reference, the enabling precursors, the CIA vector, the likelihood, and the risk.
-- `placeholder`: a unit-model row with no concrete end damage.
-  It is stored in the model, has no threat file, and is never dispatched.
-  It is red in the impact metric.
-- `precursor`: a capability entity.
-  It carries an id, the capability gained, the abstract procedure that gains it, and the evidence.
-  It is not a threat and it is not a placeholder.
-- `impact_assessment`: the model section that holds the rows and the precursors.
+  It carries the fault, the web-vulnerability class, the impact reference, the capability, the capability key, the capability path, the CIA vector, the likelihood, and the risk.
+- `precursor`: a unit-model row with no concrete end damage.
+  It still yields the capability the exploitation gains.
+  It is stored in the model, has no threat file, is never dispatched, and is queryable by a later unit.
+- `capability`: the adversarial capability a row gains when its impact is realised.
+  It is first class on every row, whatever the disposition.
+- `capability_id`: the `P-*` key of the capability, local to the unit and qualified as `Unit::P-*` when referenced across units.
+- `capability_path`: the ordered capability ids required to exploit the vulnerability.
+  It may be empty for a direct impact.
+- `impact_assessment`: the model section that holds the rows.
   It is written at the `IMPACT_ASSESSED` gate.
-- `capability_path`: the ordered precursor ids that reach the damage.
-  It lives on the impact assessment.
 - `prior_art`: the model section that records the store queries and the reused records.
-  It is written at the `PRIOR_ART` gate.
+  It is written at the `PRIOR_ART` gate, after the vulnerability phase.
 
 The `disposition` is the first-class typed field on the impact assessment row.
-It is `threat` or `placeholder`.
-There is no damage-family enum and no victim-class enum.
+It is `threat` or `precursor`.
+A row with a concrete victim and end damage is a `threat`; a row without one is a `precursor`.
+No severity threshold decides the disposition.
 The `damage` field carries the semantic.
 
 ### 2. The damage field
@@ -147,7 +148,7 @@ Examples:
 - `A user loses access to the application for the duration of the resource exhaustion.`
 
 A `threat` row must name a concrete victim and property.
-A `placeholder` row says that no concrete victim or property is affected.
+A `precursor` row states why no concrete end damage follows, and still names the capability gained.
 The CIA score is authored after the damage field.
 The score must reflect the damage.
 
@@ -209,25 +210,19 @@ class PriorArt(BaseModel):
     notes: str
 
 
-class Precursor(BaseModel):
-    id: str                      # P-*
-    capability: str
-    procedure: str               # abstract, never a request or a payload
-    evidence_refs: list[str]
-
-
 class ImpactDisposition(StrEnum):
     THREAT = "threat"
-    PLACEHOLDER = "placeholder"
+    PRECURSOR = "precursor"
 
 
 class ImpactAssessment(BaseModel):
     id: str                      # IA-*
     vulnerability_ref: str       # V-*
     disposition: ImpactDisposition
-    damage: str
-    precursor_refs: list[str]    # P-* yielded by this vulnerability
-    capability_path: list[str]   # P-* in order; empty for a placeholder
+    damage: str                  # the end damage, or why none follows
+    capability: str              # the capability this exploitation gains
+    capability_id: str           # P-*; this row's key
+    capability_path: list[str]   # required P-* or Unit::P-*, in order
     evidence_refs: list[str]
 
 
@@ -243,7 +238,7 @@ class Threat(BaseModel):
     confidence: Confidence
     evidences: list[Evidence]
     impact_ref: str              # IA-*
-    enabling_precursors: list[str]
+    enabling_precursors: list[tuple[str, str | None]]
     impact: Impact               # C, I, A only
     impact_weight: int = 0
     risk: int = 0
@@ -255,24 +250,29 @@ class Impact(BaseModel):
     availability: ImpactLevel = ImpactLevel.NONE
 ```
 
+The legacy `Precursor` entity is read-only in schema 4.
+The capability and its key live on the impact row.
 `Threat.impact.end_impact` is removed.
 The damage text lives in the `ImpactAssessment`.
+`enabling_precursors` is an ordered pair: the required capability, then the precursor that provides it, or `None` for a gap.
 The store computes the impact sub-score, the ordinal weight, and the threat risk from the CIA vector, as it does today.
 
 ### 4. The impact invariants
 
-- A `threat` row has at least one non-none CIA value.
-- A `placeholder` row has all-none CIA values.
-- A `threat` row has a non-empty `damage`, a non-empty `capability_path`, and at least one `enabling_precursor`.
-- A `placeholder` row has a non-empty `damage` that states no concrete victim or property, and an empty `capability_path`.
-- Every `precursor_refs` and `capability_path` entry resolves to a `Precursor` in the same model.
+- Every row has a non-empty `damage`, `capability`, and `capability_id`.
+- A row's `capability_id` is unique in the unit.
+- A `threat` row has at least one non-none CIA value on its threat.
+- A `precursor` row has no end damage, so it has no threat and its effective CIA vector is all-none.
+- `capability_path` may be empty for a direct impact, and may be non-empty on either disposition.
+- Every `capability_path` entry resolves, locally or as `Unit::P-*`.
 - Every `Threat.impact_ref` resolves to a `threat` assessment with the same `vulnerability_ref`.
-- Every `Threat.enabling_precursors` entry resolves to a `Precursor` in the same model.
-- The `Threat.enabling_precursors` set equals the assessment's `capability_path` set.
+- Every `Threat.enabling_precursors` first element mirrors the assessment's `capability_path` in order.
+- A `Threat.enabling_precursors` provider resolves or is `None`; `None` is an unfilled gap.
+- The capability graph is acyclic.
 - One threat references exactly one assessment.
 - A `threat` assessment has exactly one threat.
 - A vulnerability may have several `threat` assessments, one per exploitation manner.
-- A `placeholder` assessment has no threat.
+- A `precursor` assessment has no threat.
 - Every non-dropped vulnerability has at least one assessment.
 
 These invariants are deterministic.
@@ -285,29 +285,31 @@ The modeller has seven states.
 | # | State | Gate section | Necessary content |
 |---|---|---|---|
 | 1 | `UNIT_TECHNICAL_SHARP` | `technical_sharpening` | Interface agreements, control flows, data flows |
-| 2 | `PRIOR_ART` | `prior_art` | The store queries and the reused records |
-| 3 | `TRUST_MODELLED` | `trust_model` | Trust agreements and dynamic-state trust |
-| 4 | `TRUST_ASSUMPTIONS_WRITTEN` | `assumptions` | Assumptions, each naming a fault |
-| 5 | `VULNERABILITIES_WRITTEN` | `vulnerabilities` | Web-vulnerability classes |
-| 6 | `IMPACT_ASSESSED` | `impact_assessment`, `precursors` | The impact rows and the precursors |
+| 2 | `TRUST_MODELLED` | `trust_model` | Trust agreements and dynamic-state trust |
+| 3 | `TRUST_ASSUMPTIONS_WRITTEN` | `assumptions` | Assumptions, each naming a fault |
+| 4 | `VULNERABILITIES_WRITTEN` | `vulnerabilities` | Web-vulnerability classes |
+| 5 | `PRIOR_ART` | `prior_art` | The store queries and the reused records |
+| 6 | `IMPACT_ASSESSED` | `impact_assessment` | The assessed exploitation rows |
 | 7 | `COMPLETED` | `threats` | The damage-bearing threats |
 
-The well-formedness loop runs after `VULNERABILITIES_WRITTEN` and before `IMPACT_ASSESSED`.
+The well-formedness loop runs after `VULNERABILITIES_WRITTEN` and before `PRIOR_ART`.
 The harness stays passive.
 The state is monotonic.
 The trajectory records the gates.
 The completion check reports the findings.
 The existing `validation.valid` contract is the dispatch gate.
 
-The `PRIOR_ART` phase runs after the technical sharpening and before the trust model.
+The `PRIOR_ART` phase runs after the well-formedness loop and before the impact assessment.
 The modeller runs at least one query for threats, one for vulnerabilities, and one for precursors.
 It records the queries and the reused records in `prior_art`.
 It writes a `prior_art` note as the phase exit.
+It uses the query to find the capabilities affine to each vulnerability and the chains that already reach an end damage.
 
-The `IMPACT_ASSESSED` phase runs after the well-formedness loop.
-The modeller writes one assessment row per damage claim.
-It writes the precursor entities.
-It scores the CIA vector in the `COMPLETED` threats, after the assessment.
+The `IMPACT_ASSESSED` phase runs after the prior art.
+For each vulnerability, it assesses the impact of exploiting it alone.
+If the impact reaches an end damage, it writes a `threat` row.
+If not, it names the missing capabilities, looks for a chain in the prior art, and either writes a `threat` with a full or partial chain or a `precursor`.
+The CIA vector is scored in the `COMPLETED` threats, after the assessment.
 
 ### 6. The project scope
 
@@ -456,19 +458,21 @@ impact:
   impact_ref: IA-2
   damage: "The attacker reads live credential material from the process dump."
   disposition: threat
-  precursors:
-    - id: P-1
-      capability: "read the management route table"
-      procedure: "resolve the management base path outside the API filter"
-      evidence_refs: ["exec:api-36"]
-    - id: P-2
-      capability: "read live session material"
-      procedure: "fetch a heap dump from the exposed management handle"
-      evidence_refs: ["exec:api-35"]
-  capability_path: [P-1, P-2]
+  capability: "read live credential material from the process dump"
+  capability_id: RESTApi-api::P-2
+  capability_path: [RESTApi-api::P-1]
+  chain:
+    - capability: RESTApi-api::P-1
+      precursor: RESTApi-api::P-1
+      resolved:
+        unit_id: RESTApi-api
+        row:
+          capability: "read the management route table"
+          damage: "No end damage follows from the route table alone."
 threat:
   impact_ref: IA-2
-  enabling_precursors: [P-1, P-2]
+  enabling_precursors:
+    - [RESTApi-api::P-1, RESTApi-api::P-1]
   impact:
     confidentiality: high
     integrity: medium
@@ -478,7 +482,7 @@ threat:
 `materialise_hunter_payload` adds the `impact` block to the payload.
 `_compose_grounding` renders the impact assessment and the attacker position as labelled lines.
 The payload carries no request, payload, or procedure that belongs to the hunter.
-The `procedure` on a precursor is the abstract trust-boundary mechanism, not the hunter's technique.
+The capability is a statement, never a request, a payload, or a tool.
 
 The spec contract is unchanged.
 The pod contract is unchanged.
@@ -493,18 +497,18 @@ The measurement reads the unit model and the threat files.
 
 - `impact_rows` = every `impact_assessment` row.
 - `threats` = rows with `disposition=threat`.
-- `placeholders` = rows with `disposition=placeholder`.
-- `red` = rows with all CIA values `none`.
-- `green` = rows with any CIA value not `none`.
-- `green_share` = green / impact_rows.
-- `threat_share` = threats / impact_rows.
-- `placeholder_share` = placeholders / impact_rows.
+- `precursor_rows` = rows with `disposition=precursor`.
+- `capability_rows` = rows with a non-empty `capability`.
+- `green` = `threat` rows.
+- `red` = rows the assessor labels `scope=out` or `mining=under_mined` in `impact_review.yaml`.
+- `green_share` = green / (green + red) when the review exists, else green / impact_rows with `reviewed: false`.
+- `threat_share`, `precursor_share`, `capability_share`, and `placeholder_share` (legacy alias).
 - The CIA distribution per metric and level.
-- The precursor count and the prior-art reuse count.
+- The capability count and the prior-art reuse count.
 
-A threat row is green by the invariant.
-A placeholder row is red by the invariant.
-The green share therefore measures the share of modelled rows that are damage-bearing.
+`mining=under_mined` marks a precursor row where a concrete end damage was achievable.
+A well-mined precursor is a capability row, not red.
+The gate is assessed, not deterministic; the raw split remains deterministic.
 The class-binding rate remains a diagnostic.
 The class-based green gate is retired.
 The old class-based figure may be reported beside the new figure for continuity, marked superseded.
@@ -519,6 +523,13 @@ That assumption does not lower the likelihood to invite a deeper probe.
 The likelihood is scored from the attack factors.
 The hunter and the pod own the effective attempt.
 A probe that would require a destructive or data-exfiltrating step is out of scope for the modeller.
+
+A negative probe never closes a fault.
+A route that answers 404 for one spelling still exists; the candidate is wrong.
+A fault is closed only on at least two independent falsifying observations, one of them a control from inside the served root.
+A modelled endpoint stays in the model at `ASSUMED` or `INFERRED` even without direct evidence of its fault.
+The concrete technique belongs to the hunter.
+The white-jotter-006 miss is the worked failure: six single-encoded 404s closed a route whose ground truth used a double-encoded traversal payload.
 
 The probe discipline is part of the prompt and the honour clauses.
 It is not a new gate.
@@ -557,15 +568,19 @@ data/<project_id>/hunting/
 
 ### 13. Migration
 
-- `SCHEMA_VERSION` becomes 3.
-- The new sections are `prior_art`, `impact_assessment`, and `precursors`.
-- The new states are `PRIOR_ART` and `IMPACT_ASSESSED`.
+- `SCHEMA_VERSION` becomes 4.
+- The disposition `placeholder` becomes `precursor`.
+- The capability (`capability`, `capability_id`, `capability_path`) is first class on every row.
+- The `precursors[]` section and `precursor_refs` are legacy read-only.
+- `Threat.enabling_precursors` becomes an ordered pair list.
+- The gate order moves `PRIOR_ART` after `VULNERABILITIES_WRITTEN`.
+- A v3 model reads as v4 without capability synthesis: `placeholder` becomes `precursor`, a legacy id list becomes self-provided pairs, and the legacy entity list is kept.
 - A v2 model remains readable and consumable under its stored `validation.valid`.
 - A v2 model is not migrated.
 - A new run uses a fresh project.
-- The measurement reads v2 and v3.
+- The measurement reads v2, v3, and v4.
   The v2 read maps `loop-*.yaml` to the legacy row and reads the CIA vector.
-  The v2 model has no impact assessment, so its impact metric is reported as a legacy recomputation, not as a v3 result.
+  The v3 and v4 reads share the row metric; the v4 read reports capabilities and the review labels.
 
 ### 14. Supersession ledger
 
@@ -598,11 +613,11 @@ Expected values come from the spec, not from a recomputation of the implementati
 
 1. The project hunting config REST pair: the scope string round-trips and a partial PUT preserves its siblings.
 2. The `hunts_store` query: typed filters, the current-unit exclusion, the project boundary, the result shape, the empty-filter rejection.
-3. The completion checker: the impact invariants, the precursor references, the prior-art requirement, the placeholder closure.
-4. The store: the `PRIOR_ART` and `IMPACT_ASSESSED` merges, the threat-file emission, the placeholder not emitted, the model consumption.
+3. The completion checker: the impact invariants, the capability references, the prior-art requirement, the precursor closure.
+4. The store: the `PRIOR_ART` and `IMPACT_ASSESSED` merges, the threat-file emission, the precursor not emitted, the model consumption.
 5. The hunter payload: the impact block and the precursor rendering, no request or payload leakage.
 6. The prompt contract: the seven states, the damage semantic, the prior-art phase, the project scope verbatim append.
-7. The measurement: the CIA distribution, the red/green share, the placeholder share, the v2 legacy read.
+7. The measurement: the CIA distribution, the red/green share, the capability and precursor counts, the v2 legacy read.
 
 The seams should be confirmed by the operator before the tickets are cut.
 
@@ -616,9 +631,9 @@ The seams should be confirmed by the operator before the tickets are cut.
 
 ### Coverage shape
 
-- A damage-bearing row, a placeholder, and a precursor in one model.
+- A damage-bearing row with a capability, a precursor row, and a cross-unit chain in one model.
 - A threat with a multi-hop capability path.
-- A placeholder with a precursor and no threat file.
+- A precursor with a capability and no threat file.
 - A prior-art query with each filter and the empty-filter rejection.
 - A prior-art query that excludes the bound unit and includes a named unit.
 - A completion failure for a missing prior-art kind, a missing damage, a CIA/disposition mismatch, and an unresolved precursor.

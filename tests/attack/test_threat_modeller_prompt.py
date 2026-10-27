@@ -163,24 +163,21 @@ def test_the_prompt_states_the_damage_semantic_and_the_precursor_boundary():
     row, and the CIA vector is scored AFTER the assessment."""
     prompt = _modeller_skill()
     required = {
-        "damage_field": "The damage field names the victim and the damaged property",
+        "damage_field": "`damage`: the victim and the damaged property",
         "victim_user": "An end user",
         "victim_application": "The application",
         "victim_infrastructure": "The infrastructure",
         "property_code": "privileged code execution",
         "threat_row": "A `threat` row names a concrete victim and property",
-        "placeholder_row": "A `placeholder` row has no concrete victim",
+        "precursor_row": "A `precursor` row has no end damage",
+        "capability_field": "`capability` (text)",
+        "capability_id": "`capability_id` (`P-*`)",
         "capability_path": "capability_path",
-        "precursor_procedure": (
-            "an abstract trust-boundary mechanism, never a request, a payload, "
-            "or a tool"),
-        "one_threat_one_damage": (
-            "One threat references exactly one `impact_assessment` row"),
+        "one_threat_one_damage": "closes to exactly one threat",
         "several_per_vulnerability": "one per exploitation manner",
-        "cia_after": "CIA vector AFTER the impact assessment",
+        "cia_after": "AFTER the assessment",
         "threat_cia_non_none": "at least one non-none value",
-        "placeholder_no_threat": "A placeholder has no threat",
-        "placeholder_no_file": "produces no threat file",
+        "precursor_no_dispatch": "is never dispatched",
     }
     missing = [name for name, clause in required.items() if clause not in prompt]
     assert missing == []
@@ -242,7 +239,7 @@ def test_the_prompt_carries_no_gate_hint():
 
 def test_the_prompt_stays_within_a_reasonable_size():
     """A gate cadence belongs in the tool responses, not a wall of text."""
-    assert len(_modeller_skill().splitlines()) < 400
+    assert len(_modeller_skill().splitlines()) < 440
 
 
 def test_the_turn_prompt_renders_the_state_the_unit_and_the_fresh_model():
@@ -354,7 +351,7 @@ def test_the_prompt_states_the_prior_art_phase_and_the_query_contract():
     prompt = _modeller_skill()
     required = {
         "phase_heading": "## Prior art (PRIOR_ART)",
-        "phase_order": "after the technical sharpening and before the trust model",
+        "phase_order": "AFTER the vulnerability phase and BEFORE the impact assessment",
         "query_command": "cmd='query'",
         "kind_field": "`kind`",
         "kinds": (
@@ -364,11 +361,11 @@ def test_the_prompt_states_the_prior_art_phase_and_the_query_contract():
         "filter_path": "`path`",
         "filter_regex": "`regex`",
         "filter_flags": "`flags`",
-        "and_semantics": "the filters are AND",
+        "and_semantics": "non-empty AND list",
         "search_semantics": "`re.search(regex, value, flags)`",
         "star_traversal": "`*` iterates a list",
         "missing_path": "a missing path is no match",
-        "limit": "`limit` is 1..50, default 20",
+        "limit": "`limit` is 1..50",
         "bound_unit_exclusion": "unless a filter path is `unit_id`",
         "produced_and_consumed": "produced and the consumed",
         "matched_pairs": "`matched` path/value pairs",
@@ -380,10 +377,12 @@ def test_the_prompt_states_the_prior_art_phase_and_the_query_contract():
     assert missing == []
 
 
-def test_the_prompt_keeps_the_prior_art_phase_before_the_trust_mapping():
+def test_the_prompt_keeps_prior_art_after_the_vulnerability_phase():
     prompt = _modeller_skill()
+    assert prompt.index("## Vulnerability citation (VULNERABILITIES_WRITTEN)") < prompt.index(
+        "## Prior art (PRIOR_ART)")
     assert prompt.index("## Prior art (PRIOR_ART)") < prompt.index(
-        "## Trust mapping (TRUST_MODELLED)")
+        "## Impact assessment and the capability chain (IMPACT_ASSESSED)")
 
 
 # --- #438: the project scope ------------------------------------------------
