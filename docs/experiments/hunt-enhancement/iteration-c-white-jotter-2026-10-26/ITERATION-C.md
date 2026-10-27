@@ -587,6 +587,78 @@ It failed because the queue was unfiltered: the hunter spent its whole allocatio
 The arm therefore supplies the missing half of the promotion argument.
 Iteration C proves that coverage at the modeller is cheap and that an inert floor converts coverage into an undrainable queue.
 
+## Workflow and contract findings
+
+Four defects surfaced in the harness while C ran.
+None is caused by the impact system, and all four cost time rather than verdict quality.
+
+### The lineage split broke the diagnosis dispatch
+
+The harness checkout (`/opt/polymerhus-dev`, branch `dev`) and the arm checkout (`/opt/polymerhus-dev/eval/instances/eval-server-1`) are separate worktrees on separate lineages.
+
+The arm setup now parses correctly because the plugin reads `EVAL_ORCHESTRATOR_PYTHONPATH`.
+The prompt path does not: the monitor's diagnosis dispatch passed `eval/prompts/diagnoser.md` as a relative path, which resolved against the harness checkout where that file is absent or different.
+
+The monitor bounded its retries and escalated with a named failure instead of hot-looping or editing code, which is the specified behaviour.
+`close-verify` then repaired the node at the configuration layer: it re-ran the assessment (attempt 2, identical verdicts) and re-dispatched the diagnoser with the absolute instance path.
+
+The trial record shows both assessment attempts and no failure:
+
+| Field | Value |
+|---|---|
+| `assessment.status` | `present` |
+| `assessment.attempts` | 2 (`07:55:23`, `08:11:35`) |
+| `assessment.failure` | null |
+| `diagnosis` | filled by the re-dispatch |
+
+Recommended fix, in preference order:
+
+1. Launch the eval orchestrator with `--dir` at the instance worktree, so relative prompt paths resolve in the arm lineage.
+2. Make `assessment.launch_message` and the diagnosis equivalent use `request.prompt` (absolute) instead of the relative `eval/prompts/...` string.
+3. Align the canonical harness `eval/` with the arm sha.
+
+This is the second occurrence of the same split: the first broke `next_target` with `unknown field(s): hunting`.
+
+### The deadline terminal is not assessable
+
+`SUCCESS_TERMINALS` in `eval/orchestrator/monitor.py` is `{complete, stopped}`, and a trial that reaches its wall-clock deadline writes `timeout`.
+The monitor therefore defers a deadline-bounded run and never assesses it, even when the phases completed cleanly and the evidence is intact.
+
+C was 28 minutes from its 12h deadline at 6.86M of a 7M cap.
+Continuing would have produced `timeout` and skipped assessment, diagnosis, and measurement.
+The operator stopped the project at 07:48:56Z so the trial wrote `stopped`.
+
+This is a contract gap: a wall-clock-bounded arm cannot be assessed without an operator intervention.
+Two candidate repairs are for the configuration or code owner to choose:
+
+- treat `timeout` with a completed phase set as assessable, as the surfer already treats `interrupted`; or
+- have the deadline write `stopped` with a `deadline` cause on the phase, parallel to the budget stop.
+
+### The hunting status surface hides live pods
+
+`GET /projects/{id}/hunting/{run_id}` reported `live_hunts: 0` and `live_units: []` for the whole pod phase, while 14 to 15 pods were running and exporting.
+
+The monitor's batch-width assertion could therefore not fire from the status field.
+Width has to be inferred from pod directory mtimes or resume files, which is what the final measurement did.
+
+A status surface that reports zero live work while a batch is in flight also hides a stuck batch from an operator.
+
+### Recording and coupling defects
+
+Three smaller defects were found while measuring the arm:
+
+- the driver's completion marker printed `iteration B.a driver done` for iteration C, because the line was copied from the B.a driver; it is corrected in `drive_iteration_c.sh`;
+- 69 of 69 specs store `provenance.threat_id` as a bare `threat-1` instead of the qualified `ReverseProxy__threat-1`, so the threat-to-spec join exists only in the directory path;
+- only 2 pod note records exist for 55 pods, and several modeller phase notes are missing, which forces the measurement to reconstruct phase order from the artifacts.
+
+### The batch width is not asserted anywhere
+
+`pod_batch_size: 3` is frozen into the run record and honoured by the hunter, but no component checks the resulting concurrency against the host capacity.
+The observed peak was 15 concurrent pods on a host that B.a exercised with at most 5.
+
+The failure mode is silent: pods dispatch, exceed the agent-container capacity, and return `pod-watchdog-timeout` with `iterations: 1`.
+The run pays for each one.
+
 ## Learnings
 
 1. **Coverage is the discovery variable, and it works.**
@@ -670,78 +742,6 @@ Before D, repair the harness defects recorded above, in this order:
 5. `measure_utm.py`: read `threat-*.yaml`, `skill_concretised_procedure`, the GT-007 pod, and map unit names and mass assignment correctly;
 6. refuse a trial when `worktree_dirty` is true or the stamped sha disagrees with the plan;
 7. declare `budget_s` in the setup so the plan and the run agree without a CLI flag.
-
-## Workflow and contract findings
-
-Four defects surfaced in the harness while C ran.
-None is caused by the impact system, and all four cost time rather than verdict quality.
-
-### The lineage split broke the diagnosis dispatch
-
-The harness checkout (`/opt/polymerhus-dev`, branch `dev`) and the arm checkout (`/opt/polymerhus-dev/eval/instances/eval-server-1`) are separate worktrees on separate lineages.
-
-The arm setup now parses correctly because the plugin reads `EVAL_ORCHESTRATOR_PYTHONPATH`.
-The prompt path does not: the monitor's diagnosis dispatch passed `eval/prompts/diagnoser.md` as a relative path, which resolved against the harness checkout where that file is absent or different.
-
-The monitor bounded its retries and escalated with a named failure instead of hot-looping or editing code, which is the specified behaviour.
-`close-verify` then repaired the node at the configuration layer: it re-ran the assessment (attempt 2, identical verdicts) and re-dispatched the diagnoser with the absolute instance path.
-
-The trial record shows both assessment attempts and no failure:
-
-| Field | Value |
-|---|---|
-| `assessment.status` | `present` |
-| `assessment.attempts` | 2 (`07:55:23`, `08:11:35`) |
-| `assessment.failure` | null |
-| `diagnosis` | filled by the re-dispatch |
-
-Recommended fix, in preference order:
-
-1. Launch the eval orchestrator with `--dir` at the instance worktree, so relative prompt paths resolve in the arm lineage.
-2. Make `assessment.launch_message` and the diagnosis equivalent use `request.prompt` (absolute) instead of the relative `eval/prompts/...` string.
-3. Align the canonical harness `eval/` with the arm sha.
-
-This is the second occurrence of the same split: the first broke `next_target` with `unknown field(s): hunting`.
-
-### The deadline terminal is not assessable
-
-`SUCCESS_TERMINALS` in `eval/orchestrator/monitor.py` is `{complete, stopped}`, and a trial that reaches its wall-clock deadline writes `timeout`.
-The monitor therefore defers a deadline-bounded run and never assesses it, even when the phases completed cleanly and the evidence is intact.
-
-C was 28 minutes from its 12h deadline at 6.86M of a 7M cap.
-Continuing would have produced `timeout` and skipped assessment, diagnosis, and measurement.
-The operator stopped the project at 07:48:56Z so the trial wrote `stopped`.
-
-This is a contract gap: a wall-clock-bounded arm cannot be assessed without an operator intervention.
-Two candidate repairs are for the configuration or code owner to choose:
-
-- treat `timeout` with a completed phase set as assessable, as the surfer already treats `interrupted`; or
-- have the deadline write `stopped` with a `deadline` cause on the phase, parallel to the budget stop.
-
-### The hunting status surface hides live pods
-
-`GET /projects/{id}/hunting/{run_id}` reported `live_hunts: 0` and `live_units: []` for the whole pod phase, while 14 to 15 pods were running and exporting.
-
-The monitor's batch-width assertion could therefore not fire from the status field.
-Width has to be inferred from pod directory mtimes or resume files, which is what the final measurement did.
-
-A status surface that reports zero live work while a batch is in flight also hides a stuck batch from an operator.
-
-### Recording and coupling defects
-
-Three smaller defects were found while measuring the arm:
-
-- the driver's completion marker printed `iteration B.a driver done` for iteration C, because the line was copied from the B.a driver; it is corrected in `drive_iteration_c.sh`;
-- 69 of 69 specs store `provenance.threat_id` as a bare `threat-1` instead of the qualified `ReverseProxy__threat-1`, so the threat-to-spec join exists only in the directory path;
-- only 2 pod note records exist for 55 pods, and several modeller phase notes are missing, which forces the measurement to reconstruct phase order from the artifacts.
-
-### The batch width is not asserted anywhere
-
-`pod_batch_size: 3` is frozen into the run record and honoured by the hunter, but no component checks the resulting concurrency against the host capacity.
-The observed peak was 15 concurrent pods on a host that B.a exercised with at most 5.
-
-The failure mode is silent: pods dispatch, exceed the agent-container capacity, and return `pod-watchdog-timeout` with `iterations: 1`.
-The run pays for each one.
 
 ## Evidence appendix
 
