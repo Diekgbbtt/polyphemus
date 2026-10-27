@@ -64,23 +64,40 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-27T22:54Z)
+## Live state (2026-10-27T23:26Z)
 
 | Metric | Value |
 |---|---|
 | State | running |
-| Intake | 5 of 27 units |
-| Units completed | 5 |
-| Impact rows | 22 (14 threat, 8 precursor) |
-| Capability rows | 22 of 22 |
-| Threats | 14 |
-| Chain pairs | 2 |
-| Promoted / demoted | 9 / 4 |
-| Risk | 86 / 180 |
-| Capped tokens | 849,349 / 7,000,000 |
-| Modeller calls | 155 |
+| Intake | 8 of 27 units entered (9 model files) |
+| Impact rows | 28 (19 threat, 9 precursor) |
+| Capability rows | 28 of 28 |
+| Threats | 19 |
+| Chain pairs | 4 |
+| Risk | 107 / 180 |
+| Capped tokens | 1,113,383 / 7,000,000 |
+| Modeller calls | 155+ |
 | Hunter calls | 0 (phase barrier) |
-| Fence hits | 0 (after the narrowed channel regex) |
+| Fence hits | 0 |
+
+Per-unit risk sums: ReverseProxy 33, Service:sign-in 19, RESTApi:api 21,
+Service:library-catalog 11, Service:navigation-menu 2, Service:register 11,
+IdentificationSystem 6, AuthorizationSystem 4.
+
+Four cross-unit chains are real:
+
+- `Service:sign-in` row `IA-26` requires `ReverseProxy::P-3` (the actuator dump capability)
+  and closes to threat 3 with the pair `[ReverseProxy::P-3, ReverseProxy::P-3]`.
+- `Service:library-catalog` row `IA-21` requires `ReverseProxy::P-2` (the back-office write
+  capability) and closes to a browser-steering threat.
+- `Service:article-management` row `IA-20` requires `RESTApi:api::P-1`.
+- `Service:navigation-menu` row `IA-20` requires `ReverseProxy::P-1`.
+
+The earlier single fence hit was `Service-library-catalog` trust agreement: "fourteen rows
+hold a JSON-array-shaped string and six hold plain text". It describes the author field's
+data shape, not a communication channel. The monitor's channel regex was narrowed to
+`plain text channel|communication|transport|connection` and restarted, so this is not a
+violation. A manual audit over every completed model found 0 matches.
 
 ### Why the hunter has no calls yet
 
@@ -89,19 +106,6 @@ section 2). The modeller pass runs the intake one unit at a time until the risk 
 consumed or the intake is exhausted. Nothing downstream dispatches while the pass session
 is live. The surfer then builds the queue by each unit's model risk sum, descending. Zero
 hunter calls and zero test specs at this point are the contract, not a stall.
-
-Two cross-unit chains are real:
-
-- `Service:sign-in` row `IA-26` requires `ReverseProxy::P-3` (the actuator dump capability)
-  and closes to threat 3 with the pair `[ReverseProxy::P-3, ReverseProxy::P-3]`.
-- `Service:library-catalog` row `IA-21` requires `ReverseProxy::P-2` (the back-office write
-  capability) and closes to a browser-steering threat.
-
-The earlier single fence hit was `Service-library-catalog` trust agreement: "fourteen rows
-hold a JSON-array-shaped string and six hold plain text". It describes the author field's
-data shape, not a communication channel. The monitor's channel regex was narrowed to
-`plain text channel|communication|transport|connection` and restarted, so this is not a
-violation.
 
 ## Open issue
 
