@@ -12,13 +12,24 @@ import os
 import stat
 import time
 
+import pytest
+
 import kali.steel_guard as guard_module
 from kali.steel_guard import (
     guard_env,
+    known_session_names,
     read_events,
+    record_live_sessions,
     resolve_guard_path,
     run_guarded,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_registry(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "KALI_STEEL_SESSION_REGISTRY", str(tmp_path / "sessions.json")
+    )
 
 
 def test_guard_file_starts_with_a_python_shebang():
@@ -201,6 +212,50 @@ def test_resolve_guard_path_prefers_the_override(tmp_path, monkeypatch):
     monkeypatch.setenv("KALI_STEEL_GUARD", str(guard))
 
     assert resolve_guard_path() == str(guard)
+
+
+def test_registry_remembers_a_live_session():
+    record_live_sessions(["wj-live"])
+
+    assert known_session_names() == {"wj-live"}
+
+
+def test_known_but_gone_session_is_a_session_loss(tmp_path, monkeypatch):
+    real, marker = _fake_real(tmp_path, monkeypatch)
+    trace = _trace(tmp_path)
+
+    code = run_guarded(
+        ["browser", "eval", "1", "--session", "wj-gone", "--json"],
+        real_binary=str(real),
+        live_sessions=set(),
+        known_sessions={"wj-gone"},
+        trace_path=trace,
+    )
+
+    assert code == 2
+    assert not marker.exists()
+    event = read_events(trace)[0]
+    assert event["error"]["code"] == "session_missing"
+    assert event["error"]["fatal"] is True
+    assert event["error"]["recovery"]["action"] == "recreate_session"
+    assert event["error"]["recovery"]["requires_state_restore"] is True
+
+
+def test_a_never_seen_name_remains_an_unknown_session(tmp_path, monkeypatch):
+    real, marker = _fake_real(tmp_path, monkeypatch)
+    trace = _trace(tmp_path)
+
+    code = run_guarded(
+        ["browser", "eval", "1", "--session", "wj-typo", "--json"],
+        real_binary=str(real),
+        live_sessions=set(),
+        known_sessions={"wj-live"},
+        trace_path=trace,
+    )
+
+    assert code == 2
+    assert not marker.exists()
+    assert read_events(trace)[0]["error"]["code"] == "unknown_session"
 
 
 def test_read_events_removes_the_trace(tmp_path):

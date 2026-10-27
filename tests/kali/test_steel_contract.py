@@ -89,6 +89,31 @@ def test_cookies_list_is_not_rewritten_and_passes_the_cli_error():
     assert "unrecognized subcommand" in classified["stderr"]
 
 
+def test_known_but_gone_session_returns_recreate_session():
+    out = sanitize_steel_command(
+        'steel browser eval "1" --session wj-gone --json',
+        live_sessions=set(),
+        known_sessions={"wj-gone"},
+    )
+    assert isinstance(out, ContractError)
+    assert out.code == "session_missing"
+    assert out.fatal is True
+    assert out.recovery["action"] == "recreate_session"
+    assert out.recovery["requires_state_restore"] is True
+
+
+def test_a_typo_is_still_an_unknown_session():
+    out = sanitize_steel_command(
+        'steel browser eval "1" --session wj-typo --json',
+        live_sessions={"wj-live"},
+        known_sessions={"wj-live"},
+    )
+    assert isinstance(out, ContractError)
+    assert out.code == "unknown_session"
+    assert out.fatal is False
+    assert out.recovery["action"] == "use_live"
+
+
 def test_target_lost_returns_tab_new_recovery():
     command = 'steel browser eval "document.body.innerText" --session wj-live --json'
     out = classify_result(

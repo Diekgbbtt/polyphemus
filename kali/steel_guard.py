@@ -31,6 +31,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Iterable
 
@@ -54,6 +55,10 @@ GUARD_ENV = "KALI_STEEL_GUARD"
 REAL_ENV = "STEEL_REAL_BINARY_REAL"
 TRACE_ENV = "KALI_STEEL_TRACE"
 TIMEOUT_ENV = "KALI_STEEL_TIMEOUT_S"
+REGISTRY_ENV = "KALI_STEEL_SESSION_REGISTRY"
+REGISTRY_TTL_ENV = "KALI_STEEL_SESSION_TTL_S"
+DEFAULT_REGISTRY = "/tmp/kali-steel-sessions.json"
+DEFAULT_REGISTRY_TTL_S = 86400
 CATALOGUE_TIMEOUT_S = 30
 _OUTPUT_TAIL = 4000
 
@@ -125,6 +130,78 @@ def read_events(trace_path: str | None) -> list[dict]:
         except OSError:
             pass
     return events
+
+
+def _registry_path() -> str:
+    return os.environ.get(REGISTRY_ENV, DEFAULT_REGISTRY)
+
+
+def _registry_ttl_s() -> int:
+    try:
+        return max(1, int(os.environ.get(REGISTRY_TTL_ENV, DEFAULT_REGISTRY_TTL_S)))
+    except ValueError:
+        return DEFAULT_REGISTRY_TTL_S
+
+
+def _read_registry() -> dict[str, float]:
+    path = _registry_path()
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    now = time.time()
+    ttl = _registry_ttl_s()
+    return {
+        str(name): float(seen)
+        for name, seen in value.items()
+        if isinstance(seen, (int, float)) and now - float(seen) <= ttl
+    }
+
+
+def _write_registry(registry: dict[str, float]) -> None:
+    path = _registry_path()
+    directory = os.path.dirname(path) or "."
+    try:
+        os.makedirs(directory, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".steel-sessions-", suffix=".json", dir=directory
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(registry, handle, ensure_ascii=False, sort_keys=True)
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        # The registry is an identity aid, never a command dependency.
+        pass
+
+
+def record_live_sessions(names: Iterable[str]) -> None:
+    """Remember that these names were live, so a later disappearance is not a
+    typo. The file is shared by the MCP process and the binary guard."""
+    registry = _read_registry()
+    now = time.time()
+    for name in names:
+        if name:
+            registry[str(name)] = now
+    _write_registry(registry)
+
+
+def known_session_names() -> set[str]:
+    return set(_read_registry())
+
+
+def session_was_known(name: str) -> bool:
+    return name in _read_registry()
 
 
 def _write_event(trace_path: str | None, event: dict) -> None:
@@ -205,11 +282,13 @@ def _query_live_sessions(argv: list[str], real_binary: str) -> set[str] | None:
         data = json.loads(proc.stdout or "").get("data")
         if not isinstance(data, list):
             return None
-        return {
+        names = {
             str(item["name"])
             for item in data
             if isinstance(item, dict) and isinstance(item.get("name"), str)
         }
+        record_live_sessions(names)
+        return names
     except Exception:
         return None
 
@@ -240,6 +319,7 @@ def run_guarded(
     *,
     real_binary: str = DEFAULT_REAL_BINARY,
     live_sessions: set[str] | None = None,
+    known_sessions: set[str] | None = None,
     trace_path: str | None = None,
     timeout_s: int | None = None,
     catalogue: str = "live",
@@ -248,10 +328,13 @@ def run_guarded(
 
     ``live_sessions`` is injected by the tests and by ``main`` after the
     catalogue query. A caller that passes ``None`` keeps the sanitizer's
-    fail-open behaviour for an unverifiable catalogue.
+    fail-open behaviour for an unverifiable catalogue. ``known_sessions``
+    distinguishes a typo from a session that was live and disappeared.
     """
     command = shlex.join(["steel", *argv])
-    parsed = sanitize_steel_command(command, live_sessions=live_sessions)
+    parsed = sanitize_steel_command(
+        command, live_sessions=live_sessions, known_sessions=known_sessions
+    )
     if isinstance(parsed, ContractError):
         return _deny(parsed, argv=argv, trace_path=trace_path, catalogue=catalogue)
 
@@ -322,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
             args,
             real_binary=real_binary,
             live_sessions=live_sessions,
+            known_sessions=known_session_names(),
             trace_path=trace_path,
             timeout_s=timeout_s,
             catalogue=catalogue,

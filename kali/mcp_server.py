@@ -23,7 +23,12 @@ try:
         sanitize_shell_command,
         sanitize_steel_command,
     )
-    from kali.steel_guard import guard_env, read_events
+    from kali.steel_guard import (
+        guard_env,
+        known_session_names,
+        read_events,
+        record_live_sessions,
+    )
 except ImportError:  # the deployed flat layout beside mcp_server.py
     from steel_contract import (  # type: ignore[no-redef]
         BrowserCommand,
@@ -32,7 +37,12 @@ except ImportError:  # the deployed flat layout beside mcp_server.py
         sanitize_shell_command,
         sanitize_steel_command,
     )
-    from steel_guard import guard_env, read_events  # type: ignore[no-redef]
+    from steel_guard import (  # type: ignore[no-redef]
+        guard_env,
+        known_session_names,
+        read_events,
+        record_live_sessions,
+    )
 
 os.environ["PATH"] = ":".join([
     "/opt/localbin", "/root/go/bin", "/opt/venv/bin", "/usr/local/go/bin", os.environ.get("PATH", ""),
@@ -226,7 +236,9 @@ async def execute_command(
     steel_commands = ()
     if "steel" in command:
         live = _live_session_names()
-        sanitized = sanitize_shell_command(command, live_sessions=live)
+        sanitized = sanitize_shell_command(
+            command, live_sessions=live,
+            known_sessions=known_session_names())
         if isinstance(sanitized, ContractError):
             env = sanitized.envelope()
             env.update({"exec_id": "", "http_artifact_refs": [],
@@ -417,8 +429,10 @@ def _live_session_names() -> set[str] | None:
         data = json.loads(proc.stdout or "").get("data")
         if not isinstance(data, list):
             return None
-        return {s["name"] for s in data
-                if isinstance(s, dict) and isinstance(s.get("name"), str)}
+        names = {s["name"] for s in data
+                 if isinstance(s, dict) and isinstance(s.get("name"), str)}
+        record_live_sessions(names)
+        return names
     except Exception:
         return None
 
@@ -470,7 +484,9 @@ def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh
             return _refused("timeout-ordering",
                             f"longest steel wait {max(waits)}s needs tool timeout_s above it, got {timeout_s}")
         live = _live_session_names()
-        parsed = sanitize_steel_command(command, live_sessions=live)
+        parsed = sanitize_steel_command(
+            command, live_sessions=live,
+            known_sessions=known_session_names())
         if isinstance(parsed, ContractError):
             return parsed.envelope()
         result = _run(command, session_id, timeout_s)

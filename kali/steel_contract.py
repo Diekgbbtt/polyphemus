@@ -206,6 +206,7 @@ def _parse_browser_segment(
     segment: list[str],
     *,
     live_sessions: set[str] | None,
+    known_sessions: set[str] | None = None,
 ) -> BrowserCommand | ContractError:
     binary = _first_binary(segment)
     if binary is None:
@@ -304,6 +305,25 @@ def _parse_browser_segment(
             # A --session value on sessions is a filter, not a target.
             pass
         elif not live:
+            if known_sessions and session in known_sessions:
+                # The name was live earlier in this runtime but the catalogue
+                # no longer lists it. That is a session loss, not a typo: the
+                # caller needs the state-restoring recreation directive.
+                return _contract_error(
+                    "session_missing",
+                    f"session {session!r} was live and is now gone",
+                    session=session,
+                    retryable=False,
+                    fatal=True,
+                    recovery={
+                        "action": "recreate_session",
+                        "reason": "the live session disappeared; recreate it and restore state",
+                        "requires_state_restore": True,
+                        "command": "steel browser start --session <new-name> --json",
+                    },
+                    platform_state={"session_live": False, "session_known": True},
+                    canonical_command=canonical,
+                )
             return _contract_error(
                 "unknown_session",
                 f"session {session!r} is not live",
@@ -333,6 +353,7 @@ def sanitize_shell_command(
     command: str,
     *,
     live_sessions: set[str] | None,
+    known_sessions: set[str] | None = None,
 ) -> tuple[BrowserCommand, ...] | ContractError:
     """Validate every embedded ``steel browser`` command in a shell string.
 
@@ -354,7 +375,11 @@ def sanitize_shell_command(
     for segment in _split_segments(tokens):
         if _first_binary(segment) is None:
             continue
-        parsed = _parse_browser_segment(segment, live_sessions=live_sessions)
+        parsed = _parse_browser_segment(
+            segment,
+            live_sessions=live_sessions,
+            known_sessions=known_sessions,
+        )
         if isinstance(parsed, ContractError):
             return parsed
         commands.append(parsed)
@@ -377,9 +402,12 @@ def sanitize_steel_command(
     command: str,
     *,
     live_sessions: set[str] | None,
+    known_sessions: set[str] | None = None,
 ) -> BrowserCommand | ContractError:
     """Validate one browser command, used by the dedicated ``steel_exec``."""
-    parsed = sanitize_shell_command(command, live_sessions=live_sessions)
+    parsed = sanitize_shell_command(
+        command, live_sessions=live_sessions, known_sessions=known_sessions
+    )
     if isinstance(parsed, ContractError):
         return parsed
     if not parsed:
