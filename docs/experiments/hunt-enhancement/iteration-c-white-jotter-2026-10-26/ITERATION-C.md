@@ -221,6 +221,12 @@ The second shell was worse (9 of 11) than the first (7 of 14), which is consiste
 The batch therefore buys wall-clock parallelism at a 64% pod failure rate on the first unit, and every failed pod still spends its budget.
 This is the clearest configuration regression in the arm and it is independent of the impact system.
 
+*Correction after the post-run diagnosis.*
+The batch width is the amplifier, not the root cause.
+The pod budget is a fixed 3600 s per session while the work is an unbounded agent loop, and C's per-probe cost rose to about 220 s against 60 s in B.a, so a spec that needed 17 probes could not finish inside the hour.
+Tool execution is 0.36% of the pod wall clock, so the executor environment is not the bottleneck.
+See `DIAGNOSIS-ZERO-THREATS-PODS-MODELLER.md`.
+
 ### Coverage is the dominant cost
 
 The arm modelled 23 units against 5 in iteration B and 5 in iteration B.a.
@@ -245,6 +251,11 @@ The presentation units (`AuthorizationSystem`, `IdentificationSystem`, `navigati
 
 The 90% gate is therefore unreachable on a full-surface run: it can only be met by a run that stops early enough to exclude the non-damage-bearing tail.
 That is a property of the metric and the halt together, not a quality regression in the threat models.
+
+*Correction after the post-run diagnosis.*
+Thirteen of the 23 placeholders come from nine units that allocated their damage to another owning unit, not from missing impact work.
+The dilution is structural: the model deliberately does not double-count a loss that another unit records.
+See `DIAGNOSIS-ZERO-THREATS-PODS-MODELLER.md`, Task 1.
 
 ## Results
 
