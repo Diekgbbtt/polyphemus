@@ -64,7 +64,7 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-28T03:31Z)
+## Live state (2026-10-28T04:32Z)
 
 | Metric | Value |
 |---|---|
@@ -77,18 +77,18 @@ Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 | Chain pairs | 4 |
 | Promoted / demoted | 19 / 8 |
 | Risk | 150 / 180 (final; below the halt) |
-| Capped tokens | 3,168,796 / 7,000,000 |
+| Capped tokens | 3,513,851 / 7,000,000 |
 | Hunter calls | 83 |
-| Pod-runner calls | 302 |
-| Hunt specs / pod dirs | 3 / 11 |
+| Pod-runner calls | 433 |
+| Hunt specs / pod dirs | 3 / 17 |
 | Fence hits | 0 |
 
 The modeller phase exhausted the 27-unit intake at 01:38 without reaching the 180 halt. The
 batched barrier lifted at that point: the surfer built the queue by model risk sum, the
 hunters started, and the first unit's three hunts are terminal. The pod phase is now
-running one block at a time with `pod_batch_size: 1`; the first block has produced eleven
+running one block at a time with `pod_batch_size: 1`; the first block has produced seventeen
 pod specs across the broken-function-level-authorization variants. The remaining budget is
-3.83M tokens.
+3.49M tokens.
 
 ### Run bound
 
