@@ -64,27 +64,27 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-28T00:57Z)
+## Live state (2026-10-28T01:30Z)
 
 | Metric | Value |
 |---|---|
 | State | running |
-| Intake | 20 of 27 entered (21 model files) |
-| Impact rows | 47 (24 threat, 23 precursor) |
-| Capability rows | 47 of 47 |
-| Green share | 24 / 47 = 51.1% |
-| Threats | 24 |
+| Intake | 25 of 27 entered (26 model files) |
+| Impact rows | 53 (26 threat, 27 precursor) |
+| Capability rows | 53 of 53 |
+| Green share | 26 / 53 = 49.1% |
+| Threats | 26 |
 | Chain pairs | 4 |
-| Promoted / demoted | 16 / 8 |
-| Risk | 134 / 180 |
-| Capped tokens | 1,842,797 / 7,000,000 |
+| Promoted / demoted | 18 / 8 |
+| Risk | 146 / 180 |
+| Capped tokens | 2,155,165 / 7,000,000 |
 | Hunter calls | 0 (phase barrier) |
 | Fence hits | 0 |
 
 ### Unit shape
 
-The first ten units (still in `produced/`) carry all 24 threats. The eleven units already
-moved to `consumed/` are capability-only:
+At the 21-unit snapshot, the first ten units (still in `produced/`) carried all 24 threats,
+and the eleven units already moved to `consumed/` were capability-only:
 
 | Unit | Rows | Threats | Precursors |
 |---|---|---|---|
@@ -114,6 +114,9 @@ This is the intended effect of the disposition. Iteration C filed 13 placeholder
 zero-threat units; D keeps 23 capabilities that reach no end damage as `precursor` rows, and
 still fails to turn them into threats. Whether they are honest capabilities or under-mined
 rows is exactly what the assessor's `impact_review.yaml` must judge.
+
+The five later units (intake 22-26) add 2 threats and 3 precursors; the live totals above
+include them. The full per-unit table is assembled from the run artifacts at the end.
 
 Four cross-unit chains are real:
 
