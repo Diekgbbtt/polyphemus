@@ -135,6 +135,8 @@ def _compact_event(event: dict) -> dict:
     keys = (
         "verb",
         "session",
+        "session_id",
+        "remaining_ms",
         "decision",
         "returncode",
         "duration_ms",
@@ -295,6 +297,16 @@ async def execute_command(
                 "canonical_command": command,
             },
         }
+    # Belt and braces for an unguarded deployment: a successful start is
+    # remembered immediately, not only at the next catalogue query. The guard
+    # does the same at the binary boundary.
+    if result.get("returncode") == 0 and steel_commands:
+        started = [
+            item.session for item in steel_commands
+            if item.verb == "start" and item.session
+        ]
+        if started:
+            record_live_sessions(started)
     result["stdout"] = _sanitize_output(result["stdout"])
     result["stderr"] = _sanitize_output(result["stderr"])
     events = result.pop("steel_events", None) or []
@@ -508,6 +520,11 @@ def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh
         if isinstance(parsed, ContractError):
             return parsed.envelope()
         result = _run(command, session_id, timeout_s)
+        if (result.get("returncode") == 0 and parsed.verb == "start"
+                and parsed.session):
+            # The guard records this too when deployed; this keeps the
+            # unguarded path correct as well.
+            record_live_sessions([parsed.session])
         return classify_result(command, result, session=parsed.session,
                                live_sessions=live)
     if script_lang not in _SCRIPT_RUNNERS:

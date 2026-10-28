@@ -37,7 +37,8 @@ import shlex
 import sys
 import tempfile
 import time
-from typing import Iterable
+from contextlib import contextmanager
+from typing import Iterable, Iterator
 
 try:
     from kali.steel_contract import (
@@ -199,15 +200,57 @@ def _write_registry(registry: dict[str, float]) -> None:
         pass
 
 
+@contextmanager
+def _registry_write_lock() -> Iterator[None]:
+    """Serialize the read-modify-write of the shared registry.
+
+    The guard runs as one short-lived process per Steel invocation while the
+    MCP server also records catalogue results. Without a lock, two writers can
+    read the same state and the later write silently drops the other's
+    session. The lock is advisory and best-effort: a filesystem that cannot
+    lock falls back to the atomic replace, which still prevents torn files.
+    """
+    lock_path = f"{_registry_path()}.lock"
+    descriptor = None
+    try:
+        os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        yield
+        return
+    locked = False
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            locked = True
+        except (ImportError, OSError):
+            pass
+        yield
+    finally:
+        if locked:
+            try:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+        os.close(descriptor)
+
+
 def record_live_sessions(names: Iterable[str]) -> None:
     """Remember that these names were live, so a later disappearance is not a
     typo. The file is shared by the MCP process and the binary guard."""
-    registry = _read_registry()
-    now = time.time()
-    for name in names:
-        if name:
-            registry[str(name)] = now
-    _write_registry(registry)
+    values = [str(name) for name in names if name]
+    if not values:
+        return
+    with _registry_write_lock():
+        registry = _read_registry()
+        now = time.time()
+        for name in values:
+            registry[name] = now
+        _write_registry(registry)
 
 
 def known_session_names() -> set[str]:
@@ -361,6 +404,21 @@ def run_guarded(
         session=parsed.session,
         live_sessions=live_sessions,
     )
+    session_id = None
+    remaining_ms = None
+    if parsed.verb == "start" and returncode == 0 and parsed.session:
+        # The catalogue was queried BEFORE the start, so it cannot contain the
+        # new name. Record the creation here: if the session dies before the
+        # next catalogue query, the loss must still classify as session_missing,
+        # not as a typo.
+        record_live_sessions([parsed.session])
+        try:
+            start_data = json.loads(stdout or "").get("data") or {}
+            if isinstance(start_data, dict):
+                session_id = start_data.get("id")
+                remaining_ms = start_data.get("remainingMs")
+        except (ValueError, AttributeError):
+            pass
     event = {
         "ts": time.time(),
         "pid": os.getpid(),
@@ -376,6 +434,10 @@ def run_guarded(
         "warning": classified.get("warning"),
         "catalogue": catalogue,
     }
+    if session_id:
+        event["session_id"] = session_id
+    if isinstance(remaining_ms, int):
+        event["remaining_ms"] = remaining_ms
     _write_event(trace_path, event)
     if stdout:
         sys.stdout.write(stdout)

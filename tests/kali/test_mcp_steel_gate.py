@@ -189,6 +189,52 @@ def test_execute_command_returns_session_missing_for_a_known_gone_session(
     assert service.calls == 0
 
 
+def test_steel_exec_records_a_successful_start(monkeypatch):
+    monkeypatch.setattr(m, "_steel_version_ok", lambda: True)
+    monkeypatch.setattr(m, "_live_session_names", lambda: set())
+    recorded = []
+    monkeypatch.setattr(m, "record_live_sessions", lambda names: recorded.extend(names))
+    monkeypatch.setattr(
+        m, "_run",
+        lambda *args, **kwargs: _result(
+            stdout='{"data":{"id":"sid-1"},"success":true}'),
+    )
+
+    out = m._steel_exec_sync(
+        command="steel browser start --session wj-new --json",
+        session_id="gate", timeout_s=30)
+
+    assert out["returncode"] == 0
+    assert recorded == ["wj-new"]
+
+
+def test_execute_command_records_a_successful_start(monkeypatch):
+    service = _Service(_result(stdout='{"data":{"id":"sid-1"},"success":true}'))
+    monkeypatch.setattr(m, "_get_service", lambda: service)
+    monkeypatch.setattr(m, "_live_session_names", lambda: set())
+    recorded = []
+    monkeypatch.setattr(m, "record_live_sessions", lambda names: recorded.extend(names))
+
+    out = asyncio.run(m.execute_command(
+        "steel browser start --session wj-new --json", "pod"))
+
+    assert out["returncode"] == 0
+    assert recorded == ["wj-new"]
+
+
+def test_a_failed_start_is_not_recorded_by_the_mcp(monkeypatch):
+    service = _Service(_result(stdout="", stderr="boom", returncode=1))
+    monkeypatch.setattr(m, "_get_service", lambda: service)
+    monkeypatch.setattr(m, "_live_session_names", lambda: set())
+    recorded = []
+    monkeypatch.setattr(m, "record_live_sessions", lambda names: recorded.extend(names))
+
+    asyncio.run(m.execute_command(
+        "steel browser start --session wj-new --json", "pod"))
+
+    assert recorded == []
+
+
 def test_apply_steel_events_prefers_the_first_guard_error():
     result = _result(stdout="echo output\n")
     events = [

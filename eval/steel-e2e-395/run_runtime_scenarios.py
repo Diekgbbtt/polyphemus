@@ -332,6 +332,67 @@ async def _session_loss_scenarios(tools, session: str | None) -> list[dict]:
     )]
 
 
+async def _start_loss_scenario(tools, core: str | None) -> list[dict]:
+    """A session created through the tool, then stopped without a catalogue
+    query. The creation record must make the loss a session_missing, not a
+    typo."""
+    if not core:
+        return [_record(
+            "session_lifecycle/start_then_loss",
+            True,
+            "a private core path was provided",
+            {"skipped": "no --private-core"},
+        )]
+    name = _typo("startloss")
+    start = await _call(tools, "steel_exec", {
+        "command": (
+            f"steel browser start --session {name} "
+            "--session-timeout 60000 --inactivity-timeout 0 --json"
+        ),
+        "session_id": "scenario-startloss",
+        "timeout_s": 60,
+    })
+    stop = await _call(tools, "execute_command", {
+        "command": (
+            f"bash -c '{core} --local browser stop --session {name} --json'"
+        ),
+        "session_id": "scenario-startloss",
+        "timeout_s": 60,
+    })
+    lost = await _call(tools, "steel_exec", {
+        "command": f'steel browser eval "1" --session {name} --json',
+        "session_id": "scenario-startloss",
+        "timeout_s": 30,
+    })
+    error = lost.get("error") or {}
+    passed = (
+        start.get("returncode") == 0
+        and start.get("steel_events")
+        and stop.get("returncode") == 0
+        and error.get("code") == "session_missing"
+        and error.get("fatal") is True
+        and (error.get("recovery") or {}).get("action") == "recreate_session"
+        and (error.get("recovery") or {}).get("requires_state_restore") is True
+    )
+    return [_record(
+        "session_lifecycle/start_then_loss",
+        passed,
+        "start recorded -> catalogue-invisible stop -> session_missing "
+        "with state restore",
+        {
+            "start_returncode": start.get("returncode"),
+            "start_events": len(start.get("steel_events") or []),
+            "stop_returncode": stop.get("returncode"),
+            "error": error.get("code"),
+            "fatal": error.get("fatal"),
+            "recovery": (error.get("recovery") or {}).get("action"),
+            "requires_state_restore": (
+                (error.get("recovery") or {}).get("requires_state_restore")
+            ),
+        },
+    )]
+
+
 async def _timeout_scenarios(tools) -> list[dict]:
     marker = "311"
     started = await _call(tools, "execute_command", {
@@ -426,6 +487,7 @@ async def run(args: argparse.Namespace) -> int:
     records.extend(await _composition_scenarios(tools))
     records.extend(await _masked_scenarios(tools, args.session))
     records.extend(await _session_loss_scenarios(tools, args.loss_session))
+    records.extend(await _start_loss_scenario(tools, args.private_core))
     records.extend(await _timeout_scenarios(tools))
     records.extend(await _catalogue_scenario(tools))
     limit = await _private_core_probe(tools, args.private_core)

@@ -58,6 +58,9 @@ if mode == "sleep":
 if mode in ("fail", "cdp"):
     print('{"error":"CDP error (Runtime.evaluate): Session with given id not found.","success":false}')
     sys.exit(1)
+if mode == "start":
+    print('{"data":{"id":"sid-1","remainingMs":86400000},"success":true}')
+    sys.exit(0)
 print('{"data":1,"success":true}')
 """,
         encoding="utf-8",
@@ -295,6 +298,107 @@ def test_a_queried_catalogue_says_live(tmp_path, monkeypatch):
     )
 
     assert read_events(trace)[0]["catalogue"] == "live"
+
+
+def test_a_successful_start_is_recorded_immediately(tmp_path, monkeypatch):
+    real, _ = _fake_real(tmp_path, monkeypatch)
+    trace = _trace(tmp_path)
+
+    code = run_guarded(
+        ["browser", "start", "--session", "wj-new", "--json"],
+        real_binary=str(real),
+        live_sessions=set(),
+        trace_path=trace,
+    )
+
+    assert code == 0
+    assert "wj-new" in known_session_names()
+
+
+def test_a_failed_start_is_not_recorded(tmp_path, monkeypatch):
+    real, _ = _fake_real(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_MODE", "fail")
+
+    code = run_guarded(
+        ["browser", "start", "--session", "wj-new", "--json"],
+        real_binary=str(real),
+        live_sessions=set(),
+        trace_path=_trace(tmp_path),
+    )
+
+    assert code == 1
+    assert "wj-new" not in known_session_names()
+
+
+def test_a_start_trace_records_the_runtime_session_id_and_lifetime(
+        tmp_path, monkeypatch):
+    real, _ = _fake_real(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_MODE", "start")
+    trace = _trace(tmp_path)
+
+    run_guarded(
+        ["browser", "start", "--session", "wj-new", "--json"],
+        real_binary=str(real),
+        live_sessions=set(),
+        trace_path=trace,
+    )
+
+    event = read_events(trace)[0]
+    assert event["session_id"] == "sid-1"
+    assert event["remaining_ms"] == 86400000
+
+
+def test_a_started_session_that_dies_before_a_catalogue_query_is_a_loss(
+        tmp_path, monkeypatch):
+    """The catalogue is queried before `start`, so it cannot contain the new
+    name. A loss before the next query must still be session_missing."""
+    real, _ = _fake_real(tmp_path, monkeypatch)
+    start_code = run_guarded(
+        ["browser", "start", "--session", "wj-new", "--json"],
+        real_binary=str(real),
+        live_sessions=set(),
+        trace_path=_trace(tmp_path),
+    )
+    assert start_code == 0
+
+    trace = str(tmp_path / "loss-trace.jsonl")
+    code = run_guarded(
+        ["browser", "eval", "1", "--session", "wj-new", "--json"],
+        real_binary=str(real),
+        live_sessions=set(),
+        known_sessions=known_session_names(),
+        trace_path=trace,
+    )
+
+    assert code == 2
+    error = read_events(trace)[0]["error"]
+    assert error["code"] == "session_missing"
+    assert error["recovery"]["action"] == "recreate_session"
+
+
+def test_concurrent_registry_writes_keep_every_session(tmp_path, monkeypatch):
+    """The MCP process and one guard process per command share the registry.
+    An unlocked read-modify-write loses names."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    original_write = guard_module._write_registry
+
+    def slow_write(registry):
+        time.sleep(0.02)
+        original_write(registry)
+
+    monkeypatch.setattr(guard_module, "_write_registry", slow_write)
+    barrier = threading.Barrier(8)
+
+    def writer(index):
+        barrier.wait()
+        record_live_sessions([f"wj-{index}"])
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(writer, range(8)))
+
+    assert known_session_names() == {f"wj-{i}" for i in range(8)}
 
 
 def test_read_events_removes_the_trace(tmp_path):
