@@ -143,13 +143,21 @@ async def main() -> int:
 
     created = False
     session_id = None
+    inactivity_timeout_ms = None
     if args.session not in live:
+        # A finite 24h inactivity window, not 0. The deployed daemon reaps a
+        # session created with `--inactivity-timeout 0` after its default
+        # window (observed ~2 minutes idle), while the finite value is
+        # honoured and reported back as `inactivityTimeoutMs`.
         start_cmd = (f"steel browser start --session {args.session} "
-                     f"--session-timeout 86400000 --inactivity-timeout 0 --json")
+                     f"--session-timeout 86400000 "
+                     f"--inactivity-timeout 86400000 --json")
         start_env = await steel(start_cmd)
         record("start", start_cmd, start_env)
         start_data = (start_env.get("inner") or {}).get("data") or {}
         session_id = start_data.get("id")
+        if isinstance(start_data, dict):
+            inactivity_timeout_ms = start_data.get("inactivityTimeoutMs")
         created = start_env.get("returncode") == 0
     else:
         for item in sessions_data:
@@ -242,6 +250,7 @@ async def main() -> int:
         "session_id": session_id,
         "created": created,
         "session_live": session_live,
+        "inactivity_timeout_ms": inactivity_timeout_ms,
         "cookie_set_ok": cookie_set_ok,
         "authn": {
             "url": authn_url,
@@ -266,6 +275,7 @@ async def main() -> int:
         "session": args.session,
         "session_live": session_live,
         "created": created,
+        "inactivity_timeout_ms": inactivity_timeout_ms,
         "cookie_set_ok": cookie_set_ok,
         "authn_marker": authn_marker,
         "admin_code": admin.get("code"),

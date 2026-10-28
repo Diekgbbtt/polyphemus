@@ -347,7 +347,7 @@ async def _start_loss_scenario(tools, core: str | None) -> list[dict]:
     start = await _call(tools, "steel_exec", {
         "command": (
             f"steel browser start --session {name} "
-            "--session-timeout 60000 --inactivity-timeout 0 --json"
+            "--session-timeout 60000 --inactivity-timeout 86400000 --json"
         ),
         "session_id": "scenario-startloss",
         "timeout_s": 60,
