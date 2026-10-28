@@ -64,22 +64,28 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-28T01:30Z)
+## Live state (2026-10-28T02:00Z)
 
 | Metric | Value |
 |---|---|
-| State | running |
-| Intake | 25 of 27 entered (26 model files) |
-| Impact rows | 53 (26 threat, 27 precursor) |
-| Capability rows | 53 of 53 |
-| Green share | 26 / 53 = 49.1% |
-| Threats | 26 |
+| State | running (hunt phase) |
+| Intake | 27 of 27 entered (exhausted) |
+| Impact rows | 55 (27 threat, 28 precursor) |
+| Capability rows | 55 of 55 |
+| Green share | 27 / 55 = 49.1% |
+| Threats | 27 |
 | Chain pairs | 4 |
-| Promoted / demoted | 18 / 8 |
-| Risk | 146 / 180 |
-| Capped tokens | 2,155,165 / 7,000,000 |
-| Hunter calls | 0 (phase barrier) |
+| Promoted / demoted | 18 / 9 |
+| Risk | 150 / 180 (final; below the halt) |
+| Capped tokens | 2,450,047 / 7,000,000 |
+| Hunter calls | 83 |
+| Test specs | 3 |
 | Fence hits | 0 |
+
+The modeller phase exhausted the 27-unit intake at 01:38 without reaching the 180 halt. The
+final risk is 150. The batched barrier lifted at that point: the surfer built the queue by
+model risk sum, the hunters started, and the pod phase will follow as each unit's hunts
+become terminal. The remaining budget is 4.55M tokens.
 
 ### Unit shape
 
@@ -133,13 +139,14 @@ data shape, not a communication channel. The monitor's channel regex was narrowe
 `plain text channel|communication|transport|connection` and restarted, so this is not a
 violation. A manual audit over every completed model found 0 matches.
 
-### Why the hunter has no calls yet
+### The batched barrier, and its lift
 
 `pipeline_sync: batched` is a phase barrier, not an interleave (pipeline-sync ADR
 section 2). The modeller pass runs the intake one unit at a time until the risk budget is
 consumed or the intake is exhausted. Nothing downstream dispatches while the pass session
-is live. The surfer then builds the queue by each unit's model risk sum, descending. Zero
-hunter calls and zero test specs at this point are the contract, not a stall.
+is live. The surfer then builds the queue by each unit's model risk sum, descending. The
+modeller pass exhausted the intake at 01:38 (risk 150), the barrier lifted, and the hunter
+phase started. Zero hunter calls before that point were the contract, not a stall.
 
 ## Open issue
 
