@@ -64,7 +64,7 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-28T06:34Z)
+## Live state (2026-10-28T07:37Z)
 
 | Metric | Value |
 |---|---|
@@ -77,18 +77,18 @@ Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 | Chain pairs | 4 |
 | Promoted / demoted | 19 / 8 |
 | Risk | 150 / 180 (final; below the halt) |
-| Capped tokens | 4,169,246 / 7,000,000 |
-| Hunter calls | 141 |
-| Pod-runner calls | 664 |
-| Hunt specs / pod dirs | 5 / 21 |
+| Capped tokens | 4,599,115 / 7,000,000 |
+| Hunter calls | 217 |
+| Pod-runner calls | 723 |
+| Hunt specs / pod dirs | 8 / 28 |
 | Fence hits | 0 |
 
 The modeller phase exhausted the 27-unit intake at 01:38 without reaching the 180 halt. The
 batched barrier lifted at that point: the surfer built the queue by model risk sum, the
 hunters started, and the first unit's three hunts are terminal. Its pod block completed
-with seventeen pod specs. The second unit's non-terminal hunts are in the pod phase: five
-hunt specs and twenty-one pod specs, currently the mass-assignment role-write variants. The
-remaining budget is 2.83M tokens.
+with seventeen pod specs. The queue is now on the second and third units: eight hunt specs
+and twenty-eight pod specs, currently the mass-assignment role-write variants and the next
+unit's hunts. The remaining budget is 2.40M tokens.
 
 ### Run bound
 
