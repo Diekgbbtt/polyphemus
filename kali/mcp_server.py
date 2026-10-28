@@ -151,26 +151,36 @@ def _apply_steel_events(result: dict, events: list[dict]) -> dict:
     The guard is the only component that sees every real Steel invocation,
     including ones hidden behind nested shells, scripts, pipes, and output
     suppression. Its trace is therefore authoritative for browser-state
-    failures. The legacy stdout/stderr/returncode fields stay unchanged.
+    failures. ``stdout`` and ``stderr`` stay unchanged. When the guard reports
+    an error, the envelope's ``returncode`` follows the error and the
+    composition's own rc is preserved as ``shell_returncode``.
     """
     if not events:
         return result
     out = dict(result)
     out["steel_events"] = [_compact_event(event) for event in events]
-    error = next(
+    error_event = next(
         (
-            event["error"]
+            event
             for event in events
             if isinstance(event.get("error"), dict) and event["error"].get("code")
         ),
         None,
     )
-    if error is not None:
+    if error_event is not None:
+        error = error_event["error"]
         out["error"] = error
         if not out.get("stderr"):
             out["stderr"] = str(error.get("message") or "")
-        if int(out.get("returncode") or 0) == 0:
-            out["returncode"] = 2
+        # The error object is authoritative. A shell composition can return a
+        # different rc for the same failure (`xargs` maps a denied child to
+        # 123; `|| true` maps it to 0). Keep the composition's rc available as
+        # `shell_returncode`, but make the primary rc agree with the error.
+        error_rc = int(error_event.get("returncode") or 2)
+        shell_rc = int(out.get("returncode") or 0)
+        if shell_rc != error_rc:
+            out["shell_returncode"] = shell_rc
+            out["returncode"] = error_rc
     else:
         warning = next(
             (

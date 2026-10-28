@@ -268,6 +268,35 @@ def test_a_never_seen_name_remains_an_unknown_session(tmp_path, monkeypatch):
     assert read_events(trace)[0]["error"]["code"] == "unknown_session"
 
 
+def test_a_command_that_skips_the_catalogue_says_not_required(tmp_path, monkeypatch):
+    real, _ = _fake_real(tmp_path, monkeypatch)
+    trace = _trace(tmp_path)
+
+    code = run_guarded(
+        ["browser", "sessions", "--json"],
+        real_binary=str(real),
+        live_sessions=None,
+        trace_path=trace,
+    )
+
+    assert code == 0
+    assert read_events(trace)[0]["catalogue"] == "not-required"
+
+
+def test_a_queried_catalogue_says_live(tmp_path, monkeypatch):
+    real, _ = _fake_real(tmp_path, monkeypatch)
+    trace = _trace(tmp_path)
+
+    run_guarded(
+        ["browser", "eval", "1", "--session", "wj-live", "--json"],
+        real_binary=str(real),
+        live_sessions={"wj-live"},
+        trace_path=trace,
+    )
+
+    assert read_events(trace)[0]["catalogue"] == "live"
+
+
 def test_read_events_removes_the_trace(tmp_path):
     trace = tmp_path / "trace.jsonl"
     trace.write_text(json.dumps({"decision": "allow"}) + "\n", encoding="utf-8")

@@ -203,9 +203,44 @@ def test_apply_steel_events_prefers_the_first_guard_error():
     out = m._apply_steel_events(result, events)
 
     assert out["error"]["code"] == "target_lost"
-    assert out["returncode"] == 2
+    # The guard recorded the real CLI's rc; the shell had returned 0.
+    assert out["returncode"] == 1
+    assert out["shell_returncode"] == 0
     assert out["stdout"] == "echo output\n"
     assert len(out["steel_events"]) == 2
+
+
+def test_a_composition_rc_never_contradicts_the_guard_error():
+    """`xargs` maps a denied child to 123. The envelope must still report the
+    policy rc (2) and preserve 123 as the shell's own result."""
+    result = _result(returncode=123)
+    events = [
+        {"verb": "eval", "session": "wj-typo", "decision": "deny",
+         "returncode": 2,
+         "error": {"code": "unknown_session", "message": "not live",
+                   "recovery": {"action": "use_live"}}},
+    ]
+
+    out = m._apply_steel_events(result, events)
+
+    assert out["returncode"] == 2
+    assert out["shell_returncode"] == 123
+    assert out["error"]["code"] == "unknown_session"
+
+
+def test_an_equal_shell_rc_is_not_duplicated():
+    result = _result(returncode=2)
+    events = [
+        {"verb": "eval", "session": "wj-typo", "decision": "deny",
+         "returncode": 2,
+         "error": {"code": "unknown_session", "message": "not live",
+                   "recovery": {"action": "use_live"}}},
+    ]
+
+    out = m._apply_steel_events(result, events)
+
+    assert out["returncode"] == 2
+    assert "shell_returncode" not in out
 
 
 def test_run_merges_a_guard_denial_even_when_the_shell_returns_zero(

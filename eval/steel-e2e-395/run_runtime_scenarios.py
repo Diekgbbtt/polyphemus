@@ -2,17 +2,25 @@
 """Repeatable runtime-state scenarios for the Steel tool stack.
 
 The runner drives the live Kali MCP server from the agent container. It covers
-the failure families found in the runtime stress campaign:
+the failure families found in the runtime stress campaigns:
 
 * shell composition that hides a Steel invocation from the MCP string gate;
+* the compatibility ``steel-real`` name, which must route through the wrapper;
 * a masked Steel failure behind ``2>/dev/null || true`` and a pipe;
 * a second-command failure in a multi-command shell;
 * a known live session that disappears (session loss vs typo);
-* a timed-out command that leaves a background child in the Kali container.
+* a timed-out command that leaves a background child in the Kali container;
+* the catalogue fact recorded in the guard trace.
+
+Acceptance is exact. Every composition must return the declared error code and
+the policy return code 2, create no session, and leave the catalogue unchanged.
+A masked failure must carry the same code, message, and stderr as the unmasked
+command, with the composition's own rc preserved separately.
 
 The session-loss scenario stops the session named by ``--loss-session``.
-Prepare that session before the run and re-prepare it afterwards. Every other
-scenario uses unique names and cleans any stray it creates.
+Prepare that session before the run and re-prepare it afterwards.
+Every other scenario uses names unique to this run, so a persisted session
+registry cannot turn a typo into a false session-loss.
 
 The output is one JSON document. Cookie values never reach it.
 """
@@ -22,10 +30,12 @@ import argparse
 import asyncio
 import json
 import os
-import sys
+import time
 from pathlib import Path
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
+
+RUN_ID = f"{int(time.time())}-{os.getpid()}"
 
 
 def _parse(result) -> dict:
@@ -66,39 +76,90 @@ def _record(name: str, passed: bool, expected: str, observed: dict) -> dict:
     }
 
 
+def _typo(label: str) -> str:
+    return f"wj-sc-{RUN_ID}-{label}"
+
+
 async def _composition_scenarios(tools) -> list[dict]:
+    # (label, tool, session, arguments, expected error code, expected shell rc,
+    #  expected gate). "mcp_precheck" means the whole command was refused
+    #  before the shell ran; "binary_guard" means the shell ran and the guard
+    #  refused the embedded Steel invocation.
     cases = [
-        ("script", "steel_exec", "wj-scenario-script", {
-            "script": 'steel browser eval "1" --session wj-scenario-script --json',
+        ("script", "steel_exec", _typo("script"), {
+            "script": f'steel browser eval "1" --session {_typo("script")} --json',
             "script_lang": "sh",
-        }),
-        ("bash_c", "execute_command", "wj-scenario-bash", {
-            "command": "bash -c 'steel browser eval \"1\" --session wj-scenario-bash --json'",
-        }),
-        ("env", "execute_command", "wj-scenario-env", {
-            "command": 'env steel browser eval "1" --session wj-scenario-env --json',
-        }),
-        ("command", "execute_command", "wj-scenario-command", {
-            "command": 'command steel browser eval "1" --session wj-scenario-command --json',
-        }),
-        ("sh_c", "execute_command", "wj-scenario-sh", {
-            "command": "sh -c 'steel browser eval \"1\" --session wj-scenario-sh --json'",
-        }),
-        ("path_prefix", "execute_command", "wj-scenario-path", {
-            "command": 'PATH=/opt/localbin:$PATH steel browser eval "1" --session wj-scenario-path --json',
-        }),
-        ("absolute", "execute_command", "wj-scenario-abs", {
-            "command": '/opt/localbin/steel browser eval "1" --session wj-scenario-abs --json',
-        }),
-        ("xargs", "execute_command", "wj-scenario-xargs", {
-            "command": "printf wj-scenario-xargs | xargs -I{} steel browser eval \"1\" --session {} --json",
-        }),
-        ("shell_continue", "execute_command", "wj-scenario-cont", {
-            "command": 'echo pre; steel browser eval "1" --session wj-scenario-cont --json; echo post',
-        }),
+        }, "unknown_session", 2, "binary_guard"),
+        ("bash_c", "execute_command", _typo("bash"), {
+            "command": (
+                "bash -c 'steel browser eval \"1\" --session "
+                f"{_typo('bash')} --json'"
+            ),
+        }, "unknown_session", 2, "binary_guard"),
+        ("env", "execute_command", _typo("env"), {
+            "command": (
+                f'env steel browser eval "1" --session {_typo("env")} --json'
+            ),
+        }, "unknown_session", 2, "binary_guard"),
+        ("command", "execute_command", _typo("command"), {
+            "command": (
+                f'command steel browser eval "1" --session '
+                f'{_typo("command")} --json'
+            ),
+        }, "unknown_session", 2, "binary_guard"),
+        ("sh_c", "execute_command", _typo("sh"), {
+            "command": (
+                "sh -c 'steel browser eval \"1\" --session "
+                f"{_typo('sh')} --json'"
+            ),
+        }, "unknown_session", 2, "binary_guard"),
+        ("path_prefix", "execute_command", _typo("path"), {
+            "command": (
+                f'PATH=/opt/localbin:$PATH steel browser eval "1" '
+                f'--session {_typo("path")} --json'
+            ),
+        }, "unknown_session", 2, "binary_guard"),
+        ("absolute", "execute_command", _typo("abs"), {
+            "command": (
+                f'/opt/localbin/steel browser eval "1" --session '
+                f'{_typo("abs")} --json'
+            ),
+        }, "unknown_session", 2, "mcp_precheck"),
+        ("xargs", "execute_command", _typo("xargs"), {
+            "command": (
+                f"printf {_typo('xargs')} | xargs -I{{}} steel browser "
+                'eval "1" --session {} --json'
+            ),
+        }, "unknown_session", 123, "binary_guard"),
+        ("shell_continue", "execute_command", _typo("cont"), {
+            "command": (
+                f'echo pre; steel browser eval "1" --session '
+                f'{_typo("cont")} --json; echo post'
+            ),
+        }, "unknown_session", 2, "mcp_precheck"),
+        # The public compatibility name must route through the wrapper. A
+        # nested shell is the shape that bypassed the old string gate.
+        ("steel_real_direct", "execute_command", _typo("reald"), {
+            "command": (
+                f'steel-real browser eval "1" --session '
+                f'{_typo("reald")} --json'
+            ),
+        }, "unknown_session", 2, "mcp_precheck"),
+        ("steel_real_bash", "execute_command", _typo("realb"), {
+            "command": (
+                "bash -c 'steel-real browser eval \"1\" --session "
+                f"{_typo('realb')} --json'"
+            ),
+        }, "unknown_session", 2, "binary_guard"),
+        ("steel_real_absolute", "execute_command", _typo("reala"), {
+            "command": (
+                f'/opt/localbin/steel-real browser eval "1" --session '
+                f'{_typo("reala")} --json'
+            ),
+        }, "unknown_session", 2, "mcp_precheck"),
     ]
     records = []
-    for label, tool, case_session, args in cases:
+    for label, tool, case_session, args, expected, shell_expected, gate in cases:
         args = dict(args)
         args["session_id"] = f"scenario-{label}"
         args["timeout_s"] = 60
@@ -107,15 +168,34 @@ async def _composition_scenarios(tools) -> list[dict]:
         # Scope the assertion to THIS case's session. A separately prepared
         # loss fixture is live on purpose and is not a stray.
         strays = [case_session] if case_session in live else []
-        error = (out.get("error") or {}).get("code")
-        passed = not strays and error in {"unknown_session", "session_missing"}
+        error = out.get("error") or {}
+        events = out.get("steel_events") or []
+        observed = {
+            "error": error.get("code"),
+            "returncode": out.get("returncode"),
+            "shell_returncode": out.get("shell_returncode"),
+            "strays": strays,
+            "events": len(events),
+            "gate": "mcp_precheck" if not events else "binary_guard",
+            "stdout": str(out.get("stdout") or "")[:80],
+            "expected_shell_returncode": shell_expected,
+            "expected_gate": gate,
+        }
+        passed = (
+            error.get("code") == expected
+            and out.get("returncode") == 2
+            and out.get("shell_returncode", out.get("returncode"))
+            == shell_expected
+            and observed["gate"] == gate
+            and not strays
+            and (gate == "binary_guard" or not observed["stdout"])
+        )
         records.append(_record(
             f"composition/{label}",
             passed,
-            "no execution without a live session; no stray session",
-            {"error": error, "returncode": out.get("returncode"),
-             "strays": strays,
-             "events": len(out.get("steel_events") or [])},
+            f"{expected} with policy rc 2 and shell rc {shell_expected}, "
+            f"caught by {gate}, and no stray session",
+            observed,
         ))
         for name in strays:
             await _call(tools, "steel_exec", {
@@ -138,38 +218,72 @@ async def _masked_scenarios(tools, session: str | None) -> list[dict]:
             f"{session} is live before the masked-failure scenarios",
             {"sessions": sorted(live)},
         )]
+    command = f"steel browser get text --session {session} --json"
+    direct = await _call(tools, "steel_exec", {
+        "command": command,
+        "session_id": "scenario-direct",
+        "timeout_s": 60,
+    })
     masked = await _call(tools, "execute_command", {
-        "command": (f"steel browser get text --session {session} --json "
-                    "2>/dev/null || true"),
+        "command": f"{command} 2>/dev/null || true",
         "session_id": "scenario-masked",
         "timeout_s": 60,
     })
-    masked_error = (masked.get("error") or {}).get("code")
-    masked_ok = masked_error in {"invalid_command", "cli_error"}
     multiple = await _call(tools, "execute_command", {
-        "command": (f"echo pre; steel browser get text --session {session} "
-                    "--json; echo post"),
+        "command": f"echo pre; {command}; echo post",
         "session_id": "scenario-multi",
         "timeout_s": 60,
     })
-    multiple_error = (multiple.get("error") or {}).get("code")
-    multiple_ok = multiple_error in {"invalid_command", "cli_error"}
-    return [
+    direct_error = direct.get("error") or {}
+    masked_error = masked.get("error") or {}
+    multiple_error = multiple.get("error") or {}
+    same_error = (
+        direct_error.get("code")
+        and direct_error.get("code") == masked_error.get("code")
+        and direct_error.get("message") == masked_error.get("message")
+        and str(direct.get("stderr") or "").strip()
+        == str(masked.get("stderr") or "").strip()
+    )
+    records = [
         _record(
             "masked/output_suppression",
-            masked_ok,
-            "the guard trace reports the hidden CLI failure",
-            {"error": masked_error, "returncode": masked.get("returncode"),
-             "stderr": str(masked.get("stderr") or "")[:160]},
+            bool(same_error)
+            and masked.get("returncode") == direct.get("returncode") == 2
+            and masked.get("shell_returncode") == 0,
+            "same code, message, stderr, and rc as the unmasked failure; "
+            "the masked shell rc is preserved separately",
+            {
+                "direct": {
+                    "error": direct_error.get("code"),
+                    "returncode": direct.get("returncode"),
+                    "shell_returncode": direct.get("shell_returncode"),
+                },
+                "masked": {
+                    "error": masked_error.get("code"),
+                    "returncode": masked.get("returncode"),
+                    "shell_returncode": masked.get("shell_returncode"),
+                },
+                "same_error": bool(same_error),
+            },
         ),
         _record(
             "masked/second_command",
-            multiple_ok,
-            "the guard trace reports the second command's failure",
-            {"error": multiple_error, "returncode": multiple.get("returncode"),
-             "stdout": str(multiple.get("stdout") or "")[:160]},
+            multiple_error.get("code") == direct_error.get("code")
+            and multiple.get("returncode") == 2
+            and multiple.get("shell_returncode") == 0
+            and "pre" in str(multiple.get("stdout") or "")
+            and "post" in str(multiple.get("stdout") or ""),
+            "the second command's failure is reported with rc 2 while both "
+            "printable commands still ran",
+            {
+                "error": multiple_error.get("code"),
+                "returncode": multiple.get("returncode"),
+                "shell_returncode": multiple.get("shell_returncode"),
+                "stdout": str(multiple.get("stdout") or "")[:120],
+            },
         ),
     ]
+    return records
 
 
 async def _session_loss_scenarios(tools, session: str | None) -> list[dict]:
@@ -204,15 +318,17 @@ async def _session_loss_scenarios(tools, session: str | None) -> list[dict]:
         and error.get("code") == "session_missing"
         and error.get("fatal") is True
         and (error.get("recovery") or {}).get("action") == "recreate_session"
+        and gone.get("returncode") == 2
     )
     return [_record(
         "session_loss/known_session_disappears",
         passed,
-        "known live -> stopped -> session_missing + recreate_session",
+        "known live -> stopped -> session_missing + recreate_session + rc 2",
         {"live_returncode": live_cmd.get("returncode"),
          "stop_returncode": stop.get("returncode"),
          "error": error.get("code"), "fatal": error.get("fatal"),
-         "recovery": (error.get("recovery") or {}).get("action")},
+         "recovery": (error.get("recovery") or {}).get("action"),
+         "returncode": gone.get("returncode")},
     )]
 
 
@@ -245,6 +361,62 @@ async def _timeout_scenarios(tools) -> list[dict]:
     )]
 
 
+async def _catalogue_scenario(tools) -> list[dict]:
+    out = await _call(tools, "steel_exec", {
+        "command": "steel browser sessions --json",
+        "session_id": "scenario-catalogue",
+        "timeout_s": 30,
+    })
+    events = out.get("steel_events") or []
+    catalogue = events[0].get("catalogue") if events else None
+    return [_record(
+        "trace/catalogue_fact",
+        catalogue == "not-required",
+        "a sessions command that needs no catalogue records not-required, "
+        "never unavailable",
+        {"catalogue": catalogue, "returncode": out.get("returncode")},
+    )]
+
+
+async def _private_core_probe(tools, core: str | None) -> dict | None:
+    """Record, do not hide, the residual filesystem-level bypass.
+
+    A deliberate absolute path to the private real CLI is outside the
+    name-resolution boundary this stack can enforce without OS isolation. The
+    probe proves whether the limit is still present and cleans any session it
+    created.
+    """
+    if not core:
+        return None
+    name = _typo("private")
+    before = await _sessions(tools)
+    out = await _call(tools, "execute_command", {
+        "command": (
+            f"bash -c '{core} browser eval \"1\" --session {name} --json'"
+        ),
+        "session_id": "scenario-private",
+        "timeout_s": 60,
+    })
+    after = await _sessions(tools)
+    created = sorted(after - before)
+    for stray in created:
+        await _call(tools, "steel_exec", {
+            "command": f"steel browser stop --session {stray} --json",
+            "session_id": "scenario-cleanup",
+            "timeout_s": 30,
+        })
+    return {
+        "limit": "private-core absolute path",
+        "path": core,
+        "error": (out.get("error") or {}).get("code"),
+        "returncode": out.get("returncode"),
+        "created": created,
+        "cleaned": bool(created),
+        "scope": "requires knowing the private path; not reachable by any "
+                 "public name or PATH lookup",
+    }
+
+
 async def run(args: argparse.Namespace) -> int:
     client = MultiServerMCPClient(
         {"kali": {"url": args.mcp_url, "transport": "streamable_http"}})
@@ -255,14 +427,18 @@ async def run(args: argparse.Namespace) -> int:
     records.extend(await _masked_scenarios(tools, args.session))
     records.extend(await _session_loss_scenarios(tools, args.loss_session))
     records.extend(await _timeout_scenarios(tools))
+    records.extend(await _catalogue_scenario(tools))
+    limit = await _private_core_probe(tools, args.private_core)
 
     passed = all(record["pass"] for record in records)
     summary = {
+        "run_id": RUN_ID,
         "mcp_url": args.mcp_url,
         "session": args.session,
         "loss_session": args.loss_session,
         "passed": passed,
         "scenarios": records,
+        "known_limits": [limit] if limit else [],
     }
     args.evidence_dir.mkdir(parents=True, exist_ok=True)
     (args.evidence_dir / "runtime-scenarios.json").write_text(
@@ -273,10 +449,12 @@ async def run(args: argparse.Namespace) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--session", default="wj-gateway-e2e",
+    parser.add_argument("--session", default=None,
                         help="live session for the masked-failure scenarios")
     parser.add_argument("--loss-session", default=None,
                         help="prepared session the loss scenario may stop")
+    parser.add_argument("--private-core", default=None,
+                        help="private real CLI path, for the residual-limit probe")
     parser.add_argument("--evidence-dir", type=Path,
                         default=Path("/tmp/polymerhus-e2e/evidence"))
     parser.add_argument("--mcp-url", default=os.environ.get(

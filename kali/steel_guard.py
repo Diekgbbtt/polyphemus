@@ -327,7 +327,7 @@ def run_guarded(
     known_sessions: set[str] | None = None,
     trace_path: str | None = None,
     timeout_s: int | None = None,
-    catalogue: str = "live",
+    catalogue: str | None = None,
 ) -> int:
     """Validate, run, classify, and trace one invocation.
 
@@ -335,7 +335,12 @@ def run_guarded(
     catalogue query. A caller that passes ``None`` keeps the sanitizer's
     fail-open behaviour for an unverifiable catalogue. ``known_sessions``
     distinguishes a typo from a session that was live and disappeared.
+    ``catalogue`` states the verification fact: ``live``, ``unavailable``, or
+    ``not-required``. It is never inferred from a missing live set, because a
+    command that does not need the catalogue must not look like an outage.
     """
+    if catalogue is None:
+        catalogue = "live" if live_sessions is not None else "not-required"
     command = shlex.join(["steel", *argv])
     parsed = sanitize_steel_command(
         command, live_sessions=live_sessions, known_sessions=known_sessions
@@ -369,7 +374,7 @@ def run_guarded(
         "stderr_tail": _tail(stderr),
         "error": classified.get("error"),
         "warning": classified.get("warning"),
-        "catalogue": catalogue if live_sessions is not None else "unavailable",
+        "catalogue": catalogue,
     }
     _write_event(trace_path, event)
     if stdout:
