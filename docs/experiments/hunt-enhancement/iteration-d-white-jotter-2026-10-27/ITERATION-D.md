@@ -64,26 +64,56 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-28T00:27Z)
+## Live state (2026-10-28T00:57Z)
 
 | Metric | Value |
 |---|---|
 | State | running |
-| Intake | 16 of 27 entered (17 model files) |
-| Impact rows | 43 (24 threat, 19 precursor) |
-| Capability rows | 43 of 43 |
-| Green share | 24 / 43 = 55.8% |
+| Intake | 20 of 27 entered (21 model files) |
+| Impact rows | 47 (24 threat, 23 precursor) |
+| Capability rows | 47 of 47 |
+| Green share | 24 / 47 = 51.1% |
 | Threats | 24 |
 | Chain pairs | 4 |
 | Promoted / demoted | 16 / 8 |
 | Risk | 134 / 180 |
-| Capped tokens | 1,643,871 / 7,000,000 |
+| Capped tokens | 1,842,797 / 7,000,000 |
 | Hunter calls | 0 (phase barrier) |
 | Fence hits | 0 |
 
-The risk curve has flattened: 132 at 12 units, 134 at 17. The later units are
-precursor-heavy (19 capability rows with no end damage), which is the intended use of the
-disposition: the capability is kept and queryable, but no threat is inflated.
+### Unit shape
+
+The first ten units (still in `produced/`) carry all 24 threats. The eleven units already
+moved to `consumed/` are capability-only:
+
+| Unit | Rows | Threats | Precursors |
+|---|---|---|---|
+| ReverseProxy | 6 | 4 | 2 |
+| Service:sign-in | 7 | 4 | 3 |
+| RESTApi:api | 4 | 2 | 2 |
+| Service:register | 3 | 2 | 1 |
+| Service:library-catalog | 3 | 3 | 0 |
+| AuthenticationMechanism | 2 | 2 | 0 |
+| Service:article-management | 1 | 1 | 0 |
+| Service:jotter-reading | 1 | 1 | 0 |
+| AuthorizationSystem | 1 | 1 | 0 |
+| IdentificationSystem | 1 | 1 | 0 |
+| Service:navigation-menu | 2 | 1 | 1 |
+| IntegrationSystem:cross-origin-policy | 2 | 1 | 1 |
+| WebPresentation:article-management | 3 | 1 | 2 |
+| Service:book-management | 2 | 0 | 2 |
+| Service:media-asset-serving | 1 | 0 | 1 |
+| Service:role-permission-administration | 1 | 0 | 1 |
+| Service:user-administration | 1 | 0 | 1 |
+| WebPresentation:jotter-reading | 2 | 0 | 2 |
+| WebPresentation:library-catalog | 2 | 0 | 2 |
+| WebPresentation:register | 1 | 0 | 1 |
+| WebPresentation:sign-in | 2 | 0 | 2 |
+
+This is the intended effect of the disposition. Iteration C filed 13 placeholders across 9
+zero-threat units; D keeps 23 capabilities that reach no end damage as `precursor` rows, and
+still fails to turn them into threats. Whether they are honest capabilities or under-mined
+rows is exactly what the assessor's `impact_review.yaml` must judge.
 
 Four cross-unit chains are real:
 
