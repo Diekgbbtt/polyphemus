@@ -53,6 +53,14 @@ def api(base: str, path: str) -> dict:
         return json.load(response)
 
 
+def api_post(base: str, path: str) -> dict:
+    request = urllib.request.Request(f"{base}{path}", data=b"{}", method="POST")
+    request.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
 def load(path: pathlib.Path) -> dict:
     try:
         body = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -215,12 +223,18 @@ def main() -> int:
     parser.add_argument("--token-budget", type=int, default=7000000)
     parser.add_argument("--risk-threshold", type=int, default=180)
     parser.add_argument("--max-minutes", type=int, default=720)
+    parser.add_argument(
+        "--stop-at-cap", action="store_true",
+        help="stop the hunting run through the API when capped_tokens reaches "
+             "the budget; the monitor keeps polling to the terminal",
+    )
     args = parser.parse_args()
 
     root = args.data_root / args.project_id / "hunting" / "threat_modeller"
     args.out.parent.mkdir(parents=True, exist_ok=True)
     started = dt.datetime.now(dt.timezone.utc)
     run_id: str | None = args.run_id
+    stop_issued = False
     while True:
         now = dt.datetime.now(dt.timezone.utc)
         elapsed = (now - started).total_seconds()
@@ -256,6 +270,7 @@ def main() -> int:
             "hunter_calls": (agents.get("hunting_hunter") or {}).get("calls"),
             "pod_calls": (agents.get("pod_runner") or {}).get("calls"),
             "token_budget": args.token_budget,
+            "stop_issued": stop_issued,
             **snapshot,
         }
         with args.out.open("a", encoding="utf-8") as handle:
@@ -272,7 +287,19 @@ def main() -> int:
         )
         terminal = record["status"] in TERMINAL
         capped = (record["capped_tokens"] or 0) >= args.token_budget
-        if terminal or capped or elapsed >= args.max_minutes * 60:
+        if capped and args.stop_at_cap and run_id and not stop_issued:
+            try:
+                api_post(
+                    args.api,
+                    f"/projects/{args.project_id}/hunting/{run_id}/stop",
+                )
+                stop_issued = True
+                print(f"{record['at']} stop issued at the token cap", flush=True)
+            except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+                print(f"{record['at']} stop failed: {exc}", file=sys.stderr, flush=True)
+        if terminal or elapsed >= args.max_minutes * 60:
+            break
+        if capped and not args.stop_at_cap:
             break
         time.sleep(args.interval)
     return 0
