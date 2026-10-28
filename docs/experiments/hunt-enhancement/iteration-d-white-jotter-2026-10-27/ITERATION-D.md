@@ -168,10 +168,40 @@ is live. The surfer then builds the queue by each unit's model risk sum, descend
 modeller pass exhausted the intake at 01:38 (risk 150), the barrier lifted, and the hunter
 phase started. Zero hunter calls before that point were the contract, not a stall.
 
+## Terminal state (2026-10-28T14:45Z)
+
+The monitor stopped the run at the cap. The run is terminal `stopped`.
+
+| Metric | Value |
+|---|---|
+| Capped tokens | 7,003,931 / 7,000,000 (overshoot 3,931) |
+| Total tokens | 166,942,875 |
+| Calls | 2,303 |
+| Risk | 150 / 180 |
+| Intake | 27 of 27 |
+| Threats / precursors | 27 / 28 |
+| Chains | 4 |
+| Pods | 52: 17 successful, 30 unsuccessful, 5 in progress at the stop |
+| Terminal pod success share | 17 / 47 = 36.2% (17 / 52 = 32.7% including interrupted) |
+| Hunt specs | 12 |
+| Fence hits | 0 |
+
+Final per-agent capped-token split:
+
+| Agent | Calls | Capped | Share of cap |
+|---|---:|---:|---:|
+| pod_runner | 1,423 | 3,049,457 | 43.5% |
+| hunting_threat_modeller | 481 | 2,210,283 | 31.6% |
+| hunting_hunter | 333 | 1,189,035 | 17.0% |
+| pod_triager | 66 | 555,156 | 7.9% |
+
+The finalizer started at 15:16:58Z: the identity was re-verified, the fingerprint was
+present, and `close-verify` dispatched the assessor to write `verdicts.yaml` and
+`impact_review.yaml`. Store materialisation and the measurement follow the assessment.
+
 ## Open issue
 
-The driver launched with an empty `--stack-fingerprint` because the manifest computation
-returned empty at that moment. It computes now as
-`84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0`.
-If the trial record carries no fingerprint, backfill it before the assessment or the
-verdicts will be refused as an identity mismatch. The hunting run itself is unaffected.
+Resolved. The trial launched with an empty `--stack-fingerprint`; the record was backfilled
+to `84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0` before the
+assessment. The trial record's own spend is the 4,940,868 of its `stopped` phase; the final
+run spend is the 7,003,931 above, read from the durable usage ledger.
