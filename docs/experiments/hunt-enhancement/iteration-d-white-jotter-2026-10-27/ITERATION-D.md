@@ -64,28 +64,30 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-28T02:00Z)
+## Live state (2026-10-28T02:30Z)
 
 | Metric | Value |
 |---|---|
-| State | running (hunt phase) |
-| Intake | 27 of 27 entered (exhausted) |
+| State | running (pod phase) |
+| Intake | 27 of 27 (exhausted) |
 | Impact rows | 55 (27 threat, 28 precursor) |
 | Capability rows | 55 of 55 |
 | Green share | 27 / 55 = 49.1% |
 | Threats | 27 |
 | Chain pairs | 4 |
-| Promoted / demoted | 18 / 9 |
+| Promoted / demoted | 19 / 8 |
 | Risk | 150 / 180 (final; below the halt) |
-| Capped tokens | 2,450,047 / 7,000,000 |
+| Capped tokens | 2,754,100 / 7,000,000 |
 | Hunter calls | 83 |
-| Test specs | 3 |
+| Pod-runner calls | 143 |
+| Hunt specs / pod dirs | 3 / 7 |
 | Fence hits | 0 |
 
 The modeller phase exhausted the 27-unit intake at 01:38 without reaching the 180 halt. The
-final risk is 150. The batched barrier lifted at that point: the surfer built the queue by
-model risk sum, the hunters started, and the pod phase will follow as each unit's hunts
-become terminal. The remaining budget is 4.55M tokens.
+batched barrier lifted at that point: the surfer built the queue by model risk sum, the
+hunters started, and the first unit's three hunts are terminal. The pod phase is now
+running one block at a time with `pod_batch_size: 1`; the first block's pod specs are the
+seven broken-function-level-authorization variants. The remaining budget is 4.25M tokens.
 
 ### Unit shape
 
