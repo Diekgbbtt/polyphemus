@@ -424,6 +424,63 @@ def test_a_new_turn_posts_its_degraded_reply_after_an_earlier_delivery():
     assert replies.try_get_nowait() is None
 
 
+def test_on_turn_complete_fires_with_the_turn_id():
+    """The gateway closes its checkpointer on the reply; the reply can precede
+    the final checkpoint write. The completion signal must fire after the
+    turn returns."""
+    saver = InMemorySaver()
+    inbox = AgentInbox()
+    seen = []
+
+    async def _drive():
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_threat_modeller", "run1:orch",
+            [HumanMessage(content="start")],
+            checkpointer=saver, inbox=inbox,
+            on_turn_complete=lambda turn_id: seen.append(turn_id),
+            model_factory=_seq_factory("done"), observe=False,
+        ))
+        await asyncio.sleep(0)
+        await inbox.post(AgentMessage(kind="stop"))
+        return await task
+
+    result = asyncio.run(_drive())
+
+    assert result.stop_reason == "stop_message"
+    assert len(seen) == 1
+    assert isinstance(seen[0], str) and seen[0]
+
+
+def test_on_turn_complete_fires_after_a_degraded_turn(monkeypatch):
+    monkeypatch.setattr(actor_module, "attempt_timeouts", lambda: (0.01,))
+    saver = InMemorySaver()
+    inbox = AgentInbox()
+    completed = []
+    degraded = []
+
+    def on_turn_degraded(thread_id, exc):
+        degraded.append(type(exc).__name__)
+
+    async def _drive():
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_threat_modeller", "run1:orch",
+            [HumanMessage(content="start")],
+            checkpointer=saver, inbox=inbox,
+            on_turn_degraded=on_turn_degraded,
+            on_turn_complete=lambda turn_id: completed.append(turn_id),
+            model_factory=lambda role: _Boom(exc=RuntimeError("down")),
+            observe=False,
+        ))
+        await asyncio.sleep(0)
+        await inbox.post(AgentMessage(kind="stop"))
+        return await task
+
+    asyncio.run(_drive())
+
+    assert degraded
+    assert len(completed) == 1 and completed[0]
+
+
 def test_actor_survives_a_raising_turn_then_serves_the_next():
     """#186 - per-turn isolation: one raising turn must NOT kill the mailbox
     actor. The failed turn degrades (a no-decision reply wakes the parent so its

@@ -208,6 +208,12 @@ _REPLY_SOURCE = "recon-orchestrator"
 # escalating per-attempt budgets) own turn length; this only bounds the WAIT.
 GATEWAY_AWAIT_TIMEOUT_S = 3600.0
 
+# How long `run_gateway` waits, after receiving the turn's reply, for the
+# pipeline's final checkpoint write to settle. The reply is posted at the end
+# of the graph turn; the checkpoint write lands a moment later. A caller that
+# closes its checkpointer on the reply must not race that write.
+TURN_SETTLE_TIMEOUT_S = 30.0
+
 
 class GatewayStop(Exception):
     """The fail-close stop: the project declares an auth surface but stores
@@ -291,6 +297,8 @@ class ReconOrchestratorActor:
         self._inbox = None
         self._replies: "AgentInbox | None" = None
         self._task: "asyncio.Task | None" = None
+        self._turn_settled: "asyncio.Event | None" = None
+        self._reply_seen = False
 
     @property
     def compaction_manager(self):
@@ -380,6 +388,7 @@ class ReconOrchestratorActor:
         from polymerhus.app.llm.session import structured_response_format  # noqa: PLC0415
         response_format = structured_response_format(
             "job_orchestrator", GatewayVerdict, tools_bound=True)
+        self._turn_settled = asyncio.Event()
         self._task = asyncio.ensure_future(
             run_session_agent(
                 self._address.role_id,
@@ -393,12 +402,35 @@ class ReconOrchestratorActor:
                 middleware=middleware_list,
                 context=binding.context,
                 on_turn_degraded=degraded_hook,
+                on_turn_complete=self._on_turn_complete,
                 system_prompt=_load_gateway_prompt(),
                 model_factory=self._model_factory,
                 observe=self._observe,
                 usage_scope=project_id,
             )
         )
+
+    def _on_turn_complete(self, turn_id: str | None) -> None:
+        """Signal that the turn that produced a reply has fully returned.
+
+        The delivery middleware can post the reply before the graph writes its
+        final checkpoint. `run_gateway` waits on this event before returning,
+        so a caller may close the checkpointer without racing that write."""
+        if self._turn_settled is not None:
+            self._turn_settled.set()
+
+    async def _await_turn_settled(self) -> None:
+        if self._turn_settled is None:
+            return
+        try:
+            await asyncio.wait_for(
+                self._turn_settled.wait(), timeout=TURN_SETTLE_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "auth gateway: the turn did not settle within %.0fs after its "
+                "reply; a caller may close the checkpointer while the final "
+                "write is pending", TURN_SETTLE_TIMEOUT_S)
 
     def _on_message(self, message, last_turn):
         """Route inbox messages: the gateway brief triggers the ONE gateway
@@ -470,6 +502,9 @@ class ReconOrchestratorActor:
         try:
             await self._ensure_started()
             from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
+            self._reply_seen = False
+            if self._turn_settled is not None:
+                self._turn_settled.clear()
             await self._inbox.post(
                 AgentMessage(
                     kind=_GATEWAY_KIND,
@@ -478,6 +513,10 @@ class ReconOrchestratorActor:
                 )
             )
             verdict = await self._await_reply()
+            if self._reply_seen:
+                # The reply can precede the graph's final checkpoint write.
+                # Return only after the turn that produced it has settled.
+                await self._await_turn_settled()
         except GatewayStop:
             raise
         except Exception:
@@ -519,6 +558,7 @@ class ReconOrchestratorActor:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if reply_task in done:
+                self._reply_seen = True
                 message = reply_task.result()
                 payload = message.payload if isinstance(message.payload, dict) else {}
                 content = payload.get("content")
@@ -598,6 +638,7 @@ class ReconOrchestratorActor:
 __all__ = [
     "GatewayStop",
     "GATEWAY_AWAIT_TIMEOUT_S",
+    "TURN_SETTLE_TIMEOUT_S",
     "ReconOrchestratorActor",
     "build_authn_loop_middleware",
 ]

@@ -186,6 +186,15 @@ async def run(args: argparse.Namespace) -> int:
     store = AuthStore(root_dir=args.data_root)
     skill_store = SkillStore(root_dir=args.skills_root)
     skill_before = skill_store.read("authn", project_id=project)
+    if args.session not in skill_before:
+        # The seeded procedure names the operator-owned session. A run with a
+        # different --session gives the model two contradictory facts; the
+        # live verdict then (correctly) refuses to reuse the other session.
+        raise SystemExit(
+            f"the seeded authn skill does not name the run session "
+            f"{args.session!r}; prepare the session with the designated name "
+            "or re-seed the skill"
+        )
     overview = _read_overview(store, project)
     accounts = store.read(project, "accounts")
     gate = classify_gate(overview, accounts)
@@ -249,6 +258,20 @@ async def run(args: argparse.Namespace) -> int:
                 thread_id = actor.thread_id
             except Exception:
                 thread_id = ""
+
+            # Retire the actor while the saver is still OPEN. `stop` waits for
+            # the in-flight turn, whose final checkpoint write belongs to the
+            # saver; closing the context first races that write and turns a
+            # delivered verdict into "the connection is closed".
+            if actor is not None:
+                try:
+                    await asyncio.wait_for(actor.stop(), timeout=120)
+                except asyncio.TimeoutError:
+                    await actor.cancel()
+                    stop_error = "actor stop timed out after 120s; actor cancelled"
+                except Exception as exc:  # noqa: BLE001 - teardown best-effort
+                    stop_error = f"{type(exc).__name__}: {exc}"
+                actor = None
 
             if thread_id:
                 try:

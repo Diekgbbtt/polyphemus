@@ -250,6 +250,7 @@ async def run_session_agent(
     extra_tags: Sequence[str] | None = None,
     usage_scope: str | None = None,
     on_turn_degraded: Callable[[str, Exception], Awaitable[None] | None] | None = None,
+    on_turn_complete: Callable[[str | None], Awaitable[None] | None] | None = None,
     context: dict | None = None,
 ) -> AgentRunResult:
     """Run an async-native agent that stays ACTIVE after its turn, listening on `inbox`.
@@ -270,7 +271,13 @@ async def run_session_agent(
     `on_turn_degraded(thread_id, exc)` (default None) is the #186 degradation hook: a
     turn that exhausts its retry budget (or raises non-retryably) does NOT kill the
     actor - the hook is called so the caller can wake its parent with a no-decision
-    (`None`) reply, and the loop keeps listening for the next message."""
+    (`None`) reply, and the loop keeps listening for the next message.
+
+    `on_turn_complete(turn_id)` (default None) fires after every turn returns or
+    degrades, including on cancellation. Delivery is posted at the end of the
+    graph turn, which can precede the final checkpoint write by a moment; a
+    caller that closes its checkpointer on the reply uses this signal to wait
+    for the turn to settle."""
     inbox = inbox or AgentInbox()
     result = AgentRunResult(thread_id=thread_id)
 
@@ -379,9 +386,30 @@ async def run_session_agent(
             await _coerce(on_turn_degraded(thread_id, degrade_cause))
         return None
 
+    async def _turn_and_settle(
+        messages: Sequence[BaseMessage],
+    ) -> SessionTurn | None:
+        """Take one turn, then signal settlement even on a degraded or
+        cancelled turn. The delivery middleware can post the parent reply
+        before the graph's final checkpoint write; this signal is what lets a
+        caller close its checkpointer without racing that write."""
+        try:
+            return await _turn(messages)
+        finally:
+            if on_turn_complete is not None:
+                try:
+                    outcome = on_turn_complete(_CURRENT_TURN_ID.get())
+                    if inspect.isawaitable(outcome):
+                        await outcome
+                except Exception as exc:  # noqa: BLE001 - settlement never kills the actor
+                    logger.warning(
+                        "on_turn_complete failed for %s/%s: %s",
+                        role_id, thread_id, exc,
+                    )
+
     last_turn: SessionTurn | None = None
     if initial_messages:
-        last_turn = await _turn(initial_messages)
+        last_turn = await _turn_and_settle(initial_messages)
 
     while True:
         if max_turns is not None and len(result.turns) >= max_turns:
@@ -405,7 +433,7 @@ async def run_session_agent(
             result.stop_reason = "handler_stop"
             break
         if follow:
-            last_turn = await _turn(follow)  # another turn on the same thread: memory carries
+            last_turn = await _turn_and_settle(follow)  # another turn on the same thread: memory carries
 
     return result
 

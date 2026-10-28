@@ -6,7 +6,7 @@ description: >-
   session through the browser, assert it in the auth store, and never replay
   the login over HTTP.
 metadata:
-  version: '2.0-steel-e2e'
+  version: '2.0.0'
 ---
 
 # White Jotter authentication skill - browser-only fixture
@@ -77,9 +77,9 @@ It stores no credentials and no roles.
    Reason: `GET /api/authentication` answers `身份认证成功` only when the httpOnly `JSESSIONID` is sent and valid.
    An unauthenticated or stale request answers `302` with `Location: /nowhere`.
 4. Probe the privileged feature.
-   Command: `steel browser navigate http://t-1618c524.target/api/admin/user --wait-until domcontentloaded --session wj-gateway-e2e --json`.
+   Command: `steel browser navigate http://t-1618c524.target/api/admin/role --wait-until domcontentloaded --session wj-gateway-e2e --json`.
    Then run `steel browser eval "document.body.innerText" --session wj-gateway-e2e --json`.
-   Reason: the response must carry `code: 200` and the administrator entry with role `sysAdmin`.
+   Reason: the response must carry `code: 200` and the `sysAdmin` role with the `users_management` permission.
    The member session would receive an empty `200` body.
 5. Assert the account in the store.
    Tool call: `auth_store` with `{"command": "write", "path": "accounts.admin-sessiononly-e2e.status", "value": "valid"}`.
@@ -95,7 +95,7 @@ It stores no credentials and no roles.
 7. Emit the gateway verdict.
    The verdict must be `outcome: authenticated`, `account: admin-sessiononly-e2e`, and `branch: browser_only`.
    Leave `replayability_resolved` false because the overview already records the known `http-client-replayability: false`.
-   The rationale must cite the `身份认证成功` marker and the administrator entry with role `sysAdmin`.
+   The rationale must cite the `身份认证成功` marker and the `sysAdmin` role with the `users_management` permission.
    The rationale must not contain the token, a cookie value, or any credential.
 
 ## Failure branch
@@ -105,7 +105,7 @@ It stores no credentials and no roles.
 - If `/api/authentication` answers `302 /nowhere`, the server session is stale or absent.
   Do not fall back to a request login.
   Write `not_valid`, emit `failed`, and report that the operator must re-mint the session.
-- If `/api/admin/user` returns an empty body while `/api/authentication` succeeds, the session is valid but the account lacks the administrator role.
+- If `/api/admin/role` returns an empty body while `/api/authentication` succeeds, the session is valid but the account lacks the administrator role.
   Do not retry the login.
   Emit `failed` with the role-gate evidence.
 - If the admin dashboard does not render, the browser path is broken, not the session.

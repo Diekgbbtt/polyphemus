@@ -43,46 +43,39 @@ def _inner(envelope: dict) -> dict:
         return {"success": False, "data": None, "raw": stdout[:500]}
 
 
-def _role_names(value: object) -> list[str]:
-    if isinstance(value, dict):
-        return [str(k) for k in value]
-    if isinstance(value, list):
-        names = []
-        for item in value:
-            if isinstance(item, dict):
-                name = item.get("name") or item.get("role")
-                if name:
-                    names.append(str(name))
-            elif item is not None:
-                names.append(str(item))
-        return names
-    return []
-
-
 def _admin_summary(body: str) -> dict:
+    """Summarize the privileged ROLE probe.
+
+    The admin user-list route is sensitive to every probe account in the
+    shared target; the role list proves the same `sysAdmin` capability and is
+    stable. The summary carries names and permissions only, never a secret.
+    """
     try:
         parsed = json.loads(body) if body else {}
     except Exception:
         parsed = {}
     result = parsed.get("result") if isinstance(parsed, dict) else None
-    entries = result if isinstance(result, list) else ([result] if isinstance(result, dict) else [])
-    username = None
+    entries = result if isinstance(result, list) else (
+        [result] if isinstance(result, dict) else [])
     roles: list[str] = []
+    permissions: list[str] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        if str(entry.get("username") or "") == "admin":
-            username = "admin"
-            roles = _role_names(entry.get("roles"))
-            break
+        name = entry.get("name")
+        if name:
+            roles.append(str(name))
+        for permission in entry.get("perms") or []:
+            if isinstance(permission, dict) and permission.get("name"):
+                permissions.append(str(permission["name"]))
     return {
         "code": parsed.get("code") if isinstance(parsed, dict) else None,
-        "username_admin": username == "admin",
         "roles": sorted(set(roles)),
+        "permissions": sorted(set(permissions)),
         "sysadmin": "sysAdmin" in body,
+        "users_management": "users_management" in body,
         "password_field_present": isinstance(parsed, dict)
-        and "password" in body
-        and any(isinstance(e, dict) and "password" in e for e in entries),
+        and "password" in body,
         "result_count": len(entries),
     }
 
@@ -199,15 +192,15 @@ async def main() -> int:
         authn_body = str(authn_body)
     authn_marker = "身份认证成功" in authn_body
 
-    nav_admin = (f"steel browser navigate {TARGET}/api/admin/user "
+    nav_admin = (f"steel browser navigate {TARGET}/api/admin/role "
                  f"--wait-until domcontentloaded --session {args.session} --json")
     admin_nav_env = await steel(nav_admin)
-    record("navigate-admin-user", nav_admin, admin_nav_env)
+    record("navigate-admin-role", nav_admin, admin_nav_env)
     admin_url = ((admin_nav_env.get("inner") or {}).get("data") or {}).get("url")
     eval_admin = (f'steel browser eval "document.body.innerText" '
                   f"--session {args.session} --json")
     admin_body_env = await steel(eval_admin)
-    record("eval-admin-user", eval_admin, admin_body_env)
+    record("eval-admin-role", eval_admin, admin_body_env)
     admin_body = ((admin_body_env.get("inner") or {}).get("data") or "")
     if not isinstance(admin_body, str):
         admin_body = str(admin_body)

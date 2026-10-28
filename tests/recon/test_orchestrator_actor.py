@@ -352,6 +352,43 @@ def test_gateway_fail_open_when_the_model_raises(tmp_path, caplog):
     asyncio.run(actor.stop())
 
 
+def test_gateway_returns_after_the_turn_settles(tmp_path):
+    """The reply is posted at the end of the graph turn; the final checkpoint
+    write lands a moment later. The gateway must return only after the turn
+    settled, so a caller may close the checkpointer safely."""
+    make, _ = _script_model([_verdict_call()])
+    actor = _actor("r1", store=_seeded_store(tmp_path, accounts=_account()),
+                   model_factory=make, tmp_path=tmp_path)
+
+    verdict = asyncio.run(actor.run_gateway())
+
+    assert isinstance(verdict, GatewayVerdict)
+    assert actor._turn_settled is not None
+    assert actor._turn_settled.is_set()
+    asyncio.run(actor.stop())
+
+
+def test_await_turn_settled_is_bounded(tmp_path, monkeypatch):
+    import time
+
+    import polymerhus.recon.control.orchestrator_agent as OA
+
+    monkeypatch.setattr(OA, "TURN_SETTLE_TIMEOUT_S", 0.05)
+    actor = _actor("r1", store=_seeded_store(tmp_path), model_factory=lambda r: None,
+                   tmp_path=tmp_path)
+
+    async def _drive():
+        actor._turn_settled = asyncio.Event()
+        started = time.monotonic()
+        await actor._await_turn_settled()
+        return time.monotonic() - started
+
+    elapsed = asyncio.run(_drive())
+
+    assert elapsed >= 0.04
+    assert elapsed < 2
+
+
 def test_gateway_bounded_await_leaves_no_stale_reply(tmp_path, monkeypatch):
     """D223-10: the gateway await is bounded in wall-clock time - a hung turn
     returns None instead of stalling run start, and no stale reply survives
