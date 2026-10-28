@@ -64,11 +64,11 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-28T07:37Z)
+## Live state (2026-10-28T08:33Z)
 
 | Metric | Value |
 |---|---|
-| State | running (hunt/pod queue) |
+| State | running (resumed hunt/pod queue) |
 | Intake | 27 of 27 (exhausted) |
 | Impact rows | 55 (27 threat, 28 precursor) |
 | Capability rows | 55 of 55 |
@@ -77,7 +77,7 @@ Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 | Chain pairs | 4 |
 | Promoted / demoted | 19 / 8 |
 | Risk | 150 / 180 (final; below the halt) |
-| Capped tokens | 4,599,115 / 7,000,000 |
+| Capped tokens | 4,940,868 / 7,000,000 at the stop; the resumed run continues |
 | Hunter calls | 217 |
 | Pod-runner calls | 723 |
 | Hunt specs / pod dirs | 8 / 28 |
@@ -86,18 +86,26 @@ Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 The modeller phase exhausted the 27-unit intake at 01:38 without reaching the 180 halt. The
 batched barrier lifted at that point: the surfer built the queue by model risk sum, the
 hunters started, and the first unit's three hunts are terminal. Its pod block completed
-with seventeen pod specs. The queue is now on the second and third units: eight hunt specs
-and twenty-eight pod specs, currently the mass-assignment role-write variants and the next
-unit's hunts. The remaining budget is 2.40M tokens.
+with seventeen pod specs. At 08:33 the queue was on the second and third units: eight hunt
+specs and twenty-eight pod specs, currently the mass-assignment role-write variants and the
+next unit's hunts.
 
-### Run bound
+### Takeover at the trial clock
 
-The hunting run's budget is the 7,000,000 capped-token cap. The trial's own poll budget is
-12 hours from 21:53:50Z, i.e. 09:53:50Z. The trial stops the whole project when that poll
-deadline arrives, which would truncate the pod phase near 6M tokens. If the queue is still
-live near 09:30Z, the operator path is: stop the hunting run through the API, let the trial
-record the `stopped` phase, then resume the run and enforce the 7M cap with the monitor.
-The run, not the trial's clock, is the experiment's bound.
+The trial's own 12-hour poll clock was 09:53:50Z. The run was stopped through the API at
+08:32:44Z, so the trial wrote a normal record instead of timing out:
+
+- trial id `white-jotter-1-20261028T083326-1618c524`, terminal `stopped`, hunting phase
+  `stopped`, spent 4,940,868 tokens;
+- `eval_sha 5cadea78...`, `worktree_dirty true`;
+- `stack_fingerprint 84d14309...` backfilled before the assessment.
+
+The run was resumed in place at 08:33:29Z (HTTP 202, `resumed: true`). The driver and its
+eval-monitor child were killed before they could assess the partial run. The final
+assessment, close-verify, materialisation, and measurement run once, after the resumed run
+reaches its terminal, through `finalize_iteration_d.sh`. The monitor was restarted with
+`--stop-at-cap` and a 24-hour bound, so the resumed run stops at the 7M cap rather than at
+the trial's clock.
 
 ### Unit shape
 
