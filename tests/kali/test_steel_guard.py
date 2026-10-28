@@ -202,9 +202,17 @@ def test_guard_env_sets_the_wrapper_and_the_real_binary(tmp_path, monkeypatch):
     env = guard_env(trace_path="/tmp/trace.jsonl", timeout_s=30)
 
     assert env["STEEL_REAL_BINARY"].endswith("steel_guard.py")
-    assert env["STEEL_REAL_BINARY_REAL"].endswith("steel-real")
+    assert env["STEEL_REAL_BINARY_REAL"] == "/opt/localbin/.steel/steel"
     assert env["KALI_STEEL_TRACE"] == "/tmp/trace.jsonl"
     assert env["KALI_STEEL_TIMEOUT_S"] == "30"
+
+
+def test_the_real_binary_is_not_in_a_path_directory():
+    """A public PATH name would let a nested shell skip the guard entirely."""
+    assert guard_module.DEFAULT_REAL_BINARY == "/opt/localbin/.steel/steel"
+    assert os.path.dirname(guard_module.DEFAULT_REAL_BINARY) == (
+        "/opt/localbin/.steel"
+    )
 
 
 def test_resolve_guard_path_prefers_the_override(tmp_path, monkeypatch):

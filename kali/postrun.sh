@@ -137,7 +137,22 @@ fi
 # daemon treats a self-hosted `timeout: 0` as "no expiry" instead of an
 # already-expired session (#395). 0.4.4 remains the latest stable tag, and it
 # carries the defect; replace this pin with 0.5.0 (or later) when it ships.
-if ! /opt/localbin/steel-real --version 2>/dev/null | grep -q "0.5.0-preview.6"; then
+# The real CLI lives in a private subdirectory of the persisted binary volume,
+# NOT in a PATH directory. Both public names (`steel` and the compatibility
+# `steel-real`) are the wrapper, which calls the guard; a directly invocable
+# real binary would bypass every policy check.
+_STEEL_PRIVATE_DIR=/opt/localbin/.steel
+_STEEL_REAL="$_STEEL_PRIVATE_DIR/steel"
+mkdir -p "$_STEEL_PRIVATE_DIR" /opt/localbin
+
+# Migrate the pre-hardening layout: the real CLI used to live on PATH beside
+# the wrapper. Copy it into the private dir before the compatibility name is
+# replaced by a symlink to the wrapper.
+if [ ! -x "$_STEEL_REAL" ] && [ -x /opt/localbin/steel-real ] && [ ! -L /opt/localbin/steel-real ]; then
+  cp /opt/localbin/steel-real "$_STEEL_REAL" && chmod 0755 "$_STEEL_REAL"
+fi
+
+if ! "$_STEEL_REAL" --version 2>/dev/null | grep -q "0.5.0-preview.6"; then
   (
     _SVER="0.5.0-preview.6"
     _ARCH=$(uname -m)
@@ -151,16 +166,18 @@ if ! /opt/localbin/steel-real --version 2>/dev/null | grep -q "0.5.0-preview.6";
       echo "${_SSHA}  ${_STGZ}" | sha256sum -c - && \
       tar xz -C /tmp/steel-cli-extract -f "$_STGZ" && \
       _SBIN=$(find /tmp/steel-cli-extract -name steel -type f | head -1) && \
-      [ -n "$_SBIN" ] && cp "$_SBIN" /opt/localbin/steel-real && chmod +x /opt/localbin/steel-real
+      [ -n "$_SBIN" ] && mkdir -p "$_STEEL_PRIVATE_DIR" && cp "$_SBIN" "$_STEEL_REAL" && chmod +x "$_STEEL_REAL"
     rm -rf /tmp/steel-cli-extract "$_STGZ"
   ) || true
 fi
 
-# The one runtime edge (#395): the wrapper owns local mode and the fixed local
-# user agent. It is installed under the name the skill calls; the pinned
-# binary stays beside it as steel-real.
-if [ -x /opt/localbin/steel-real ] && [ -f /opt/kali/steel_wrapper.sh ]; then
+# The one runtime edge (#395): the wrapper owns local mode, the fixed local
+# user agent, and the guard boundary. The real CLI stays private; `steel-real`
+# remains a public compatibility name but resolves to the same wrapper.
+if [ -x "$_STEEL_REAL" ] && [ -f /opt/kali/steel_wrapper.sh ]; then
   install -m 0755 /opt/kali/steel_wrapper.sh /opt/localbin/steel
+  rm -f /opt/localbin/steel-real
+  ln -s steel /opt/localbin/steel-real
 fi
 
 echo "[postrun] gap-fill complete"

@@ -17,6 +17,11 @@ The guard:
 * refuses before the real binary when the session is missing, unknown, or a
   ``start`` collides with a live session.
 
+The real binary is installed at ``/opt/localbin/.steel/steel``, in a private
+subdirectory of the persisted binary volume rather than a PATH directory. The
+public ``steel`` wrapper and the compatibility ``steel-real`` name both route
+to this guard, so a nested shell cannot reach the real CLI by naming it.
+
 The trace is the reliable channel that stdout suppression, ``|| true``, pipes,
 and multi-command shells cannot hide. The MCP layer reads it and turns the
 event into the additive error envelope.
@@ -51,7 +56,11 @@ except ImportError:  # flat deployment beside mcp_server.py
     )
     from process_group import run_in_process_group  # type: ignore[no-redef]
 
-DEFAULT_REAL_BINARY = "/opt/localbin/steel-real"
+# The real CLI is deliberately in a private subdirectory of the persisted
+# binary volume, not in a PATH directory. Only the public wrapper (and its
+# `steel-real` compatibility name) may reach it, and the wrapper calls this
+# guard. A directly invocable real binary would bypass every policy check.
+DEFAULT_REAL_BINARY = "/opt/localbin/.steel/steel"
 GUARD_ENV = "KALI_STEEL_GUARD"
 REAL_ENV = "STEEL_REAL_BINARY_REAL"
 TRACE_ENV = "KALI_STEEL_TRACE"
