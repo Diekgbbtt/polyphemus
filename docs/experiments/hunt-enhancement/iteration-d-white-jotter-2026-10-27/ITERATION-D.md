@@ -64,26 +64,26 @@ A direction that depends on one of these is out of scope. Do not write it as an 
 
 Trail: `/opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl`.
 
-## Live state (2026-10-27T23:57Z)
+## Live state (2026-10-28T00:27Z)
 
 | Metric | Value |
 |---|---|
 | State | running |
-| Intake | 12 of 27 units entered |
-| Impact rows | 33 (23 threat, 10 precursor) |
-| Capability rows | 33 of 33 |
-| Threats | 23 |
+| Intake | 16 of 27 entered (17 model files) |
+| Impact rows | 43 (24 threat, 19 precursor) |
+| Capability rows | 43 of 43 |
+| Green share | 24 / 43 = 55.8% |
+| Threats | 24 |
 | Chain pairs | 4 |
-| Risk | 132 / 180 |
-| Capped tokens | 1,371,694 / 7,000,000 |
+| Promoted / demoted | 16 / 8 |
+| Risk | 134 / 180 |
+| Capped tokens | 1,643,871 / 7,000,000 |
 | Hunter calls | 0 (phase barrier) |
 | Fence hits | 0 |
 
-Per-unit risk sums: ReverseProxy 33, Service:sign-in 19, RESTApi:api 21,
-Service:library-catalog 11, Service:navigation-menu 2, Service:register 11,
-IdentificationSystem 6, AuthorizationSystem 4, Service:article-management 6,
-Service:jotter-reading 6, AuthenticationMechanism 10,
-IntegrationSystem:cross-origin-policy 3.
+The risk curve has flattened: 132 at 12 units, 134 at 17. The later units are
+precursor-heavy (19 capability rows with no end damage), which is the intended use of the
+disposition: the capability is kept and queryable, but no threat is inflated.
 
 Four cross-unit chains are real:
 

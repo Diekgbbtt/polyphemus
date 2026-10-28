@@ -194,6 +194,8 @@ def artefact_snapshot(root: pathlib.Path) -> dict:
         "states": states,
         "promoted": promoted,
         "demoted": demoted,
+        "test_specs": len(list((root.parent / "hunter" / "test-specs").glob("*"))),
+        "pods": len(list((root.parent / "test-executor-pod").glob("*"))),
         "fence_hits": len(fence),
         "fence": fence[:8],
     }
@@ -235,6 +237,7 @@ def main() -> int:
             except urllib.error.HTTPError:
                 status = {}
         stats = status.get("stats") or {}
+        agents = usage.get("by_agent") or {}
         snapshot = artefact_snapshot(root)
         record = {
             "at": now.isoformat(),
@@ -249,6 +252,9 @@ def main() -> int:
             "capped_tokens": usage.get("capped_tokens"),
             "total_tokens": usage.get("total_tokens"),
             "calls": usage.get("calls"),
+            "modeller_calls": (agents.get("hunting_threat_modeller") or {}).get("calls"),
+            "hunter_calls": (agents.get("hunting_hunter") or {}).get("calls"),
+            "pod_calls": (agents.get("pod_runner") or {}).get("calls"),
             "token_budget": args.token_budget,
             **snapshot,
         }
@@ -260,6 +266,7 @@ def main() -> int:
             f"tokens={record['capped_tokens']}/{args.token_budget} "
             f"units={record['units']} rows={record['rows']} "
             f"threat={record['threat_rows']} precursor={record['precursor_rows']} "
+            f"hunter_calls={record['hunter_calls']} specs={record['test_specs']} "
             f"fence={record['fence_hits']}",
             flush=True,
         )
