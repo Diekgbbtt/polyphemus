@@ -195,9 +195,82 @@ Final per-agent capped-token split:
 | hunting_hunter | 333 | 1,189,035 | 17.0% |
 | pod_triager | 66 | 555,156 | 7.9% |
 
-The finalizer started at 15:16:58Z: the identity was re-verified, the fingerprint was
-present, and `close-verify` dispatched the assessor to write `verdicts.yaml` and
-`impact_review.yaml`. Store materialisation and the measurement follow the assessment.
+The finalizer completed at 15:59:48Z with exit 0.
+
+### Assessment
+
+| Vuln | Verdict | Confidence | Matched unit | Class |
+|---|---|---:|---|---|
+| white-jotter-001 | partial | 0.50 | AuthenticationMechanism | session-management |
+| white-jotter-002 | identified | 0.93 | ReverseProxy | broken-function-level-authorization |
+| white-jotter-003 | missed | 0.95 | - | - |
+| white-jotter-004 | missed | 0.95 | - | - |
+| white-jotter-005 | identified | 0.97 | RESTApi:api | sql-injection |
+| white-jotter-006 | missed | 0.90 | - | - |
+| white-jotter-007 | partial | 0.60 | RESTApi:api | mass-assignment-nested-relation-write |
+
+The impact review labelled 26 units in scope and 1 out: `IntegrationSystem:cross-origin-policy`,
+whose only threat requires serving content on the developer's `localhost:8080` before the
+victim's browser acts, a preliminary step the fence excludes. It labelled 54 rows sufficient
+and 1 under-mined: `ReverseProxy IA-24`, where GT-006 shows an encoded traversal read was
+achievable while the row stopped at the capability. That is the 006 failure surviving the
+negative-evidence rule, now visible as `under_mined` instead of hidden.
+
+### Metric
+
+| Metric | Value |
+|---|---|
+| Schema | v4 |
+| Reviewed | yes |
+| Impact rows | 55 (27 threat, 28 precursor) |
+| Capability rows | 55 of 55 |
+| Green / red | 27 / 3 |
+| green_share | 0.90 |
+| threat_share | 49.1% |
+| precursor_share | 50.9% |
+| capability_share | 100% |
+| prior_art_reused | 69 |
+| class_binding_rate | 1.00 |
+
+The red 3 is two rows from the out-of-scope unit plus the one under-mined row. The raw
+split remains 27 of 55 rows, but the reviewed metric is 27 / (27 + 3) = 90%.
+
+### Measurement
+
+- L1 unit recall 7 of 7; L0 endpoint recall 3 of 11; full L0/L1 core 2 of 7.
+- 27 threat files, all valid; sharpness 3 for 002, 003, 005, 007.
+- 12 of 27 threats dispatched; 60 specs, 52 ratified.
+- Pods: 47 exports, 17 symptom-confirmed (36%), 17 watchdog timeouts, 5 missing exports.
+- Workflow adherence: modeller 0.79, hunter 0.71, pod 0.85, overall 0.78.
+- 13 confirmed non-GT symptoms, all novel; the strongest are an 87.9 MB heap dump and a
+  source-map disclosure.
+- The trial record's 4,940,868 capped tokens and 1,579 calls are stale; the ledger is
+  7,003,931 and 2,303 calls. The run finished 6h12m after the recorded terminal.
+
+The measurement's main finding: sharpness is not the bottleneck on this target. Three GT
+faults are unbound or under-mined (001, 004, 006), while four of the five GT-relevant
+directions the model did produce score 3 on the sharpness rubric. Class-level delivery
+matters more than unit binding: 002, 005 and 007 were reached by specs bound to sibling
+units.
+
+The materialised store is
+`/srv/eval-artifacts/white-jotter-1/iterd-white-jotter/white-jotter-1-20261028T083326-1618c524`.
+
+### Recommendations
+
+- Run the trial to the run's terminal, or re-read the ledger after a resume. The 12-hour
+  trial clock cut the pod phase at 4.94M, and the record stayed stale through the 7.00M
+  finish.
+- Fix the triager's model-name construction and its labelling of provider 401s as domain
+  verdicts. One confirming mass-assignment pod was exported unsuccessful, which cost
+  GT-007 its identified verdict.
+- Raise or phase the 3600 s pod watchdog. Seventeen of 47 exports die in it.
+- Dispatch the promoted-but-undispatched threats, starting with the stored-XSS threat
+  (risk 6). Fifteen of 27 threats never reached a spec.
+- Add a JNDI/logging-sink class and a double-decoded traversal shape. Those are the two
+  modeller binding misses (004 and 006).
+- Fix the `measure_utm.py` procedure-key read and the unit-agnostic spec join. The 0/7
+  procedure metric and the 118-row threat count are script artifacts, not model gaps.
 
 ## Open issue
 

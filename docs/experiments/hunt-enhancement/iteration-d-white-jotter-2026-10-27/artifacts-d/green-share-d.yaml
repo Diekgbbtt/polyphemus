@@ -1,0 +1,442 @@
+impact:
+  schema: v4
+  legacy_recomputation: false
+  reviewed: true
+  impact_rows: 55
+  threats: 27
+  precursor_rows: 28
+  placeholders: 28
+  capability_rows: 55
+  red: 3
+  green: 27
+  green_share: 0.9
+  threat_share: 0.4909
+  precursor_share: 0.5091
+  placeholder_share: 0.5091
+  capability_share: 1.0
+  cia:
+    confidentiality:
+      none: 39
+      low: 3
+      medium: 7
+      high: 6
+    integrity:
+      none: 38
+      low: 4
+      medium: 10
+      high: 3
+    availability:
+      none: 49
+      low: 2
+      medium: 3
+      high: 1
+  precursors: 0
+  prior_art_reused: 69
+  class_binding_rate: 1.0
+review:
+  units:
+  - unit: AuthorizationSystem
+    scope: in
+    scope_reason: The unit's single row is an authorization-state integrity direction
+      on the target's own attack surface; it uses no volumetric defence, no plain-text
+      channel, and no preliminary step outside the target.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (a disabled role
+        keeps its authority) and is always sufficient.'
+  - unit: IdentificationSystem
+    scope: in
+    scope_reason: The unit's single row is a session and authorization-state integrity
+      direction on the target's own attack surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (a disabled account
+        keeps a fully privileged identification) and is always sufficient.'
+  - unit: RESTApi:actuator-management
+    scope: in
+    scope_reason: The unit's single row is an unauthenticated management-surface write
+      on the target's own attack surface, not a volumetric, plain-text, or external
+      preliminary-step direction.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (unauthenticated
+        logging-configuration change) and is always sufficient.'
+  - unit: Service:article-management
+    scope: in
+    scope_reason: The stored-markup direction acts through the target's own article
+      write and read routes; the reader is reached on the target's own surface, not
+      through an external preliminary step.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (executable markup
+        running in every reader''s browser) and is always sufficient.'
+  - unit: Service:jotter-reading
+    scope: in
+    scope_reason: The unit's single row is a pagination correctness and availability
+      direction on the target's own public reading route, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (published articles
+        unreachable through normal navigation) and is always sufficient.'
+  - unit: Service:operations-telemetry
+    scope: in
+    scope_reason: The unit's single row is an anonymous information-disclosure direction
+      on the target's own management surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (dependency inventory
+        and per-route error map disclosed) and is always sufficient.'
+  - unit: WebPresentation:user-administration::console-pages
+    scope: in
+    scope_reason: Both rows are console-side account-administration integrity directions
+      on the target's own surface; neither needs a volumetric defence, a plain-text
+      channel, or an external preliminary step.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (an account stripped
+        of every role by a save) and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'The false-credential capability is a legitimate hand-off: the concrete
+        end damages it produces (credential destruction and the absence of a recovery
+        path) are filed as threat rows in AuthenticationMechanism and in Service:password-recovery,
+        so this row does not leave an unowned end damage at a capability.'
+  - unit: AuthenticationMechanism
+    scope: in
+    scope_reason: Both rows are session-lifecycle integrity and availability directions
+      on the target's own authentication surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (a live session
+        survives password change and sibling sign-out) and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (a reset reports
+        success while leaving the account able to authenticate with nothing) and is
+        always sufficient.'
+  - unit: IntegrationSystem:cross-origin-policy
+    scope: out
+    scope_reason: The only threat row requires the attacker to first serve content
+      on the developer's localhost:8080 before the victim's browser acts; that is
+      a preliminary step outside the target's own attack surface to gain client-side
+      code control, which the injected scope fence excludes. The unit's rows therefore
+      do not count as assessed damage.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage in the model and
+        is always sufficient as a row, even though the unit is out of scope.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'The route-group map is the honest end of this surface: a foreign
+        origin still receives no Access-Control header, so no unowned concrete end
+        damage is left at a capability.'
+  - unit: RESTApi:api
+    scope: in
+    scope_reason: The rows are registration over-posting and catalogue-query injection
+      directions on the target's own API surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (anonymous sysAdmin
+        account creation) and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (arbitrary database
+        row read through the catalogue query) and is always sufficient.'
+    - id: IA-22
+      mining: sufficient
+      rationale: 'No concrete end damage is achievable from what was observed: every
+        handler failure is an in-body code, but no status-keying consumer (cache,
+        retry, monitor) was found on the target, so the capability is the honest end.'
+    - id: IA-23
+      mining: sufficient
+      rationale: 'No concrete end damage is achievable from what was observed: negative
+        identifiers and pages coerce cleanly to the same empty answer as an out-of-dataset
+        positive identifier, so the capability is the honest end.'
+  - unit: ReverseProxy
+    scope: in
+    scope_reason: The rows are path-normalization, namespace-exposure, forwarding-header,
+      traversal, and request-framing directions on the target's own edge and origin;
+      none is a volumetric, plain-text, or external preliminary-step direction.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (unauthenticated
+        account-roster and role-catalogue read) and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (unauthenticated
+        back-office writes) and is always sufficient.'
+    - id: IA-22
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (unauthenticated
+        heap and configuration disclosure) and is always sufficient.'
+    - id: IA-23
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (client-address
+        spoofing in audit telemetry) and is always sufficient.'
+    - id: IA-24
+      mining: under_mined
+      rationale: 'GT-006 shows a concrete arbitrary file read through /api/file/ was
+        achievable: an encoded traversal sequence reaches /etc/passwd through the
+        same handler, while the row stopped at the capability after its own traversal
+        probes were refused. The exploitation was under-mined.'
+    - id: IA-25
+      mining: sufficient
+      rationale: 'No concrete end damage is achievable from what was observed: the
+        edge refuses both canonical framing disagreements and strips Connection and
+        TE before the origin, so the capability is the honest end.'
+  - unit: Service:book-management
+    scope: in
+    scope_reason: The rows are cover-upload and success-envelope confusion directions
+      on the target's own administrative content surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'No concrete end damage follows: the upload names no stored file
+        and the media route resolves nothing, so the unreferenceable-upload capability
+        is the honest end.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'No concrete end damage follows: the create/replace and failure-envelope
+        confusion has no consumer that acts on the wrong outcome, so the capability
+        is the honest end.'
+  - unit: Service:library-catalog
+    scope: in
+    scope_reason: The rows are public-catalogue disclosure and stored-artifact disclosure
+      directions on the target's own surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (internal media
+        origin disclosed) and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (every catalogue
+        visitor steered to a writer-chosen host) and is always sufficient.'
+    - id: IA-22
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (complete front-end
+        source disclosed anonymously) and is always sufficient.'
+  - unit: Service:media-asset-serving
+    scope: in
+    scope_reason: The row is a media-route availability direction on the target's
+      own surface; it is not a volumetric, plain-text, or external preliminary-step
+      direction.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'The honest end of this exploitation is the broken media route itself:
+        every asset name returns nothing, and the row records that presentation failure
+        rather than stopping short of an achievable security damage.'
+  - unit: Service:navigation-menu
+    scope: in
+    scope_reason: The rows are navigation-catalogue disclosure and per-principal caching
+      directions on the target's own surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (complete back-office
+        navigation map read with no role) and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'No concrete end damage was observed: the payload differs per principal,
+        but no shared cache keying on the URL alone was found, so the cross-principal
+        delivery capability is the honest end.'
+  - unit: Service:password-recovery
+    scope: in
+    scope_reason: The row is an account-availability direction on the target's own
+      recovery surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: The end damage (an account no party can recover) is owned by threat
+        rows in AuthenticationMechanism and WebPresentation:user-administration; this
+        row is a legitimate hand-off, not an unowned stop at a capability.
+  - unit: Service:register
+    scope: in
+    scope_reason: The rows are registration uniqueness, name canonicalisation, and
+      credential policy directions on the target's own registration surface, outside
+      every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (duplicate accounts
+        take the account-administration surface out of service) and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (a shadow principal
+        occupies another account''s display name) and is always sufficient.'
+    - id: IA-22
+      mining: sufficient
+      rationale: 'No concrete end damage follows: the registrant chooses the single-character
+        secret for their own account, and converting it into takeover would need a
+        guessing or stuffing step the scope fences out, so the credential-space capability
+        is the honest end.'
+  - unit: Service:role-permission-administration
+    scope: in
+    scope_reason: The row is a menu-grant integrity direction on the target's own
+      role administration surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'No concrete end damage follows: the error direction narrows a role''s
+        menu set rather than widening authority, and no consumer acts on the false
+        success, so the capability is the honest end.'
+  - unit: Service:sign-in
+    scope: in
+    scope_reason: The rows are authentication-status, session-fixation, identity-canonicalisation,
+      remember-me deserialization, and sign-out directions on the target's own sign-in
+      surface; none is a volumetric or plain-text direction, and none needs an external
+      preliminary step.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (account-name enumeration)
+        and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (positive authentication
+        verdict with no principal) and is always sufficient.'
+    - id: IA-22
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (cross-site sign-out
+        through a tokenless GET) and is always sufficient.'
+    - id: IA-23
+      mining: sufficient
+      rationale: 'No concrete end damage follows from this surface: the pre-login
+        identifier becomes the post-login identifier, but account takeover needs a
+        victim to adopt the pre-set identifier, a separate delivery step, so the elevation
+        capability is the honest end.'
+    - id: IA-24
+      mining: sufficient
+      rationale: 'No concrete end damage follows from what was observed: a case variant
+        authenticates and the session records the caller''s spelling, but every probed
+        route behaves identically, so the capability is the honest end.'
+    - id: IA-25
+      mining: sufficient
+      rationale: 'No concrete end damage follows from this surface: the remember-me
+        decode-decrypt-deserialize path is reachable, but no payload the server accepts
+        could be produced from outside, so the deserialization capability is the honest
+        end.'
+    - id: IA-26
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (attacker-chosen
+        code execution in the origin JVM) and is always sufficient.'
+  - unit: Service:user-administration
+    scope: in
+    scope_reason: The row is a blind account-write direction on the target's own administration
+      surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: The end damages it touches (roster availability and account administration)
+        are already filed by the registration unit's threat row, so this row is a
+        legitimate hand-off rather than an unowned stop at a capability.
+  - unit: WebPresentation:article-management::console-pages
+    scope: in
+    scope_reason: The rows are editor-state integrity, upload-policy, and cover-reset
+      directions on the target's own console surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'Threat row: it carries a CIA-bearing end damage (a stale save replaces
+        an unseen revision) and is always sufficient.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'No concrete end damage follows on this unit''s surface: the upload
+        policy is absent in the console, but the end of that path belongs to the server-side
+        upload route, so the capability is the honest end here.'
+    - id: IA-22
+      mining: sufficient
+      rationale: 'The honest end is the cleared cover address described in the row:
+        the uploader reports success while silently blanking the cover, and no further
+        security damage is achievable from that console component.'
+  - unit: WebPresentation:book-management::console-pages
+    scope: in
+    scope_reason: The row is a silent book-edit failure direction on the target's
+      own console surface, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: The two faults that compose the silent failure are each owned elsewhere
+        (the article console's upload handler and the server's refusal), so the row
+        is a legitimate hand-off rather than an unowned capability.
+  - unit: WebPresentation:jotter-reading::reading-pages
+    scope: in
+    scope_reason: The rows are same-origin request forgery and stale-content presentation
+      directions on the target's own reading page; neither needs an external preliminary
+      step to gain client-side code control.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: The forged same-origin request cannot read data (the response is
+        rendered only into title, date, and content fields) and the surviving end
+        damage (tokenless GET sign-out) is filed as a threat row in Service:sign-in,
+        so the row is a legitimate hand-off.
+    - id: IA-21
+      mining: sufficient
+      rationale: 'No concrete end damage follows: stale rows are the reader''s own
+        previous page and a blank page is content they could not have read anyway,
+        so the presentation capability is the honest end.'
+  - unit: WebPresentation:library-catalog::catalogue-pages
+    scope: in
+    scope_reason: The rows are client-side query-string encoding and failure-presentation
+      directions on the target's own catalogue page, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'No concrete end damage follows: a term with URL syntax makes the
+        reader search for a different term, and the bounds are observed rather than
+        assumed, so the capability is the honest end.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'No concrete end damage follows: an empty catalogue and a refused
+        search render as ordinary views, with no state change or disclosure beyond
+        what the reader could already see, so the capability is the honest end.'
+  - unit: WebPresentation:register::registration-page
+    scope: in
+    scope_reason: The row is a client-side validation and submission-integrity direction
+      on the target's own registration page, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'No concrete end damage follows: the endpoint independently refuses
+        the invalid submissions the form would have stopped, so the client-side gap
+        is the honest end.'
+  - unit: WebPresentation:role-permission-administration::console-pages
+    scope: in
+    scope_reason: The row is a console success-interpretation direction on the target's
+      own role-administration page, outside every fenced category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: The end damages it touches are owned by the API unit's transport-
+        success threat row, so this row is a legitimate hand-off rather than an unowned
+        stop at a capability.
+  - unit: WebPresentation:sign-in::credential-pages
+    scope: in
+    scope_reason: The rows are client-side sign-in failure handling and client-side
+      gating directions on the target's own credential page, outside every fenced
+      category.
+    rows:
+    - id: IA-20
+      mining: sufficient
+      rationale: 'No concrete end damage follows: a request that never reaches an
+        application answer disappears into an empty rejection handler, but no state
+        changes and the victim is the person at the keyboard, so the capability is
+        the honest end.'
+    - id: IA-21
+      mining: sufficient
+      rationale: 'No concrete end damage follows: the stored name is display and gating
+        state only, the session rides an HttpOnly cookie, and every request the mounted
+        view makes is still gated by the server, so the capability is the honest end.'
