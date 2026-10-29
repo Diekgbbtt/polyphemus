@@ -22,14 +22,18 @@ Role/default_role selection resolves over the account record
 settings blob (D223-4). The same selector serves caller-supplied
 {roles, default_role} maps on the backward-recon seam (analysis/anatomy.py).
 
-Fail-open throughout (D223-2): an unresolvable account projects to nothing,
-loudly - collection runs unauthenticated, never blocked.
+The helpers never raise: an unreadable store or a missing record returns an
+empty projection, loudly. The pipeline treats an unresolvable GATEWAY-SELECTED
+account as a fail-closed stop (D223-21), so a projection miss never becomes a
+silent anonymous run.
 """
 from __future__ import annotations
 
 import logging
 import shlex
 from typing import Iterator
+
+from polymerhus.app.auth.probe import resolve_auth_probe
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +74,13 @@ def select_account_role(account: dict | None, role: str | None = None) -> dict:
 
 
 def resolve_account(project_id: str, account_name: str, *, store=None) -> dict:
-    """Read one account record from the shared store (fail-open to {}).
+    """Read one account record from the shared store (empty on a miss).
 
     `store` injects the bucket (tests); None resolves the production
     `AuthStore` lazily, so importing this module performs no I/O. A missing
-    account or an unreadable store is a loud warn, never a raise - the caller
-    runs that job unauthenticated (D223-2)."""
+    account or an unreadable store is a loud warn, never a raise; the pipeline
+    fails closed when the gateway-selected account does not resolve
+    (D223-21)."""
     try:
         if store is None:
             from polymerhus.app.auth.store import AuthStore  # noqa: PLC0415
@@ -86,13 +91,12 @@ def resolve_account(project_id: str, account_name: str, *, store=None) -> dict:
             record = accounts.get(account_name)
             if isinstance(record, dict):
                 return record
-    except Exception:  # noqa: BLE001 - fail-open, loudly
-        logger.warning("auth feed: account %r unresolvable for project %s; "
-                       "running unauthenticated", account_name, project_id,
-                       exc_info=True)
+    except Exception:  # noqa: BLE001 - never a raise; the caller fails closed
+        logger.warning("auth feed: account %r unresolvable for project %s",
+                       account_name, project_id, exc_info=True)
         return {}
-    logger.warning("auth feed: account %r not on record for project %s; "
-                   "running unauthenticated", account_name, project_id)
+    logger.warning("auth feed: account %r not on record for project %s",
+                   account_name, project_id)
     return {}
 
 
@@ -103,7 +107,7 @@ def resolve_overview(project_id: str, *, store=None) -> dict:
     `store` injects the bucket (tests); None resolves the production
     `AuthStore` lazily, so importing this module performs no I/O. A missing
     overview or an unreadable store is a loud warn, never a raise - the
-    caller projects with no headers (D223-2)."""
+    caller projects with no headers."""
     try:
         if store is None:
             from polymerhus.app.auth.store import AuthStore  # noqa: PLC0415
@@ -194,7 +198,8 @@ def project_request_auth(account: dict | None,
 
 
 def project_browser_auth(account: dict | None,
-                         overview: dict | None = None) -> dict:
+                         overview: dict | None = None,
+                         origin: str | None = None) -> dict:
     """Project an account onto browser auth material.
 
     Cookies come from the snapshot and cookie-located tokens. Headers come
@@ -202,9 +207,12 @@ def project_browser_auth(account: dict | None,
     Storage-located tokens group under their `target` origin; a storage token
     with no target is skipped because it cannot be placed in a browser origin.
 
-    An absent/empty overview projects no required headers. A stale
-    `snapshot.headers` bag is never replayed. The result is empty when the
-    account carries no browser material."""
+    The overview's authenticated-context oracle (`auth_probe.url`) is resolved
+    against `origin` and carried as `auth_probe`, so the crawl gate asks the
+    same deterministic question as the gateway. An absent/empty overview
+    projects no required headers and no probe. A stale `snapshot.headers` bag
+    is never replayed. The result is empty when the account carries no browser
+    material."""
     if not isinstance(account, dict):
         return {}
     headers = _parse_required_headers(overview)
@@ -242,6 +250,9 @@ def project_browser_auth(account: dict | None,
         material["headers"] = headers
     if storage:
         material["storage"] = storage
+    probe = resolve_auth_probe(overview, origin)
+    if probe:
+        material["auth_probe"] = probe
     if material:
         credentials = account.get("credentials")
         if isinstance(credentials, dict):

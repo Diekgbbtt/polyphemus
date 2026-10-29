@@ -13,7 +13,7 @@ Read `tools/bootstrap/DATA-DEPENDENCIES.md` first: it is the contract for the ou
 
 - Target checkout: `<web_root>` (contains `<target>/docker-compose.cage.yml`, `<target>/challenge.json`, `<target>/setup_files/`).
 - AuthContext + authn skill (staging project dir = `<staging>/<target>/`):
-  - `<staging>/<target>/auth/overview.yaml` - login mechanism, defences, `http-client-replayability`.
+  - `<staging>/<target>/auth/overview.yaml` - login mechanism, defences, `http-client-replayability`, and `auth_probe` (the authenticated-context oracle).
   - `<staging>/<target>/auth/credentials.yaml` - accounts, secrets, and the persisted session `snapshot` (cookies/headers/tokens).
   - `<staging>/<target>/skills/authn/SKILL.md` (+ `references/`) - the replayable sign-in procedure.
   Read the skill and its `references/` scripts; they are the authoritative login procedure.
@@ -41,9 +41,14 @@ If it is not up, redeploy with `scripts/targetctl build <target> && scripts/targ
 
 Read `<staging>/<target>/auth/overview.yaml` and `<staging>/<target>/auth/credentials.yaml`, then the skill.
 
-1. **Prefer the persisted session.** If the account carries a `snapshot` (cookies/headers) and `http-client-replayability` is `true`, replay that snapshot with `curl` (write the cookies to a jar; set the required headers), then verify the authenticated landing (a post-login route returns the authenticated page, not a bounce to login). This is the persisted session identifier: no re-sign-in.
-2. **Fall back to sign-in.** If the snapshot is missing, expired, or not portable (for example a browser-bound session), execute the skill's sign-in procedure with the account's `credentials` (inject secret values via environment variables, never inline). Verify the authenticated landing and capture the fresh cookies/tokens into a jar for the crawl.
-3. Never crawl the authenticated surface anonymously on a silent fallback: if you cannot authenticate, say so loudly in the report and mark the auth-gated services unobserved with the reason.
+The oracle is `overview.auth_probe.url`, a deployment-neutral path.
+Resolve it against `<base_url>` and treat it as the ONLY authentication verdict: 2xx with no followed redirect passes; 401, 403, or any 3xx fails; anything else is indeterminate and is not a pass.
+A login page is never the oracle.
+
+1. **Prefer the persisted session.** If the account carries a `snapshot` (cookies/headers) and `http-client-replayability` is `true`, replay that snapshot with `curl` (write the cookies to a jar; set the required headers), then request the oracle. This is the persisted session identifier: no re-sign-in.
+2. **Fall back to sign-in.** If the snapshot is missing, expired, or not portable (for example a browser-bound session), execute the skill's sign-in procedure with the account's `credentials` (inject secret values via environment variables, never inline). Re-request the oracle and capture the fresh cookies/tokens into a jar for the crawl.
+3. Never crawl the authenticated surface anonymously on a silent fallback: if the oracle does not pass, say so loudly in the report and mark the auth-gated services unobserved with the reason.
+   Do not substitute an "authenticated landing" heuristic for the oracle.
 
 Keep the authenticated cookie jar for the whole crawl.
 

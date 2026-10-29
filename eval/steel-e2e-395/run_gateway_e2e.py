@@ -362,6 +362,7 @@ async def run(args: argparse.Namespace) -> int:
         "overview": {
             "anti_bot": overview.get("anti-bot"),
             "http_client_replayability": overview.get("http-client-replayability"),
+            "auth_probe": _plain(overview.get("auth_probe")),
             "defences": _plain(overview.get("defences")),
         },
         "skill": {

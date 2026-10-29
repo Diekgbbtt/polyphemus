@@ -27,7 +27,7 @@ Transition table (spec, D223-15):
 |            |                                                                 |                                        | usable account                         |
 | RETRIEVED  | `accounts` read holding a usable account (the empty       | validate the selected account          | VALIDATION on the first probe          |
 |            | full-state read retrieves too, recording grounding alongside)   |                                        |                                        |
-| VALIDATION | first probe (`execute_command`, `steel_exec`, or `replay_http_request`) after RETRIEVED | conclude valid or not_valid | GENERATION on the `not_valid` write; |
+| VALIDATION | first probe (`execute_command`, `steel_exec`, or `replay_http_request`) after RETRIEVED; the browser probe is the oracle | conclude from the oracle: 2xx valid, 401/403/3xx not_valid, else indeterminate | GENERATION on the `not_valid` write; |
 |            |                                                                 |                                        | FINISH on the `valid` write            |
 | GENERATION | `not_valid` write, or a no-usable-account read                  | run the sign-in procedure              | DEBUG at the second attempt call;      |
 |            |                                                                 |                                        | FINISH when sign-in persists state     |
@@ -106,66 +106,66 @@ GROUNDED_HINT = (
 """Injected when grounding completes: retrieve and select the account."""
 
 RETRIEVED_HINT = (
-    "Account selected. Validate it first with the recorded HTTP history "
-    "replay, or by reusing the operator-owned live session, per the branch "
-    "directive. The in-process auth-store view is redacted: never read or "
+    "Account selected. Validate it with the authenticated-context oracle at "
+    "`overview.auth_probe.url`: a browser request in the live session. A 2xx "
+    "passes; 401, 403, or any 3xx fails; anything else is indeterminate and "
+    "does not pass. The in-process auth-store view is redacted: never read or "
     "paste token, cookie, or credential values. Conclude by asserting the "
     "account status valid or not_valid in the store before any sign-in."
 )
-"""Injected on RETRIEVED: validate the selected account."""
+"""Injected on RETRIEVED: validate the selected account with the oracle."""
 
 VALIDATION_HINT = (
-    "Validation probe observed. Conclude it: on a live session assert the "
-    "account status valid; on a dead one assert not_valid; do not read or "
-    "write secret values. The external bootstrap or the crawl provider owns "
-    "raw credential and token capture."
+    "Oracle observed. 2xx: assert the account status valid. 401, 403, or "
+    "any 3xx: assert not_valid, then run the sign-in or mint procedure. "
+    "Indeterminate (network error, 5xx, any other 4xx): do not pass and do "
+    "not fail open; emit the terminal failed verdict with the evidence. The "
+    "gateway never reads secret values."
 )
-"""Injected on the first validation probe: conclude valid or not_valid."""
+"""Injected on the first validation probe: conclude from the oracle."""
 
 GENERATION_HINT = (
-    "The account is asserted not_valid. Run the sign-in procedure from the "
-    "authn skill (recorded request replay or the operator-pre-authenticated "
-    "browser flow per the branch directive). The gateway never reads "
-    "credentials or writes token values; the external bootstrap or crawl "
-    "provider owns them. There is no mechanical attempt cap: keep debugging "
-    "while progress is real; declare the space exhausted through the terminal "
-    "failed verdict when it is not."
+    "The account is asserted not_valid. Run the authn skill's sign-in "
+    "procedure, or mint a new account through its sign-up procedure with "
+    "synthetic identity data. Write the new credentials to the store (writes "
+    "are accepted; reads stay redacted), then re-run the oracle. The gateway "
+    "never reads an existing secret. If the skill provides no sign-in or mint "
+    "path, stop with the terminal failed verdict: do not fail open. There is "
+    "no mechanical attempt cap: keep debugging while progress is real."
 )
-"""Injected on GENERATION: run the sign-in procedure."""
+"""Injected on GENERATION: sign in or mint, then re-run the oracle."""
 
 GENERATION_SIGNIN_HINT = (
-    "No usable account on record. The credential and token capture is the "
-    "external bootstrap's or the crawl provider's; the gateway may reuse an "
-    "operator-pre-authenticated session but must not mint an unauthenticated "
-    "replacement. Run the sign-in procedure only when the skill provides a "
-    "credential-free path; otherwise assert the account not_valid and fail "
-    "open loudly. Never write a browser state reference. There is no "
-    "mechanical attempt cap; declare the space exhausted through the terminal "
-    "failed verdict when no sign-in path remains."
+    "No usable account on record. Mint a new account through the authn "
+    "skill's sign-up procedure with synthetic identity data, write the new "
+    "credentials and status valid, then re-run the oracle. If the skill has "
+    "no mint path, stop with the terminal failed verdict (missing bootstrap "
+    "data dependency); do not fail open and do not mint an unauthenticated "
+    "browser session. Never write a browser state reference."
 )
-"""Injected when the accounts read holds no usable account: sign in to mint."""
+"""Injected when the accounts read holds no usable account: mint one."""
 
 SELF_SERVICE_HINT = (
-    "No usable account and no authn skill bundle. Request-based self-service "
-    "is the external bootstrap's path; the gateway must not read secrets or "
-    "guess credentials. Assert the account not_valid and fail open with the "
-    "missing bootstrap loud in the rationale. A thin description is a "
-    "residual risk, not a licence to invent a login."
+    "No usable account and no authn skill bundle. The sign-in and mint "
+    "procedure is the external bootstrap's data dependency; the gateway must "
+    "not guess credentials or read secrets. Stop with the terminal failed "
+    "verdict and name the missing bootstrap. Do not fail open."
 )
-"""Injected when the skill is missing too: fail-open self-service (D223-17)."""
+"""Injected when the skill is missing too: fail-closed, no self-service."""
 
 DEBUG_HINT = (
-    "Sign-in attempt observed and traced. Adjust one variable and retry, or "
-    "declare the tweaking space exhausted through the terminal failed "
-    "verdict. No cap, no rejection: the span ends on success or exhaustion."
+    "Sign-in or mint attempt observed and traced. Adjust one variable and "
+    "retry, or declare the tweaking space exhausted through the terminal "
+    "failed verdict. No cap, no rejection: the span ends on a passing oracle "
+    "or exhaustion."
 )
 """Injected per attempt in DEBUG: trace, tweak, or declare exhausted."""
 
 FINISH_HINT = (
-    "Authenticated state persisted. Run the outer loop: re-read the authn "
-    "skill, judge what this target taught (a blocking condition, a replay "
-    "fact, a selector fix), and write the reusable part back through "
-    "write_skill. Then emit the gateway verdict."
+    "The oracle passed and the authenticated state is persisted. Run the "
+    "outer loop: re-read the authn skill, judge what this target taught (a "
+    "blocking condition, a replay fact, a selector fix), and write the "
+    "reusable part back through write_skill. Then emit the gateway verdict."
 )
 """Injected on FINISH: judge the skill, then emit the verdict."""
 
@@ -524,16 +524,21 @@ An absent or null mechanism is UNKNOWN, not a positive no-auth statement."""
 
 SURFACE_DECLARING_KEYS = frozenset({
     "login_endpoint", "defences", "anti-bot", "required_headers",
-    "fingerprinting", "technical_conditions",
+    "fingerprinting", "technical_conditions", "auth_probe",
 })
 """The overview fields that declare an authenticated surface when they carry a
-real value (#339). The free-text `notes` and the derived
-`http-client-replayability` fact never declare one; `mechanism` is checked
-separately because an explicit no-mechanism is not a surface."""
+real value (#339, extended 2026-10-29 with the oracle). The free-text `notes`
+and the derived `http-client-replayability` fact never declare one;
+`mechanism` is checked separately because an explicit no-mechanism is not a
+surface."""
 
-GatePath = Literal["run_loop", "no_auth_surface", "missing_credentials"]
-"""The gateway's pre-turn gate: run the authn loop, skip it (anonymous), or
-stop the run (missing prerequisite)."""
+GatePath = Literal["run_loop", "no_auth_surface"]
+"""The gateway's pre-turn gate: run the authn loop, or skip it (anonymous).
+
+A declared surface with no accounts no longer stops the gate: the orchestrator
+runs the loop and mints a new account through the authn skill's sign-up
+procedure. A missing mint/sign-in data dependency stops the run at the
+terminal verdict, not here (D223-21)."""
 
 
 def _declares_mechanism(overview: Mapping[str, Any]) -> bool:
@@ -588,14 +593,14 @@ def classify_gate(overview: Any, accounts: Any) -> GatePath:
     from the target's behaviour: any accounts at all run the loop (even
     all-known-bad ones - the loop judges, the gate does not); with no
     accounts, a marked or undeclared surface is the expected-shape anonymous
-    path, while a declared surface with no credentials is the missing
-    prerequisite that stops the run. Never raises: garbage runs the loop."""
+    path, while a declared surface runs the loop so the orchestrator can mint
+    a new account. Never raises: garbage runs the loop."""
     try:
         if isinstance(accounts, Mapping) and accounts:
             return "run_loop"
         if has_no_auth_marker(overview) or not declares_auth_surface(overview):
             return "no_auth_surface"
-        return "missing_credentials"
+        return "run_loop"
     except Exception:  # noqa: BLE001 - the gate never breaks the run
         logger.warning("authn loop gate degraded on %r", overview)
         return "run_loop"
@@ -619,12 +624,12 @@ class GatewayVerdict(BaseModel):
 
     `outcome` stays the D223-3 pair plus the first-class anonymous path: a
     failed authentication (`failed`, the exhausted sign-in space included)
-    runs collection unauthenticated, loudly (D223-2); `anonymous` is the
+    stops the run with no collection (D223-21); `anonymous` is the
     no-authenticated-surface finding, not a failure. No cross-field
-    validation by design (fail-open): an `authenticated` verdict without an
-    account runs the pipeline unauthenticated, loudly, rather than degrading
-    the turn."""
-    # the D223-2 fail-open default: a degraded turn parses to failed, never anonymous
+    validation by design: an `authenticated` verdict without an account is a
+    contradiction the pipeline treats as a fail-closed stop, never an
+    unauthenticated run."""
+    # the fail-closed default: a degraded turn parses to failed, never anonymous
     outcome: Literal["authenticated", "anonymous", "failed"] = "failed"
     account: str | None = Field(default=None)
     branch: VerdictBranch = "request"

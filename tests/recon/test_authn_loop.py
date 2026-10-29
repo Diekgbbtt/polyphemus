@@ -369,9 +369,12 @@ def test_no_auth_marker_is_structural_mechanism_none():
     assert L.has_no_auth_marker(None) is False
 
 
-def test_gate_declared_surface_without_accounts_is_missing_credentials():
-    assert L.classify_gate({"login_endpoint": "https://x/login"}, {}) == "missing_credentials"
-    assert L.classify_gate({"anti-bot": "waf:x"}, {}) == "missing_credentials"
+def test_gate_declared_surface_without_accounts_runs_the_loop_to_mint():
+    # D223-21: the orchestrator mints a new account through the authn skill's
+    # sign-up procedure; the terminal failed verdict is the stop, not the gate.
+    assert L.classify_gate({"login_endpoint": "https://x/login"}, {}) == "run_loop"
+    assert L.classify_gate({"anti-bot": "waf:x"}, {}) == "run_loop"
+    assert L.classify_gate({"auth_probe": {"url": "/api/me"}}, {}) == "run_loop"
 
 
 def test_gate_marker_wins_over_a_declared_surface():

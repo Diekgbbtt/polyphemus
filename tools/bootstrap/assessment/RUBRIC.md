@@ -97,8 +97,9 @@ Metrics: `kb_services_missing_in_surface`, `auth_edge_coverage`, `extra_surface_
 
 **D1 `auth.structure`** (deterministic, the validator's checks).
 `auth/overview.yaml`, `auth/credentials.yaml`, and `skills/authn/SKILL.md`.
-Anchors: 4 = no validator errors and >= 2 accounts and the skill present; 3 = no errors and >= 1 account; 2 = no errors, zero accounts (a valid unauthenticated target); 1 = validator errors but some artifact present; 0 = nothing.
-Metrics: `validator_errors`, `n_accounts`, `skill_present`, `overview_present`.
+An authenticated target also needs `auth_probe.url`, the 2xx-only oracle (2xx authenticated, 401/403/3xx not).
+Anchors: 4 = no validator errors, >= 2 accounts, the skill present, and the oracle present; 3 = no errors, >= 1 account, and the oracle present; 2 = no errors, zero accounts (a valid unauthenticated target); 1 = validator errors or an authenticated target missing the oracle; 0 = nothing.
+Metrics: `validator_errors`, `n_accounts`, `skill_present`, `auth_probe_present`, `overview_present`.
 
 ### Family E - research artifacts and integrity
 

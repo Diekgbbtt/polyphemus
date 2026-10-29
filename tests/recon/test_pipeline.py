@@ -845,8 +845,7 @@ def test_no_mid_run_steering_inputs_pass_unfiltered_and_no_steering_key(monkeypa
     class _Gateway:
         async def run_gateway(self, **kw):
             from polymerhus.recon.control.authn_loop import GatewayVerdict
-            return GatewayVerdict(outcome="authenticated", account="alice",
-                                  branch="request", rationale="t")
+            return GatewayVerdict(outcome="anonymous", rationale="steering fixture")
 
         async def stop(self): pass
 
@@ -955,6 +954,7 @@ def test_pipeline_default_seam_is_the_gateway_actor_and_reaps_it(monkeypatch, tm
         load_settings=lambda pid: {"target_domain": "*.example.com"},
         registry=FakeRegistry(),
         read_assets=fake_read_assets,
+        auth_store=store,
     ))
 
     assert spawned == ["r1"]                    # ONE actor per run (production default)
@@ -1007,7 +1007,8 @@ def test_cancelling_the_pipeline_writes_a_stopped_terminal_not_complete(monkeypa
 
     class _Gateway:
         async def run_gateway(self, **kw):
-            return None
+            from polymerhus.recon.control.authn_loop import GatewayVerdict
+            return GatewayVerdict(outcome="anonymous", rationale="no surface")
 
         async def stop(self):
             pass
@@ -1050,7 +1051,8 @@ def test_cancelling_during_teardown_still_writes_a_stopped_terminal(monkeypatch)
 
     class _Gateway:
         async def run_gateway(self, **kw):
-            return None
+            from polymerhus.recon.control.authn_loop import GatewayVerdict
+            return GatewayVerdict(outcome="anonymous", rationale="no surface")
 
         async def stop(self):
             teardown_started.set()

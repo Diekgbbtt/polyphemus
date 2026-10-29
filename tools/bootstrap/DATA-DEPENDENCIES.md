@@ -9,7 +9,9 @@ Three data dependencies per target, the N12 work items of the eval harness:
 
 1. **L1 surface** - the target's business-function `Service`s and cross-cutting `System`s, grounded on the real deployed target.
    Consumed now as `operator_kb.md` (structured prose) through the platform scaffold (`src/polymerhus/analysis/scaffold.py`; the eval CLI wrapper is `eval/scaffold.py`); also emitted as a graph-ready RDF dataset (`l1-surface.yaml`).
-2. **AuthContext** - the store's `overview` (login mechanism, defences, required headers, anti-bot, replayability) and `accounts` (credentials, tokens, roles).
+2. **AuthContext** - the store's `overview` (login mechanism, defences, required headers, anti-bot, replayability, authenticated-context oracle) and `accounts` (credentials, tokens, roles).
+   The oracle is `auth_probe.url`: a deployment-neutral path that answers 2xx only with an authenticated context, and 401, 403, or 3xx without one.
+   It is the recon gateway's only pass/fail signal for authentication.
    Consumed inline through `target_config.auth` -> `PUT /projects/{id}/auth`.
 3. **Project authn skill** - the replayable sign-in/sign-up procedure bundle.
    Consumed as text through `target_config.auth.authn_skill` -> `<data_root>/<project_id>/skills/authn/SKILL.md`.
@@ -34,7 +36,7 @@ eval/data/webexploitbench/<target>/
 eval/data-dependencies/
   <project_id>/         # placeholder project id (the target name; remapped to the real eval project id at wire time)
     auth/
-      overview.yaml     # AuthContext overview - SECRET-BEARING when it carries tokens; never commit
+      overview.yaml     # AuthContext overview (includes auth_probe: {url}) - SECRET-BEARING when it carries tokens; never commit
       credentials.yaml  # AuthContext accounts - SECRET-BEARING; never commit
     skills/
       authn/
@@ -174,7 +176,7 @@ Rules:
 One creator subagent per target.
 The order is **authn first, L1 second**: the L1 crawl is authenticated, so the authn artifacts must exist before it runs.
 
-- **Phase 1 (authn)** - deploy the target locally, then run the `authn-skill-writing` meta-skill P0-P6 against it; write `auth/{overview.yaml,credentials.yaml}` + `skills/authn/`, including the persisted session `snapshot`. Leave the target running. STOP.
+- **Phase 1 (authn)** - deploy the target locally, then run the `authn-skill-writing` meta-skill P0-P6 against it; write `auth/{overview.yaml,credentials.yaml}` + `skills/authn/`, including the persisted session `snapshot` and the proved `auth_probe` oracle (2xx authenticated, 401/403/3xx anonymous). Leave the target running. STOP.
 - **Phase 2 (L1, authenticated)** - the same creator is resumed; it reads the AuthContext + skill, authenticates by replaying the persisted session snapshot (falling back to the skill's sign-in procedure with credentials when the snapshot is stale or not portable), then crawls both the anonymous and the post-login surface into `operator_kb.md` + `l1-surface.yaml` + `surface-map.md`/`research-notes.md`. STOP.
 
 Why this order:

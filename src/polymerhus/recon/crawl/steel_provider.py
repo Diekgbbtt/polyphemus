@@ -56,6 +56,7 @@ import time
 import uuid
 from urllib.parse import parse_qsl, urlparse
 
+from polymerhus.app.auth.probe import classify_probe
 from polymerhus.app.steel_endpoint import steel_browser_api_url
 from polymerhus.app.steel_session import SteelSession
 from polymerhus.app.steel_session_state import (
@@ -575,11 +576,58 @@ class SteelCrawlProvider:
 
         await ctx.route("**/*", _add_headers)
 
+    async def _probe_auth_gate(self, crawl: _Crawl) -> dict | None:
+        """Ask the authenticated-context oracle from the live page (#223).
+
+        A browser `fetch` carries the session cookies and exposes the truth
+        the navigation envelope hides: a followed 302 reports success and a
+        2xx URL, but `redirected` is true. The oracle contract is fixed:
+        2xx passes, 401/403/3xx fails, anything else is indeterminate and
+        fails the gate loudly. Returns None when no oracle is recorded, so
+        the legacy surface gate stays the fallback for old records."""
+        probe = self._browser_auth.get("auth_probe")
+        if not isinstance(probe, str) or not probe:
+            return None
+        try:
+            result = await crawl.page.evaluate(
+                """async (url) => {
+                    try {
+                        const r = await fetch(url, {
+                            redirect: 'follow',
+                            credentials: 'include',
+                            cache: 'no-store',
+                        });
+                        return {status: r.status, redirected: r.redirected, url: r.url};
+                    } catch (err) {
+                        return {error: String(err)};
+                    }
+                }""",
+                probe,
+            )
+        except Exception as exc:  # noqa: BLE001 - a broken probe fails the gate
+            logger.warning("auth probe raised for %s: %s", probe, exc)
+            return {"authenticated": False, "reason": "auth_probe_error"}
+        if not isinstance(result, dict) or "error" in result:
+            return {"authenticated": False, "reason": "auth_probe_error"}
+        outcome = classify_probe(
+            status=result.get("status"),
+            redirected=bool(result.get("redirected")),
+        )
+        if outcome == "authenticated":
+            return {"authenticated": True, "signal": "auth_probe"}
+        if outcome == "unauthenticated":
+            return {"authenticated": False, "reason": "auth_probe_unauthenticated"}
+        return {"authenticated": False, "reason": "auth_probe_indeterminate"}
+
     async def _check_auth_gate(self, crawl: _Crawl, status: int) -> None:
         """Evaluate the gate once, on the first authenticated navigation."""
         if not crawl.auth_required or crawl.auth_checked:
             return
         crawl.auth_checked = True
+        probe_result = await self._probe_auth_gate(crawl)
+        if probe_result is not None:
+            crawl.auth_result = probe_result
+            return
         local_storage: dict = {}
         try:
             current = await crawl.page.evaluate(

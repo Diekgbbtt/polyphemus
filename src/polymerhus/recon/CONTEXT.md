@@ -185,9 +185,10 @@ the authn loop over the armed surface - closing with the structured
 wall-clock bound, then configures from it: browser-only prunes the plan to the Steel
 crawl, and the selected account's identifier rides the pipeline state (`extra`
 `auth_account` on `use_auth` jobs, never the material) for the feed to resolve.
-Mid-run steering is removed entirely (#243, D223-12); a degraded
-gateway fails open (every phase, unauthenticated, loudly); missing credentials stop the
-run loudly (`GatewayStop`, fail-close).
+Mid-run steering is removed entirely (#243, D223-12); a degraded gateway or a
+failed/indeterminate oracle stops the run (fail-closed, D223-21); a declared
+surface with no accounts runs the loop so the orchestrator can mint; a missing
+bootstrap prerequisite stops the run loudly (`GatewayStop`).
 _Status_: registered `session` (`LLM_JOB_ORCHESTRATOR`).
 _Avoid_: planner; mid-run routing.
 
@@ -226,6 +227,9 @@ _Avoid_: a closed vendor enum (the vendor space is open; research the block patt
 
 **HTTP-client replayability** (`overview.http-client-replayability`), #237:
 The optional typed fact stating whether the browser-trusted authenticated context replays through a plain HTTP client: `true` (replayable, its static/dynamic continuation facts carried in the authn skill) or `false` (browser-only), validated by `validate_overview`; unset means UNKNOWN and is deliberately distinct from `false`.
+
+**Authenticated-context oracle** (`overview.auth_probe`), 2026-10-29:
+The optional `{url}` record of the one URL that answers 2xx only with an authenticated context, validated by `validate_overview` as a deployment-neutral path (or an absolute agent-minted URL). A browser request to it is the ONLY authentication verdict: 2xx with no followed redirect is authenticated; 401, 403, or any 3xx is not; anything else is indeterminate and stops the run. The external bootstrapper proves both polarities; the model-facing read and the browser feed resolve the path against the project's canonical origin. A 3xx never passes, even when a browser follows it to a 200 page.
 _Avoid_: reading absence as false (unknown is a third state).
 
 **Continuation facts** (static vs dynamic shape elements), #237:
@@ -271,16 +275,16 @@ The project-authored skill (no canonical catalogue copy) that the meta skill `me
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 **Auth feed** (#223 T4 #243, D223-19):
-How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the per-account session-state reference (`extra["steel_state"]`, restored into the SDK `session_context` and captured before release) and the browser auth material (`extra["browser_auth"]`: cookies, required headers, header-located tokens, and storage-located tokens) for the agent-driven crawl; nothing for non-auth jobs. The browser gates the replication attempt on application state or on an authenticated-surface response; a failed gate is `auth_replication_failed` with reduced coverage. The request-cookie subset remains for request tools. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
+How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the per-account session-state reference (`extra["steel_state"]`, restored into the SDK `session_context` and captured before release) and the browser auth material (`extra["browser_auth"]`: cookies, required headers, header-located tokens, and storage-located tokens) for the agent-driven crawl; nothing for non-auth jobs. The browser gates the replication attempt on the recorded authenticated-context oracle (`overview.auth_probe`); without one it keeps the legacy surface gate and records the missing oracle loudly. A failed gate is `auth_replication_failed` with reduced coverage. The request-cookie subset remains for request tools. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
 The browser path does not treat session state as auth evidence; it replicates auth material and verifies the result (#395, D20).
 _Avoid_: threading material through the pipeline state (the identifier rides; the projection resolves per phase).
 
 **Authn loop** (the auth gateway, #223):
 The recon orchestrator's pre-pipeline stateful turn - used by that role only - that establishes or validates the run's auth state against the auth store BEFORE the pipeline is configured: one ReAct turn with a hunting-style passive state machine over its own tool calls (`recon/control/authn_loop.py`: GROUNDED -> RETRIEVED -> VALIDATION -> GENERATION -> DEBUG -> FINISH; detection pure of the observed call, pushes never gating, hints riding the triggering tool result only inside `<authn-loop-hint>`), closing with the structured gateway verdict.
 The verdict (`GatewayVerdict`: `outcome` authenticated | anonymous | failed, `account` identifier-only, `branch` request | browser_only, run-scoped `replayability_resolved` / `replayability`, `rationale`) carries the selected account identifier, the no-auth-surface finding, or the failure mode; the orchestrator alone prunes phases and configures the pipeline from it (mid-run steering is retired, D223-12), and the account identifier - never its material - rides the pipeline state for lazy per-phase resolution by each phase's tool configuration (D223-19).
-The pre-loop branch directive follows the four-way overview contract (`request` | `browser_only` | `request_browser_first` | `resolve_in_loop`, D223-11); the null case resolves in-loop, is logged loudly, and is persisted to the overview by the loop (D220-12).
+The pre-loop branch directive follows the four-way overview contract (`request` | `browser_only` | `request_browser_first` | `resolve_in_loop`, D223-11); the null case resolves in-loop, is logged loudly, and is persisted to the overview by the loop (D220-12). Independently of the directive, the session verdict is the authenticated-context oracle; a failed or indeterminate oracle stops the run, and a declared surface with no accounts runs the loop so the orchestrator can mint (D223-21).
 An empty store with no authenticated surface is the expected shape with its own path - loop skipped, pipeline run anonymously, verdict records it (D223-17, #242 settled; discriminator corrected #339).
-A surface is declared only by the real surface fields (an endpoint, a real `mechanism`, defences, `anti-bot`, required headers, fingerprinting, technical conditions); the derived `http-client-replayability` fact and free-text `notes` never declare one, and an explicit no-mechanism (`mechanism: none`) is the structural no-auth marker (the legacy `notes` substring stays honoured).
+A surface is declared only by the real surface fields (an endpoint, a real `mechanism`, defences, `anti-bot`, required headers, fingerprinting, technical conditions, `auth_probe`); the derived `http-client-replayability` fact and free-text `notes` never declare one, and an explicit no-mechanism (`mechanism: none`) is the structural no-auth marker (the legacy `notes` substring stays honoured).
 A declared surface with no accounts fail-closes by stopping.
 _Avoid_: a per-job auth loop (the job-specialised agents never authenticate, D223-5); a "coverage exhausted" verdict state (exhaustion is a failed authentication, D223-3); re-adding mid-run auth steering.
 

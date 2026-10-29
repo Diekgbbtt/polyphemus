@@ -25,13 +25,15 @@ observes the turn's own tool calls, detection is a pure function of each
 call, pushes never gate or reject (the no-block invariant), and each
 transition hint rides its TRIGGERING tool result only.
 
-Fail-open (D223-10): the gateway rides the harness failure suite; when that
-is exhausted the run proceeds unauthenticated with all phases, loudly. The
-gateway-specific requirements live here: the await is bounded in wall-clock
-time and drains rather than leaving a stale reply, wrong-schema replies are
-logged loudly, and the missing-data gate discriminates structurally before
-any turn (no-auth-surface skips the loop and records itself; missing
-credentials stop the run loudly via `GatewayStop`, outside D223-2 fail-open).
+Fail-closed (D223-21): the gateway rides the harness failure suite; when that
+is exhausted the turn returns a `failed` verdict and the pipeline stops
+collection. The gateway-specific requirements live here: the await is bounded
+in wall-clock time and drains rather than leaving a stale reply, wrong-schema
+replies are logged loudly, and the missing-data gate discriminates
+structurally before any turn (no-auth-surface skips the loop and records
+itself; a declared surface with no accounts runs the loop so the orchestrator
+can mint; a missing bootstrap prerequisite stops the run loudly via
+`GatewayStop`).
 """
 from __future__ import annotations
 
@@ -151,34 +153,46 @@ def build_authn_loop_middleware():
 # static discipline lives in the prompt file; only the run facts vary here).
 _BRANCH_MANNER = {
     "request": (
-        "No blocking defence recorded. Validate with the recorded HTTP "
-        "history replay (`search_http_history`, then `replay_http_request`); "
-        "the in-process auth-store view is redacted, so never read or paste "
-        "token values. The request material is applied server-side. Request "
-        "phases stay released."),
+        "No blocking defence recorded. Validate the loaded session with the "
+        "authenticated-context oracle at `overview.auth_probe.url`: a browser "
+        "request in the live session. 2xx passes; 401, 403, or any 3xx fails; "
+        "anything else is indeterminate and stops the run. Then validate the "
+        "request material with the recorded HTTP history replay "
+        "(`search_http_history`, then `replay_http_request`); the in-process "
+        "auth-store view is redacted, so never read or paste token values. "
+        "The request material is applied server-side. Request phases stay "
+        "released."),
     "browser_only": (
         "Browser-only target (the defence is not HTTP-replayable). Validate "
-        "EXCLUSIVELY through the Steel path. Reuse the operator-owned live "
-        "session named by the authn skill. Do not start a replacement: a "
-        "start on a live name is refused with session_taken, and a loss "
-        "(session_missing) needs state-restoring recreation, not a blank "
-        "session. Navigate, verify. Never use request tools. You never write "
-        "a browser state reference; only the crawl provider captures state. "
-        "Request phases will be pruned; only the Steel crawl runs."),
+        "EXCLUSIVELY through the oracle in the Steel path. Reuse the "
+        "operator-owned live session named by the authn skill. Do not start a "
+        "replacement: a start on a live name is refused with session_taken, "
+        "and a loss (session_missing) needs state-restoring recreation, not a "
+        "blank session. A 2xx oracle passes; 401, 403, or 3xx fails. On a "
+        "failure, sign in or mint a new account through the authn skill's "
+        "sign-up procedure with synthetic identity data, then prove the oracle "
+        "again. A failed or indeterminate oracle stops the run. Never use "
+        "request tools. You never write a browser state reference; only the "
+        "crawl provider captures state. Request phases will be pruned; only "
+        "the Steel crawl runs."),
     "request_browser_first": (
-        "Replayable defence. Reuse the operator-owned live session for the "
-        "browser validation; the request material is applied server-side by "
-        "the pipeline. Do not read or compare token values. Then release "
-        "request collection."),
+        "Replayable defence. Validate the session with the oracle at "
+        "`overview.auth_probe.url` first. Reuse the operator-owned live "
+        "session; the request material is applied server-side by the "
+        "pipeline. Do not read or compare token values. On a failed oracle, "
+        "sign in or mint a new account through the authn skill's sign-up "
+        "procedure with synthetic identity data, then prove the oracle again. "
+        "Then release request collection."),
     "resolve_in_loop": (
         "Replayability UNKNOWN. Resolve it with the recorded HTTP history "
         "replay: replayable releases the request branch (record replayability "
         "true), not replayable prunes to browser-only (record false). If no "
         "captured artifact exists, do not read secrets and do not invent a "
-        "result; fail open with the unknown fact loud. Persist the resolved "
-        "fact to the overview with an auth_store write (your write merges; the "
-        "operator stamp stays), and record the resolution loudly in the "
-        "rationale and verdict."),
+        "result; record the fact as unresolved and loud. The oracle still "
+        "decides whether the session is authenticated; an unresolved request "
+        "fact never forces a fail-open. Persist any resolved fact to the "
+        "overview with an auth_store write (your write merges; the operator "
+        "stamp stays), and record it in the rationale and verdict."),
 }
 
 
@@ -192,14 +206,18 @@ def _gateway_human(*, project_id: str, directive: str, candidate: str | None) ->
     selection = (
         f"Candidate account (most recently updated usable): {candidate}."
         if candidate else
-        "No usable account on record: mint one through the sign-in procedure.")
+        "No usable account on record: mint one through the authn skill's "
+        "sign-up procedure with synthetic identity data, write its "
+        "credentials, then prove the oracle.")
     return HumanMessage(content=(
         f"Auth gateway for project {project_id}.\n\n"
         f"Branch directive: {directive}.\n{manner}\n\n"
         f"{selection}\n\n"
-        "Ground (overview read + authn skill load), validate before sign-in, "
-        "assert the outcome in the store, run the outer skill-judging loop, "
-        "then emit the GatewayVerdict."))
+        "Ground (overview read + authn skill load), validate with the "
+        "authenticated-context oracle before sign-in, sign in or mint on a "
+        "failed oracle, assert the outcome in the store, run the outer "
+        "skill-judging loop, then emit the GatewayVerdict. A failed or "
+        "indeterminate oracle stops the run; never fail open."))
 
 
 # --- the mailbox actor ------------------------------------------------------------
@@ -208,10 +226,11 @@ _GATEWAY_KIND = "gateway"
 _REPLY_KIND = "gateway_verdict"
 _REPLY_SOURCE = "recon-orchestrator"
 
-# The wall-clock bound on the gateway await (D223-10): a hung turn returns
-# None (fail-open, loudly) instead of stalling run start. Sized above any
-# legitimate sign-in span - the turn's own harness bounds (recursion limit,
-# escalating per-attempt budgets) own turn length; this only bounds the WAIT.
+# The wall-clock bound on the gateway await (D223-10, amended by D223-21): a
+# hung turn returns a failed verdict (fail-closed, loudly) instead of stalling
+# run start. Sized above any legitimate sign-in span - the turn's own harness
+# bounds (recursion limit, escalating per-attempt budgets) own turn length;
+# this only bounds the WAIT.
 GATEWAY_AWAIT_TIMEOUT_S = 3600.0
 
 # How long `run_gateway` waits, after receiving the turn's reply, for the
@@ -222,10 +241,12 @@ TURN_SETTLE_TIMEOUT_S = 30.0
 
 
 class GatewayStop(Exception):
-    """The fail-close stop: the project declares an auth surface but stores
-    no credentials at all - a missing bootstrap prerequisite, not a gateway
-    failure, so D223-2 fail-open collection does not apply. The pipeline
-    catches this, marks the run failed loudly, and runs nothing."""
+    """The fail-close stop for a missing bootstrap prerequisite.
+
+    A declared auth surface with no usable account and no mint/sign-in data
+    dependency is not a gateway failure; the pipeline catches this, marks the
+    run failed loudly, and runs nothing. Authentication failure always stops
+    collection (D223-21); it never fails open."""
 
 
 async def _fetch_kali_tools() -> list:
@@ -264,10 +285,10 @@ class ReconOrchestratorActor:
     `auth_store` / `skill_store` / `kali_tools` inject fakes (tests); None
     resolves the production collaborator lazily in `_ensure_started` (MCP
     fetch for the Kali tools) or at the gateway pre-read (tool-owned project
-    scope). Fail-open: a dead/crashed actor (LLM error, parse error, harness
-    error, bounded-await timeout) maps to a None verdict - the pipeline runs
-    every phase unauthenticated, loudly - except the missing-credentials
-    prerequisite, which stops the run via `GatewayStop`."""
+    scope). Fail-closed (D223-21): a dead/crashed actor (LLM error, parse
+    error, harness error, bounded-await timeout) maps to None and then to a
+    `failed` verdict, so the pipeline stops collection; a missing bootstrap
+    prerequisite stops the run via `GatewayStop`."""
 
     def __init__(
         self,
@@ -364,8 +385,8 @@ class ReconOrchestratorActor:
         self._replies = replies
         # The delivery pair (#186): the middleware posts the turn's REAL
         # `GatewayVerdict`; the degraded_hook posts a no-decision reply when the
-        # turn exhausts its retry budget, so the pipeline's fail-open fires
-        # per-turn and a dead turn never hangs the gateway await.
+        # turn exhausts its retry budget, so the gateway returns `failed` and
+        # the pipeline stops collection; a dead turn never hangs the await.
         middleware, degraded_hook = build_inbox_delivery(
             replies, kind=_REPLY_KIND, source=_REPLY_SOURCE
         )
@@ -456,11 +477,12 @@ class ReconOrchestratorActor:
             return STOP
         return None
 
-    async def run_gateway(self, *, project_id: str | None = None) -> "GatewayVerdict | None":
+    async def run_gateway(self, *, project_id: str | None = None) -> "GatewayVerdict":
         """Run the gateway: gate on the store state, take at most one turn,
-        return the typed verdict. Fail-open to None on any turn failure (the
-        pipeline runs every phase unauthenticated, loudly); fail-CLOSED via
-        `GatewayStop` only on the missing-credentials prerequisite."""
+        return the typed verdict. A turn failure returns a `failed` verdict:
+        authentication failures stop collection (D223-21), never fail open.
+        `GatewayStop` remains the explicit fail-close stop for a caller that
+        proves a missing bootstrap prerequisite before the turn."""
         from polymerhus.app.auth.store import AuthStore  # noqa: PLC0415
         from polymerhus.app.auth.records import select_recent_usable_account  # noqa: PLC0415
 
@@ -483,17 +505,6 @@ class ReconOrchestratorActor:
                 outcome="anonymous",
                 rationale="No authenticated surface on record (empty store); "
                           "pipeline runs anonymously.")
-        if gate == "missing_credentials":
-            # D223-17: a missing prerequisite, not a gateway failure - D223-2
-            # fail-open does not apply. Stop the run loudly.
-            logger.error(
-                "auth gateway: project %s declares an auth surface but stores "
-                "no credentials; stopping the run (fail-close: seed accounts via "
-                "PUT /projects/%s/auth)", pid, pid)
-            raise GatewayStop(
-                f"auth gateway: project {pid!r} declares an auth surface but "
-                "stores no credentials; seed accounts via "
-                f"PUT /projects/{pid}/auth and re-run")
         directive = select_branch(overview)
         if directive == "resolve_in_loop":
             # D223-11 as amended by D220-12: the loop resolves the unknown
@@ -526,13 +537,19 @@ class ReconOrchestratorActor:
         except GatewayStop:
             raise
         except Exception:
-            logger.warning("auth gateway turn failed for project %s; "
-                           "fail-open: pipeline runs unauthenticated", pid, exc_info=True)
-            return None
+            logger.error("auth gateway turn failed for project %s; "
+                         "fail-closed: collection will not run", pid, exc_info=True)
+            return GatewayVerdict(
+                outcome="failed",
+                rationale="Gateway turn failed before producing a verdict; "
+                          "collection stops (fail-closed).")
         if verdict is None:
-            logger.warning("auth gateway: no verdict for project %s; fail-open: "
-                           "pipeline runs every phase unauthenticated", pid)
-            return None
+            logger.error("auth gateway: no verdict for project %s; "
+                         "fail-closed: collection will not run", pid)
+            return GatewayVerdict(
+                outcome="failed",
+                rationale="Gateway produced no verdict; collection stops "
+                          "(fail-closed).")
         if verdict.replayability_resolved:
             logger.warning(
                 "auth gateway: project %s in-loop replayability resolved to %s "
@@ -545,11 +562,12 @@ class ReconOrchestratorActor:
         """Await the gateway turn's verdict, bounded in wall-clock time (D223-10).
 
         Races the reply against the actor task: a dead actor maps to None
-        (fail-open) rather than hanging; a live-but-hung turn maps to None at
-        the bound WITHOUT cancelling the turn (its harness bounds own turn
-        length) and WITHOUT leaving a stale reply (the inbox drains
-        best-effort; the actor is per-run, so no later consumer exists). A
-        reply whose content parses to the wrong schema is logged LOUDLY."""
+        (the caller returns `failed`) rather than hanging; a live-but-hung
+        turn maps to None at the bound WITHOUT cancelling the turn (its
+        harness bounds own turn length) and WITHOUT leaving a stale reply
+        (the inbox drains best-effort; the actor is per-run, so no later
+        consumer exists). A reply whose content parses to the wrong schema is
+        logged LOUDLY."""
         reply_task = asyncio.ensure_future(self._replies.get())
         try:
             # `asyncio.wait` (not `wait_for`) is the precise primitive here:
@@ -571,17 +589,17 @@ class ReconOrchestratorActor:
                 if isinstance(content, GatewayVerdict):
                     return content
                 if content is None:
-                    return None  # the degraded no-decision reply: fail-open
+                    return None  # the degraded no-decision reply; the caller fails closed
                 logger.warning(
                     "auth gateway wrong-schema reply (expected GatewayVerdict, "
-                    "got %s): %r; fail-open to no verdict",
+                    "got %s): %r; no verdict, the caller fails closed",
                     type(content).__name__, str(content)[:500])
                 return None
             if self._task.done():
-                return None  # the actor task finished first: dead actor, fail-open
+                return None  # the actor task finished first: dead actor; the caller fails closed
             logger.warning(
                 "auth gateway await timed out after %.0fs with a live turn; "
-                "fail-open to no verdict (the turn continues under its harness "
+                "no verdict, fail-closed (the turn continues under its harness "
                 "bounds; no stale reply is left behind)",
                 GATEWAY_AWAIT_TIMEOUT_S)
             return None

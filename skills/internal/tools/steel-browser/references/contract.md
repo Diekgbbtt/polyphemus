@@ -123,6 +123,21 @@ These are independent of the Langfuse exporter:
 Langfuse is one observability exporter.
 It is not the only record and it is not the authoritative one for the tool contract.
 
+## The authenticated-context oracle
+
+The auth store records one oracle: `overview.auth_probe.url`.
+It is a deployment-neutral path such as `/api/authentication`; the model-facing read and the crawl feed resolve it against the project's canonical origin.
+A browser request to the resolved URL is the only authentication verdict:
+
+- 2xx with no followed redirect: authenticated;
+- 401, 403, or any 3xx: not authenticated;
+- anything else: indeterminate, never a pass.
+
+A navigation envelope is not the oracle: `steel browser navigate` follows a 302 and reports `success: true` with the final 200 URL, so a stale session looks alive.
+The fetch behind `auth-oracle.sh` exposes `redirected` and the true status.
+Run the fetch from a page on the probe's origin; a cross-origin fetch without CORS is indeterminate, never a pass.
+The oracle is a proof, not a cookie-name check and not a landing-page check.
+
 ## The binary boundary
 
 The public command is `steel`.
@@ -136,6 +151,9 @@ A deliberate absolute path to the private core remains outside name-based enforc
 - `select-elements.py`: select a DOM family, project tag, text, attributes, and visibility, return bounded JSON.
 - `session-records.py`: fetch metadata, snapshot, screenshot, and the record probes that the runtime supports.
 - `session-lifecycle.sh`: survey, open an owned name, use it, release under a trap.
+- `auth-oracle.sh`: ask the authenticated-context oracle in a live session.
+  A browser fetch to the recorded probe answers 2xx only for an authenticated context; 401, 403, or any 3xx fails; anything else is indeterminate and never passes.
+  A followed redirect keeps its 200 body but sets `redirected: true`, so a login page cannot pass.
 - `catalogue.sh`, `navigate-read.sh`, `extract-reads.sh`, `eval-inline.sh`, `eval-interact.sh`, `interact-batch.sh`, `spider-bounded.sh`, `scrape-page.sh`, `stop-owner.sh`: the existing operation families.
 
 The three canonical read scripts require a live session and never start or stop one.

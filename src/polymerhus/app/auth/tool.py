@@ -88,7 +88,9 @@ AUTH_STORE_CONTRACT = (
     "axis.\n\n"
     "SCHEMA - overview (all optional): `login_endpoint`, `required_headers`, "
     "`mechanism`, `defences`, `fingerprinting`, `technical_conditions` "
-    "(optional list of `{name, check}`, absent by default), `notes`. Account "
+    "(optional list of `{name, check}`, absent by default), `auth_probe` "
+    "(`{url}` - the authenticated-context oracle: a path that answers 2xx only "
+    "with an authenticated context, 401/403/3xx without one), `notes`. Account "
     "record: `origin` (operator or agent, stamped server-side), optional "
     "`procedure` label, optional `credentials` (`username`, `password`, "
     "`login_url` plus optional `domain` and form selectors), optional `roles` "
@@ -139,7 +141,9 @@ AUTH_STORE_READ_CONTRACT = (
     "bucket. An overview is the login-mechanism header: `login_endpoint`, "
     "`required_headers` (header NAMES), `mechanism`, `defences`, "
     "`fingerprinting`, `technical_conditions` (a list of `{name, check}` "
-    "pairs), `notes`. An account record is one named bundle: `origin` "
+    "pairs), `auth_probe` (`{url}` - the authenticated-context oracle: a "
+    "browser request to it answers 2xx only for an authenticated context; "
+    "401/403/3xx is not authenticated), `notes`. An account record is one named bundle: `origin` "
     "(operator or agent), an optional `procedure` label, optional "
     "`credentials` (`username`, `login_url`, `domain`, form selectors), "
     "optional `roles` (role -> credential set) with `default_role`, optional "
@@ -365,12 +369,20 @@ def _credential_sets(record: Any):
 def _resolve_canonical_origin(state: Any, origin: str | None) -> Any:
     """Resolve deployment-neutral stored paths against the canonical origin.
 
-    Mutates the (already copied) read state in place: `login_url` gains the
-    origin when it carries no scheme, and the informational `domain` is
-    back-filled when absent. An absolute value is NEVER rewritten (agent-minted
-    live state stays as recorded); a None origin leaves everything untouched."""
+    Mutates the (already copied) read state in place: `login_url` and
+    `overview.auth_probe.url` gain the origin when they carry no scheme, and
+    the informational `domain` is back-filled when absent. An absolute value
+    is NEVER rewritten (agent-minted live state stays as recorded); a None
+    origin leaves everything untouched."""
     if not origin or not isinstance(state, dict):
         return state
+    overview = state.get("overview")
+    if isinstance(overview, dict):
+        probe = overview.get("auth_probe")
+        if isinstance(probe, dict):
+            url = probe.get("url")
+            if isinstance(url, str) and url and "://" not in url:
+                probe["url"] = f"{origin.rstrip('/')}/{url.lstrip('/')}"
     accounts = state.get("accounts")
     if not isinstance(accounts, dict):
         return state

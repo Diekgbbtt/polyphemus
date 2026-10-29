@@ -292,21 +292,23 @@ def test_gateway_takes_the_anonymous_path_for_a_comfyui_shaped_overview(tmp_path
     asyncio.run(actor.stop())
 
 
-def test_gateway_stops_loudly_without_credentials(tmp_path, caplog):
-    """A declared surface with no accounts is a missing prerequisite, not a
-    gateway failure: the run stops loudly (fail-close, D223-2 does not
-    apply)."""
-    make, _ = _script_model([_verdict_call()])
+def test_gateway_runs_the_loop_without_accounts_to_mint(tmp_path):
+    """D223-21: a declared surface with no accounts is a recoverable state.
+    The gateway runs the turn so the orchestrator can mint a new account
+    through the authn skill's sign-up procedure."""
+    make, seen = _script_model([_verdict_call(account="minted-alice")])
     actor = _actor(
         "r1", store=_seeded_store(
-            tmp_path, overview={"login_endpoint": "https://x/login"},
+            tmp_path, overview={"login_endpoint": "https://x/login",
+                                "auth_probe": {"url": "/api/me"}},
             accounts={}), model_factory=make, tmp_path=tmp_path)
 
-    with caplog.at_level("ERROR"):
-        with pytest.raises(GatewayStop):
-            asyncio.run(actor.run_gateway())
-    assert "no credentials" in caplog.text.lower()
+    verdict = asyncio.run(actor.run_gateway())
     asyncio.run(actor.stop())
+
+    assert verdict.outcome == "authenticated"
+    assert verdict.account == "minted-alice"
+    assert seen["bound"], "the gateway turn must run so it can mint"
 
 
 def test_gateway_null_replayability_is_logged_loudly_harness_writes_nothing(tmp_path, caplog):
@@ -335,7 +337,9 @@ def test_gateway_null_replayability_is_logged_loudly_harness_writes_nothing(tmp_
 # --- failure posture ---------------------------------------------------------------
 
 
-def test_gateway_fail_open_when_the_model_raises(tmp_path, caplog):
+def test_gateway_returns_a_failed_verdict_when_the_model_raises(tmp_path, caplog):
+    """D223-21: a turn failure proves nothing, so it returns `failed` and the
+    pipeline stops. It never fails open into unauthenticated collection."""
     class _Boom(BaseChatModel):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             raise RuntimeError("llm down")
@@ -346,10 +350,12 @@ def test_gateway_fail_open_when_the_model_raises(tmp_path, caplog):
 
     actor = _actor("r1", store=_seeded_store(tmp_path, accounts=_account()),
                    model_factory=lambda role: _Boom(), tmp_path=tmp_path)
-    with caplog.at_level("WARNING"):
-        assert asyncio.run(actor.run_gateway()) is None
-    assert "fail-open" in caplog.text.lower()
+    with caplog.at_level("ERROR"):
+        verdict = asyncio.run(actor.run_gateway())
     asyncio.run(actor.stop())
+    assert verdict.outcome == "failed"
+    assert verdict.account is None
+    assert "fail-closed" in caplog.text.lower()
 
 
 def test_gateway_returns_after_the_turn_settles(tmp_path):
@@ -418,7 +424,8 @@ def test_gateway_bounded_await_leaves_no_stale_reply(tmp_path, monkeypatch):
                    model_factory=lambda role: _Slow(), tmp_path=tmp_path)
     import time
     t0 = time.monotonic()
-    assert asyncio.run(actor.run_gateway()) is None
+    verdict = asyncio.run(actor.run_gateway())
+    assert verdict.outcome == "failed"  # fail-closed, never a None fail-open
     assert time.monotonic() - t0 < 5  # bounded, never the slow turn's tail
     asyncio.run(actor.stop())
 

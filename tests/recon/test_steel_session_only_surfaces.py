@@ -48,6 +48,36 @@ def test_gateway_branch_manner_teaches_live_sessions_and_no_profile() -> None:
     assert "state reference" in _BRANCH_MANNER["browser_only"].lower()
 
 
+def test_gateway_prompt_names_the_oracle_and_fails_closed() -> None:
+    text = _read(
+        "src", "polymerhus", "recon", "control", "prompts", "auth-gateway.md"
+    )
+    lower = text.lower()
+    assert "auth_probe" in text
+    assert "2xx" in text
+    assert "401" in text and "403" in text and "3xx" in text
+    assert "indeterminate" in lower
+    assert "redirected" in lower
+    assert "mint" in lower
+    assert "fail-closed" in lower or "does not fail open" in lower
+    assert "authenticated landing" not in lower
+
+
+def test_authn_meta_skill_and_bootstrap_teach_the_oracle() -> None:
+    skill = _read("skills", "meta", "authn-skill-writing", "SKILL.md")
+    prompt = _read(
+        "skills", "meta", "authn-skill-writing", "references",
+        "bootstrap-workflow.md",
+    )
+    for name, text in (("SKILL.md", skill), ("bootstrap-workflow.md", prompt)):
+        assert "auth_probe" in text, name
+        assert "2xx" in text, name
+        assert "401" in text and "403" in text and "3xx" in text, name
+        assert "indeterminate" in text.lower(), name
+        assert "auth-oracle.sh" in text, name
+        assert "mint" in text.lower(), name
+
+
 def test_gateway_prompt_uses_the_redacted_store_and_recorded_replay() -> None:
     text = _read(
         "src", "polymerhus", "recon", "control", "prompts", "auth-gateway.md"

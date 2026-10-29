@@ -18,6 +18,8 @@ from __future__ import annotations
 import copy
 import re
 
+from polymerhus.app.auth.probe import is_valid_probe_url
+
 
 class AuthInvalidError(ValueError):
     """The denoted refusal: names the offending field in both the message
@@ -42,9 +44,14 @@ _OVERVIEW_KEYS = frozenset(
         "technical_conditions",
         "anti-bot",
         "http-client-replayability",
+        # #223 amendment (2026-10-29): the authenticated-context oracle.
+        # `{url: <root-relative path or absolute http(s) URL>}`.
+        "auth_probe",
         "notes",
     }
 )
+
+_AUTH_PROBE_KEYS = frozenset({"url"})
 
 _ACCOUNT_KEYS = frozenset(
     {
@@ -185,6 +192,29 @@ def _check_tokens(tokens: object) -> None:
                 _fail(f"{token_field}.{optional}", "must be a string")
 
 
+def _check_auth_probe(probe: object) -> None:
+    """Validate the authenticated-context oracle: exactly one `url` key.
+
+    The URL is a deployment-neutral root-relative path in committed data
+    dependencies, or an absolute http(s) URL on agent-minted live state. It
+    carries no fragment, no userinfo, and no whitespace: the oracle must be a
+    request the server actually receives."""
+    if not isinstance(probe, dict):
+        _fail("overview.auth_probe", "must be an object carrying a url key")
+    for key in probe:
+        if key not in _AUTH_PROBE_KEYS:
+            _fail(f"overview.auth_probe.{key}", "is not a known auth_probe field")
+    url = probe.get("url")
+    if not isinstance(url, str) or not url:
+        _fail("overview.auth_probe.url", "must be a non-empty string")
+    if not is_valid_probe_url(url):
+        _fail(
+            "overview.auth_probe.url",
+            "must be a root-relative path such as '/api/me' or an absolute "
+            "http(s) URL without userinfo, fragment, or whitespace",
+        )
+
+
 def _check_steel(steel: object) -> None:
     # The durable reference is the per-account session-state key (#395, D20).
     # `state` is validated only when present; a retired `profile` key is
@@ -229,6 +259,8 @@ def validate_overview(record: object) -> dict:
     replayability = record.get("http-client-replayability")
     if replayability is not None and not isinstance(replayability, bool):
         _fail("overview.http-client-replayability", "must be a boolean or null")
+    if "auth_probe" in record:
+        _check_auth_probe(record["auth_probe"])
     conditions = record.get("technical_conditions")
     if conditions is not None:
         if not isinstance(conditions, list):

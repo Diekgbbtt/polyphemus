@@ -52,17 +52,21 @@ def test_skill_states_the_auth_gate_signals():
     text = SKILL.read_text(encoding="utf-8")
     assert "login redirect" in text
     assert "401" in text and "403" in text
+    assert "3xx" in text
+    assert "indeterminate" in text
+    assert "auth_probe" in text
     assert "storage-located" in text
     assert "reduced coverage" in text
 
 
 def test_skill_pins_the_current_contract_and_references():
     text = SKILL.read_text(encoding="utf-8")
-    assert "version: '2.1.0'" in text
+    assert "version: '2.2.0'" in text
     for token in (
         "steel_events", "shell_returncode", "browser batch", "browser find",
         "browser diff", "sessions get", "--inactivity-timeout 300000",
-        "has no effect", "live_view", "addressable",
+        "has no effect", "live_view", "addressable", "auth_probe",
+        "auth-oracle.sh", "indeterminate",
     ):
         assert token in text
     assert "--inactivity-timeout 0" not in text
@@ -70,6 +74,7 @@ def test_skill_pins_the_current_contract_and_references():
     references = SKILL.parent / "references"
     for name in (
         "contract.md", "load-eval.py", "select-elements.py", "session-records.py",
+        "auth-oracle.sh",
     ):
         assert name in text
         assert (references / name).is_file()

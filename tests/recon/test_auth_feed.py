@@ -230,6 +230,18 @@ def test_project_browser_auth_skips_storage_without_a_target_origin():
     assert "csrf-store" not in str(material)
 
 
+def test_project_browser_auth_resolves_the_oracle_path():
+    overview = {"auth_probe": {"url": "/api/authentication"}}
+    material = project_browser_auth({}, overview, origin="http://t.example:8080")
+    assert material["auth_probe"] == "http://t.example:8080/api/authentication"
+
+
+def test_project_browser_auth_keeps_an_absolute_oracle():
+    overview = {"auth_probe": {"url": "https://live.example/api/me"}}
+    material = project_browser_auth({}, overview, origin="http://t.example")
+    assert material["auth_probe"] == "https://live.example/api/me"
+
+
 def test_project_browser_auth_empty_projects_empty():
     assert project_browser_auth({}, {}) == {}
     assert project_browser_auth(None, None) == {}

@@ -2,7 +2,7 @@
 name: authn-skill-writing
 description: Use when executing authentication against a target project by hand and authoring that target's per-project authentication skill from verified state.
 metadata:
-  version: '2.7'
+  version: '2.8'
 ---
 # Authn skill writing
 
@@ -43,8 +43,11 @@ The in-process agent store tool is the in-system agent path, not yours: do not u
 Name every account `<username>-<minting_context>`: the credential username with its email location suffix stripped (`diegogobbetti69@gmail.com` -> `diegogobbetti69`), a hyphen, then the run or flow that minted it (`first_authn_bootstrap`, `hunting_misauthr`, ...), which you assess at write time.
 The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share ONE account name; a second name for the same credential identity is a fork, not a second account.
 Per account record: `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `steel` (`{state}` key only, never browser state), `snapshot` (`{cookies, params, captured_at}`; the required header fact single-sources on the overview's `required_headers`, never duplicated here), `roles` with `default_role` where multiple roles exist, `notes`.
-Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` (a list of `{name, check}`), `anti-bot`, `http-client-replayability`, `notes`.
+Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` (a list of `{name, check}`), `anti-bot`, `http-client-replayability`, `auth_probe` (`{url}` - the authenticated-context oracle), `notes`.
 `anti-bot` is the defence type (a vendor, product, or challenge name such as `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, or `waf:<name>`) or null when none; `http-client-replayability` is `true` or `false`, and leaving it unset means UNKNOWN, never false.
+`auth_probe.url` is a deployment-neutral path such as `/api/authentication`, never a host.
+It is the ONE deterministic authentication oracle: the target answers 2xx only with an authenticated context, and 401, 403, or a 3xx without one.
+The app resolves the path against the project's canonical origin at read.
 Procedural prose never lands in the store.
 Secret values never land in the skill.
 The skill bundle is a separate write path from the seed face: write facts to the store, steps to the bundle, and never cross the two.
@@ -52,8 +55,8 @@ The skill bundle is a separate write path from the seed face: write facts to the
 ## P0 - Read state
 
 Read the store full state and any existing authn skill bundle before acting.
-Treat `overview` as operator ground truth: `mechanism`, `defences`, `fingerprinting`, `required_headers`, `login_endpoint`, `technical_conditions`, `anti-bot`, `http-client-replayability`.
-Gate: you can name the operator-stated mechanism and defences, and say whether the two facts are already recorded, or know they are absent.
+Treat `overview` as operator ground truth: `mechanism`, `defences`, `fingerprinting`, `required_headers`, `login_endpoint`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `auth_probe`.
+Gate: you can name the operator-stated mechanism and defences, say whether the two facts are already recorded, and name the existing oracle or know it is absent.
 
 ## P1 - Anti-bot posture and HTTP-client replayability
 
@@ -71,7 +74,7 @@ Whatever the target, establish and record these two facts before you record its 
 4. Replay the trusted context surgically. When a browser session holds the trusted context, attempt to reproduce it with a plain HTTP client. Start from the overview's `required_headers` (the single source of the required header fact), the account `snapshot` (cookies, params) and the stored tokens with their locations. Identify line by line what carries the trust: header set and order, cookies, token values and locations, user-agent and client hints, query and body parameters, request and network parameters you control, and TLS/HTTP signature specifics where your tooling lets you control them. Change one variable at a time and read the response; iterate until the replay reaches the authenticated state or you can name what blocks it.
 5. Record the verdict honestly. When a plain-client replay reaches the authenticated state, record `http-client-replayability: true` and record which shape elements are static (replayable as-is) and which are dynamic (must be re-minted or are browser-bound): the continuation facts a follower needs. When replay cannot reach the authenticated state, record `http-client-replayability: false`; browser-only is a complete, honest result, never a failure.
 6. Script-driven logins. When the sign-in is programmed by client-side script, fetch and read the script; replay the exact request shape it builds (endpoints, headers, nonces, parameter order); where the script derives values dynamically (nonces, signatures, fingerprints), say so and treat those parts as browser-bound.
-7. Re-verify stale state. Treat an expired or missing session as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
+7. Re-verify stale state. Treat an expired or missing session as a loud failure. Re-run the oracle before recording or replaying; never fall back silently to anonymous state. The oracle is a 2xx-only URL, not a landing-page heuristic.
 8. Persist through the operator seed face. Write both facts into the overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. This seed face is your write path: the in-process agent store tool is the in-system agents' path (their writes merge into the same overview, D220-12), so never use it here and never put `origin` in the payload.
 
 Two rules bind every target: facts live in the store, steps live in the skill; secret values stay in the store, the skill cites names only.
@@ -103,16 +106,20 @@ Only when it is absent and this bootstrap owns the session, start a FREE name: `
 A start on a live name is refused with `session_taken`; reuse the now-live name, never start a twin.
 A known loss returns `session_missing` with `recreate_session` and `requires_state_restore`; a blank replacement is not a recovery. Re-bootstrap or report to the operator.
 Size both clocks for the slowest human step; a zero inactivity window is unreliable and is reaped.
-Log in when the live session does not yield the authenticated landing.
-Settle then verify: navigate to the authenticated landing URL and read it back before trusting the session; an unverified session never passes a verdict.
+Log in when the live session does not pass the oracle.
+Verify with the oracle: a browser request to `overview.auth_probe.url` answers 2xx only for an authenticated context; 401, 403, or 3xx is not authenticated; anything else is indeterminate and is not a pass.
+An unverified session never passes a verdict.
 The programmatic crawl provider restores state, replicates auth material, and captures state on release. The CLI login path does not write state; only the programmatic crawl provider captures it.
 Stop on every path with `steel browser stop --session <name> --json`, then prove it gone against `steel browser sessions --json`.
-The scripts beside the steel-browser skill are optional helpers for these acts: `references/session-lifecycle.sh`, `references/catalogue.sh`, `references/extract-reads.sh`, `references/contract.md`.
+The scripts beside the steel-browser skill are optional helpers for these acts: `references/session-lifecycle.sh`, `references/catalogue.sh`, `references/extract-reads.sh`, `references/auth-oracle.sh`, `references/contract.md`.
 
 A follower's rules differ from this bootstrap's.
 A generated procedure that a gateway or pod runs must reuse the operator-owned live session and never start a replacement.
-A missing or unknown session is asserted `not_valid` and fails open; it is not a reason to mint a blank session.
+A missing or unknown session is asserted `not_valid` and stops the run; it is not a reason to mint a blank session.
+A follower may mint a NEW account through the sign-up procedure with synthetic identity data when the operator session is gone and the target supports sign-up.
+It writes the new credentials and proves the oracle; it never reads an existing secret.
 A model-facing follower sees a REDACTED `auth_store` view: it cites token names and locations, uses the recorded HTTP history replay or the browser session, and never reads or pastes a secret value.
+Authentication failure never fails open; collection does not run unauthenticated.
 
 ### Browser fast path (read this before you touch the CLI)
 
@@ -139,24 +146,40 @@ Find the sign-in feature (endpoint, form or API shape, required headers, CSRF or
 Find the sign-up feature separately where one exists, with the same shape detail.
 Keep sign-in and sign-up DISTINGUISHABLE as separate flows, each with its own procedure.
 An account is keyed by its credential identity, so flows that share credentials share ONE account (sign-up mints it, sign-in serves it); they are separate accounts only when their credentials differ.
-Gate: each flow states its endpoint or form plus its required headers and anti-forgery handling, or states which element could not be found.
+
+Find the authenticated-context oracle: one URL that answers 2xx only with an authenticated context.
+Prefer a same-origin path such as `/api/me`, `/api/authentication`, or an account page that never renders anonymously.
+Prove BOTH polarities before recording it:
+
+1. With the authenticated session: a browser request returns 2xx with no followed redirect.
+2. With an anonymous client (no cookies, or a fresh session): the same request returns 401, 403, or a 3xx.
+3. If the anonymous request also returns 2xx, the URL is not an oracle; find another one.
+4. If the authenticated request returns 3xx, the URL is not an oracle; find another one.
+
+A login page is never the oracle: it answers 2xx anonymously.
+Gate: each flow states its endpoint or form plus its required headers and anti-forgery handling, or states which element could not be found; and one oracle path is recorded with both observed polarities, or the target has no reliable oracle and the bootstrap reports that as a blocker.
 
 ## P3 - Execute and verify
 
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
-Browser path: survey the catalogue, reuse the live session, or start a free name only when this bootstrap owns it; verify it per the fallback discipline above. Log in only when it does not yield the authenticated landing, and pace that login per the mechanics skill's cadence and escalation rules.
+Browser path: survey the catalogue, reuse the live session, or start a free name only when this bootstrap owns it; verify it with the oracle per the fallback discipline above. Log in only when the oracle does not pass, and pace that login per the mechanics skill's cadence and escalation rules.
 Record `steel.state` only when a state file exists.
-Verify with concrete commands: `navigate` to the target URL, then settle with `wait --url <authenticated-landing-substr>` or `wait --text <marker>` (a condition, not a fixed pause), then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
-Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead.
-Gate: a verification predicate fired for the flow, where request success means a new session cookie plus a non-login URL and browser success means navigation to the authenticated landing state.
+Verify the oracle with the canonical browser request: `SESSION=<name> bash <mechanics-skill-references>/auth-oracle.sh <probe-url>`, or the equivalent `steel browser eval` fetch.
+The request must run in the live page context so it carries the session cookies.
+Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead when a step needs a page.
+Gate: the oracle returns 2xx with no followed redirect for the flow.
+A 401, 403, or 3xx is a failed verification.
+Anything else is indeterminate and is not a pass.
 An unverified flow never yields a verdict and never advances to P4.
 
 ## P4 - Record the facts (WHAT)
 
 Write the verified facts into the store through the seed face from the contract section above.
 Record per account only what P3 verified: `credentials`, `tokens`, `steel` state reference when one exists, `snapshot`, `roles` and `default_role`, `notes`.
-Record overview only what P0 through P2 established: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `notes`.
+Record overview only what P0 through P2 established: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `auth_probe`, `notes`.
 Set `anti-bot` to the named defence or null; set `http-client-replayability` to `true` or `false` only once the replay was actually run, otherwise leave it unset so it reads UNKNOWN.
+Set `auth_probe` to the verified oracle path: `{url: /api/...}`.
+Never store a host; the app resolves the path against the project's canonical origin at read.
 Gate: no procedure prose landed in the store and no secret value landed in the skill.
 
 ## P5 - Write the procedure (HOW)
@@ -166,9 +189,10 @@ Every sign-up procedure carries this line verbatim, so every target mints new ac
 Cite for EVERY step the tool it uses AND why it uses it (request-based because no blocking defence was observed, steel because a named WAF, anti-bot, or fingerprinting signal forced it).
 When `http-client-replayability` is `true`, the procedure cites the recorded HTTP history replay (`search_http_history`, `replay_http_request`) or the pipeline's server-side request material, plus the static/dynamic element names and locations. It never instructs a model-facing follower to read or paste a value; the `auth_store` view is redacted.
 When it is `false`, the procedure carries the browser steps instead, and says plainly that a plain-client replay cannot reach the authenticated state. Those steps reuse the operator-owned live session and never start a replacement.
-The browser procedure's failure branch names the typed session outcomes: `session_taken` means the live name must be reused, never twinned; `session_missing` means the state is gone and needs an operator re-mint or state restore, never a blank replacement; `unknown_session` means the name was never live, so do not start. A follower asserts `not_valid` and fails open when the operator session is gone.
+Every procedure, request or browser, carries the same verification step: run the oracle at `overview.auth_probe.url` and pass only on 2xx with no followed redirect. A 401, 403, or 3xx is a failure; anything else is indeterminate and stops the run.
+The browser procedure's failure branch names the typed session outcomes: `session_taken` means the live name must be reused, never twinned; `session_missing` means the state is gone and needs an operator re-mint or state restore, never a blank replacement; `unknown_session` means the name was never live, so do not start. A follower asserts `not_valid` and stops when the operator session is gone. When the target supports sign-up, the follower may mint a new account with synthetic identity data, write its credentials, and prove the oracle; it never fails open.
 Name for every steel step the live session, the concrete CLI commands, and the script they come from.
-Resolve script citations to the steel-browser skill's published references beside that skill (`references/session-lifecycle.sh`, `references/extract-reads.sh`, `references/eval-inline.sh`, `references/eval-interact.sh`) or the authn skill's own `references/` scripts.
+Resolve script citations to the steel-browser skill's published references beside that skill (`references/session-lifecycle.sh`, `references/extract-reads.sh`, `references/eval-inline.sh`, `references/eval-interact.sh`, `references/auth-oracle.sh`) or the authn skill's own `references/` scripts.
 Keep login-specific scripts in the authn skill's own `references/`, and mechanics in the steel-browser references.
 
 ### Where the project skill lands
@@ -183,8 +207,9 @@ Gate: the skill file exists at that path with valid frontmatter (name equal to t
 Set each served account's `procedure` label to the skill procedure that minted or serves it.
 Make each procedure cite the account and token names it uses.
 Re-verify replayability: the programmatic follower can reproduce each flow from the raw store, and a model-facing follower can reproduce it through the recorded HTTP history replay or the operator-owned browser session. The two recorded facts match what the procedure does.
+Re-verify the oracle: the procedure names `overview.auth_probe.url` and passes only on 2xx with no followed redirect. Re-run it after any expiry.
 Re-verify secrecy: the skill holds names and steps, never values.
-Re-verify the failure branch: the skill's unexpected-failure path cites the `overview.technical_conditions` checks as its diagnostic ladder.
+Re-verify the failure branch: the skill's unexpected-failure path cites the `overview.technical_conditions` checks as its diagnostic ladder, and stops rather than failing open.
 Gate: the two planes are mutually consistent and non-overlapping, with no orphan account and no orphan procedure.
 
 ## Join map (store element, skill element, rule)
@@ -201,6 +226,7 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 | `overview.http-client-replayability` | Replay verdict and continuation facts (P1/P5) | true means the skill carries replay steps; false means browser steps; unset means unknown |
 | `overview.mechanism`, `defences`, `fingerprinting` | P1 mode decision | Skill consumes ground truth, never restates |
 | `overview.required_headers`, `login_endpoint` | Request step shape | Send exactly these |
+| `overview.auth_probe.url` | Verification step | The only pass/fail oracle: 2xx passes, 401/403/3xx fails, else indeterminate |
 | `overview.technical_conditions` | Unexpected-failure branch | Diagnostic ladder lives in store |
 | `origin` trust split | Seed-face writes | Reader acts as operator, never as in-system agent |
 | `roles`, `default_role` | Role procedures | Each role set maps to a procedure |
@@ -209,8 +235,8 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 ## Stale state
 
 Treat expired or missing sessions as loud failures, never as silent anonymous state.
-Re-run the P3 verification predicate after any expiry before recording or replaying.
-Say in the skill which step fails loudly when its session is stale.
+Re-run the P3 oracle after any expiry before recording or replaying.
+Say in the skill which step fails loudly when its session is stale, and that a failed or indeterminate oracle stops the run.
 
 ## Red flags - stop and repair
 
@@ -222,6 +248,9 @@ Say in the skill which step fails loudly when its session is stale.
 | Defence named without research | Research the vendor block page, challenge script, or characteristic cookie, then name it or set null |
 | Replayability set false on an unverified replay | Finish the iteration or leave the fact unset (unknown) |
 | Unverified flow recorded | Delete the record, return to P3 |
+| No oracle, or a login page named as the oracle | Return to P2 and prove both polarities |
+| Oracle returns 401/403/3xx but the flow is recorded as valid | Re-authenticate or mint, then re-run the oracle; never waive it |
+| Failure path falls back to unauthenticated collection | Stop the run, assert `not_valid`, and report the missing data dependency |
 | Secret value in skill text | Move value to store, leave name citation |
 | Procedure prose in store notes | Move steps to skill, keep facts only |
 | Sign-up and sign-in merged | Split into separate procedures; keep ONE account per credential identity |
@@ -237,3 +266,4 @@ Say in the skill which step fails loudly when its session is stale.
 
 - `references/worked-example.yaml` - two worked scenarios (a request-replayable target and a browser-only target) with their probe traces, classifications, and seed payloads.
 - `references/bootstrap-workflow.md` - the reusable, target-agnostic first prompt for the external bootstrapper, with placeholders and the request-first anti-bot workflow.
+- the steel-browser skill's `references/auth-oracle.sh` - the canonical browser oracle probe (2xx pass, 401/403/3xx fail, else indeterminate).

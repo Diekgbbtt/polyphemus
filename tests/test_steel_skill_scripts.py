@@ -85,6 +85,16 @@ if args[:1] == ["browser"]:
         out({"data": {}, "success": True})
     if sub == "eval":
         script = args[2]
+        if "redirected" in script and "fetch" in script:
+            mode = os.environ.get("FAKE_STEEL_ORACLE", "ok")
+            if mode == "redirect":
+                out({"data": {"status": 200, "redirected": True,
+                              "url": "http://target/login"}, "success": True})
+            if mode == "indeterminate":
+                out({"data": {"status": 500, "redirected": False,
+                              "url": "http://target/api/me"}, "success": True})
+            out({"data": {"status": 200, "redirected": False,
+                          "url": "http://target/api/me"}, "success": True})
         if "querySelectorAll" in script:
             out({"data": {
                 "selector": "a", "count": 2, "scanned": 2,
@@ -144,6 +154,59 @@ def _run(script: str, *args: str, env: dict) -> tuple[int, dict, list[list[str]]
     if log.exists():
         calls = [json.loads(line) for line in log.read_text().splitlines()]
     return result.returncode, output, calls
+
+
+def _run_sh(script: str, *args: str, env: dict) -> tuple[int, dict, list[list[str]]]:
+    result = subprocess.run(
+        ["bash", str(REFERENCES / script), *args],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+    try:
+        output = json.loads(result.stdout)
+    except ValueError:
+        output = {"raw_stdout": result.stdout, "raw_stderr": result.stderr}
+    calls = []
+    log = Path(env["FAKE_STEEL_LOG"])
+    if log.exists():
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+    return result.returncode, output, calls
+
+
+def test_auth_oracle_classifies_a_2xx_as_authenticated(fake_steel):
+    env, _ = fake_steel
+    code, output, calls = _run_sh(
+        "auth-oracle.sh", "http://target/api/me",
+        env={**env, "SESSION": "s1"},
+    )
+    assert code == 0
+    assert output["outcome"] == "authenticated"
+    assert output["success"] is True
+    assert output["status"] == 200
+    assert not [call for call in calls if call[:2] in (
+        ["browser", "start"], ["browser", "stop"])]
+
+
+def test_auth_oracle_fails_a_followed_redirect(fake_steel):
+    env, _ = fake_steel
+    code, output, _calls = _run_sh(
+        "auth-oracle.sh", "http://target/api/me",
+        env={**env, "SESSION": "s1", "FAKE_STEEL_ORACLE": "redirect"},
+    )
+    assert code == 0
+    assert output["outcome"] == "unauthenticated"
+    assert output["success"] is False
+    assert output["redirected"] is True
+
+
+def test_auth_oracle_does_not_pass_an_indeterminate_status(fake_steel):
+    env, _ = fake_steel
+    code, output, _calls = _run_sh(
+        "auth-oracle.sh", "http://target/api/me",
+        env={**env, "SESSION": "s1", "FAKE_STEEL_ORACLE": "indeterminate"},
+    )
+    assert code == 0
+    assert output["outcome"] == "indeterminate"
+    assert output["success"] is False
 
 
 def test_load_eval_loads_waits_and_evals_without_lifecycle(fake_steel):

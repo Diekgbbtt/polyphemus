@@ -2,8 +2,9 @@
 
 *Status: accepted, published as tracker issue #223 (`ready-for-agent`). This is the persisted repo copy of that specification; the tracker issue remains the work authority.*
 *Amendment 2026-10-20: user stories 15, 16, and 22 and the profile-mount design are superseded by D20 in `browser-cli-221-decisions.md`. The browser path restores session state (`steel.state`) as application context, replicates auth material (cookies, required headers, header-located tokens, and storage-located tokens), and gates the attempt on application state or an authenticated-surface response. Profiles are retired in the cloud and local deployments. Old profile references are silently disregarded, with no warning, alias, or migration branch. The network-identity risk below remains, but the state file, not a profile, is the browser state. Full record: `docs/design/steel-session-only-395-decisions.md`.*
+*Amendment 2026-10-29: the authenticated-context oracle (D223-20) replaces every token-replay and landing-page verification reading. User stories 8, 12, 13, and 16 are rewritten below; D223-2 and the asymptotic fail-open half of D223-10/D223-17 are superseded by D223-21. Authentication failure stops collection. The gateway may mint a new credential through the authn skill's sign-up procedure. Full record: the amendment at the end of `recon-job-auth-223-decisions.md`.*
 *Decision ledger: `docs/design/recon-job-auth-223-decisions.md` (D223-1..D223-19, all in force; plus the T3 #242 implementation record IR-1..IR-8, the T4 #243 record IR-9..IR-12, and the T5 #244 verification record V-1..V-6). Amendments landed in `auth-store-220-decisions.md` (D220-9 amendment), `browser-cli-221-decisions.md` (D18 amendment), `src/polymerhus/recon/CONTEXT.md`, `src/polymerhus/project_management/CONTEXT.md`, and `docs/design/domain-model.md`.*
-*Implementation: T3 (#242) landed - the gateway turn, the armed surface, the verdict, and the pipeline treatment are built (`recon/control/authn_loop.py`, `recon/control/orchestrator_agent.py`, `recon/control/pipeline.py`); T4 (#243) landed - the lazy auth feed (`recon/control/auth_feed.py`: identifier rides, assembly resolves, pod fills `{auth_flags}`) with the settings-blob, interactive-crawl, and mid-run-steering retirements removed with their footprints (ledger IR-9..IR-12 record the settlements). T5 (#244) verified live - gateway verdict before phase 0 with authenticated collection, loud fail-open on harness failure, loud fail-close with no collection on missing credentials (ledger V-1..V-6 record the runs, the trace pointer, the environment blockers, and the e2e-tier precondition).*
+*Implementation: T3 (#242) landed - the gateway turn, the armed surface, the verdict, and the pipeline treatment are built (`recon/control/authn_loop.py`, `recon/control/orchestrator_agent.py`, `recon/control/pipeline.py`); T4 (#243) landed - the lazy auth feed (`recon/control/auth_feed.py`: identifier rides, assembly resolves, pod fills `{auth_flags}`) with the settings-blob, interactive-crawl, and mid-run-steering retirements removed with their footprints (ledger IR-9..IR-12 record the settlements). T5 (#244) verified live - gateway verdict before phase 0 with authenticated collection, loud fail-close with no collection on missing credentials (ledger V-1..V-6 record the runs, the trace pointer, the environment blockers, and the e2e-tier precondition). The 2026-10-29 amendment replaces the T5 fail-open behaviour with the oracle and a fail-closed stop (D223-20/D223-21).*
 *Scope: the auth gateway itself - the orchestrator's pre-pipeline authn loop - plus the feed path from the shared auth store to the pipeline's consumers.*
 
 ## Problem Statement
@@ -19,7 +20,7 @@ Authentication is a phase that must happen before collection; today it is an ass
 
 The recon orchestrator wakes as the **auth gateway**: before the pipeline is configured, it runs one stateful gateway turn - the **authn loop**, used by this role only - that establishes or validates the run's auth state against the shared auth store and the project's `authn` skill, then emits a structured verdict.
 The pipeline configures from that verdict and obeys it: the selected account's identifier rides the pipeline state, each phase resolves the material it needs lazily, phases the verdict excludes are pruned, and collection runs to completion from the upfront configuration alone - no mid-run steering, no operator prompts.
-Authentication failure is explicit and loud, never silent-anonymous; the no-authenticated-surface case is a first-class outcome; a missing credential prerequisite stops the run so the operator knows to seed.
+Authentication failure is explicit and loud, never silent-anonymous; the no-authenticated-surface case is a first-class outcome; a recoverable account is re-minted through the authn skill's sign-up procedure, and a missing bootstrap data dependency stops the run so the operator knows to seed.
 
 ## User Stories
 
@@ -30,15 +31,15 @@ Authentication failure is explicit and loud, never silent-anonymous; the no-auth
 5. As the operator, I want account validity recorded as a typed fact on the record, so that I can see what the system believes and when.
 6. As the operator, I want agent writes to merge into the store (the overview and operator-stamped accounts alike), so that verified facts persist while my ground truth and its provenance stamp survive (D220-12).
 7. As the operator, I want the no-authenticated-surface case recognised structurally, so that simple targets do not look like bootstrap failures.
-8. As the operator, I want a run with no credentials at all to stop loudly, so that I know the bootstrap prerequisite was missing.
+8. As the operator, I want a run with no usable account to mint one through the bootstrap-provided sign-up procedure, and to stop loudly only when that data dependency is missing, so that a recoverable auth state never degrades into an anonymous run.
 9. As the operator, I want the stored overview facts (anti-bot defence, HTTP-client replayability) to steer the gateway's branch choice, so that the topology is respected without mid-run guessing.
 10. As the orchestrator, I want one ReAct gateway turn with a hunting-style passive state machine over my own tool calls, so that the loop's progress is machine-observable without micromanaging my judgment.
 11. As the orchestrator, I want transition hints injected onto the triggering tool result only, so that my context carries one clear next step per transition.
-12. As the orchestrator, I want to validate a request-replayable account by replaying its stored request state first, so that a live session is proven, not assumed.
-13. As the orchestrator, I want a null replayability fact resolved in-loop by attempting the fingerprint replay, so that the unknown case ends in evidence rather than a guess.
+12. As the orchestrator, I want to validate the loaded browser session with one authenticated-context oracle URL (2xx authenticated, 401/403/3xx not, anything else indeterminate), so that a live session is proven, not assumed.
+13. As the orchestrator, I want a null replayability fact resolved in-loop by the recorded HTTP replay, so that the unknown request fact ends in evidence rather than a guess; an unresolved request fact never overrides a passing session oracle.
 14. As the orchestrator, I want browser-only targets to run exclusively through the Steel crawl path, so that request-tool shortcuts never contaminate a browser-only surface.
-15. As the orchestrator, I want to mint a project-scoped browser profile (`<project_id>-<account>`) with `--update-profile` and persist the key plus extracted tokens to the account, so that the next run rebinds instead of re-authenticating.
-16. As the orchestrator, I want a missing or unauthenticated profile to fail open into sign-in with the account asserted `not_valid`, so that the system never lies about validity.
+15. As the orchestrator, I want to mint a NEW account through the authn skill's sign-up procedure with synthetic identity data when the selected account is dead, and persist its credentials, so that a recoverable auth state does not fail open.
+16. As the orchestrator, I want a failed or indeterminate oracle to stop the run with the account asserted `not_valid`, so that collection never runs unauthenticated.
 17. As the orchestrator, I want failed sign-in attempts bounded by my own judgment (no mechanical cap) and the harness's generic bounds, so that a false cap never cuts a viable tweak short.
 18. As the orchestrator, I want to declare the tweaking space exhausted through the terminal verdict, so that exhaustion is a recorded failure mode rather than a hang.
 19. As the orchestrator, I want an outer skill-judging loop in the same turn, so that what I learned about this target's sign-in is written back through `write_skill`.
@@ -79,7 +80,7 @@ The state machine implements exactly this transition table:
 | --- | --- | --- | --- |
 | GROUNDED | `auth_store` read of `overview` AND `load_skill("authn")` both observed (an empty full-state read is a RETRIEVE, not a ground - ledger IR-1) | mark grounded; hint: retrieve and select the account | RETRIEVED on an `auth_store` read of the accounts |
 | RETRIEVED | `auth_store` read of `accounts` (or an empty read after grounding) observed | mark retrieved; hint: validate the selected account | VALIDATION on the first probe; GENERATION directly when the read returned no account |
-| VALIDATION | first probe call after RETRIEVED: `execute_command` (request replay) or `steel_exec` (browser mount/navigate) | mark validation; count the probe; hint: conclude valid or not_valid | FINISH when the validity assertion is `valid` or the terminal verdict says so; GENERATION when the loop writes the account `status: not_valid` |
+| VALIDATION | first probe call after RETRIEVED: `execute_command` (request replay), `steel_exec` (browser oracle), or `replay_http_request` (recorded replay) | mark validation; count the probe; hint: conclude from the oracle (2xx valid, 401/403/3xx not_valid, else indeterminate) | FINISH when the oracle passes and the validity assertion is `valid`; GENERATION when the loop writes the account `status: not_valid` |
 | GENERATION | `auth_store` write asserting account `status: not_valid` observed | mark generation; hint: run the sign-in procedure | DEBUG at the second attempt call; FINISH when the sign-in succeeds and persists state |
 | DEBUG | second and later attempt calls in the sign-in span | observe and trace each attempt; per-attempt hint; NO cap and NO rejection | FINISH on success, or when the model declares the space exhausted (terminal `exhausted` verdict); generic harness bounds backstop |
 | FINISH | the `auth_store` write asserting `status: valid` - the only observable transition; the terminal failure verdict is NOT a tool call (see note below) | record the verdict; run the outer loop; return the gateway result | terminal |
@@ -88,17 +89,36 @@ The state machine implements exactly this transition table:
 - The failure terminal (`exhausted`) is NOT an observable tool call: the tracker records FINISH only on the `status: valid` write, and the terminal verdict carries the failure as `outcome="failed"` - there is no `exhausted` member on `GatewayVerdict` (`authn_loop.py:38-43,457-465,563-583`).
 - The consumed attribute contract (D223-11) has four branches: no defence (including absent or empty overview) -> request path; defence present with replayability false -> browser-only path, exclusively the Steel crawl; defence present with replayability true -> request path with a browser-first validation; defence present with replayability null -> the orchestrator resolves it in-loop by attempting the fingerprint replay, and the verdict then releases or prunes the run. The resolution is logged loudly and persisted to the overview by the loop (D220-12); disagreement is still recorded, never silently patched.
 - Debug bounding (D223-16): no bespoke attempt cap, no duplicate-command rejection; attempt calls are observed and traced; the terminal `exhausted` verdict is the model's declaration; the only hard bounds are the harness's generic ones (the ReAct turn's recursion limit and the escalating per-attempt LLM budgets).
-- Missing-data states (D223-17) are discriminated structurally in the store:
+- Missing-data states (D223-17, amended by D223-21) are discriminated structurally in the store:
   - no authenticated surface (overview absent, carrying no surface field, or carrying the structural no-mechanism marker `mechanism: none`; the derived `http-client-replayability` fact is not a surface): its own path - authn loop skipped, pipeline run anonymously, verdict records the finding; an empty store is the EXPECTED shape here;
-  - external bootstrapper not run: with no credentials at all -> fail-close, stop the run loudly (this is a missing prerequisite, not a gateway failure, so fail-open collection does not apply); with credentials but no `authn` skill -> fail-open self-service: a request-based default driven by the store's description and procedure, with the thin-description risk accepted as a documented residual risk.
-- Failure posture (D223-10): the gateway rides the existing harness failure suite (retry/degrade, exactly-one-reply, client fail-open with a warning, structured-parse degrade, tool-error handling, compaction fail-open, heartbeat vs reaper, cancellation semantics); asymptotic behaviour is fail-open, loudly. The uncovered gateway-specific risks carry implementation requirements: the heartbeat must start before the gateway (reaper window); a hang on an unknown or ignored message has no wall-clock bound today; silent schema mismatch must be made loud; the empty-signal short-circuit must not bypass the trigger gate.
-- Authentication failure is fail-open for collection with no fabricated persistence (D223-2); the verdict vocabulary is success or failure, and "coverage exhausted" is a failed authentication, never a third state (D223-3).
+  - a declared surface with no accounts -> run the loop and mint a new account through the authn skill's sign-up procedure; a missing mint/sign-in data dependency stops the run at the terminal verdict, loudly;
+  - a declared surface with accounts but no `authn` skill -> the gateway may reuse a live session that passes the oracle; otherwise it stops with the missing bootstrap, never a self-service guess.
+- Failure posture (D223-10, amended by D223-21): the gateway rides the existing harness failure suite (retry/degrade, exactly-one-reply, structured-parse degrade, tool-error handling, compaction fail-open, heartbeat vs reaper, cancellation semantics); a turn that still produces no verdict returns `failed`, and the pipeline stops collection. The uncovered gateway-specific risks carry implementation requirements: the heartbeat must start before the gateway (reaper window); a hang on an unknown or ignored message has no wall-clock bound today; silent schema mismatch must be made loud; the empty-signal short-circuit must not bypass the trigger gate.
+- Authentication failure is fail-closed for collection with no fabricated persistence (D223-21); the verdict vocabulary is success or failure, and "coverage exhausted" is a failed authentication, never a third state (D223-3).
+
+### The authenticated-context oracle (2026-10-29)
+
+The gateway verifies the loaded browser session against ONE recorded URL, `overview.auth_probe.url`.
+The external bootstrapper proves both polarities before recording it: authenticated -> 2xx with no followed redirect; anonymous -> 401, 403, or 3xx.
+A URL that answers 2xx anonymously is not an oracle; a login page is never the oracle.
+The value is a deployment-neutral path such as `/api/authentication`; the model-facing read and the crawl feed resolve it against the project's canonical origin (#384).
+A browser request to the resolved URL is the only verdict:
+
+- 2xx with `redirected: false` -> authenticated;
+- 401, 403, or any 3xx (`redirected: true` included) -> unauthenticated;
+- anything else -> indeterminate, which stops the run.
+
+A 3xx is a failure even when the browser follows it to a 200 login or SPA page.
+`steel browser navigate` reports a followed 302 as `success: true` with the final 200 URL, so a navigation envelope is never the oracle.
+The canonical probe is `skills/internal/tools/steel-browser/references/auth-oracle.sh`.
+The crawl provider asks the same oracle before its first authenticated navigation; without one it keeps the legacy surface gate and records the missing oracle loudly.
+The store and the tool resolve the probe path but never rewrite an absolute agent-minted value.
 
 ### Account state and the store
 
 - The account record gains two server-stamped facts, exact shapes settled at implementation: a typed validity status (`valid | not_valid`, D223-14) and `updated_at` (D223-18).
 - Selection is deterministic: the most recently updated usable account; ties fall back to list position, newest last.
-- The browser path mints with `steel start --profile <project_id>-<account> --update-profile` and persists the profile key plus the extracted tokens back to the account (D223-14).
+- The browser path reuses the operator-owned live session, or mints a NEW account through the authn skill's sign-up procedure with synthetic identity data and writes its credentials (D223-21). It never reads an existing secret and never writes a browser state reference; only the crawl provider captures state.
 - The operator seed faces (`PUT` / `GET /projects/{project_id}/auth`) are unchanged; the operator section is agent-writable - agent writes merge and keep the `origin: operator` stamp as provenance (D220-12) - and the agent section is the agents' own.
 
 ### Arming and roles
@@ -124,6 +144,7 @@ The state machine implements exactly this transition table:
 - Test tiers are the final-result seams: unit tests for the pure transition contract of the authn loop and the record validation; integration tests at the pipeline phase boundary (gateway-before-phase-0, verdict-driven pruning, account-id-in-state, no mid-run steering); end-to-end tests against the live eval targets (`tests/e2e/fixtures/eval-targets.yaml`).
 - Good tests assert external behaviour only - the tool calls the phase makes, the verdict it emits, the phases pruned, the material resolved per consumer - never internal wiring or private helpers.
 - Modules under test: the authn loop's state machine (pure transitions and hints), the gateway phase in the pipeline, the auth-store records (new facts, server stamping), and the consumers (per-job configuration projection, crawler profile mount).
+- The oracle is pinned at the pure seam: `classify_probe` (2xx, 401/403/3xx, indeterminate), the store shape (`auth_probe.url` as a deployment-neutral path), the tool's origin resolution, the gateway prompt and hints, the crawl gate, and the pipeline's fail-closed treatment of `failed` and no-verdict turns.
 - Prior art: the hunting state-machine tests, the recon pipeline tests, the auth-store tests, and the eval-target e2e runs.
 - Contract and e2e assertion authoring belongs to the development pipeline stretch that follows the `/to-assertions` procedure after this spec; assertions are not enumerated here.
 - Integration precondition (ledger V-6): `tests/e2e/fixtures/eval-targets.yaml` does not exist on this branch and still describes the retired settings-blob `auth_context`, so the live e2e assertion tier for the gateway is unverified on-branch and must be brought current (seed faces plus the `skills/authn` bundle) before mechanical evals run.

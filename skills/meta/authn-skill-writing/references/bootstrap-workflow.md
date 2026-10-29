@@ -21,8 +21,9 @@ It is the prompt form of the mandatory workflow in `../SKILL.md`; the skill is t
 - `<mechanics_skill_path>` - the path to the `steel-browser` operation-mechanics skill (`skills/internal/tools/steel-browser/SKILL.md`), with its `references/` scripts beside it.
 - `<session_name>` - the agent-chosen session name for a browser step.
 - `<session_timeout_ms>` - the session hard timeout in milliseconds.
-- `<authenticated_landing_substr>` - a substring of the authenticated landing URL.
-- `<marker>` - a text marker that appears only in the authenticated state.
+- `<auth_probe_path>` - the authenticated-context oracle path (for example `/api/authentication`), or `none` while you are still discovering it.
+- `<authenticated_landing_substr>` - a substring of the authenticated landing URL, for a wait condition only.
+- `<marker>` - a text marker that appears only in the authenticated state, for a wait condition only.
 
 ## Prompt
 
@@ -47,9 +48,26 @@ The interaction mode defaults to request-based; the browser is taken only when t
 3. Name the defence as precisely as the evidence allows (for example `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, a named challenge, or `waf:<name>`); research unfamiliar block patterns before naming them; no defence signal means the type is null.
 4. Derive the mode: no defence signal -> request-based (reproduce the flow with a plain HTTP client, discovering the request shape from the client-side script when the sign-in is JS-programmed); a defence signal or a block-signalling 403 -> browser through steel.
 5. Record the verdict honestly: `http-client-replayability: true` with the static (replayable as-is) and dynamic (re-minted or browser-bound) shape elements, or `false` with the browser steps when a plain-client replay cannot reach the authenticated state. Browser-only is a complete, honest result, never a failure.
-6. Re-verify stale state loudly: an expired or missing session is a failure to re-run the verification predicate, never a silent fall back to anonymous state.
+6. Re-verify stale state loudly: an expired or missing session is a failure to re-run the oracle, never a silent fall back to anonymous state.
 7. Persist both facts through the seed face, merging the overview you read first; a shape violation returns 400 `auth_invalid` and lands nothing.
 8. Keep the shared vocabulary: `waf_protected` and `waf_detection` for a block, `rate_limited` for a throttle; an application-level 401/403 takes no blocking-signature name.
+
+## The authenticated-context oracle (mandatory)
+
+Find ONE URL that answers 2xx only with an authenticated context.
+Use `<auth_probe_path>` when it is already known; otherwise choose a same-origin candidate such as `/api/me`, `/api/authentication`, or an account page.
+Prove both polarities before recording it:
+
+- With the authenticated session, a browser request returns 2xx with no followed redirect.
+- Without the session (a fresh anonymous client, or no cookies), the same request returns 401, 403, or 3xx.
+- A URL that answers 2xx anonymously is not an oracle; find another one.
+- A login page is never the oracle.
+
+Verify with the canonical probe: `SESSION=<session_name> bash <mechanics_skill_path>/../references/auth-oracle.sh <auth_probe_path>`.
+The oracle is the ONLY pass/fail signal for authentication.
+2xx passes; 401, 403, or 3xx fails; anything else is indeterminate and is not a pass.
+Store `overview.auth_probe = {url: <auth_probe_path>}`; it is a deployment-neutral path, never a host.
+A target with no reliable oracle is a loud blocker, not a pass.
 
 ## Browser branch (only when the probe forces it)
 
@@ -58,20 +76,21 @@ If the named session is live, reuse it.
 Otherwise start a FREE name only when this bootstrap owns the session: `steel browser start --session <session_name> --session-timeout <session_timeout_ms> --inactivity-timeout <inactivity_timeout_ms> --json`.
 A start on a live name is refused (`session_taken`); reuse the now-live name, never start a twin.
 A known loss returns `session_missing` / `recreate_session`; a blank replacement is not a recovery. Re-bootstrap or report to the operator.
-Log in only when the session does not yield the authenticated landing.
+Log in only when the oracle fails.
 The pinned CLI has no state field, so a later CLI flow must reuse this live session. Do not claim that a new CLI session restored state.
 Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `steel browser wait --url <authenticated_landing_substr>` or `steel browser wait --text <marker>`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
+Those waits only settle the page; the oracle still decides pass or fail.
 Wait on the challenge's own marker with a bounded `--timeout`, then escalate to the operator: the post-gate state cannot appear until the human acts, so a wait on it burns its whole timeout.
 Stop every session with `steel browser stop --session <session_name> --json` and prove it gone against `steel browser sessions --json`.
 Record `steel.state` only when a state file exists.
 
 ## Report back
 
-Return a concise report: the mode decision with its forcing evidence (status codes, headers, body markers); the `anti-bot` name or null; the `http-client-replayability` verdict with its static and dynamic continuation facts; the authenticated landing URL; the token names and locations; the exact skill path written and the store read-back with secret values redacted; and any error verbatim, plus anything you could not establish.
+Return a concise report: the mode decision with its forcing evidence (status codes, headers, body markers); the `anti-bot` name or null; the `http-client-replayability` verdict with its static and dynamic continuation facts; the oracle path with both observed polarities (authenticated 2xx, anonymous 401/403/3xx); the token names and locations; the exact skill path written and the store read-back with secret values redacted; and any error verbatim, plus anything you could not establish.
 Cite secret names only: no secret VALUE in the report or in the skill.
 
 ## Deliverable
 
-- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `credentials`, `tokens` (with locations), `steel` state reference only when a state file exists, `snapshot`, and the `procedure` label joining the account to the skill procedure.
-- The project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md`, with the mandatory block embedded verbatim and target-specific ordered steps (tool plus why per step), sign-up and sign-in as separate named procedures, and secret values cited by name only.
-- Report: the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; the token names/locations if a browser was used; the written skill path; and any error verbatim.
+- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`, `auth_probe`) and, per account named `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), `credentials`, `tokens` (with locations), `steel` state reference only when a state file exists, `snapshot`, and the `procedure` label joining the account to the skill procedure.
+- The project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md`, with the mandatory block embedded verbatim and target-specific ordered steps (tool plus why per step), sign-up and sign-in as separate named procedures, the oracle verification step, and secret values cited by name only.
+- Report: the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; the oracle path and both polarities; the token names/locations if a browser was used; the written skill path; and any error verbatim.

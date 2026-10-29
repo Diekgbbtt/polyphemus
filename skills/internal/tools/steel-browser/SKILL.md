@@ -8,7 +8,7 @@ description: >-
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '2.1.0'
+  version: '2.2.0'
 ---
 
 # Steel browser operation
@@ -137,7 +137,8 @@ Never log, print, or paste cookie values, storage values, or the state file. Pri
 - Clear a consent, region, or guest gate before snapshotting for refs; the gate's own click changes cookie and storage state, so take any pre-state baseline after it settles.
 - Decide a state change on a UI signal plus a pre/post baseline, never on cookie names alone: `PHPSESSID` and `PrestaShop-<hash>` exist pre-login, and login changes their values, not their names. Read the pre/post signal as a `get count` of the selector - presence and how many match, which a hidden twin cannot fool; reserve `is visible` for the distinct question of whether a specific first-matching element is shown. A surprising read is in-flight absence, not a stale value (a session whose `start` has not returned is legitimately missing), so re-read once before believing it.
 - Pass `get count` a CSS selector, never a ref: it does not resolve refs and returns `count 0` for a ref or a missing selector alike, so a 0 means no CSS match.
-- For an authenticated crawl, the provider replicates cookies, required headers, header-located tokens, and storage-located tokens, then gates the attempt on the application state or the response to an authenticated part of the surface. A login redirect, a 401, or a 403 fails the gate; a failure is reduced coverage, never a silent authenticated crawl.
+- For an authenticated crawl, the provider replicates cookies, required headers, header-located tokens, and storage-located tokens, then asks the recorded authenticated-context oracle (`overview.auth_probe`). A browser request to it answers 2xx only for an authenticated context; 401, 403, or any 3xx fails, and anything else is indeterminate and fails the gate. A login redirect is a 3xx: it never passes, even when the browser follows it to a 200 page. A failure is reduced coverage, never a silent authenticated crawl.
+  When no oracle is recorded, the legacy surface gate is the fallback; record the missing oracle loudly.
 
 ## Command families
 
@@ -171,6 +172,7 @@ Runnable scripts beside this skill; each is self-guarding, `--json`, bounded out
 - `references/session-records.py` - session metadata, snapshot, screenshot, the addressable live-view candidate, and the record probes the runtime supports.
   These three read scripts require a live session and never start or stop one.
 - `references/catalogue.sh` - list live sessions; the survey read.
+- `references/auth-oracle.sh` - ask the authenticated-context oracle in a live session: 2xx passes, 401/403/3xx fails, anything else is indeterminate. It never starts or stops a session.
 - `references/session-lifecycle.sh` - survey, open a free name, use it, release under a trap, prove the catalogue clean.
 - `references/stop-owner.sh` - arm or defuse a dead-man watchdog for a flow that spans separate calls.
 - `references/navigate-read.sh` - navigate, then read title, URL, and a compact tree slice.
