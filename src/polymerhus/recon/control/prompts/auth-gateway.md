@@ -38,21 +38,34 @@ record, mint one through sign-in (section 5).
 
 ### 3. Validate before sign-in
 
+The in-process `auth_store` read is REDACTED: it returns names, statuses,
+shapes, and locations, never a token, cookie, password, or header value.
+A `<redacted>` value is the contract working, not a failed read.
+Never read, copy, or paste a secret value into a command, a write, or the
+rationale.
+
 Validate the selected account BEFORE any sign-in attempt, following the
 branch directive in the turn brief:
 
-- request: replay the stored request state (snapshot headers/cookies,
-  tokens) with the Kali exec capability. A live session is proven, not
-  assumed.
-- browser_only: validate EXCLUSIVELY through the Steel path: start or reuse
-  a live session, replay the account's recorded browser auth material per the
-  `authn` skill, navigate, verify. Never use request tools here.
-- request_browser_first: start or reuse a live session, verify it, compare
-  against the stored tokens and persist what changed, then release request
-  collection.
-- resolve_in_loop: the overview's replayability is unknown. Attempt request
-  replay from the browser-trusted context per the `authn` skill: replayable
-  releases the request branch, not replayable prunes to browser-only.
+- request: validate with the recorded HTTP history replay
+  (`search_http_history`, then `replay_http_request`). The capture plane and
+  the pipeline's auth feed apply the raw material server-side; it never crosses
+  the model. If no captured artifact exists, do not fabricate a request from
+  secrets: leave the fact unresolved and fail open.
+- browser_only: validate EXCLUSIVELY through the Steel path. Reuse the
+  operator-owned live session named by the `authn` skill. Do not start a
+  replacement: a start on a live name is refused with `session_taken`, and a
+  loss (`session_missing`) requires a state-restoring recreate, not a blank
+  session. Navigate, verify the authenticated landing, and treat a missing or
+  unknown session as a loud failure.
+- request_browser_first: reuse the operator-owned live session for the browser
+  validation. The request material is applied server-side by the pipeline; do
+  not read or compare token values.
+- resolve_in_loop: the overview's replayability is unknown. Resolve it with
+  the recorded HTTP replay: replayable releases the request branch; not
+  replayable prunes to browser-only. If no captured artifact exists, do not
+  read secrets and do not invent a result; fail open with the unknown fact
+  loud.
 
 A new CLI session cannot restore saved browser state, so reuse a live session
 whenever the validation needs continuity.
@@ -66,20 +79,26 @@ it never replaces the write.
 
 ### 4. Sign-in and debug (no mechanical cap)
 
-On `not_valid`, run the sign-in procedure from the `authn` skill (request
-replay or browser flow per the branch directive). The browser path reuses or
-starts a live session; it never writes a browser state reference. A new CLI
-session cannot restore saved state, so a later CLI flow must reuse the live
-session. Only the crawl provider captures session state, on its own release.
+On `not_valid`, run the sign-in procedure from the `authn` skill (recorded
+request replay or the operator-pre-authenticated browser flow per the branch
+directive). The gateway never reads credentials or writes token values: the
+external bootstrap through the operator seed face, or the programmatic crawl
+provider, owns the raw material. A browser sign-in that needs a credential the
+redacted view does not expose is a bootstrap step, not a model step.
+The browser path reuses the operator-owned live session; it does not start a
+replacement. A new CLI session cannot restore saved state. Only the crawl
+provider captures session state, on its own release.
 A missing or unauthenticated session fails open into sign-in with the account
-asserted `not_valid`, never a silent anonymous turn.
+asserted `not_valid`, never a silent anonymous turn and never a newly minted
+unauthenticated session.
 
 There is NO attempt cap and no duplicate-command rejection: adjust one
 variable per attempt and keep debugging while progress is real. The span ends
-in exactly two ways: success (one `auth_store` write of `accounts.<account>`
-carrying the extracted `tokens` and `status: valid`; never a browser state
-reference), or your declaration that the tweaking space is exhausted - the
-terminal failed verdict. A failed authentication is explicit and loud, never
+in exactly two ways: success (one `auth_store` write of `accounts.<account>.status`;
+the status assertion is the gateway's boundary act, while token and credential
+capture belongs to the external bootstrap or the crawl provider, never the
+gateway; never a browser state reference), or your declaration that the
+tweaking space is exhausted - the terminal failed verdict. A failed authentication is explicit and loud, never
 silent-anonymous.
 
 ### 5. Outer loop, then the verdict

@@ -205,6 +205,24 @@ def test_first_probe_enters_validation_and_counts():
     assert state["injected_hint"] is None
 
 
+def test_http_history_replay_is_a_validation_probe():
+    state = L.initial_state()
+    state = L.push_transition(state, "retrieve", _obs(
+        "auth_store", {"command": "read", "path": "accounts"},
+        _read_envelope("accounts", _accounts_payload(("alice",)))))
+    replay = _obs("replay_http_request", {"project_id": "p1", "artifact_id": "a1"})
+    assert L.detect_transition(replay) == "probe"
+    state = L.push_transition(state, "probe", replay)
+    assert state["phase"] == "VALIDATION"
+    assert state["probe_count"] == 1
+    assert state["injected_hint"] == L.VALIDATION_HINT
+
+
+def test_search_http_history_alone_is_not_a_validation_probe():
+    search = _obs("search_http_history", {"project_id": "p1"})
+    assert L.detect_transition(search) == "none"
+
+
 def test_not_valid_assertion_enters_generation():
     state = L.initial_state()
     state = L.push_transition(state, "retrieve", _obs(

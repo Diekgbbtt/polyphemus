@@ -53,7 +53,11 @@ The interaction mode defaults to request-based; the browser is taken only when t
 
 ## Browser branch (only when the probe forces it)
 
-Start or reuse a named live session: `steel browser start --session <session_name> --session-timeout <session_timeout_ms> --json`.
+Survey the catalogue first: `steel browser sessions --json`.
+If the named session is live, reuse it.
+Otherwise start a FREE name only when this bootstrap owns the session: `steel browser start --session <session_name> --session-timeout <session_timeout_ms> --inactivity-timeout <inactivity_timeout_ms> --json`.
+A start on a live name is refused (`session_taken`); reuse the now-live name, never start a twin.
+A known loss returns `session_missing` / `recreate_session`; a blank replacement is not a recovery. Re-bootstrap or report to the operator.
 Log in only when the session does not yield the authenticated landing.
 The pinned CLI has no state field, so a later CLI flow must reuse this live session. Do not claim that a new CLI session restored state.
 Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `steel browser wait --url <authenticated_landing_substr>` or `steel browser wait --text <marker>`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.

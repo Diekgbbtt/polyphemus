@@ -6,7 +6,7 @@ description: >-
   session through the browser, assert it in the auth store, and never replay
   the login over HTTP.
 metadata:
-  version: '2.0.0'
+  version: '2.0.1'
 ---
 
 # White Jotter authentication skill - browser-only fixture
@@ -102,6 +102,8 @@ It stores no credentials and no roles.
 
 - If `wj-gateway-e2e` is absent from `sessions --json`, do not start a replacement.
   Write `accounts.admin-sessiononly-e2e.status` as `not_valid`, emit `outcome: failed`, and report that the operator must re-mint the session.
+- If the tool returns `session_missing` or `unknown_session`, treat the designated session as absent: do not start, write `not_valid`, emit `failed`, and report the operator.
+- A `session_taken` response means the designated session is live: reuse it; never start a twin.
 - If `/api/authentication` answers `302 /nowhere`, the server session is stale or absent.
   Do not fall back to a request login.
   Write `not_valid`, emit `failed`, and report that the operator must re-mint the session.

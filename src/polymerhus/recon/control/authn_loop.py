@@ -27,7 +27,7 @@ Transition table (spec, D223-15):
 |            |                                                                 |                                        | usable account                         |
 | RETRIEVED  | `accounts` read holding a usable account (the empty       | validate the selected account          | VALIDATION on the first probe          |
 |            | full-state read retrieves too, recording grounding alongside)   |                                        |                                        |
-| VALIDATION | first probe (`execute_command` / `steel_exec`) after RETRIEVED  | conclude valid or not_valid            | GENERATION on the `not_valid` write;   |
+| VALIDATION | first probe (`execute_command`, `steel_exec`, or `replay_http_request`) after RETRIEVED | conclude valid or not_valid | GENERATION on the `not_valid` write; |
 |            |                                                                 |                                        | FINISH on the `valid` write            |
 | GENERATION | `not_valid` write, or a no-usable-account read                  | run the sign-in procedure              | DEBUG at the second attempt call;      |
 |            |                                                                 |                                        | FINISH when sign-in persists state     |
@@ -106,47 +106,51 @@ GROUNDED_HINT = (
 """Injected when grounding completes: retrieve and select the account."""
 
 RETRIEVED_HINT = (
-    "Account selected. Validate it first: replay its stored request state "
-    "(snapshot, tokens) with the exec capability, or start or reuse a live "
-    "session and verify it per the branch directive. Conclude by "
-    "asserting the account status valid or not_valid in the store before any "
-    "sign-in."
+    "Account selected. Validate it first with the recorded HTTP history "
+    "replay, or by reusing the operator-owned live session, per the branch "
+    "directive. The in-process auth-store view is redacted: never read or "
+    "paste token, cookie, or credential values. Conclude by asserting the "
+    "account status valid or not_valid in the store before any sign-in."
 )
 """Injected on RETRIEVED: validate the selected account."""
 
 VALIDATION_HINT = (
     "Validation probe observed. Conclude it: on a live session assert the "
-    "account status valid; on a dead one assert not_valid, then run the "
-    "sign-in procedure."
+    "account status valid; on a dead one assert not_valid; do not read or "
+    "write secret values. The external bootstrap or the crawl provider owns "
+    "raw credential and token capture."
 )
 """Injected on the first validation probe: conclude valid or not_valid."""
 
 GENERATION_HINT = (
     "The account is asserted not_valid. Run the sign-in procedure from the "
-    "authn skill (request replay or browser flow per the branch directive). "
-    "There is no mechanical attempt cap: keep debugging while progress is "
-    "real; declare the space exhausted through the terminal failed verdict "
-    "when it is not."
+    "authn skill (recorded request replay or the operator-pre-authenticated "
+    "browser flow per the branch directive). The gateway never reads "
+    "credentials or writes token values; the external bootstrap or crawl "
+    "provider owns them. There is no mechanical attempt cap: keep debugging "
+    "while progress is real; declare the space exhausted through the terminal "
+    "failed verdict when it is not."
 )
 """Injected on GENERATION: run the sign-in procedure."""
 
 GENERATION_SIGNIN_HINT = (
-    "No usable account on record. Run the sign-in procedure from the authn "
-    "skill to mint one (request replay or browser flow per the branch "
-    "directive), then persist the extracted tokens and assert the account "
-    "status valid. Never write a browser state reference; only the "
-    "programmatic crawl provider captures session state. There is no "
+    "No usable account on record. The credential and token capture is the "
+    "external bootstrap's or the crawl provider's; the gateway may reuse an "
+    "operator-pre-authenticated session but must not mint an unauthenticated "
+    "replacement. Run the sign-in procedure only when the skill provides a "
+    "credential-free path; otherwise assert the account not_valid and fail "
+    "open loudly. Never write a browser state reference. There is no "
     "mechanical attempt cap; declare the space exhausted through the terminal "
     "failed verdict when no sign-in path remains."
 )
 """Injected when the accounts read holds no usable account: sign in to mint."""
 
 SELF_SERVICE_HINT = (
-    "No usable account and no authn skill bundle. Fall back to request-based "
-    "self-service driven by the store's description and procedure: attempt "
-    "sign-in over plain HTTP, persist what succeeds, and say so in the "
-    "verdict rationale. A thin description yields a blind attempt; that "
-    "residual risk is accepted, not mitigated."
+    "No usable account and no authn skill bundle. Request-based self-service "
+    "is the external bootstrap's path; the gateway must not read secrets or "
+    "guess credentials. Assert the account not_valid and fail open with the "
+    "missing bootstrap loud in the rationale. A thin description is a "
+    "residual risk, not a licence to invent a login."
 )
 """Injected when the skill is missing too: fail-open self-service (D223-17)."""
 
@@ -185,9 +189,11 @@ _HINT_TAG = "authn-loop-hint"
 `<phase-transition-hint>` precedent): the hint rides the TRIGGERING tool
 result only, inside this tag, and is consumed immediately."""
 
-PROBE_TOOLS = frozenset({"execute_command", "steel_exec"})
-"""The probe surface: the Kali exec capability and the Steel exec gateway
-(D223-13). Any other tool call is never a probe."""
+PROBE_TOOLS = frozenset({"execute_command", "steel_exec", "replay_http_request"})
+"""The probe surface: the Kali exec capability, the Steel exec gateway, and the
+server-side recorded HTTP replay (D223-13). The replay is the validation probe
+that keeps the raw material out of the model. Any other tool call is never a
+probe."""
 
 
 def wrap_hint(hint: str) -> str:

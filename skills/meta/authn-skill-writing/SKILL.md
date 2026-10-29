@@ -96,12 +96,23 @@ A static element that proves to be a stable target property graduates into the o
 Durable browser state is the four-field session context: cookies, localStorage, sessionStorage, and indexedDB. The tool keeps no server-side identity bundle.
 The store holds only a `steel: {state}` reference when a state file exists; secrets never touch the store.
 A fresh CLI session is a fresh context. The pinned CLI has no state field, so a later CLI flow must reuse the live session; never claim that a new session restored state.
-Start by name: `steel browser start --session <name> --session-timeout <ms> --json`.
+
+Survey first: `steel browser sessions --json`.
+If the named session is live, reuse it.
+Only when it is absent and this bootstrap owns the session, start a FREE name: `steel browser start --session <name> --session-timeout 600000 --inactivity-timeout 300000 --json`.
+A start on a live name is refused with `session_taken`; reuse the now-live name, never start a twin.
+A known loss returns `session_missing` with `recreate_session` and `requires_state_restore`; a blank replacement is not a recovery. Re-bootstrap or report to the operator.
+Size both clocks for the slowest human step; a zero inactivity window is unreliable and is reaped.
 Log in when the live session does not yield the authenticated landing.
 Settle then verify: navigate to the authenticated landing URL and read it back before trusting the session; an unverified session never passes a verdict.
 The programmatic crawl provider restores state, replicates auth material, and captures state on release. The CLI login path does not write state; only the programmatic crawl provider captures it.
 Stop on every path with `steel browser stop --session <name> --json`, then prove it gone against `steel browser sessions --json`.
-The scripts beside the steel-browser skill are optional helpers for these acts: `references/session-lifecycle.sh`, `references/catalogue.sh`, `references/extract-reads.sh`.
+The scripts beside the steel-browser skill are optional helpers for these acts: `references/session-lifecycle.sh`, `references/catalogue.sh`, `references/extract-reads.sh`, `references/contract.md`.
+
+A follower's rules differ from this bootstrap's.
+A generated procedure that a gateway or pod runs must reuse the operator-owned live session and never start a replacement.
+A missing or unknown session is asserted `not_valid` and fails open; it is not a reason to mint a blank session.
+A model-facing follower sees a REDACTED `auth_store` view: it cites token names and locations, uses the recorded HTTP history replay or the browser session, and never reads or pastes a secret value.
 
 ### Browser fast path (read this before you touch the CLI)
 
@@ -133,7 +144,7 @@ Gate: each flow states its endpoint or form plus its required headers and anti-f
 ## P3 - Execute and verify
 
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
-Browser path: reuse or start a live session and verify it per the fallback discipline above; log in only when it does not yield the authenticated landing, and pace that login per the mechanics skill's cadence and escalation rules.
+Browser path: survey the catalogue, reuse the live session, or start a free name only when this bootstrap owns it; verify it per the fallback discipline above. Log in only when it does not yield the authenticated landing, and pace that login per the mechanics skill's cadence and escalation rules.
 Record `steel.state` only when a state file exists.
 Verify with concrete commands: `navigate` to the target URL, then settle with `wait --url <authenticated-landing-substr>` or `wait --text <marker>` (a condition, not a fixed pause), then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
 Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead.
@@ -153,8 +164,9 @@ Gate: no procedure prose landed in the store and no secret value landed in the s
 Write the authn skill as replayable ordered steps, with sign-up and sign-in as separate named procedures.
 Every sign-up procedure carries this line verbatim, so every target mints new accounts the same way: "New accounts are minted with synthetic identity data - a fake email address and fake personal details - never real personal data; the exact values used are recorded in the account's `credentials`."
 Cite for EVERY step the tool it uses AND why it uses it (request-based because no blocking defence was observed, steel because a named WAF, anti-bot, or fingerprinting signal forced it).
-When `http-client-replayability` is `true`, the procedure carries the replay steps and the static/dynamic element lists: which headers, cookies, parameters, and token locations to send as-is, and which values must be re-minted or are browser-bound.
-When it is `false`, the procedure carries the browser steps instead, and says plainly that a plain-client replay cannot reach the authenticated state.
+When `http-client-replayability` is `true`, the procedure cites the recorded HTTP history replay (`search_http_history`, `replay_http_request`) or the pipeline's server-side request material, plus the static/dynamic element names and locations. It never instructs a model-facing follower to read or paste a value; the `auth_store` view is redacted.
+When it is `false`, the procedure carries the browser steps instead, and says plainly that a plain-client replay cannot reach the authenticated state. Those steps reuse the operator-owned live session and never start a replacement.
+The browser procedure's failure branch names the typed session outcomes: `session_taken` means the live name must be reused, never twinned; `session_missing` means the state is gone and needs an operator re-mint or state restore, never a blank replacement; `unknown_session` means the name was never live, so do not start. A follower asserts `not_valid` and fails open when the operator session is gone.
 Name for every steel step the live session, the concrete CLI commands, and the script they come from.
 Resolve script citations to the steel-browser skill's published references beside that skill (`references/session-lifecycle.sh`, `references/extract-reads.sh`, `references/eval-inline.sh`, `references/eval-interact.sh`) or the authn skill's own `references/` scripts.
 Keep login-specific scripts in the authn skill's own `references/`, and mechanics in the steel-browser references.
@@ -170,7 +182,7 @@ Gate: the skill file exists at that path with valid frontmatter (name equal to t
 
 Set each served account's `procedure` label to the skill procedure that minted or serves it.
 Make each procedure cite the account and token names it uses.
-Re-verify replayability: a follower holding only the skill plus the store can reproduce each flow, and the two recorded facts match what the procedure does.
+Re-verify replayability: the programmatic follower can reproduce each flow from the raw store, and a model-facing follower can reproduce it through the recorded HTTP history replay or the operator-owned browser session. The two recorded facts match what the procedure does.
 Re-verify secrecy: the skill holds names and steps, never values.
 Re-verify the failure branch: the skill's unexpected-failure path cites the `overview.technical_conditions` checks as its diagnostic ladder.
 Gate: the two planes are mutually consistent and non-overlapping, with no orphan account and no orphan procedure.
@@ -182,7 +194,7 @@ Gate: the two planes are mutually consistent and non-overlapping, with no orphan
 | `procedure` label | Named procedure | Sole formal edge, bidirectional |
 | Account NAME | Procedure account citation | Known name means duplicate, never fork |
 | `credentials` | Sign-in or sign-up step | Secrets stay in store, skill cites account |
-| `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels |
+| `tokens.<t>` value plus location | Token carrying or reading step | Location dictates where token travels; a model-facing follower is redacted and the value is applied server-side |
 | `steel: {state}` | Browser session step | Store holds the reference when a state file exists |
 | `snapshot` | Request replay step | Replay the account snapshot exactly |
 | `overview.anti-bot` | Defence-naming step (P1) | Store holds the vendor name, skill names it for the mode decision |

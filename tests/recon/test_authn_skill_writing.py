@@ -197,7 +197,11 @@ def test_bootstrap_prompt_cites_the_mechanics_skill():
 
 def test_browser_discipline_reuses_a_live_session_and_logs_in_only_on_failure():
     body = _body()
-    assert "reuse the live session" in body
+    assert "reuse it" in body
+    assert "start a FREE name" in body
+    assert "--inactivity-timeout 300000" in body
+    assert "session_taken" in body
+    assert "session_missing" in body
     assert "Log in when the live session does not yield the authenticated landing" in body
     assert "programmatic crawl provider restores state" in body
     assert "profile" not in body.lower()
@@ -207,11 +211,26 @@ def test_bootstrap_prompt_reuses_a_live_session_and_cannot_restore_state():
     prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
         encoding="utf-8"
     )
-    assert "Start or reuse a named live session" in prompt
+    assert "Survey the catalogue first" in prompt
+    assert "If the named session is live, reuse it" in prompt
+    assert "start a FREE name" in prompt
+    assert "--inactivity-timeout <inactivity_timeout_ms>" in prompt
+    assert "session_taken" in prompt
+    assert "session_missing" in prompt
     assert "pinned CLI has no state field" in prompt
     assert "Do not claim that a new CLI session restored state" in prompt
     assert "profile" not in prompt.lower()
     assert "--profile" not in prompt
+
+
+def test_generated_procedure_uses_the_redacted_material_path():
+    body = _body()
+    assert "REDACTED" in body
+    assert "search_http_history" in body
+    assert "replay_http_request" in body
+    assert "never instructs a model-facing follower to read or paste a value" in body
+    assert "reuse the operator-owned live session" in body
+    assert "never start a replacement" in body
 
 
 def test_mechanics_skill_paces_the_login_and_sizes_the_clock():

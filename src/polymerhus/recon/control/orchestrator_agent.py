@@ -151,28 +151,34 @@ def build_authn_loop_middleware():
 # static discipline lives in the prompt file; only the run facts vary here).
 _BRANCH_MANNER = {
     "request": (
-        "No blocking defence recorded. Validate by replaying the account's "
-        "stored request state (snapshot headers/cookies, tokens) with the "
-        "Kali exec capability. Request phases stay released."),
+        "No blocking defence recorded. Validate with the recorded HTTP "
+        "history replay (`search_http_history`, then `replay_http_request`); "
+        "the in-process auth-store view is redacted, so never read or paste "
+        "token values. The request material is applied server-side. Request "
+        "phases stay released."),
     "browser_only": (
         "Browser-only target (the defence is not HTTP-replayable). Validate "
-        "EXCLUSIVELY through the Steel path: start or reuse a live session, "
-        "replay the account's recorded browser auth material per the authn "
-        "skill, navigate, verify. Never validate with request tools. You never "
-        "write a browser state reference; only the crawl provider captures "
-        "state. Request phases will be pruned; only the Steel crawl runs."),
+        "EXCLUSIVELY through the Steel path. Reuse the operator-owned live "
+        "session named by the authn skill. Do not start a replacement: a "
+        "start on a live name is refused with session_taken, and a loss "
+        "(session_missing) needs state-restoring recreation, not a blank "
+        "session. Navigate, verify. Never use request tools. You never write "
+        "a browser state reference; only the crawl provider captures state. "
+        "Request phases will be pruned; only the Steel crawl runs."),
     "request_browser_first": (
-        "Replayable defence. Validate browser-first: start or reuse a live "
-        "session, verify it, compare against the stored tokens and persist "
-        "what changed, then release request collection."),
+        "Replayable defence. Reuse the operator-owned live session for the "
+        "browser validation; the request material is applied server-side by "
+        "the pipeline. Do not read or compare token values. Then release "
+        "request collection."),
     "resolve_in_loop": (
-        "Replayability UNKNOWN. Attempt request replay from the "
-        "browser-trusted context per the authn skill: replayable releases the "
-        "request branch (record replayability true), not replayable prunes to "
-        "browser-only (record false). Persist the resolved fact to the "
-        "overview with an auth_store write (your write merges; the operator "
-        "stamp stays), and record the resolution loudly in the rationale "
-        "and verdict."),
+        "Replayability UNKNOWN. Resolve it with the recorded HTTP history "
+        "replay: replayable releases the request branch (record replayability "
+        "true), not replayable prunes to browser-only (record false). If no "
+        "captured artifact exists, do not read secrets and do not invent a "
+        "result; fail open with the unknown fact loud. Persist the resolved "
+        "fact to the overview with an auth_store write (your write merges; the "
+        "operator stamp stays), and record the resolution loudly in the "
+        "rationale and verdict."),
 }
 
 

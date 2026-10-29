@@ -48,6 +48,59 @@ def test_gateway_branch_manner_teaches_live_sessions_and_no_profile() -> None:
     assert "state reference" in _BRANCH_MANNER["browser_only"].lower()
 
 
+def test_gateway_prompt_uses_the_redacted_store_and_recorded_replay() -> None:
+    text = _read(
+        "src", "polymerhus", "recon", "control", "prompts", "auth-gateway.md"
+    )
+    lower = text.lower()
+    assert "redacted" in lower
+    assert "never read" in lower
+    assert "search_http_history" in text
+    assert "replay_http_request" in text
+    assert "start or reuse" not in lower
+    assert "stored request state" not in lower
+    assert "extracted tokens" not in lower
+    assert "session_taken" in text
+    assert "session_missing" in text
+
+
+def test_gateway_manner_and_hints_do_not_teach_raw_secret_reads() -> None:
+    from polymerhus.recon.control import authn_loop
+    from polymerhus.recon.control.orchestrator_agent import _BRANCH_MANNER
+
+    text = "\n".join(_BRANCH_MANNER.values())
+    text += "\n" + "\n".join((
+        authn_loop.RETRIEVED_HINT,
+        authn_loop.VALIDATION_HINT,
+        authn_loop.GENERATION_HINT,
+        authn_loop.GENERATION_SIGNIN_HINT,
+        authn_loop.SELF_SERVICE_HINT,
+    ))
+    lower = text.lower()
+    assert "start or reuse" not in lower
+    assert "stored request state" not in lower
+    assert "extracted tokens" not in lower
+    assert "redacted" in lower
+    assert "replay_http_request" in text
+    assert "session_taken" in text
+    assert "session_missing" in text
+
+
+def test_authn_meta_skill_sizes_the_session_and_handles_typed_loss() -> None:
+    skill = _read("skills", "meta", "authn-skill-writing", "SKILL.md")
+    prompt = _read(
+        "skills", "meta", "authn-skill-writing", "references",
+        "bootstrap-workflow.md",
+    )
+    for name, text in (("SKILL.md", skill), ("bootstrap-workflow.md", prompt)):
+        assert "--inactivity-timeout" in text, name
+        assert "session_taken" in text, name
+        assert "session_missing" in text, name
+        assert "start or reuse" not in text.lower(), name
+    assert "reuse it" in skill
+    assert "start a FREE name" in prompt
+
+
 def test_authn_loop_hints_teach_live_sessions_and_no_profile() -> None:
     from polymerhus.recon.control import authn_loop
 
