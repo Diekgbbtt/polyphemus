@@ -628,6 +628,9 @@ class SteelCrawlProvider:
         if probe_result is not None:
             crawl.auth_result = probe_result
             return
+        logger.warning(
+            "no authenticated-context oracle (overview.auth_probe) recorded; "
+            "falling back to the legacy surface gate for this crawl")
         local_storage: dict = {}
         try:
             current = await crawl.page.evaluate(
