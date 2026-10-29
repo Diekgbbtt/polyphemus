@@ -54,3 +54,60 @@ def test_skill_states_the_auth_gate_signals():
     assert "401" in text and "403" in text
     assert "storage-located" in text
     assert "reduced coverage" in text
+
+
+def test_skill_pins_the_current_contract_and_references():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "version: '2.1.0'" in text
+    for token in (
+        "steel_events", "shell_returncode", "browser batch", "browser find",
+        "browser diff", "sessions get", "--inactivity-timeout 300000",
+        "has no effect",
+    ):
+        assert token in text
+    assert "--inactivity-timeout 0" not in text
+    assert "steel-real" not in text
+    references = SKILL.parent / "references"
+    for name in (
+        "contract.md", "load-eval.py", "select-elements.py", "session-records.py",
+    ):
+        assert name in text
+        assert (references / name).is_file()
+
+
+def test_contract_reference_pins_the_error_and_record_surface():
+    contract = (SKILL.parent / "references" / "contract.md").read_text(
+        encoding="utf-8")
+    for token in (
+        "unknown_session", "session_missing", "recreate_session",
+        "requires_state_restore", "session_taken", "target_lost",
+        "browser_stuck", "invalid_command", "steel_events", "shell_returncode",
+        "not_found", "no video recording", "HTTP history",
+    ):
+        assert token in contract
+    assert "logs" in contract and "agent-logs" in contract and "traces" in contract
+
+
+def test_lifecycle_scripts_mark_ownership_after_start():
+    references = SKILL.parent / "references"
+    for name in (
+        "eval-inline.sh", "eval-interact.sh", "extract-reads.sh",
+        "interact-batch.sh", "navigate-read.sh", "session-lifecycle.sh",
+        "spider-bounded.sh",
+    ):
+        text = (references / name).read_text(encoding="utf-8")
+        assert "SESSION_NAMED" not in text
+        assert "SESSION_OWNED=1\nSTART_JSON" not in text
+        start = text.index("START_JSON=$(steel browser start")
+        assert text.index("SESSION_OWNED=1", start) > start
+        assert "--inactivity-timeout 300000" in text
+        assert "--inactivity-timeout 0" not in text
+
+
+def test_read_scripts_never_create_sessions():
+    references = SKILL.parent / "references"
+    for name in ("load-eval.py", "select-elements.py", "session-records.py"):
+        text = (references / name).read_text(encoding="utf-8")
+        assert "browser start" not in text
+        assert "browser stop" not in text
+        assert "steel-real" not in text

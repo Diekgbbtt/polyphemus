@@ -30,7 +30,7 @@ FORM_USERNAME="${FORM_USERNAME:-}"
 FORM_PASSWORD="${FORM_PASSWORD:-}"
 ROUTE="${ROUTE:-click}"
 SESSION="${SESSION:-polymerhus-${FLOW}-$(date +%s)}"
-SESSION_NAMED=0
+SESSION_OWNED=0
 LOGGED="false"
 REASON="unset"
 
@@ -64,12 +64,12 @@ case "$ROUTE" in
 esac
 
 finish() {
-  # The single summary line, then the trap-owned stop. SESSION_NAMED is set
-  # before `start` (past the catalogue guard), so a signal inside the start
-  # window still gets a named stop; the refusal path leaves it down, so a
-  # stranger's live name is never addressed.
+  # The single summary line, then the trap-owned stop. Ownership is marked only
+  # after `start` returns success, so a `session_taken` denial never stops a
+  # foreign session. A signal inside the start window can orphan a just-created
+  # session; the finite session clock reaps it.
   echo "SUMMARY logged_in=${LOGGED} reason=${REASON}"
-  if [ "$SESSION_NAMED" = 1 ]; then
+  if [ "$SESSION_OWNED" = 1 ]; then
     steel browser stop --session "$SESSION" --json >/dev/null 2>&1 || true
   fi
 }
@@ -88,8 +88,8 @@ sys.exit(0 if sys.argv[1] in names else 1)
   exit 3
 fi
 
-SESSION_NAMED=1
-START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --json)
+START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --inactivity-timeout 300000 --json)
+SESSION_OWNED=1
 printf '%s' "$START_JSON" | python3 -c \
   'import json,sys; d=json.load(sys.stdin)["data"]; print("started", d["name"], "remainingMs", d.get("remainingMs"))'
 
@@ -166,9 +166,9 @@ else
 fi
 
 # Explicit stop so this run prints its own clean-catalogue proof; the trap stays
-# armed as the backstop and no-ops because SESSION_NAMED is cleared.
+# armed as the backstop and no-ops because SESSION_OWNED is cleared.
 steel browser stop --session "$SESSION" --json >/dev/null 2>&1 || true
-SESSION_NAMED=0
+SESSION_OWNED=0
 steel browser sessions --json | python3 -c '
 import json,sys
 names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}

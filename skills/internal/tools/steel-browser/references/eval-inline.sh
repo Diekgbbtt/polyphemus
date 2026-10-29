@@ -9,14 +9,15 @@ set -euo pipefail
 FLOW="eval"
 URL="${URL:-https://quotes.toscrape.com}"
 SESSION="${SESSION:-polymerhus-${FLOW}-$(date +%s)}"
-SESSION_NAMED=0
+SESSION_OWNED=0
 
 release() {
-  # Fires on success, error, and signal alike. The mark is set before `start`
-  # (past the catalogue guard), so a signal inside the start window still gets a
-  # named stop; a name never created is a harmless no-op, and the explicit stop
+  # Fires on success, error, and signal alike. Ownership is marked only after
+  # `start` returns success: a `session_taken` denial means the name is foreign,
+  # so the trap must not stop it. A signal inside the start window can orphan a
+  # just-created session; the finite session clock reaps it. The explicit stop
   # below clears the mark so the trap no-ops on the happy path.
-  if [ "$SESSION_NAMED" = 1 ]; then
+  if [ "$SESSION_OWNED" = 1 ]; then
     steel browser stop --session "$SESSION" --json >/dev/null 2>&1 || true
   fi
 }
@@ -35,8 +36,8 @@ sys.exit(0 if sys.argv[1] in names else 1)
   exit 3
 fi
 
-SESSION_NAMED=1
-START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --json)
+START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --inactivity-timeout 300000 --json)
+SESSION_OWNED=1
 printf '%s' "$START_JSON" | python3 -c \
   'import json,sys; d=json.load(sys.stdin)["data"]; print("started", d["name"])'
 
@@ -65,7 +66,7 @@ echo "dollar-and-backtick:"; run_eval '`${document.title} / ${document.querySele
 
 # Explicit stop, then prove the name is gone; the trap is the backstop.
 steel browser stop --session "$SESSION" --json >/dev/null
-SESSION_NAMED=0
+SESSION_OWNED=0
 steel browser sessions --json | python3 -c '
 import json,sys
 names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}

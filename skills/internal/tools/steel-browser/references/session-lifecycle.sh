@@ -10,16 +10,15 @@ set -euo pipefail
 FLOW="lifecycle"
 URL="${URL:-https://example.com}"
 SESSION="${SESSION:-polymerhus-${FLOW}-$(date +%s)}"
-SESSION_NAMED=0
+SESSION_OWNED=0
 
 release() {
-  # Trap-owned stop: fires on success, error, and signal alike. SESSION_NAMED is
-  # set once the name is marked free (past the catalogue guard) and BEFORE
-  # `start`, so a signal landing inside the start window still gets a named stop;
-  # a name never created is a harmless no-op. A refusal leaves the mark down, so
-  # a stranger's live name is never addressed, and the explicit stop below clears
-  # the mark so the trap no-ops on the happy path.
-  if [ "$SESSION_NAMED" = 1 ]; then
+  # Trap-owned stop: fires on success, error, and signal alike. Ownership is
+  # marked only AFTER `start` returns success. A `session_taken` denial means the
+  # name is foreign, so the trap must not stop it. A signal inside the start
+  # window can orphan a just-created session; the finite session clock reaps it.
+  # The explicit stop below clears the mark so the trap no-ops on the happy path.
+  if [ "$SESSION_OWNED" = 1 ]; then
     steel browser stop --session "$SESSION" --json >/dev/null 2>&1 || true
   fi
 }
@@ -50,8 +49,8 @@ fi
 # set only after `start` returns, so a signal inside the start window is not
 # orphaned. Session lifetime 600000 ms outlives the script; provisioning consumes
 # part of it before the receipt, so remainingMs lands below what was requested.
-SESSION_NAMED=1
-START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --json)
+START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --inactivity-timeout 300000 --json)
+SESSION_OWNED=1
 printf '%s' "$START_JSON" | python3 -c \
   'import json,sys; d=json.load(sys.stdin)["data"]; print("started", d["name"], "mode", d["mode"], "remainingMs", d.get("remainingMs"))'
 
@@ -62,7 +61,7 @@ printf '%s' "$NAV_JSON" | python3 -c \
 # Explicit stop first, so this run proves the catalogue clean itself; the trap
 # stays armed as the backstop on the error and signal paths.
 steel browser stop --session "$SESSION" --json >/dev/null
-SESSION_NAMED=0
+SESSION_OWNED=0
 steel browser sessions --json | python3 -c '
 import json,sys
 names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}
