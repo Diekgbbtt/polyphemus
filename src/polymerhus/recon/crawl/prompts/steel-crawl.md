@@ -46,6 +46,8 @@ distinct interactive controls** (e.g. a login form, a social-login button, a sea
 
 ## Procedure
 1. `steel_crawl_start(target, scope)` once; note `crawl_id` + `viewer_url`.
+   `live_view.addressable` says whether the view names this session; a shared player is not addressable.
+   Publish the session id with the URL; never rebuild the URL.
 2. From the returned frontier, **pick the next URL by criticality**: auth / admin / account / api /
    upload paths FIRST; ordinary pages next; **`.js` and static assets — skip (already captured)**.
 3. `steel_navigate` the chosen **page**. Inspect `new_links`, `network_delta`, `status` to choose next.

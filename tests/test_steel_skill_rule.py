@@ -62,7 +62,7 @@ def test_skill_pins_the_current_contract_and_references():
     for token in (
         "steel_events", "shell_returncode", "browser batch", "browser find",
         "browser diff", "sessions get", "--inactivity-timeout 300000",
-        "has no effect",
+        "has no effect", "live_view", "addressable",
     ):
         assert token in text
     assert "--inactivity-timeout 0" not in text

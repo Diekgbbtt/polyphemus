@@ -34,6 +34,7 @@ import re
 import subprocess
 import sys
 import time
+from urllib.parse import parse_qsl, urlparse
 
 STEEL = "steel"
 
@@ -136,9 +137,54 @@ def _record_probe(
 def _metadata(data: dict) -> dict:
     keys = (
         "id", "status", "createdAt", "duration", "eventCount", "timeout",
-        "sessionViewerUrl", "debuggerUrl", "dimensions", "userAgent",
+        "sessionViewerUrl", "debugUrl", "debuggerUrl", "dimensions",
+        "userAgent",
     )
     return {key: data.get(key) for key in keys if key in data}
+
+
+def _carries_session(url: str, session_id: str) -> bool:
+    if not url or not session_id:
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if any(part == session_id for part in parsed.path.split("/") if part):
+        return True
+    return any(value == session_id for _, value in parse_qsl(parsed.query))
+
+
+def _live_view(metadata: dict) -> dict | None:
+    """The view candidate with its addressability explicit.
+
+    A cloud viewer URL can name the session; the self-hosted base is shared,
+    and the debug player follows the active session. Never fabricate a
+    session query parameter.
+    """
+    session_id = str(metadata.get("id") or "")
+    candidates = (
+        ("viewer", str(metadata.get("sessionViewerUrl") or "")),
+        ("player", str(metadata.get("debugUrl") or "")),
+        ("debugger", str(metadata.get("debuggerUrl") or "")),
+    )
+    for kind, url in candidates:
+        if _carries_session(url, session_id):
+            return {
+                "url": url, "kind": kind, "session_id": session_id,
+                "addressable": True, "scope": "session",
+            }
+    for kind, url in (
+        ("player", str(metadata.get("debugUrl") or "")),
+        ("viewer", str(metadata.get("sessionViewerUrl") or "")),
+        ("debugger", str(metadata.get("debuggerUrl") or "")),
+    ):
+        if url:
+            return {
+                "url": url, "kind": kind, "session_id": session_id,
+                "addressable": False, "scope": "active",
+            }
+    return None
 
 
 def _safe_name(value: str) -> str:
@@ -250,6 +296,7 @@ def main() -> int:
         "ok": True,
         "session": args.session,
         "metadata": metadata,
+        "live_view": _live_view(metadata),
         "snapshot": snapshot,
         "screenshot": screenshot,
         "records": records,

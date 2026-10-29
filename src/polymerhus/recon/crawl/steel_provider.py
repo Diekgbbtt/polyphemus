@@ -57,6 +57,7 @@ import uuid
 from urllib.parse import parse_qsl, urlparse
 
 from polymerhus.app.steel_endpoint import steel_browser_api_url
+from polymerhus.app.steel_session import SteelSession
 from polymerhus.app.steel_session_state import (
     SteelStateError,
     load_session_context,
@@ -207,6 +208,7 @@ class _Crawl:
         self.max_depth = max_depth
         self.max_pages = max_pages
         self.session = session
+        self.steel_session: SteelSession | None = None
         self.browser = browser
         self.page = page
         self.pw = pw
@@ -323,6 +325,21 @@ def _steel_client_kwargs(api_key: str, base_url: str | None) -> dict:
     if base_url:
         kwargs["base_url"] = base_url
     return kwargs
+
+
+def _session_payload(session) -> tuple[SteelSession, dict]:
+    """Return the client-side session object and its public view payload.
+
+    `viewer_url` stays for backward compatibility. `live_view` makes the
+    addressability decision explicit: a cloud viewer URL that carries the id
+    is session-addressable; a shared player follows the active session.
+    """
+    steel_session = SteelSession.from_sdk(session)
+    view = steel_session.live_view
+    return steel_session, {
+        "viewer_url": steel_session.viewer_url,
+        "live_view": view.as_public() if view else None,
+    }
 
 
 def _cdp_connect_url(session, api_key: str) -> str:
@@ -521,8 +538,10 @@ class SteelCrawlProvider:
                 pass
             raise
         crawl_id = uuid.uuid4().hex
+        steel_session, view_payload = _session_payload(session)
         crawl = _Crawl(crawl_id, scope, max_depth, max_pages, session, browser,
                        page, p, self._api_key, client=client)
+        crawl.steel_session = steel_session
         crawl.auth_required = bool(self._browser_auth)
         crawl.enqueue([target], depth=0)
         with self._lock:
@@ -530,7 +549,7 @@ class SteelCrawlProvider:
         return {
             "crawl_id": crawl_id,
             "frontier": list(crawl.frontier),
-            "viewer_url": getattr(session, "session_viewer_url", ""),
+            **view_payload,
             "auth_required": crawl.auth_required,
         }
 
@@ -734,7 +753,7 @@ class SteelCrawlProvider:
                 self._steel_crawl_start,
                 "Start a Steel browser crawl session. Creates a browser, seeds "
                 "the frontier with `target`, and returns "
-                "{crawl_id, frontier, viewer_url}. `scope` is a list of hostnames; "
+                "{crawl_id, frontier, viewer_url, live_view}. `scope` is a list of hostnames; "
                 "only URLs whose host equals or is a subdomain of a scope entry are "
                 "enqueued. Call steel_navigate/steel_frontier/steel_crawl_finish next.",
             ),

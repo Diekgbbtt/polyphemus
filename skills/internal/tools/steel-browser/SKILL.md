@@ -47,6 +47,8 @@ A `start` on a catalogued live name is refused with `session_taken`; do not rely
 
 A session leaves metadata, a live viewer URL, an accessibility snapshot, a screenshot file, and a snapshot or screenshot diff.
 `sessions get --session <name> --json` returns the runtime id, status, duration, event count, viewer and debugger URLs, dimensions, and user agent.
+A viewer URL may be a shared base; only an addressable view carries the specific session id in the URL.
+`references/session-records.py` returns `live_view.addressable` and `live_view.scope`; publish the session id with the URL and never rebuild the URL.
 `browser diff snapshot|screenshot` compares the current page against a baseline and returns `changed`, `additions`, and a unified diff.
 The guard also leaves one event per real invocation in `steel_events`.
 The stack separately records HTTP history with deterministic replay, LangGraph checkpoints, and run evidence.
@@ -166,7 +168,7 @@ Runnable scripts beside this skill; each is self-guarding, `--json`, bounded out
 - `references/contract.md` - the envelope, error and recovery table, session lifecycle, and the platform record surface.
 - `references/load-eval.py` - load one URL, wait for a selector or text, evaluate one JS expression or file, return bounded JSON.
 - `references/select-elements.py` - select a DOM family by CSS, project tag, text, chosen attributes, and visibility, return bounded JSON.
-- `references/session-records.py` - session metadata, snapshot, screenshot, and the record probes the runtime supports.
+- `references/session-records.py` - session metadata, snapshot, screenshot, the addressable live-view candidate, and the record probes the runtime supports.
   These three read scripts require a live session and never start or stop one.
 - `references/catalogue.sh` - list live sessions; the survey read.
 - `references/session-lifecycle.sh` - survey, open a free name, use it, release under a trap, prove the catalogue clean.

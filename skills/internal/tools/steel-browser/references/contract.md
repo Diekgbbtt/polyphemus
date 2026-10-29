@@ -80,6 +80,21 @@ An operator-owned or pre-authenticated session cannot be recreated without resto
 - Multi-step results: `steel browser batch --session <name> --json -- "cmd" "cmd"`.
   The result is `{"data":{"results":[{"command","data","success"}]}}`.
 
+### Live-view addressability
+
+`viewerUrl` and `sessionViewerUrl` are resource attributes, not values to reconstruct.
+A cloud viewer URL can name the session directly (`https://app.steel.dev/sessions/<id>`).
+The self-hosted base can be shared and may not serve a page at all.
+The working player is `debugUrl` (`/v1/sessions/debug`); it is shared and follows the active session.
+Its cast WebSocket is `/v1/sessions/cast` and has no session id.
+
+A view is addressable only when its URL carries the session id in a path segment or a query value.
+Do not append `?sessionId=` or any other selector unless the runtime documents it.
+`polymerhus.app.steel_session.SteelSession.live_view` makes this decision.
+`SteelSessionRegistry` tracks the name, id, status, and view across start, catalogue, API, and stop observations.
+The crawl provider returns the same object as `live_view`, next to the backward-compatible `viewer_url`.
+Publish the session id next to the URL, and mark the shared player as active, not session-addressable.
+
 ### What the runtime does not expose here
 
 `steel sessions logs`, `steel sessions agent-logs`, and `steel sessions traces` are advertised for cloud sessions.

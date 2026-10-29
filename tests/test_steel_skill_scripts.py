@@ -68,6 +68,7 @@ if args[:1] == ["sessions"]:
             "createdAt": "2026-01-01T00:00:00Z", "duration": 12,
             "eventCount": 0, "timeout": 0,
             "sessionViewerUrl": "http://viewer",
+            "debugUrl": "http://viewer/v1/sessions/debug",
             "debuggerUrl": "http://debugger",
             "dimensions": {"width": 1280, "height": 720},
             "userAgent": "UA",
@@ -216,6 +217,10 @@ def test_session_records_reports_unsupported_probes_and_evidence(fake_steel, tmp
     assert code == 0
     assert output["ok"] is True
     assert output["metadata"]["id"] == "sid-1"
+    assert output["metadata"]["debugUrl"].endswith("/v1/sessions/debug")
+    assert output["live_view"]["kind"] == "player"
+    assert output["live_view"]["addressable"] is False
+    assert output["live_view"]["scope"] == "active"
     assert output["records"]["logs"]["supported"] is False
     assert output["records"]["logs"]["error"]["code"] == "not_found"
     assert output["records"]["agent_logs"]["supported"] is False
