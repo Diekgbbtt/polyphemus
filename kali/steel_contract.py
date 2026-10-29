@@ -202,6 +202,36 @@ def _boundary_gap(tokens: list[str]) -> str | None:
     return None
 
 
+def _batch_boundary_gap(tokens: list[str]) -> str | None:
+    """Check the variadic verbs INSIDE a canonical outer batch.
+
+    `batch` has its own boundary before the command strings. Each string is
+    a complete browser command and carries its own grammar, so a variadic
+    element without its own `--` is refused instead of letting clap fold a
+    trailing option into the value.
+    """
+    browser_at = _browser_index(tokens)
+    if browser_at is None or browser_at + 1 >= len(tokens):
+        return None
+    if tokens[browser_at + 1] != "batch":
+        return None
+    try:
+        boundary = tokens.index(_BOUNDARY)
+    except ValueError:
+        return None
+    for command in tokens[boundary + 1:]:
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            continue
+        if not parts:
+            continue
+        verb = os.path.basename(parts[0])
+        if verb in _VARIADIC_VERBS and _BOUNDARY not in parts:
+            return verb
+    return None
+
+
 def _parse_browser_segment(
     segment: list[str],
     *,
@@ -277,6 +307,18 @@ def _parse_browser_segment(
             retryable=True,
             recovery={"action": "fix_command", "reason": "insert -- before values"},
             suggestion=f"steel browser {gap} [OPTIONS] <selector> -- <value>...",
+            canonical_command=canonical,
+        )
+
+    batch_gap = _batch_boundary_gap(segment)
+    if batch_gap is not None:
+        return _contract_error(
+            "variadic_boundary",
+            f"steel browser batch element {batch_gap!r} needs its own "
+            "-- boundary before the value",
+            retryable=True,
+            recovery={"action": "fix_command", "reason": "insert -- in the batch element"},
+            suggestion=f"steel browser batch -- '<verb> <selector> -- <value>'",
             canonical_command=canonical,
         )
 

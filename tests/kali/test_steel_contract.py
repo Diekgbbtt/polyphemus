@@ -266,3 +266,25 @@ def test_non_browser_steel_command_is_allowed():
     assert isinstance(out, BrowserCommand)
     assert out.verb == ""
     assert out.session is None
+
+
+def test_a_batch_element_needs_its_own_boundary():
+    out = sanitize_shell_command(
+        "steel browser batch --session wj-live --json -- "
+        "'snapshot -i' 'fill @e6 42'",
+        live_sessions=LIVE,
+    )
+    assert isinstance(out, ContractError)
+    assert out.code == "variadic_boundary"
+    assert "fill" in out.message
+
+
+def test_a_batch_element_with_its_own_boundary_passes():
+    out = sanitize_shell_command(
+        "steel browser batch --session wj-live --json -- "
+        "'snapshot -i' 'fill @e6 -- 42'",
+        live_sessions=LIVE,
+    )
+    assert isinstance(out, tuple)
+    assert out[0].verb == "batch"
+    assert out[0].session == "wj-live"
