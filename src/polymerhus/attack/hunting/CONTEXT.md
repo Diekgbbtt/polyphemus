@@ -4,6 +4,53 @@
 
 Hunting configures and dispatches; a test-executor pod executes. Only the former is in scope.
 
+**Risk scoring vocabulary (2026-10-31, supersedes the risk-score, likelihood, and confidence entries below).**
+
+**risk**:
+The CVSS 4.0 base score of an impact assessment, a float `0.0 .. 10.0` rounded to two decimals.
+It is the only severity number.
+It is derived at persistence and never authored.
+_Avoid_: likelihood, likelihood weight, combined risk, impact weight
+
+**severity band**:
+The standard CVSS qualitative band of `risk`: none, low, medium, high, critical.
+It is derived on read.
+_Avoid_: risk bucket, tier
+
+**exploitability**:
+The five-factor group `AV/AC/AT/PR/UI`, compiled from the kill chain.
+It is not `likelihood`, which is retired.
+_Avoid_: likelihood
+
+**impact description**:
+The assessment's prose naming the victim and the damaged property.
+Formerly `damage`.
+_Avoid_: damage, end impact
+
+**exploitability description**:
+The assessment's prose describing the chain, its capabilities, and its human participation.
+Formerly `likelihood_rationale`.
+_Avoid_: likelihood rationale
+
+**acceptance threshold**:
+The per-threat promotion floor on `risk`.
+It is the project setting `promotion_risk_threshold`, now a float.
+_Avoid_: likelihood threshold
+
+**risk budget**:
+The run-level cumulative `risk` ceiling.
+It is the project setting `risk_threshold`, now a float.
+_Avoid_: likelihood budget
+
+**confidence**:
+The evidence-and-grounding degree of a technical or trust-model claim.
+It remains on `Agreement`, `TrustAgreement`, `DynamicState`, `Transition`, `Violation`, and `Assumption`.
+It is removed from `Threat` and `Vulnerability`, and it never feeds `risk`.
+_Avoid_: rung, likelihood factor
+
+Where an entry below conflicts with this block, this block wins.
+The entries dated before 2026-10-31 describe the retired model.
+
 **Spec contract realignment (2026-10-25, built on `fix/hunt-spec-contract-realign`).**
 The spec identity is now `<class>__<value>__<value>[__...]`, derived from `provenance.web_vulnerability_class` and the ordered `discriminators` (two to four `{axis, value}` instances).
 `fault_keyword` and `strategy_keyword` are retired from the tool schema, the prompt, the store, and the state.

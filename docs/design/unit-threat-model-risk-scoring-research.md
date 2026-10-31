@@ -1,5 +1,9 @@
 # Unit threat model - risk scoring research
 
+> **Superseded 2026-10-31.** The CVSS 4.0 base scoring recommendation is adopted.
+> The authoritative spec is `docs/design/cvss4-risk-scoring-spec.md`; the decisions are `docs/design/threat-model-cvss4-risk-scoring-adr.md` and `docs/design/impact-assessment-atomic-write-adr.md`.
+> The likelihood-only recommendation in this note is retired.
+
 > **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
 
 > **Superseded 2026-10-25.** The likelihood-only risk score (Q33, R3-1) and the failure-mode artifact are amended by `docs/design/threat-model-impact-elicitation-adr.md`. The impact is now first-class (`VC/VI/VA`), the risk is `likelihood_weight * impact_weight`, and the failure modes are removed.

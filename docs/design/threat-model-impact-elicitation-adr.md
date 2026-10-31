@@ -3,6 +3,14 @@
 *Status: decided 2026-10-25, built 2026-10-25. Impact map: `docs/design/threat-model-impact-elicitation-impact-map.md`. Plan: `docs/experiments/modeller-impact-quality/PLAN.md`. Baseline: `docs/experiments/modeller-impact-quality/BASELINE.md`.*
 *Supersedes: the likelihood-only risk scoring in `unit-threat-model-workbench.md` Q33 and R3-1, and the failure-mode artifact in `hunting-67-threat-model-artifact-spec.md`.*
 *Decision owner: operator. Grilled and settled 2026-10-25.*
+
+## Amendment 2026-10-31: CVSS 4.0 risk scoring
+
+The risk formula in this ADR is superseded.
+The authoritative spec is `docs/design/cvss4-risk-scoring-spec.md`; the decisions are `docs/design/threat-model-cvss4-risk-scoring-adr.md` and `docs/design/impact-assessment-atomic-write-adr.md`.
+`risk` is the CVSS 4.0 base score, a float `0.0..10.0`, derived at persistence.
+The likelihood, the ordinal impact weight, and the threat confidence are retired.
+The impact assessment remains first-class.
 **Vocabulary note (2026-10-25).** The ranked artifact was called a **loop** in the earlier baseline and design text. The module, the store, and the current documentation now call it a **threat**. A historical "loop" in the baseline means the same artifact.
 
 

@@ -6,6 +6,18 @@ Batch and promotion contract: `docs/design/hunting-batch-and-promotion-spec.md`.
 Assertion catalogue: `docs/design/hunting-pipeline-sync-assertions.md`.*
 *Extends the run-scoped surfer of `hunting-pipeline-wiring-adr.md` (#169/T4) and the risk halt of `unit-threat-model-ordering-halt-adr.md`.*
 
+## Amendment 2026-10-31: float thresholds and the per-threat queue
+
+The CVSS 4.0 risk-scoring workstream supersedes the integer thresholds and the unit-sum dispatch queue in this document.
+The authoritative spec is `docs/design/cvss4-risk-scoring-spec.md`; the decisions are `docs/design/threat-model-cvss4-risk-scoring-adr.md` and `docs/design/impact-assessment-atomic-write-adr.md`; the component map is `docs/design/cvss4-risk-scoring-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- `risk_threshold` and `promotion_risk_threshold` are floats.
+  `DEFAULT_RISK_THRESHOLD` is `156.25`; the iteration D project settings scale to `112.5` and `2.5`.
+- The dispatch queue is a global list of promoted threat items, ordered by `risk` descending, then the unit intake position, then the threat rank.
+  There is no per-unit cap.
+- The unit model sum stays in the run record for the budget and the audit.
+
 ## The configuration
 
 - Attribute: `hunting_pipeline_sync`, a string enum `serial | batched | parallel`.

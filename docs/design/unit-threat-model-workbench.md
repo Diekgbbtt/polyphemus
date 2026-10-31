@@ -7,6 +7,10 @@
 
 > **Superseded 2026-10-25.** The likelihood-only risk score (Q33, R3-1) and the failure-mode artifact are amended by `docs/design/threat-model-impact-elicitation-adr.md`. The impact is now first-class (`VC/VI/VA`), the risk is `likelihood_weight * impact_weight`, and the failure modes are removed.
 
+> **Superseded 2026-10-31.** The risk formula is replaced by the CVSS 4.0 base score.
+> The authoritative spec is `docs/design/cvss4-risk-scoring-spec.md`; the decisions are `docs/design/threat-model-cvss4-risk-scoring-adr.md` and `docs/design/impact-assessment-atomic-write-adr.md`.
+> The likelihood, the ordinal impact weight, and the threat confidence are retired.
+
 
 - Change: the hunt-orchestrator (fault-space breadth explorer) is rewritten in place into the threat modeller, which publishes a formal unit threat model per discretely testable unit.
 - Branch: `design/unit-threat-model`.

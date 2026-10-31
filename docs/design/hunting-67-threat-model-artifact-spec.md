@@ -1,5 +1,23 @@
 # Threat model spec: the formal unit threat model artifact
 
+## Amendment 2026-10-31: CVSS 4.0 risk scoring
+
+The CVSS 4.0 risk-scoring workstream supersedes the likelihood and impact-weight scoring, the threat-side CIA carriage, the threat and vulnerability confidence, and the unit-sum dispatch order in this document.
+The authoritative spec is `docs/design/cvss4-risk-scoring-spec.md`; the decisions are `docs/design/threat-model-cvss4-risk-scoring-adr.md` and `docs/design/impact-assessment-atomic-write-adr.md`; the component map is `docs/design/cvss4-risk-scoring-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- `risk` is the CVSS 4.0 base score, a float `0.0..10.0` rounded to two decimals, derived at persistence.
+  The severity band is derived on read from the standard CVSS bands.
+- The assessment row carries `impact_description`, `exploitability_description`, and the eight base factors.
+  The `assess_impact` tool is the sole writer and the persistence helper computes the score.
+- The threat carries `impact_ref`, `enabling_precursors`, and a derived `risk` mirror.
+  It does not carry `likelihood`, `likelihood_rationale`, `risk_factors`, `confidence`, `impact`, or `impact_weight`.
+- `confidence` remains only on the technical and trust-model claims: `Agreement`, `TrustAgreement`, `DynamicState`, `Transition`, `Violation`, and `Assumption`.
+- The promotion floor and the risk budget are floats.
+  The dispatch queue is per-threat risk descending, with no per-unit cap.
+- `SCHEMA_VERSION` is 5.
+  A v4 document is read raw and never re-scored.
+
 ## Amendment 2026-10-25: impact-first elicitation
 
 The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.

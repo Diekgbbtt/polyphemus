@@ -1,5 +1,15 @@
 # Hunting pipeline phase synchronisation - ADR
 
+## Amendment 2026-10-31: float thresholds and the per-threat queue
+
+The CVSS 4.0 risk-scoring workstream supersedes the integer thresholds and the unit-sum dispatch queue in this document.
+The authoritative spec is `docs/design/cvss4-risk-scoring-spec.md`; the component map is `docs/design/cvss4-risk-scoring-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- `risk_threshold` and `promotion_risk_threshold` are floats.
+- The dispatch queue is per-threat risk descending, with no per-unit cap.
+- The unit model sum stays in the run record for the budget and the audit.
+
 ## Amendment 2026-10-25: impact-first elicitation
 
 The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
