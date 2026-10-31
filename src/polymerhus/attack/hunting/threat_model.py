@@ -106,10 +106,14 @@ TECHNIQUE_FAMILIES: frozenset[str] = frozenset(
 # `failure_modes` section and the `Threat.failure_mode_refs` link WITHOUT a
 # version bump - the A/B uses fresh models and no legacy model is migrated.)
 
-# The progressive risk budget's default halt (S2 7.4). The canary's first unit
-# reached risk_total=44, so the operator raised the documented default to 250;
-# the run records the effective threshold either way.
-DEFAULT_RISK_THRESHOLD = 250
+# The progressive risk budget's default halt (S2 7.4, scaled by the CVSS 4.0
+# change: T7 #410, spec 7, ADR 8). The old per-threat maximum was 16, the CVSS
+# 4.0 maximum is 10, so the ratio is 0.625 and the old documented default 250
+# becomes 156.25. The operator raised the old default to 250 when the canary's
+# first unit reached risk_total=44; the new value is that default scaled
+# proportionally, never fitted to the iteration D corpus. The run records the
+# effective threshold either way.
+DEFAULT_RISK_THRESHOLD = 156.25
 
 
 class Confidence(StrEnum):

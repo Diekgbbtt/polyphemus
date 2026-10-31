@@ -15,6 +15,7 @@ eagerly, keeping the dependency `project_management -> recon` lazy.
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -189,6 +190,43 @@ def _stored_int(
     return value
 
 
+def _threshold_float(value: Any, *, minimum: float) -> float | None:
+    """One threshold as a finite float at least `minimum`, or None when the
+    value is not one. The two hunting thresholds are floats on the CVSS 4.0
+    scale (spec 12, ADR 8); an int is read as its float, and a boolean is never
+    a threshold."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed < minimum:
+        return None
+    return parsed
+
+
+def _stored_threshold(
+    stored: Mapping[str, Any], key: str, *, minimum: float = 0.0,
+) -> float | None:
+    """One stored float threshold, or None with a warning.
+
+    An unset key and an explicit JSON null both read back as None (no override /
+    no promotion filter). A hand-edited row carrying a string, a boolean, a
+    negative, or a non-finite value reads back None and warns, so the operator
+    can see the drift."""
+    value = stored.get(key)
+    if value is None:
+        return None
+    parsed = _threshold_float(value, minimum=minimum)
+    if parsed is None:
+        logger.warning(
+            "hunting config: %s=%r is not a finite number >= %s; reading None",
+            key, value, minimum,
+        )
+    return parsed
+
+
 def read_hunting_config(project_id: str) -> dict:
     """The project's hunting config (`{"pipeline_sync", "risk_threshold",
     "pod_batch_size", "promotion_risk_threshold", "threat_model_scope"}`).
@@ -197,9 +235,10 @@ def read_hunting_config(project_id: str) -> dict:
     blob reads back the documented defaults (mode `batched`, threshold None,
     batch size 1, promotion threshold None - no filter, scope `""`). A stored
     mode outside the enum (a hand-edited row) reads back as the default rather
-    than an error. A malformed or out-of-range batch size or promotion
-    threshold reads back the default with a warning; a stored scope that is not
-    a string reads back as the empty default."""
+    than an error. The two thresholds are read back as FLOATS on the CVSS 4.0
+    scale (a v4-era int reads as its float); a malformed or out-of-range batch
+    size or threshold reads back the default with a warning; a stored scope that
+    is not a string reads back as the empty default."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
     stored = dict(pg.get_hunting_settings(project_id) or {})
@@ -211,12 +250,12 @@ def read_hunting_config(project_id: str) -> dict:
         scope = ""
     return {
         "pipeline_sync": mode,
-        "risk_threshold": stored.get("risk_threshold"),
+        "risk_threshold": _stored_threshold(stored, "risk_threshold"),
         "pod_batch_size": _stored_int(
             stored, "pod_batch_size", minimum=1,
             default=HUNTING_POD_BATCH_DEFAULT),
-        "promotion_risk_threshold": _stored_int(
-            stored, "promotion_risk_threshold", minimum=0, default=None),
+        "promotion_risk_threshold": _stored_threshold(
+            stored, "promotion_risk_threshold"),
         "threat_model_scope": scope,
     }
 
@@ -226,14 +265,14 @@ def save_hunting_config(project_id: str, body: dict) -> None:
 
     Only the provided keys land (`pipeline_sync`, `risk_threshold`,
     `pod_batch_size`, `promotion_risk_threshold`, `threat_model_scope`). The
-    mode must be a known enum value; the risk threshold must be a non-negative
-    integer (or an explicit None, which clears the DB override and falls back
-    to the env/default basis); the batch size must be an integer at least 1 (or
-    an explicit None, which clears it to the default 1); the promotion
-    threshold must be a non-negative integer (or an explicit None, which clears
-    it to no filter); the scope is free text (an explicit None clears it).
-    Raises ProjectNotFound if unknown, ValueError on an invalid value - nothing
-    lands on a refusal."""
+    mode must be a known enum value; the two thresholds must be finite floats at
+    least 0 (spec 12, ADR 8: the CVSS 4.0 scale), stored as floats; an explicit
+    None clears `risk_threshold` back to the env/default basis and
+    `promotion_risk_threshold` to no filter; the batch size must be an integer
+    at least 1 (or an explicit None, which clears it to the default 1); the
+    scope is free text (an explicit None clears it). Raises ProjectNotFound if
+    unknown, ValueError naming the field on an invalid value - nothing lands on
+    a refusal."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
     if "pipeline_sync" in body and body["pipeline_sync"] not in HUNTING_SYNC_MODES:
@@ -246,15 +285,10 @@ def save_hunting_config(project_id: str, body: dict) -> None:
             and not isinstance(body["threat_model_scope"], str)):
         raise ValueError("threat_model_scope must be a free-text string or null")
     if "risk_threshold" in body and body["risk_threshold"] is not None:
-        try:
-            threshold = int(body["risk_threshold"])
-        except (TypeError, ValueError) as exc:
+        threshold = _threshold_float(body["risk_threshold"], minimum=0.0)
+        if threshold is None:
             raise ValueError(
-                "risk_threshold must be a non-negative integer or null"
-            ) from exc
-        if threshold < 0:
-            raise ValueError(
-                "risk_threshold must be a non-negative integer or null")
+                "risk_threshold must be a finite number at least 0 or null")
         body = {**body, "risk_threshold": threshold}
     if "pod_batch_size" in body and body["pod_batch_size"] is not None:
         raw_batch = body["pod_batch_size"]
@@ -269,15 +303,14 @@ def save_hunting_config(project_id: str, body: dict) -> None:
         "promotion_risk_threshold" in body
         and body["promotion_risk_threshold"] is not None
     ):
-        raw_promotion = body["promotion_risk_threshold"]
-        if isinstance(raw_promotion, bool) or not isinstance(raw_promotion, int):
+        promotion = _threshold_float(
+            body["promotion_risk_threshold"], minimum=0.0)
+        if promotion is None:
             raise ValueError(
-                "promotion_risk_threshold must be a non-negative integer or null"
+                "promotion_risk_threshold must be a finite number at least 0 "
+                "or null"
             )
-        if raw_promotion < 0:
-            raise ValueError(
-                "promotion_risk_threshold must be a non-negative integer or null")
-        body = {**body, "promotion_risk_threshold": raw_promotion}
+        body = {**body, "promotion_risk_threshold": promotion}
     pg.save_hunting_settings(project_id, body)
 
 

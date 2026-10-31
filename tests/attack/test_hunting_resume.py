@@ -287,13 +287,11 @@ def _record(**overrides) -> dict:
         "intake_order": [UNIT_A, UNIT_B],
         "intake_position": 1,
         "intake_excluded": [],
-        "risk_threshold": 250,
+        "risk_threshold": 112.5,
         "threshold_basis": "default",
-        "risk_weights": {"none": 0, "low": 1, "medium": 2, "high": 3,
-                         "critical": 4},
-        "risk_total": 1,
+        "risk_total": 1.0,
         "risk_breakdown": _breakdown(low=1),
-        "model_sums": [{"unit_id": UNIT_A, "total": 1,
+        "model_sums": [{"unit_id": UNIT_A, "total": 1.0,
                         "breakdown": _breakdown(low=1)}],
         "crossing_unit": None,
         "blocked_unit": None,
@@ -498,11 +496,10 @@ def test_a_resumed_run_adopts_the_committed_models_and_recomputes_risk_total(
 
     assert seen == []  # the complete model is adopted, never re-modelled
     assert fake.record["intake_position"] == 2
-    # The recorded unit-A sum is the only contribution today: the run-record
-    # accumulator still reads the retired likelihood (T7 sums the CVSS 4.0
-    # `risk`), so the adopted v5 model adds no budget yet. The ADOPTION and the
-    # per-unit entry are what this resume test owns.
-    assert fake.record["risk_total"] == 1
+    # The recorded unit-A sum (1.0) plus the adopted v5 model's mirrored 9.3:
+    # the float accumulator reads the CVSS 4.0 `risk`, so the adopted model now
+    # contributes its own budget (T7 #410).
+    assert fake.record["risk_total"] == 10.3
     assert [entry["unit_id"] for entry in fake.record["model_sums"]] == [
         UNIT_A, UNIT_B]
     assert dispatched == [THREAT_B_DISPATCH]  # the adopted unit's threat dispatches

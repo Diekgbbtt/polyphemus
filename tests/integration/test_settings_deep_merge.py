@@ -93,21 +93,21 @@ def test_partial_nested_put_preserves_sibling_blocks(pg_mod, project):
 
 def test_partial_hunting_put_preserves_siblings_and_the_recon_blob(pg_mod, project):
     """The hunting sibling blob merges like `recon` and never touches it
-    (`hunting_pipeline_sync`, the risk threshold, the pod batch size, and the
-    promotion threshold are independent keys)."""
+    (`hunting_pipeline_sync`, the float risk threshold, the pod batch size, and
+    the float promotion threshold are independent keys)."""
     pg_mod.save_hunting_settings(project, {"pipeline_sync": "serial"})
-    pg_mod.save_hunting_settings(project, {"risk_threshold": 250})
+    pg_mod.save_hunting_settings(project, {"risk_threshold": 112.5})
     pg_mod.save_hunting_settings(project, {
-        "pod_batch_size": 3, "promotion_risk_threshold": 5,
+        "pod_batch_size": 3, "promotion_risk_threshold": 2.5,
     })
     pg_mod.save_settings(project, {"target_domain": "shop.example"})
 
     hunting = pg_mod.get_hunting_settings(project)
     assert hunting == {
         "pipeline_sync": "serial",
-        "risk_threshold": 250,
+        "risk_threshold": 112.5,
         "pod_batch_size": 3,
-        "promotion_risk_threshold": 5,
+        "promotion_risk_threshold": 2.5,
     }
     assert pg_mod.load_settings(project)["target_domain"] == "shop.example"
 
@@ -115,9 +115,9 @@ def test_partial_hunting_put_preserves_siblings_and_the_recon_blob(pg_mod, proje
     pg_mod.save_hunting_settings(project, {"pipeline_sync": "parallel"})
     assert pg_mod.get_hunting_settings(project) == {
         "pipeline_sync": "parallel",
-        "risk_threshold": 250,
+        "risk_threshold": 112.5,
         "pod_batch_size": 3,
-        "promotion_risk_threshold": 5,
+        "promotion_risk_threshold": 2.5,
     }
     assert pg_mod.load_settings(project)["target_domain"] == "shop.example"
 

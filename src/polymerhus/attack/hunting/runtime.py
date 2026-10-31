@@ -586,7 +586,7 @@ async def _run_intake(
             _resume_intake, store, project_id, record)
         logger.info(
             "hunting run %s: resumed the intake at position %d of %d "
-            "(halt=%s, risk_total=%d)",
+            "(halt=%s, risk_total=%.2f)",
             run_id, run.intake_position, len(run.intake_order), run.halt,
             run.accumulator.total,
         )
@@ -630,7 +630,7 @@ async def _run_intake(
         )
         await _write_record()
         logger.info(
-            "hunting run %s: modelled unit %s (%s); risk_total %d/%d%s",
+            "hunting run %s: modelled unit %s (%s); risk_total %.2f/%.2f%s",
             run_id, unit_id, status, run.accumulator.total,
             run.accumulator.threshold,
             " HALTED" if run.halt else "",

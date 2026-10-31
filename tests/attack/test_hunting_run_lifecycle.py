@@ -59,11 +59,9 @@ def _seed_record(**overrides) -> dict:
         "intake_order": [],
         "intake_position": 0,
         "intake_excluded": [],
-        "risk_threshold": 250,
+        "risk_threshold": 156.25,
         "threshold_basis": "default",
-        "risk_weights": {"none": 0, "low": 1, "medium": 2, "high": 3,
-                         "critical": 4},
-        "risk_total": 0,
+        "risk_total": 0.0,
         "risk_breakdown": {"none": 0, "low": 0, "medium": 0, "high": 0,
                            "critical": 0},
         "model_sums": [],
@@ -77,15 +75,14 @@ def _seed_record(**overrides) -> dict:
     return record
 
 
-def _completed_sum(unit_id: str, total: int = 3) -> dict:
-    """The recorded sum of one completed model: one `high` threat (weight 3)."""
+def _completed_sum(unit_id: str) -> dict:
+    """The recorded sum of one completed model: the worked example's ONE
+    `critical` threat scored 9.2."""
     return {
         "unit_id": unit_id,
-        "total": total,
-        "breakdown": {"none": 0, "low": 0, "medium": 0, "high": 1,
-                      "critical": 0},
-        "impact_breakdown": {"none": 0, "low": 1, "medium": 0, "high": 0,
-                             "critical": 0},
+        "total": 9.2,
+        "breakdown": {"none": 0, "low": 0, "medium": 0, "high": 0,
+                      "critical": 1},
     }
 
 
@@ -99,11 +96,10 @@ def _resume_fake(record: dict) -> _FakePg:
 def _write_completed_model(models: ThreatModelStore, unit_id: str,
                            *, run_id: str = "earlier-run") -> None:
     """Drive the REAL store to a COMPLETED, valid model for `unit_id` through
-    its seven gates (the shared worked example: one `high` threat)."""
-    from tests.hunting_fixtures import modeller_gate_payloads
-
-    for state, sections in modeller_gate_payloads().items():
-        models.write_sections(PROJECT, unit_id, state, sections, run_id=run_id)
+    its seven gates (the shared worked example: one `critical` threat at 9.2).
+    The `IMPACT_ASSESSED` gate has ONE writer, the `assess_impact` tool, so the
+    ladder goes through the shared `produce_model` fixture."""
+    produce_model(models, project_id=PROJECT, unit_id=unit_id, run_id=run_id)
     assert models.read_model(PROJECT, unit_id)["state"] == ModelState.COMPLETED.value
 
 
@@ -152,15 +148,15 @@ def test_the_run_record_carries_every_fixed_key_and_the_accumulated_sum(
     assert record["intake_order"] == [UNIT_A, UNIT_B]
     assert record["intake_position"] == 2
     assert record["intake_excluded"] == []
-    assert record["risk_threshold"] == 250
+    assert record["risk_threshold"] == 156.25
     assert record["threshold_basis"] == "default"
-    assert record["risk_weights"] == {"none": 0, "low": 1, "medium": 2,
-                                      "high": 3, "critical": 4}
-    # one `high` threat per unit (the shared worked example): 3 + 3
-    assert record["risk_total"] == 6
+    # one `critical` threat per unit (the shared worked example): 9.2 + 9.2
+    assert record["risk_total"] == 18.4
     assert record["risk_breakdown"] == {"none": 0, "low": 0, "medium": 0,
-                                        "high": 2, "critical": 0}
+                                        "high": 0, "critical": 2}
     assert record["model_sums"] == [_completed_sum(UNIT_A), _completed_sum(UNIT_B)]
+    for retired in ("risk_weights", "impact_weights", "impact_breakdown"):
+        assert retired not in record, f"{retired} is a retired run-record key"
     assert record["crossing_unit"] is None
     assert record["blocked_unit"] is None
     assert record["halt"] is False
@@ -178,8 +174,9 @@ def test_the_halt_completes_the_crossing_unit_and_never_models_the_blocked_one(
     """S1 7.4 / S2 7.4: the accumulator is checked after each COMPLETED write;
     on an inclusive crossing the crossing unit is fully modelled and the NEXT
     unit in the intake order is never modelled - it is recorded as the blocked
-    unit with `halt` set."""
-    monkeypatch.setenv("HUNT_RISK_THRESHOLD", "5")
+    unit with `halt` set. `HUNT_RISK_THRESHOLD` carries a float, so the halt
+    lands between the two modelled units."""
+    monkeypatch.setenv("HUNT_RISK_THRESHOLD", "15.5")
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     hunter, models = _stores(tmp_path)
@@ -187,11 +184,9 @@ def test_the_halt_completes_the_crossing_unit_and_never_models_the_blocked_one(
 
     async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
         seen.append(unit_id)
-        # one `high` threat's worth of budget (3), committed through the store
-        from tests.hunting_fixtures import modeller_gate_payloads
-        for state, sections in modeller_gate_payloads().items():
-            tools.threat_store.write_sections(
-                project_id, unit_id, state, sections, run_id=run_id)
+        # one `critical` threat's worth of budget (9.2), committed through the store
+        produce_model(models, project_id=project_id, unit_id=unit_id,
+                      run_id=run_id)
         return UnitOutcome(unit_id=unit_id, status="completed")
 
     asyncio.run(hunting_runtime.start_hunting(
@@ -207,8 +202,8 @@ def test_the_halt_completes_the_crossing_unit_and_never_models_the_blocked_one(
     assert seen == [UNIT_A, UNIT_B]              # the blocked unit is never seen
     record = fake.run_record(RUN)
     assert record["threshold_basis"] == "override"
-    assert record["risk_threshold"] == 5
-    assert record["risk_total"] == 6             # 3 + 3, inclusive `>=`
+    assert record["risk_threshold"] == 15.5
+    assert record["risk_total"] == 18.4          # 9.2 + 9.2, inclusive `>=`
     assert record["crossing_unit"] == UNIT_B
     assert record["blocked_unit"] == UNIT_C
     assert record["halt"] is True
@@ -229,10 +224,8 @@ def test_a_degraded_unit_is_recorded_and_the_run_continues(tmp_path, monkeypatch
         if unit_id == UNIT_B:
             return UnitOutcome(unit_id=unit_id, status="degraded",
                                reason="the target was unreachable")
-        from tests.hunting_fixtures import modeller_gate_payloads
-        for state, sections in modeller_gate_payloads().items():
-            tools.threat_store.write_sections(
-                project_id, unit_id, state, sections, run_id=run_id)
+        produce_model(models, project_id=project_id, unit_id=unit_id,
+                      run_id=run_id)
         return UnitOutcome(unit_id=unit_id, status="completed")
 
     asyncio.run(hunting_runtime.start_hunting(
@@ -249,7 +242,7 @@ def test_a_degraded_unit_is_recorded_and_the_run_continues(tmp_path, monkeypatch
     record = fake.run_record(RUN)
     assert record["degraded_units"] == [
         {"unit_id": UNIT_B, "reason": "the target was unreachable"}]
-    assert record["risk_total"] == 3             # the degraded unit is zero
+    assert record["risk_total"] == 9.2           # the degraded unit is zero
     assert [entry["unit_id"] for entry in record["model_sums"]] == [UNIT_A]
     assert record["intake_position"] == 2
     assert record["halt"] is False
@@ -262,9 +255,9 @@ def test_a_resumed_run_re_enters_at_the_intake_position(tmp_path, monkeypatch):
     fake = _resume_fake(_seed_record(
         intake_order=[UNIT_A, UNIT_B],
         intake_position=1,
-        risk_total=3,
-        risk_breakdown={"none": 0, "low": 0, "medium": 0, "high": 1,
-                        "critical": 0},
+        risk_total=9.2,
+        risk_breakdown={"none": 0, "low": 0, "medium": 0, "high": 0,
+                        "critical": 1},
         model_sums=[_completed_sum(UNIT_A)],
     ))
     _patch_pg(monkeypatch, fake)
@@ -274,10 +267,8 @@ def test_a_resumed_run_re_enters_at_the_intake_position(tmp_path, monkeypatch):
 
     async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
         seen.append(unit_id)
-        from tests.hunting_fixtures import modeller_gate_payloads
-        for state, sections in modeller_gate_payloads().items():
-            tools.threat_store.write_sections(
-                project_id, unit_id, state, sections, run_id=run_id)
+        produce_model(models, project_id=project_id, unit_id=unit_id,
+                      run_id=run_id)
         return UnitOutcome(unit_id=unit_id, status="completed")
 
     asyncio.run(hunting_runtime.start_hunting(
@@ -296,7 +287,7 @@ def test_a_resumed_run_re_enters_at_the_intake_position(tmp_path, monkeypatch):
         "pipeline_sync", "pod_batch_size", "promotion_risk_threshold"}
     assert record["intake_order"] == [UNIT_A, UNIT_B]
     assert record["intake_position"] == 2
-    assert record["risk_total"] == 6
+    assert record["risk_total"] == 18.4
     assert [entry["unit_id"] for entry in record["model_sums"]] == [
         UNIT_A, UNIT_B]
 
@@ -309,7 +300,7 @@ def test_a_crash_between_the_model_and_the_run_record_leaves_no_stale_total(
     fake = _resume_fake(_seed_record(
         intake_order=[UNIT_A, UNIT_B],
         intake_position=0,
-        risk_total=0,                            # stale: the record never updated
+        risk_total=0.0,                          # stale: the record never updated
         model_sums=[],
     ))
     _patch_pg(monkeypatch, fake)
@@ -333,7 +324,7 @@ def test_a_crash_between_the_model_and_the_run_record_leaves_no_stale_total(
     assert seen == [UNIT_B]                      # the committed unit is adopted
     record = fake.run_record(RUN)
     assert record["intake_position"] == 2
-    assert record["risk_total"] == 3             # the adopted model's sum
+    assert record["risk_total"] == 9.2           # the adopted model's sum
     assert [entry["unit_id"] for entry in record["model_sums"]] == [UNIT_A]
 
 
@@ -343,7 +334,7 @@ def test_a_halted_run_resumes_dispatch_only(tmp_path, monkeypatch):
     fake = _resume_fake(_seed_record(
         intake_order=[UNIT_A, UNIT_B, UNIT_C],
         intake_position=2,
-        risk_total=6,
+        risk_total=18.4,
         model_sums=[_completed_sum(UNIT_A), _completed_sum(UNIT_B)],
         crossing_unit=UNIT_B, blocked_unit=UNIT_C, halt=True,
     ))
@@ -368,7 +359,7 @@ def test_a_halted_run_resumes_dispatch_only(tmp_path, monkeypatch):
     assert record["crossing_unit"] == UNIT_B
     assert record["blocked_unit"] == UNIT_C
     assert record["intake_position"] == 2
-    assert record["risk_total"] == 6
+    assert record["risk_total"] == 18.4
 
 
 def test_the_freeze_excludes_the_completed_and_the_in_flight_units(
@@ -650,14 +641,14 @@ def test_a_resume_that_models_nothing_re_persists_the_recomputed_record(
     """S1 7.5: a resume whose ADOPTION itself crosses the threshold halts before
     the unit threat runs, so no threat iteration can write the record. The persisted
     row must still carry the recomputed total, the adopted model sum and the
-    halt fields - the pre-crash record would otherwise read `risk_total=0` and
+    halt fields - the pre-crash record would otherwise read `risk_total=0.0` and
     `halt=false` for a run that is already halted."""
     fake = _resume_fake(_seed_record(
         intake_order=[UNIT_A, UNIT_B],
         intake_position=0,
-        risk_threshold=3,                 # one adopted `high` threat crosses it
+        risk_threshold=9.2,               # one adopted threat crosses it (inclusive)
         threshold_basis="override",
-        risk_total=0,                     # stale: the record never updated
+        risk_total=0.0,                   # stale: the record never updated
         model_sums=[],
     ))
     _patch_pg(monkeypatch, fake)
@@ -677,7 +668,7 @@ def test_a_resume_that_models_nothing_re_persists_the_recomputed_record(
     ))
 
     record = fake.run_record(RUN)
-    assert record["risk_total"] == 3
+    assert record["risk_total"] == 9.2
     assert [entry["unit_id"] for entry in record["model_sums"]] == [UNIT_A]
     assert record["halt"] is True
     assert record["crossing_unit"] == UNIT_A
@@ -791,7 +782,7 @@ def test_a_failed_model_commit_is_never_counted_in_the_run_record(
     assert ("model-failed", UNIT_A, "COMPLETED") in events
     record = fake.run_record(RUN)
     assert record["model_sums"] == []
-    assert record["risk_total"] == 0
+    assert record["risk_total"] == 0.0
     assert [entry["unit_id"] for entry in record["degraded_units"]] == [UNIT_A]
     assert record["intake_position"] == 1
 
@@ -805,7 +796,7 @@ def test_a_resumed_run_clears_the_stale_provider_interrupt_keys(
     fake = _resume_fake(_seed_record(
         intake_order=[UNIT_A],
         intake_position=1,                # the intake was already exhausted
-        risk_total=3,
+        risk_total=9.2,
         model_sums=[_completed_sum(UNIT_A)],
         interrupted=True,
         interrupt_reason="provider unavailable (status=429)",
@@ -835,7 +826,7 @@ def test_a_resumed_run_clears_the_stale_provider_interrupt_keys(
     assert record["provider_status"] is None
     assert record["quota_exhausted"] is None
     assert record["retry_after_s"] is None
-    assert record["risk_total"] == 3      # the run record itself is untouched
+    assert record["risk_total"] == 9.2    # the run record itself is untouched
 
 
 # --- the DB-backed risk threshold (ADR `hunting-pipeline-sync-adr.md`) ----------
@@ -843,15 +834,16 @@ def test_a_resumed_run_clears_the_stale_provider_interrupt_keys(
 def test_threshold_config_prefers_the_db_value_over_the_env():
     from polymerhus.attack.hunting.run_lifecycle import threshold_config
 
-    threshold, basis = threshold_config({"HUNT_RISK_THRESHOLD": "7"}, db_value=250)
-    assert (threshold, basis) == (250, "db")
+    threshold, basis = threshold_config(
+        {"HUNT_RISK_THRESHOLD": "7"}, db_value=156.25)
+    assert (threshold, basis) == (156.25, "db")
 
 
 def test_threshold_config_falls_back_to_the_env_on_a_malformed_db_value():
     from polymerhus.attack.hunting.run_lifecycle import threshold_config
 
-    threshold, basis = threshold_config({"HUNT_RISK_THRESHOLD": "7"}, db_value="oops")
-    assert (threshold, basis) == (7, "override")
+    threshold, basis = threshold_config({"HUNT_RISK_THRESHOLD": "7.5"}, db_value="oops")
+    assert (threshold, basis) == (7.5, "override")
 
 
 def test_threshold_config_without_a_db_value_keeps_the_env_basis():
@@ -863,9 +855,10 @@ def test_threshold_config_without_a_db_value_keeps_the_env_basis():
 def test_the_run_record_stamps_the_pod_batch_and_promotion_threshold(
         tmp_path, monkeypatch):
     """The frozen pipeline settings ride every run-record write, so a resume and
-    an audit use the policy the run booted with."""
+    an audit use the policy the run booted with. The promotion floor is a float
+    (ADR 8: the old 4 -> 2.5); the pod batch size stays an integer."""
     fake = _FakePg(hunting_settings={
-        "pod_batch_size": 3, "promotion_risk_threshold": 5,
+        "pod_batch_size": 3, "promotion_risk_threshold": 2.5,
     })
     _patch_pg(monkeypatch, fake)
     hunter, models = _stores(tmp_path)
@@ -882,7 +875,7 @@ def test_the_run_record_stamps_the_pod_batch_and_promotion_threshold(
 
     record = fake.run_record(RUN)
     assert record["pod_batch_size"] == 3
-    assert record["promotion_risk_threshold"] == 5
+    assert record["promotion_risk_threshold"] == 2.5
 
 
 def test_a_resume_prefers_the_recorded_pipeline_settings(tmp_path, monkeypatch):
@@ -890,10 +883,10 @@ def test_a_resume_prefers_the_recorded_pipeline_settings(tmp_path, monkeypatch):
     project setting."""
     fake = _resume_fake(_seed_record(
         intake_order=[UNIT_A], intake_position=1,
-        pod_batch_size=4, promotion_risk_threshold=7,
+        pod_batch_size=4, promotion_risk_threshold=6.25,
     ))
     fake.hunting_settings = {
-        "pod_batch_size": 2, "promotion_risk_threshold": 3,
+        "pod_batch_size": 2, "promotion_risk_threshold": 2.5,
     }
     _patch_pg(monkeypatch, fake)
     hunter, models = _stores(tmp_path)
@@ -910,4 +903,4 @@ def test_a_resume_prefers_the_recorded_pipeline_settings(tmp_path, monkeypatch):
 
     record = fake.run_record(RUN)
     assert record["pod_batch_size"] == 4
-    assert record["promotion_risk_threshold"] == 7
+    assert record["promotion_risk_threshold"] == 6.25

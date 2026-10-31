@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from fastapi.testclient import TestClient
 
 import polymerhus.app.clients.pg as pg
@@ -158,9 +159,86 @@ def test_put_accepts_the_risk_threshold(monkeypatch):
     fake = FakeHuntingSettings()
     _install(monkeypatch, fake)
     response = client.put(
-        "/projects/p1/hunting/config", json={"risk_threshold": 250})
+        "/projects/p1/hunting/config", json={"risk_threshold": 156.25})
     assert response.status_code == 200
-    assert fake.saves == [("p1", {"risk_threshold": 250})]
+    assert fake.saves == [("p1", {"risk_threshold": 156.25})]
+
+
+def test_put_round_trips_the_float_thresholds(monkeypatch):
+    """ADR 8 / spec 12: both thresholds are floats on the CVSS 4.0 scale (the
+    iteration D values 112.5 and 2.5), so the settings round-trip without
+    truncation."""
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config",
+        json={"risk_threshold": 112.5, "promotion_risk_threshold": 2.5},
+    )
+    assert response.status_code == 200
+    assert fake.saves == [
+        ("p1", {"risk_threshold": 112.5, "promotion_risk_threshold": 2.5})]
+    read = client.get("/projects/p1/hunting/config").json()
+    assert read["risk_threshold"] == 112.5
+    assert read["promotion_risk_threshold"] == 2.5
+
+
+def test_put_rejects_a_negative_risk_threshold(monkeypatch):
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    response = client.put(
+        "/projects/p1/hunting/config", json={"risk_threshold": -0.5})
+    assert response.status_code == 422
+    assert fake.saves == []
+
+
+def test_put_rejects_a_non_numeric_threshold_naming_the_field(monkeypatch):
+    """A malformed threshold fails fast at the schema layer, naming the field,
+    so the run never boots on a typo."""
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    for body, field in (
+        ({"risk_threshold": "high"}, "risk_threshold"),
+        ({"promotion_risk_threshold": "high"}, "promotion_risk_threshold"),
+    ):
+        response = client.put("/projects/p1/hunting/config", json=body)
+        assert response.status_code == 422, body
+        assert field in response.text, body
+    assert fake.saves == []
+
+
+def test_the_repository_rejects_a_malformed_threshold_naming_the_field(monkeypatch):
+    """The use-case layer owns the same rule as the schema: a direct caller (an
+    eval setup, a script) gets a ValueError naming the field, and nothing
+    lands."""
+    from polymerhus.project_management.repository import save_hunting_config
+
+    fake = FakeHuntingSettings()
+    _install(monkeypatch, fake)
+    for body, field in (
+        ({"risk_threshold": -1.0}, "risk_threshold"),
+        ({"risk_threshold": "high"}, "risk_threshold"),
+        ({"promotion_risk_threshold": -1.0}, "promotion_risk_threshold"),
+        ({"promotion_risk_threshold": "high"}, "promotion_risk_threshold"),
+    ):
+        with pytest.raises(ValueError) as excinfo:
+            save_hunting_config("p1", body)
+        assert field in str(excinfo.value), body
+    assert fake.saves == []
+
+
+def test_the_repository_reads_the_stored_thresholds_as_floats(monkeypatch):
+    """A stored integer from a v4-era row reads back as a float: the surface has
+    ONE numeric type for the thresholds."""
+    from polymerhus.project_management.repository import read_hunting_config
+
+    fake = FakeHuntingSettings(stored={
+        "p1": {"risk_threshold": 250, "promotion_risk_threshold": 4}})
+    _install(monkeypatch, fake)
+    config = read_hunting_config("p1")
+    assert config["risk_threshold"] == 250.0
+    assert isinstance(config["risk_threshold"], float)
+    assert config["promotion_risk_threshold"] == 4.0
+    assert isinstance(config["promotion_risk_threshold"], float)
 
 
 def test_put_sets_only_the_scope_and_preserves_the_sibling_settings(monkeypatch):

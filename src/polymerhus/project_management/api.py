@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from polymerhus.analysis.scaffold import ScaffoldError
 from polymerhus.app.auth.store import (
@@ -84,8 +84,9 @@ class SettingsUpdate(BaseModel):
 
 class HuntingConfigUpdate(BaseModel):
     """The partial PUT body of the project's hunting config (ADR
-    `hunting-pipeline-sync-adr.md`, amended 2026-10-26, and spec 6 of the
-    impact assessment system). Only the provided keys land (deep-merged);
+    `hunting-pipeline-sync-adr.md`, amended 2026-10-26 and 2026-10-31, and spec
+    12 of the CVSS 4.0 risk-scoring spec). Only the provided keys land
+    (deep-merged); the two thresholds are FLOATS on the CVSS 4.0 scale;
     `risk_threshold: null` clears the DB override and falls back to the
     env/default basis; `pod_batch_size: null` clears it to the default 1;
     `promotion_risk_threshold: null` clears it to no filter;
@@ -95,11 +96,31 @@ class HuntingConfigUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pipeline_sync: Literal["serial", "batched", "parallel"] | None = None
-    risk_threshold: int | None = Field(default=None, ge=0)
+    risk_threshold: float | None = Field(
+        default=None, ge=0,
+        description=(
+            "The threat-modeller risk budget as a float on the CVSS 4.0 scale "
+            "(0.0 .. 10.0 per threat; the default is 156.25)."
+        ),
+    )
     pod_batch_size: int | None = Field(default=None, ge=1, strict=True)
-    promotion_risk_threshold: int | None = Field(
-        default=None, ge=0, strict=True)
+    promotion_risk_threshold: float | None = Field(
+        default=None, ge=0,
+        description=(
+            "The minimum per-threat CVSS 4.0 risk (0.0 .. 10.0) a hunter is "
+            "dispatched for; null or 0 means no filter."
+        ),
+    )
     threat_model_scope: str | None = None
+
+    @field_validator("risk_threshold", "promotion_risk_threshold", mode="before")
+    @classmethod
+    def _reject_a_boolean_threshold(cls, value):
+        """A boolean is not a threshold: pydantic would read `True` as `1.0` and
+        silently configure a 1-point budget."""
+        if isinstance(value, bool):
+            raise ValueError("must be a number, not a boolean")
+        return value
 
 
 class ReconLaunch(BaseModel):

@@ -105,10 +105,13 @@ def test_E1_whole_pipeline(client, _live_llm):
     exports = stack.pod_export_entries(project, spec_id)
     assert exports, f"no pod export for {spec_id}"
 
-    # The operator audit trail: the run row carries the recorded intake.
+    # The operator audit trail: the run row carries the recorded intake and the
+    # float CVSS 4.0 risk total with its severity-band breakdown (T7 #410; the
+    # likelihood weight table is retired).
     stats = row.get("stats") or {}
     assert stats.get("intake_order"), row
     assert UNIT in stats["intake_order"], stats["intake_order"]
-    assert stats.get("risk_weights") == {
-        "none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4,
-    }, stats
+    assert isinstance(stats.get("risk_total"), float), stats
+    assert set(stats.get("risk_breakdown") or {}) == {
+        "none", "low", "medium", "high", "critical"}, stats
+    assert "risk_weights" not in stats, stats
