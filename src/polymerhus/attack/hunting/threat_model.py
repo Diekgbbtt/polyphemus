@@ -45,12 +45,11 @@ Rules this module owns:
 The checker is pure; the store (`threat_model_store`) applies it on the
 `COMPLETED` write only.
 
-The retired likelihood/impact vocabulary (`Likelihood`, `RISK_WEIGHTS`,
-`Impact`, `ImpactLevel`, `ImpactSeverity`, `IMPACT_METRIC_WEIGHTS`,
-`impact_weight*`, `impact_severity`, `threat_risk`, `RISK_BUCKETS`,
-`risk_bucket`, `RiskFactors`) is kept ONLY for the consumers ticket #405 does
-not migrate (the mover, the queue, the run record, the payload); the v5 schema
-exposes none of it.  T9 deletes it.
+Schema 5 is the ONLY model this module exposes: the retired likelihood and
+impact-weight vocabulary (the enums, the weight tables, the CIA record, and the
+`risk_factors`) is deleted, so no field, reader, or helper can route a score
+through it.  A v4 document is still read RAW (`RawThreatModel`) and never
+re-scored.
 """
 from __future__ import annotations
 
@@ -90,12 +89,13 @@ TECHNIQUE_FAMILIES: frozenset[str] = frozenset(
 
 # Migration note (2026-10-31): schema 5 replaces the likelihood x impact model
 # with the CVSS 4.0 base score. The assessment row carries the eight factors and
-# the derived `risk` / `risk_vector`; the threat mirrors the score and loses
-# `likelihood`, `likelihood_rationale`, `risk_factors`, `confidence`, `impact`,
-# and `impact_weight`; `RiskProfile` is the summed risk and the severity-band
-# breakdown. The `impact_assessment` section leaves `ModelSections` (the
-# `assess_impact` tool is its sole writer, ticket #406). A v4 document is NOT
-# migrated: the store reads it raw and refuses to write into it.
+# the derived `risk` / `risk_vector`; the threat mirrors the score and loses its
+# likelihood block, its confidence, its risk factors, and its threat-side CIA
+# vector; `RiskProfile` is the summed risk and the severity-band breakdown. The
+# retired vocabulary itself is DELETED (T9 #412), not kept behind a flag. The
+# `impact_assessment` section leaves `ModelSections` (the `assess_impact` tool is
+# its sole writer, ticket #406). A v4 document is NOT migrated: the store reads it
+# raw and refuses to write into it.
 # Migration note (2026-10-26): schema 3 replaced the damage-first model with the
 # impact-assessment model - the `prior_art`, `impact_assessment`, and
 # `precursors` sections, the `PRIOR_ART` and `IMPACT_ASSESSED` gates,
@@ -122,77 +122,6 @@ class Confidence(StrEnum):
     OBSERVED = "OBSERVED"
     INFERRED = "INFERRED"
     ASSUMED = "ASSUMED"
-
-
-# --- the retired likelihood/impact vocabulary (kept for the T5-T9 consumers) --
-#
-# Schema 5 no longer routes the score through these values. They remain ONLY so
-# the consumers outside ticket #405's scope (the mover, the dispatch queue, the
-# run record, the payload) keep importing and behaving until their own tickets
-# migrate them. Nothing below is a field of a v5 model.
-
-class Likelihood(StrEnum):
-    """The retired threat likelihood enum; the weight is monotonic (S2 7.1)."""
-
-    NONE = "none"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-# The ONE likelihood-weight table (S2 7.1): strictly increasing, likelihood
-# only (no impact factor). The run driver records this map and sums with it.
-RISK_WEIGHTS: dict[Likelihood, int] = {
-    Likelihood.NONE: 0,
-    Likelihood.LOW: 1,
-    Likelihood.MEDIUM: 2,
-    Likelihood.HIGH: 3,
-    Likelihood.CRITICAL: 4,
-}
-
-
-class ImpactLevel(StrEnum):
-    """The CVSS 4.0-like value of one impact metric."""
-
-    NONE = "none"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
-# The ONE impact-weight table: the CVSS 4.0-like metric weights. The impact
-# sub-score is `1 - (1-VC)(1-VI)(1-VA)`, and the ordinal weight is derived from
-# the sub-score by the monotone thresholds below (ADR, 2026-10-25).
-IMPACT_METRIC_WEIGHTS: dict[ImpactLevel, float] = {
-    ImpactLevel.NONE: 0.00,
-    ImpactLevel.LOW: 0.22,
-    ImpactLevel.MEDIUM: 0.35,
-    ImpactLevel.HIGH: 0.56,
-}
-
-
-class ImpactSeverity(StrEnum):
-    """The ordinal severity of the impact sub-score, 0..4."""
-
-    NONE = "none"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-IMPACT_SEVERITY_BY_WEIGHT: dict[int, ImpactSeverity] = {
-    0: ImpactSeverity.NONE,
-    1: ImpactSeverity.LOW,
-    2: ImpactSeverity.MEDIUM,
-    3: ImpactSeverity.HIGH,
-    4: ImpactSeverity.CRITICAL,
-}
-
-# The inclusive upper bounds of the ordinal classes 1..3; above the last bound
-# the class is 4 (critical). Zero is the only value that maps to class 0.
-IMPACT_WEIGHT_BOUNDS: tuple[float, float, float] = (0.25, 0.50, 0.75)
 
 
 class UnitKind(StrEnum):
@@ -251,29 +180,6 @@ class ViolationKind(StrEnum):
     STATE_CONSISTENCY = "state-consistency"
     FORCED_TRANSITION = "forced-transition"
     OTHER = "other"
-
-
-class AttackVector(StrEnum):
-    NETWORK = "network"
-    ADJACENT = "adjacent"
-    LOCAL = "local"
-    PHYSICAL = "physical"
-
-
-class AttackRequirements(StrEnum):
-    NONE = "none"
-    PRESENT = "present"
-
-
-class PrivilegesRequired(StrEnum):
-    NONE = "none"
-    LOW = "low"
-    HIGH = "high"
-
-
-class Complexity(StrEnum):
-    LOW = "low"
-    HIGH = "high"
 
 
 class _Record(BaseModel):
@@ -393,15 +299,7 @@ class Vulnerability(_Record):
     dropped: bool = False
     drop_reason: str = ""
     drop_probe: str = ""
-    confidence: Confidence
     evidences: list[Evidence]
-
-
-class RiskFactors(_Record):
-    attack_vector: AttackVector
-    attack_requirements: AttackRequirements
-    privileges_required: PrivilegesRequired
-    complexity: Complexity
 
 
 class PriorArtKind(StrEnum):
@@ -430,14 +328,16 @@ _FACTOR_PATHS: tuple[str, ...] = (
 
 # The planned-profile amendment (2026-10-31): the v5 paths are `risk`,
 # `risk_vector`, `factors.*`, `impact_description`, and
-# `exploitability_description`; the v4 paths (`damage`, `likelihood`, ...) stay
-# accepted so a raw v4 document is still queryable. The `threat` view is the
-# threat file merged with its impact row; the other views are the unit model's
-# records. The catalog covers every field of the threat file and of the model
-# records (a dict-valued path is matched on its JSON string); `unit_id` is
-# accepted for EVERY kind (see `prior_art_paths`), because every view carries
-# the owning model's identity and the query excludes the bound unit unless a
-# filter names it.
+# `exploitability_description`; the v4 PROSE path (`damage`) stays accepted so a
+# raw v4 document is still queryable. The retired scoring vocabulary (the
+# likelihood, the risk factors, the confidence, the threat-side CIA vector, and
+# the CIA weight) is not a path: a v4 document still reads raw, but its retired
+# fields are not search terms. The `threat` view is the threat file merged with
+# its impact row; the other views are the unit model's records. The catalog
+# covers every field of the threat file and of the model records (a dict-valued
+# path is matched on its JSON string); `unit_id` is accepted for EVERY kind (see
+# `prior_art_paths`), because every view carries the owning model's identity and
+# the query excludes the bound unit unless a filter names it.
 PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
     PriorArtKind.THREAT: (
         "threat_id",
@@ -451,8 +351,6 @@ PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
         # beside the threat file's own keys (schema-5 spec 10).
         "impact_description",
         "exploitability_description",
-        # The v4 threat file's top-level key stays queryable in a raw model.
-        "likelihood",
         *_FACTOR_PATHS,
         "created_at",
         "threat",
@@ -461,23 +359,10 @@ PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
         "threat.vulnerability_ref",
         "threat.canonical_class",
         "threat.web_vulnerability_class",
-        "threat.likelihood",
-        "threat.likelihood_rationale",
-        "threat.risk_factors",
-        "threat.risk_factors.attack_vector",
-        "threat.risk_factors.attack_requirements",
-        "threat.risk_factors.privileges_required",
-        "threat.risk_factors.complexity",
-        "threat.confidence",
         "threat.evidences",
         "threat.evidences.*.ref",
         "threat.impact_ref",
         "threat.enabling_precursors",
-        "threat.impact",
-        "threat.impact.confidentiality",
-        "threat.impact.integrity",
-        "threat.impact.availability",
-        "threat.impact_weight",
         "threat.risk",
         "impact",
         "impact.impact_ref",
@@ -548,7 +433,6 @@ PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
         "dropped",
         "drop_reason",
         "drop_probe",
-        "confidence",
         "evidences",
     ),
     PriorArtKind.ASSUMPTION: (
@@ -644,32 +528,6 @@ class ThreatQueryResult(_Record):
     truncated: bool = False
 
 
-class Impact(_Record):
-    """The CIA vector of one RETIRED damage claim (schema 4 and earlier).
-
-    Schema 5 replaced the threat-side CIA vector with the assessment row's
-    `RiskMetrics`. This record is kept only for the T5-T9 consumers of the
-    retired risk score; no v5 model field carries it.
-    """
-
-    confidentiality: ImpactLevel = ImpactLevel.NONE
-    integrity: ImpactLevel = ImpactLevel.NONE
-    availability: ImpactLevel = ImpactLevel.NONE
-
-    @classmethod
-    def none(cls) -> "Impact":
-        return cls()
-
-    def is_none(self) -> bool:
-        """True when every metric is `none` - the red row of the impact metric."""
-        return all(
-            level == ImpactLevel.NONE
-            for level in (
-                self.confidentiality, self.integrity, self.availability,
-            )
-        )
-
-
 class ImpactDisposition(StrEnum):
     """Whether a row reaches an end damage (`threat`) or only a capability."""
 
@@ -727,57 +585,6 @@ class ImpactAssessment(_Record):
     @classmethod
     def _legacy_placeholder(cls, value: object) -> object:
         return "precursor" if value == "placeholder" else value
-
-
-def compute_impact(impact: Impact) -> float:
-    """The CVSS 4.0-like impact sub-score, 0.0..1.0."""
-    remaining = 1.0
-    for level in (impact.confidentiality, impact.integrity, impact.availability):
-        remaining *= 1.0 - IMPACT_METRIC_WEIGHTS[level]
-    return 1.0 - remaining
-
-
-def impact_weight_from_sub_score(sub_score: float) -> int:
-    """The ordinal impact weight, 0..4, from the sub-score."""
-    if sub_score <= 0:
-        return 0
-    for weight, bound in enumerate(IMPACT_WEIGHT_BOUNDS, start=1):
-        if sub_score <= bound:
-            return weight
-    return 4
-
-
-def impact_weight(impact: Impact) -> int:
-    """The ordinal impact weight of one impact record."""
-    return impact_weight_from_sub_score(compute_impact(impact))
-
-
-def impact_severity(weight: int) -> ImpactSeverity:
-    """The named severity of an ordinal impact weight."""
-    return IMPACT_SEVERITY_BY_WEIGHT[weight]
-
-
-def threat_risk(likelihood: Likelihood, impact: Impact) -> int:
-    """The combined threat risk: likelihood weight times impact weight."""
-    return RISK_WEIGHTS[likelihood] * impact_weight(impact)
-
-
-# The dispatch buckets over the combined threat risk (ADR, 2026-10-25). The mover
-# uses the bucket, never the raw likelihood, to order and hold threats.
-RISK_BUCKETS: tuple[str, ...] = ("none", "low", "medium", "high", "critical")
-
-
-def risk_bucket(risk: int) -> str:
-    """The dispatch bucket of a combined threat risk, 0..16."""
-    if risk <= 0:
-        return "none"
-    if risk <= 3:
-        return "low"
-    if risk <= 7:
-        return "medium"
-    if risk <= 11:
-        return "high"
-    return "critical"
 
 
 class ThreatWrite(_Record):
@@ -1451,9 +1258,6 @@ def check_completion(
 __all__ = [
     "Agreement",
     "Assumption",
-    "AttackRequirements",
-    "AttackVector",
-    "Complexity",
     "Confidence",
     "DEFAULT_RISK_THRESHOLD",
     "DynamicState",
@@ -1463,13 +1267,8 @@ __all__ = [
     "Fault",
     "FieldFilter",
     "GATE_SECTIONS",
-    "IMPACT_METRIC_WEIGHTS",
-    "Impact",
     "ImpactAssessment",
     "ImpactDisposition",
-    "ImpactLevel",
-    "ImpactSeverity",
-    "Likelihood",
     "ModelSections",
     "ModelState",
     "PREVIOUS_SCHEMA_VERSION",
@@ -1480,10 +1279,7 @@ __all__ = [
     "PriorArtKind",
     "PriorArtQuery",
     "PriorArtReuse",
-    "PrivilegesRequired",
-    "RISK_WEIGHTS",
     "RawThreatModel",
-    "RiskFactors",
     "RiskMetrics",
     "RiskProfile",
     "RiskResult",
@@ -1506,19 +1302,12 @@ __all__ = [
     "ViolationKind",
     "Vulnerability",
     "check_completion",
-    "compute_impact",
     "compute_risk",
     "compute_risk_profile",
-    "RISK_BUCKETS",
     "document_of",
-    "impact_severity",
-    "impact_weight",
-    "impact_weight_from_sub_score",
     "severity_band",
-    "threat_risk",
     "normalise_threats",
     "prior_art_paths",
-    "risk_bucket",
     "unit_kind_from_unit_id",
     "validate_metrics",
 ]

@@ -26,9 +26,9 @@ The payload carries (spec 9):
 It does NOT carry (S2 8.2): any narrowed vector or payload, a `HuntConfig`, or a
 pre-authored payload vector space. The rationale stays vulnerability-level, so
 the hunter keeps the room to engineer its own procedure. It also never renders
-the RETIRED vocabulary: no `likelihood`, no `likelihood_rationale`, no threat
-`confidence`, no `impact_weight`, and no threat-side CIA block. The key set is
-exactly the list above plus the threat record.
+the RETIRED vocabulary: no likelihood, no likelihood rationale, no threat
+confidence, and no threat-side CIA block. The key set is exactly the list above
+plus the v5 threat fields.
 
 PURE by construction (CODING_STANDARD s3): the model document and the threat
 record go in, one dict comes out; no I/O, no clock, no LLM. Every unit-context
@@ -46,6 +46,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Sequence
 
 from polymerhus.attack.hunting.risk_score import severity_band
+from polymerhus.attack.hunting.threat_model import Threat
 
 __all__ = ["HunterPayloadError", "materialise_hunter_payload"]
 
@@ -67,17 +68,10 @@ _FACTOR_FIELDS: tuple[str, ...] = (
     "availability",
 )
 
-# The retired v4 threat fields (ADR 6). A v5 threat record carries none of them;
-# they are stripped defensively because the payload is the hunter's ONLY view, so
-# a stale record can never reintroduce the retired vocabulary.
-_RETIRED_THREAT_FIELDS: tuple[str, ...] = (
-    "likelihood",
-    "likelihood_rationale",
-    "confidence",
-    "impact",
-    "impact_weight",
-    "risk_factors",
-)
+# The v5 threat fields the payload carries, taken from the schema itself so the
+# projection cannot drift from it. It is a WHITELIST, not a strip list: a stale or
+# foreign threat record can never reintroduce the retired v4 vocabulary (ADR 6).
+_THREAT_FIELDS: tuple[str, ...] = tuple(Threat.model_fields)
 
 
 class HunterPayloadError(ValueError):
@@ -276,8 +270,9 @@ def materialise_hunter_payload(
     mover's dispatch record, S2 8.1). Pure; the unit context is fail-open, the
     assessment is required (see the module docstring)."""
     threat = dict(threat_file.get("threat") or {})
-    for retired in _RETIRED_THREAT_FIELDS:
-        threat.pop(retired, None)
+    threat = {
+        field: threat[field] for field in _THREAT_FIELDS if field in threat
+    }
     fault_ref = str(threat.get("fault_ref") or "")
     assessment = _assessment(threat_file, threat, dispatch_id)
     factors = _factors(assessment, dispatch_id)

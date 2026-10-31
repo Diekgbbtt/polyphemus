@@ -52,9 +52,11 @@ RUN = "run-1"
 PROJECT = "proj-1"
 
 
-def _threat_record(*, unit_id=UNIT, threat_id="threat-1", likelihood="high",
+def _threat_record(*, unit_id=UNIT, threat_id="threat-1", risk=9.0,
                  run_id=RUN, **overrides) -> dict:
-    """One threat file record exactly as the store writes it (S2 8.1)."""
+    """One threat file record exactly as the store writes it (S2 8.1): the float
+    risk at the top level and the v5 threat row, with none of the retired
+    likelihood, confidence, risk-factor, or CIA vocabulary."""
     unit_name = unit_id.replace(":", "-")
     record = {
         "threat_id": threat_id,
@@ -62,26 +64,15 @@ def _threat_record(*, unit_id=UNIT, threat_id="threat-1", likelihood="high",
         "unit_kind": "service",
         "run_id": run_id,
         "dispatch_id": f"{unit_name}__{threat_id}",
-        "likelihood": likelihood,
+        "risk": risk,
         "threat": {
             "id": threat_id,
             "fault_ref": "fault-1",
             "vulnerability_ref": "v-1",
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",
-            "likelihood": likelihood,
-            "likelihood_rationale": "the item id is caller-supplied",
             "impact_ref": "ia-1",
             "enabling_precursors": ["p-1"],
-            "impact": {
-                "confidentiality": {
-                    "low": "low", "medium": "medium", "high": "high",
-                    "critical": "high", "none": "none",
-                }.get(likelihood, "none"),
-                "integrity": "none",
-                "availability": "none",
-            },
-            "confidence": "INFERRED",
             "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
         },
         "created_at": "2026-10-19T00:00:00Z",
@@ -90,20 +81,19 @@ def _threat_record(*, unit_id=UNIT, threat_id="threat-1", likelihood="high",
     return record
 
 
-def _threat_item(*, record=None, threat_id="threat-1", likelihood="high",
+def _threat_item(*, record=None, threat_id="threat-1", risk=9.0,
                run_id=RUN, unit_id=UNIT, unit_name=UNIT_NAME) -> "ThreatItem | None":
     return threat_item(
         project_id=PROJECT, unit_id=unit_id, unit_name=unit_name, threat_id=threat_id,
         record=_threat_record(unit_id=unit_id, threat_id=threat_id,
-                            likelihood=likelihood, run_id=run_id)
+                            risk=risk, run_id=run_id)
         if record is None else record,
         run_id=run_id,
     )
 
 
 def test_the_threat_item_carries_the_severity_score_and_band():
-    record = _threat_record()
-    record["risk"] = 7.0
+    record = _threat_record(risk=7.0)
 
     item = threat_item(
         project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
@@ -116,30 +106,27 @@ def test_the_threat_item_carries_the_severity_score_and_band():
 
 def test_threat_risk_reads_a_v5_float_and_a_v4_int():
     """The tolerant reader (spec 11): a v5 threat file carries a float score, a
-    v4 file an int, and both read as the same float. The retired likelihood
-    fallback still reads a file that predates either."""
+    v4 file an int, and both read as the same float. A file with no stored score
+    is unreadable: the retired likelihood route to a score is gone."""
     from polymerhus.attack.hunting.mover import threat_risk
 
     assert threat_risk({"risk": 9.3}) == 9.3
     assert threat_risk({"risk": 9}) == 9.0
-    # The v4 legacy fallback: high likelihood (3) x high impact (3) = 9.
-    assert threat_risk({
-        "likelihood": "high",
-        "impact": {
-            "confidentiality": "high",
-            "integrity": "none",
-            "availability": "none",
-        },
-    }) == 9.0
+    assert threat_risk({"risk": 0}) == 0.0
     assert threat_risk({"risk": "bad"}) is None
     assert threat_risk({"risk": True}) is None
     assert threat_risk({}) is None
+    assert threat_risk({"likelihood": "high"}) is None
+    assert threat_risk({
+        "likelihood": "high",
+        "impact": {"confidentiality": "high", "integrity": "none",
+                   "availability": "none"},
+    }) is None
     assert threat_risk(None) is None
 
 
 def test_a_zero_risk_threat_file_is_refused():
-    record = _threat_record()
-    record["risk"] = 0
+    record = _threat_record(risk=0)
 
     assert threat_item(
         project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
@@ -172,8 +159,8 @@ def test_a_threat_file_from_another_run_is_refused():
 
 @pytest.mark.parametrize("broken", [
     pytest.param("not-a-mapping", id="record-not-a-mapping"),
-    pytest.param({**_threat_record(), "likelihood": "urgent"}, id="bad-likelihood"),
-    pytest.param({**_threat_record(), "likelihood": "none"}, id="none-has-no-file"),
+    pytest.param({**_threat_record(), "risk": "urgent"}, id="unreadable-risk"),
+    pytest.param({**_threat_record(), "risk": None}, id="missing-risk"),
     pytest.param({**_threat_record(), "dispatch_id": ""}, id="missing-dispatch-id"),
     pytest.param({**_threat_record(), "dispatch_id": f"{UNIT_NAME}__threat-2"},
                  id="dispatch-id-disagrees-with-the-file"),
@@ -208,7 +195,7 @@ def test_higher_tier_threats_dispatch_and_low_threats_pause_behind_them():
     low = _threat_item(
         threat_id="threat-2",
         record=_threat_record(threat_id="threat-2", dispatch_id=f"{UNIT_NAME}__threat-2",
-                            likelihood="low"),
+                            risk=2.0),
     )
 
     assert sequence_dispatch([low]) == (low,)
@@ -217,7 +204,7 @@ def test_higher_tier_threats_dispatch_and_low_threats_pause_behind_them():
 
 
 def test_a_low_threat_pauses_while_a_higher_tier_session_is_live():
-    low = _threat_item(record=_threat_record(likelihood="low"))
+    low = _threat_item(record=_threat_record(risk=2.0))
 
     assert sequence_dispatch([low], live_bands={"d-1": "medium"}) == ()
     assert sequence_dispatch([low], live_bands={"d-1": "low"}) == (low,)
@@ -228,7 +215,7 @@ def test_a_low_threat_pauses_while_a_higher_tier_session_is_live():
 def test_the_low_pause_is_per_tick_and_cross_unit():
     """S2 8.3/S1 7.6: a low threat is released on the tick where no higher threat
     file is produced (cross-unit: another unit's produced high threat holds it)."""
-    low = _threat_item(record=_threat_record(likelihood="low"))
+    low = _threat_item(record=_threat_record(risk=2.0))
     other_high = threat_item(
         project_id=PROJECT,
         unit_id="Service:other", unit_name="Service-other", threat_id="threat-1",

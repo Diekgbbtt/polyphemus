@@ -237,43 +237,35 @@ class ImpactAssessment(BaseModel):
     id: str                      # IA-*
     vulnerability_ref: str       # V-*
     disposition: ImpactDisposition
-    damage: str                  # the end damage, or why none follows
+    impact_description: str      # the victim and the damaged property, or why none follows
+    exploitability_description: str  # the chain, its capabilities, and the human participation
     capability: str              # the capability this exploitation gains
     capability_id: str           # P-*; this row's key
     capability_path: list[str]   # required P-* or Unit::P-*, in order
     evidence_refs: list[str]
+    factors: RiskMetrics         # the eight authored CVSS 4.0 base factors
+    risk: float = 0.0            # derived at persistence, never authored
+    risk_vector: str = ""        # derived at persistence, never authored
 
 
 class Threat(BaseModel):
-    id: str
+    id: str = ""
     fault_ref: str
     vulnerability_ref: str
     canonical_class: str
-    web_vulnerability_class: str
-    likelihood: Likelihood
-    likelihood_rationale: str
-    risk_factors: RiskFactors
-    confidence: Confidence
+    web_vulnerability_class: str = ""
     evidences: list[Evidence]
     impact_ref: str              # IA-*
     enabling_precursors: list[tuple[str, str | None]]
-    impact: Impact               # C, I, A only
-    impact_weight: int = 0
-    risk: int = 0
-
-
-class Impact(BaseModel):
-    confidentiality: ImpactLevel = ImpactLevel.NONE
-    integrity: ImpactLevel = ImpactLevel.NONE
-    availability: ImpactLevel = ImpactLevel.NONE
+    risk: float = 0.0            # mirrored from the row at COMPLETED, never authored
 ```
 
 The legacy `Precursor` entity is read-only in schema 4.
 The capability and its key live on the impact row.
 `Threat.impact.end_impact` is removed.
-The damage text lives in the `ImpactAssessment`.
+The assessment text lives in the `ImpactAssessment`.
 `enabling_precursors` is an ordered pair: the required capability, then the precursor that provides it, or `None` for a gap.
-The store computes the impact sub-score, the ordinal weight, and the threat risk from the CIA vector, as it does today.
+The persistence helper computes `risk` and `risk_vector` from `factors`; the store mirrors `risk` onto the threat at the `COMPLETED` write and computes the risk profile from the threats.
 
 ### 4. The impact invariants
 

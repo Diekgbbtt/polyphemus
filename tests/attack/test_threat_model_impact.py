@@ -26,6 +26,9 @@ from polymerhus.attack.hunting.risk_score import (
 from polymerhus.attack.hunting.threat_model import (
     GATE_SECTIONS,
     SCHEMA_VERSION,
+    Agreement,
+    Assumption,
+    DynamicState,
     Evidence,
     EvidenceKind,
     ImpactAssessment,
@@ -37,7 +40,11 @@ from polymerhus.attack.hunting.threat_model import (
     SeverityBand,
     Threat,
     ThreatWrite,
+    Transition,
+    TrustAgreement,
     UnitThreatModel,
+    Violation,
+    Vulnerability,
     compute_risk_profile,
     normalise_threats,
 )
@@ -168,9 +175,30 @@ def test_the_v5_schema_carries_no_retired_risk_field():
     assert "confidence" not in Threat.model_fields
     assert "impact" not in Threat.model_fields
     assert "impact_weight" not in Threat.model_fields
+    # ADR 5: the vulnerability loses the confidence degree too; the six
+    # technical and trust-model claims keep it.
+    assert "confidence" not in Vulnerability.model_fields
+    for claim in (Agreement, TrustAgreement, DynamicState, Transition, Violation,
+                  Assumption):
+        assert "confidence" in claim.model_fields, claim.__name__
     assert set(RiskProfile.model_fields) == {"total", "breakdown"}
     assert "impact_breakdown" not in RiskProfile.model_fields
     assert set(UnitThreatModel.model_fields) >= {"impact_assessment", "threats"}
+
+
+def test_the_retired_likelihood_and_impact_vocabulary_is_deleted():
+    """T9 #412: schema 5 is the only model, so the retired vocabulary does not
+    merely stay unused - it is not importable from the schema module."""
+    from polymerhus.attack.hunting import threat_model
+
+    for gone in (
+        "Likelihood", "RISK_WEIGHTS", "RISK_BUCKETS", "risk_bucket",
+        "Impact", "ImpactLevel", "ImpactSeverity", "IMPACT_METRIC_WEIGHTS",
+        "IMPACT_WEIGHT_BOUNDS", "impact_weight", "impact_severity",
+        "threat_risk", "RiskFactors",
+    ):
+        assert not hasattr(threat_model, gone), gone
+        assert gone not in threat_model.__all__, gone
 
 
 def test_the_model_writes_the_threat_without_a_risk_and_the_store_fills_it():

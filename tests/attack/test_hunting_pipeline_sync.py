@@ -573,9 +573,10 @@ def test_threat_is_promoted_reads_the_risk():
     assert not threat_is_promoted({"risk": 4.0}, 5.0)
     # A v4 threat file carries the same score as an int.
     assert threat_is_promoted({"risk": 9}, 9.0)
-    # A legacy file without the stored risk falls back to the impact product:
-    # high likelihood (3) x high impact (3) = 9.
-    legacy = {
+    # A file with no stored score is unreadable, never re-derived from the
+    # retired likelihood and impact: it is not promoted.
+    assert not threat_is_promoted({"likelihood": "high"}, 9.0)
+    assert not threat_is_promoted({
         "likelihood": "high",
         "threat": {"impact": {
             "confidentiality": "high",
@@ -583,22 +584,7 @@ def test_threat_is_promoted_reads_the_risk():
             "availability": "none",
             "end_impact": "reads another tenant",
         }},
-    }
-    assert threat_is_promoted(legacy, 9.0)
-    assert not threat_is_promoted(legacy, 9.1)
-    # The model document stores the impact at the threat's own level; the same
-    # fallback must read it.
-    model_shape = {
-        "likelihood": "high",
-        "impact": {
-            "confidentiality": "high",
-            "integrity": "none",
-            "availability": "none",
-            "end_impact": "reads another tenant",
-        },
-    }
-    assert threat_is_promoted(model_shape, 9.0)
-    assert not threat_is_promoted(model_shape, 9.1)
+    }, 9.0)
 
 
 def _spec_set(hunts):

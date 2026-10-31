@@ -807,17 +807,19 @@ The run record carries:
 - `intake_excluded`: the excluded unit ids with reasons `completed`, `in-flight`, or `stale`.
   An `abandoned/` model is ignored and retried, not excluded.
   `stale` records a produced model of a terminal, non-resumable run whose archive to `abandoned/` did not land: the unit is excluded, never modelled into the stale model, and a later run retries it (implementation-time addition, T3 #376).
-- `risk_threshold`.
-- `threshold_basis`: `default` or `override`.
-- `risk_weights`.
-- `risk_total`.
-- `risk_breakdown`: the sum of the per-model breakdowns.
-- `model_sums`: one entry per modelled unit with `unit_id`, `total`, and `breakdown`.
+- `risk_threshold`: a float on the CVSS 4.0 scale (default `156.25`, spec 7 / ADR 8).
+- `threshold_basis`: `default`, `override`, or `db`.
+- `risk_total`: a float, the running sum of the unit totals, rounded to two decimals.
+- `risk_breakdown`: the summed per-`SeverityBand` threat counts, keyed `none`..`critical`.
+- `model_sums`: one entry per modelled unit with `unit_id`, the float `total`, and the `breakdown`.
 - `crossing_unit`.
 - `blocked_unit`.
 - `halt`.
 - `degraded_units`: the unit ids with their validation or degradation reason.
 - `trajectory`: the bounded list of state and gate entries.
+- `pipeline_sync`: the frozen sync mode the bootstrap stamps on every write.
+
+The retired `risk_weights`, `impact_weights`, and `impact_breakdown` keys are gone: the record carries no weight table, and the risk is one float total broken down by band (CVSS 4.0 spec 6, amendment 2026-10-31).
 
 A `trajectory` entry is:
 

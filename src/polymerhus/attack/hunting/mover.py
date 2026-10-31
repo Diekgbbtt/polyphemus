@@ -65,13 +65,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, AbstractSet, Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from polymerhus.attack.hunting.risk_score import severity_band
-from polymerhus.attack.hunting.threat_model import (
-    RISK_WEIGHTS,
-    Impact,
-    Likelihood,
-    UnitKind,
-    impact_weight,
-)
+from polymerhus.attack.hunting.threat_model import UnitKind
 from polymerhus.attack.hunting.threat_model_store import dispatch_id, is_threat_id
 from polymerhus.app.runtime import ModuleAdmissionRefused
 
@@ -298,44 +292,23 @@ def threat_risk(record: Mapping[str, Any]) -> float | None:
     """The CVSS 4.0 severity score one threat file carries, or None when it is
     unreadable.
 
-    The persisted top-level `risk` is authoritative: a v5 file carries a float,
-    a v4 file an int, and both read as a float. A legacy file without it falls
-    back to `likelihood_weight * impact_weight`; a file without an impact falls
-    back to the likelihood weight. The promotion predicate, the gate, the
-    completion audit, and the dispatch validity predicate share this read, so
-    they can never disagree on a threat's risk."""
+    The persisted top-level `risk` is authoritative: a v5 file carries a float, a
+    v4 file an int, and both read as a float (spec 11, the tolerant reader). A
+    file without the stored score is unreadable: the retired likelihood route to
+    a score is gone, and no fallback may recompute one. The promotion predicate,
+    the gate, the completion audit, and the dispatch validity predicate share
+    this read, so they can never disagree on a threat's risk."""
     if not isinstance(record, Mapping):
         return None
     raw = record.get("risk")
-    if raw is not None:
-        if isinstance(raw, bool):
-            return None
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            return None
-    try:
-        likelihood = Likelihood(record.get("likelihood"))
-    except (ValueError, KeyError):
+    if raw is None:
         return None
-    threat = record.get("threat")
-    impact_raw = None
-    if isinstance(threat, Mapping) and "impact" in threat:
-        impact_raw = threat.get("impact")
-    elif "impact" in record:
-        impact_raw = record.get("impact")
-    if impact_raw is not None:
-        # A legacy v2 record carries the retired `end_impact` string beside the
-        # CIA vector. The vector is the risk input; drop the retired key before
-        # the strict validation so the legacy file still reads.
-        impact_payload = dict(impact_raw or {})
-        impact_payload.pop("end_impact", None)
-        try:
-            impact = Impact.model_validate(impact_payload)
-        except Exception:  # noqa: BLE001 - a malformed impact is unreadable
-            return None
-        return float(RISK_WEIGHTS[likelihood] * impact_weight(impact))
-    return float(RISK_WEIGHTS[likelihood])
+    if isinstance(raw, bool):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def threat_item(

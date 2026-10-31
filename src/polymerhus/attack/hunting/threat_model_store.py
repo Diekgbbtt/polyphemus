@@ -598,7 +598,6 @@ def _threat_view(
             row.get("impact_description") or row.get("damage") or ""),
         "exploitability_description": row.get("exploitability_description", ""),
         "factors": dict(row.get("factors") or {}),
-        "likelihood": record.get("likelihood") or threat.get("likelihood") or "",
         "threat": threat,
         "impact": impact,
     }

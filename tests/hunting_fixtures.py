@@ -485,7 +485,6 @@ def modeller_gate_payloads() -> dict:
                 "canonical_class": "IDOR",
                 "web_vulnerability_class": "idor",
                 "characterisation": "An anonymous caller reads another user's item.",
-                "confidence": "INFERRED",
                 "evidences": [_evidence()],
             }],
         },

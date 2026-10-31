@@ -22,7 +22,6 @@ import yaml
 from polymerhus.attack.hunting.threat_model import (
     DEFAULT_RISK_THRESHOLD,
     GATE_SECTIONS,
-    RISK_WEIGHTS,
     ModelState,
     UnitThreatModel,
     check_completion,
@@ -135,7 +134,6 @@ def _vulnerabilities() -> list[dict]:
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
         "characterisation": "An anonymous caller reads another user's item.",
-        "confidence": "INFERRED",
         "evidences": [_evidence()],
     }]
 
@@ -676,7 +674,7 @@ def test_a_v4_document_reads_raw_and_is_never_re_scored(tmp_path):
     assert model["threats"][0]["likelihood"] == "medium"
     assert model["threats"][0]["risk"] == 2  # the stored v4 score, never re-scored
 
-    # the prior art reads the raw v4 fields through the v5 catalog
+    # the prior art reads the raw v4 PROSE through the v5 catalog
     result = store.query_prior_art(
         PROJECT,
         kind="impact",
@@ -686,7 +684,8 @@ def test_a_v4_document_reads_raw_and_is_never_re_scored(tmp_path):
     assert result["count"] == 1
     assert result["matches"][0]["record_id"] == "ia-1"
 
-    # a v4 threat file is queryable too, through the same v4 paths
+    # a v4 threat file is queryable too, through the v5 threat paths; its
+    # retired likelihood is NOT a path (T9 #412)
     (unit_dir / "threat-1.yaml").write_text(
         yaml.safe_dump({
             "threat_id": "threat-1",
@@ -694,12 +693,11 @@ def test_a_v4_document_reads_raw_and_is_never_re_scored(tmp_path):
             "unit_kind": "service",
             "run_id": RUN,
             "dispatch_id": "Service-catalogue-and-discovery__threat-1",
-            "likelihood": "medium",
+            "risk": 2,
             "threat": {
                 "id": "threat-1",
                 "canonical_class": "IDOR",
                 "web_vulnerability_class": "idor",
-                "likelihood": "medium",
                 "impact_ref": "ia-1",
                 "risk": 2,
             },
@@ -710,7 +708,7 @@ def test_a_v4_document_reads_raw_and_is_never_re_scored(tmp_path):
     threats = store.query_prior_art(
         PROJECT,
         kind="threat",
-        filters=[{"path": "threat.likelihood", "regex": "^medium$"}],
+        filters=[{"path": "threat.canonical_class", "regex": "^IDOR$"}],
     )
 
     assert threats["count"] == 1
@@ -2226,15 +2224,9 @@ def test_the_note_kinds_match_the_patterns_single_source():
 
 # --- the exported risk contract (for T3) and the read defaults ----------------
 
-def test_the_risk_weights_and_default_threshold_are_exported(tmp_path):
-    assert RISK_WEIGHTS == {
-        "none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4,
-    }
+def test_the_default_threshold_is_exported(tmp_path):
     # The old per-threat maximum was 16, the new one 10: 250 * 0.625 (ADR 8).
     assert DEFAULT_RISK_THRESHOLD == 156.25
-    weights = [RISK_WEIGHTS[level] for level in ("none", "low", "medium", "high", "critical")]
-    assert weights == sorted(weights)
-    assert len(set(weights)) == len(weights)
 
 
 def test_reads_of_an_unknown_unit_are_empty(tmp_path):

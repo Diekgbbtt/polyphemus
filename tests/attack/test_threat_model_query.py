@@ -119,7 +119,6 @@ def _seed_in_progress(
             "canonical_class": canonical_class,
             "web_vulnerability_class": web_vulnerability_class,
             "characterisation": "The prior unit characterises this class.",
-            "confidence": "INFERRED",
             "evidences": [{"kind": "request", "ref": "GET /prior"}],
         }],
     }, run_id=PRIOR_RUN)
