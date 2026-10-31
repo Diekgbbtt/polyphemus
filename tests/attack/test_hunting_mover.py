@@ -101,17 +101,40 @@ def _threat_item(*, record=None, threat_id="threat-1", likelihood="high",
     )
 
 
-def test_the_threat_item_carries_the_combined_risk_bucket():
+def test_the_threat_item_carries_the_severity_score_and_band():
     record = _threat_record()
-    record["risk"] = 7
+    record["risk"] = 7.0
 
     item = threat_item(
         project_id=PROJECT, unit_id=UNIT, unit_name=UNIT_NAME,
         threat_id="threat-1", record=record, run_id=RUN)
 
     assert item is not None
-    assert item.risk == 7
-    assert item.bucket == "medium"
+    assert item.risk == 7.0
+    assert item.band == "high"
+
+
+def test_threat_risk_reads_a_v5_float_and_a_v4_int():
+    """The tolerant reader (spec 11): a v5 threat file carries a float score, a
+    v4 file an int, and both read as the same float. The retired likelihood
+    fallback still reads a file that predates either."""
+    from polymerhus.attack.hunting.mover import threat_risk
+
+    assert threat_risk({"risk": 9.3}) == 9.3
+    assert threat_risk({"risk": 9}) == 9.0
+    # The v4 legacy fallback: high likelihood (3) x high impact (3) = 9.
+    assert threat_risk({
+        "likelihood": "high",
+        "impact": {
+            "confidentiality": "high",
+            "integrity": "none",
+            "availability": "none",
+        },
+    }) == 9.0
+    assert threat_risk({"risk": "bad"}) is None
+    assert threat_risk({"risk": True}) is None
+    assert threat_risk({}) is None
+    assert threat_risk(None) is None
 
 
 def test_a_zero_risk_threat_file_is_refused():
@@ -137,7 +160,6 @@ def test_a_produced_threat_file_becomes_one_dispatch_item():
     assert item.unit_id == UNIT
     assert item.unit_name == UNIT_NAME
     assert item.threat_id == "threat-1"
-    assert item.likelihood == "high"
     assert item.record["threat"]["id"] == "threat-1"
 
 
@@ -197,10 +219,10 @@ def test_higher_tier_threats_dispatch_and_low_threats_pause_behind_them():
 def test_a_low_threat_pauses_while_a_higher_tier_session_is_live():
     low = _threat_item(record=_threat_record(likelihood="low"))
 
-    assert sequence_dispatch([low], live_likelihoods={"d-1": "medium"}) == ()
-    assert sequence_dispatch([low], live_likelihoods={"d-1": "low"}) == (low,)
-    assert sequence_dispatch([low], live_likelihoods=()) == (low,)
-    assert sequence_dispatch([low], live_likelihoods={"d-1": "none"}) == (low,)
+    assert sequence_dispatch([low], live_bands={"d-1": "medium"}) == ()
+    assert sequence_dispatch([low], live_bands={"d-1": "low"}) == (low,)
+    assert sequence_dispatch([low], live_bands=()) == (low,)
+    assert sequence_dispatch([low], live_bands={"d-1": "none"}) == (low,)
 
 
 def test_the_low_pause_is_per_tick_and_cross_unit():
@@ -349,9 +371,10 @@ def test_a_recovered_threat_dispatches_but_its_move_is_already_satisfied():
         unit_name="Service-a",
         threat_id="threat-1",
         dispatch_id="Service-a__threat-1",
-        likelihood="high",
         record={},
         recovered=True,
+        risk=9.3,
+        band="critical",
     )
     assert deduce_delivery([threat]).to_dispatch == (threat,)
     admitted = deduce_delivery(
@@ -385,8 +408,9 @@ def test_family_items_mix_in_one_deduction():
         unit_name="Service-a",
         threat_id="threat-1",
         dispatch_id="Service-a__threat-1",
-        likelihood="high",
         record={},
+        risk=9.3,
+        band="critical",
     )
     spec = TestSpecItem(
         message_id="Service-a__threat-1/sqli_blind",

@@ -58,7 +58,7 @@ from polymerhus.attack.hunting.surfer import (
     run_work_remaining,
 )
 
-from tests.hunting_fixtures import threat_row, produce_model
+from tests.hunting_fixtures import produce_model, risk_row, threat_row
 
 PROJECT = "proj-1"
 RUN = "run-1"
@@ -389,7 +389,7 @@ def test_a_consumed_threat_is_recovered_while_its_sibling_stays_produced(stores)
     the LAST threat. The consumed threat is recovered from the still-produced
     model, while the sibling produced threat stays a normal dispatch candidate."""
     threat, hunter = stores
-    _produce(stores, threats=[threat_row(), threat_row(likelihood="low")])
+    _produce(stores, threats=[threat_row(), risk_row(2.0)])
     assert threat.consume_threat(PROJECT, UNIT, "threat-1") is True
     assert [e["unit_id"] for e in threat.read_consumed_threats(PROJECT)] == [UNIT]
     assert [e["unit_id"] for e in threat.read_produced_threats(PROJECT)] == [UNIT]
@@ -595,7 +595,7 @@ def test_coro_builder_failure_is_refused_and_stays_produced(stores):
 
 def test_move_failure_is_counted_and_never_aborts_the_tick(stores, monkeypatch):
     threat, hunter = stores
-    _produce(stores, threats=[threat_row(), threat_row(likelihood="critical")])
+    _produce(stores, threats=[threat_row(), risk_row(9.9)])
 
     def failing_consume(project_id, unit_id, threat_id):
         raise OSError("disk failure (fixture)")
@@ -776,7 +776,7 @@ def test_is_run_quiesced_ignores_a_demoted_produced_threat(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
-        threats=[threat_row(likelihood="low")],
+        threats=[risk_row(2.0)],
     )
     state = RunDispatchState(promotion_risk_threshold=5)
 

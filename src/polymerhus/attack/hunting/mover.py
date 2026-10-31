@@ -64,13 +64,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, AbstractSet, Any, Callable, Iterable, Mapping, Protocol, Sequence
 
+from polymerhus.attack.hunting.risk_score import severity_band
 from polymerhus.attack.hunting.threat_model import (
     RISK_WEIGHTS,
     Impact,
     Likelihood,
     UnitKind,
     impact_weight,
-    risk_bucket,
 )
 from polymerhus.attack.hunting.threat_model_store import dispatch_id, is_threat_id
 from polymerhus.app.runtime import ModuleAdmissionRefused
@@ -238,14 +238,13 @@ class ThreatItem(ProducedItem):
     unit_name: str
     threat_id: str
     dispatch_id: str
-    likelihood: str
     record: Mapping[str, Any]
     model: Mapping[str, Any] | None = None
     recovered: bool = False
-    # The combined-risk dispatch bucket (ADR, 2026-10-25). The mover orders and
-    # holds threats by this bucket, never by the likelihood string.
-    risk: int = 0
-    bucket: str = "low"
+    # The CVSS 4.0 severity score and its derived band (schema 5). The mover
+    # orders and holds threats by the score, never by the retired likelihood.
+    risk: float = 0.0
+    band: str = "none"
 
 
 @dataclass(frozen=True)
@@ -287,32 +286,32 @@ class DispatchFeedback(Enum):
 
 # --- the threat dispatch record: the validity predicate + the sequencing ---------
 
-# The sequencing's higher buckets (S2 8.3, amended 2026-10-25): a `low` bucket
-# threat file waits while one of these is produced or its hunter session is live.
-HIGHER_TIERS: tuple[str, ...] = ("critical", "high", "medium")
+# The sequencing's higher bands (S2 8.3, amended 2026-10-31): a `low` band
+# threat file waits while one of these is produced or its hunter session is
+# live. The band replaces the retired likelihood bucket.
+HIGHER_BANDS: tuple[str, ...] = ("critical", "high", "medium")
 
-# The likelihood values a threat FILE may carry: `none` has no file at all
-# (S2 8.3), so a file carrying it is malformed, never work.
-_DISPATCHABLE_LIKELIHOODS = tuple(
-    level.value for level in Likelihood if level is not Likelihood.NONE
-)
 _UNIT_KINDS = tuple(kind.value for kind in UnitKind)
 
 
-def threat_risk(record: Mapping[str, Any]) -> int | None:
-    """The combined risk one threat file carries, or None when it is unreadable.
+def threat_risk(record: Mapping[str, Any]) -> float | None:
+    """The CVSS 4.0 severity score one threat file carries, or None when it is
+    unreadable.
 
-    The persisted top-level `risk` is authoritative. A legacy file without it
-    falls back to `likelihood_weight * impact_weight`; a file without an impact
-    falls back to the likelihood weight. The promotion predicate, the gate, the
+    The persisted top-level `risk` is authoritative: a v5 file carries a float,
+    a v4 file an int, and both read as a float. A legacy file without it falls
+    back to `likelihood_weight * impact_weight`; a file without an impact falls
+    back to the likelihood weight. The promotion predicate, the gate, the
     completion audit, and the dispatch validity predicate share this read, so
     they can never disagree on a threat's risk."""
     if not isinstance(record, Mapping):
         return None
     raw = record.get("risk")
     if raw is not None:
+        if isinstance(raw, bool):
+            return None
         try:
-            return int(raw)
+            return float(raw)
         except (TypeError, ValueError):
             return None
     try:
@@ -335,8 +334,8 @@ def threat_risk(record: Mapping[str, Any]) -> int | None:
             impact = Impact.model_validate(impact_payload)
         except Exception:  # noqa: BLE001 - a malformed impact is unreadable
             return None
-        return RISK_WEIGHTS[likelihood] * impact_weight(impact)
-    return RISK_WEIGHTS[likelihood]
+        return float(RISK_WEIGHTS[likelihood] * impact_weight(impact))
+    return float(RISK_WEIGHTS[likelihood])
 
 
 def threat_item(
@@ -373,8 +372,8 @@ def threat_item(
     - a `dispatch_id` that is not the store-derived `<unit_name>__<threat_id>`
       (the session id derives from it, so an unverified one would address the
       wrong session);
-    - a `likelihood` outside `{low, medium, high, critical}` (`none` has no
-      file; anything else is a foreign or corrupt body);
+    - a missing/unreadable `risk` score, or a zero score (S2 8.3: a zero-risk
+      threat has no dispatchable work);
     - a nested `threat` record that is not a mapping, or carries no
       `fault_ref`/`vulnerability_ref` - the payload's anchors.
 
@@ -415,12 +414,6 @@ def threat_item(
             f"its dispatch_id {record.get('dispatch_id')!r} is not the "
             f"store-derived {dispatch!r}",
         )
-    likelihood = record.get("likelihood")
-    if likelihood not in _DISPATCHABLE_LIKELIHOODS:
-        return _refuse_threat(
-            project_id, run_id, unit_name, threat_id,
-            f"unknown or undispatchable likelihood {likelihood!r}",
-        )
     threat = record.get("threat")
     if not isinstance(threat, Mapping) or not threat.get("fault_ref") \
             or not threat.get("vulnerability_ref") or threat.get("id") != threat_id:
@@ -433,10 +426,10 @@ def threat_item(
     if risk is None:
         return _refuse_threat(
             project_id, run_id, unit_name, threat_id,
-            "its combined risk is unreadable",
+            "its severity score is unreadable",
         )
-    bucket = risk_bucket(risk)
-    if bucket == "none":
+    band = severity_band(risk).value
+    if risk <= 0:
         return _refuse_threat(
             project_id, run_id, unit_name, threat_id,
             "a zero-risk threat has no dispatchable work",
@@ -448,12 +441,11 @@ def threat_item(
         unit_name=unit_name,
         threat_id=threat_id,
         dispatch_id=dispatch,
-        likelihood=str(likelihood),
         record=record,
         model=model,
         recovered=recovered,
         risk=risk,
-        bucket=bucket,
+        band=band,
     )
 
 
@@ -473,33 +465,33 @@ def _refuse_threat(
 
 def sequence_dispatch(
     items: Sequence[ProducedItem],
-    live_likelihoods: Mapping[str, str] | Iterable[str] = (),
+    live_bands: Mapping[str, str] | Iterable[str] = (),
 ) -> tuple[ProducedItem, ...]:
     """The dispatch sequencing filter (S2 8.3, S1 7.6): a `critical`, `high` or
-    `medium` threat dispatches immediately; a `low` threat dispatches only when no
-    higher-tier threat file is produced (`items`) and no higher-tier hunter session
-    is live (`live_likelihoods`, the run's own dispatch state keyed by dispatch
-    id).
+    `medium` band threat dispatches immediately; a `low` band threat dispatches
+    only when no higher-band threat file is produced (`items`) and no
+    higher-band hunter session is live (`live_bands`, the run's own dispatch
+    state keyed by dispatch id).
 
     Pure: equal inputs -> equal outputs; the produced order survives. The
     sequencing ranks THREATS only - every other produced item (the pod family's
     specs, S3 8.7) passes through untouched.
 
-    `none` threats have no file at all, so they can never appear here. A session
-    is "live" while its hunter is still working the threat: an idle hunter authors
-    nothing more, so it cannot hold a later low threat (and holding quiesce on it
-    would deadlock the run terminal's settle, S2 8.4)."""
-    buckets = set(
-        live_likelihoods.values()
-        if isinstance(live_likelihoods, Mapping) else live_likelihoods
+    A zero-risk threat has no file at all, so it can never appear here. A
+    session is "live" while its hunter is still working the threat: an idle
+    hunter authors nothing more, so it cannot hold a later low threat (and
+    holding quiesce on it would deadlock the run terminal's settle, S2 8.4)."""
+    bands = set(
+        live_bands.values()
+        if isinstance(live_bands, Mapping) else live_bands
     ) | {
-        item.bucket for item in items if isinstance(item, ThreatItem)
+        item.band for item in items if isinstance(item, ThreatItem)
     }
-    if not any(bucket in HIGHER_TIERS for bucket in buckets):
+    if not any(band in HIGHER_BANDS for band in bands):
         return tuple(items)
     return tuple(
         item for item in items
-        if not (isinstance(item, ThreatItem) and item.bucket == "low")
+        if not (isinstance(item, ThreatItem) and item.band == "low")
     )
 
 
@@ -591,7 +583,7 @@ class TickReport:
     a refused attempt - by control-plane admission or a missing dispatch
     coroutine - stays produced for the next tick); `paused` = the produced
     items the sequencing filter held back this tick (a `low` threat file behind a
-    higher-tier threat, S2 8.3); `moved` = records renamed produced->consumed;
+    higher-band threat, S2 8.3); `moved` = records renamed produced->consumed;
     `models_consumed` = produced model documents renamed to consumed/ (the
     zero-threat consume and the last-threat-file move, S2 8.4); `move_failed` =
     records the move could not complete (missing record or a storage failure -
@@ -825,9 +817,9 @@ def run_delivery_tick(
     pod_store: Any = None,
     control: DispatchControlPlane,
     coro_for: Callable[[ProducedItem], Any],
-    live_threat_buckets: Mapping[str, str] | Iterable[str] = (),
+    live_threat_bands: Mapping[str, str] | Iterable[str] = (),
     deferred_session_ids: AbstractSet[str] = frozenset(),
-    promotion_risk_threshold: int | None = None,
+    promotion_risk_threshold: float | None = None,
     demoted_hunts: AbstractSet[str] = frozenset(),
     pre_filter: Callable[
         [Sequence[ProducedItem], AbstractSet[str]], Sequence[ProducedItem],
@@ -842,12 +834,12 @@ def run_delivery_tick(
     Protocol per lap:
     1. Read the produced inbox (the threat model store's threat files and the
        hunter memory's test specs) plus the live registry session ids.
-    2. Apply the sequencing filter: a `low` threat file waits while a higher-tier
-       threat file is produced or a higher-tier hunter session is live (S2 8.3),
-       then the run's sync pre-filter (`hunting_pipeline_sync`): a held item
-       stays produced and counts as paused. `sequence_tiers=False` skips the
-       tier ordering: a `batched` run admits the unit's whole threat set, so the
-       tier filter must not hide a threat from the batch.
+    2. Apply the sequencing filter: a `low`-band threat file waits while a
+       higher-band threat file is produced or a higher-band hunter session is
+       live (S2 8.3), then the run's sync pre-filter (`hunting_pipeline_sync`):
+       a held item stays produced and counts as paused. `sequence_tiers=False`
+       skips the band ordering: a `batched`/`serial` run works the global threat
+       queue, so the band filter must not hide a threat from the queue.
     3. Deduce with empty feedback -> the items `to_dispatch` this lap. An item
        whose child is backing off (F-026) is held pending and never dispatched;
        the run cannot quiesce while it remains.
@@ -876,14 +868,12 @@ def run_delivery_tick(
     )
     produced = inbox.items
     live = control.live_session_ids()
-    # S2 8.3 orders tiers only where the sync mode admits one item at a time
-    # (`parallel`, `serial`). A `batched` run dispatches the unit's WHOLE threat
-    # set: the low-tier sequencing is subsumed and must not order a batch (the
-    # pipeline-sync ADR, section 2, `batched`), otherwise another unit's
-    # produced high threat would hold this unit's low threat for ever and pin the
-    # batch in the hunt phase.
+    # S2 8.3 orders bands only where the sync mode admits one item at a time
+    # (`parallel`, `serial`). A `batched`/`serial` run works the GLOBAL threat
+    # queue in risk order: the low-band sequencing is subsumed by that order and
+    # must not hold a threat behind another unit's produced high threat for ever.
     dispatchable = (
-        sequence_dispatch(produced, live_threat_buckets)
+        sequence_dispatch(produced, live_threat_bands)
         if sequence_tiers else tuple(produced)
     )
     if pre_filter is not None:
@@ -1054,7 +1044,7 @@ def read_produced_inbox(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any = None,
-    promotion_risk_threshold: int | None = None,
+    promotion_risk_threshold: float | None = None,
     demoted_hunts: AbstractSet[str] = frozenset(),
 ) -> ProducedInbox:
     """The produced inbox set for one tick.
@@ -1480,7 +1470,7 @@ __all__ = [
     "DeliveryPlan",
     "DispatchControlPlane",
     "DispatchFeedback",
-    "HIGHER_TIERS",
+    "HIGHER_BANDS",
     "ProducedInbox",
     "ProducedItem",
     "RuntimeControlPlane",

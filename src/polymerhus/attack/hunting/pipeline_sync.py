@@ -1,17 +1,23 @@
 """The hunting pipeline sync policy (`hunting_pipeline_sync`, ADR
-`docs/design/hunting-pipeline-sync-adr.md`, 2026-10-22).
+`docs/design/hunting-pipeline-sync-adr.md`, 2026-10-22; amended 2026-10-31 for
+the CVSS 4.0 risk score and the GLOBAL threat queue).
 
 The project-level mode governs WHEN the pipeline phases may dispatch:
 
 - `parallel` - the historical behaviour: every produced item the mover finds is
   dispatched as it appears (the S1 7.3 interleave stays live);
-- `batched` - phase barriers only: the modeller pass settles first, then one
-  unit at a time in risk order, its whole hunter batch concurrently, then its
-  pods one hunt at a time in threat-rank order (every spec of the current hunt
-  concurrently), then the next unit;
-- `serial` - the same queue strictly one agent at a time: hunter N+1 after
-  hunter N completed AND every one of its pods reached a terminal export, and
-  the pods of one hunt one at a time in file-stem order.
+- `batched` - phase barriers only: the modeller pass settles first, then the
+  run's GLOBAL threat queue is worked in risk order - the current threat's
+  hunter, then its pods once the hunter is terminal, in fixed blocks of
+  `pod_batch_size` threats;
+- `serial` - the same global queue strictly one agent at a time: hunter N+1
+  after hunter N completed AND every one of its pods reached a terminal export,
+  and the pods of one hunt one at a time in file-stem order.
+
+The queue is per-THREAT and global (spec 8): promoted threats ordered by `risk`
+descending, then the unit intake position, then the threat rank, then the
+dispatch id. It is not the unit model sum and there is no per-unit cap. The unit
+model sum stays in the run record for the budget and the audit.
 
 This module holds the PURE surface (`SyncMode`, the unit metadata, the fact
 snapshot, the ordering and the per-mode `decide`). The impure adapter that
@@ -40,21 +46,20 @@ from polymerhus.attack.hunting.mover import (
     threat_modeller_session_id,
     threat_risk,
 )
-from polymerhus.attack.hunting.threat_model import RISK_WEIGHTS, Likelihood
 
 # The dispatch queue's intake-position fallback: a unit the run record has not
-# named (a recovered spec-only unit) sorts after every recorded unit. The name
-# then breaks the tie deterministically.
+# named (a recovered spec-only unit) sorts after every recorded unit. The
+# dispatch id then breaks the tie deterministically.
 UNKNOWN_INTAKE_POSITION = 1_000_000
 
 # The rank fallback for a dispatch id whose threat id is not `threat-<n>` (a
 # malformed or foreign key): it sorts after every ranked hunt and never crashes
 # the decision.
 UNRANKED = 1 << 30
-# An unknown blocked unit sorts ahead of every known unit: without a readable
-# spec body the gate cannot prove its identity or risk, so it fails closed and
-# holds the queue instead of silently skipping the stale hunt.
-BLOCKED_RISK = 1 << 30
+# An unknown blocked threat sorts ahead of every scored threat: without a
+# readable spec body the gate cannot prove its identity or risk, so it fails
+# closed and holds the queue instead of silently skipping the stale hunt.
+BLOCKED_RISK = float("inf")
 
 
 class SyncMode(StrEnum):
@@ -89,6 +94,27 @@ def _int_at_least(value: Any, minimum: int, *, setting: str) -> int | None:
     return value
 
 
+def _float_at_least(
+    value: Any, minimum: float, *, setting: str,
+) -> float | None:
+    """One stored numeric candidate as a float, or None when it is malformed or
+    below the documented floor. A boolean, a non-numeric value, or a negative
+    value is malformed: the settings are DB-stored numbers and the API writes
+    only numbers. An int stored by a pre-v5 settings blob reads as a float. A
+    malformed value warns once and falls through."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        logger.warning(
+            "hunting: %s=%r is not a number; falling back", setting, value)
+        return None
+    if value < minimum:
+        logger.warning(
+            "hunting: %s=%r is below %r; falling back", setting, value, minimum)
+        return None
+    return float(value)
+
+
 def resolve_pod_batch_size(
     recorded: Any,
     settings: Mapping[str, Any] | None,
@@ -108,38 +134,39 @@ def resolve_promotion_risk_threshold(
     settings: Mapping[str, Any] | None,
     *,
     recorded_present: bool = False,
-) -> int | None:
+) -> float | None:
     """The run's frozen promotion threshold: the run record first (an explicit
     null is a frozen "no filter"), then the project setting, then None. A
     malformed recorded candidate warns and falls through to the setting; a
-    malformed setting warns and falls back to no filter."""
+    malformed setting warns and falls back to no filter. The threshold is a
+    float on the CVSS 4.0 scale; an int stored by a pre-v5 blob reads as one."""
     if recorded_present:
         if recorded is None:
             return None
-        value = _int_at_least(recorded, 0, setting="promotion_risk_threshold")
+        value = _float_at_least(recorded, 0.0, setting="promotion_risk_threshold")
         if value is not None:
             return value
-    return _int_at_least(
-        (settings or {}).get("promotion_risk_threshold"), 0,
+    return _float_at_least(
+        (settings or {}).get("promotion_risk_threshold"), 0.0,
         setting="promotion_risk_threshold")
 
 
-def risk_is_promoted(risk: int, threshold: int | None) -> bool:
+def risk_is_promoted(risk: float, threshold: float | None) -> bool:
     """The ONE promotion comparison: inclusive; None or 0 means no filter."""
     return threshold is None or threshold <= 0 or risk >= threshold
 
 
 def threat_is_promoted(
-    record: Mapping[str, Any], threshold: int | None,
+    record: Mapping[str, Any], threshold: float | None,
 ) -> bool:
     """Whether one stored threat file is promoted to a hunter. A threat whose
-    combined risk is unreadable is never promoted."""
+    risk is unreadable is never promoted."""
     risk = threat_risk(record)
     return risk is not None and risk_is_promoted(risk, threshold)
 
 
 def threat_is_demoted(
-    record: Mapping[str, Any], threshold: int | None,
+    record: Mapping[str, Any], threshold: float | None,
 ) -> bool:
     """Whether one stored threat is DEMOTED: a readable, positive risk below an
     active floor. An unreadable risk is a refusal, never a demotion, so the
@@ -152,13 +179,27 @@ def threat_is_demoted(
 
 @dataclass(frozen=True)
 class UnitMeta:
-    """One unit's queue metadata: the risk contribution orders the queue, the
-    intake position breaks risk ties, the unit name breaks intake ties."""
+    """One unit's queue metadata: the intake position breaks a risk tie between
+    two threats of different units. The unit model sum is NOT here - it stays in
+    the run record for the budget and the audit and never orders the queue."""
 
     unit_name: str
     unit_id: str = ""
-    risk: int = 0
     intake_position: int = UNKNOWN_INTAKE_POSITION
+
+
+@dataclass(frozen=True)
+class ThreatMeta:
+    """One threat's queue metadata (the dispatch queue is a global list of
+    promoted threats, spec 8): the score orders the queue, the unit intake
+    position and the threat rank break its ties, and the dispatch id is the
+    final deterministic key."""
+
+    dispatch_id: str
+    unit_name: str = ""
+    risk: float = 0.0
+    intake_position: int = UNKNOWN_INTAKE_POSITION
+    rank: int = UNRANKED
 
 
 @dataclass(frozen=True)
@@ -193,30 +234,35 @@ class SyncFacts:
     # evidence, not work: its leftover spec folder is excluded from the pod
     # block and the spec inbox.
     demoted_hunts: frozenset[str] = frozenset()
-    # The current unit's FULL rank-ordered hunt list, including hunts whose
-    # threat files are already consumed. The fixed pod block needs the original
-    # positions, so a done hunt cannot slide the next hunt into its place.
-    unit_hunts: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # The run's GLOBAL threat queue metadata: every promoted, observable hunt
+    # with its score, its unit's intake position, and its rank. `decide` and
+    # `batch_state` re-derive the order through `order_threats`, so the queue is
+    # deterministic on every input. A hunt visible only through an item carries
+    # its own metadata; one with no known score sorts last.
+    threats: tuple[ThreatMeta, ...] = ()
 
 
 @dataclass(frozen=True)
 class BatchState:
-    """The derived per-unit phase snapshot (the ledger's cursor view).
+    """The derived phase snapshot of the ONE current threat (the ledger's
+    cursor view).
 
-    `phase` is `hunt` while the unit's hunter batch is still running,
-    `pod` once the batch is terminal and one hunt's pod set is current
-    (batched), `serial` for the strict cursor view, and `done` once every
-    member is finished. `hunts` is the unit's hunt order (by threat rank) and
-    `cursor` the first hunt that is not fully done; `pods`/`pod_cursor` are the
-    cursor hunt's spec stems and the first stem without a durable export.
+    `phase` is `hunt` while the current threat's hunter is still running,
+    `pod` once the hunter is terminal and the current pod block is not fully
+    exported (batched), `serial` for the strict cursor view, and `done` when the
+    threat is finished. `current` is the current threat's
+    dispatch id; `hunts` is the ordered threat list in scope for this phase (the
+    block for `batched`, the whole queue for `serial`); `cursor` the first
+    threat that is not fully done; `pods`/`pod_cursor` are the cursor threat's
+    spec stems and the first stem without a durable export.
     """
 
-    unit_name: str
+    current: str
     phase: str
     hunts: tuple[str, ...] = ()
     cursor: str | None = None
-    # The current `batched` pod block: the fixed slice of rank-ordered hunts
-    # whose pod sets dispatch together. Its first unfinished hunt is `cursor`.
+    # The current `batched` pod block: the fixed slice of risk-ordered threats
+    # whose pod sets dispatch together. Its first unfinished threat is `cursor`.
     pod_batch: tuple[str, ...] = ()
     pods: tuple[str, ...] = ()
     pod_cursor: str | None = None
@@ -248,15 +294,17 @@ class PipelineSyncState:
                 return position
         return UNKNOWN_INTAKE_POSITION
 
-    def meta_for(self, unit_name: str, unit_id: str, *, risk: int) -> UnitMeta:
-        """The cached unit metadata (the models freeze once the modeller
-        settles, so the risk is computed once per unit)."""
+    def meta_for(self, unit_name: str, unit_id: str) -> UnitMeta:
+        """The unit metadata: the unit identity is cached for the run's
+        lifetime, while the intake position is RE-READ on every call. The intake
+        order lands on the run record before dispatch, so a unit first seen
+        earlier must not stay at the unknown fallback."""
         cached = self._metas.get(unit_name)
+        resolved = unit_id or (cached.unit_id if cached else "")
         meta = UnitMeta(
             unit_name=unit_name,
-            unit_id=unit_id or (cached.unit_id if cached else ""),
-            risk=risk,
-            intake_position=self.intake_position(unit_id),
+            unit_id=resolved,
+            intake_position=self.intake_position(resolved),
         )
         self._metas[unit_name] = meta
         return meta
@@ -297,12 +345,17 @@ def hunt_rank(dispatch_id: str) -> int:
     return UNRANKED
 
 
-def order_units(units: Iterable[UnitMeta]) -> tuple[UnitMeta, ...]:
-    """The dispatch queue order: risk contribution DESC, intake position ASC,
-    unit name ASC (deterministic on every input)."""
+def order_threats(threats: Iterable[ThreatMeta]) -> tuple[ThreatMeta, ...]:
+    """The dispatch queue order (spec 8): risk DESC, then the unit intake
+    position ASC, then the threat rank ASC, then the dispatch id ASC - a total
+    order, so a tie is deterministic on every input."""
     return tuple(sorted(
-        units, key=lambda unit: (
-            -unit.risk, unit.intake_position, unit.unit_name)))
+        threats, key=lambda threat: (
+            -threat.risk,
+            threat.intake_position,
+            threat.rank,
+            threat.dispatch_id,
+        )))
 
 
 def resolve_mode(
@@ -320,31 +373,89 @@ def resolve_mode(
     return DEFAULT_SYNC_MODE
 
 
-def _queue_units(
-    units: Sequence[UnitMeta], items: Sequence[ProducedItem],
-) -> tuple[UnitMeta, ...]:
-    """The ordered unit metas, with a default meta for every item unit the
-    caller did not describe (fail-open: an unknown unit still queues)."""
-    metas = {unit.unit_name: unit for unit in units}
-    for item in items:
-        name = unit_of_item(item)
-        if name is not None and name not in metas:
-            metas[name] = UnitMeta(unit_name=name)
-    return order_units(metas.values())
+def _threat_hunts(items: Sequence[ProducedItem]) -> set[str]:
+    """The hunts that still carry a produced threat item (the hunter is not
+    admitted yet)."""
+    return {
+        item.dispatch_id for item in items if isinstance(item, ThreatItem)
+    }
 
 
-def _pending_units(
+def _visible_hunts(
     items: Sequence[ProducedItem], facts: SyncFacts,
 ) -> set[str]:
-    """The units with live work: an item to dispatch, a hunt still mid-graph,
-    or a pod still executing. An idle hunter is NOT here (it authors nothing
-    more) and an already-terminal export is not either (the mover wrote it)."""
-    pending = {unit_of_item(item) for item in items}
-    pending |= {unit_of_dispatch(hunt) for hunt in facts.hunts_in_graph}
-    pending |= {unit_of_dispatch(hunt) for hunt in facts.live_pod_hunts}
-    pending |= {unit_of_dispatch(hunt) for hunt in facts.blocked_hunts}
-    pending.discard(None)
-    return pending
+    """Every hunt the facts or the items name: the pods' and hunters' keys, the
+    graph and pod sessions, the blocked hunts, and the spec stems."""
+    hunts = set(facts.spec_stems) | set(facts.pending_spec_stems)
+    hunts |= set(facts.consumed_spec_stems)
+    hunts |= set(facts.hunts_in_graph) | set(facts.live_pod_hunts)
+    hunts |= set(facts.blocked_hunts)
+    for item in items:
+        if isinstance(item, ThreatItem):
+            hunts.add(item.dispatch_id)
+        elif isinstance(item, TestSpecItem):
+            hunts.add(item.hunt_key)
+    return hunts
+
+
+def threat_queue(
+    items: Sequence[ProducedItem],
+    units: Sequence[UnitMeta],
+    facts: SyncFacts,
+) -> tuple[ThreatMeta, ...]:
+    """The run's GLOBAL dispatch queue: the ordered threat metadata (spec 8).
+
+    The gate's `facts.threats` carry the authoritative metadata (the score, the
+    unit intake position, the rank). A hunt visible only through an item or a
+    spec stem still queues: an item supplies its own score, and a hunt with no
+    known score sorts last (fail-open, never dropped from the queue). A demoted
+    hunt never queues.
+    """
+    intake = {unit.unit_name: unit.intake_position for unit in units}
+    metas: dict[str, ThreatMeta] = {
+        meta.dispatch_id: meta for meta in facts.threats
+        if meta.dispatch_id not in facts.demoted_hunts
+    }
+    for item in items:
+        if not isinstance(item, ThreatItem):
+            continue
+        if item.dispatch_id in metas or item.dispatch_id in facts.demoted_hunts:
+            continue
+        metas[item.dispatch_id] = ThreatMeta(
+            dispatch_id=item.dispatch_id,
+            unit_name=item.unit_name,
+            risk=float(item.risk or 0.0),
+            intake_position=intake.get(item.unit_name, UNKNOWN_INTAKE_POSITION),
+            rank=hunt_rank(item.dispatch_id),
+        )
+    for hunt in sorted(_visible_hunts(items, facts)):
+        if hunt in metas or hunt in facts.demoted_hunts:
+            continue
+        unit_name = unit_of_dispatch(hunt)
+        metas[hunt] = ThreatMeta(
+            dispatch_id=hunt,
+            unit_name=unit_name,
+            risk=0.0,
+            intake_position=intake.get(unit_name, UNKNOWN_INTAKE_POSITION),
+            rank=hunt_rank(hunt),
+        )
+    return order_threats(metas.values())
+
+
+def current_threat(
+    queue: Sequence[ThreatMeta],
+    items: Sequence[ProducedItem],
+    facts: SyncFacts,
+) -> ThreatMeta | None:
+    """The queue's current threat: the first threat in risk order that is not
+    fully done (a produced threat file, a mid-graph hunter, a live pod, a
+    blocked hunt, or an un-exported pod set). None when the queue is drained."""
+    threat_hunts = _threat_hunts(items)
+    return next(
+        (meta for meta in queue
+         if not _hunt_done(meta.dispatch_id, threat_hunts, facts)),
+        None,
+    )
 
 
 def decide(
@@ -358,13 +469,12 @@ def decide(
     """The items admissible NOW, as `message_id`s (the pure policy decision).
 
     `parallel` admits every item. `batched`/`serial` hold everything while the
-    modeller pass is live, then work the queue one unit at a time:
-    `batched` admits the current unit's whole hunter batch, and its pods only
-    once no threat file and no mid-graph hunt remains; the pods dispatch in
-    fixed blocks of `pod_batch_size` hunts in rank order. `serial` admits only
-    the cursor hunt (or, once it is terminal, its next pod in stem order), and
-    only after every earlier hunt is fully done (terminal AND all its pods
-    exported).
+    modeller pass is live, then work the GLOBAL threat queue in risk order:
+    `batched` admits the current threat's hunter, and its pods once the hunter
+    is terminal (in fixed blocks of `pod_batch_size` threats); `serial` admits
+    only the current threat's hunter, or its next pod in stem order once the
+    hunter is terminal, and only after every earlier threat is fully done.
+    There is no per-unit cap: a unit boundary never holds another unit's threat.
     """
     items = tuple(items)
     if not items:
@@ -374,15 +484,15 @@ def decide(
     if facts.modeller_live:
         return frozenset()
 
-    current = current_unit(items, units, facts)
+    queue = threat_queue(items, units, facts)
+    current = current_threat(queue, items, facts)
     if current is None:
         return frozenset()
 
     if mode is SyncMode.SERIAL:
-        return _decide_serial(
-            items, current, facts, pod_batch_size=pod_batch_size)
+        return _decide_serial(items, current.dispatch_id, facts)
     return _decide_batched(
-        items, current, facts, pod_batch_size=pod_batch_size)
+        items, queue, current.dispatch_id, facts, pod_batch_size=pod_batch_size)
 
 
 def batch_state(
@@ -393,159 +503,117 @@ def batch_state(
     *,
     pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
 ) -> BatchState:
-    """The unit's derived phase state: `hunt` while the hunter batch is
-    unfinished, `pod` for the first fixed block of hunts whose pod set is not
-    fully exported, the ordered hunts + cursor + pod block for `batched`, the
-    strict cursor view for `serial`, `done` when nothing is left."""
-    unit_items = [item for item in items if unit_of_item(item) == current]
-    size = max(1, int(pod_batch_size))
-    if mode is SyncMode.BATCHED:
-        threat_hunts = {
-            item.dispatch_id for item in unit_items
-            if isinstance(item, ThreatItem)
-        }
-        spec_hunts = {
-            item.hunt_key for item in unit_items
-            if isinstance(item, TestSpecItem)
-        }
-        graph_hunts = {
-            hunt for hunt in facts.hunts_in_graph
-            if unit_of_dispatch(hunt) == current
-        }
-        pod_hunts = {
-            hunt for hunt in facts.live_pod_hunts
-            if unit_of_dispatch(hunt) == current
-        }
-        blocked_hunts = {
-            hunt for hunt in facts.blocked_hunts
-            if unit_of_dispatch(hunt) == current
-        }
-        hunts = tuple(sorted(
-            set(facts.unit_hunts.get(current, ()))
-            | threat_hunts | spec_hunts | graph_hunts | pod_hunts | blocked_hunts,
-            key=hunt_rank,
-        ))
-        hunts = tuple(
-            hunt for hunt in hunts if hunt not in facts.demoted_hunts)
-        # The hunter phase ends only when every hunt of the unit is terminal:
-        # a produced threat file or a live graph is obvious work, and a hunt
-        # that ended without a terminal marker is blocked, never a silent pass
-        # to the pod phase.
-        hunters_ready = (
-            not threat_hunts
-            and not graph_hunts
-            and all(
-                hunt in facts.terminal_hunts
-                and hunt not in facts.blocked_hunts
-                for hunt in hunts
-            )
-        )
-        if not hunters_ready:
-            return BatchState(unit_name=current, phase="hunt", hunts=hunts)
-        pending = [
-            index for index, hunt in enumerate(hunts)
-            if not _hunt_done(hunt, threat_hunts, facts)
-        ]
-        if not pending:
-            return BatchState(unit_name=current, phase="done", hunts=hunts)
-        first = pending[0]
-        start = (first // size) * size
-        pod_batch = hunts[start:start + size]
-        cursor = hunts[first]
-        pods = tuple(facts.spec_stems.get(cursor, ()))
+    """The current threat's derived phase state: `hunt` while its hunter is
+    unfinished, `pod` for its fixed block of `pod_batch_size` threats whose pod
+    set is not fully exported, `serial` for the strict cursor view, `done` when
+    the threat is finished. `current` is a threat dispatch id - the unit
+    boundary no longer bounds a dispatch.
+
+    The queue is rebuilt from the facts alone. The live decision passes its
+    unit-aware queue to `_batch_state` directly, so a tie broken by the unit
+    intake position lands on the same block boundary in both paths."""
+    return _batch_state(
+        mode, threat_queue(items, (), facts), current, items, facts,
+        pod_batch_size=pod_batch_size,
+    )
+
+
+def _batch_state(
+    mode: SyncMode,
+    queue: Sequence[ThreatMeta],
+    current: str,
+    items: Sequence[ProducedItem],
+    facts: SyncFacts,
+    *,
+    pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
+) -> BatchState:
+    hunts = tuple(meta.dispatch_id for meta in queue)
+    threat_hunts = _threat_hunts(items)
+    if current not in hunts:
+        return BatchState(current=current, phase="done", hunts=hunts)
+    if _hunt_done(current, threat_hunts, facts):
+        return BatchState(current=current, phase="done", hunts=hunts)
+    if mode is SyncMode.SERIAL:
+        pods = tuple(facts.spec_stems.get(current, ()))
         pod_cursor = next(
-            (stem for stem in pods if (cursor, stem) not in facts.terminal_specs),
+            (stem for stem in pods
+             if (current, stem) not in facts.terminal_specs),
             None,
         )
         return BatchState(
-            unit_name=current, phase="pod", hunts=hunts, cursor=cursor,
-            pod_batch=pod_batch, pods=pods, pod_cursor=pod_cursor,
+            current=current, phase="serial", hunts=hunts, cursor=current,
+            pods=pods, pod_cursor=pod_cursor,
         )
+    if not _hunter_terminal(current, threat_hunts, facts):
+        return BatchState(current=current, phase="hunt", hunts=hunts)
 
-    threat_hunts = {
-        item.dispatch_id for item in unit_items
-        if isinstance(item, ThreatItem)
-    }
-    spec_hunts = {
-        item.hunt_key for item in unit_items if isinstance(item, TestSpecItem)
-    }
-    graph_hunts = {
-        hunt for hunt in facts.hunts_in_graph
-        if unit_of_dispatch(hunt) == current
-    }
-    pod_hunts = {
-        hunt for hunt in facts.live_pod_hunts
-        if unit_of_dispatch(hunt) == current
-    }
-    blocked_hunts = {
-        hunt for hunt in facts.blocked_hunts
-        if unit_of_dispatch(hunt) == current
-    }
-    hunts = tuple(sorted(
-        set(facts.unit_hunts.get(current, ()))
-        | threat_hunts | spec_hunts | graph_hunts | pod_hunts | blocked_hunts,
-        key=hunt_rank,
-    ))
-    hunts = tuple(
-        hunt for hunt in hunts if hunt not in facts.demoted_hunts)
+    size = max(1, int(pod_batch_size))
+    index = hunts.index(current)
+    start = (index // size) * size
+    pod_batch = hunts[start:start + size]
     cursor = next(
-        (hunt for hunt in hunts if not _hunt_done(hunt, threat_hunts, facts)),
-        None,
+        (hunt for hunt in pod_batch
+         if not _hunt_done(hunt, threat_hunts, facts)),
+        current,
     )
-    if cursor is None:
-        return BatchState(unit_name=current, phase="done", hunts=hunts)
     pods = tuple(facts.spec_stems.get(cursor, ()))
     pod_cursor = next(
         (stem for stem in pods if (cursor, stem) not in facts.terminal_specs),
         None,
     )
     return BatchState(
-        unit_name=current, phase="serial", hunts=hunts, cursor=cursor,
-        pods=pods, pod_cursor=pod_cursor,
+        current=current, phase="pod", hunts=pod_batch, cursor=cursor,
+        pod_batch=pod_batch, pods=pods, pod_cursor=pod_cursor,
     )
 
 
-def current_unit(
-    items: Sequence[ProducedItem],
-    units: Sequence[UnitMeta],
-    facts: SyncFacts,
-) -> str | None:
-    """The queue's current unit: the first unit in risk order that still has
-    live work (an item, a mid-graph hunt, or an executing pod). None when the
-    queue is drained."""
-    ordered = _queue_units(units, items)
-    pending = _pending_units(items, facts)
-    return next(
-        (unit.unit_name for unit in ordered if unit.unit_name in pending), None)
+def _hunter_terminal(
+    hunt: str, threat_hunts: set[str], facts: SyncFacts,
+) -> bool:
+    """A hunt's hunter phase is terminal: no produced threat file, no live
+    graph, no blocked hunt, and a durable terminal marker for THIS run. The pod
+    phase may only start behind a terminal hunter."""
+    if hunt in threat_hunts:
+        return False
+    if hunt in facts.hunts_in_graph:
+        return False
+    if hunt in facts.blocked_hunts:
+        return False
+    return hunt in facts.terminal_hunts
 
 
 def _decide_batched(
     items: Sequence[ProducedItem],
+    queue: Sequence[ThreatMeta],
     current: str,
     facts: SyncFacts,
     *,
     pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
 ) -> frozenset[str]:
-    """One unit's phase at a time: the whole hunter batch while the hunt phase
-    is active, then the current fixed block's pod sets. The next block waits
-    until every pod of every hunt in the current block carries a durable export.
-    """
-    state = batch_state(
-        SyncMode.BATCHED, current, items, facts,
+    """The current threat's phase: its hunter while the hunt phase is active,
+    then the current fixed block's pod sets. The next threat's hunter starts
+    only once the current threat's pods carry a durable export, so the block is
+    a block of THREATS, never of units."""
+    state = _batch_state(
+        SyncMode.BATCHED, queue, current, items, facts,
         pod_batch_size=pod_batch_size,
     )
-    unit_items = [item for item in items if unit_of_item(item) == current]
     if state.phase == "hunt":
         return frozenset(
-            item.message_id for item in unit_items
-            if isinstance(item, ThreatItem))
+            item.message_id for item in items
+            if isinstance(item, ThreatItem) and item.dispatch_id == current)
     if state.phase != "pod" or not state.pod_batch:
         return frozenset()
+    threat_hunts = _threat_hunts(items)
     block = frozenset(state.pod_batch)
+    # Only a TERMINAL hunter's pods belong to the block: a later threat in the
+    # same span has not been hunted yet, so it contributes nothing and can
+    # never hold the block.
     return frozenset(
-        item.message_id for item in unit_items
+        item.message_id for item in items
         if isinstance(item, TestSpecItem)
         and item.hunt_key in block
+        and _hunter_terminal(item.hunt_key, threat_hunts, facts)
         and (item.hunt_key, item.spec_file) not in facts.terminal_specs
     )
 
@@ -554,18 +622,13 @@ def _decide_serial(
     items: Sequence[ProducedItem],
     current: str,
     facts: SyncFacts,
-    *,
-    pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
 ) -> frozenset[str]:
-    """The cursor: the pending threat file of the cursor hunt is the hunter;
-    once that hunt is terminal, its next pod in stem order; a hunt still
-    mid-graph admits nothing. The batch size is ignored: serial stays one
-    agent at a time."""
-    state = batch_state(
-        SyncMode.SERIAL, current, items, facts,
-        pod_batch_size=pod_batch_size,
-    )
-    if state.cursor is None:
+    """The cursor: the current threat's produced file is the hunter; once that
+    threat's hunter is terminal, its next pod in stem order; a hunt still
+    mid-graph admits nothing. The batch size is ignored: serial stays one agent
+    at a time."""
+    state = batch_state(SyncMode.SERIAL, current, items, facts)
+    if state.phase != "serial" or state.cursor is None:
         return frozenset()
     cursor = state.cursor
     threat_item = next(
@@ -618,24 +681,21 @@ def _hunt_done(
     )
 
 
-def _threat_weight(threat: Any) -> int:
-    """One model threat's combined risk weight.
+def _model_threat_risk(threat: Any) -> float:
+    """One model threat's CVSS 4.0 score.
 
-    The persisted threat carries the store-computed `risk`; a legacy or foreign
-    model without it falls back to the likelihood weight. An unknown likelihood
-    contributes nothing (never a crash - the queue still runs)."""
+    The persisted threat carries the store-derived float `risk`. A model without
+    it (a foreign or pre-v5 document that a live run never dispatches) scores
+    nothing: never a crash - the queue still runs and the threat sorts last."""
     if not isinstance(threat, Mapping):
-        return 0
+        return 0.0
     raw = threat.get("risk")
-    if raw is not None:
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            return 0
+    if raw is None or isinstance(raw, bool):
+        return 0.0
     try:
-        return RISK_WEIGHTS[Likelihood(threat.get("likelihood"))]
-    except (ValueError, KeyError):
-        return 0
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _spec_unit_id(body: Any) -> str:
@@ -661,11 +721,12 @@ class RunSyncGate:
     run bootstrap and consulted by the mover tick.
 
     It gathers the storage-backed facts (`SyncFacts`) from the stores and the
-    caller-supplied live-session set, orders the units (model risk contribution,
-    run-record intake position), and applies the pure `decide`. It keeps only
-    the per-unit metadata cache (the models are frozen once the modeller
-    settles); every gate decision itself is re-derived, so a resumed run
-    rebuilds the same queue with no persisted ledger.
+    caller-supplied live-session set, builds the GLOBAL threat queue metadata
+    (each promoted threat's score, its unit's intake position, its rank), and
+    applies the pure `decide`. It keeps only the model and unit-metadata caches
+    (the models are frozen once the modeller settles); every gate decision
+    itself is re-derived, so a resumed run rebuilds the same queue with no
+    persisted ledger.
     """
 
     def __init__(
@@ -679,7 +740,7 @@ class RunSyncGate:
         pod_store: Any = None,
         intake_order: Sequence[str] | Callable[[], Sequence[str]] | None = None,
         pod_batch_size: int = DEFAULT_POD_BATCH_SIZE,
-        promotion_risk_threshold: int | None = None,
+        promotion_risk_threshold: float | None = None,
     ) -> None:
         self.state = PipelineSyncState(
             mode=SyncMode(mode), intake_order=intake_order,
@@ -732,11 +793,11 @@ class RunSyncGate:
         facts = self._base_facts(live, hunts_in_graph)
         # The lifecycle facts must land before the queue is built: a stale or
         # malformed hunt is pending work even when it contributes no produced
-        # item, so its unit must stay current and block a silent skip. Both
-        # batched and serial read the per-hunt pod cursor from the same facts.
+        # item, so it must stay current and block a silent skip. Both batched
+        # and serial read the per-hunt pod cursor from the same facts.
         facts = self._lifecycle_facts(facts)
         units = self._units(items, facts)
-        facts = self._pod_cursor_facts(items, units, facts)
+        facts = self._queue_facts(items, units, facts)
         admitted = decide(
             self.mode, items, units, facts,
             pod_batch_size=self.state.pod_batch_size,
@@ -768,9 +829,9 @@ class RunSyncGate:
     ) -> tuple[UnitMeta, ...]:
         """The unit metas for the tick: the item units plus the units only
         visible through a live pod or a mid-graph hunt (a consumed threat search
-        finds no produced item for it). The per-unit metadata (risk) is cached
-        for the run's lifetime - models freeze once the modeller settles - and
-        a session-only unit's unit id is recovered from its stored spec body."""
+        finds no produced item for it). The metadata (the unit identity and its
+        intake position) is cached for the run's lifetime, and a session-only
+        unit's unit id is recovered from its stored spec body."""
         metas: dict[str, UnitMeta] = {}
         for item in items:
             name = unit_of_item(item)
@@ -788,15 +849,10 @@ class RunSyncGate:
                 continue
             cached = self.state.cached(name)
             if cached is not None:
-                metas[name] = cached
+                metas[name] = self.state.meta_for(name, cached.unit_id)
                 continue
             unit_id = self._unit_id_for_hunt(hunt)
-            risk = self._risk(unit_id)
-            if hunt in facts.blocked_hunts and not unit_id:
-                # Unknown identity or unreadable spec: fail closed. The unit
-                # must stay current so the stale hunt is surfaced, never skipped.
-                risk = BLOCKED_RISK
-            metas[name] = self.state.meta_for(name, unit_id, risk=risk)
+            metas[name] = self.state.meta_for(name, unit_id)
         return tuple(metas.values())
 
     def _unit_id_for_hunt(self, hunt_key: str) -> str:
@@ -827,36 +883,8 @@ class RunSyncGate:
             else _spec_unit_id(item.spec)
         )
         cached = self.state.cached(unit_name)
-        if cached is not None and (cached.unit_id == unit_id or not unit_id):
-            return cached
         return self.state.meta_for(
-            unit_name,
-            unit_id or (cached.unit_id if cached else ""),
-            risk=cached.risk if cached and cached.unit_id == unit_id
-            else self._risk(unit_id),
-        )
-
-    def _risk(self, unit_id: str) -> int:
-        """The unit's risk contribution: the summed threat likelihood weights of
-        its model document (the run record's `model_sum` figure). Fail-open:
-        an unreadable or unknown model contributes zero."""
-        if not unit_id or self.threat_store is None:
-            return 0
-        model = self._read_model(unit_id)
-        threats = (model or {}).get("threats") or ()
-        return sum(_threat_weight(threat) for threat in threats)
-
-    def _intake_position(self, unit_id: str) -> int:
-        order = self.intake_order
-        if callable(order):
-            try:
-                order = order()
-            except Exception:  # noqa: BLE001 - fail-open: unknown position
-                return UNKNOWN_INTAKE_POSITION
-        for position, candidate in enumerate(order or (), start=1):
-            if candidate == unit_id:
-                return position
-        return UNKNOWN_INTAKE_POSITION
+            unit_name, unit_id or (cached.unit_id if cached else ""))
 
     def _lifecycle_facts(self, facts: SyncFacts) -> SyncFacts:
         """The hunter-side lifecycle facts for every hunt on disk.
@@ -1022,85 +1050,119 @@ class RunSyncGate:
                 return threat_is_demoted(threat, threshold)
         return False
 
-    def _pod_cursor_facts(
+    def _queue_facts(
         self,
         items: Sequence[ProducedItem],
         units: Sequence[UnitMeta],
         facts: SyncFacts,
     ) -> SyncFacts:
-        """The per-hunt pod cursor facts: pending (produced) pod specs, the
-        consumed completion set, and the durable exports. Batched reads them
-        to gate one hunt's pod set at a time; serial reads them to gate one
-        pod at a time. Only the current unit needs its per-spec facts this
-        tick."""
-        current = current_unit(items, units, facts)
-        if current is None:
-            return facts
-        hunts: set[str] = set()
+        """The GLOBAL queue metadata plus the per-hunt pod cursor facts.
+
+        The queue is built from every OBSERVABLE hunt of this run's units (an
+        item, a spec folder, a graph or pod session, a blocked hunt, or a
+        terminal marker) with the model-derived score and the unit intake
+        position. A model threat with no artifact never queues: a zero-risk
+        threat has no threat file (S2 8.3) and a refused threat has no
+        observable artifact, so neither can hold the phase.
+
+        The pod facts (produced and consumed stems, the durable exports) are
+        read only for the hunts that can carry pods - a terminal hunter, a
+        produced spec item, or a live pod - so the tick keeps reading one small
+        per-hunt set instead of the whole store.
+        """
+        by_name = {unit.unit_name: unit for unit in units}
+        metas: dict[str, ThreatMeta] = {}
+        observed: set[str] = set()
+        if self.hunter_store is not None:
+            try:
+                hunt_keys = self.hunter_store.list_hunt_keys(self.project_id)
+            except Exception:  # noqa: BLE001 - a read failure is not a false done
+                hunt_keys = ()
+            observed |= {
+                hunt for hunt in hunt_keys
+                if unit_of_dispatch(hunt) in by_name
+            }
         for item in items:
-            if unit_of_item(item) != current:
-                continue
             if isinstance(item, ThreatItem):
-                hunts.add(item.dispatch_id)
+                observed.add(item.dispatch_id)
             elif isinstance(item, TestSpecItem):
-                hunts.add(item.hunt_key)
-        hunts |= {
-            hunt for hunt in facts.hunts_in_graph
-            if unit_of_dispatch(hunt) == current
+                observed.add(item.hunt_key)
+        observed |= {
+            hunt for hunt in facts.hunts_in_graph | facts.live_pod_hunts
+            if unit_of_dispatch(hunt) in by_name
         }
-        hunts |= {
-            hunt for hunt in facts.live_pod_hunts
-            if unit_of_dispatch(hunt) == current
+        observed |= {
+            hunt for hunt in facts.blocked_hunts
+            if unit_of_dispatch(hunt) in by_name
         }
-        hunts -= set(facts.demoted_hunts)
-        # The current unit's FULL promoted hunt order, including hunts whose
-        # threat files are already consumed. The fixed pod block needs the
-        # original positions, so a done hunt cannot slide the next hunt in.
-        # Only a DISPATCHABLE threat is a hunt: a zero-risk threat has no
-        # threat file (S2 8.3) and a threat the mover refused has no observable
-        # artifact, so neither may hold the pod phase.
-        unit_hunts: dict[str, tuple[str, ...]] = {}
-        meta = next((unit for unit in units if unit.unit_name == current), None)
-        if meta is not None and meta.unit_id and self.threat_store is not None:
-            observed = (
-                hunts
-                | set(facts.terminal_hunts)
-                | set(facts.blocked_hunts)
+        observed -= set(facts.demoted_hunts)
+
+        # The model-derived score per hunt. The models freeze once the modeller
+        # settles, so the read is cached for the run's lifetime.
+        risk_by_hunt: dict[str, float] = {}
+        for unit_name, unit in by_name.items():
+            if not unit.unit_id:
+                continue
+            model = self._read_model(unit.unit_id)
+            if not isinstance(model, Mapping) or model.get("state") != "COMPLETED":
+                continue
+            for threat in model.get("threats") or ():
+                if not isinstance(threat, Mapping):
+                    continue
+                threat_id = str(threat.get("id") or "")
+                risk = _model_threat_risk(threat)
+                if not threat_id or risk <= 0:
+                    continue
+                if not risk_is_promoted(risk, self.promotion_risk_threshold):
+                    continue
+                risk_by_hunt[f"{unit_name}__{threat_id}"] = risk
+
+        for item in items:
+            if not isinstance(item, ThreatItem):
+                continue
+            unit = by_name.get(item.unit_name)
+            metas[item.dispatch_id] = ThreatMeta(
+                dispatch_id=item.dispatch_id,
+                unit_name=item.unit_name,
+                risk=float(item.risk or 0.0),
+                intake_position=(
+                    unit.intake_position
+                    if unit is not None else UNKNOWN_INTAKE_POSITION),
+                rank=hunt_rank(item.dispatch_id),
             )
-            model = self._read_model(meta.unit_id)
-            if (
-                isinstance(model, Mapping)
-                and model.get("state") == "COMPLETED"
-            ):
-                ranked: list[str] = []
-                for threat in model.get("threats") or ():
-                    if not isinstance(threat, Mapping):
-                        continue
-                    threat_id = str(threat.get("id") or "")
-                    if not threat_id:
-                        continue
-                    risk = _threat_weight(threat)
-                    if risk <= 0:
-                        # A zero-risk threat is stored but never written as a
-                        # threat file: it can never become a hunt.
-                        continue
-                    if not risk_is_promoted(
-                            risk, self.promotion_risk_threshold):
-                        continue
-                    hunt_key = f"{current}__{threat_id}"
-                    if hunt_key not in observed:
-                        # A refused or otherwise unobservable threat is not a
-                        # hunt and must not hold the pod phase.
-                        continue
-                    ranked.append(hunt_key)
-                if ranked:
-                    unit_hunts[current] = tuple(ranked)
-                    hunts |= set(ranked)
+        for hunt in observed:
+            if hunt in metas:
+                continue
+            unit_name = unit_of_dispatch(hunt)
+            unit = by_name.get(unit_name)
+            risk = risk_by_hunt.get(hunt, 0.0)
+            if hunt in facts.blocked_hunts:
+                # Fail closed: a hunt with no terminal marker and no live
+                # session has no trustworthy state, so it heads the queue and
+                # is surfaced, never silently skipped.
+                risk = BLOCKED_RISK
+            metas[hunt] = ThreatMeta(
+                dispatch_id=hunt,
+                unit_name=unit_name,
+                risk=risk,
+                intake_position=(
+                    unit.intake_position
+                    if unit is not None else UNKNOWN_INTAKE_POSITION),
+                rank=hunt_rank(hunt),
+            )
+
+        pod_hunts: set[str] = {
+            hunt for hunt in observed
+            if hunt in facts.terminal_hunts and hunt not in facts.blocked_hunts
+        }
+        pod_hunts |= {
+            item.hunt_key for item in items if isinstance(item, TestSpecItem)
+        }
         stems: dict[str, tuple[str, ...]] = {}
         pending: dict[str, tuple[str, ...]] = {}
         consumed: dict[str, tuple[str, ...]] = {}
         terminal: set[tuple[str, str]] = set()
-        for hunt in hunts:
+        for hunt in pod_hunts:
             produced = self._ratified_stems(hunt, "produced")
             consumed_stems = self._ratified_stems(hunt, "consumed")
             pending[hunt] = produced
@@ -1117,7 +1179,7 @@ class RunSyncGate:
             pending_spec_stems=pending,
             consumed_spec_stems=consumed,
             terminal_specs=frozenset(terminal),
-            unit_hunts=unit_hunts,
+            threats=tuple(metas.values()),
         )
 
     def _side_stems(self, hunt_key: str, side: str) -> tuple[str, ...]:
@@ -1220,7 +1282,7 @@ def hunting_artifacts_terminal(
     hunter_store: Any,
     pod_store: Any,
     threat_store: Any = None,
-    promotion_risk_threshold: int | None = None,
+    promotion_risk_threshold: float | None = None,
 ) -> tuple[bool, tuple[str, ...]]:
     """Hard completion audit over every CURRENT-RUN hunting artifact.
 
@@ -1350,6 +1412,7 @@ def make_sync_gate(
 
 
 __all__ = [
+    "BLOCKED_RISK",
     "BatchState",
     "DEFAULT_POD_BATCH_SIZE",
     "DEFAULT_SYNC_MODE",
@@ -1357,22 +1420,24 @@ __all__ = [
     "RunSyncGate",
     "SyncFacts",
     "SyncMode",
+    "ThreatMeta",
     "UNRANKED",
     "UNKNOWN_INTAKE_POSITION",
     "UnitMeta",
     "batch_state",
-    "current_unit",
+    "current_threat",
     "decide",
     "hunt_rank",
     "hunting_artifacts_terminal",
     "make_sync_gate",
-    "order_units",
+    "order_threats",
     "resolve_mode",
     "resolve_pod_batch_size",
     "resolve_promotion_risk_threshold",
     "risk_is_promoted",
     "threat_is_demoted",
     "threat_is_promoted",
+    "threat_queue",
     "unit_of_dispatch",
     "unit_of_item",
 ]

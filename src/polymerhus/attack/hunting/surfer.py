@@ -56,7 +56,7 @@ bootstrap, the surfer, the hunters, and the pods all execute on the ONE shared
 worker loop, so no lock is needed. `hunters_in_graph` is the mid-graph vs
 idle-loop distinction the quiesce predicate needs (a hunter whose graph is
 still running may yet author a produced spec; an idling one cannot), and
-`threat_buckets` is the live-threat half of the low-threat sequencing (S2 8.3).
+`threat_bands` is the live-threat half of the low-threat sequencing (S2 8.3).
 
 T4b (#387) retired the config family from this module: there is no
 `HuntConfigItem` branch, no ratified-config predicate and no hunt-store read.
@@ -247,11 +247,11 @@ class RunDispatchState:
     `hunters_in_graph` is the set
     of those keys whose hunter is still running its ReAct graph - the
     mid-graph vs idle-loop distinction the quiesce predicate needs (a mid-graph
-    hunter may still author produced specs). `threat_buckets` is the subset
-    that came from a THREAT file: the dispatch id -> likelihood map the low-threat
-    sequencing reads (S2 8.3 - only an ACTIVE higher-tier hunter holds a low
-    threat; an idle one authors nothing more and settles with the run terminal, so
-    counting it would deadlock the quiesce).
+    hunter may still author produced specs). `threat_bands` is the subset
+    that came from a THREAT file: the dispatch id -> severity band map the
+    low-band sequencing reads (S2 8.3 - only an ACTIVE higher-band hunter holds
+    a low threat; an idle one authors nothing more and settles with the run
+    terminal, so counting it would deadlock the quiesce).
 
     F-026 (B): `child_failures` is the per-child retry ledger. A transient
     provider failure defers only that child's item until `retry_after`; its
@@ -263,7 +263,7 @@ class RunDispatchState:
 
     hunter_inboxes: dict[str, AgentInbox] = field(default_factory=dict)
     hunters_in_graph: set[str] = field(default_factory=set)
-    threat_buckets: dict[str, str] = field(default_factory=dict)
+    threat_bands: dict[str, str] = field(default_factory=dict)
     child_failures: dict[str, ChildFailure] = field(default_factory=dict)
     provider_failure: ProviderUnavailableError | None = None
     # The watchdog ceilings for one dispatched hunter or pod session. A session
@@ -282,9 +282,10 @@ class RunDispatchState:
     # `parallel`, but a demoted hunt's leftover spec is still evidence, not
     # work. This gate is used only for its `demoted_hunts()` read.
     promotion_gate: Any = None
-    # The frozen per-threat promotion floor (2026-10-26): a produced threat
-    # below it is evidence, not work. `None` means no filter.
-    promotion_risk_threshold: int | None = None
+    # The frozen per-threat promotion floor (2026-10-26; float since the CVSS
+    # 4.0 score): a produced threat below it is evidence, not work. `None` means
+    # no filter.
+    promotion_risk_threshold: float | None = None
 
     def record_child_failure(
         self,
@@ -342,12 +343,13 @@ class SurferReport:
 
 
 def tier_sequencing_enabled(sync_gate: Any) -> bool:
-    """Whether the S2 8.3 low-tier ordering applies to this run.
+    """Whether the S2 8.3 low-band ordering applies to this run.
 
-    It orders `parallel` and `serial` dispatches. A `batched` run dispatches
-    the unit's WHOLE threat set, so the ordering is subsumed and must never hold
-    a threat behind another unit's produced higher-tier threat (the pipeline-sync
-    ADR, section 2, `batched`). `sync_gate` is None for `parallel`."""
+    It orders `parallel` dispatches. A `batched` run works the GLOBAL threat
+    queue in risk order, so the band ordering is subsumed and must never hold a
+    threat behind another unit's produced higher-band threat; `serial` keeps it
+    (the queue order and the band order agree, and the filter is the historical
+    contract). `sync_gate` is None for `parallel`."""
     if sync_gate is None:
         return True
     from polymerhus.attack.hunting.pipeline_sync import SyncMode  # noqa: PLC0415
@@ -383,9 +385,9 @@ def run_work_remaining(
     threat_store: Any = None,
     hunter_store: HunterMemoryStore,
     pod_store: Any = None,
-    live_threat_buckets: Mapping[str, str] | Iterable[str] = (),
+    live_threat_bands: Mapping[str, str] | Iterable[str] = (),
     sequence_tiers: bool = True,
-    promotion_risk_threshold: int | None = None,
+    promotion_risk_threshold: float | None = None,
     demoted_hunts: AbstractSet[str] = frozenset(),
 ) -> bool:
     """True when a DISPATCHABLE-NOW produced item remains for this run.
@@ -420,10 +422,10 @@ def run_work_remaining(
         # mover consumes it on its next tick (S2 8.4), so the move itself is work
         return True
     if not sequence_tiers:
-        # A `batched` run dispatches the unit's whole threat set: the S2 8.3 tier
-        # ordering does not order a batch, so every produced threat is work.
+        # A `batched` run works the GLOBAL threat queue: the S2 8.3 band
+        # ordering does not order it, so every produced threat is work.
         return bool(inbox.items)
-    return bool(sequence_dispatch(inbox.items, live_threat_buckets))
+    return bool(sequence_dispatch(inbox.items, live_threat_bands))
 
 
 async def is_run_quiesced(
@@ -467,9 +469,9 @@ async def is_run_quiesced(
     if run_work_remaining(
         project_id, run_id, threat_store=threat_store,
         hunter_store=hunter_store, pod_store=pod_store,
-        live_threat_buckets=state.threat_buckets,
+        live_threat_bands=state.threat_bands,
         # A batched run's lows are real work even while another unit's higher
-        # threat is produced: the tier ordering does not order a batch.
+        # threat is produced: the band ordering does not order the queue.
         sequence_tiers=tier_sequencing_enabled(state.sync_gate),
         promotion_risk_threshold=state.promotion_risk_threshold,
         demoted_hunts=demoted,
@@ -538,8 +540,9 @@ def build_run_dispatch(
       produced-first: a model the mover already consumed is still a valid
       context source) plus the threat record the mover read. The hunter's inbox is
       minted under the threat's dispatch id so a spec the hunt authors is
-      addressable, and the threat's likelihood is registered on the run state for
-      the duration of its graph so a later `low` threat waits behind it (S2 8.3).
+      addressable, and the threat's severity band is registered on the run
+      state for the duration of its graph so a later `low` threat waits behind
+      it (S2 8.3).
       A model that vanished, or a stopped hunter role, yields `None` (the
       mover's refused rule - stays produced, retried next tick, never dropped).
     - `TestSpecItem` -> ONE pod session for the produced spec, ONLY when its
@@ -634,9 +637,9 @@ def build_run_dispatch(
         """ONE hunter session for ONE produced threat file (S2 8.4): the payload is
         materialised at dispatch time from the unit's model document and the
         session is keyed by the threat's dispatch id. The run-local registration
-        (the inbox, the mid-graph key, the threat's likelihood) lands INSIDE the
-        session coroutine, so a coroutine the control plane refuses - which is
-        closed without ever running - mutates nothing (T4a review I1)."""
+        (the inbox, the mid-graph key, the threat's severity band) lands INSIDE
+        the session coroutine, so a coroutine the control plane refuses - which
+        is closed without ever running - mutates nothing (T4a review I1)."""
         model = item.model
         if model is None and threat_store is not None:
             # A directly constructed item (or a store that does not carry the
@@ -670,7 +673,7 @@ def build_run_dispatch(
             project_id=project_id,
             run_id=run_id,
             hunt_key=item.dispatch_id,
-            likelihood=item.bucket,
+            band=item.band,
             hunter_store=hunter_store,
             state=state,
             gate=gate,
@@ -742,7 +745,7 @@ async def run_hunter_session(
     project_id: str,
     run_id: str,
     hunt_key: str,
-    likelihood: str,
+    band: str,
     hunter_store: HunterMemoryStore,
     state: RunDispatchState,
     gate: Any,
@@ -753,8 +756,9 @@ async def run_hunter_session(
     """ONE hunter session (ADR Q13 hunter id `hunting:<run_id>:hunt:<hunt_key>`,
     S3 8.9): the build-to-END ReAct graph on the hunt's own thread - handed
     the threat PAYLOAD materialised at dispatch time (S2 8.2) and the threat's
-    likelihood, never a config - gate-bounded (Q15), then the IDLE THREAT over
-    the run's inbox (ADR "Agent idle state", verdict handling stubbed - Q16).
+    severity band, never a config - gate-bounded (Q15), then the IDLE THREAT
+    over the run's inbox (ADR "Agent idle state", verdict handling stubbed -
+    Q16).
     The dispatch coroutine the mover schedules when a threat file is admitted.
 
     The payload is the ONLY input: the config bridge retired in T4b (#387).
@@ -764,7 +768,7 @@ async def run_hunter_session(
 
     The run state carries the session's threat for the duration of its GRAPH
     stretch: `hunters_in_graph` holds quiesce while the hunt may still author
-    specs, and `threat_buckets` is what a later `low` threat waits behind
+    specs, and `threat_bands` is what a later `low` threat waits behind
     (S2 8.3). Both are released when the graph ends - an idle hunter authors
     nothing more, so it must not hold the sequencing (or the run terminal's
     settle could never land).
@@ -785,7 +789,7 @@ async def run_hunter_session(
     # every hunter session now comes from a threat file, so it always carries the
     # threat's tier: a later lower threat waits behind it for the graph stretch
     # (S2 8.3)
-    state.threat_buckets[hunt_key] = likelihood
+    state.threat_bands[hunt_key] = band
     registry: Any = None
     try:
         dispatch_fn, registry = hunter_builder(
@@ -799,7 +803,7 @@ async def run_hunter_session(
         # mid-graph key would hold the quiesce (M-c, T4a review round 2).
         state.hunter_inboxes.pop(hunt_key, None)
         state.hunters_in_graph.discard(hunt_key)
-        state.threat_buckets.pop(hunt_key, None)
+        state.threat_bands.pop(hunt_key, None)
         return
     paused_on_provider_failure = False
     graph_completed = False
@@ -838,7 +842,7 @@ async def run_hunter_session(
         # quiesce predicate no longer needs to wait on it and a later low threat is
         # no longer held behind it.
         state.hunters_in_graph.discard(hunt_key)
-        state.threat_buckets.pop(hunt_key, None)
+        state.threat_bands.pop(hunt_key, None)
 
     if graph_completed:
         state.record_child_success(session_id)
@@ -1172,7 +1176,7 @@ async def run_surfer_loop(
             hunter_store=hunter_store,
             pod_store=pod_store,
             control=control, coro_for=coro_for,
-            live_threat_buckets=state.threat_buckets,
+            live_threat_bands=state.threat_bands,
             deferred_session_ids=state.deferred_session_ids(),
             promotion_risk_threshold=state.promotion_risk_threshold,
             demoted_hunts=demoted_hunts_for(state),

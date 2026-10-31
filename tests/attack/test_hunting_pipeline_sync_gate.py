@@ -20,13 +20,14 @@ from polymerhus.attack.hunting.mover import (
     threat_modeller_session_id,
 )
 from polymerhus.attack.hunting.pipeline_sync import RunSyncGate, SyncMode
+from polymerhus.attack.hunting.risk_score import severity_band
 
 PROJECT = "proj-1"
 RUN = "run-1"
 
 
 def _threat(unit_name: str = "u1", threat_id: str = "threat-1", *,
-          unit_id: str | None = None) -> ThreatItem:
+          unit_id: str | None = None, risk: float = 9.3) -> ThreatItem:
     dispatch = f"{unit_name}__{threat_id}"
     return ThreatItem(
         message_id=dispatch,
@@ -35,8 +36,9 @@ def _threat(unit_name: str = "u1", threat_id: str = "threat-1", *,
         unit_name=unit_name,
         threat_id=threat_id,
         dispatch_id=dispatch,
-        likelihood="high",
         record={"threat": {"id": threat_id}},
+        risk=risk,
+        band=severity_band(risk).value,
     )
 
 
@@ -140,27 +142,27 @@ def test_gate_holds_everything_while_the_modeller_is_live():
         items, live_session_ids={threat_modeller_session_id(RUN)}) == ()
 
 
-def test_gate_orders_units_by_the_model_risk_contribution():
+def test_gate_orders_threats_by_the_derived_score():
     models = {
-        "Service:u1": {"unit_id": "Service:u1", "threats": [
-            {"id": "threat-1", "likelihood": "low"}]},
-        "Service:u2": {"unit_id": "Service:u2", "threats": [
-            {"id": "threat-1", "likelihood": "high"}]},
+        "Service:u1": {"state": "COMPLETED", "unit_id": "Service:u1", "threats": [
+            {"id": "threat-1", "risk": 2.0}]},
+        "Service:u2": {"state": "COMPLETED", "unit_id": "Service:u2", "threats": [
+            {"id": "threat-1", "risk": 9.3}]},
     }
     gate = _gate(SyncMode.BATCHED, models=models)
-    items = [_threat("u1"), _threat("u2")]
+    items = [_threat("u1", risk=2.0), _threat("u2", risk=9.3)]
     admitted = gate.filter(items)
-    # u2 carries the heavier threat, so it is the current unit and its hunter batch
-    # is the only admissible item.
+    # u2's threat carries the higher derived score, so its hunter is the only
+    # admissible item: the unit model sum orders nothing.
     assert _ids(admitted) == (_threat("u2").message_id,)
 
 
 def test_gate_holds_the_next_unit_behind_a_live_pod():
     models = {
-        "Service:u1": {"unit_id": "Service:u1", "threats": [
-            {"id": "threat-1", "likelihood": "critical"}]},
-        "Service:u2": {"unit_id": "Service:u2", "threats": [
-            {"id": "threat-1", "likelihood": "low"}]},
+        "Service:u1": {"state": "COMPLETED", "unit_id": "Service:u1", "threats": [
+            {"id": "threat-1", "risk": 9.9}]},
+        "Service:u2": {"state": "COMPLETED", "unit_id": "Service:u2", "threats": [
+            {"id": "threat-1", "risk": 2.0}]},
     }
     pod_session = f"hunting:{RUN}:pod:u1__threat-1:sqli_blind"
     bodies = {
@@ -355,10 +357,10 @@ def test_gate_serial_blocks_a_stale_hypothesised_hunt():
     """A stale draft must hold the queue, not be silently skipped."""
     stale = "u1__threat-1"
     models = {
-        "Service:u1": {"unit_id": "Service:u1", "threats": [
-            {"id": "threat-1", "likelihood": "high"}]},
-        "Service:u2": {"unit_id": "Service:u2", "threats": [
-            {"id": "threat-1", "likelihood": "low"}]},
+        "Service:u1": {"state": "COMPLETED", "unit_id": "Service:u1", "threats": [
+            {"id": "threat-1", "risk": 9.3}]},
+        "Service:u2": {"state": "COMPLETED", "unit_id": "Service:u2", "threats": [
+            {"id": "threat-1", "risk": 2.0}]},
     }
     bodies = {
         (stale, "a_draft"): {
@@ -377,10 +379,10 @@ def test_gate_serial_blocks_a_hypothesised_spec_behind_a_terminal_marker():
     """A stale draft written after finalize must not hide behind the marker."""
     hunt = "u1__threat-1"
     models = {
-        "Service:u1": {"unit_id": "Service:u1", "threats": [
-            {"id": "threat-1", "likelihood": "high"}]},
-        "Service:u2": {"unit_id": "Service:u2", "threats": [
-            {"id": "threat-1", "likelihood": "low"}]},
+        "Service:u1": {"state": "COMPLETED", "unit_id": "Service:u1", "threats": [
+            {"id": "threat-1", "risk": 9.3}]},
+        "Service:u2": {"state": "COMPLETED", "unit_id": "Service:u2", "threats": [
+            {"id": "threat-1", "risk": 2.0}]},
     }
     bodies = {
         (hunt, "a_late"): {
@@ -400,10 +402,10 @@ def test_gate_serial_requires_the_hunter_terminal_marker():
     """A consumed spec with an export is not completion without the marker."""
     hunt = "u1__threat-1"
     models = {
-        "Service:u1": {"unit_id": "Service:u1", "threats": [
-            {"id": "threat-1", "likelihood": "high"}]},
-        "Service:u2": {"unit_id": "Service:u2", "threats": [
-            {"id": "threat-1", "likelihood": "low"}]},
+        "Service:u1": {"state": "COMPLETED", "unit_id": "Service:u1", "threats": [
+            {"id": "threat-1", "risk": 9.3}]},
+        "Service:u2": {"state": "COMPLETED", "unit_id": "Service:u2", "threats": [
+            {"id": "threat-1", "risk": 2.0}]},
     }
     bodies = {
         (hunt, "a_first"): {
@@ -426,10 +428,10 @@ def test_gate_serial_blocks_an_invalid_spec_status():
     recoverable."""
     hunt = "u1__threat-1"
     models = {
-        "Service:u1": {"unit_id": "Service:u1", "threats": [
-            {"id": "threat-1", "likelihood": "high"}]},
-        "Service:u2": {"unit_id": "Service:u2", "threats": [
-            {"id": "threat-1", "likelihood": "low"}]},
+        "Service:u1": {"state": "COMPLETED", "unit_id": "Service:u1", "threats": [
+            {"id": "threat-1", "risk": 9.3}]},
+        "Service:u2": {"state": "COMPLETED", "unit_id": "Service:u2", "threats": [
+            {"id": "threat-1", "risk": 2.0}]},
     }
     bodies = {
         (hunt, "bad"): {
@@ -448,10 +450,10 @@ def test_gate_serial_treats_unsuccessful_export_as_terminal():
     """A failed or degraded pod execution still closes the consumed spec."""
     hunt = "u1__threat-1"
     models = {
-        "Service:u1": {"unit_id": "Service:u1", "threats": [
-            {"id": "threat-1", "likelihood": "high"}]},
-        "Service:u2": {"unit_id": "Service:u2", "threats": [
-            {"id": "threat-1", "likelihood": "low"}]},
+        "Service:u1": {"state": "COMPLETED", "unit_id": "Service:u1", "threats": [
+            {"id": "threat-1", "risk": 9.3}]},
+        "Service:u2": {"state": "COMPLETED", "unit_id": "Service:u2", "threats": [
+            {"id": "threat-1", "risk": 2.0}]},
     }
     bodies = {
         (hunt, "a_first"): {
@@ -488,10 +490,10 @@ def test_gate_serial_moves_to_the_next_hunt_after_the_pods_are_terminal():
 
 def test_gate_intake_position_breaks_a_risk_tie():
     models = {
-        "Service:u1": {"unit_id": "Service:u1", "threats": [
-            {"id": "threat-1", "likelihood": "high"}]},
-        "Service:u2": {"unit_id": "Service:u2", "threats": [
-            {"id": "threat-1", "likelihood": "high"}]},
+        "Service:u1": {"state": "COMPLETED", "unit_id": "Service:u1", "threats": [
+            {"id": "threat-1", "risk": 9.3}]},
+        "Service:u2": {"state": "COMPLETED", "unit_id": "Service:u2", "threats": [
+            {"id": "threat-1", "risk": 9.3}]},
     }
     gate = _gate(
         SyncMode.BATCHED, models=models,

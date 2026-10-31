@@ -56,7 +56,7 @@ def test_a_hunter_session_that_exceeds_its_window_settles_and_moves_on(
 
     asyncio.run(run_hunter_session(
         payload={}, project_id=PROJECT, run_id=RUN, hunt_key=HUNT,
-        likelihood="high", hunter_store=hunter, state=RunDispatchState(),
+        band="high", hunter_store=hunter, state=RunDispatchState(),
         gate=None, hunter_builder=_builder, session_timeout_s=0.01,
     ))
 

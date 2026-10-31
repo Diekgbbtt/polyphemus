@@ -521,13 +521,13 @@ def test_a_demoted_produced_threat_is_not_a_dispatch_gap(tmp_path, caplog):
     """The dispatch-gap diagnostic counts only PROMOTED produced threats: a
     demoted file left in produced/ is evidence, not a missed dispatch."""
     from polymerhus.attack.hunting.surfer import RunDispatchState
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     models = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(
         models, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
-        threats=[threat_row(risk=2.0)],
+        threats=[risk_row(2.0)],
     )
     assert models.consume_model_if_done(
         PROJECT, UNIT, non_pending_threats=("threat-1",)) is True

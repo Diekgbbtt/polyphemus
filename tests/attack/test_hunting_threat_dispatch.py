@@ -31,8 +31,8 @@ from tests.hunting_fixtures import (
     ITEM_RISK,
     ITEM_VECTOR,
 )
-from tests.hunting_fixtures import threat_row as _threat_row
 from tests.hunting_fixtures import produce_model as _produce_model
+from tests.hunting_fixtures import risk_row as _risk_row
 
 PROJECT = "proj-threat"
 RUN = "run-threat-1"
@@ -378,7 +378,7 @@ def _payload_recorder(*, state=None):
             seen.append(payload)
             if state is not None:
                 snapshots.append((
-                    dict(state.threat_buckets), set(state.hunters_in_graph),
+                    dict(state.threat_bands), set(state.hunters_in_graph),
                 ))
                 # settle the idle loop up front (the run terminal's own verb): the
                 # session's graph stretch has run, so it must not wait for a later
@@ -459,7 +459,7 @@ def test_the_hunter_session_receives_the_materialised_payload(
     assert coro is not None
     # the dispatch seam itself registers nothing (a refused coroutine must never
     # mutate the run state, T4a review I1)
-    assert state.threat_buckets == {}
+    assert state.threat_bands == {}
     assert state.hunters_in_graph == set()
     asyncio.run(coro)
 
@@ -469,11 +469,11 @@ def test_the_hunter_session_receives_the_materialised_payload(
     assert seen[0]["canonical_class"] == "IDOR"
     assert seen[0]["trust_agreement"]["id"] == "ta-1"
     # DURING the graph stretch the two fields move TOGETHER (I1 + the F6
-    # invariant): `hunters_in_graph` holds quiesce, `threat_buckets` carries the
+    # invariant): `hunters_in_graph` holds quiesce, `threat_bands` carries the
     # live dispatch bucket a later `low` threat waits behind - and both are
     # released when the graph ends.
-    assert snapshots == [({item.dispatch_id: item.bucket}, {item.dispatch_id})]
-    assert state.threat_buckets == {}
+    assert snapshots == [({item.dispatch_id: item.band}, {item.dispatch_id})]
+    assert state.threat_bands == {}
     assert state.hunters_in_graph == set()
 
 
@@ -498,7 +498,7 @@ def _tick(threat_store, hunter_store, *, control=None, state=None):
         control=control,
         coro_for=_coro_for(threat_store, hunter_store, control=control,
                            state=state),
-        live_threat_buckets=state.threat_buckets,
+        live_threat_bands=state.threat_bands,
     )
 
 
@@ -566,8 +566,8 @@ def test_a_low_threat_waits_for_the_higher_threat_and_is_released_after_it(
     higher threat file is produced the low threat stays in produced/; once the higher
     threat is consumed and its session is gone, the next tick releases the low
     threat."""
-    produce_model(threat_store, threats=[_threat_row(likelihood="low"),
-                                       _threat_row(likelihood="critical")])
+    produce_model(threat_store, threats=[_risk_row(2.0),
+                                       _risk_row(9.9)])
     # the store ranks the threats: threat-1 is the critical one
     control = RecordingControlPlane()
 
@@ -599,11 +599,11 @@ def test_a_low_threat_stays_paused_while_a_higher_hunter_is_live(
     only a threat whose hunter is still mid-graph holds a later low threat."""
     from polymerhus.attack.hunting.surfer import RunDispatchState
 
-    produce_model(threat_store, threats=[_threat_row(likelihood="low")])
+    produce_model(threat_store, threats=[_risk_row(2.0)])
     state = RunDispatchState()
     state.hunters_in_graph.add("Service-x__threat-1")
-    state.threat_buckets["Service-x__threat-1"] = "high"
-    assert set(state.threat_buckets) <= state.hunters_in_graph
+    state.threat_bands["Service-x__threat-1"] = "high"
+    assert set(state.threat_bands) <= state.hunters_in_graph
 
     report = run_delivery_tick_for_state(threat_store, hunter_store, state)
 
@@ -618,8 +618,8 @@ def test_a_restart_holds_a_low_threat_while_the_higher_threat_file_is_produced(
     A restart (the run-local wire state is gone) with the higher threat file still
     produced keeps the low threat paused - losing the state cannot release work past
     a higher-ranked threat."""
-    produce_model(threat_store, threats=[_threat_row(likelihood="low"),
-                                       _threat_row(likelihood="critical")])
+    produce_model(threat_store, threats=[_risk_row(2.0),
+                                       _risk_row(9.9)])
     higher = f"hunting:{RUN}:hunt:{UNIT_NAME}__threat-1"
 
     # the higher threat's dispatch is refused, so its threat file stays produced
@@ -658,7 +658,7 @@ def run_delivery_tick_for_state(threat_store, hunter_store, state):
         PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store,
         control=RecordingControlPlane(),
         coro_for=_coro_for(threat_store, hunter_store, state=state),
-        live_threat_buckets=state.threat_buckets,
+        live_threat_bands=state.threat_bands,
     )
 
 
@@ -666,9 +666,9 @@ def test_the_sequencing_is_cross_unit(threat_store, hunter_store):
     """S2 8.3/S1 7.6: the surfer reads the RUN's produced threat files, not only
     the current unit's - another unit's produced high threat holds this unit's low
     threat, and BOTH are dispatchable in one run."""
-    produce_model(threat_store, threats=[_threat_row(likelihood="low")])
+    produce_model(threat_store, threats=[_risk_row(2.0)])
     produce_model(threat_store, unit_id="Service:other",
-                  threats=[_threat_row(likelihood="high")])
+                  threats=[_risk_row(9.3)])
     control = RecordingControlPlane()
 
     report = _tick(threat_store, hunter_store, control=control)
@@ -794,7 +794,7 @@ def test_a_model_less_item_is_refused_once_by_the_dispatch_branch(
         message_id=f"{UNIT_NAME}__threat-1",
         session_id=f"hunting:{RUN}:hunt:{UNIT_NAME}__threat-1",
         unit_id=UNIT, unit_name=UNIT_NAME, threat_id="threat-1",
-        dispatch_id=f"{UNIT_NAME}__threat-1", likelihood="high",
+        dispatch_id=f"{UNIT_NAME}__threat-1", risk=9.3,
         record=_threat_file_record(),
     )
 
@@ -874,7 +874,7 @@ def test_a_refused_dispatch_leaks_no_run_state_and_quiesces(
     """I1 (the T4a code-quality review): the run-local registration lands INSIDE
     the session coroutine, so an admission refusal - which closes the coroutine
     without ever running it - leaks nothing. Otherwise the leaked key stays in
-    `hunters_in_graph`/`threat_buckets`: the quiesce never lands and a leaked
+    `hunters_in_graph`/`threat_bands`: the quiesce never lands and a leaked
     higher tier holds every later low threat for ever."""
     from polymerhus.attack.hunting.surfer import (
         RunDispatchState,
@@ -892,7 +892,7 @@ def test_a_refused_dispatch_leaks_no_run_state_and_quiesces(
     assert refused.refused == 1 and refused.moved == 0
     assert state.hunter_inboxes == {}
     assert state.hunters_in_graph == set()
-    assert state.threat_buckets == {}
+    assert state.threat_bands == {}
     # the work is still produced and still dispatchable: the run is not quiesced
     assert run_work_remaining(
         PROJECT, RUN, threat_store=threat_store, hunter_store=hunter_store) is True
@@ -903,7 +903,7 @@ def test_a_refused_dispatch_leaks_no_run_state_and_quiesces(
 
     assert admitted.admitted == 1 and admitted.moved == 1
     assert state.hunters_in_graph == set()
-    assert state.threat_buckets == {}
+    assert state.threat_bands == {}
     # F-022: the move is admission, not completion. The fake hunter session
     # never ran, so its terminal spec set is written here (a zero-spec hunt is
     # still a completed hunt); only then is the run's work exhausted.
@@ -932,13 +932,13 @@ def test_a_builder_failure_undoes_the_whole_run_registration(
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.surfer"):
         asyncio.run(run_hunter_session(
             payload={}, project_id=PROJECT, run_id=RUN, hunt_key=hunt_key,
-            likelihood="high", hunter_store=hunter_store, state=state, gate=None,
+            band="high", hunter_store=hunter_store, state=state, gate=None,
             hunter_builder=failing_builder,
         ))
 
     assert state.hunter_inboxes == {}
     assert state.hunters_in_graph == set()
-    assert state.threat_buckets == {}
+    assert state.threat_bands == {}
     assert any("builder failed" in record.message for record in caplog.records)
 
 
@@ -996,8 +996,8 @@ def test_a_malformed_threat_file_is_logged_once_across_ticks(
     first, the model document moves only in the second)."""
     import yaml
 
-    produce_model(threat_store, threats=[_threat_row(likelihood="high"),
-                                       _threat_row(likelihood="high")])
+    produce_model(threat_store, threats=[_risk_row(9.3),
+                                       _risk_row(9.3)])
     path = _threat_path(tmp_path, threat_id="threat-2")
     body = yaml.safe_load(path.read_text(encoding="utf-8"))
     body["threat"] = None                      # a record the predicate refuses
@@ -1051,8 +1051,8 @@ def test_the_model_document_moves_with_its_last_threat_file(
         threat_store, hunter_store):
     """S2 8.1/8.4: the model document remains in produced/ while a threat file
     does; the LAST threat file's admission moves it."""
-    produce_model(threat_store, threats=[_threat_row(likelihood="low"),
-                                       _threat_row(likelihood="high")])
+    produce_model(threat_store, threats=[_risk_row(2.0),
+                                       _risk_row(9.3)])
 
     # the high threat (rank 1) dispatches; the low one waits behind it, so the
     # model stays produced with one threat file left
@@ -1195,10 +1195,12 @@ def _produce_zero_threat_model(store, *, unit_id=UNIT):
         "drop_probe": "a second tenant's item id returning that item",
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
-    payloads[ModelState.IMPACT_ASSESSED] = {
-        "impact_assessment": [],
-    }
     for state in ModelState:
+        if state is ModelState.IMPACT_ASSESSED:
+            # Schema 5: the assessment rows are tool-only and a zero-threat
+            # model needs none (the completion check reports the dropped
+            # vulnerability as decided, not as a missing assessment).
+            continue
         store.write_sections(PROJECT, unit_id, state, payloads[state], run_id=RUN)
     return unit_id
 

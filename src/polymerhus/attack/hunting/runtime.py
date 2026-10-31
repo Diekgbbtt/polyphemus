@@ -808,7 +808,7 @@ def _produced_threat_count(
     project_id: str,
     run_id: str,
     *,
-    promotion_risk_threshold: int | None = None,
+    promotion_risk_threshold: float | None = None,
 ) -> int:
     """The run's PROMOTED produced threat files, for the dispatch-gap line.
     Best-effort (a read failure counts zero): the terminal path must never

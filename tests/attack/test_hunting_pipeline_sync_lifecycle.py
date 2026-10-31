@@ -40,7 +40,7 @@ def _threat(unit_name: str, threat_id: str = "threat-1") -> ThreatItem:
         unit_name=unit_name,
         threat_id=threat_id,
         dispatch_id=dispatch,
-        likelihood="high",
+        risk=9.3,
         record={"threat": {"id": threat_id}},
     )
 
@@ -207,7 +207,7 @@ def test_run_hunter_session_settles_at_graph_complete(tmp_path, monkeypatch):
 
     asyncio.run(run_hunter_session(
         payload={}, project_id=PROJECT, run_id=RUN, hunt_key=hunt,
-        likelihood="high", hunter_store=hunter, state=RunDispatchState(),
+        band="high", hunter_store=hunter, state=RunDispatchState(),
         gate=None, hunter_builder=_builder,
     ))
 
@@ -372,7 +372,7 @@ def test_run_hunter_session_settles_when_the_graph_degrades(tmp_path, monkeypatc
 
     asyncio.run(run_hunter_session(
         payload={}, project_id=PROJECT, run_id=RUN, hunt_key=hunt,
-        likelihood="high", hunter_store=hunter, state=RunDispatchState(),
+        band="high", hunter_store=hunter, state=RunDispatchState(),
         gate=None, hunter_builder=_builder,
     ))
 
@@ -408,14 +408,14 @@ def test_a_resume_cursor_does_not_count_as_a_terminal_export(tmp_path):
 
 
 def test_demoted_produced_threat_is_not_pending_in_the_completion_audit(tmp_path):
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     produce_model(
         threat, project_id=PROJECT, unit_id="Service:u1", run_id=RUN,
-        threats=[threat_row(likelihood="low")],
+        threats=[risk_row(2.0)],
     )
 
     complete, reasons = hunting_artifacts_terminal(
@@ -437,14 +437,14 @@ def test_demoted_produced_threat_is_not_pending_in_the_completion_audit(tmp_path
 
 
 def test_real_store_batched_admits_the_first_block_of_n_hunts(tmp_path):
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     produce_model(
         threat, project_id=PROJECT, unit_id="Service:u1", run_id=RUN,
-        threats=[threat_row(likelihood="high") for _ in range(3)],
+        threats=[risk_row(9.3) for _ in range(3)],
     )
     hunts = [f"Service-u1__threat-{rank}" for rank in (1, 2, 3)]
     for rank, hunt in enumerate(hunts, start=1):
@@ -477,14 +477,14 @@ def test_zero_risk_model_threat_never_holds_the_pod_phase(tmp_path):
     """A model threat with risk 0 has no threat file (S2 8.3) and is refused by
     the dispatch predicate. It must not join the full hunt list and freeze the
     pod phase under the default settings."""
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row, threat_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     produce_model(
         threat, project_id=PROJECT, unit_id="Service:u1", run_id=RUN,
-        threats=[threat_row(likelihood="high"), threat_row(likelihood="none")],
+        threats=[risk_row(9.3), threat_row(risk=0.0)],
     )
     hunt = "Service-u1__threat-1"
     _write_set(hunter, hunt, [_spec("f", "s", "ratified")])
@@ -507,14 +507,14 @@ def test_zero_risk_model_threat_never_holds_the_pod_phase(tmp_path):
 def test_demoted_hunt_leftover_spec_is_ignored_after_the_model_moves(tmp_path):
     """The audit must still know a hunt is demoted after the unit model moves
     to consumed/: a leftover spec folder cannot block the run terminal."""
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     produce_model(
         threat, project_id=PROJECT, unit_id="Service:u1", run_id=RUN,
-        threats=[threat_row(likelihood="high"), threat_row(likelihood="low")],
+        threats=[risk_row(9.3), risk_row(2.0)],
     )
     promoted_hunt = "Service-u1__threat-1"
     _write_set(hunter, promoted_hunt, [_spec("f", "s", "ratified")])

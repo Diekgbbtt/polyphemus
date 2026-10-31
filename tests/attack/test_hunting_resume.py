@@ -29,7 +29,7 @@ from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from polymerhus.attack.hunting.threat_modeller import UnitOutcome
 from polymerhus.attack.hunting.threat_modeller_tools import ModellerTools
 
-from tests.hunting_fixtures import intake_unit, threat_row, produce_model
+from tests.hunting_fixtures import intake_unit, produce_model, risk_row
 
 NOW = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -488,7 +488,7 @@ def test_a_resumed_run_adopts_the_committed_models_and_recomputes_risk_total(
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_B, run_id=RUN,
-                  threats=[threat_row(likelihood="high")])
+                  threats=[risk_row(9.3)])
     seen: list[str] = []
     dispatched: list[str] = []
 
@@ -498,8 +498,11 @@ def test_a_resumed_run_adopts_the_committed_models_and_recomputes_risk_total(
 
     assert seen == []  # the complete model is adopted, never re-modelled
     assert fake.record["intake_position"] == 2
-    # A: 1 (low likelihood, low impact) + B: 9 (high likelihood, high impact)
-    assert fake.record["risk_total"] == 10
+    # The recorded unit-A sum is the only contribution today: the run-record
+    # accumulator still reads the retired likelihood (T7 sums the CVSS 4.0
+    # `risk`), so the adopted v5 model adds no budget yet. The ADOPTION and the
+    # per-unit entry are what this resume test owns.
+    assert fake.record["risk_total"] == 1
     assert [entry["unit_id"] for entry in fake.record["model_sums"]] == [
         UNIT_A, UNIT_B]
     assert dispatched == [THREAT_B_DISPATCH]  # the adopted unit's threat dispatches
@@ -511,7 +514,7 @@ def test_a_halted_run_resumes_dispatch_only(tmp_path, monkeypatch):
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_C, run_id=RUN,
-                  threats=[threat_row(likelihood="high")])
+                  threats=[risk_row(9.3)])
     seen: list[str] = []
     dispatched: list[str] = []
 
@@ -535,9 +538,9 @@ def test_only_the_resumed_runs_produced_threats_dispatch(tmp_path, monkeypatch):
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_A, run_id=RUN,
-                  threats=[threat_row(likelihood="high")])
+                  threats=[risk_row(9.3)])
     produce_model(threat, project_id=PROJECT, unit_id=FOREIGN_UNIT,
-                  run_id=FOREIGN_RUN, threats=[threat_row(likelihood="high")])
+                  run_id=FOREIGN_RUN, threats=[risk_row(9.3)])
     seen: list[str] = []
     dispatched: list[str] = []
 
@@ -558,7 +561,7 @@ def test_a_resumed_run_never_redispatches_a_live_threat(tmp_path, monkeypatch):
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_A, run_id=RUN,
-                  threats=[threat_row(likelihood="high")])
+                  threats=[risk_row(9.3)])
     session_id = hunter_session_id(RUN, THREAT_A_DISPATCH)
 
     def _live_while_adopting():
@@ -636,12 +639,12 @@ def test_the_intake_freeze_consumes_the_resume_decision(tmp_path, monkeypatch):
     threat = ThreatModelStore(root_dir=tmp_path / "models")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_A,
-                  run_id="quota-producer", threats=[threat_row(likelihood="high")])
+                  run_id="quota-producer", threats=[risk_row(9.3)])
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_B,
                   run_id="throttled-producer",
-                  threats=[threat_row(likelihood="high")])
+                  threats=[risk_row(9.3)])
     produce_model(threat, project_id=PROJECT, unit_id=UNIT_C,
-                  run_id="backoff-producer", threats=[threat_row(likelihood="high")])
+                  run_id="backoff-producer", threats=[risk_row(9.3)])
     now = datetime.now(timezone.utc)
     fake = _ResumePg(
         {}, run_id="freeze-launch-run",

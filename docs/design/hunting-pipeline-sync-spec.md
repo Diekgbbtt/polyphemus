@@ -14,7 +14,7 @@ Where this document and the amendment disagree, the amendment wins.
 
 - `risk_threshold` and `promotion_risk_threshold` are floats.
   `DEFAULT_RISK_THRESHOLD` is `156.25`; the iteration D project settings scale to `112.5` and `2.5`.
-- The dispatch queue is a global list of promoted threat items, ordered by `risk` descending, then the unit intake position, then the threat rank.
+- The dispatch queue is a global list of promoted threat items, ordered by `risk` descending, then the unit intake position, then the threat rank, then the dispatch id.
   There is no per-unit cap.
 - The unit model sum stays in the run record for the budget and the audit.
 
@@ -97,11 +97,11 @@ still use every stored threat.
 - `DEFAULT_POD_BATCH_SIZE = 1`, `resolve_pod_batch_size`, `resolve_promotion_risk_threshold`.
 - `threat_is_promoted(record, threshold)` - the ONE pure promotion predicate; the mover, the
   gate, the completion audit, and the dispatch-gap diagnostic share it.
-- Pure surface: `UnitMeta`, `SyncFacts`, `order_units`, `unit_of_dispatch`, `unit_of_item`, `hunt_rank`, `current_unit`, `decide(mode, items, units, facts, pod_batch_size=1) -> frozenset[message_id]`.
+- Pure surface: `UnitMeta`, `ThreatMeta`, `SyncFacts`, `order_threats`, `threat_queue`, `unit_of_dispatch`, `unit_of_item`, `hunt_rank`, `current_threat`, `decide(mode, items, units, facts, pod_batch_size=1) -> frozenset[message_id]`.
 - `BatchState` gains the current `pod_batch` block; the cursor and pod cursor stay for `serial`
   and for the batch's first unfinished hunt.
 - Impure adapter: `RunSyncGate.filter(items, live_session_ids=..., hunts_in_graph=...)`, built by `make_sync_gate` (None for `parallel`).
-  It reads the unit models for the queue risk, the run record's intake order for the tie-break, the spec stems and the durable exports for the pod block; the per-unit metadata is cached for the run's lifetime.
+  It reads the run's unit models for each threat's derived score, the run record's intake order for the tie-break, the spec stems and the durable exports for the pod block; the per-unit metadata is cached for the run's lifetime.
   It carries the frozen `pod_batch_size` and `promotion_risk_threshold`.
 - State: `RunDispatchState.sync_gate` and `RunDispatchState.promotion_risk_threshold` (run-local, never durable, never a session).
 

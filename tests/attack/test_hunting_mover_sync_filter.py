@@ -117,47 +117,27 @@ def _model_with_threats(threat, unit_id, threats):
     )
 
 
-def _ratified_spec(hunt: str) -> dict:
-    return {
-        "status": "ratified",
-        "discriminators": [
-            {"axis": "fault", "value": "f"},
-            {"axis": "technique", "value": "keep"},
-        ],
-        "target": {"unit_id": UNIT},
-        "provenance": {"run_id": RUN},
-    }
+def test_batched_admits_the_highest_risk_threat_across_units(tmp_path):
+    """The queue is GLOBAL (spec 8): the highest-risk threat dispatches first,
+    whatever unit it belongs to, and no unit boundary holds a later unit.
 
-
-def test_batched_admits_a_low_threat_named_by_another_units_high_threat(tmp_path):
-    """The batch is the unit's WHOLE threat set (ADR, section 2, `batched`).
-
-    The S2 8.3 low-tier sequencing is subsumed in `batched`: a high threat file
-    produced for a LATER unit must never hold the current unit's low threat. Held
-    forever, that low threat would also keep the batched gate from ever leaving
-    the hunt phase - and the run would wedge on a produced threat no unit could
-    consume.
+    The S2 8.3 low-band sequencing is subsumed by the risk order in `batched`:
+    a produced high threat for a LATER unit must never hold an equally-ranked
+    threat, and once the top threat is done the later unit's threat is next
+    even though its own unit still has a produced threat.
     """
     from polymerhus.attack.hunting.pipeline_sync import RunSyncGate, SyncMode
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     _model_with_threats(threat, UNIT, [
-        threat_row(likelihood="high"),
-        threat_row(likelihood="low"),
+        risk_row(9.3),
+        risk_row(2.0),
     ])
-    # A later unit with a high threat: risk 3 against the current unit's 4, so
-    # the current unit stays first and the later threat stays produced.
-    _model_with_threats(threat, "Service:later", [threat_row(likelihood="high")])
-    hunt = "Service-catalogue-and-discovery__threat-1"
-    hunter.write_specs(
-        PROJECT, hunt,
-        [{**_ratified_spec(hunt), "status": "hypothesised"}],
-        enforce_complete=False)
-    hunter.write_specs(
-        PROJECT, hunt, [_ratified_spec(hunt)], enforce_complete=False)
-    hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
+    # The later unit's threat ties the current unit's top threat at 9.3; the
+    # intake position (UNIT first) breaks the tie on the first tick.
+    _model_with_threats(threat, "Service:later", [risk_row(9.3)])
 
     gate = RunSyncGate(
         mode=SyncMode.BATCHED, project_id=PROJECT, run_id=RUN,
@@ -182,25 +162,21 @@ def test_batched_admits_a_low_threat_named_by_another_units_high_threat(tmp_path
         )
 
     first = _tick_once()
-    # The WHOLE unit batch: the high threat AND the low threat dispatch together,
-    # even though the later unit's high threat is still produced.
-    assert first.dispatched == 2
-    assert any(call.endswith("threat-1") for call in control.calls)
-    assert any(call.endswith("threat-2") for call in control.calls)
-    # The pod phase waits for the batch: the spec stays produced.
-    assert [call for call in control.calls if ":pod:" in call] == []
-    assert hunter.read_spec(
-        PROJECT, hunt, "spec__f__keep", side="produced") is not None
+    # ONE hunter at a time, the global top: the current unit's threat-1.
+    assert first.dispatched == 1
+    assert control.calls == [
+        f"hunting:{RUN}:hunt:{UNIT.replace(':', '-')}__threat-1"]
 
-    # Close both hunts so the F-022 consumed-threat recovery does not re-offer
-    # them; the batch is then done and the pod may start.
-    hunter.finalize_specs(PROJECT, hunt, run_id=RUN)
-    hunter.finalize_specs(
-        PROJECT, "Service-catalogue-and-discovery__threat-2", run_id=RUN)
+    # Close the top hunt so the F-022 recovery does not re-offer it.
+    top = f"{UNIT.replace(':', '-')}__threat-1"
+    hunter.finalize_specs(PROJECT, top, run_id=RUN)
 
     second = _tick_once()
+    # The later unit's 9.3 is next: the current unit's remaining produced low
+    # threat (2.0) never becomes a unit barrier.
     assert second.dispatched == 1
-    assert [call for call in control.calls if ":pod:" in call] != []
+    assert control.calls[-1] == (
+        f"hunting:{RUN}:hunt:Service-later__threat-1")
 
 
 def test_tier_sequencing_applies_to_parallel_and_serial_only():
@@ -228,15 +204,15 @@ def test_run_work_remaining_counts_a_held_low_when_sequencing_is_off(tmp_path):
     keep counting it.
     """
     from polymerhus.attack.hunting.surfer import run_work_remaining
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    _model_with_threats(threat, UNIT, [threat_row(likelihood="low")])
+    _model_with_threats(threat, UNIT, [risk_row(2.0)])
 
     kwargs = dict(
         threat_store=threat, hunter_store=hunter,
-        live_threat_buckets={"hunting:run-1:hunt:other__threat-1": "high"},
+        live_threat_bands={"hunting:run-1:hunt:other__threat-1": "high"},
     )
     assert run_work_remaining(PROJECT, RUN, **kwargs) is False
     assert run_work_remaining(PROJECT, RUN, sequence_tiers=False, **kwargs) is True
@@ -245,13 +221,13 @@ def test_run_work_remaining_counts_a_held_low_when_sequencing_is_off(tmp_path):
 # --- the promotion floor (2026-10-26) ---------------------------------------------
 
 def _two_threat_model(tmp_path):
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
-        threats=[threat_row(likelihood="high"), threat_row(likelihood="low")],
+        threats=[risk_row(9.3), risk_row(2.0)],
     )
     return threat, hunter
 
@@ -322,13 +298,13 @@ def test_promotion_none_dispatches_every_threat(tmp_path):
 
 
 def test_all_demoted_unit_is_model_consume_work_then_quiet(tmp_path):
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
-        threats=[threat_row(likelihood="low")],
+        threats=[risk_row(2.0)],
     )
 
     # The model consume is work, so the run is not quiet yet.
@@ -376,13 +352,13 @@ def test_a_refused_threat_stays_in_produced_and_is_not_archived(tmp_path):
     """A mover refusal leaves the file in produced/. It is not an `abandoned/`
     archive: that family is written only for a whole stale or invalid unit
     model, by the intake freeze or the modeller."""
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
-        threats=[threat_row(likelihood="high"), threat_row(likelihood="high")],
+        threats=[risk_row(9.3), risk_row(9.3)],
     )
     produced = (
         tmp_path / "threat" / PROJECT / "hunting" / "threat_modeller"

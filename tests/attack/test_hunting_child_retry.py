@@ -34,8 +34,9 @@ def _recovered_threat() -> ThreatItem:
         unit_name="Service-a",
         threat_id="threat-1",
         dispatch_id="Service-a__threat-1",
-        likelihood="high",
         record={},
+        risk=9.3,
+        band="critical",
         recovered=True,
     )
 
@@ -129,8 +130,9 @@ def test_a_live_deferred_item_still_lands_its_admission_move():
         unit_name="Service-a",
         threat_id="threat-1",
         dispatch_id="Service-a__threat-1",
-        likelihood="high",
         record={},
+        risk=9.3,
+        band="critical",
     )
     plan = deduce_delivery(
         [produced], live_session_ids={produced.session_id},

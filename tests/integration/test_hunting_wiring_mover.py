@@ -781,14 +781,14 @@ def test_promotion_demotes_a_low_threat_and_the_run_still_reaches_terminal(
     from polymerhus.attack.hunting.pipeline_sync import (
         hunting_artifacts_terminal,
     )
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")
     produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
-        threats=[threat_row(likelihood="high"), threat_row(likelihood="low")],
+        threats=[risk_row(9.3), risk_row(2.0)],
     )
     control = RecordingControlPlane()
 
@@ -829,7 +829,7 @@ def test_promotion_and_pod_batch_flow_through_the_gate_and_mover(tmp_path):
     The gate's pod block admits the first two hunts' specs; the mover dispatches
     them; the demoted threat and the third hunt's spec stay produced."""
     from polymerhus.attack.hunting.pipeline_sync import RunSyncGate, SyncMode
-    from tests.hunting_fixtures import threat_row
+    from tests.hunting_fixtures import risk_row
 
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
@@ -837,9 +837,9 @@ def test_promotion_and_pod_batch_flow_through_the_gate_and_mover(tmp_path):
     produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
         threats=[
-            threat_row(likelihood="high"),
-            threat_row(likelihood="high"),
-            threat_row(likelihood="low"),
+            risk_row(9.3),
+            risk_row(9.3),
+            risk_row(2.0),
         ],
     )
     hunts = [f"{UNIT_NAME}__threat-{rank}" for rank in (1, 2, 3)]

@@ -310,6 +310,36 @@ ITEM_FACTORS = {
 ITEM_RISK = 9.2
 ITEM_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N"
 
+# The fan-out tiers the sequencing fixtures need: one known-good factor set per
+# `cvss==3.6` CVSS 4.0 base score, so a model can carry distinct risks and stay
+# internally valid (a seeded `risk` that its factors do not compute is reported
+# by the completion checker and the model is not consumable). The scores are the
+# library's reference values, never recomputed by a test.
+RISK_FACTORS: dict[float, dict[str, str]] = {
+    9.9: {**ITEM_FACTORS, "integrity": "high"},
+    9.3: {**ITEM_FACTORS, "availability": "high"},
+    9.2: dict(ITEM_FACTORS),
+    6.9: {**ITEM_FACTORS, "confidentiality": "low"},
+    5.3: {**ITEM_FACTORS, "confidentiality": "low", "user_interaction": "passive"},
+    2.0: {
+        **ITEM_FACTORS,
+        "confidentiality": "low",
+        "user_interaction": "passive",
+        "attack_complexity": "high",
+        "attack_requirements": "present",
+        "privileges_required": "high",
+    },
+}
+
+
+def risk_row(score: float, **overrides) -> dict:
+    """One COMPLETED threat row scored at `score` (a `RISK_FACTORS` tier).
+
+    The fan-out fixtures use this instead of a bare `risk` override: the
+    assessment's factors are the tier's known-good set, so the derived score and
+    vector are consistent and the model stays consumable."""
+    return threat_row(factors=dict(RISK_FACTORS[score]), **overrides)
+
 
 def _evidence(ref: str = "GET /catalogue") -> dict:
     return {"kind": "request", "ref": ref}
@@ -487,7 +517,27 @@ EXPLOITABILITY_DESCRIPTION = (
 )
 
 
-def _assessment_row(index: int = 1, *, risk: float = ITEM_RISK) -> dict:
+def _assessment_row(
+    index: int = 1, *, risk: float = ITEM_RISK,
+    factors: dict[str, str] | None = None,
+) -> dict:
+    """One seeded assessment row.
+
+    A `factors` set derives the score and the vector through the real risk
+    module, exactly as the `assess_impact` write would, so the row is internally
+    consistent. Without it the worked example's known-good `risk`/`vector` land
+    unchanged (the legacy fan-out callers)."""
+    row_factors = dict(factors) if factors is not None else dict(ITEM_FACTORS)
+    if factors is not None:
+        from polymerhus.attack.hunting.risk_score import (  # noqa: PLC0415
+            RiskMetrics,
+            compute_risk,
+        )
+
+        result = compute_risk(RiskMetrics.model_validate(row_factors))
+        risk, vector = result.score, result.vector
+    else:
+        vector = ITEM_VECTOR
     return {
         "id": f"ia-{index}",
         "vulnerability_ref": "v-1",
@@ -498,9 +548,9 @@ def _assessment_row(index: int = 1, *, risk: float = ITEM_RISK) -> dict:
         "capability_id": f"p-{index}",
         "capability_path": [],
         "evidence_refs": ["GET /catalogue?id=2"],
-        "factors": dict(ITEM_FACTORS),
+        "factors": row_factors,
         "risk": risk,
-        "risk_vector": ITEM_VECTOR,
+        "risk_vector": vector,
     }
 
 
@@ -603,7 +653,11 @@ def produce_model(
             # the worked example's one row.
             assessment_rows = (
                 [
-                    _assessment_row(index, risk=float(row.get("risk", ITEM_RISK)))
+                    _assessment_row(
+                        index,
+                        risk=float(row.get("risk", ITEM_RISK)),
+                        factors=row.get("factors"),
+                    )
                     for index, row in enumerate(rows, start=1)
                 ]
                 if rows is not None else [_assessment_row()]
@@ -612,9 +666,13 @@ def produce_model(
             continue
         sections = dict(payloads[state])
         if state is ModelState.COMPLETED and rows is not None:
-            # The model's write shape: no authored score.
+            # The model's write shape: no authored score and no fixture-only
+            # factor set (the factors live on the assessment row).
             sections["threats"] = [
-                {key: value for key, value in row.items() if key != "risk"}
+                {
+                    key: value for key, value in row.items()
+                    if key not in ("risk", "factors")
+                }
                 for row in rows
             ]
         path = store.write_sections(
