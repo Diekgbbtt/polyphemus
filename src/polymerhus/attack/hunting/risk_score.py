@@ -211,6 +211,7 @@ def compute_risk(metrics: RiskMetrics) -> RiskResult:
 
 def validate_metrics(
     metrics: RiskMetrics,
+    *,
     disposition: RiskDisposition,
 ) -> list[str]:
     """The coded findings of one factor set against its row disposition.
@@ -286,8 +287,7 @@ FACTOR_DESCRIPTIONS: dict[str, dict[str, str]] = {
         ),
         "present": (
             "One further attacker capability adds a phase to the chain. "
-            "Example: a planted XSS payload for exfiltration, DNS rebinding "
-            "for an SSRF, or JWKS access for a forged token."
+            "Example: a planted XSS payload for exfiltration."
         ),
     },
     "privileges_required": {

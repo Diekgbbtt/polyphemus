@@ -209,7 +209,7 @@ def test_severity_band_edges(score: float, band: SeverityBand) -> None:
 # --- the factor-set contract -------------------------------------------------
 
 def test_precursor_with_a_non_none_impact_value_is_rejected() -> None:
-    findings = validate_metrics(metrics(), "precursor")
+    findings = validate_metrics(metrics(), disposition="precursor")
 
     assert findings
     assert any("integrity" in finding for finding in findings)
@@ -220,7 +220,7 @@ def test_precursor_with_all_none_impact_values_is_accepted() -> None:
         confidentiality=ImpactLevel.NONE, integrity=ImpactLevel.NONE,
     )
 
-    assert validate_metrics(row, "precursor") == []
+    assert validate_metrics(row, disposition="precursor") == []
 
 
 def test_threat_with_all_none_impact_values_is_rejected() -> None:
@@ -230,7 +230,7 @@ def test_threat_with_all_none_impact_values_is_rejected() -> None:
         availability=ImpactLevel.NONE,
     )
 
-    findings = validate_metrics(row, "threat")
+    findings = validate_metrics(row, disposition="threat")
 
     assert findings
     assert any("none" in finding for finding in findings)
@@ -243,7 +243,7 @@ def test_threat_with_one_impact_value_above_none_is_accepted() -> None:
         availability=ImpactLevel.LOW,
     )
 
-    assert validate_metrics(row, "threat") == []
+    assert validate_metrics(row, disposition="threat") == []
 
 
 def test_risk_metrics_forbids_an_unknown_factor() -> None:

@@ -48,13 +48,12 @@ The final ticket is the live walkthrough.
 
 1. Dispatch one implementer subagent with the ticket text, the spec sections, the impact map rows, and the verification commands.
 2. The implementer works test-first, commits, and self-reviews.
-3. Dispatch the spec-compliance reviewer. The reviewer checks the ticket acceptance criteria against the diff.
-4. Dispatch the code-quality reviewer. The reviewer checks the tests, the patterns, and the edge cases.
-5. Fix and re-review until both approve.
-6. Record the ticket status in this plan.
-7. Move to the next frontier ticket.
+3. Run the targeted tests and the ticket's grep gate in the controller.
+4. Record the ticket status in this plan.
+5. Move to the next frontier ticket.
 
-The final ticket is one adversarial review over the whole branch.
+There is no per-ticket spec or code-quality review.
+The one critical adversarial review runs at T11 over the whole branch.
 It checks the spec, the outliers, the test breadth and depth, and the `src/polymerhus/attack/hunting/CONTEXT.md` patterns.
 
 ## Verification commands
@@ -89,7 +88,7 @@ It checks the spec, the outliers, the test breadth and depth, and the `src/polym
 
 | # | Status | Commit |
 |---|---|---|
-| T1 | pending | |
+| T1 | done | 224b916a + review fixes |
 | T2 | pending | |
 | T3 | pending | |
 | T4 | pending | |
