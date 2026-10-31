@@ -75,9 +75,9 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
         "drop_probe": "a second tenant's item id returning that item",
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
-    payloads[ModelState.IMPACT_ASSESSED] = {
-        "impact_assessment": [], "precursors": [],
-    }
+    # no assessment row: every vulnerability is dropped, so there is nothing
+    # for `assess_impact` to write
+    payloads[ModelState.IMPACT_ASSESSED] = {}
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         hid = asyncio.run(hunting_runtime.start_hunting(
@@ -390,9 +390,9 @@ def _zero_threat_turns():
         "drop_probe": "a second tenant's item id returning that item",
     }]}
     payloads[ModelState.COMPLETED] = {"threats": []}
-    payloads[ModelState.IMPACT_ASSESSED] = {
-        "impact_assessment": [], "precursors": [],
-    }
+    # no assessment row: every vulnerability is dropped, so there is nothing
+    # for `assess_impact` to write
+    payloads[ModelState.IMPACT_ASSESSED] = {}
     return ScriptedModellerTurns(payloads=payloads)
 
 
@@ -527,7 +527,7 @@ def test_a_demoted_produced_threat_is_not_a_dispatch_gap(tmp_path, caplog):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     produce_model(
         models, project_id=PROJECT, unit_id=UNIT, run_id=RUN,
-        threats=[threat_row(likelihood="low")],
+        threats=[threat_row(risk=2.0)],
     )
     assert models.consume_model_if_done(
         PROJECT, UNIT, non_pending_threats=("threat-1",)) is True

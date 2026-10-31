@@ -642,7 +642,7 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
                 self._surface = build_modeller_tool_surface(
                     self.project_id, unit, self.tools)
                 built.append(self.run_id)
-            from tests.hunting_fixtures import modeller_gate_payloads
+            from tests.hunting_fixtures import modeller_gate_payloads, write_gate
 
             if turn_input.phase == "WELLFORMEDNESS":
                 self._surface["notes"].invoke({
@@ -651,9 +651,8 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
                     "body": "every threat checked",
                 })
                 return None
-            self._surface["hunts_store"].invoke({
-                "cmd": "write", "state": turn_input.state.value,
-                "sections": modeller_gate_payloads()[turn_input.state]})
+            write_gate(self._surface, turn_input.state,
+                       payload=modeller_gate_payloads()[turn_input.state])
             return None
 
         def last_degrade_cause(self):

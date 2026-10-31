@@ -7,6 +7,11 @@ coded write rejection, the notes binding with the hunter-only kind refused, the
 completion validation call and the invalid-model archive, and the
 web-vulnerability suite binding with its fail-open gap.
 
+The schema-5 assessment contract (T4, #407): `assess_impact` is the sole
+writer of an assessment row, the first call advances `IMPACT_ASSESSED`, its
+contract rejects a field it does not take (an authored score included), and
+the `hunts_store` surface refuses an `impact_assessment` section.
+
 Every test drives the REAL `ThreatModelStore` on a temporary project root and
 the REAL tool surface, through a scripted turn seam - the pass reads the states
 passively from the gate writes, so a fake turn that calls the bound tool is the
@@ -15,6 +20,7 @@ whole contract.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 import yaml
@@ -53,8 +59,11 @@ def _no_degraded_backoff(monkeypatch):
 # `tests/hunting_fixtures.py`: the runtime wiring tests (T2b) drive the SAME
 # seven-gate payloads, so the fixture has one home.
 from tests.hunting_fixtures import (  # noqa: E402
+    ITEM_RISK,
+    ITEM_VECTOR,
     ScriptedModellerTurns as _ScriptedTurns,
     _evidence,
+    write_gate,
 )
 from tests.hunting_fixtures import (  # noqa: E402
     modeller_gate_payloads as _payloads,
@@ -64,6 +73,16 @@ from tests.hunting_fixtures import (  # noqa: E402
 def _tools(store, **kwargs) -> ModellerTools:
     return ModellerTools(threat_store=store, project_id=PROJECT, run_id=RUN,
                          **kwargs)
+
+
+def _write_to_prior_art(store) -> None:
+    """Drive the real store to `PRIOR_ART`: the state the assessment write
+    accepts, with the one vulnerability the worked example assesses."""
+    payloads = _payloads()
+    for state in (ModelState.UNIT_TECHNICAL_SHARP,
+                  ModelState.VULNERABILITIES_WRITTEN,
+                  ModelState.PRIOR_ART):
+        store.write_sections(PROJECT, UNIT, state, payloads[state], run_id=RUN)
 
 
 def test_a_scripted_pass_writes_all_seven_gates_to_the_real_store(tmp_path):
@@ -88,7 +107,8 @@ def test_a_scripted_pass_writes_all_seven_gates_to_the_real_store(tmp_path):
     assert model["vulnerabilities"]
     assert model["impact_assessment"]
     assert model["impact_assessment"][0]["capability"]
-    assert model["risk_profile"]["total"] == 3
+    # the profile sums the DERIVED row score the threat mirrors
+    assert model["risk_profile"]["total"] == ITEM_RISK
     assert model["validation"]["valid"] is True
     # the threat file landed for the non-`none` threat
     assert [threat["threat_id"] for threat in store.read_threat_files(PROJECT, UNIT)] == ["threat-1"]
@@ -206,14 +226,22 @@ def test_a_lower_gate_write_updates_the_section_without_regressing_the_state(tmp
 
 def test_each_gate_write_response_carries_the_next_state_hint(tmp_path):
     """The hint table (S1 9.3) rides the tool response of every gate but the
-    last; the COMPLETED write carries no hint."""
+    last: `hunts_store` for its gates, `assess_impact` for the tool-only
+    `IMPACT_ASSESSED` transition, whose hint is the completion pointer. The
+    COMPLETED write carries no hint, and no response ever carries a score."""
     store = ThreatModelStore(root_dir=tmp_path)
     turns = _ScriptedTurns()
 
     asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
 
+    # the responses are in gate order: five `hunts_store` writes below COMPLETED,
+    # the assessment write, then the COMPLETED write with no hint
     hints = [response.get("hint") for response in turns.responses]
     assert hints == [GATE_HINTS[state] for state in list(ModelState)[:-1]] + [None]
+    assert "state" not in turns.responses[5]
+    assert "score" not in turns.responses[5]
+    assert "vector" not in turns.responses[5]
+    assert "factors" not in turns.responses[5]
     assert GATE_HINTS[ModelState.UNIT_TECHNICAL_SHARP].startswith("Proceed to trust mapping")
     assert GATE_HINTS[ModelState.PRIOR_ART].startswith("Proceed to the impact assessment")
     assert GATE_HINTS[ModelState.TRUST_MODELLED].startswith("Proceed to assumptions")
@@ -223,6 +251,12 @@ def test_each_gate_write_response_carries_the_next_state_hint(tmp_path):
             .startswith("Proceed to the well-formedness phase"))
     assert (GATE_HINTS[ModelState.IMPACT_ASSESSED]
             .startswith("Proceed to completion"))
+    # the assessment hint names the tool; the completion hint names the derived
+    # risk, the coverage, and the chains to verify
+    assert "`assess_impact`" in GATE_HINTS[ModelState.PRIOR_ART]
+    assert "derived" in GATE_HINTS[ModelState.IMPACT_ASSESSED].lower()
+    assert "never author a score" in GATE_HINTS[ModelState.IMPACT_ASSESSED].lower()
+    assert "enabling chains" in GATE_HINTS[ModelState.IMPACT_ASSESSED]
 
 
 def test_a_pass_that_never_completes_reports_a_degraded_unit(tmp_path):
@@ -272,9 +306,7 @@ def test_a_lower_gate_write_re_enters_the_wellformedness_turn(tmp_path):
                     "body": "every threat checked after the local patch",
                 })
                 return None
-            self.store_tool(turn).invoke({
-                "cmd": "write", "state": turn.state.value,
-                "sections": _payloads()[turn.state]})
+            self.write_gate(turn, turn.state)
             return None
 
     turns = _Reentering()
@@ -331,10 +363,7 @@ def test_a_crossing_gate_write_hints_and_the_state_jumps_forward(tmp_path):
                 # one turn writes every gate below COMPLETED and then COMPLETED
                 # itself: the pass reads one forward jump and never re-asks
                 for state in list(ModelState)[:-1]:
-                    self.store_tool(turn).invoke({
-                        "cmd": "write", "state": state.value,
-                        "sections": payloads[state],
-                    })
+                    self.write_gate(turn, state)
                 self.responses.append(self.store_tool(turn).invoke({
                     "cmd": "write", "state": "COMPLETED",
                     "sections": payloads[ModelState.COMPLETED],
@@ -367,10 +396,7 @@ def test_a_silent_ladder_then_a_forward_jump_is_accepted(tmp_path):
             if len(self.turn_inputs) < 7:
                 return None
             for state in list(ModelState)[:-1]:
-                self.store_tool(turn).invoke({
-                    "cmd": "write", "state": state.value,
-                    "sections": payloads[state],
-                })
+                self.write_gate(turn, state)
             self.responses.append(self.store_tool(turn).invoke({
                 "cmd": "write", "state": "COMPLETED",
                 "sections": payloads[ModelState.COMPLETED],
@@ -587,12 +613,7 @@ def test_an_invalid_completed_model_is_archived_and_reported_degraded(tmp_path):
                 "fault_ref": "fault-not-in-the-model",
                 "vulnerability_ref": "v-missing",
                 "canonical_class": "IDOR",
-                "likelihood": "none",
-                "likelihood_rationale": "the threat is deliberately unclosed",
-                "risk_factors": {
-                    "attack_vector": "network", "attack_requirements": "none",
-                    "privileges_required": "none", "complexity": "low"},
-                "confidence": "ASSUMED",
+                "impact_ref": "ia-missing",
                 "evidences": [_evidence()],
             }],
         },
@@ -688,9 +709,7 @@ def test_a_run_scoped_actor_capture_completes_every_unit_of_the_run(tmp_path):
                     "body": "every threat checked",
                 })
                 return None
-            captured_surface()["hunts_store"].invoke({
-                "cmd": "write", "state": turn.state.value,
-                "sections": _payloads()[turn.state]})
+            write_gate(captured_surface(), turn.state)
             return None
 
     for unit_id in ("Service:first", "Service:second"):
@@ -896,9 +915,7 @@ def test_the_suite_gap_reaches_the_unit_outcome(tmp_path):
             suite_load = next(tool for tool in turn.tools
                               if tool.name == "skill_load")
             self.responses.append(suite_load.invoke({"name": "idor"}))
-            self.store_tool(turn).invoke({
-                "cmd": "write", "state": turn.state.value,
-                "sections": _payloads()[turn.state]})
+            self.write_gate(turn, turn.state)
             return None
 
     turns = _ProbingSuite()
@@ -935,9 +952,7 @@ def test_injected_suite_tools_still_report_their_gaps(tmp_path):
             suite_load = next(tool for tool in turn.tools
                               if tool.name == "skill_load")
             suite_load.invoke({"name": "idor"})
-            self.store_tool(turn).invoke({
-                "cmd": "write", "state": turn.state.value,
-                "sections": _payloads()[turn.state]})
+            self.write_gate(turn, turn.state)
             return None
 
     outcome = asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, tools,
@@ -1042,15 +1057,179 @@ def test_the_actor_registry_is_keyed_by_run_id_under_a_factory():
 
 
 def test_the_modeller_tool_surface_is_exactly_the_bound_tools(tmp_path):
-    """The surface is exactly the modeller's (S1 5): the store, the notes, the
-    HTTP-history read pair, exec, and the suite pair - and NOT `graph_view`,
-    `kb_query`, the fault-KB aid, or `replay`."""
+    """The surface is exactly the modeller's (S1 5): the store, the assessment
+    write, the notes, the HTTP-history read pair, exec, and the suite pair -
+    and NOT `graph_view`, `kb_query`, the fault-KB aid, or `replay`."""
     store = ThreatModelStore(root_dir=tmp_path)
     surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
 
     assert set(surface) == set(TOOL_SURFACE)
+    assert "assess_impact" in surface
     assert {"graph_view", "kb_query", "query_lightrag", "replay",
             "mint_hunt_config"} & set(surface) == set()
+
+
+# --- the `assess_impact` tool (schema-5 spec 4, ticket #407) -----------------
+
+def test_the_assess_impact_tool_writes_the_row_and_advances_the_state(tmp_path):
+    """The tool is the row's sole writer. The typed args carry the two prose
+    blocks and the eight factors; the persistence derives the score and the
+    vector; the first call advances `IMPACT_ASSESSED`; and the response is the
+    success envelope plus the next-state hint - no score, no vector, no factor
+    echo."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+    _write_to_prior_art(store)
+    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
+
+    response = surface["assess_impact"].invoke(
+        dict(_payloads()[ModelState.IMPACT_ASSESSED]))
+
+    # the envelope is success plus the next-state cadence hint: no score, no
+    # vector, no factor echo
+    assert response["ok"] is True
+    assert set(response) == {"ok", "hint"}
+    model = store.read_model(PROJECT, UNIT)
+    assert model["state"] == ModelState.IMPACT_ASSESSED.value
+    row = model["impact_assessment"][0]
+    assert row["id"] == "ia-1"
+    assert row["impact_description"] and row["exploitability_description"]
+    assert row["capability"] and row["capability_id"]
+    # the score and the vector are the derived CVSS 4.0 values for the factors
+    assert row["risk"] == ITEM_RISK
+    assert row["risk_vector"] == ITEM_VECTOR
+    # the read still reports the section the tool wrote, so the model can read
+    # its rows back (the rows are the scored claim, not a gate section)
+    assert "impact_assessment" in surface["hunts_store"].invoke(
+        {"cmd": "read"})["sections"]
+
+
+def test_the_assess_impact_tool_rejects_a_field_it_does_not_take(tmp_path):
+    """An authored score is not a field of the contract: the args schema refuses
+    it with a coded rejection naming the field, so the model can never bias the
+    score it must not see."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+    _write_to_prior_art(store)
+
+    rejection = surface["assess_impact"].invoke({
+        **_payloads()[ModelState.IMPACT_ASSESSED], "risk": 9.9})
+
+    assert rejection["ok"] is False
+    assert rejection["error"] == "assess_impact_args_rejected"
+    assert rejection["fields"] == ["risk"]
+    assert store.read_model(PROJECT, UNIT)["impact_assessment"] == []
+
+
+def test_the_assess_impact_tool_returns_the_store_rejection_with_its_field(
+        tmp_path):
+    """The store owns the referential check; its coded rejection is re-surfaced
+    with the field to fix and the known values, never a raise and never a
+    silent write."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+    _write_to_prior_art(store)
+
+    rejection = surface["assess_impact"].invoke({
+        **_payloads()[ModelState.IMPACT_ASSESSED],
+        "vulnerability_ref": "v-missing",
+    })
+
+    assert rejection["ok"] is False
+    assert rejection["error"] == "assess_impact_rejected"
+    assert rejection["fields"] == ["vulnerability_ref"]
+    assert "v-1" in rejection["detail"]
+    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
+    assert store.read_model(PROJECT, UNIT)["impact_assessment"] == []
+
+
+def test_the_assess_impact_factor_descriptions_come_from_the_single_source():
+    """The factor semantics and the examples are defined ONCE, in the risk
+    module; the tool's `factors` schema renders the same entries, so the tool
+    contract and the prompt cannot drift."""
+    from polymerhus.attack.hunting.risk_score import FACTOR_DESCRIPTIONS
+    from polymerhus.attack.hunting.threat_modeller_tools import (
+        AssessImpactArgs,
+    )
+
+    properties = AssessImpactArgs.model_json_schema()["$defs"]["RiskMetrics"][
+        "properties"]
+    missing = [
+        f"{field}.{value}: {text}"
+        for field, values in FACTOR_DESCRIPTIONS.items()
+        for value, text in values.items()
+        if text not in properties[field]["description"]
+    ]
+
+    assert missing == []
+
+
+def test_the_assess_impact_rejection_reaches_the_harness_as_a_tool_message(
+        tmp_path):
+    """The graph's ToolNode invokes a tool with a ToolCall dict and requires a
+    ToolMessage back; a rejected field must not raise out of the graph."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+    _write_to_prior_art(store)
+
+    message = surface["assess_impact"].invoke({
+        "name": "assess_impact", "type": "tool_call", "id": "call-1",
+        "args": {**_payloads()[ModelState.IMPACT_ASSESSED], "risk": 1.0},
+    })
+
+    assert message.tool_call_id == "call-1"
+    assert json.loads(message.content)["fields"] == ["risk"]
+
+
+def test_a_rejected_assessment_does_not_advance_the_tracked_state(tmp_path):
+    """The tracking store observes the assessment write only once it landed: a
+    refused row raises before the observation, so the pass never reads a gate
+    the store never wrote, and a success does advance it."""
+    from polymerhus.attack.hunting.threat_modeller import (
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    wrapped = TrackingThreatModelStore(store, tracker)
+    _write_to_prior_art(store)
+    tool = build_modeller_tool_surface(
+        PROJECT, UNIT,
+        ModellerTools(threat_store=wrapped, project_id=PROJECT, run_id=RUN),
+    )["assess_impact"]
+
+    rejected = tool.invoke({
+        **_payloads()[ModelState.IMPACT_ASSESSED],
+        "vulnerability_ref": "v-missing",
+    })
+    assert rejected["ok"] is False
+    assert tracker.writes == [] and tracker.state is None
+
+    accepted = tool.invoke(dict(_payloads()[ModelState.IMPACT_ASSESSED]))
+    assert accepted["ok"] is True
+    assert tracker.state is ModelState.IMPACT_ASSESSED
+    assert [write.state for write in tracker.writes] == [
+        ModelState.IMPACT_ASSESSED]
+
+
+def test_the_hunts_store_surface_rejects_the_impact_assessment_section(tmp_path):
+    """The assessment rows have ONE writer (schema-5 spec 4): `hunts_store` no
+    longer takes the section, so the model cannot bypass the tool's contract."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+
+    rejection = surface["hunts_store"].invoke({
+        "cmd": "write", "state": "IMPACT_ASSESSED",
+        "sections": {"impact_assessment": [
+            _payloads()[ModelState.IMPACT_ASSESSED]]},
+    })
+
+    assert rejection["ok"] is False
+    assert rejection["error"] == "hunts_store_args_rejected"
+    assert rejection["fields"] == ["sections.impact_assessment"]
+    assert store.read_model(PROJECT, UNIT) is None
+
 
 
 def test_the_store_tool_rejects_a_write_without_a_state(tmp_path):

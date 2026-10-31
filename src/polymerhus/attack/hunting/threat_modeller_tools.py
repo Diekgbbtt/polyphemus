@@ -3,7 +3,8 @@
 Split out of `threat_modeller.py` in T2b (#386). The pass module keeps the gate
 tracker, the unit cell, the degradation breaker, and the pass itself; this
 module owns the tool surface built over those seams: `hunts_store` (the
-threat-model read/write), `notes` (the shared notes tool with the bound
+threat-model read/write), `assess_impact` (the sole writer of one schema-5
+assessment row, ticket #407), `notes` (the shared notes tool with the bound
 `<unit_name>:<note_name>` key), the HTTP-history read pair, the Kali `exec`
 probe, and the web-vulnerability suite pair (`skill_list` / `skill_load`). The
 auth store and the project skill arrive through the role's `load_skill` binding
@@ -15,6 +16,7 @@ This module imports no driver and performs no I/O at import (CODING_STANDARD 6).
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -22,14 +24,16 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
     StoreToolBase,
     build_notes_tool,
+    coded_teaching_rejection,
 )
 
+from .risk_score import FACTOR_DESCRIPTIONS, RiskMetrics
 from .threat_model import (
     GATE_SECTIONS,
     FieldFilter,
@@ -41,7 +45,9 @@ from .threat_model_store import (
     NOTE_KINDS,
     QUERY_DEFAULT_LIMIT,
     QUERY_MAX_LIMIT,
+    ImpactAssessmentError,
     ThreatModelIdentityError,
+    ThreatModelSchemaVersionError,
     ThreatQueryError,
 )
 from .threat_modeller import (
@@ -59,6 +65,9 @@ MODEL_SECTIONS: tuple[str, ...] = (
     "technical_sharpening", "prior_art", "trust_model", "assumptions",
     "vulnerabilities", "impact_assessment", "precursors", "threats",
 )
+# `impact_assessment` rides this READ summary although no gate writes it: the
+# `assess_impact` tool owns the rows, and the model must still see that it holds
+# them. It is not an accepted section of any `hunts_store` write.
 
 
 def _section_holds(value: Any) -> bool:
@@ -115,7 +124,9 @@ class ModellerHuntsStoreArgs(BaseModel):
         default=None,
         description="Write payload: the gate state, one of UNIT_TECHNICAL_SHARP, "
                     "PRIOR_ART, TRUST_MODELLED, TRUST_ASSUMPTIONS_WRITTEN, "
-                    "VULNERABILITIES_WRITTEN, IMPACT_ASSESSED, COMPLETED.")
+                    "VULNERABILITIES_WRITTEN, IMPACT_ASSESSED, COMPLETED. "
+                    "IMPACT_ASSESSED carries no section: the `assess_impact` "
+                    "tool owns that transition.")
     sections: ModelSections | None = Field(
         default=None,
         description="Write payload: the typed section content for that gate. "
@@ -152,10 +163,12 @@ _HUNTS_STORE_DESCRIPTION = (
     "or a path. The states and their sections are: UNIT_TECHNICAL_SHARP "
     "(technical_sharpening), TRUST_MODELLED (trust_model), "
     "TRUST_ASSUMPTIONS_WRITTEN (assumptions), VULNERABILITIES_WRITTEN "
-    "(vulnerabilities), PRIOR_ART (prior_art), IMPACT_ASSESSED "
-    "(impact_assessment), COMPLETED (threats; the store computes "
-    "the risk profile and runs the completion checker). A section outside the "
-    "state's set is rejected; the model state is monotonic, so a later write for "
+    "(vulnerabilities), PRIOR_ART (prior_art), COMPLETED (threats; the store "
+    "mirrors the derived risk, computes the risk profile, and runs the "
+    "completion checker). The IMPACT_ASSESSED gate carries NO section and is "
+    "not a write of this tool: `assess_impact` is the sole writer of an "
+    "assessment row and owns that transition. A section outside the state's set "
+    "is rejected; the model state is monotonic, so a later write for "
     "an earlier gate updates that section without regressing the state.\n"
     "cmd='read': pass an optional `unit_id` (default: the unit you are modelling) "
     "and an optional `section` to project one section. Reads are read-only.\n"
@@ -173,7 +186,7 @@ _HUNTS_STORE_DESCRIPTION = (
     "`technical_sharpening.interface_agreements[].id` (`IA-*`), "
     "`trust_model.dynamic_state_trust.violations[].maps_to_fault` names an "
     "`assumptions[].fault.id` (`F-*`), `threats[].impact_ref` names an "
-    "`impact_assessment[].id` (`IA-*`), `impact_assessment[].capability_id` "
+    "`assess_impact` row (`IA-*`), `impact_assessment[].capability_id` "
     "is this row's capability key (`P-*`), and `threats[].enabling_precursors` "
     "is an ordered pair of `[capability, provider]`, each a `P-*` or "
     "`Unit::P-*` key or `null`. The `precursor` query returns the impact rows "
@@ -356,6 +369,215 @@ class ModellerHuntsStoreTool(StoreToolBase):
         # and counted), never into the turn silently.
         return {"ok": True, "state": gate.value, "sections": sorted(sections),
                 "path": str(path), "hint": GATE_HINTS.get(gate)}
+
+
+# --- the `assess_impact` tool for the threat model (schema-5 spec 4) ----------
+
+# The factor rules the ASSESSMENT enters per argument: the domain mapping, not
+# the standard's wording (ADR 3). The per-VALUE semantics and examples live in
+# `risk_score.FACTOR_DESCRIPTIONS`, which the description below renders, so the
+# tool contract and the system prompt cannot drift (spec 1).
+_FACTORS_ARG_DESCRIPTION = (
+    "The eight CVSS 4.0 base factors of the attack AS IT WOULD RUN IF THE FAULT "
+    "IS PRESENT; never discount one for an `ASSUMED` premise. `PR`: the role and "
+    "the permissions the chain's application primitives need. `AC`: the defence "
+    "that must be circumnavigated (a sanitizer, a rate limiter, CSP, CORS, a "
+    "cookie attribute, an authorization control, a trust control), never the "
+    "step count. `AT`: any other attacker capability that adds a phase (a "
+    "planted XSS payload, DNS rebinding for SSRF and TOCTOU, JWKS access for "
+    "forged tokens and session fixation); a multi-request chain is not "
+    "`present`. `AV`: the network position. `UI`: passive for a routine flow or "
+    "a common application state, active for a specific non-routine victim "
+    "action. `VC`/`VI`/`VA`: `high` for a direct serious loss, `low` for a "
+    "partial or bounded loss, `none` for no loss. Each value's semantic and "
+    "example follows."
+)
+
+
+def _factor_contract_lines() -> list[str]:
+    """The eight factors rendered from `FACTOR_DESCRIPTIONS`.
+
+    ONE source for the tool contract and the system prompt: the prompt renders
+    the same entries, and both are checked against the constant."""
+    lines: list[str] = []
+    for name, values in FACTOR_DESCRIPTIONS.items():
+        lines.append(f"{name}:")
+        lines.extend(f"- {value}: {text}" for value, text in values.items())
+    return lines
+
+
+ASSESS_IMPACT_DESCRIPTION = "\n".join([
+    "Write ONE impact-assessment row: the scored claim of one vulnerability "
+    "exploitation, and the ONLY writer of the assessment rows (the "
+    "`hunts_store` surface refuses that section).",
+    "The row carries the two prose blocks and the eight CVSS 4.0 base factors. "
+    "The tool validates the row and advances the model state to "
+    "IMPACT_ASSESSED; the persistence derives the score and the vector inside "
+    "the write, so never send a score, a vector, or a factor echo - success is "
+    "`{ok: true}` plus the next-state hint, and a failure is a coded rejection "
+    "naming the field and the fix.",
+    "Call it once per assessment row, and at least once for every vulnerability "
+    "that is not dropped. A second row for the same vulnerability needs a "
+    "distinct `capability_id`.",
+    "The factors describe the attack AS IT WOULD RUN IF THE FAULT IS PRESENT; "
+    "never discount one for an `ASSUMED` premise. Confidence plans the "
+    "verification of the technical and trust-model claims; it never lowers a "
+    "factor and it is not a field of this row.",
+    "The factors (CVSS 4.0 base group; the subsequent system mirrors the "
+    "vulnerable one):",
+    *_factor_contract_lines(),
+])
+
+
+class AssessImpactArgs(BaseModel):
+    """The `assess_impact` args contract: one assessment row, atomically.
+
+    `risk` and `risk_vector` are NOT fields, so an authored score is a rejected
+    field: the persistence derives both from `factors` (ADR 2, 3). The `factors`
+    schema renders `risk_score.FACTOR_DESCRIPTIONS`."""
+
+    id: str = Field(
+        description="The row id (`IA-*`), the key `threats[].impact_ref` names "
+                    "(for example `IA-1`).")
+    vulnerability_ref: str = Field(
+        description="The id of the `vulnerabilities[]` row this exploitation is "
+                    "of (`V-*`), never prose.")
+    disposition: Literal["threat", "precursor"] = Field(
+        description="`threat` for a row that reaches a concrete end damage; "
+                    "`precursor` for a capability with no end damage.")
+    impact_description: str = Field(
+        description="The victim and the damaged property for a `threat` row; "
+                    "for a `precursor` row, why no end damage follows.")
+    exploitability_description: str = Field(
+        description="The chain: its capabilities, its phases, and the human "
+                    "participation it needs.")
+    capability: str = Field(
+        description="The adversarial capability gained when this impact is "
+                    "realised.")
+    capability_id: str = Field(
+        description="This row's capability key (`P-*`), the key other units "
+                    "reference.")
+    capability_path: list[str] = Field(
+        description="The capabilities required before this one, in execution "
+                    "order, each a `P-*` or `Unit::P-*`; empty for a direct "
+                    "impact.")
+    evidence_refs: list[str] = Field(
+        description="The probes and records behind the assessment.")
+    factors: RiskMetrics = Field(description=_FACTORS_ARG_DESCRIPTION)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ModellerAssessImpactTool(BaseTool):
+    """The modeller's `assess_impact` binding: the sole writer of one schema-5
+    assessment row, bound to the store, the project, the unit, and the run.
+
+    The success envelope is `{ok: true}` plus the next-state cadence hint (the
+    tool, not `hunts_store`, owns the `IMPACT_ASSESSED` transition); a failure
+    is a coded teaching rejection naming the row field and the fix. The tool
+    never returns the score, the vector, or a factor echo, so the model cannot
+    iterate on a value it must not author (ADR 2)."""
+
+    name: str = "assess_impact"
+    description: str = ASSESS_IMPACT_DESCRIPTION
+    args_schema: type[BaseModel] = AssessImpactArgs
+
+    def __init__(self, *, store=None, project_id: str = "", unit_id: str = "",
+                 run_id: str = "", unit: "ModellerUnit | None" = None, **data):
+        super().__init__(**data)
+        self._store = store
+        self._project_id = project_id
+        self._unit_id = unit_id
+        self._run_id = run_id
+        self._unit = unit
+
+    @property
+    def _bound_project(self) -> str:
+        return self._unit.project_id if self._unit is not None else self._project_id
+
+    @property
+    def _bound_unit(self) -> str:
+        return self._unit.unit_id if self._unit is not None else self._unit_id
+
+    @property
+    def _bound_run(self) -> str:
+        return self._unit.run_id if self._unit is not None else self._run_id
+
+    def invoke(self, input, config=None, **kwargs):
+        """Translate a schema-drift `ValidationError` into a coded teaching
+        rejection, so an authored score or an unknown field names itself and
+        the model corrects in one pass (the shared rejection convention).
+
+        A direct unit-test invocation keeps the plain payload; a harness
+        ToolCall gets the ToolMessage the graph expects (`type == "tool_call"`,
+        never the row's own `id` field)."""
+        try:
+            return super().invoke(input, config=config, **kwargs)
+        except ValidationError as exc:
+            coded = coded_teaching_rejection(
+                tool_name=self.name, tool_input=input, exc=exc,
+                discriminator="", known_commands=(),
+                require_write_intent=False, args_schema=self.args_schema)
+            if coded is None:
+                raise
+            if isinstance(input, dict) and input.get("type") == "tool_call":
+                from langchain_core.messages import ToolMessage  # noqa: PLC0415
+
+                return ToolMessage(content=json.dumps(coded),
+                                   tool_call_id=str(input.get("id")))
+            return coded
+
+    @staticmethod
+    def _rejected(fields: list[str], detail: str) -> dict:
+        return {
+            "ok": False, "error": "assess_impact_rejected",
+            "fields": list(fields), "detail": detail, "rejected": True,
+        }
+
+    def _run(self, **kwargs: Any) -> dict:
+        if self._store is None:
+            return {"ok": False, "error": "assess_impact_unavailable",
+                    "degraded": True,
+                    "detail": "no threat model store is bound to this tool"}
+        if not self._bound_unit:
+            # the sibling store tool returns a coded rejection for an unbound
+            # identity; this tool must not raise where it does
+            return self._rejected(
+                ["unit_id"],
+                "no unit is bound to this tool; the assessment row cannot derive "
+                "the unit directory")
+        if not self._bound_run:
+            return self._rejected(
+                ["run_id"],
+                "no run is bound to this tool; the assessment write stamps the "
+                "harness-held run id")
+        try:
+            self._store.write_impact_assessment(
+                self._bound_project, self._bound_unit, self._bound_run,
+                id=kwargs["id"],
+                vulnerability_ref=kwargs["vulnerability_ref"],
+                disposition=kwargs["disposition"],
+                impact_description=kwargs["impact_description"],
+                exploitability_description=kwargs["exploitability_description"],
+                capability=kwargs["capability"],
+                capability_id=kwargs["capability_id"],
+                capability_path=kwargs["capability_path"],
+                evidence_refs=kwargs["evidence_refs"],
+                factors=kwargs["factors"],
+            )
+        except ImpactAssessmentError as exc:
+            # the store's coded teaching rejection, re-surfaced verbatim: the
+            # referential and factor rules belong to the document, not here
+            return self._rejected(list(exc.fields), str(exc))
+        except ThreatModelSchemaVersionError as exc:
+            # a v4 (or unreadable) document is never written into (spec 11)
+            return self._rejected(["state"], str(exc))
+        # The score is derived and NEVER echoed. The success envelope carries
+        # the next-state cadence hint, exactly like every `hunts_store` gate
+        # write, because this tool owns the IMPACT_ASSESSED transition: without
+        # it the completion pointer would be a table entry nothing emits.
+        return {"ok": True,
+                "hint": GATE_HINTS[ModelState.IMPACT_ASSESSED]}
 
 
 # --- the `notes` tool for the threat model (S1 5.2) --------------------------
@@ -882,6 +1104,9 @@ def build_modeller_tool_surface(
         tools.seam_gaps = ToolSeamGaps()
     surface: list[BaseTool] = [
         ModellerHuntsStoreTool(
+            store=tools.threat_store, project_id=project_id, unit_id=unit_id,
+            run_id=tools.run_id, unit=tools.unit_cell),
+        ModellerAssessImpactTool(
             store=tools.threat_store, project_id=project_id, unit_id=unit_id,
             run_id=tools.run_id, unit=tools.unit_cell),
         build_modeller_notes_tool(tools.threat_store, project_id, unit_id,

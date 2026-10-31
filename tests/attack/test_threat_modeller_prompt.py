@@ -80,14 +80,16 @@ def test_the_prompt_carries_the_required_material():
         "drop_rule": "A drop requires ONE of two findings",
         "unobserved_assumptions": "Unobserved assumptions survive",
         "closure_check": "Assumption-to-threat closure",
-        "risk_factor_attack_vector": "**attack vector**",
-        "risk_factor_attack_requirements": "**attack requirements**",
-        "risk_factor_privileges": "**privileges required**",
-        "risk_factor_complexity": "**complexity**",
-        "likelihood_enum": "`none / low / medium / high / critical`",
-        "monotonic_weights": "`0 / 1 / 2 / 3 / 4`",
-        "impact_metrics": "**Impact metrics.**",
-        "score_authority": "Never author a score.",
+        "factor_attack_vector": "`attack_vector` (`AV`)",
+        "factor_attack_complexity": "`attack_complexity` (`AC`)",
+        "factor_attack_requirements": "`attack_requirements` (`AT`)",
+        "factor_privileges": "`privileges_required` (`PR`)",
+        "factor_user_interaction": "`user_interaction` (`UI`)",
+        "factor_confidentiality": "`confidentiality` (`VC`)",
+        "factor_integrity": "`integrity` (`VI`)",
+        "factor_availability": "`availability` (`VA`)",
+        "score_authority": "Never author a score",
+        "derived_score": "the persistence computes the score",
         "wellformedness": "Well-formedness: retrospective modelling",
         "class_guard": "Technique families are not vulnerability classes",
         "class_required": "never leave `web_vulnerability_class` empty",
@@ -96,6 +98,7 @@ def test_the_prompt_carries_the_required_material():
         "target_front_directive": "502 Bad Gateway",
         "route_absence": "404",
         "tool_store": "`hunts_store`",
+        "tool_assess_impact": "`assess_impact`",
         "tool_notes": "`notes`",
         "tool_http_search": "`search_http_history`",
         "tool_http_get": "`get_http_artifact`",
@@ -116,7 +119,7 @@ def test_the_prompt_names_every_bound_tool_including_the_lesson_tool():
     """The tool section is the human projection of the bound surface; a bound
     tool the prompt never names is a hidden capability."""
     prompt = _modeller_skill()
-    for name in ("hunts_store", "notes", "search_http_history",
+    for name in ("hunts_store", "assess_impact", "notes", "search_http_history",
                  "get_http_artifact", "exec", "skill_list", "skill_load",
                  "load_skill", "record_skill_lesson", "auth_store"):
         assert name in prompt, name
@@ -157,13 +160,15 @@ def test_the_prompt_states_the_seven_gates_in_workflow_order():
 
 
 def test_the_prompt_states_the_damage_semantic_and_the_precursor_boundary():
-    """Ticket 436's prompt contract: the damage names the victim and the
-    property, the victim/property catalog is explicit, a precursor is an abstract
-    capability (never a request or payload), one threat references one damage
-    row, and the CIA vector is scored AFTER the assessment."""
+    """Ticket 436's prompt contract, on the schema-5 field names: the impact
+    description names the victim and the property, the victim/property catalog is
+    explicit, a precursor is an abstract capability (never a request or payload),
+    one threat references one row, and the two prose blocks precede the factors."""
     prompt = _modeller_skill()
     required = {
-        "damage_field": "`damage`: the victim and the damaged property",
+        "impact_description": (
+            "`impact_description`: the victim and the damaged property"),
+        "exploitability_description": "`exploitability_description`: the chain",
         "victim_user": "An end user",
         "victim_application": "The application",
         "victim_infrastructure": "The infrastructure",
@@ -175,12 +180,128 @@ def test_the_prompt_states_the_damage_semantic_and_the_precursor_boundary():
         "capability_path": "capability_path",
         "one_threat_one_damage": "closes to exactly one threat",
         "several_per_vulnerability": "one per exploitation manner",
-        "cia_after": "AFTER the assessment",
-        "threat_cia_non_none": "at least one non-none value",
+        "threat_impact_non_none": "at least one impact value above `none`",
+        "precursor_impact_none": "`none` in all three",
         "precursor_no_dispatch": "is never dispatched",
     }
     missing = [name for name, clause in required.items() if clause not in prompt]
     assert missing == []
+
+
+def test_the_prompt_retires_the_likelihood_the_weights_and_the_confidence_rule():
+    """Schema 5 retires the whole likelihood vocabulary: no enum, no monotonic
+    weights, no impact sub-score arithmetic, and no confidence-as-a-factor rule.
+    The retired words must not survive anywhere in the prompt."""
+    prompt = _modeller_skill()
+    for retired in ("likelihood", "ordinal weight", "impact weight",
+                    "0 / 1 / 2 / 3 / 4", "0.22", "0.35", "0.56", "0.6568",
+                    "lower the class", "likelihood_rationale"):
+        assert retired not in prompt, retired
+    # the retired four-value impact set: the impact values are high/low/none
+    assert "none / low / medium / high" not in prompt
+
+
+def test_the_prompt_renders_the_five_exploitability_factors_with_their_domain_semantics():
+    """The factors are the domain mapping, not the standard's wording: PR is the
+    role and permissions of the chain's primitives, AC is the defence to
+    circumnavigate, AT is a further capability that adds a phase, AV is the
+    network position, and UI is passive for a routine flow and active for a
+    specific victim action."""
+    prompt = _modeller_skill()
+    required = {
+        "pr_role": "the role and the permissions the chain's application "
+                   "primitives need",
+        "ac_defence": "the defence that must be circumnavigated",
+        "ac_sanitizer": "sanitizer",
+        "ac_rate_limiter": "rate limiter",
+        "ac_csp": "CSP",
+        "ac_cors": "CORS",
+        "ac_cookie": "cookie attribute",
+        "ac_authorization": "authorization control",
+        "ac_trust": "trust control",
+        "at_phase": "any other attacker capability that adds a phase",
+        "at_planted_xss": "planted XSS payload",
+        "at_dns": "DNS rebinding for SSRF and TOCTOU",
+        "at_jwks": "JWKS access for forged tokens and session fixation",
+        "at_not_step_count": "A multi-request chain is not",
+        "av_position": "the network position",
+        "ui_passive": "passive for a routine",
+        "ui_active": "active for a specific non-routine victim action",
+        "ui_implicit": "Leave passive interaction implicit",
+        "ui_explicit": "state an active interaction",
+    }
+    missing = [name for name, clause in required.items() if clause not in prompt]
+    assert missing == []
+
+
+def test_the_prompt_states_the_impact_values_with_one_example_each():
+    """The impact values are `high`, `low`, and `none` (CVSS 4.0 has no
+    `medium`), and every value carries one brief example in the prompt."""
+    from polymerhus.attack.hunting.risk_score import FACTOR_DESCRIPTIONS
+
+    prompt = _modeller_skill()
+    assert "`high` is a direct, serious loss" in prompt
+    assert "`low` is a partial or bounded loss" in prompt
+    assert "`none` is no loss" in prompt
+    for field in ("confidentiality", "integrity", "availability"):
+        assert set(FACTOR_DESCRIPTIONS[field]) == {"none", "low", "high"}
+
+
+def test_the_prompt_renders_every_factor_value_from_the_single_source():
+    """The factor semantics and the examples are defined ONCE, in `risk_score`'s
+    FACTOR_DESCRIPTIONS; the prompt renders the same text the tool contract
+    renders, so a value cannot drift between them."""
+    from polymerhus.attack.hunting.risk_score import FACTOR_DESCRIPTIONS
+
+    prompt = _modeller_skill()
+    missing = [
+        f"{field}.{value}"
+        for field, values in FACTOR_DESCRIPTIONS.items()
+        for value, text in values.items()
+        if text not in prompt
+    ]
+    assert missing == []
+
+
+def test_the_prompt_states_the_no_discount_rule_and_the_derived_score():
+    """Two rules the score depends on: the factors describe the attack as it
+    would run if the fault is present (an `ASSUMED` premise never lowers one),
+    and the model writes the two prose blocks and the eight factors while the
+    tool writes the row and the persistence derives the score."""
+    prompt = _modeller_skill()
+    required = {
+        "if_present": "IF THE FAULT IS PRESENT",
+        "no_discount": "Never discount a factor for an `ASSUMED` premise",
+        "confidence_plans": "verification-planning attribute",
+        "confidence_scope": "technical and trust-model claims only",
+        "no_score": "Never author a score",
+        "model_writes": "you write the two prose blocks and the eight factors",
+        "tool_writes": "the tool writes the row",
+        "persistence_scores": "the persistence computes the score",
+    }
+    missing = [name for name, clause in required.items() if clause not in prompt]
+    assert missing == []
+
+
+def test_the_assess_impact_tool_description_renders_the_same_factor_contract():
+    """The tool contract and the prompt render ONE source: every factor value and
+    its example appears verbatim in both, and the tool states the success
+    envelope and the no-score rule."""
+    from polymerhus.attack.hunting.risk_score import FACTOR_DESCRIPTIONS
+    from polymerhus.attack.hunting.threat_modeller_tools import (
+        ASSESS_IMPACT_DESCRIPTION,
+    )
+
+    missing = [
+        f"{field}.{value}"
+        for field, values in FACTOR_DESCRIPTIONS.items()
+        for value, text in values.items()
+        if text not in ASSESS_IMPACT_DESCRIPTION
+    ]
+    assert missing == []
+    assert "ok: true" in ASSESS_IMPACT_DESCRIPTION
+    assert "never send a score" in ASSESS_IMPACT_DESCRIPTION
+    assert "ASSUMED" in ASSESS_IMPACT_DESCRIPTION
 
 
 def test_the_prompt_reference_table_matches_the_typed_paths():
@@ -200,15 +321,19 @@ def test_the_prompt_reference_table_matches_the_typed_paths():
         assert path in prompt, path
 
 
-def test_the_worked_example_carries_the_impact_arithmetic():
+def test_the_worked_example_carries_the_factor_compilation():
     """The composite example is the prompt's worked chain: the SSRF/TOCTOU
-    metrics, the sub-score, the ordinal weight, and the low-yield contrast."""
+    factors and the precursor contrast, with no arithmetic for the model to
+    author (the persistence derives the score)."""
     prompt = _modeller_skill()
     assert "TOCTOU" in prompt
-    assert "0.6568" in prompt
-    assert "ordinal weight is `3`" in prompt
+    assert "AV=network" in prompt
+    assert "AT=present" in prompt
+    assert "VC=high" in prompt
     assert "soft-404 contract divergence" in prompt
-    assert "impact weight is `0`" in prompt
+    assert "derived score is `0.0`" in prompt
+    assert "ordinal weight" not in prompt
+    assert "impact weight" not in prompt
 
 
 def test_the_prompt_embeds_the_retired_notes_material():
@@ -562,3 +687,19 @@ def test_the_completed_gate_teaches_class_copying_and_the_validation_rewrite():
     instruction = STATE_INSTRUCTIONS[ModelState.COMPLETED]
     assert "verbatim" in instruction
     assert "write COMPLETED again" in instruction
+
+
+def test_the_assessment_and_completion_turns_name_the_tool_and_the_derived_risk():
+    """Schema 5 moves the write to the tool: the IMPACT_ASSESSED turn calls
+    `assess_impact` once per row, and the COMPLETED turn derives the risk and
+    verifies the coverage and the chains instead of scoring anything."""
+    instruction = STATE_INSTRUCTIONS[ModelState.IMPACT_ASSESSED]
+    assert "`assess_impact`" in instruction
+    assert "once per assessment row" in instruction
+    assert "derived" in instruction
+
+    completion = STATE_INSTRUCTIONS[ModelState.COMPLETED]
+    assert "do not author a score" in completion
+    assert "assessment row" in completion
+    assert "enabling chain" in completion
+    assert "likelihood" not in completion

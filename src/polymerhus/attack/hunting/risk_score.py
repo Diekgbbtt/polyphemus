@@ -30,7 +30,7 @@ from enum import StrEnum
 from typing import Literal
 
 from cvss import CVSS4
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # The disposition of an assessment row, duplicated from the schema's
 # `ImpactDisposition` as a structural type so this module never imports the
@@ -104,17 +104,165 @@ class SeverityBand(StrEnum):
     CRITICAL = "critical"
 
 
+# The ONE source of the factor descriptions the `assess_impact` tool contract
+# and the modeller prompt render, so the two cannot drift (spec 1).  Every entry
+# is "<one-line semantic>. Example: <one brief example>", keyed by the
+# `RiskMetrics` field and then by the enum value.  `RiskMetrics` renders it into
+# the tool schema's factor descriptions.
+FACTOR_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "attack_vector": {
+        "network": (
+            "The attack reaches the target from any network position. "
+            "Example: a hostile HTTP request to the public front."
+        ),
+        "adjacent": (
+            "The attack needs the same local network segment or broadcast "
+            "domain as the target. "
+            "Example: a spoofed request from another host on the office LAN."
+        ),
+        "local": (
+            "The attack needs a local account or shell on the target host. "
+            "Example: a shell on the application server running the target."
+        ),
+        "physical": (
+            "The attack needs physical contact with the target hardware. "
+            "Example: a device plugged into an exposed port."
+        ),
+    },
+    "attack_complexity": {
+        "low": (
+            "No defence has to be beaten; the chain works on the first "
+            "attempt. "
+            "Example: an object reference read with no token or rate check."
+        ),
+        "high": (
+            "A defence must be circumnavigated for the chain to work. "
+            "Example: escaping a context-aware HTML sanitizer."
+        ),
+    },
+    "attack_requirements": {
+        "none": (
+            "No further attacker capability is needed beyond the chain "
+            "itself. "
+            "Example: one request that returns another user's record."
+        ),
+        "present": (
+            "One further attacker capability adds a phase to the chain. "
+            "Example: a planted XSS payload for exfiltration."
+        ),
+    },
+    "privileges_required": {
+        "none": (
+            "The chain needs no account and no permission. "
+            "Example: an anonymous request to a public route."
+        ),
+        "low": (
+            "The chain needs a basic authenticated role. "
+            "Example: a self-registered user calling the API with its own "
+            "session."
+        ),
+        "high": (
+            "The chain needs an administrative role or a high-privilege "
+            "permission. "
+            "Example: an admin-only management route called with an admin "
+            "session."
+        ),
+    },
+    "user_interaction": {
+        "none": (
+            "The attack needs no victim action; a routine or automatic flow is "
+            "enough. "
+            "Example: a page that fires the request as soon as it loads."
+        ),
+        "passive": (
+            "The attack rides a routine flow or common application state the "
+            "victim already uses. "
+            "Example: a stored XSS that runs when a reader opens the article "
+            "they came to read."
+        ),
+        "active": (
+            "The attack needs a specific non-routine action by the victim. "
+            "Example: the victim drags a crafted string into a form field."
+        ),
+    },
+    "confidentiality": {
+        "none": (
+            "No data is disclosed. "
+            "Example: the injected request returns only its own status."
+        ),
+        "low": (
+            "The disclosure is partial or bounded. "
+            "Example: username enumeration that confirms one account exists."
+        ),
+        "high": (
+            "The disclosure is direct and serious. "
+            "Example: the full record set of every user is returned."
+        ),
+    },
+    "integrity": {
+        "none": (
+            "No data can be modified. "
+            "Example: a read-only route that ignores the mutated body."
+        ),
+        "low": (
+            "The damage to data is partial or bounded. "
+            "Example: one non-load-bearing profile field of the attacker's own "
+            "account is changed."
+        ),
+        "high": (
+            "The damage to data is direct and serious. "
+            "Example: another user's session state is rewritten."
+        ),
+    },
+    "availability": {
+        "none": (
+            "No service is lost. "
+            "Example: the injected request completes and leaves the pool "
+            "healthy."
+        ),
+        "low": (
+            "The loss of service is partial or bounded. "
+            "Example: one request is delayed by a per-account timeout."
+        ),
+        "high": (
+            "The loss of service is direct and serious. "
+            "Example: the whole worker pool is exhausted by one request."
+        ),
+    },
+}
+
+
+def _factor_description(name: str) -> str:
+    """One factor's schema description: every value, its semantic and example.
+
+    Rendered from `FACTOR_DESCRIPTIONS` with the same sentence-space joiner the
+    modeller prompt uses, so the tool schema the model reads and the prompt it
+    reads carry the same text.
+    """
+    return " ".join(
+        f"`{value}`: {text}" for value, text in FACTOR_DESCRIPTIONS[name].items()
+    )
+
+
 class RiskMetrics(_Record):
     """The eight authored CVSS 4.0 base factors of one impact assessment."""
 
-    attack_vector: AttackVector
-    attack_complexity: AttackComplexity
-    attack_requirements: AttackRequirements
-    privileges_required: PrivilegesRequired
-    user_interaction: UserInteraction
-    confidentiality: ImpactLevel
-    integrity: ImpactLevel
-    availability: ImpactLevel
+    attack_vector: AttackVector = Field(
+        description=_factor_description("attack_vector"))
+    attack_complexity: AttackComplexity = Field(
+        description=_factor_description("attack_complexity"))
+    attack_requirements: AttackRequirements = Field(
+        description=_factor_description("attack_requirements"))
+    privileges_required: PrivilegesRequired = Field(
+        description=_factor_description("privileges_required"))
+    user_interaction: UserInteraction = Field(
+        description=_factor_description("user_interaction"))
+    confidentiality: ImpactLevel = Field(
+        description=_factor_description("confidentiality"))
+    integrity: ImpactLevel = Field(
+        description=_factor_description("integrity"))
+    availability: ImpactLevel = Field(
+        description=_factor_description("availability"))
 
 
 class RiskResult(_Record):
@@ -242,130 +390,3 @@ def validate_metrics(
             "threat row (a threat row must carry at least one impact value "
             "above none)")
     return findings
-
-
-# The ONE source of the factor descriptions the `assess_impact` tool contract
-# and the modeller prompt render, so the two cannot drift (spec 1).  Every entry
-# is "<one-line semantic>. Example: <one brief example>", keyed by the
-# `RiskMetrics` field and then by the enum value.
-FACTOR_DESCRIPTIONS: dict[str, dict[str, str]] = {
-    "attack_vector": {
-        "network": (
-            "The attack reaches the target from any network position. "
-            "Example: a hostile HTTP request to the public front."
-        ),
-        "adjacent": (
-            "The attack needs the same local network segment or broadcast "
-            "domain as the target. "
-            "Example: a spoofed request from another host on the office LAN."
-        ),
-        "local": (
-            "The attack needs a local account or shell on the target host. "
-            "Example: a shell on the application server running the target."
-        ),
-        "physical": (
-            "The attack needs physical contact with the target hardware. "
-            "Example: a device plugged into an exposed port."
-        ),
-    },
-    "attack_complexity": {
-        "low": (
-            "No defence has to be beaten; the chain works on the first "
-            "attempt. "
-            "Example: an object reference read with no token or rate check."
-        ),
-        "high": (
-            "A defence must be circumnavigated for the chain to work. "
-            "Example: escaping a context-aware HTML sanitizer."
-        ),
-    },
-    "attack_requirements": {
-        "none": (
-            "No further attacker capability is needed beyond the chain "
-            "itself. "
-            "Example: one request that returns another user's record."
-        ),
-        "present": (
-            "One further attacker capability adds a phase to the chain. "
-            "Example: a planted XSS payload for exfiltration."
-        ),
-    },
-    "privileges_required": {
-        "none": (
-            "The chain needs no account and no permission. "
-            "Example: an anonymous request to a public route."
-        ),
-        "low": (
-            "The chain needs a basic authenticated role. "
-            "Example: a self-registered user calling the API with its own "
-            "session."
-        ),
-        "high": (
-            "The chain needs an administrative role or a high-privilege "
-            "permission. "
-            "Example: an admin-only management route called with an admin "
-            "session."
-        ),
-    },
-    "user_interaction": {
-        "none": (
-            "The attack needs no victim action; a routine or automatic flow is "
-            "enough. "
-            "Example: a page that fires the request as soon as it loads."
-        ),
-        "passive": (
-            "The attack rides a routine flow or common application state the "
-            "victim already uses. "
-            "Example: a stored XSS that runs when a reader opens the article "
-            "they came to read."
-        ),
-        "active": (
-            "The attack needs a specific non-routine action by the victim. "
-            "Example: the victim drags a crafted string into a form field."
-        ),
-    },
-    "confidentiality": {
-        "none": (
-            "No data is disclosed. "
-            "Example: the injected request returns only its own status."
-        ),
-        "low": (
-            "The disclosure is partial or bounded. "
-            "Example: username enumeration that confirms one account exists."
-        ),
-        "high": (
-            "The disclosure is direct and serious. "
-            "Example: the full record set of every user is returned."
-        ),
-    },
-    "integrity": {
-        "none": (
-            "No data can be modified. "
-            "Example: a read-only route that ignores the mutated body."
-        ),
-        "low": (
-            "The damage to data is partial or bounded. "
-            "Example: one non-load-bearing profile field of the attacker's own "
-            "account is changed."
-        ),
-        "high": (
-            "The damage to data is direct and serious. "
-            "Example: another user's session state is rewritten."
-        ),
-    },
-    "availability": {
-        "none": (
-            "No service is lost. "
-            "Example: the injected request completes and leaves the pool "
-            "healthy."
-        ),
-        "low": (
-            "The loss of service is partial or bounded. "
-            "Example: one request is delayed by a per-account timeout."
-        ),
-        "high": (
-            "The loss of service is direct and serious. "
-            "Example: the whole worker pool is exhausted by one request."
-        ),
-    },
-}

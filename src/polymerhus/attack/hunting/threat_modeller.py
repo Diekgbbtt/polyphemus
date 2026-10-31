@@ -13,7 +13,7 @@ gate writes (S1 6.1):
     TRUST_MODELLED            trust_model
     TRUST_ASSUMPTIONS_WRITTEN assumptions
     VULNERABILITIES_WRITTEN   vulnerabilities
-    IMPACT_ASSESSED           impact_assessment, precursors
+    IMPACT_ASSESSED           no model-facing section; the `assess_impact` rows
     COMPLETED                 threats
 
 Three rules govern the harness side:
@@ -36,9 +36,10 @@ checker is non-blocking and never rejects a write.
 The tool surface (S1 5) is built by
 `threat_modeller_tools.build_modeller_tool_surface` over the seams in
 `threat_modeller_tools.ModellerTools`: `hunts_store` (the threat-model
-read/write), `notes` (the shared notes tool with the bound
-`<unit_name>:<note_name>` key), the HTTP-history read pair, the Kali `exec`
-probe, and the web-vulnerability suite pair (`skill_list` / `skill_load`). The
+read/write), `assess_impact` (the sole writer of one assessment row),
+`notes` (the shared notes tool with the bound `<unit_name>:<note_name>` key),
+the HTTP-history read pair, the Kali `exec` probe, and the web-vulnerability
+suite pair (`skill_list` / `skill_load`). The
 auth store and the project skill arrive through the role's `load_skill` binding
 (the recon-orchestrator coupling). Deliberately NOT bound: `graph_view` (the
 unit projection and the L1 application-surface overview reach the turn through
@@ -90,8 +91,8 @@ MODELLER_MODEL_KEY = "LLM_HUNTING_THREAT_MODELLER"
 # aid tool is withdrawn - the fault is induced from the trust model, never
 # copied from an outside repository.
 TOOL_SURFACE: tuple[str, ...] = (
-    "hunts_store", "notes", "search_http_history", "get_http_artifact", "exec",
-    "skill_list", "skill_load",
+    "hunts_store", "assess_impact", "notes", "search_http_history",
+    "get_http_artifact", "exec", "skill_list", "skill_load",
 )
 
 # The gate hints (S1 9.3): module constants injected in the gate write's tool
@@ -106,11 +107,12 @@ GATE_HINTS: dict[ModelState, str] = {
         "with a hunts_store write for state TRUST_MODELLED."
     ),
     ModelState.PRIOR_ART: (
-        "Proceed to the impact assessment: for each vulnerability, assess the "
-        "impact of exploiting it alone, then use the prior art to fill the "
-        "capability gaps and either write a threat row with its enabling pairs "
-        "or a precursor row. Write the outcomes with a hunts_store write for "
-        "state IMPACT_ASSESSED."
+        "Proceed to the impact assessment: call `assess_impact` once per "
+        "assessment row, and at least once for every vulnerability that is not "
+        "dropped. Each call carries the two prose blocks (impact_description, "
+        "exploitability_description) and the eight factors; the tool validates "
+        "the row, the persistence derives the score, and the first successful "
+        "call advances the state to IMPACT_ASSESSED. Never author a score."
     ),
     ModelState.TRUST_MODELLED: (
         "Proceed to assumptions: enumerate the security-relevant artifacts and "
@@ -137,10 +139,12 @@ GATE_HINTS: dict[ModelState, str] = {
         "gate, then write the IMPACT_ASSESSED rows."
     ),
     ModelState.IMPACT_ASSESSED: (
-        "Proceed to completion: score each threat's CIA vector AFTER its damage "
-        "claim (at least one value above none), reference the threat's impact "
-        "row and its enabling precursors, and score the likelihood from the "
-        "four risk factors. Write ONLY the threats section; the store ranks the "
+        "Proceed to completion: the risk is DERIVED from the assessment rows - "
+        "never author a score, a vector, or a factor. Verify the assessment "
+        "coverage (every non-dropped vulnerability has a row with both prose "
+        "blocks and its capability) and the enabling chains (every required "
+        "capability resolves to its provider, ordered in execution order). Then "
+        "write ONLY the threats section; the store mirrors the risk, ranks the "
         "threats, computes the risk profile, and runs the completion checker."
     ),
 }
@@ -193,25 +197,28 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "and never leave the class empty. Then run the well-formedness phase."
     ),
     ModelState.IMPACT_ASSESSED: (
-        "Assess the damage BEFORE you score it. For every vulnerability that is "
-        "not dropped, write one impact_assessment row per exploitation manner. "
-        "The damage field names the victim and the damaged property for a threat "
-        "row, and states why no end damage follows for a precursor row. Every "
-        "row carries its capability and its capability_id; capability_path lists "
-        "the required capability keys in order. A row with a concrete end damage "
-        "is a threat; a row without one is a precursor and has no threat. Write "
-        "ONLY the impact_assessment section."
+        "Assess each vulnerability through the `assess_impact` tool: once per "
+        "assessment row, and at least once for every vulnerability that is not "
+        "dropped. Each row carries impact_description (the victim and the "
+        "damaged property, or why no end damage follows), "
+        "exploitability_description (the chain, its capabilities, and its human "
+        "participation), capability, capability_id, capability_path, "
+        "evidence_refs, and the eight factors. A row with a concrete end damage "
+        "is a threat; a row without one is a precursor. The tool validates the "
+        "row and advances the gate; the score is derived, never authored."
     ),
     ModelState.COMPLETED: (
         "Rank the threats: apply the two-clause drop rule, reference each "
-        "threat's impact row (impact_ref) and its enabling_precursors, score its "
-        "VC, VI, and VA AFTER the damage claim (at least one value above none), "
-        "and score its likelihood from the four risk factors. Copy each threat's "
-        "canonical_class and web_vulnerability_class verbatim from its "
-        "vulnerability. Write ONLY the threats section. The store computes the "
-        "combined risk profile and runs the completion checker after your "
-        "write; if validation.valid is false, fix every finding and write "
-        "COMPLETED again before ending the pass."
+        "threat's impact row (impact_ref) and its enabling_precursors, and copy "
+        "each threat's canonical_class and web_vulnerability_class verbatim "
+        "from its vulnerability. The risk is derived from the assessment rows: "
+        "do not author a score, a vector, or a factor. Verify that every "
+        "non-dropped vulnerability has an assessment row and that every "
+        "enabling chain resolves to its provider. Write ONLY the threats "
+        "section. The store mirrors the risk, computes the risk profile, and "
+        "runs the completion checker after your write; if validation.valid is "
+        "false, fix every finding and write COMPLETED again before ending the "
+        "pass."
     ),
 }
 
@@ -501,6 +508,20 @@ class TrackingThreatModelStore:
             return path
         self._tracker.observe(gate, sections)
         return path
+
+    def write_impact_assessment(self, project_id: str, unit_id: str,
+                                run_id: str, **fields):
+        """The assessment write is the `IMPACT_ASSESSED` gate (schema 5).
+
+        It is a store method of its own, not a `write_sections` call, so the
+        wrapper observes it here: the tool's first successful row advances the
+        tracked state, and the pass never re-asks the gate. A refused row raises
+        before this observation, so a rejected write is never counted."""
+        row = self._inner.write_impact_assessment(
+            project_id, unit_id, run_id, **fields)
+        self._tracker.observe(ModelState.IMPACT_ASSESSED,
+                              ("impact_assessment",))
+        return row
 
     def __getattr__(self, name):
         return getattr(self._inner, name)

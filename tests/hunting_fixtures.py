@@ -325,13 +325,12 @@ def modeller_gate_payloads() -> dict:
     never derived from the code under test. Single home: the modeller's pass
     tests, the runtime wiring tests, and the mover fixtures drive the SAME
     example. The worked example's ONE high-scoring threat references the ONE
-    scored assessment row (`ia-1`) that `_assessment_row` builds.
+    scored assessment row (`ia-1`) that `assessment_args` builds.
 
-    The `IMPACT_ASSESSED` payload is EMPTY: schema 5's `hunts_store` surface
-    carries no assessment section, because the `assess_impact` tool (ticket
-    #406) is that row's sole writer. A fixture that needs the row seeds the
-    document the tool will write (`produce_model`), never the model-facing
-    gate.
+    The `IMPACT_ASSESSED` payload is the `assess_impact` ARGS, never a
+    `hunts_store` section: schema 5's store surface carries no assessment
+    section, because the `assess_impact` tool (ticket #407) is that row's sole
+    writer and the persistence derives the score from the factors.
     """
     from polymerhus.attack.hunting.threat_model import ModelState
 
@@ -463,8 +462,8 @@ def modeller_gate_payloads() -> dict:
                 "evidences": [_evidence()],
             }],
         },
-        # The `assess_impact` tool owns this gate's content (ticket #406).
-        ModelState.IMPACT_ASSESSED: {},
+        # The `assess_impact` tool's args own this gate's content (ticket #407).
+        ModelState.IMPACT_ASSESSED: assessment_args(),
         ModelState.COMPLETED: {
             "threats": [{
                 "fault_ref": "fault-1",
@@ -506,6 +505,39 @@ def _assessment_row(index: int = 1, *, risk: float = ITEM_RISK) -> dict:
         "risk": risk,
         "risk_vector": ITEM_VECTOR,
     }
+
+
+def assessment_args(index: int = 1) -> dict:
+    """The `assess_impact` ARGS of the worked example's row `index`.
+
+    The derived `risk` and `risk_vector` are dropped: the tool's contract refuses
+    both, and the persistence computes them from the authored factors.
+    """
+    return {
+        key: value
+        for key, value in _assessment_row(index).items()
+        if key not in ("risk", "risk_vector")
+    }
+
+
+def write_gate(surface, state, *, payload=None):
+    """Write ONE gate through the BOUND tools.
+
+    The assessment rows have ONE writer, `assess_impact`; every other gate goes
+    through `hunts_store`. An EMPTY assessment payload writes nothing, for the
+    fixture whose model carries no row at all. `payload` defaults to the worked
+    example's content for that gate.
+    """
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    content = (
+        modeller_gate_payloads()[state] if payload is None else payload)
+    if state is ModelState.IMPACT_ASSESSED:
+        if not content:
+            return None
+        return surface["assess_impact"].invoke(dict(content))
+    return surface["hunts_store"].invoke({
+        "cmd": "write", "state": state.value, "sections": content})
 
 
 def _coherent_threats(threats):
@@ -651,8 +683,9 @@ def build_intake_l1(*, units=(), systems=()):
 
 class ScriptedModellerTurns:
     """The fake modeller turn seam: each state's turn writes its gate through the
-    BOUND `hunts_store` tool (never the store directly), so a test drives exactly
-    what the model drives. Returns the tool responses and the turn inputs."""
+    BOUND tools (never the store directly), so a test drives exactly what the
+    model drives - `hunts_store` for every gate, `assess_impact` for the
+    assessment rows. Returns the tool responses and the turn inputs."""
 
     def __init__(self, states=None, payloads=None):
         from polymerhus.attack.hunting.threat_model import ModelState
@@ -670,6 +703,12 @@ class ScriptedModellerTurns:
     def store_tool(self, turn):
         return next(tool for tool in turn.tools if tool.name == "hunts_store")
 
+    def write_gate(self, turn, state):
+        """One gate through the BOUND tools: the assessment row through
+        `assess_impact`, every other gate through `hunts_store`."""
+        return write_gate({tool.name: tool for tool in turn.tools}, state,
+                          payload=self.payloads[state])
+
     def __call__(self, turn):
         self.turn_inputs.append(turn)
         if turn.phase == "WELLFORMEDNESS":
@@ -684,8 +723,7 @@ class ScriptedModellerTurns:
             return None
         if turn.state not in self.states:
             return None
-        payload = self.payloads[turn.state]
-        self.responses.append(self.store_tool(turn).invoke({
-            "cmd": "write", "state": turn.state.value, "sections": payload,
-        }))
+        response = self.write_gate(turn, turn.state)
+        if response is not None:
+            self.responses.append(response)
         return None

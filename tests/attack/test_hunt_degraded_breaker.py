@@ -24,7 +24,7 @@ from polymerhus.attack.hunting.threat_modeller import (
 )
 from polymerhus.attack.hunting.threat_modeller_tools import ModellerTools
 
-from tests.hunting_fixtures import modeller_gate_payloads
+from tests.hunting_fixtures import write_gate
 
 PROJECT = "p"
 RUN = "r"
@@ -36,13 +36,13 @@ def _tools(tmp_path, **kwargs) -> ModellerTools:
                          project_id=PROJECT, run_id=RUN, **kwargs)
 
 
-def _gate_writer(turn, store):
-    """The turn seam's real-decision action: the BOUND store tool's gate write.
+def _gate_writer(turn):
+    """The turn seam's real-decision action: the BOUND tools' gate write.
 
-    The well-formedness pseudo-phase writes its exit note and the
-    IMPACT_ASSESSED gate, so a seam that writes every turn never re-enters the
-    phase."""
-    tool = next(t for t in turn.tools if t.name == "hunts_store")
+    The assessment rows have ONE writer, `assess_impact`; every other gate is a
+    `hunts_store` write. The well-formedness pseudo-phase writes its exit note
+    and advances to PRIOR_ART - the state the assessment write accepts - so a
+    seam that writes every turn never re-enters the phase."""
     if turn.phase == "WELLFORMEDNESS":
         notes = next(t for t in turn.tools if t.name == "notes")
         notes.invoke({
@@ -50,15 +50,10 @@ def _gate_writer(turn, store):
             "note_name": "wellformedness", "kind": "wellformedness",
             "body": "every threat checked",
         })
-        from polymerhus.attack.hunting.threat_model import ModelState
-        return tool.invoke({
-            "cmd": "write", "state": ModelState.IMPACT_ASSESSED.value,
-            "sections": modeller_gate_payloads()[ModelState.IMPACT_ASSESSED],
-        })
-    return tool.invoke({
-        "cmd": "write", "state": turn.state.value,
-        "sections": modeller_gate_payloads()[turn.state],
-    })
+        # the phase exit advances to PRIOR_ART; the assessment write accepts
+        # this state (the store refuses a row before it)
+        return write_gate({t.name: t for t in turn.tools}, ModelState.PRIOR_ART)
+    return write_gate({t.name: t for t in turn.tools}, turn.state)
 
 
 def _run(tmp_path, turns):
@@ -173,17 +168,18 @@ def test_pass_aborts_after_k_consecutive_no_decision_turns(tmp_path, monkeypatch
 
 
 def test_pass_a_real_decision_resets_consecutive_failures(tmp_path, monkeypatch):
-    """None, None, gate, None, None, gate, None: each gate write resets the
-    counter, so with abort=4 the trailing no-decisions stay below the threshold
-    and the pass returns instead of aborting."""
+    """None, None, gate, None, None, gate: each gate write resets the counter, so
+    with abort=4 the trailing no-decisions stay below the threshold and the pass
+    returns instead of aborting."""
     _set_breaker_env(monkeypatch, abort=4, warn=1, base=0.0)
     store = ThreatModelStore(root_dir=tmp_path)
     seen: list[ModelState] = []
 
     def turns(turn):
         seen.append(turn.state)
-        if turn.state in (ModelState.TRUST_MODELLED, ModelState.IMPACT_ASSESSED):
-            _gate_writer(turn, store)
+        if turn.phase == "WELLFORMEDNESS" or turn.state in (
+                ModelState.TRUST_MODELLED, ModelState.PRIOR_ART):
+            _gate_writer(turn)
         return None
 
     outcome = asyncio.run(arun_modeller_pass(
@@ -207,7 +203,7 @@ def test_per_state_fail_open_below_the_threshold_is_unchanged(tmp_path,
     def turns(turn):
         if turn.state == ModelState.UNIT_TECHNICAL_SHARP:
             return None                      # one degraded state
-        _gate_writer(turn, store)
+        _gate_writer(turn)
         return None
 
     outcome = asyncio.run(arun_modeller_pass(
