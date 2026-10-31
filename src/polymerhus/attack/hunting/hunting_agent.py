@@ -5,8 +5,9 @@ The harness drives the model through the ratified threat tool surface
 `skill_load`, R3/R1/R2, S3 8.7) as a turn-by-turn ReAct loop OVER the
 pass-chain tracker (`hunter_graph.py`). It is dispatched with ONE threat PAYLOAD
 (S2 8.2: the threat record, the unit context, the trust agreement or transition,
-the programming fault, the two classes, the evidence, the likelihood and the
-target context) - never a `HuntConfig` (retired T6). Persistence rides the
+the programming fault, the two classes, the evidence, the derived risk and the
+assessment, and the target context) - never a `HuntConfig` (retired T6).
+Persistence rides the
 per-project hunter memory store under the threat dispatch id
 `<unit_name>__<threat_id>` (S3 8.9), and the harness derives no verdict: the hunt
 idles at END (R4/GP2-b).
@@ -286,47 +287,47 @@ def _project_sharpening(value: Any) -> Any:
 
 
 def _compose_grounding(payload: Mapping[str, Any]) -> str:
-    """The threat payload rendered once, ahead of the first step (S2 8.2): the
-    threat's context (the unit, the trust agreement or dynamic-state transition,
-    the programming fault, the two classes), the technical sharpening, the
-    evidence the hunter may choose a baseline from, the likelihood/confidence
-    and the target context. The rationale stays vulnerability-level - the
-    payload carries no narrowed vector and no pre-authored
-    payload vector space, so the hunter keeps the room to engineer its
-    procedure."""
+    """The threat payload rendered once, ahead of the first step (S2 8.2, spec
+    9): the threat's derived risk (score, band, vector, factors), the assessment
+    prose, the capability chain, the assumption confidences, the unit context
+    (the trust agreement or dynamic-state transition, the programming fault, the
+    two classes), the technical sharpening, the evidence the hunter may choose a
+    baseline from, and the target context. The rationale stays vulnerability-
+    level - the payload carries no narrowed vector and no pre-authored payload
+    vector space, so the hunter keeps the room to engineer its procedure."""
     unit_id = str(payload.get("unit_id") or "(unknown unit)")
     threat_id = str(payload.get("threat_id") or "(unknown threat)")
     sharpening = payload.get("technical_sharpening") or {}
     target = payload.get("target_context") or {}
-    impact = (payload.get("threat") or {}).get("impact") or {}
-    assessment = payload.get("impact") or {}
-    damage = str(assessment.get("damage") or "(none)")
-    disposition = str(assessment.get("disposition") or "(none)")
-    precursors = assessment.get("precursors") or []
-    attacker_position = "; ".join(
-        f"{precursor.get('capability')} via {precursor.get('procedure')}"
-        for precursor in precursors
-        if isinstance(precursor, Mapping)
-    ) or "(none)"
+    risk = payload.get("risk")
+    risk_text = "(none)" if risk is None else str(risk)
+    capability = str(payload.get("capability") or "(none)")
+    capability_id = str(payload.get("capability_id") or "")
+    if capability_id:
+        capability = f"{capability} ({capability_id})"
     return (
         f"You are dispatched to hunt {unit_id} for one threat-model threat.\n"
         f"Threat: {threat_id} (dispatch id "
-        f"{payload.get('dispatch_id') or '(none)'}), likelihood "
-        f"{payload.get('likelihood') or '(none)'}.\n"
+        f"{payload.get('dispatch_id') or '(none)'}), risk {risk_text} "
+        f"({payload.get('severity_band') or '(none)'}).\n"
+        f"CVSS 4.0 vector over domain-mapped factors: "
+        f"{payload.get('risk_vector') or '(none)'}\n"
+        f"Factors: {_render(payload.get('factors'))}\n"
         f"Canonical class: {payload.get('canonical_class') or '(none)'}; "
         f"web-vulnerability suite class: "
         f"{payload.get('web_vulnerability_class') or '(none)'}.\n"
         f"Vulnerability-level rationale: "
         f"{payload.get('vulnerability_rationale') or '(none)'}\n"
-        f"Likelihood rationale: "
-        f"{payload.get('likelihood_rationale') or '(none)'}\n"
-        f"Impact assessment: {damage} (disposition {disposition})\n"
-        f"Attacker position: {attacker_position}\n"
-        f"CIA: VC {impact.get('confidentiality') or 'none'}, VI "
-        f"{impact.get('integrity') or 'none'}, VA "
-        f"{impact.get('availability') or 'none'}\n"
+        f"Impact description: {payload.get('impact_description') or '(none)'}\n"
+        f"Exploitability description: "
+        f"{payload.get('exploitability_description') or '(none)'}\n"
+        f"Capability: {capability}; capability path: "
+        f"{_render(payload.get('capability_path'))}\n"
+        f"Enabling precursors (capability, provider): "
+        f"{_render(payload.get('enabling_precursors'))}\n"
         "The verification symptoms are variant-specific; the end damage is shared.\n"
-        f"Confidence degree: {payload.get('confidence') or '(none)'}\n"
+        f"Assumption confidences (probe the ASSUMED premises): "
+        f"{_render(payload.get('assumptions'))}\n"
         f"Programming fault: {_render(payload.get('programming_fault'))}\n"
         f"Trust agreement: {_render(payload.get('trust_agreement'))}\n"
         f"Dynamic-state transition/violation: "

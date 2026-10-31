@@ -127,44 +127,44 @@ def _answer(text):
 
 
 def _hunter_payload(**overrides) -> dict:
-    """The canonical threat payload the surfer materialises at dispatch (S2 8.2)
-    for the `(Service:slug:a, threat-1)` pair - the SAME key set
-    `materialise_hunter_payload` emits."""
+    """The canonical threat payload the surfer materialises at dispatch (S2 8.2,
+    CVSS 4.0 spec 9) for the `(Service:slug:a, threat-1)` pair - the SAME key set
+    `materialise_hunter_payload` emits. The assessment values are the worked
+    example's known-good literals (`ITEM_*`), never recomputed here."""
     payload = {
         "dispatch_id": HUNT_KEY,
         "run_id": "run-1",
         "threat_id": "threat-1",
         "unit_id": UNIT_ID,
         "unit_kind": "service",
+        "risk": ITEM_RISK,
+        "severity_band": "critical",
+        "risk_vector": ITEM_VECTOR,
+        "factors": dict(ITEM_FACTORS),
+        "impact_description": IMPACT_DESCRIPTION,
+        "exploitability_description": EXPLOITABILITY_DESCRIPTION,
+        "capability": "read another tenant's item",
+        "capability_id": f"{UNIT_ID}::p-1",
+        "capability_path": [],
+        "enabling_precursors": [],
+        "assumptions": [{
+            "id": "as-1",
+            "statement": "The lookup omits the ownership check.",
+            "fault_ref": "fault-1",
+            "boundary_ref": "ta-1",
+            "confidence": "ASSUMED",
+            "evidence_refs": ["note:catalogue"],
+        }],
         "threat": {
             "id": "threat-1",
             "fault_ref": "fault-1",
             "vulnerability_ref": "v-1",
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",
-            "likelihood": "high",
-            "likelihood_rationale": "An anonymous caller controls the id.",
-            "impact": {
-                "confidentiality": "low",
-                "integrity": "none",
-                "availability": "none",
-            },
             "impact_ref": "ia-1",
-            "enabling_precursors": ["p-1"],
-            "confidence": "INFERRED",
+            "enabling_precursors": [],
+            "risk": ITEM_RISK,
             "evidences": [{"kind": "request", "ref": "GET /api/a"}],
-        },
-        "impact": {
-            "impact_ref": "ia-1",
-            "damage": "A caller reads another tenant's item.",
-            "disposition": "threat",
-            "precursors": [{
-                "id": "p-1",
-                "capability": "read the item by its identifier",
-                "procedure": "resolve the item by the caller-supplied id",
-                "evidence_refs": ["GET /api/a"],
-            }],
-            "capability_path": ["p-1"],
         },
         "technical_sharpening": {
             "interface_agreements": [{
@@ -187,10 +187,7 @@ def _hunter_payload(**overrides) -> dict:
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
         "evidence": [{"kind": "request", "ref": "GET /api/a"}],
-        "likelihood": "high",
-        "likelihood_rationale": "An anonymous caller controls the id.",
         "vulnerability_rationale": "An anonymous caller reads another user's item.",
-        "confidence": "INFERRED",
         "target_context": {
             "unit_id": UNIT_ID,
             "unit_kind": "service",

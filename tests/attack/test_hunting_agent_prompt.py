@@ -222,9 +222,11 @@ def test_the_role_framing_names_the_hunting_process_only():
 
 
 def test_the_prompt_carries_the_threat_ontology():
-    """S3 8.5: one paragraph with the unit and its technical sharpening, the
-    trust model, the abduction chain, the confidence degree, the
-    variant and manifestation space, and the reasoning from the threat to attacks."""
+    """S3 8.5, CVSS 4.0 spec 9: one paragraph with the unit and its technical
+    sharpening, the trust model, the abduction chain, the CVSS 4.0 risk (score,
+    band, vector, factors), the two prose blocks, the capability chain, the
+    assumption confidences, the variant and manifestation space, and the
+    reasoning from the threat to attacks."""
     prompt = _prompt()
     start = prompt.index("## The threat ontology")
     ontology = prompt[start:prompt.index("\n## ", start)]
@@ -233,11 +235,32 @@ def test_the_prompt_carries_the_threat_ontology():
         "the trust model: the trust agreement",
         "dynamic-state transition",
         "the abduction chain: the programming fault and the vulnerability",
-        "the confidence degree",
+        "the CVSS 4.0 risk that prioritised the threat",
+        "the base score, the severity band, the vector, and the eight factors",
+        "the impact description (the shared end damage)",
+        "the exploitability description (the chain, its capabilities, and its "
+        "human participation)",
+        "the capability chain that reaches the damage",
+        "the assumption confidences that grade the premises the threat rests on",
         "the variant and manifestation space",
         "The reasoning from the threat to engineered attacks",
     ):
         assert clause in ontology, clause
+
+
+def test_the_prompt_retires_the_likelihood_vocabulary():
+    """ADR 6, spec 9: the threat ontology is the CVSS 4.0 risk, the band, the
+    vector, the factors, the two prose blocks, the capability chain, and the
+    assumption confidence. `likelihood`, its rationale, and the threat confidence
+    are retired, so the prompt never names them."""
+    prompt = _prompt()
+    assert "likelihood" not in prompt.lower()
+    assert "confidence degree" not in prompt.lower()
+    assert "CVSS 4.0" in prompt
+    assert "severity band" in prompt
+    assert "assumption confidences" in prompt
+    assert "impact description" in prompt
+    assert "exploitability description" in prompt
 
 
 # --- the discipline -----------------------------------------------------------

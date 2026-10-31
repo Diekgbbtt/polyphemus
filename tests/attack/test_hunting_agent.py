@@ -49,10 +49,11 @@ def test_axis_empty_card_defaults():
 # --- the hunting roles join the LLM role registry (Q1, #93/#94) --------------
 
 def test_compose_grounding_renders_the_threat_payload():
-    """The first-step grounding renders the threat payload's context (S2 8.2):
-    the unit and threat, the two classes, the trust agreement, the programming
-    fault, the technical sharpening, the evidence and the target context - and
-    never a retired config field or a failure mode."""
+    """The first-step grounding renders the threat payload's context (S2 8.2,
+    spec 9): the unit and threat, the derived risk, the two classes, the trust
+    agreement, the programming fault, the technical sharpening, the evidence and
+    the target context - and never a retired config field, a failure mode, or the
+    retired likelihood vocabulary."""
     from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
     from tests.hunting_fixtures import _hunter_payload
 
@@ -60,6 +61,9 @@ def test_compose_grounding_renders_the_threat_payload():
     text = _compose_grounding(payload)
     assert "You are dispatched to hunt Service:slug:a" in text
     assert "Threat: threat-1" in text and "Service-slug-a__threat-1" in text
+    assert "risk 9.2 (critical)" in text
+    assert "CVSS 4.0 vector over domain-mapped factors: CVSS:4.0/AV:N/AC:L" in text
+    assert "Factors:" in text and '"confidentiality": "high"' in text
     assert "Canonical class: IDOR" in text
     assert "web-vulnerability suite class: idor" in text
     assert "An anonymous caller reads another user's item." in text
@@ -67,26 +71,33 @@ def test_compose_grounding_renders_the_threat_payload():
     assert "ta-1" in text and "ia-1" in text
     assert "GET /api/a" in text
     for gone in ("HuntConfig", "failure_modes", "payload_vector_space",
-                 "technique_primitives", "prior_hunt_insights"):
-        assert gone not in text
+                 "technique_primitives", "prior_hunt_insights", "likelihood",
+                 "Likelihood", "Confidence degree"):
+        assert gone not in text, gone
 
 
-def test_compose_grounding_renders_the_impact_assessment():
-    """The hunter sees the shared damage and the attacker position as context,
-    not as a gate: the symptoms it engineers remain variant-specific."""
+def test_compose_grounding_renders_the_risk_and_the_assessment():
+    """The hunter sees the risk that prioritised the threat and the shared
+    assessment as context, not as a gate: the symptoms it engineers remain
+    variant-specific, and the assumption confidences say what to verify."""
     from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
     from tests.hunting_fixtures import _hunter_payload
 
     text = _compose_grounding(_hunter_payload())
 
-    assert "Impact assessment:" in text
-    assert "A caller reads another tenant's item." in text
-    assert "Attacker position:" in text
-    assert "read the item by its identifier" in text
-    assert "resolve the item by the caller-supplied id" in text
+    assert "Impact description:" in text
+    assert "An anonymous caller reads another tenant's item" in text
+    assert "Exploitability description:" in text
+    assert "One unauthenticated request names the item id" in text
+    assert "Capability: read another tenant's item (Service:slug:a::p-1)" in text
+    assert "capability path: (none)" in text
+    assert "Enabling precursors (capability, provider): (none)" in text
+    assert "Assumption confidences (probe the ASSUMED premises):" in text
+    assert '"confidence": "ASSUMED"' in text
     assert "The verification symptoms are variant-specific; the end damage is shared." in text
-    assert "End impact:" not in text
-    assert "VC low" in text and "VI none" in text and "VA none" in text
+    for gone in ("End impact:", "CIA:", "VC ", "Attacker position:",
+                 "Likelihood rationale:", "Impact assessment:"):
+        assert gone not in text, gone
 
 
 def test_step_protocol_respecifies_the_phase_hint_as_a_transition_signal():

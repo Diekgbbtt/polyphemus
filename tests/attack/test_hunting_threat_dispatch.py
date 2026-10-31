@@ -17,10 +17,20 @@ import asyncio
 import pytest
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
+from polymerhus.attack.hunting.hunter_payload import (
+    HunterPayloadError,
+    materialise_hunter_payload,
+)
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from polymerhus.app.llm.actor import AgentMessage
 
+from tests.hunting_fixtures import (
+    EXPLOITABILITY_DESCRIPTION,
+    IMPACT_DESCRIPTION,
+    ITEM_FACTORS,
+    ITEM_RISK,
+    ITEM_VECTOR,
+)
 from tests.hunting_fixtures import threat_row as _threat_row
 from tests.hunting_fixtures import produce_model as _produce_model
 
@@ -65,12 +75,14 @@ def produce_model(store, *, unit_id=UNIT, run_id=RUN, threats=None) -> str:
 
 # --- the payload (S2 8.2) ------------------------------------------------------
 
-def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store):
-    """S2 8.2: the payload carries the threat record, the unit identity, the
-    relevant sharpening, the trust boundary, the fault, the classes, the
-    evidence, the likelihood rationale, the confidence and the target context -
-    and does NOT carry the failure modes, a narrowed vector, a `HuntConfig`, or
-    a payload vector space."""
+def test_the_payload_carries_the_derived_risk_the_assessment_and_the_unit_context(
+        threat_store):
+    """CVSS 4.0 spec 9: the payload carries the derived risk (the float, the
+    band, the vector, and the eight factors), the assessment (both prose blocks,
+    the capability and its path, the enabling precursors), the assumption
+    confidences, the unit context, and nothing more. It carries no failure modes,
+    a narrowed vector, a retired `HuntConfig`, or a payload vector space, and no
+    likelihood, likelihood rationale, or threat confidence."""
     produce_model(threat_store)
     model = threat_store.read_model(PROJECT, UNIT)
     threat_file = threat_store.read_threat_files(PROJECT, UNIT)[0]
@@ -80,26 +92,42 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
         model, threat_file, dispatch_id=f"{UNIT_NAME}__threat-1",
     )
 
-    # the POSITIVE list (S2 8.2): the payload carries exactly these keys and no
+    # the POSITIVE list (spec 9): the payload carries exactly these keys and no
     # others - the failure modes, a narrowed vector, the retired `HuntConfig` and
-    # a payload vector space stay in the model (T4a review F4: `assumption` and `suite_gap`
-    # were extra; `programming_fault` and the threat record already carry them)
+    # a payload vector space stay in the model
     assert set(payload) == {
-        "dispatch_id", "run_id", "threat_id", "unit_id", "unit_kind", "threat",
-        "technical_sharpening", "trust_agreement", "dynamic_state",
+        "dispatch_id", "run_id", "threat_id", "unit_id", "unit_kind",
+        "risk", "severity_band", "risk_vector", "factors",
+        "impact_description", "exploitability_description",
+        "capability", "capability_id", "capability_path",
+        "enabling_precursors", "assumptions",
+        "threat", "technical_sharpening", "trust_agreement", "dynamic_state",
         "programming_fault", "canonical_class", "web_vulnerability_class",
-        "evidence", "likelihood", "likelihood_rationale",
-        "vulnerability_rationale", "confidence", "target_context", "impact",
-        "capability_chain",
+        "evidence", "vulnerability_rationale", "target_context",
     }
     assert payload["dispatch_id"] == f"{UNIT_NAME}__threat-1"
     assert payload["threat_id"] == "threat-1"
-    assert payload["impact"]["damage"] == (
-        "An anonymous caller reads another tenant's item from the catalogue database."
-    )
-    assert payload["impact"]["capability_path"] == []
-    assert payload["impact"]["capability"] == "read another tenant's item"
-    assert payload["capability_chain"] == []
+    # the derived risk: the worked example's known-good CVSS 4.0 values
+    assert payload["risk"] == ITEM_RISK
+    assert payload["severity_band"] == "critical"
+    assert payload["risk_vector"] == ITEM_VECTOR
+    assert payload["factors"] == ITEM_FACTORS
+    # the assessment prose, the capability, and the ordered precursor pairs
+    assert payload["impact_description"] == IMPACT_DESCRIPTION
+    assert payload["exploitability_description"] == EXPLOITABILITY_DESCRIPTION
+    assert payload["capability"] == "read another tenant's item"
+    assert payload["capability_id"] == f"{UNIT}::p-1"
+    assert payload["capability_path"] == []
+    assert payload["enabling_precursors"] == []
+    # the unit model's premises and their verification-planning confidence
+    assert payload["assumptions"] == [{
+        "id": "as-1",
+        "statement": "The handler omits the ownership check.",
+        "fault_ref": "fault-1",
+        "boundary_ref": "ta-1",
+        "confidence": "ASSUMED",
+        "evidence_refs": ["note:catalogue"],
+    }]
     assert payload["unit_id"] == UNIT
     assert payload["unit_kind"] == "service"
     assert payload["threat"]["id"] == "threat-1"
@@ -121,21 +149,23 @@ def test_the_payload_carries_the_dispatch_context_and_nothing_more(threat_store)
         "unit_id": UNIT, "unit_kind": "service",
         "baseline_refs": ["GET /catalogue"],
     }
-    assert payload["likelihood"] == "high"
-    assert payload["likelihood_rationale"] == threat["likelihood_rationale"]
     assert payload["vulnerability_rationale"] == "An anonymous caller reads another user's item."
-    assert payload["confidence"] == "INFERRED"
-    # the prohibitions (S2 8.2)
-    assert "failure_modes" not in payload
-    assert "payload_vector_space" not in payload
-    assert "hunt_config" not in payload
-    assert "vector" not in payload
+    # the prohibitions (spec 9, S2 8.2)
+    for gone in ("failure_modes", "payload_vector_space", "hunt_config",
+                 "vector", "likelihood", "likelihood_rationale",
+                 "confidence", "impact", "impact_weight"):
+        assert gone not in payload, gone
+    assert "likelihood" not in payload["threat"]
+    assert "likelihood_rationale" not in payload["threat"]
+    assert "confidence" not in payload["threat"]
+    assert "impact" not in payload["threat"]
 
 
-def test_the_payload_carries_the_impact_and_not_the_derived_score(threat_store):
-    """The hunter receives the intended impact vector as context. The derived
-    impact weight and threat risk are dispatch concerns, not hunter reasoning,
-    and the damage text lives in the threat file's `impact` block."""
+def test_the_payload_renders_the_derived_score_and_no_retired_impact_block(
+        threat_store):
+    """Spec 9: the hunter reads why the threat was prioritised - the float risk,
+    the band, the vector, and the eight factors. The threat-side CIA block and
+    the derived impact weight are retired and must not come back."""
     produce_model(threat_store)
     model = threat_store.read_model(PROJECT, UNIT)
     threat_file = threat_store.read_threat_files(PROJECT, UNIT)[0]
@@ -144,13 +174,65 @@ def test_the_payload_carries_the_impact_and_not_the_derived_score(threat_store):
         model, threat_file, dispatch_id=f"{UNIT_NAME}__threat-1",
     )
 
-    assert payload["threat"]["impact"] == {
-        "confidentiality": "low",
-        "integrity": "none",
-        "availability": "none",
-    }
+    assert payload["risk"] == threat_file["risk"]
+    assert payload["threat"]["risk"] == threat_file["risk"]
+    assert payload["severity_band"] == "critical"
+    assert payload["factors"]["confidentiality"] == "high"
+    assert payload["factors"]["integrity"] == "none"
+    assert payload["factors"]["availability"] == "none"
+    assert "impact" not in payload["threat"]
     assert "impact_weight" not in payload["threat"]
-    assert "risk" not in payload["threat"]
+
+
+def test_a_threat_file_without_its_assessment_block_is_a_coded_error(threat_store):
+    """Spec 9: the assessment is not optional. The store emits a threat file only
+    for a threat whose `impact_ref` resolves to a `threat` row, so a file without
+    its `impact` block (or with a block naming another row) is malformed. The
+    payload raises the coded defect instead of dispatching a hunter with an empty
+    assessment it can never hunt against."""
+    import copy
+
+    model, threat_file = _dynamic_model(threat_store)
+    body = copy.deepcopy(threat_file)
+    body.pop("impact")
+
+    with pytest.raises(HunterPayloadError) as missing:
+        materialise_hunter_payload(
+            model, body, dispatch_id=f"{UNIT_NAME}__threat-1")
+
+    assert missing.value.code == "hunter_payload_missing_assessment"
+    assert "impact assessment" in str(missing.value)
+
+    # the same defect when the block names a different row than the threat does
+    body = copy.deepcopy(threat_file)
+    body["impact"]["impact_ref"] = "ia-9"
+
+    with pytest.raises(HunterPayloadError) as mismatch:
+        materialise_hunter_payload(
+            model, body, dispatch_id=f"{UNIT_NAME}__threat-1")
+
+    assert mismatch.value.code == "hunter_payload_missing_assessment"
+    assert "ia-9" in str(mismatch.value) and "ia-1" in str(mismatch.value)
+
+
+def test_the_assumption_confidence_is_rendered_and_the_threat_confidence_is_not(
+        threat_store):
+    """ADR 5, spec 9: confidence stays on the trust-model claims and leaves the
+    threat. The hunter plans the verification probes from the assumption
+    confidences, so they ride the payload with their evidence refs; a threat
+    confidence is retired and must not."""
+    produce_model(threat_store)
+    model = threat_store.read_model(PROJECT, UNIT)
+    threat_file = threat_store.read_threat_files(PROJECT, UNIT)[0]
+
+    payload = materialise_hunter_payload(
+        model, threat_file, dispatch_id=f"{UNIT_NAME}__threat-1",
+    )
+
+    assert payload["assumptions"][0]["confidence"] == "ASSUMED"
+    assert payload["assumptions"][0]["evidence_refs"] == ["note:catalogue"]
+    assert "confidence" not in payload
+    assert "confidence" not in payload["threat"]
 
 
 # --- the payload's violation -> transition link (S2 5.1, S3 8.2) -------------
