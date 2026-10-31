@@ -14,6 +14,8 @@ public store API or the persisted files, never a private method.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -27,7 +29,6 @@ from polymerhus.attack.hunting.threat_model import (
 )
 from polymerhus.attack.hunting.threat_model_store import (
     ThreatModelDirectoryError,
-    ThreatModelDocumentError,
     ThreatModelIdentityError,
     ThreatModelSchemaVersionError,
     ThreatModelStore,
@@ -182,62 +183,115 @@ def _prior_art() -> dict:
     }
 
 
-def _precursors(index: int = 1) -> list[dict]:
-    return [{
-        "id": f"p-{index}",
-        "capability": "read another tenant's item",
-        "procedure": "resolve the item by the identifier the caller supplies",
-        "evidence_refs": ["GET /catalogue?id=2"],
-    }]
+# The known-good CVSS 4.0 scores of the two literal factor sets (`cvss==3.6`,
+# `AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N` = 9.2, `VC:L` = 6.9).
+TOP_RISK = 9.2
+LOWER_RISK = 6.9
+TOP_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N"
+LOWER_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:L/SI:N/SA:N"
+ZERO_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N"
+ITEM_DESCRIPTION = (
+    "An anonymous caller reads another tenant's item from the catalogue "
+    "database."
+)
+ITEM_EXPLOITABILITY = (
+    "One unauthenticated request names the item id; no defence stands between "
+    "the caller and the lookup."
+)
+
+# The score tier of one fixture threat, for the tests that only care that two
+# threats sort (or do not sort) against each other.
+_TIER_RISK: dict[str, float] = {
+    "critical": TOP_RISK,
+    "high": TOP_RISK,
+    "medium": LOWER_RISK,
+    "low": LOWER_RISK,
+    "none": 0.0,
+}
 
 
-def _impact_assessment(index: int = 1) -> list[dict]:
-    """One damage-bearing row with no prerequisite capability."""
+def _factors(confidentiality: str = "high") -> dict:
+    return {
+        "attack_vector": "network",
+        "attack_complexity": "low",
+        "attack_requirements": "none",
+        "privileges_required": "none",
+        "user_interaction": "none",
+        "confidentiality": confidentiality,
+        "integrity": "none",
+        "availability": "none",
+    }
+
+
+def _scored_factors(risk: float) -> tuple[dict, str]:
+    """The factor set and vector that carry one known-good score."""
+    if risk <= 0:
+        return _factors("none"), ZERO_VECTOR
+    if risk >= TOP_RISK:
+        return _factors("high"), TOP_VECTOR
+    return _factors("low"), LOWER_VECTOR
+
+
+def _impact_assessment(
+    index: int = 1, *, risk: float = TOP_RISK,
+    confidentiality: str = "high",
+) -> list[dict]:
+    """One scored assessment row: a direct disclosure, no prerequisite."""
+    factors, vector = _scored_factors(risk)
+    if confidentiality != "high":
+        factors = _factors(confidentiality)
     return [{
         "id": f"ia-{index}",
         "vulnerability_ref": "v-1",
         "disposition": "threat",
-        "damage": "An anonymous caller reads another tenant's item from the catalogue database.",
+        "impact_description": ITEM_DESCRIPTION,
+        "exploitability_description": ITEM_EXPLOITABILITY,
         "capability": "read another tenant's item",
         "capability_id": f"p-{index}",
         "capability_path": [],
         "evidence_refs": ["GET /catalogue?id=2"],
+        "factors": factors,
+        "risk": risk,
+        "risk_vector": vector,
     }]
 
 
-def _impact_row_for(threat: dict) -> dict:
+def _impact_row_for(threat: dict, index: int = 1) -> dict:
     """The row a supplied threat declares: one threat, one row, one path."""
-    ref = threat.get("impact_ref") or "ia-1"
+    ref = threat.get("impact_ref") or f"ia-{index}"
     pairs = list(threat.get("enabling_precursors") or [])
     path = [pair[0] if isinstance(pair, (list, tuple)) else pair for pair in pairs]
+    risk = float(threat.get("risk", TOP_RISK))
+    row = _impact_assessment(index, risk=risk)[0]
     return {
+        **row,
         "id": ref,
         "vulnerability_ref": threat["vulnerability_ref"],
-        "disposition": "threat",
-        "damage": "An anonymous caller reads another tenant's item from the catalogue database.",
-        "capability": "read another tenant's item",
         "capability_id": ref.replace("ia-", "p-"),
         "capability_path": path,
-        "evidence_refs": ["GET /catalogue?id=2"],
     }
 
 
-def _precursors_for(rows: list[dict]) -> list[dict]:
-    """Legacy only: the retired precursor entities for the rows' ids."""
-    return []
-
-
 def _placeholder_assessment() -> list[dict]:
-    """One precursor row: a capability with no end damage."""
+    """One precursor row: a capability with no end damage (all impacts none)."""
     return [{
         "id": "ia-1",
         "vulnerability_ref": "v-1",
         "disposition": "precursor",
-        "damage": "No user, application, or infrastructure property is affected; the handler returns a generic envelope.",
+        "impact_description": (
+            "No user, application, or infrastructure property is affected; the "
+            "handler returns a generic envelope."),
+        "exploitability_description": (
+            "One unauthenticated request distinguishes an unmapped handler "
+            "from an unmapped route."),
         "capability": "distinguish an unmapped handler from an unmapped route",
         "capability_id": "p-1",
         "capability_path": [],
         "evidence_refs": ["GET /catalogue?id=2"],
+        "factors": _factors("none"),
+        "risk": 0.0,
+        "risk_vector": (
+            "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N"),
     }]
 
 
@@ -246,14 +300,9 @@ def _precursor_row(
     capability: str = "distinguish an unmapped handler from an unmapped route",
 ) -> dict:
     return {
-        "id": "ia-1",
-        "vulnerability_ref": "v-1",
-        "disposition": "precursor",
-        "damage": "No user, application, or infrastructure property is affected.",
-        "capability": capability,
+        **_placeholder_assessment()[0],
         "capability_id": capability_id,
-        "capability_path": [],
-        "evidence_refs": ["GET /catalogue?id=2"],
+        "capability": capability,
     }
 
 
@@ -271,53 +320,79 @@ def _legacy_failure_modes() -> list[dict]:
     }]
 
 
-def _threat(likelihood: str = "high", *, index: int = 1) -> dict:
+def _threat(tier: str = "high", *, index: int = 1, risk: float | None = None) -> dict:
+    """One model-written threat row (schema 5): no authored score.
+
+    `tier` keeps the fixture's old call sites readable (a higher tier is a
+    higher score); the store fills the mirror from the threat's own row in
+    `_impact_row_for`, so `risk` is only the fixture's tier marker.
+    """
     return {
         "id": "modeller-1",
         "fault_ref": "fault-1",
         "vulnerability_ref": "v-1",
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
-        "likelihood": likelihood,
-        "likelihood_rationale": "The item id is attacker-controlled and unauthenticated.",
-        "risk_factors": {
-            "attack_vector": "network",
-            "attack_requirements": "none",
-            "privileges_required": "none",
-            "complexity": "low",
-        },
         "impact_ref": f"ia-{index}",
         "enabling_precursors": [],
-        "impact": {
-            "confidentiality": "low",
-            "integrity": "none",
-            "availability": "none",
-        },
-        "confidence": "INFERRED",
         "evidences": [_evidence()],
+        "risk": _TIER_RISK.get(tier, TOP_RISK) if risk is None else risk,
     }
 
 
-def _sections_below_completed(
-    impact_assessment: list[dict] | None = None,
-    precursors: list[dict] | None = None,
-) -> list[tuple[str, dict]]:
-    rows = impact_assessment if impact_assessment is not None else _impact_assessment()
-    entities = precursors if precursors is not None else _precursors()
+def _write_shape(threat: dict) -> dict:
+    """One threat as the MODEL writes it: `ThreatWrite` carries no `risk`."""
+    return {key: value for key, value in threat.items() if key != "risk"}
+
+
+def _sections_below_completed() -> list[tuple[str, dict]]:
+    """The MODEL-facing gates below COMPLETED.
+
+    The `IMPACT_ASSESSED` gate carries no model section (the `assess_impact`
+    tool owns it, ticket #406), so the ladder stops at `PRIOR_ART`; the
+    assessment rows are seeded by `_seed_assessments`.
+    """
     return [
         ("UNIT_TECHNICAL_SHARP", {"technical_sharpening": _sharpening()}),
         ("TRUST_MODELLED", {"trust_model": _trust_model()}),
         ("TRUST_ASSUMPTIONS_WRITTEN", {"assumptions": _assumptions()}),
         ("VULNERABILITIES_WRITTEN", {"vulnerabilities": _vulnerabilities()}),
         ("PRIOR_ART", {"prior_art": _prior_art()}),
-        ("IMPACT_ASSESSED", {
-            "impact_assessment": rows,
-        }),
     ]
 
 
+def _write_gates(
+    store: ThreatModelStore,
+    *,
+    unit_id: str = UNIT,
+    run_id: str = RUN,
+    sections: list[tuple[str, dict]] | None = None,
+) -> Path:
+    """Drive the model-facing gates in order; return the produced model path."""
+    path = None
+    for state, payload in sections if sections is not None else _sections_below_completed():
+        path = store.write_sections(PROJECT, unit_id, state, payload, run_id=run_id)
+    return path
+
+
+def _seed_assessments(path: Path, rows: list[dict]) -> None:
+    """Seed the assessment rows the `assess_impact` tool writes (ticket #406).
+
+    A schema-5 assessment row has no model-facing gate write, and the tool's
+    store method is not part of this change. The store tests therefore write
+    the document the tool will write (state `IMPACT_ASSESSED`, the scored rows)
+    and then drive every other write through the real store, so the merge, the
+    COMPLETED commit, the ranking, and the completion checker all run for real.
+    """
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["state"] = "IMPACT_ASSESSED"
+    document["impact_assessment"] = rows
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+
 def _completed_sections(threats: list[dict] | None = None) -> dict:
-    return {"threats": [_threat()] if threats is None else threats}
+    rows = [_threat()] if threats is None else threats
+    return {"threats": [_write_shape(row) for row in rows]}
 
 
 def _write_to_completed(
@@ -325,16 +400,23 @@ def _write_to_completed(
     *,
     threats: list[dict] | None = None,
     impact_assessment: list[dict] | None = None,
-    precursors: list[dict] | None = None,
+    unit_id: str = UNIT,
+    run_id: str = RUN,
 ) -> None:
     rows = [_threat()] if threats is None else list(threats)
     if impact_assessment is None:
-        impact_assessment = [_impact_row_for(row) for row in rows]
-    if precursors is None:
-        precursors = _precursors_for(impact_assessment)
-    for state, sections in _sections_below_completed(impact_assessment, precursors):
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
-    store.write_sections(PROJECT, UNIT, "COMPLETED", {"threats": rows}, run_id=RUN)
+        impact_assessment = [
+            _impact_row_for(row, index) for index, row in enumerate(rows, start=1)
+        ]
+    path = _write_gates(
+        store,
+        unit_id=unit_id,
+        run_id=run_id,
+        sections=_sections_below_completed(),
+    )
+    _seed_assessments(path, impact_assessment)
+    store.write_sections(
+        PROJECT, unit_id, "COMPLETED", _completed_sections(rows), run_id=run_id)
 
 
 def _dropped_vulnerabilities() -> list[dict]:
@@ -347,7 +429,7 @@ def _dropped_vulnerabilities() -> list[dict]:
 
 
 def _write_zero_threat_completed(store: ThreatModelStore) -> None:
-    for state, sections in _sections_below_completed()[:-1]:
+    for state, sections in _sections_below_completed():
         store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
     store.write_sections(
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
@@ -381,7 +463,7 @@ def test_write_sections_persists_a_partial_model_and_reads_it_back(tmp_path):
     )
     assert path.exists()
     model = store.read_model(PROJECT, UNIT)
-    assert model["schema_version"] == 4
+    assert model["schema_version"] == 5
     assert model["unit_id"] == UNIT
     assert model["unit_kind"] == "service"
     assert model["run_id"] == RUN
@@ -393,8 +475,8 @@ def test_write_sections_persists_a_partial_model_and_reads_it_back(tmp_path):
 def test_gate_writes_merge_sections_into_one_document(tmp_path):
     store = ThreatModelStore(tmp_path)
 
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
 
     model = store.read_model(PROJECT, UNIT)
     assert model["state"] == "IMPACT_ASSESSED"
@@ -411,8 +493,8 @@ def test_gate_writes_merge_sections_into_one_document(tmp_path):
 
 def test_a_lower_gate_write_never_regresses_the_state(tmp_path):
     store = ThreatModelStore(tmp_path)
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
 
     store.write_sections(
         PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
@@ -463,8 +545,8 @@ def test_the_completed_gate_accepts_only_the_threats_section(tmp_path):
     the threats alone, so a `failure_modes` section is a coded rejection and
     nothing is persisted."""
     store = ThreatModelStore(tmp_path)
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
 
     with pytest.raises(ThreatModelIdentityError) as raised:
         store.write_sections(
@@ -518,7 +600,7 @@ def test_an_unknown_schema_version_refuses_to_load_and_never_migrates(tmp_path):
     unit_dir.mkdir(parents=True)
     document = unit_dir / f"{name}.yaml"
     document.write_text(
-        yaml.safe_dump({"schema_version": 5, "unit_id": UNIT, "state": "COMPLETED"}),
+        yaml.safe_dump({"schema_version": 6, "unit_id": UNIT, "state": "COMPLETED"}),
         encoding="utf-8",
     )
     before = document.read_bytes()
@@ -534,14 +616,141 @@ def test_an_unknown_schema_version_refuses_to_load_and_never_migrates(tmp_path):
     assert document.read_bytes() == before  # no silent migration
 
 
-def test_a_persisted_document_with_an_unknown_state_is_a_coded_refusal(tmp_path):
+def test_a_v4_document_reads_raw_and_is_never_re_scored(tmp_path):
+    """Schema 5 spec 11: a v4 model is read for the prior art and the
+    measurement, exactly as it was written. Its likelihood and its old risk stay
+    untouched and no profile is computed."""
     store = ThreatModelStore(tmp_path)
     name = "Service-catalogue-and-discovery"
     unit_dir = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / name
     unit_dir.mkdir(parents=True)
     (unit_dir / f"{name}.yaml").write_text(
         yaml.safe_dump({
-            "schema_version": 3,
+            "schema_version": 4,
+            "unit_id": UNIT,
+            "unit_kind": "service",
+            "run_id": RUN,
+            "state": "COMPLETED",
+            "validation": {"valid": True},
+            "impact_assessment": [{
+                "id": "ia-1",
+                "vulnerability_ref": "v-1",
+                "disposition": "threat",
+                "damage": "An anonymous caller reads another tenant's item.",
+                "capability": "read another tenant's item",
+                "capability_id": "p-1",
+                "capability_path": [],
+                "evidence_refs": ["GET /catalogue?id=2"],
+            }],
+            "threats": [{
+                "id": "threat-1",
+                "fault_ref": "fault-1",
+                "vulnerability_ref": "v-1",
+                "canonical_class": "IDOR",
+                "web_vulnerability_class": "idor",
+                "likelihood": "medium",
+                "likelihood_rationale": "the id is caller-controlled",
+                "impact_ref": "ia-1",
+                "enabling_precursors": [],
+                "impact": {
+                    "confidentiality": "low",
+                    "integrity": "none",
+                    "availability": "none",
+                },
+                "impact_weight": 1,
+                "risk": 2,
+            }],
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    model = store.read_model(PROJECT, UNIT)
+
+    assert model["schema_version"] == 4
+    assert model["state"] == "COMPLETED"
+    assert "risk_profile" not in model
+    assert model["impact_assessment"][0]["damage"].startswith("An anonymous")
+    assert model["threats"][0]["likelihood"] == "medium"
+    assert model["threats"][0]["risk"] == 2  # the stored v4 score, never re-scored
+
+    # the prior art reads the raw v4 fields through the v5 catalog
+    result = store.query_prior_art(
+        PROJECT,
+        kind="impact",
+        filters=[{"path": "damage", "regex": "anonymous caller"}],
+    )
+
+    assert result["count"] == 1
+    assert result["matches"][0]["record_id"] == "ia-1"
+
+    # a v4 threat file is queryable too, through the same v4 paths
+    (unit_dir / "threat-1.yaml").write_text(
+        yaml.safe_dump({
+            "threat_id": "threat-1",
+            "unit_id": UNIT,
+            "unit_kind": "service",
+            "run_id": RUN,
+            "dispatch_id": "Service-catalogue-and-discovery__threat-1",
+            "likelihood": "medium",
+            "threat": {
+                "id": "threat-1",
+                "canonical_class": "IDOR",
+                "web_vulnerability_class": "idor",
+                "likelihood": "medium",
+                "impact_ref": "ia-1",
+                "risk": 2,
+            },
+            "impact": {"impact_ref": "ia-1"},
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    threats = store.query_prior_art(
+        PROJECT,
+        kind="threat",
+        filters=[{"path": "threat.likelihood", "regex": "^medium$"}],
+    )
+
+    assert threats["count"] == 1
+    assert threats["matches"][0]["summary"].startswith("An anonymous caller")
+
+
+def test_a_v4_write_is_refused(tmp_path):
+    """Schema 5 spec 11: a stale model is never mixed into a v5 run."""
+    store = ThreatModelStore(tmp_path)
+    name = "Service-catalogue-and-discovery"
+    unit_dir = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / name
+    unit_dir.mkdir(parents=True)
+    document = unit_dir / f"{name}.yaml"
+    document.write_text(
+        yaml.safe_dump({
+            "schema_version": 4,
+            "unit_id": UNIT,
+            "state": "IMPACT_ASSESSED",
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    before = document.read_bytes()
+
+    with pytest.raises(ThreatModelSchemaVersionError) as raised:
+        store.write_sections(
+            PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
+            {"technical_sharpening": _sharpening()}, run_id=RUN,
+        )
+
+    assert raised.value.version == 4
+    assert document.read_bytes() == before
+
+
+def test_a_persisted_document_with_an_unknown_state_is_a_coded_refusal(tmp_path):
+    """A document the v5 schema cannot parse is never merged into: the store
+    refuses it instead of raising a raw pydantic/enum error."""
+    store = ThreatModelStore(tmp_path)
+    name = "Service-catalogue-and-discovery"
+    unit_dir = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / name
+    unit_dir.mkdir(parents=True)
+    (unit_dir / f"{name}.yaml").write_text(
+        yaml.safe_dump({
+            "schema_version": 5,
             "unit_id": UNIT,
             "unit_kind": "service",
             "run_id": RUN,
@@ -552,7 +761,7 @@ def test_a_persisted_document_with_an_unknown_state_is_a_coded_refusal(tmp_path)
         encoding="utf-8",
     )
 
-    with pytest.raises(ThreatModelDocumentError):
+    with pytest.raises(ThreatModelSchemaVersionError):
         store.write_sections(
             PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
             {"technical_sharpening": _sharpening()}, run_id=RUN,
@@ -561,20 +770,20 @@ def test_a_persisted_document_with_an_unknown_state_is_a_coded_refusal(tmp_path)
 
 # --- the COMPLETED write: threats, risk profile, validation --------------------
 
-def test_completed_ranks_threats_emits_one_file_per_non_none_threat(tmp_path):
+def test_completed_ranks_threats_by_risk_and_emits_a_file_per_threat(tmp_path):
     store = ThreatModelStore(tmp_path)
 
-    _write_to_completed(store, threats=[_threat("none"), _threat("high", index=2)])
+    _write_to_completed(store, threats=[_threat("low"), _threat("high", index=2)])
 
     model = store.read_model(PROJECT, UNIT)
     assert model["state"] == "COMPLETED"
     assert [threat["id"] for threat in model["threats"]] == ["threat-1", "threat-2"]
-    assert [threat["likelihood"] for threat in model["threats"]] == ["high", "none"]
+    # the mirror is the row's score, and the higher row ranks first
+    assert [threat["risk"] for threat in model["threats"]] == [TOP_RISK, LOWER_RISK]
     assert model["risk_profile"] == {
-        "total": RISK_WEIGHTS["high"],
-        "breakdown": {"none": 1, "low": 0, "medium": 0, "high": 1, "critical": 0},
-        "impact_breakdown": {
-            "none": 0, "low": 2, "medium": 0, "high": 0, "critical": 0,
+        "total": round(TOP_RISK + LOWER_RISK, 2),
+        "breakdown": {
+            "none": 0, "low": 0, "medium": 1, "high": 0, "critical": 1,
         },
     }
     assert model["validation"]["valid"] is True
@@ -584,15 +793,17 @@ def test_completed_ranks_threats_emits_one_file_per_non_none_threat(tmp_path):
 
     unit_name = "Service-catalogue-and-discovery"
     produced = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / unit_name
-    assert sorted(p.name for p in produced.glob("threat-*.yaml")) == ["threat-1.yaml"]
+    assert sorted(p.name for p in produced.glob("threat-*.yaml")) == [
+        "threat-1.yaml", "threat-2.yaml",
+    ]
     records = store.read_threat_files(PROJECT, UNIT)
-    assert [record["threat_id"] for record in records] == ["threat-1"]
+    assert [record["threat_id"] for record in records] == ["threat-1", "threat-2"]
     record = records[0]
     assert record["unit_id"] == UNIT
     assert record["unit_kind"] == "service"
     assert record["run_id"] == RUN
     assert record["dispatch_id"] == "Service-catalogue-and-discovery__threat-1"
-    assert record["likelihood"] == "high"
+    assert record["risk"] == TOP_RISK
     assert record["threat"]["id"] == "threat-1"
     assert record["threat"]["fault_ref"] == "fault-1"
     assert record["created_at"]
@@ -606,11 +817,8 @@ def test_a_zero_threat_model_emits_no_threat_files(tmp_path):
     model = store.read_model(PROJECT, UNIT)
     assert model["threats"] == []
     assert model["risk_profile"] == {
-        "total": 0,
+        "total": 0.0,
         "breakdown": {"none": 0, "low": 0, "medium": 0, "high": 0, "critical": 0},
-        "impact_breakdown": {
-            "none": 0, "low": 0, "medium": 0, "high": 0, "critical": 0,
-        },
     }
     assert model["validation"]["valid"] is True
     assert store.read_threat_files(PROJECT, UNIT) == []
@@ -622,8 +830,8 @@ def test_a_failing_model_write_after_the_threat_files_leaves_the_previous_state(
     tmp_path, monkeypatch
 ):
     store = ThreatModelStore(tmp_path)
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
     unit_name = "Service-catalogue-and-discovery"
     produced = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / unit_name
 
@@ -651,8 +859,8 @@ def test_read_threat_files_is_empty_for_a_model_below_completed(tmp_path, monkey
     # COMPLETED - the crash window leaves files on disk that must not surface
     # as dispatch work
     store = ThreatModelStore(tmp_path)
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
     unit_name = "Service-catalogue-and-discovery"
     produced = (
         tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / unit_name
@@ -681,14 +889,11 @@ def test_read_threat_files_is_empty_for_an_invalid_completed_model(tmp_path):
         PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
         {"assumptions": [{**_assumptions()[0], "boundary_ref": ""}]}, run_id=RUN,
     )
-    store.write_sections(
+    path = store.write_sections(
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
     )
-    store.write_sections(
-        PROJECT, UNIT, "IMPACT_ASSESSED",
-        {"impact_assessment": _impact_assessment()}, run_id=RUN,
-    )
+    _seed_assessments(path, _impact_assessment())
     store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
     produced = (
@@ -702,8 +907,8 @@ def test_read_threat_files_is_empty_for_an_invalid_completed_model(tmp_path):
 
 def test_a_lower_gate_write_deletes_the_orphan_threat_files(tmp_path, monkeypatch):
     store = ThreatModelStore(tmp_path)
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
     unit_name = "Service-catalogue-and-discovery"
     produced = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / unit_name
 
@@ -741,14 +946,11 @@ def test_completion_reports_missing_necessary_attributes(tmp_path):
         PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
         {"assumptions": [{**_assumptions()[0], "boundary_ref": ""}]}, run_id=RUN,
     )
-    store.write_sections(
+    path = store.write_sections(
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
     )
-    store.write_sections(
-        PROJECT, UNIT, "IMPACT_ASSESSED",
-        {"impact_assessment": _impact_assessment()}, run_id=RUN,
-    )
+    _seed_assessments(path, _impact_assessment())
 
     store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
@@ -763,10 +965,9 @@ def test_completion_reports_missing_necessary_attributes(tmp_path):
 def test_write_sections_accepts_typed_section_objects(tmp_path):
     # T2 may bind either plain payloads or the schema's typed section objects
     from polymerhus.attack.hunting.threat_model import (
-        ImpactAssessment,
         PriorArt,
-        Threat,
         TechnicalSharpening,
+        ThreatWrite,
         TrustModel,
     )
 
@@ -790,20 +991,16 @@ def test_write_sections_accepts_typed_section_objects(tmp_path):
         PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
         {"assumptions": _assumptions()}, run_id=RUN,
     )
-    store.write_sections(
+    path = store.write_sections(
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
     )
-    store.write_sections(
-        PROJECT, UNIT, "IMPACT_ASSESSED",
-        {"impact_assessment": [
-            ImpactAssessment.model_validate(_impact_assessment()[0])]},
-        run_id=RUN,
-    )
+    _seed_assessments(path, _impact_assessment())
 
     store.write_sections(
         PROJECT, UNIT, "COMPLETED",
-        {"threats": [Threat.model_validate(_threat("high"))]},
+        {"threats": [ThreatWrite.model_validate(
+            _write_shape(_threat("high")))]},
         run_id=RUN,
     )
 
@@ -872,8 +1069,7 @@ def test_completion_reports_an_unclosed_assumption(tmp_path):
             "description": "No vulnerability closes this fault.",
         },
     }
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
     store.write_sections(
         PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
         {"assumptions": [*_assumptions(), extra_assumption]}, run_id=RUN,
@@ -882,6 +1078,7 @@ def test_completion_reports_an_unclosed_assumption(tmp_path):
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
     )
+    _seed_assessments(path, _impact_assessment())
 
     store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
@@ -899,7 +1096,7 @@ def test_check_completion_recomputes_the_risk_profile(tmp_path):
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
     document["risk_profile"]["total"] = 99
-    document["risk_profile"]["breakdown"]["high"] = 0
+    document["risk_profile"]["breakdown"]["critical"] = 0
     document["risk_profile"]["breakdown"]["low"] = 1
 
     validation = check_completion(UnitThreatModel.model_validate(document))
@@ -911,14 +1108,14 @@ def test_check_completion_recomputes_the_risk_profile(tmp_path):
 
 def test_the_store_records_the_non_suite_class_finding(tmp_path):
     store = ThreatModelStore(tmp_path, class_names={"idor"})
-    sections = _sections_below_completed()
-    for state, payload in sections:
-        if state == "VULNERABILITIES_WRITTEN":
-            payload = {"vulnerabilities": [{
-                **_vulnerabilities()[0],
-                "web_vulnerability_class": "made-up-class",
-            }]}
-        store.write_sections(PROJECT, UNIT, state, payload, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
+    store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": [{
+            **_vulnerabilities()[0],
+            "web_vulnerability_class": "made-up-class",
+        }]}, run_id=RUN)
     threats = [{**_threat("high"), "web_vulnerability_class": "made-up-class"}]
     store.write_sections(
         PROJECT, UNIT, "COMPLETED", _completed_sections(threats), run_id=RUN)
@@ -942,13 +1139,14 @@ def test_the_modeller_surface_wires_the_suite_class_index(tmp_path):
         suite_classes=("idor",))
     build_modeller_tool_surface(PROJECT, UNIT, tools)
 
-    for state, payload in _sections_below_completed():
-        if state == "VULNERABILITIES_WRITTEN":
-            payload = {"vulnerabilities": [{
-                **_vulnerabilities()[0],
-                "web_vulnerability_class": "made-up-class",
-            }]}
-        store.write_sections(PROJECT, UNIT, state, payload, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
+    store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": [{
+            **_vulnerabilities()[0],
+            "web_vulnerability_class": "made-up-class",
+        }]}, run_id=RUN)
     threats = [{**_threat("high"), "web_vulnerability_class": "made-up-class"}]
     store.write_sections(
         PROJECT, UNIT, "COMPLETED", _completed_sections(threats), run_id=RUN)
@@ -1004,47 +1202,45 @@ def test_the_completion_records_an_empty_class_finding(tmp_path):
     assert any("=empty" in finding for finding in validation.class_findings)
 
 
-def test_check_completion_recomputes_the_impact_breakdown(tmp_path):
+def test_check_completion_recomputes_the_risk_total(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
-    document["risk_profile"]["impact_breakdown"]["low"] = 9
+    document["risk_profile"]["total"] = 99
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
-    assert "risk_profile.impact_breakdown" in validation.missing
+    assert "risk_profile.total" in validation.missing
 
 
 def test_check_completion_reports_a_tampered_threat_risk(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
-    document["threats"][0]["impact_weight"] = 0
     document["threats"][0]["risk"] = 0
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
-    assert "threat:threat-1.impact_weight" in validation.missing
     assert "threat:threat-1.risk" in validation.missing
 
 
-def test_check_completion_reports_a_threat_row_without_a_non_none_cia(tmp_path):
-    """A `threat` row is damage-bearing: its threat carries at least one
-    non-none CIA value, so an all-none vector is a finding (the retired
-    `end_impact` string was the old form of the same necessary attribute)."""
+def test_check_completion_reports_a_threat_row_with_no_impact_value(tmp_path):
+    """A `threat` row is damage-bearing: at least one of its three impact
+    factors must be above `none`, so an all-none factor set is a finding."""
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
     document = store.read_model(PROJECT, UNIT)
-    document["threats"][0]["impact"] = {
-        "confidentiality": "none", "integrity": "none", "availability": "none",
-    }
+    document["impact_assessment"][0]["factors"] = _factors("none")
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
-    assert "threat:threat-1.impact" in validation.missing
+    assert any(
+        finding.startswith("impact_assessment:ia-1.factors.confidentiality")
+        for finding in validation.missing
+    )
 
 
 def _completed_document(store) -> dict:
@@ -1053,18 +1249,20 @@ def _completed_document(store) -> dict:
     return store.read_model(PROJECT, UNIT)
 
 
-def test_completion_reports_a_missing_damage_and_a_missing_capability(tmp_path):
-    """Every row names its damage, its capability, and the capability key."""
+def test_completion_reports_a_missing_prose_and_a_missing_capability(tmp_path):
+    """Every row names its impact, its exploitability, and its capability."""
     store = ThreatModelStore(tmp_path)
     document = _completed_document(store)
-    document["impact_assessment"][0]["damage"] = ""
+    document["impact_assessment"][0]["impact_description"] = ""
+    document["impact_assessment"][0]["exploitability_description"] = ""
     document["impact_assessment"][0]["capability"] = ""
     document["impact_assessment"][0]["capability_id"] = ""
 
     validation = check_completion(UnitThreatModel.model_validate(document))
 
     assert validation.valid is False
-    assert "impact_assessment:ia-1.damage" in validation.missing
+    assert "impact_assessment:ia-1.impact_description" in validation.missing
+    assert "impact_assessment:ia-1.exploitability_description" in validation.missing
     assert "impact_assessment:ia-1.capability" in validation.missing
     assert "impact_assessment:ia-1.capability_id" in validation.missing
 
@@ -1136,7 +1334,7 @@ def test_completion_reports_two_threats_on_one_row(tmp_path):
         impact_assessment=_impact_assessment(),
         threats=[
             _threat("high"),
-            {**_threat("high"), "likelihood_rationale": "the second manner"},
+            {**_threat("high"), "canonical_class": "IDOR"},
         ],
     )
 
@@ -1167,7 +1365,6 @@ def test_completion_reports_a_threat_on_a_row_of_another_vulnerability(tmp_path)
         "vulnerability_ref": "v-2",
         "canonical_class": "Path Traversal",
         "impact_ref": "ia-2",
-        "likelihood_rationale": "the second vulnerability",
     }
     _write_to_completed(
         store,
@@ -1272,7 +1469,9 @@ def test_a_vulnerability_may_yield_several_threats_one_per_manner(tmp_path):
         "id": "ia-2",
         "capability_id": "p-2",
         "capability": "change another tenant's item through the enumeration path",
-        "damage": "An anonymous caller changes another tenant's item through the enumeration path.",
+        "impact_description": (
+            "An anonymous caller changes another tenant's item through the "
+            "enumeration path."),
         "capability_path": ["p-1"],
     }
     _write_to_completed(
@@ -1284,7 +1483,6 @@ def test_a_vulnerability_may_yield_several_threats_one_per_manner(tmp_path):
                 **_threat("high"),
                 "impact_ref": "ia-2",
                 "enabling_precursors": [["p-1", "p-1"]],
-                "likelihood_rationale": "the second exploitation manner",
             },
         ],
     )
@@ -1301,53 +1499,53 @@ def test_a_vulnerability_may_yield_several_threats_one_per_manner(tmp_path):
     ]
 
 
-def test_a_legacy_threat_without_impact_parses_and_contributes_zero(tmp_path):
+def test_the_store_overwrites_an_authored_threat_risk(tmp_path):
+    """The mirror is derived: a threat written with a score is overwritten from
+    its assessment row (the tool schema forbids the field; the store enforces
+    the value)."""
     store = ThreatModelStore(tmp_path)
-    legacy = dict(_threat("high"))
-    legacy.pop("impact")
-
-    _write_to_completed(store, threats=[legacy])
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
+    store.write_sections(
+        PROJECT, UNIT, "COMPLETED",
+        {"threats": [{**_threat("high"), "risk": 99.0}]}, run_id=RUN)
 
     model = store.read_model(PROJECT, UNIT)
-    assert model["risk_profile"]["total"] == 0
-    assert model["risk_profile"]["impact_breakdown"]["none"] == 1
-    assert "threat:threat-1.impact" in model["validation"]["missing"]
+
+    assert model["threats"][0]["risk"] == TOP_RISK
+    assert model["risk_profile"]["total"] == TOP_RISK
 
 
-def test_a_zero_risk_threat_is_stored_but_emits_no_threat_file(tmp_path):
-    """The likelihood axis can zero a damage-bearing direction. The threat stays
-    in the model and the risk profile, but it is never dispatched."""
+def test_a_zero_score_threat_is_stored_but_emits_no_threat_file(tmp_path):
+    """A zero score is no work: the threat stays in the model and the profile,
+    and it is never dispatched. (A valid `threat` row scores above zero, so this
+    state is also a completion finding.)"""
     store = ThreatModelStore(tmp_path)
-    zero = {
-        **_threat("none"),
-        "impact": {
-            "confidentiality": "low",
-            "integrity": "none",
-            "availability": "none",
-        },
-    }
-
-    _write_to_completed(store, threats=[zero])
+    _write_to_completed(store, threats=[_threat("none")])
 
     model = store.read_model(PROJECT, UNIT)
-    assert model["threats"][0]["risk"] == 0
-    assert model["risk_profile"]["total"] == 0
+    assert model["threats"][0]["risk"] == 0.0
+    assert model["risk_profile"]["total"] == 0.0
     assert store.read_threat_files(PROJECT, UNIT) == []
+    assert any(
+        finding.startswith("impact_assessment:ia-1.factors.confidentiality")
+        for finding in model["validation"]["missing"]
+    )
 
 
-def test_the_threat_file_carries_the_impact_and_the_risk(tmp_path):
+def test_the_threat_file_carries_the_assessment_and_the_risk(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store, threats=[_threat("high")])
 
     record = store.read_threat_files(PROJECT, UNIT)[0]
 
-    assert record["threat"]["impact"] == {
-        "confidentiality": "low",
-        "integrity": "none",
-        "availability": "none",
-    }
-    assert record["threat"]["impact_weight"] == 1
-    assert record["threat"]["risk"] == 3
+    assert record["risk"] == TOP_RISK
+    assert record["threat"]["risk"] == TOP_RISK
+    assert record["impact"]["risk"] == TOP_RISK
+    assert record["impact"]["risk_vector"] == TOP_VECTOR
+    assert record["impact"]["impact_description"] == ITEM_DESCRIPTION
+    assert record["impact"]["exploitability_description"] == ITEM_EXPLOITABILITY
+    assert record["impact"]["factors"] == _factors("high")
 
 
 # --- the impact assessment and the precursors (ticket 436) -------------------
@@ -1426,16 +1624,21 @@ def test_the_three_prior_art_queries_and_the_note_close_the_check(tmp_path):
     assert model["prior_art"]["notes"]
 
 
-def test_the_impact_assessed_gate_writes_the_rows_only(tmp_path):
+def test_the_impact_assessed_gate_accepts_no_model_section(tmp_path):
+    """Schema 5: the `assess_impact` tool (ticket #406) is the sole writer of an
+    assessment row, so the model-facing gate refuses the section outright."""
     store = ThreatModelStore(tmp_path)
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    _write_gates(store)
 
-    model = store.read_model(PROJECT, UNIT)
+    assert GATE_SECTIONS[ModelState.IMPACT_ASSESSED] == ()
+    with pytest.raises(ThreatModelIdentityError) as raised:
+        store.write_sections(
+            PROJECT, UNIT, "IMPACT_ASSESSED",
+            {"impact_assessment": _impact_assessment()}, run_id=RUN)
 
-    assert model["state"] == "IMPACT_ASSESSED"
-    assert model["impact_assessment"] == _impact_assessment()
-    assert model["precursors"] == []
+    assert raised.value.fields == ["impact_assessment"]
+    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
+    assert store.read_model(PROJECT, UNIT)["impact_assessment"] == []
 
 
 def test_the_threat_file_carries_the_denormalised_impact_block(tmp_path):
@@ -1448,11 +1651,15 @@ def test_the_threat_file_carries_the_denormalised_impact_block(tmp_path):
 
     assert record["impact"] == {
         "impact_ref": "ia-1",
-        "damage": "An anonymous caller reads another tenant's item from the catalogue database.",
+        "impact_description": ITEM_DESCRIPTION,
+        "exploitability_description": ITEM_EXPLOITABILITY,
         "disposition": "threat",
         "capability": "read another tenant's item",
         "capability_id": f"{UNIT}::p-1",
         "capability_path": [],
+        "factors": _factors("high"),
+        "risk": TOP_RISK,
+        "risk_vector": TOP_VECTOR,
         "chain": [],
     }
     assert record["threat"]["impact_ref"] == "ia-1"
@@ -1497,8 +1704,7 @@ def test_check_completion_reports_a_broken_threat_order_and_ids(tmp_path):
 
 def test_completion_reports_the_trust_model_referential_rules(tmp_path):
     store = ThreatModelStore(tmp_path)
-    for state, sections in _sections_below_completed()[:-1]:
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
     trust_model = _trust_model()
     trust_model["trust_agreements"][0]["interface_agreement_refs"] = ["ia-missing"]
     trust_model["dynamic_state_trust"]["transitions"][0]["target"] = "ds-missing"
@@ -1510,10 +1716,11 @@ def test_completion_reports_the_trust_model_referential_rules(tmp_path):
         PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
         {"assumptions": [{**_assumptions()[0], "boundary_ref": "ta-missing"}]}, run_id=RUN,
     )
-    store.write_sections(
+    path = store.write_sections(
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
     )
+    _seed_assessments(path, _impact_assessment())
 
     store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
@@ -1524,26 +1731,28 @@ def test_completion_reports_the_trust_model_referential_rules(tmp_path):
     assert "assumption:as-1.boundary_ref='ta-missing'" in errors
 
 
-def test_completed_keeps_the_write_order_on_a_likelihood_tie(tmp_path):
+def test_completed_keeps_the_write_order_on_a_risk_tie(tmp_path):
     store = ThreatModelStore(tmp_path)
     threats = [
-        {**_threat("medium"), "likelihood_rationale": "first medium"},
-        {**_threat("critical", index=2), "likelihood_rationale": "the critical one"},
-        {**_threat("medium", index=3), "likelihood_rationale": "second medium"},
+        _threat("low"),
+        _threat("high", index=2),
+        {**_threat("low", index=3), "canonical_class": "IDOR"},
     ]
 
     _write_to_completed(store, threats=threats)
 
     model = store.read_model(PROJECT, UNIT)
-    assert [(threat["id"], threat["likelihood"]) for threat in model["threats"]] == [
-        ("threat-1", "critical"), ("threat-2", "medium"), ("threat-3", "medium"),
+    assert [threat["id"] for threat in model["threats"]] == [
+        "threat-1", "threat-2", "threat-3",
     ]
-    assert [threat["likelihood_rationale"] for threat in model["threats"]] == [
-        "the critical one", "first medium", "second medium",
+    # the higher row moved to rank 1; the two ties keep the write order
+    assert [threat["impact_ref"] for threat in model["threats"]] == [
+        "ia-2", "ia-1", "ia-3",
     ]
-    assert model["risk_profile"]["total"] == (
-        RISK_WEIGHTS["critical"] + RISK_WEIGHTS["medium"] * 2
-    )
+    assert [threat["risk"] for threat in model["threats"]] == [
+        TOP_RISK, LOWER_RISK, LOWER_RISK,
+    ]
+    assert model["risk_profile"]["total"] == round(TOP_RISK + 2 * LOWER_RISK, 2)
     assert [record["threat_id"] for record in store.read_threat_files(PROJECT, UNIT)] == [
         "threat-1", "threat-2", "threat-3",
     ]
@@ -1605,7 +1814,7 @@ def test_read_produced_threats_returns_the_unit_and_its_produced_threat_files(tm
     assert [threat["threat_id"] for threat in entries[0]["threats"]] == ["threat-1", "threat-2"]
     record = entries[0]["threats"][0]["record"]
     assert record["dispatch_id"] == f"{unit_name}__threat-1"
-    assert record["likelihood"] == "high"
+    assert record["risk"] == TOP_RISK
     assert record["threat"]["id"] == "threat-1"
 
 
@@ -1786,10 +1995,11 @@ def test_an_invalid_completed_model_is_not_consumable_and_is_archived(tmp_path):
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
     )
-    store.write_sections(
-        PROJECT, UNIT, "IMPACT_ASSESSED",
-        {"impact_assessment": _impact_assessment()}, run_id=RUN,
+    path = store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
     )
+    _seed_assessments(path, _impact_assessment())
     store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
 
     assert store.consume_model_if_done(PROJECT, UNIT) is False
@@ -2000,8 +2210,8 @@ def test_reads_of_an_unknown_unit_are_empty(tmp_path):
 
 def test_a_retried_completed_write_repairs_the_threat_set(tmp_path, monkeypatch):
     store = ThreatModelStore(tmp_path)
-    for state, sections in _sections_below_completed():
-        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    path = _write_gates(store)
+    _seed_assessments(path, _impact_assessment())
     unit_name = "Service-catalogue-and-discovery"
 
     def _fail_the_model_write(path, body):
@@ -2128,13 +2338,32 @@ def test_the_impact_query_returns_threat_rows_too(tmp_path):
     assert result["matches"][0]["disposition"] == "threat"
 
 
+def test_the_v5_score_the_factors_and_the_vector_are_queryable(tmp_path):
+    """The v5 paths are in the catalog beside the v4 ones (schema-5 spec 10)."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+
+    result = store.query_prior_art(
+        PROJECT,
+        kind="impact",
+        filters=[
+            {"path": "risk", "regex": "^9.2$"},
+            {"path": "factors.confidentiality", "regex": "high"},
+            {"path": "risk_vector", "regex": "^CVSS:4.0/"},
+            {"path": "impact_description", "regex": "tenant"},
+        ],
+    )
+
+    assert result["count"] == 1
+    assert result["matches"][0]["record_id"] == "ia-1"
+
+
 def _write_unit(store, unit_id, rows, threats):
-    for state, sections in _sections_below_completed():
-        if state == "IMPACT_ASSESSED":
-            sections = {"impact_assessment": rows}
-        store.write_sections(PROJECT, unit_id, state, sections, run_id=RUN)
+    path = _write_gates(store, unit_id=unit_id)
+    _seed_assessments(path, rows)
     store.write_sections(
-        PROJECT, unit_id, "COMPLETED", {"threats": threats}, run_id=RUN)
+        PROJECT, unit_id, "COMPLETED",
+        {"threats": [_write_shape(row) for row in threats]}, run_id=RUN)
 
 
 def test_a_capability_from_another_unit_resolves_and_lands_in_the_chain(tmp_path):

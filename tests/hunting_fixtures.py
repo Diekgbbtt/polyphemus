@@ -9,6 +9,7 @@ speak the SAME canned objects and the duplication stays in one place.
 """
 from __future__ import annotations
 
+import yaml
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -294,18 +295,43 @@ def build_hunting_l1():
 
 # --- the threat modeller fixtures (T2, #375; the shared worked example) -------
 
+# The worked example's assessment factors (schema 5): a full-record read from
+# an unauthenticated network caller, no defence to beat. `ITEM_RISK` and
+# `ITEM_VECTOR` are the `cvss==3.6` CVSS 4.0 values for those factors
+# (`AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N` = 9.2); they are
+# known-good literals, never recomputed by the tests.
+ITEM_FACTORS = {
+    "attack_vector": "network",
+    "attack_complexity": "low",
+    "attack_requirements": "none",
+    "privileges_required": "none",
+    "user_interaction": "none",
+    "confidentiality": "high",
+    "integrity": "none",
+    "availability": "none",
+}
+ITEM_RISK = 9.2
+ITEM_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N"
+
+
 def _evidence(ref: str = "GET /catalogue") -> dict:
     return {"kind": "request", "ref": ref}
 
 
 def modeller_gate_payloads() -> dict:
-    """The seven gate payloads, the minimum the completion checker needs.
+    """The gate payloads, the minimum the completion checker needs.
 
     The literal content is the T1 fixture shape (a known-good worked example),
     never derived from the code under test. Single home: the modeller's pass
     tests, the runtime wiring tests, and the mover fixtures drive the SAME
-    example. The worked example carries ONE damage-bearing row (`ia-1`), ONE
-    precursor (`p-1`), and ONE high threat that references them.
+    example. The worked example's ONE high-scoring threat references the ONE
+    scored assessment row (`ia-1`) that `_assessment_row` builds.
+
+    The `IMPACT_ASSESSED` payload is EMPTY: schema 5's `hunts_store` surface
+    carries no assessment section, because the `assess_impact` tool (ticket
+    #406) is that row's sole writer. A fixture that needs the row seeds the
+    document the tool will write (`produce_model`), never the model-facing
+    gate.
     """
     from polymerhus.attack.hunting.threat_model import ModelState
 
@@ -320,7 +346,7 @@ def modeller_gate_payloads() -> dict:
                 }],
                 "control_flows": [{
                     "id": "cf-1",
-                    "statement": "The handler authorises before the lookup.",
+                    "statement": "The request handler authorises before the lookup.",
                     "confidence": "INFERRED",
                     "evidences": [_evidence("framework default")],
                 }],
@@ -437,31 +463,16 @@ def modeller_gate_payloads() -> dict:
                 "evidences": [_evidence()],
             }],
         },
-        ModelState.IMPACT_ASSESSED: {
-            "impact_assessment": [_damage_row()],
-        },
+        # The `assess_impact` tool owns this gate's content (ticket #406).
+        ModelState.IMPACT_ASSESSED: {},
         ModelState.COMPLETED: {
             "threats": [{
                 "fault_ref": "fault-1",
                 "vulnerability_ref": "v-1",
                 "canonical_class": "IDOR",
                 "web_vulnerability_class": "idor",
-                "likelihood": "high",
-                "likelihood_rationale": "An anonymous caller controls the id.",
-                "risk_factors": {
-                    "attack_vector": "network",
-                    "attack_requirements": "none",
-                    "privileges_required": "none",
-                    "complexity": "low",
-                },
                 "impact_ref": "ia-1",
                 "enabling_precursors": [],
-                "impact": {
-                    "confidentiality": "low",
-                    "integrity": "none",
-                    "availability": "none",
-                },
-                "confidence": "INFERRED",
                 "evidences": [_evidence()],
             }],
         },
@@ -470,38 +481,37 @@ def modeller_gate_payloads() -> dict:
 
 # The worked example's one damage claim: the victim is the tenant user, the
 # property is the confidentiality of the persisted item data (S2 section 2).
-DAMAGE = (
+IMPACT_DESCRIPTION = (
     "An anonymous caller reads another tenant's item from the catalogue "
     "database."
 )
+EXPLOITABILITY_DESCRIPTION = (
+    "One unauthenticated request names the item id; no defence stands between "
+    "the caller and the lookup, and no victim action is needed."
+)
 
 
-def _precursor(index: int = 1) -> dict:
-    return {
-        "id": f"p-{index}",
-        "capability": "read another tenant's item",
-        "procedure": "resolve the item by the identifier the caller supplies",
-        "evidence_refs": ["GET /catalogue?id=2"],
-    }
-
-
-def _damage_row(index: int = 1) -> dict:
+def _assessment_row(index: int = 1, *, risk: float = ITEM_RISK) -> dict:
     return {
         "id": f"ia-{index}",
         "vulnerability_ref": "v-1",
         "disposition": "threat",
-        "damage": DAMAGE,
+        "impact_description": IMPACT_DESCRIPTION,
+        "exploitability_description": EXPLOITABILITY_DESCRIPTION,
         "capability": "read another tenant's item",
         "capability_id": f"p-{index}",
         "capability_path": [],
         "evidence_refs": ["GET /catalogue?id=2"],
+        "factors": dict(ITEM_FACTORS),
+        "risk": risk,
+        "risk_vector": ITEM_VECTOR,
     }
 
 
 def _coherent_threats(threats):
-    """Renumber the supplied threat rows onto their OWN damage rows (ticket
-    436's one-threat-one-damage rule): threat i references `ia-<i>` and
-    `p-<i>`, so a fan-out fixture stays a valid COMPLETED model."""
+    """Renumber the supplied threat rows onto their OWN assessment rows (the
+    one-threat-one-assessment rule): threat i references `ia-<i>` and `p-<i>`,
+    so a fan-out fixture stays a valid COMPLETED model."""
     return [
         {
             **row,
@@ -510,6 +520,21 @@ def _coherent_threats(threats):
         }
         for index, row in enumerate(threats, start=1)
     ]
+
+
+def _seed_assessments(path, rows) -> None:
+    """Seed the assessment section of one produced model document.
+
+    The `assess_impact` tool (ticket #406) is the sole writer of a schema-5
+    assessment row, and its store method does not exist on this ticket's
+    branch. A fixture that needs a scored model writes the document that tool
+    will write and then drives the model's own COMPLETED write through the
+    real store, so the commit, the ranking, and the checker all run for real.
+    """
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["state"] = "IMPACT_ASSESSED"
+    document["impact_assessment"] = rows
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
 
 # --- the produced-model fixtures (T4b, #387) ------------------------------------
@@ -531,71 +556,57 @@ def produce_model(
     The one home of the worked example's ladder (T4b #387 lifted it out of the
     per-file test helpers, so the retired-config tests could be re-pointed at the
     same produced model): `threats` overrides the COMPLETED write's threat rows
-    (the sequencing fan-out fixtures) and the `IMPACT_ASSESSED` write's rows are
-    derived per threat, so every fan-out row keeps its own damage claim (ticket
-    436's one-threat-one-damage rule). The gate payloads are a KNOWN-GOOD
-    literal (`modeller_gate_payloads`), never derived from the code under test."""
+    (the sequencing fan-out fixtures) and the assessment rows are derived per
+    threat, so every fan-out row keeps its own claim. The `IMPACT_ASSESSED`
+    content is seeded as the `assess_impact` tool will write it (ticket #406);
+    every other gate and the COMPLETED commit run through the real store. The
+    gate payloads are a KNOWN-GOOD literal (`modeller_gate_payloads`), never
+    derived from the code under test."""
     payloads = modeller_gate_payloads()
     from polymerhus.attack.hunting.threat_model import ModelState
 
     rows = _coherent_threats(threats) if threats is not None else None
+    path = None
     for state in ModelState:
+        if state is ModelState.IMPACT_ASSESSED:
+            # The rows a fan-out declares (each carrying its own score), else
+            # the worked example's one row.
+            assessment_rows = (
+                [
+                    _assessment_row(index, risk=float(row.get("risk", ITEM_RISK)))
+                    for index, row in enumerate(rows, start=1)
+                ]
+                if rows is not None else [_assessment_row()]
+            )
+            _seed_assessments(path, assessment_rows)
+            continue
         sections = dict(payloads[state])
-        if rows is not None:
-            if state is ModelState.IMPACT_ASSESSED:
-                sections = {
-                    "impact_assessment": [
-                        _damage_row(index) for index in range(1, len(rows) + 1)
-                    ],
-                }
-            elif state is ModelState.COMPLETED:
-                sections["threats"] = rows
-        store.write_sections(project_id, unit_id, state, sections, run_id=run_id)
+        if state is ModelState.COMPLETED and rows is not None:
+            # The model's write shape: no authored score.
+            sections["threats"] = [
+                {key: value for key, value in row.items() if key != "risk"}
+                for row in rows
+            ]
+        path = store.write_sections(
+            project_id, unit_id, state, sections, run_id=run_id)
     return unit_id
 
 
 def threat_row(**overrides) -> dict:
-    """One COMPLETED-write threat row (the shared worked example): one `high`
-    threat over fault-1 / v-1 that references the worked example's `ia-1` row and
-    `p-1` precursor. `overrides` carry the sequencing fixtures' likelihood (or a
-    distinct threat's rows); `produce_model` renumbers a fan-out onto its own
-    rows."""
+    """One COMPLETED-write threat row (the shared worked example): one
+    high-scoring threat over fault-1 / v-1 that references the worked example's
+    `ia-1` row. `overrides` carry the sequencing fixtures' distinct rows;
+    `produce_model` renumbers a fan-out onto its own rows."""
     row = {
         "fault_ref": "fault-1",
         "vulnerability_ref": "v-1",
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
-        "likelihood": "high",
-        "likelihood_rationale": "The item id is attacker-controlled and unauthenticated.",
-        "risk_factors": {
-            "attack_vector": "network",
-            "attack_requirements": "none",
-            "privileges_required": "none",
-            "complexity": "low",
-        },
         "impact_ref": "ia-1",
-        "enabling_precursors": ["p-1"],
-        "impact": {
-            "confidentiality": "low",
-            "integrity": "none",
-            "availability": "none",
-        },
-        "confidence": "INFERRED",
+        "enabling_precursors": [],
         "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
     }
     row.update(overrides)
-    if "impact" not in overrides:
-        # Keep the fixture's combined risk aligned with its likelihood tier, so
-        # a `high` threat is a high-bucket threat in the sequencing tests.
-        level = {
-            "low": "low", "medium": "medium", "high": "high",
-            "critical": "high", "none": "none",
-        }.get(str(row.get("likelihood") or "none"), "none")
-        row["impact"] = {
-            "confidentiality": level,
-            "integrity": "none",
-            "availability": "none",
-        }
     return row
 
 

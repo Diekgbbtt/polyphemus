@@ -48,6 +48,11 @@ Write contract:
 
 Read contract:
 
+- `_load_document` returns the TYPED record: the v5 `PartialThreatModel` for the
+  current schema, and the raw `RawThreatModel` wrapper for a v4 (and, on a
+  legacy read, a v2/v3) document. A raw document is never normalised and never
+  re-scored; it renders back to its persisted mapping, so the prior art and the
+  measurement read the v4 fields as they were written.
 - `query_prior_art` is the prior-art query (S2 7): one record kind, a
   non-empty AND list of regex field filters, project-scoped, over the produced
   and consumed models. It excludes the bound unit unless a filter path is
@@ -56,7 +61,9 @@ Read contract:
 Fail-open canon: a read failure degrades (a warning, then None/[]), never a
 raise into the caller. A write failure raises to the caller (O3). An unknown
 `schema_version` refuses to load (a warning records the version) and refuses a
-merge; there is no silent migration.
+merge; a v4 (or older) document reads raw but is REFUSED as a write target,
+because a stale model must never be mixed into a v5 run. There is no silent
+migration.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6).
@@ -83,27 +90,38 @@ from polymerhus.app.memory.store import BoundedRecordStore
 
 from .threat_model import (
     GATE_SECTIONS,
+    LEGACY_SCHEMA_VERSIONS,
+    PREVIOUS_SCHEMA_VERSION,
     SCHEMA_VERSION,
     STATE_ORDER,
     FieldFilter,
     ImpactDisposition,
-    Likelihood,
     ModelState,
     PartialThreatModel,
     PriorArtKind,
+    RawThreatModel,
     ThreatQueryMatch,
     ThreatQueryResult,
     UnitThreatModel,
     check_completion,
     compute_risk_profile,
+    document_of,
     normalise_threats,
     prior_art_paths,
     unit_kind_from_unit_id,
 )
 
-# The read-only legacy schema. The intake and the measurement read it;
-# the mover and the prior-art query do not.
+# The oldest read-only legacy schema: the intake and the measurement read a v2
+# model raw when they ask for a legacy read; the mover and the prior-art query
+# do not. A v3 document reads raw on the same opt-in. A v4 document reads raw
+# ALWAYS (schema-5 spec 11, prior art and measurement); none of them is ever
+# normalised or re-scored.
 LEGACY_SCHEMA_VERSION = 2
+
+# The typed result of one document read: the v5 model parsed as the persisted
+# `PartialThreatModel`, or the raw legacy wrapper. Both render back to the
+# document mapping through `document_of`.
+LoadedDocument = PartialThreatModel | RawThreatModel
 
 
 logger = logging.getLogger(__name__)
@@ -483,8 +501,11 @@ def _threat_view(
     """One threat file merged with its impact row and precursor entities.
 
     The threat file is the published denormalisation; the model's impact row is
-    authoritative for the damage context and supplies `precursor_refs`, which
-    the threat file does not carry (S2 section 7).
+    authoritative for the assessment context and supplies `precursor_refs`,
+    which the threat file does not carry (S2 section 7). The overlay carries
+    BOTH generations: a v4 row's `damage`, and a v5 row's two prose blocks, its
+    factors, its score, and its vector, so a raw v4 model and a v5 model are
+    queryable through one catalog.
     """
     threat_value = record.get("threat")
     threat = dict(threat_value) if isinstance(threat_value, Mapping) else {}
@@ -493,10 +514,21 @@ def _threat_view(
     impact_ref = str(impact.get("impact_ref") or threat.get("impact_ref") or "")
     row = rows.get(impact_ref, {})
     if row:
-        # The model row is authoritative for the damage context; the threat
+        # The model row is authoritative for the assessment context; the threat
         # file is the published denormalisation. Key presence (not truthiness)
-        # is the overlay rule, so an explicit empty path survives.
-        for key in ("damage", "disposition", "capability_path", "precursor_refs"):
+        # is the overlay rule, so an explicit empty value survives.
+        for key in (
+            "damage",
+            "impact_description",
+            "exploitability_description",
+            "factors",
+            "risk",
+            "risk_vector",
+            "disposition",
+            "capability_path",
+            "precursor_refs",
+            "evidence_refs",
+        ):
             if key not in row:
                 continue
             value = row[key]
@@ -512,6 +544,7 @@ def _threat_view(
         "dispatch_id": str(record.get("dispatch_id") or ""),
         "unit_id": str(document.get("unit_id") or record.get("unit_id") or ""),
         "run_id": str(record.get("run_id") or document.get("run_id") or ""),
+        "risk": record.get("risk", threat.get("risk")),
         "likelihood": record.get("likelihood") or threat.get("likelihood") or "",
         "threat": threat,
         "impact": impact,
@@ -553,7 +586,8 @@ def _query_match(
         label = str(threat.get("canonical_class") or "")
         web_vulnerability_class = str(threat.get("web_vulnerability_class") or "")
         disposition = _optional_text(impact.get("disposition"))
-        summary = str(impact.get("damage") or "")
+        summary = str(
+            impact.get("impact_description") or impact.get("damage") or "")
         evidence_refs = _evidence_refs(impact.get("evidence_refs"))
         for ref in _evidence_refs(threat.get("evidences")):
             if ref not in evidence_refs:
@@ -568,7 +602,7 @@ def _query_match(
         label = str(view.get("capability") or "")
         web_vulnerability_class = ""
         disposition = _optional_text(view.get("disposition"))
-        summary = str(view.get("damage") or "")
+        summary = str(view.get("impact_description") or view.get("damage") or "")
         evidence_refs = _evidence_refs(view.get("evidence_refs"))
     elif kind is PriorArtKind.ASSUMPTION:
         fault = view.get("fault")
@@ -582,7 +616,7 @@ def _query_match(
         disposition = _optional_text(view.get("disposition"))
         label = disposition or ""
         web_vulnerability_class = ""
-        summary = str(view.get("damage") or "")
+        summary = str(view.get("impact_description") or view.get("damage") or "")
         evidence_refs = _evidence_refs(view.get("evidence_refs"))
     return ThreatQueryMatch(
         unit_id=unit_id,
@@ -596,28 +630,6 @@ def _query_match(
         evidence_refs=evidence_refs,
         matched=matched,
     )
-
-
-def _normalise_v3(raw: dict) -> dict:
-    """Lift a v3 document into the v4 shape without inventing capabilities.
-
-    The `placeholder` disposition becomes `precursor`; a legacy
-    `enabling_precursors` id list becomes a self-provided pair chain; a row's
-    missing `capability` and `capability_id` stay empty (never synthesised).
-    """
-    doc = json.loads(json.dumps(raw))
-    doc["schema_version"] = SCHEMA_VERSION
-    for row in doc.get("impact_assessment") or []:
-        if row.get("disposition") == "placeholder":
-            row["disposition"] = "precursor"
-        row.setdefault("capability", "")
-        row.setdefault("capability_id", "")
-    for threat in doc.get("threats") or []:
-        enabling = threat.get("enabling_precursors") or []
-        threat["enabling_precursors"] = [
-            [item, item] if isinstance(item, str) else item for item in enabling
-        ]
-    return doc
 
 
 class ThreatModelStore(BoundedRecordStore):
@@ -681,29 +693,51 @@ class ThreatModelStore(BoundedRecordStore):
 
     def _load_document(
         self, path: Path, *, allow_legacy: bool = False,
-    ) -> dict | None:
-        """A document under the reader's schema version.
+    ) -> LoadedDocument | None:
+        """A document under the reader's schema version, typed.
 
-        The current version is always read. A legacy v2 document is read only
-        when the caller asks for it: the intake and the measurement need it, the
-        mover and the query do not. Any other version is refused and logged,
-        never migrated (S2 5.8)."""
+        The current version parses as the persisted `PartialThreatModel`. A v4
+        document is read RAW as `RawThreatModel` for the prior art and the
+        measurement: it is never normalised and never re-scored (schema-5 spec
+        11). A v2/v3 document is read raw only when the caller asks
+        (`allow_legacy`): the intake and the measurement need it, the mover and
+        the query do not. Any other version is refused and logged, never
+        migrated (S2 5.8). A v5 document that does not parse is refused the same
+        way: an unreadable body is not merged and not queried.
+        """
         raw = self._load_raw(path)
         if raw is None:
             return None
         version = raw.get("schema_version")
         if version == SCHEMA_VERSION:
-            return raw
-        if version == 3:
-            return _normalise_v3(raw)
-        if allow_legacy and version == LEGACY_SCHEMA_VERSION:
-            return raw
+            try:
+                return PartialThreatModel.model_validate(raw)
+            except ValueError as exc:
+                logger.error(
+                    "threat model store: refusing %s - schema_version %s does "
+                    "not parse as the v5 model (%s)", path, version, exc,
+                )
+                return None
+        if version == PREVIOUS_SCHEMA_VERSION:
+            return RawThreatModel.from_document(raw)
+        if allow_legacy and version in LEGACY_SCHEMA_VERSIONS:
+            return RawThreatModel.from_document(raw)
         logger.error(
             "threat model store: refusing %s - unsupported schema_version %r "
-            "(this reader knows %s, and the legacy read accepts %s)",
-            path, version, SCHEMA_VERSION, LEGACY_SCHEMA_VERSION,
+            "(this reader knows %s, reads %s raw, and the legacy read accepts %s)",
+            path, version, SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION,
+            LEGACY_SCHEMA_VERSION,
         )
         return None
+
+    def _load_mapping(self, path: Path, *, allow_legacy: bool = False) -> dict | None:
+        """One document as a mapping, through the ONE typed load.
+
+        The store's mechanics (identity, merge, consumability, queries) read and
+        write mappings; a raw legacy record round-trips verbatim, a v5 record
+        renders through the schema's field set (`document_of`)."""
+        loaded = self._load_document(path, allow_legacy=allow_legacy)
+        return document_of(loaded) if loaded is not None else None
 
     # --- derived unit names (S2 4.2) -------------------------------------------
 
@@ -798,25 +832,27 @@ class ThreatModelStore(BoundedRecordStore):
         """
         for name in self._candidate_names(unit_id):
             path = self._model_path(project_id, name, family)
-            raw = self._load_document(path, allow_legacy=allow_legacy)
-            if raw is not None and raw.get("unit_id") == unit_id:
+            loaded = self._load_document(path, allow_legacy=allow_legacy)
+            if loaded is None:
+                continue
+            if document_of(loaded).get("unit_id") == unit_id:
                 return path
         return None
 
     def read_model(self, project_id: str, unit_id: str) -> dict | None:
-        """The unit's model document (produced/ first, then consumed/), or
-        None. An unknown `schema_version` refuses to load (a version error is
-        logged). A read failure degrades to None, never a raise (O4)."""
+        """The unit's model document as a mapping (produced/ first, then
+        consumed/), or None. A v5 document renders through the schema's field
+        set; a v4 (and every allowed legacy) document renders raw, exactly as
+        it was persisted. An unknown `schema_version` refuses to load (a version
+        error is logged). A read failure degrades to None, never a raise (O4)."""
         with self._lock_for(project_id):
-            path = self._find_model_path(
-                project_id, unit_id, "produced", allow_legacy=True)
-            if path is None:
+            for family in _READ_FAMILIES:
                 path = self._find_model_path(
-                    project_id, unit_id, "consumed", allow_legacy=True)
-            return (
-                self._load_document(path, allow_legacy=True)
-                if path is not None else None
-            )
+                    project_id, unit_id, family, allow_legacy=True)
+                if path is not None:
+                    loaded = self._load_document(path, allow_legacy=True)
+                    return document_of(loaded) if loaded is not None else None
+            return None
 
     def read_section(self, project_id: str, unit_id: str, section: str) -> Any:
         """One section of the unit's model, or None when the model or the
@@ -842,13 +878,13 @@ class ThreatModelStore(BoundedRecordStore):
         for directory in sorted(root.iterdir()):
             if not directory.is_dir():
                 continue
-            document = self._load_document(directory / f"{directory.name}.yaml")
-            if document is None and produced_fallback and family == "consumed":
-                document = self._load_document(
+            loaded = self._load_document(directory / f"{directory.name}.yaml")
+            if loaded is None and produced_fallback and family == "consumed":
+                loaded = self._load_document(
                     self._model_path(project_id, directory.name, "produced"))
-            if document is None:
+            if loaded is None:
                 continue
-            yield directory, document
+            yield directory, document_of(loaded)
 
     def _threat_query_views(
         self, directory: Path, document: dict,
@@ -962,7 +998,7 @@ class ThreatModelStore(BoundedRecordStore):
                 path = self._find_model_path(project_id, unit_id, family)
                 if path is None:
                     continue
-                raw = self._load_document(path)
+                raw = self._load_mapping(path)
                 if raw is None or not self._consumable(raw):
                     return []
                 directory = path.parent
@@ -1062,9 +1098,9 @@ class ThreatModelStore(BoundedRecordStore):
                 consumed = self._find_model_path(project_id, unit_id, "consumed")
                 if consumed is None:
                     return False
-                raw = self._load_document(consumed)
+                raw = self._load_mapping(consumed)
                 return bool(raw is not None and self._consumable(raw))
-            raw = self._load_document(model_path)
+            raw = self._load_mapping(model_path)
             if raw is None or not self._consumable(raw):
                 return False
             if self._pending_threat_files(model_path.parent, non_pending):
@@ -1087,7 +1123,7 @@ class ThreatModelStore(BoundedRecordStore):
         the now-empty produced unit directory is removed best-effort. The
         caller has already established that no produced threat file remains."""
         model_path = self._model_path(project_id, unit_name, "produced")
-        raw = self._load_document(model_path)
+        raw = self._load_mapping(model_path)
         if raw is None or not self._consumable(raw):
             return False
         consumed_model = self._model_path(project_id, unit_name, "consumed")
@@ -1117,7 +1153,7 @@ class ThreatModelStore(BoundedRecordStore):
             for directory in sorted(consumed.iterdir()):
                 if not directory.is_dir():
                     continue
-                raw = self._load_document(
+                raw = self._load_mapping(
                     directory / f"{directory.name}.yaml", allow_legacy=True)
                 if raw is None or not self._consumable(raw):
                     continue
@@ -1166,13 +1202,13 @@ class ThreatModelStore(BoundedRecordStore):
             for directory in sorted(root.iterdir()):
                 if not directory.is_dir():
                     continue
-                raw = self._load_document(directory / f"{directory.name}.yaml")
+                raw = self._load_mapping(directory / f"{directory.name}.yaml")
                 if raw is None and family == "consumed":
                     # The model moves with its LAST threat file (S2 8.4), so a
                     # consumed threat from a multi-threat unit still has its model
                     # in produced/. Read that same original document: the
                     # recovery never re-models the unit.
-                    raw = self._load_document(
+                    raw = self._load_mapping(
                         self._model_path(project_id, directory.name, "produced"))
                 if raw is None or not self._consumable(raw):
                     continue
@@ -1254,7 +1290,7 @@ class ThreatModelStore(BoundedRecordStore):
             for directory in sorted(produced.iterdir()):
                 if not directory.is_dir():
                     continue
-                raw = self._load_document(directory / f"{directory.name}.yaml")
+                raw = self._load_mapping(directory / f"{directory.name}.yaml")
                 if raw is None:
                     continue
                 unit_id = raw.get("unit_id")
@@ -1339,7 +1375,7 @@ class ThreatModelStore(BoundedRecordStore):
             for directory in sorted(abandoned.iterdir()):
                 if not directory.is_dir():
                     continue
-                raw = self._load_document(directory / f"{directory.name}.yaml")
+                raw = self._load_mapping(directory / f"{directory.name}.yaml")
                 if raw is None:
                     continue
                 unit_id = raw.get("unit_id")
@@ -1428,13 +1464,20 @@ class ThreatModelStore(BoundedRecordStore):
                 return consumed_path
             model_path = self._model_path(project_id, unit_name, "produced")
             existing = self._load_document(model_path)
+            if existing is not None and not isinstance(existing, PartialThreatModel):
+                # A legacy (v4 and older) document reads raw but is never
+                # written: a stale model would otherwise be mixed into a v5 run
+                # (schema-5 spec 11). No silent migration.
+                raise ThreatModelSchemaVersionError(
+                    model_path, existing.schema_version)
             if existing is None and model_path.exists():
                 # Present but refused (an unknown schema_version or an
                 # unreadable body): never merge into a document we cannot read.
                 raise ThreatModelSchemaVersionError(model_path, self._raw_version(model_path))
             now = datetime.now(timezone.utc)
             doc = self._merged_document(
-                existing, unit_id, run_id, gate, sections, now, model_path,
+                document_of(existing) if existing is not None else None,
+                unit_id, run_id, gate, sections, now, model_path,
                 project_id=project_id,
             )
             self._commit(project_id, unit_name, doc, gate, now)
@@ -1485,7 +1528,11 @@ class ThreatModelStore(BoundedRecordStore):
             doc[key] = self._section_value(value)
         model = PartialThreatModel.model_validate(doc)
         if gate is ModelState.COMPLETED:
-            model.threats = normalise_threats(model.threats)
+            # The assessment row is the scored claim: the store fills the
+            # threat's risk mirror from it, then ranks and profiles from the
+            # mirror. The model never authored either value.
+            model.threats = normalise_threats(
+                model.threats, model.impact_assessment)
             model.risk_profile = compute_risk_profile(model.threats)
             model.validation = check_completion(
                 UnitThreatModel.model_validate(model.model_dump()),
@@ -1554,13 +1601,15 @@ class ThreatModelStore(BoundedRecordStore):
     ) -> None:
         """Emit one threat file per DISPATCHABLE threat (S2 4.3, 8.1).
 
-        A threat is dispatchable when its combined risk is above zero and its
+        A threat is dispatchable when its mirrored risk is above zero and its
         `impact_ref` resolves to a `threat` assessment: the file carries the
-        denormalised `impact` block (the row, the precursors on its capability
-        path, and the path), so the hunter needs no model document for the
-        damage context. A placeholder never has a threat, and a threat whose
-        reference does not resolve emits no file - the completion check reports
-        it and the model is never consumable.
+        top-level `risk` (the derived score the mover reads) and the
+        denormalised `impact` block (the row's prose, factors, score, vector,
+        the precursors on its capability path, and the path), so the hunter
+        needs no model document for the assessment context. A precursor row never
+        has a threat, and a threat whose reference does not resolve emits no
+        file - the completion check reports it and the model is never
+        consumable.
         """
         produced_dir = self._unit_dir(project_id, unit_name, "produced")
         assessments = {
@@ -1579,8 +1628,8 @@ class ThreatModelStore(BoundedRecordStore):
 
         written: set[str] = set()
         for threat in model.threats:
-            # A threat with zero combined risk is stored in the model but never
-            # dispatched: a `none` likelihood zeroes a damage-bearing direction.
+            # A threat with a zero score is stored in the model but never
+            # dispatched: only a score above zero is work.
             if threat.risk <= 0:
                 continue
             assessment = assessments.get(threat.impact_ref)
@@ -1592,11 +1641,14 @@ class ThreatModelStore(BoundedRecordStore):
                 "unit_kind": model.unit_kind.value,
                 "run_id": model.run_id,
                 "dispatch_id": dispatch_id(unit_name, threat.id),
-                "likelihood": threat.likelihood.value,
+                # The derived score, at the top level: the mover's ONE read.
+                "risk": threat.risk,
                 "threat": threat.model_dump(mode="json"),
                 "impact": {
                     "impact_ref": assessment.id,
-                    "damage": assessment.damage,
+                    "impact_description": assessment.impact_description,
+                    "exploitability_description": (
+                        assessment.exploitability_description),
                     "disposition": assessment.disposition.value,
                     "capability": assessment.capability,
                     "capability_id": qualify(
@@ -1606,6 +1658,9 @@ class ThreatModelStore(BoundedRecordStore):
                         qualify(ref, model.unit_id)
                         for ref in assessment.capability_path
                     ],
+                    "factors": assessment.factors.model_dump(mode="json"),
+                    "risk": assessment.risk,
+                    "risk_vector": assessment.risk_vector,
                     "chain": [
                         {
                             "capability": qualify(capability, model.unit_id),

@@ -77,11 +77,26 @@ def _seed_in_progress(
         "id": "ia-1",
         "vulnerability_ref": "v-1",
         "disposition": disposition,
-        "damage": damage,
+        "impact_description": damage,
+        "exploitability_description": (
+            "One unauthenticated request reaches the handler."),
         "capability": capability,
         "capability_id": "p-1",
         "capability_path": [],
         "evidence_refs": list(evidence_refs),
+        "factors": {
+            "attack_vector": "network",
+            "attack_complexity": "low",
+            "attack_requirements": "none",
+            "privileges_required": "none",
+            "user_interaction": "none",
+            "confidentiality": "none",
+            "integrity": "none",
+            "availability": "none",
+        },
+        "risk": 0.0,
+        "risk_vector": (
+            "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N"),
     }
     store.write_sections(project, unit, ModelState.TRUST_ASSUMPTIONS_WRITTEN, {
         "assumptions": [{
@@ -97,7 +112,7 @@ def _seed_in_progress(
             "evidences": [{"kind": "note", "ref": "note:prior"}],
         }],
     }, run_id=PRIOR_RUN)
-    store.write_sections(project, unit, ModelState.VULNERABILITIES_WRITTEN, {
+    path = store.write_sections(project, unit, ModelState.VULNERABILITIES_WRITTEN, {
         "vulnerabilities": [{
             "id": "v-1",
             "fault_ref": "f-1",
@@ -108,9 +123,12 @@ def _seed_in_progress(
             "evidences": [{"kind": "request", "ref": "GET /prior"}],
         }],
     }, run_id=PRIOR_RUN)
-    store.write_sections(project, unit, ModelState.IMPACT_ASSESSED, {
-        "impact_assessment": [row],
-    }, run_id=PRIOR_RUN)
+    # The `assess_impact` tool (ticket #406) is the sole writer of a v5 row;
+    # this fixture seeds the document it will write.
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["state"] = ModelState.IMPACT_ASSESSED.value
+    document["impact_assessment"] = [row]
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
 
 def _seed_completed(store: ThreatModelStore, *, unit: str = CATALOGUE) -> None:
@@ -165,7 +183,7 @@ def test_the_query_applies_and_across_filters_and_matches_each_value(tmp_path):
 
     result = _query(store, kind="precursor", filters=[
         {"path": "capability", "regex": "SESSION|CREDENTIAL", "flags": "i"},
-        {"path": "damage", "regex": "dump", "flags": ""},
+        {"path": "impact_description", "regex": "dump", "flags": ""},
     ])
 
     assert result["count"] == 1
@@ -175,7 +193,7 @@ def test_the_query_applies_and_across_filters_and_matches_each_value(tmp_path):
     assert match["record_id"] == "ia-1"
     assert match["matched"] == [
         {"path": "capability", "value": SESSION_CAPABILITY},
-        {"path": "damage", "value": "The attacker reads live session material from the process dump."},
+        {"path": "impact_description", "value": "The attacker reads live session material from the process dump."},
     ]
 
 
@@ -213,7 +231,7 @@ def test_a_missing_path_is_no_match_not_a_rejection(tmp_path):
     path is the rejection (tested below)."""
     store = ThreatModelStore(root_dir=tmp_path)
     _write_raw_consumed(tmp_path, OTHER, {
-        "schema_version": 3,
+        "schema_version": 4,
         "unit_id": OTHER,
         "unit_kind": "service",
         "run_id": PRIOR_RUN,
@@ -247,7 +265,7 @@ def test_a_dict_value_is_matched_on_its_json_string(tmp_path):
     its JSON string, not on a Python repr."""
     store = ThreatModelStore(root_dir=tmp_path)
     _write_raw_consumed(tmp_path, OTHER, {
-        "schema_version": 3,
+        "schema_version": 4,
         "unit_id": OTHER,
         "state": "COMPLETED",
         "assumptions": [{
@@ -429,7 +447,7 @@ def test_each_kind_reads_its_view(tmp_path):
     assumption = _query(store, kind="assumption", filters=[
         {"path": "fault.label", "regex": "authorisation"}])["matches"][0]
     impact = _query(store, kind="impact", filters=[
-        {"path": "damage", "regex": "tenant"}])["matches"][0]
+        {"path": "impact_description", "regex": "tenant"}])["matches"][0]
 
     assert vulnerability["label"] == "session-fixation"
     assert vulnerability["web_vulnerability_class"] == "session-management"
@@ -455,7 +473,7 @@ def test_the_threat_view_merges_the_threat_file_with_the_impact_row(tmp_path):
     result = _query(store, kind="threat", filters=[
         {"path": "impact.capability", "regex": "tenant"},
         {"path": "impact.capability_id", "regex": "::p-1$"},
-        {"path": "impact.damage", "regex": "another tenant's item"},
+        {"path": "impact.impact_description", "regex": "another tenant's item"},
     ])
 
     assert result["count"] == 1
@@ -467,7 +485,7 @@ def test_the_threat_view_merges_the_threat_file_with_the_impact_row(tmp_path):
     assert [pair["path"] for pair in match["matched"]] == [
         "impact.capability",
         "impact.capability_id",
-        "impact.damage",
+        "impact.impact_description",
     ]
 
 

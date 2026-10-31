@@ -6,47 +6,77 @@ The schema is **partial** at the intermediate workflow gates and **complete** at
 document instead of re-authoring it.  Unknown fields are forbidden at every
 level, so a typo can never silently persist.
 
+Schema 5 (2026-10-31) is the CVSS 4.0 risk model.  The assessment row is the
+scored claim: it carries the eight authored `RiskMetrics` factors and the
+derived `risk` / `risk_vector`.  The threat is the dispatch grain: it references
+the row through `impact_ref` and mirrors the derived `risk` for the mover.  The
+model never authors a score, so the write shape (`ThreatWrite`) and the
+canonical `Threat` differ by exactly `risk`, and `ModelSections.threats` carries
+the write shape.
+
 The entity names are the artifact contract's (`UnitThreatModel`,
-`TechnicalSharpening`, `TrustModel`, `TrustAgreement`, `DynamicStateTrust`,
-`Assumption`, `Fault`, `Vulnerability`, `PriorArt`, `Precursor`,
-`ImpactAssessment`, `Threat`, `Evidence`, `Confidence`, `Likelihood`,
-`RiskFactors`, `RiskProfile`, `Validation`).
+`RawThreatModel`, `TechnicalSharpening`, `TrustModel`, `TrustAgreement`,
+`DynamicStateTrust`, `Assumption`, `Fault`, `Vulnerability`, `PriorArt`,
+`Precursor`, `ImpactAssessment`, `Threat`, `ThreatWrite`, `Evidence`,
+`Confidence`, `RiskMetrics`, `RiskProfile`, `SeverityBand`, `Validation`).
 
 Rules this module owns:
 
-- The likelihood weights (`RISK_WEIGHTS`) and the default progressive risk
-  threshold (`DEFAULT_RISK_THRESHOLD`) - the run driver records both.
-- The risk profile is computed from the threat likelihoods, never authored: the
-  model's own total is untrusted (S2 7.3).
-- The threat normalisation (S2 5.6): a stable sort by likelihood weight
-  descending, ties in the modeller's write order, ids renumbered `threat-1..n`.
-  The store owns the id, so the write schema defaults `Threat.id` empty.
+- The default progressive risk threshold (`DEFAULT_RISK_THRESHOLD`) - the run
+  driver records it.
+- The risk profile is computed from the threats' mirrored risk, never authored:
+  the model's own total is untrusted (S2 7.3).
+- The threat normalisation (S2 5.6): a stable sort by mirrored risk descending,
+  ties in the modeller's write order, ids renumbered `threat-1..n`.  The store
+  owns the id, so the write schema defaults `Threat.id` empty; the store also
+  fills the mirror from the assessment rows, so the model cannot author it.
 - The completion checker (S2 5.7): the loose necessary-attribute set, the
   prior-art query requirement (one threat, one vulnerability, and one precursor
   query, each with a filter, plus the phase note), the referential integrity,
-  the assumption-to-threat closure, the impact invariants
-  (one threat row per damage-bearing assessment, a placeholder with no threat,
-  the precursor resolution, the enabling-precursor/capability-path equality),
-  the threat order, and a REGRESSION check of the stored risk profile against a
-  fresh recomputation.
+  the assumption-to-threat closure, the assessment invariants (one threat row
+  per damage-bearing assessment, a precursor row with all three impact values
+  `none`, the threat risk mirror equality, the enabling-precursor/capability-
+  path equality, the capability-graph acyclicity), the threat order, and a
+  REGRESSION check of the stored risk profile against a fresh recomputation.
   It is non-blocking: it records findings, it never rejects the model.
 
 The checker is pure; the store (`threat_model_store`) applies it on the
 `COMPLETED` write only.
+
+The retired likelihood/impact vocabulary (`Likelihood`, `RISK_WEIGHTS`,
+`Impact`, `ImpactLevel`, `ImpactSeverity`, `IMPACT_METRIC_WEIGHTS`,
+`impact_weight*`, `impact_severity`, `threat_risk`, `RISK_BUCKETS`,
+`risk_bucket`, `RiskFactors`) is kept ONLY for the consumers ticket #405 does
+not migrate (the mover, the queue, the run record, the payload); the v5 schema
+exposes none of it.  T9 deletes it.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import AbstractSet, Any, Mapping
+from typing import AbstractSet, Any, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-SCHEMA_VERSION = 4
+from .risk_score import (
+    RiskMetrics,
+    RiskResult,
+    SeverityBand,
+    compute_risk,
+    severity_band,
+    validate_metrics,
+)
 
-# The legacy schema versions the reader accepts. A v3 document reads as v4 with
-# no capability synthesis: `placeholder` becomes `precursor`, and a legacy
-# `enabling_precursors` id list becomes a self-provided chain.
+SCHEMA_VERSION = 5
+
+# The previous schema version. A v4 document is read RAW for prior art and
+# measurement (never re-scored, never migrated), and a v4 write is refused.
+PREVIOUS_SCHEMA_VERSION = 4
+
+# The legacy schema versions the reader accepts when the caller asks for a
+# legacy read. A v2/v3 document reads raw, exactly like v4: the v4 shape it was
+# once lifted into no longer parses under schema 5, and no legacy model is
+# re-scored.
 LEGACY_SCHEMA_VERSIONS: tuple[int, ...] = (2, 3)
 
 # Technique families are class parents in the suite tree, but they name a
@@ -56,6 +86,14 @@ TECHNIQUE_FAMILIES: frozenset[str] = frozenset(
     {"defence-bypass", "proxy-techniques", "two-principal-authz"}
 )
 
+# Migration note (2026-10-31): schema 5 replaces the likelihood x impact model
+# with the CVSS 4.0 base score. The assessment row carries the eight factors and
+# the derived `risk` / `risk_vector`; the threat mirrors the score and loses
+# `likelihood`, `likelihood_rationale`, `risk_factors`, `confidence`, `impact`,
+# and `impact_weight`; `RiskProfile` is the summed risk and the severity-band
+# breakdown. The `impact_assessment` section leaves `ModelSections` (the
+# `assess_impact` tool is its sole writer, ticket #406). A v4 document is NOT
+# migrated: the store reads it raw and refuses to write into it.
 # Migration note (2026-10-26): schema 3 replaced the damage-first model with the
 # impact-assessment model - the `prior_art`, `impact_assessment`, and
 # `precursors` sections, the `PRIOR_ART` and `IMPACT_ASSESSED` gates,
@@ -80,8 +118,15 @@ class Confidence(StrEnum):
     ASSUMED = "ASSUMED"
 
 
+# --- the retired likelihood/impact vocabulary (kept for the T5-T9 consumers) --
+#
+# Schema 5 no longer routes the score through these values. They remain ONLY so
+# the consumers outside ticket #405's scope (the mover, the dispatch queue, the
+# run record, the payload) keep importing and behaving until their own tickets
+# migrate them. Nothing below is a field of a v5 model.
+
 class Likelihood(StrEnum):
-    """The threat likelihood enum; the weight is monotonic (S2 7.1)."""
+    """The retired threat likelihood enum; the weight is monotonic (S2 7.1)."""
 
     NONE = "none"
     LOW = "low"
@@ -169,15 +214,18 @@ STATE_ORDER: dict[ModelState, int] = {
 
 # The section names each gate may write (S2 5.4). The COMPLETED write does not
 # carry `risk_profile`; the store computes it after the merge. The
-# `IMPACT_ASSESSED` gate writes the rows and the precursor entities together,
-# because every row's precursor references resolve inside the same model.
+# `IMPACT_ASSESSED` gate carries NO model-facing section: the `assess_impact`
+# tool (ticket #406) is the sole writer of an assessment row, so the model can
+# never bypass its contract. The gate still exists (the tool advances the state
+# and the other consumers read the state); it just writes nothing through this
+# surface.
 GATE_SECTIONS: dict[ModelState, tuple[str, ...]] = {
     ModelState.UNIT_TECHNICAL_SHARP: ("technical_sharpening",),
     ModelState.PRIOR_ART: ("prior_art",),
     ModelState.TRUST_MODELLED: ("trust_model",),
     ModelState.TRUST_ASSUMPTIONS_WRITTEN: ("assumptions",),
     ModelState.VULNERABILITIES_WRITTEN: ("vulnerabilities",),
-    ModelState.IMPACT_ASSESSED: ("impact_assessment",),
+    ModelState.IMPACT_ASSESSED: (),
     ModelState.COMPLETED: ("threats",),
 }
 
@@ -360,13 +408,30 @@ class PriorArtKind(StrEnum):
     IMPACT = "impact"
 
 
-# The prior-art query path catalog (spec section 7), one tuple per kind. The
-# `threat` view is the threat file merged with its impact row and its precursor
-# entities; the other views are the unit model's records. The catalog covers
-# every field of the threat file and of the model records (a dict-valued path is
-# matched on its JSON string); `unit_id` is accepted for EVERY kind (see
-# `prior_art_paths`), because every view carries the owning model's identity and
-# the query excludes the bound unit unless a filter names it.
+# The v5 factor paths of an assessment row, reused by the `threat`, `impact`,
+# and `precursor` views so the catalog cannot drift from `RiskMetrics`.
+_FACTOR_PATHS: tuple[str, ...] = (
+    "factors",
+    "factors.attack_vector",
+    "factors.attack_complexity",
+    "factors.attack_requirements",
+    "factors.privileges_required",
+    "factors.user_interaction",
+    "factors.confidentiality",
+    "factors.integrity",
+    "factors.availability",
+)
+
+# The planned-profile amendment (2026-10-31): the v5 paths are `risk`,
+# `risk_vector`, `factors.*`, `impact_description`, and
+# `exploitability_description`; the v4 paths (`damage`, `likelihood`, ...) stay
+# accepted so a raw v4 document is still queryable. The `threat` view is the
+# threat file merged with its impact row; the other views are the unit model's
+# records. The catalog covers every field of the threat file and of the model
+# records (a dict-valued path is matched on its JSON string); `unit_id` is
+# accepted for EVERY kind (see `prior_art_paths`), because every view carries
+# the owning model's identity and the query excludes the bound unit unless a
+# filter names it.
 PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
     PriorArtKind.THREAT: (
         "threat_id",
@@ -374,7 +439,11 @@ PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
         "unit_id",
         "unit_kind",
         "run_id",
+        "risk",
+        "risk_vector",
+        # The v4 threat file's top-level key stays queryable in a raw model.
         "likelihood",
+        *_FACTOR_PATHS,
         "created_at",
         "threat",
         "threat.id",
@@ -402,6 +471,19 @@ PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
         "threat.risk",
         "impact",
         "impact.impact_ref",
+        "impact.impact_description",
+        "impact.exploitability_description",
+        "impact.risk",
+        "impact.risk_vector",
+        "impact.factors",
+        "impact.factors.attack_vector",
+        "impact.factors.attack_complexity",
+        "impact.factors.attack_requirements",
+        "impact.factors.privileges_required",
+        "impact.factors.user_interaction",
+        "impact.factors.confidentiality",
+        "impact.factors.integrity",
+        "impact.factors.availability",
         "impact.damage",
         "impact.disposition",
         "impact.capability",
@@ -420,17 +502,28 @@ PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
         "id",
         "vulnerability_ref",
         "disposition",
-        "damage",
+        "impact_description",
+        "exploitability_description",
+        "risk",
+        "risk_vector",
+        *_FACTOR_PATHS,
         "capability",
         "capability_id",
         "capability_path",
         "evidence_refs",
+        # The v4 row's prose field stays queryable in a raw model.
+        "damage",
     ),
     PriorArtKind.PRECURSOR: (
         "id",
         "capability",
         "capability_id",
         "vulnerability_ref",
+        "impact_description",
+        "exploitability_description",
+        "risk",
+        "risk_vector",
+        *_FACTOR_PATHS,
         "damage",
         "disposition",
         "capability_path",
@@ -541,14 +634,12 @@ class ThreatQueryResult(_Record):
     truncated: bool = False
 
 
-
 class Impact(_Record):
-    """The CIA vector of one damage claim.
+    """The CIA vector of one RETIRED damage claim (schema 4 and earlier).
 
-    The modeller authors the three CVSS 4.0-like metrics AFTER the impact
-    assessment has named the damage. The store computes the sub-score, the
-    ordinal weight, the threat risk, and the profile; the modeller never authors
-    a score. The damage text lives on the `ImpactAssessment` row.
+    Schema 5 replaced the threat-side CIA vector with the assessment row's
+    `RiskMetrics`. This record is kept only for the T5-T9 consumers of the
+    retired risk score; no v5 model field carries it.
     """
 
     confidentiality: ImpactLevel = ImpactLevel.NONE
@@ -577,10 +668,10 @@ class ImpactDisposition(StrEnum):
 
 
 class Precursor(_Record):
-    """One capability entity of a LEGACY model (schema 3).
+    """One capability entity of a LEGACY model (schema 3 and earlier).
 
-    Schema 4 carries the capability on the impact row. This model is retained
-    for the read-only compatibility path; it is never written by a v4 gate.
+    Schema 4 moved the capability onto the impact row. This model is retained
+    for the read-only compatibility path; no v5 gate writes it.
     """
 
     id: str
@@ -590,25 +681,36 @@ class Precursor(_Record):
 
 
 class ImpactAssessment(_Record):
-    """One assessed impact of one vulnerability exploitation.
+    """One assessed impact of one vulnerability exploitation (schema 5).
 
-    `damage` names the victim and the damaged property for a `threat` row, and
-    states why no end damage follows for a `precursor` row. `capability` is the
-    adversarial capability the exploitation gains, and `capability_id` keys it.
-    `capability_path` lists the required capability ids in execution order. The
-    CIA vector lives on the threat; a precursor row has no threat, so its
-    effective vector is all none.
+    The row is the SCORED claim: `factors` carries the eight authored CVSS 4.0
+    base factors, and `risk` / `risk_vector` are derived from them at
+    persistence, never authored.  `impact_description` names the victim and the
+    damaged property for a `threat` row, and states why no end damage follows
+    for a `precursor` row; `exploitability_description` describes the chain, its
+    capabilities, and its human participation.  `capability` is the adversarial
+    capability the exploitation gains, and `capability_id` keys it.
+    `capability_path` lists the required capability ids in execution order.
+
+    A `precursor` row has all three impact values `none`; a `threat` row has at
+    least one above `none` (`risk_score.validate_metrics` owns the rule).
     """
 
     id: str = ""
     vulnerability_ref: str
     disposition: ImpactDisposition
-    damage: str
-    capability: str = ""
-    capability_id: str = ""
+    impact_description: str
+    exploitability_description: str
+    capability: str
+    capability_id: str
     capability_path: list[str] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
-    # Legacy schema-3 field: accepted on read, never written by a v4 gate.
+    factors: RiskMetrics
+    # Derived at persistence (the `assess_impact` tool's commit), never
+    # authored. The write path recomputes both from `factors`.
+    risk: float = 0.0
+    risk_vector: str = ""
+    # Legacy schema-3 field: accepted on read, never written by a v5 gate.
     precursor_refs: list[str] = Field(default_factory=list, exclude=True)
 
     @field_validator("disposition", mode="before")
@@ -668,8 +770,13 @@ def risk_bucket(risk: int) -> str:
     return "critical"
 
 
-class Threat(_Record):
-    """One damage-bearing row and the dispatch grain.
+class ThreatWrite(_Record):
+    """One damage-bearing row as the MODEL writes it (schema 5).
+
+    The write shape is the canonical threat minus `risk`: the score is derived
+    from the assessment row at persistence, so the model cannot author or
+    iterate on it. `ModelSections.threats` is this type, which makes an authored
+    `risk` a rejected field at the tool boundary.
 
     `id` defaults empty: the threat id is a store-owned derived symbol assigned
     at the COMPLETED write (S2 5.6 / 10.2), never authored by the modeller. The
@@ -683,10 +790,6 @@ class Threat(_Record):
     vulnerability_ref: str
     canonical_class: str
     web_vulnerability_class: str = ""
-    likelihood: Likelihood
-    likelihood_rationale: str
-    risk_factors: RiskFactors
-    confidence: Confidence
     evidences: list[Evidence]
     # The impact-assessment row this threat publishes (IA-*) and the ordered
     # (required capability, provider capability) pairs that reach its damage.
@@ -694,11 +797,6 @@ class Threat(_Record):
     # is an unfilled gap; the first element mirrors the row's capability_path.
     impact_ref: str = ""
     enabling_precursors: list[tuple[str, str | None]] = Field(default_factory=list)
-    impact: Impact = Field(default_factory=Impact)
-    # Derived at the COMPLETED normalisation. The write schema defaults them to
-    # zero; the store overwrites them and the checker regression-checks them.
-    impact_weight: int = 0
-    risk: int = 0
 
     @field_validator("enabling_precursors", mode="before")
     @classmethod
@@ -717,10 +815,23 @@ class Threat(_Record):
         return normalized
 
 
+class Threat(ThreatWrite):
+    """One damage-bearing row and the dispatch grain (schema 5).
+
+    `risk` is the assessment row's derived score, mirrored here at the
+    COMPLETED write for the mover and the threat file. It is never authored:
+    the model writes `ThreatWrite`, and the store overwrites the mirror from
+    the row the threat's `impact_ref` names.
+    """
+
+    risk: float = 0.0
+
+
 class RiskProfile(_Record):
-    total: int
-    breakdown: dict[Likelihood, int]
-    impact_breakdown: dict[ImpactSeverity, int] = Field(default_factory=dict)
+    """The unit's derived risk: the summed threat risk and the band breakdown."""
+
+    total: float
+    breakdown: dict[SeverityBand, int]
 
 
 class Validation(_Record):
@@ -742,15 +853,18 @@ class ModelSections(BaseModel):
     The tool schema exposes exactly the sections the store accepts; it is not
     an open `dict`. The store still enforces the per-gate allowed set, so a
     section from the wrong gate is a coded rejection. All fields are optional
-    because a gate writes only its own section(s)."""
+    because a gate writes only its own section(s).
+
+    `threats` is the WRITE shape (`ThreatWrite`), so an authored `risk` is an
+    unknown field. The assessment rows are not a model-facing section at all:
+    the `assess_impact` tool (ticket #406) is their sole writer."""
 
     technical_sharpening: TechnicalSharpening | None = None
     prior_art: PriorArt | None = None
     trust_model: TrustModel | None = None
     assumptions: list[Assumption] | None = None
     vulnerabilities: list[Vulnerability] | None = None
-    impact_assessment: list[ImpactAssessment] | None = None
-    threats: list[Threat] | None = None
+    threats: list[ThreatWrite] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -802,56 +916,104 @@ def unit_kind_from_unit_id(unit_id: str) -> UnitKind:
     return UnitKind.SERVICE if unit_id.startswith("Service:") else UnitKind.SYSTEM
 
 
+class RawThreatModel(_Record):
+    """A legacy document read RAW: the version and the sections, verbatim.
+
+    The v4 shape is not migrated and never re-scored (schema-5 spec 11). The
+    prior art and the measurement read its fields as they were persisted, so
+    this record deliberately does not parse, normalise, or validate a single
+    section. `sections` holds every key of the document except
+    `schema_version`.
+    """
+
+    schema_version: int
+    sections: dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def from_document(cls, raw: Mapping[str, Any]) -> "RawThreatModel":
+        """The wrapper over one loaded document mapping."""
+        version = raw.get("schema_version")
+        return cls(
+            schema_version=version if isinstance(version, int) else 0,
+            sections={
+                str(key): value for key, value in raw.items()
+                if key != "schema_version"
+            },
+        )
+
+    def document(self) -> dict[str, Any]:
+        """The document as it was persisted, `schema_version` included."""
+        return {"schema_version": self.schema_version, **self.sections}
+
+
+def document_of(model: UnitThreatModel | RawThreatModel) -> dict[str, Any]:
+    """One loaded document as a JSON-safe mapping.
+
+    The ONE place a typed load is rendered back to the document shape: the
+    store parses and merges mappings, and a raw legacy record must round-trip
+    byte-equivalent, never through the v5 schema's field set.
+    """
+    if isinstance(model, RawThreatModel):
+        return model.document()
+    return model.model_dump(mode="json")
+
+
 def compute_risk_profile(threats: list[Threat]) -> RiskProfile:
-    """The authoritative per-unit risk profile (S2 7.3, amended 2026-10-25).
+    """The authoritative per-unit risk profile (S2 7.3, schema 5).
 
-    The total sums every threat's combined risk (`likelihood_weight * impact_
-    weight`). The likelihood breakdown counts every threat by likelihood, and the
-    impact breakdown counts every threat by its ordinal impact severity. The
-    profile recomputes from the threat's authored impact; it never trusts the
-    threat's derived `risk` field. The modeller never authors the profile.
+    The total sums every threat's mirrored `risk` (rounded to two decimals, as
+    the score is) and the breakdown counts every threat by its `SeverityBand`.
+    The profile recomputes from the threats; it never trusts an authored
+    profile. The modeller never authors either value.
     """
-    breakdown = {level: 0 for level in Likelihood}
-    impact_breakdown = {level: 0 for level in ImpactSeverity}
-    total = 0
+    breakdown = {band: 0 for band in SeverityBand}
+    total = 0.0
     for threat in threats:
-        breakdown[threat.likelihood] += 1
-        weight = impact_weight(threat.impact)
-        impact_breakdown[impact_severity(weight)] += 1
-        total += RISK_WEIGHTS[threat.likelihood] * weight
-    return RiskProfile(
-        total=total,
-        breakdown=breakdown,
-        impact_breakdown=impact_breakdown,
-    )
+        breakdown[severity_band(threat.risk)] += 1
+        total += threat.risk
+    return RiskProfile(total=round(total, 2), breakdown=breakdown)
 
 
-def normalise_threats(threats: list[Threat]) -> list[Threat]:
-    """The ranked order and the derived threat fields (S2 5.6, amended).
+def _risk_by_assessment(
+    assessments: Mapping[str, float] | Sequence[ImpactAssessment] | None,
+) -> dict[str, float]:
+    """The `{impact_ref: risk}` map the mirror is filled from.
 
-    Stable sort by combined risk descending, then impact weight descending,
-    then likelihood weight descending; ties keep the modeller's write order.
-    Renumber `threat-1..n` in that order and fill the derived `impact_weight` and
-    `risk` fields. Rank 1 is the highest risk.
+    The store passes its assessment rows; a caller that already holds the map
+    passes it directly. A missing map leaves every threat's own `risk` in
+    place, which the completion checker then reports as a mirror mismatch.
     """
-    def key(threat: Threat) -> tuple[int, int, int]:
-        weight = impact_weight(threat.impact)
-        return (
-            RISK_WEIGHTS[threat.likelihood] * weight,
-            weight,
-            RISK_WEIGHTS[threat.likelihood],
-        )
+    if assessments is None:
+        return {}
+    if isinstance(assessments, Mapping):
+        return {str(ref): float(risk) for ref, risk in assessments.items()}
+    return {row.id: row.risk for row in assessments}
 
-    ordered = sorted(threats, key=key, reverse=True)
+
+def normalise_threats(
+    threats: list[Threat],
+    assessments: Mapping[str, float] | Sequence[ImpactAssessment] | None = None,
+) -> list[Threat]:
+    """The ranked order and the derived threat fields (S2 5.6, schema 5).
+
+    The store fills the risk mirror from the assessment rows FIRST, then sorts
+    stable by risk descending with the modeller's write order as the tie-break,
+    and renumbers `threat-1..n` in that order. Rank 1 is the highest risk. The
+    assessment is the scored claim, so a threat whose `impact_ref` names no row
+    keeps whatever `risk` it carried (zero for a model-written threat) and the
+    checker reports it.
+    """
+    risks = _risk_by_assessment(assessments)
+    ordered = sorted(
+        enumerate(threats),
+        key=lambda pair: (-risks.get(pair[1].impact_ref, pair[1].risk), pair[0]),
+    )
     return [
-        threat.model_copy(
-            update={
-                "id": f"threat-{rank}",
-                "impact_weight": impact_weight(threat.impact),
-                "risk": RISK_WEIGHTS[threat.likelihood] * impact_weight(threat.impact),
-            }
-        )
-        for rank, threat in enumerate(ordered, start=1)
+        threat.model_copy(update={
+            "id": f"threat-{rank}",
+            "risk": risks.get(threat.impact_ref, threat.risk),
+        })
+        for rank, (_index, threat) in enumerate(ordered, start=1)
     ]
 
 
@@ -859,7 +1021,7 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
     """The fixed necessary-attribute set (S2 5.7), as dotted finding paths.
 
     The boundary is a pydantic-validated `UnitThreatModel`: `unit_kind` and
-    the risk-factor values are already enum-checked by the schema, so no
+    the `RiskMetrics` values are already enum-checked by the schema, so no
     finding can exist for them and none is emitted (the store rejects an
     invalid shape at the write seam).
     """
@@ -911,21 +1073,32 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
         vulnerability.dropped for vulnerability in model.vulnerabilities
     )
     if not model.impact_assessment and not every_vulnerability_dropped:
-        # A model whose vulnerabilities are all placeholders has no threats and
-        # is still complete; the damage claims are the impact rows.
+        # A model whose vulnerabilities are all dropped has no threats and is
+        # still complete; the scored claims are the impact rows.
         missing.append("impact_assessment")
-    # The impact invariants (S2 5.7). The CIA vector lives on the threat, so a
-    # `threat` row's non-none requirement is checked on its threat below. Every
-    # row carries its capability and its key; a row with no end damage is a
-    # `precursor` and has no threat. The capability path is the ordered set of
-    # required capabilities and may be empty for a direct impact.
+    # The assessment invariants (S2 5.7, schema 5). Every row carries its two
+    # prose blocks, its capability, its key, and the derived vector; the factor
+    # SET is enforced by `RiskMetrics` at the write seam, so only the factor
+    # VALUES need a finding. A `precursor` row must be all-none and a `threat`
+    # row must carry at least one non-none value (`validate_metrics` owns both
+    # rules). A row with no end damage is a `precursor` and has no threat; the
+    # capability path is the ordered set of required capabilities and may be
+    # empty for a direct impact.
     for assessment in model.impact_assessment:
-        if not assessment.damage:
-            missing.append(f"impact_assessment:{assessment.id}.damage")
+        for name in ("impact_description", "exploitability_description"):
+            if not getattr(assessment, name):
+                missing.append(f"impact_assessment:{assessment.id}.{name}")
         if not assessment.capability:
             missing.append(f"impact_assessment:{assessment.id}.capability")
         if not assessment.capability_id:
             missing.append(f"impact_assessment:{assessment.id}.capability_id")
+        if not assessment.risk_vector:
+            missing.append(f"impact_assessment:{assessment.id}.risk_vector")
+        missing.extend(
+            f"impact_assessment:{assessment.id}.{finding}"
+            for finding in validate_metrics(
+                assessment.factors, disposition=assessment.disposition.value)
+        )
     for index, assessment in enumerate(model.impact_assessment):
         if not assessment.id:
             missing.append(f"impact_assessment[{index}].id")
@@ -941,23 +1114,22 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
     ]
     if len(capability_ids) != len(set(capability_ids)):
         missing.append("impact_assessment.capability_ids")
+    impact_index = {
+        assessment.id: assessment for assessment in model.impact_assessment
+    }
     for threat in model.threats:
-        if not threat.likelihood_rationale:
-            missing.append(f"threat:{threat.id}.likelihood_rationale")
         if not threat.evidences:
             missing.append(f"threat:{threat.id}.evidences")
         if not threat.impact_ref:
             missing.append(f"threat:{threat.id}.impact_ref")
-        if threat.impact.is_none():
-            missing.append(f"threat:{threat.id}.impact")
-        expected_weight = impact_weight(threat.impact)
-        if threat.impact_weight != expected_weight:
-            missing.append(f"threat:{threat.id}.impact_weight")
-        if threat.risk != RISK_WEIGHTS[threat.likelihood] * expected_weight:
+        # The mirror: the threat's risk IS the row's derived score. A threat
+        # whose row is missing is the referential check's finding, so it is not
+        # reported twice.
+        assessment = impact_index.get(threat.impact_ref)
+        if assessment is not None and threat.risk != assessment.risk:
             missing.append(f"threat:{threat.id}.risk")
-    keys = [(threat.risk, threat.impact_weight, RISK_WEIGHTS[threat.likelihood])
-            for threat in model.threats]
-    if any(left < right for left, right in zip(keys, keys[1:])):
+    risks = [threat.risk for threat in model.threats]
+    if any(left < right for left, right in zip(risks, risks[1:])):
         missing.append("threats.order")
     expected_ids = [f"threat-{rank}" for rank in range(1, len(model.threats) + 1)]
     if [threat.id for threat in model.threats] != expected_ids:
@@ -971,8 +1143,6 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
                 missing.append("risk_profile.total")
             if model.risk_profile.breakdown != expected.breakdown:
                 missing.append("risk_profile.breakdown")
-            if model.risk_profile.impact_breakdown != expected.impact_breakdown:
-                missing.append("risk_profile.impact_breakdown")
     return missing
 
 
@@ -1071,7 +1241,7 @@ def _check_references(
 def _check_closure(model: UnitThreatModel) -> list[str]:
     """The assumption-to-threat closure findings (S2 5.7), as dotted paths.
 
-    The impact closure is the one-threat-one-damage rule: a `threat` row
+    The impact closure is the one-threat-one-assessment rule: a `threat` row
     publishes exactly one threat, a `precursor` row none, a threat references a
     `threat` row of its own vulnerability, and its enabling pairs mirror that
     row's capability path in order. An unresolved reference is the referential
@@ -1265,8 +1435,8 @@ __all__ = [
     "ImpactSeverity",
     "Likelihood",
     "ModelSections",
-    "Threat",
     "ModelState",
+    "PREVIOUS_SCHEMA_VERSION",
     "PartialThreatModel",
     "PRIOR_ART_PATHS",
     "Precursor",
@@ -1276,14 +1446,20 @@ __all__ = [
     "PriorArtReuse",
     "PrivilegesRequired",
     "RISK_WEIGHTS",
+    "RawThreatModel",
     "RiskFactors",
+    "RiskMetrics",
     "RiskProfile",
+    "RiskResult",
     "SCHEMA_VERSION",
+    "SeverityBand",
     "TECHNIQUE_FAMILIES",
     "STATE_ORDER",
     "TechnicalSharpening",
+    "Threat",
     "ThreatQueryMatch",
     "ThreatQueryResult",
+    "ThreatWrite",
     "Transition",
     "TrustAgreement",
     "TrustModel",
@@ -1295,14 +1471,18 @@ __all__ = [
     "Vulnerability",
     "check_completion",
     "compute_impact",
+    "compute_risk",
     "compute_risk_profile",
     "RISK_BUCKETS",
+    "document_of",
     "impact_severity",
     "impact_weight",
     "impact_weight_from_sub_score",
+    "severity_band",
     "threat_risk",
     "normalise_threats",
     "prior_art_paths",
     "risk_bucket",
     "unit_kind_from_unit_id",
+    "validate_metrics",
 ]

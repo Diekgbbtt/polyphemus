@@ -1,87 +1,122 @@
-"""Unit tier: the impact model, the impact assessment schema, the combined risk.
+"""Unit tier: the schema-5 risk shapes, the normaliser, and the risk profile.
 
-Ticket 404 authored the CVSS 4.0-like impact on the threat. Ticket 436 moved the
-damage text into the `impact_assessment` section: the threat carries the CIA
-vector and references one assessment row plus its enabling precursors. The store
-computes the sub-score, the ordinal weight, the threat risk, the unit profile,
-and the ranking. The tests use the known-good literals from the ADR, never a
-recomputation of the implementation formula.
+Schema 5 (2026-10-31) makes the assessment row the scored claim: it carries the
+eight authored CVSS 4.0 factors and the derived `risk` / `risk_vector`. The
+threat is the dispatch grain: it references the row and mirrors the score for
+the mover, and the model writes a shape (`ThreatWrite`) that cannot author the
+mirror. The store fills the mirror and ranks; the model never authors a score.
+
+The expected scores are the `cvss==3.6` CVSS 4.0 values for the literal factor
+sets (`AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N` = 9.2, `VC:L` = 6.9), never a
+recomputation through the code under test.
 """
 from __future__ import annotations
 
 import pytest
 
+from polymerhus.attack.hunting.risk_score import (
+    AttackComplexity,
+    AttackRequirements,
+    AttackVector,
+    ImpactLevel,
+    PrivilegesRequired,
+    UserInteraction,
+    validate_metrics,
+)
 from polymerhus.attack.hunting.threat_model import (
     GATE_SECTIONS,
     SCHEMA_VERSION,
-    Confidence,
     Evidence,
     EvidenceKind,
-    Impact,
     ImpactAssessment,
     ImpactDisposition,
-    ImpactLevel,
-    ImpactSeverity,
-    Likelihood,
+    ModelSections,
     ModelState,
-    Precursor,
-    PriorArt,
+    RiskMetrics,
+    RiskProfile,
+    SeverityBand,
     Threat,
+    ThreatWrite,
     UnitThreatModel,
-    RiskFactors,
-    AttackVector,
-    AttackRequirements,
-    PrivilegesRequired,
-    Complexity,
-    compute_impact,
     compute_risk_profile,
-    impact_severity,
-    impact_weight,
-    impact_weight_from_sub_score,
-    threat_risk,
     normalise_threats,
-    RISK_WEIGHTS,
 )
-from polymerhus.attack.hunting.threat_model import IMPACT_METRIC_WEIGHTS
+
+# The known-good CVSS 4.0 scores of the two literal factor sets used below.
+HIGH_RISK = 9.2
+LOW_RISK = 6.9
+HIGH_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N"
+LOW_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:L/SI:N/SA:N"
 
 
-def impact(confidentiality=ImpactLevel.NONE, integrity=ImpactLevel.NONE,
-           availability=ImpactLevel.NONE) -> Impact:
-    return Impact(
+def factors(
+    confidentiality: ImpactLevel = ImpactLevel.HIGH,
+    integrity: ImpactLevel = ImpactLevel.NONE,
+    availability: ImpactLevel = ImpactLevel.NONE,
+) -> RiskMetrics:
+    return RiskMetrics(
+        attack_vector=AttackVector.NETWORK,
+        attack_complexity=AttackComplexity.LOW,
+        attack_requirements=AttackRequirements.NONE,
+        privileges_required=PrivilegesRequired.NONE,
+        user_interaction=UserInteraction.NONE,
         confidentiality=confidentiality,
         integrity=integrity,
         availability=availability,
     )
 
 
-def threat(*, likelihood=Likelihood.MEDIUM, impact_value=None,
-         canonical="Cross-Site Scripting", web="xss") -> Threat:
+def row(
+    *,
+    id: str = "IA-1",
+    disposition: ImpactDisposition = ImpactDisposition.THREAT,
+    risk: float = HIGH_RISK,
+    vector: str = HIGH_VECTOR,
+    capability_path: list[str] | None = None,
+    precursor_refs: list[str] | None = None,
+) -> ImpactAssessment:
+    return ImpactAssessment(
+        id=id,
+        vulnerability_ref="V-1",
+        disposition=disposition,
+        impact_description="An anonymous caller reads another tenant's item.",
+        exploitability_description="One unauthenticated request names the item id.",
+        capability="read another tenant's item",
+        capability_id="P-1",
+        capability_path=capability_path or [],
+        evidence_refs=["GET /api/items/2"],
+        factors=factors(),
+        risk=risk,
+        risk_vector=vector,
+        precursor_refs=precursor_refs or [],
+    )
+
+
+def threat(
+    *,
+    impact_ref: str = "IA-1",
+    risk: float = 0.0,
+    canonical: str = "Cross-Site Scripting",
+    web: str = "xss",
+    enabling: list[tuple[str, str | None]] | None = None,
+) -> Threat:
     return Threat(
         fault_ref="F-1",
         vulnerability_ref="V-1",
         canonical_class=canonical,
         web_vulnerability_class=web,
-        likelihood=likelihood,
-        likelihood_rationale="a rationale",
-        risk_factors=RiskFactors(
-            attack_vector=AttackVector.NETWORK,
-            attack_requirements=AttackRequirements.NONE,
-            privileges_required=PrivilegesRequired.NONE,
-            complexity=Complexity.LOW,
-        ),
-        confidence=Confidence.OBSERVED,
         evidences=[Evidence(kind=EvidenceKind.PROBE, ref="probe:test", detail="")],
-        impact_ref="IA-1",
-        enabling_precursors=["P-1"],
-        impact=impact_value or Impact.none(),
+        impact_ref=impact_ref,
+        enabling_precursors=enabling or [],
+        risk=risk,
     )
 
 
-# --- the impact-assessment schema contract (ticket 436) ----------------------
+# --- the v5 schema contract --------------------------------------------------
 
-def test_the_seven_states_wire_their_gate_sections():
-    """S2 section 5: seven states, each with the section(s) its gate writes."""
-    assert SCHEMA_VERSION == 4
+def test_schema_five_wires_the_seven_states_its_gate_sections():
+    """The `IMPACT_ASSESSED` gate is tool-only: it accepts no model section."""
+    assert SCHEMA_VERSION == 5
     assert [state.value for state in ModelState] == [
         "UNIT_TECHNICAL_SHARP",
         "TRUST_MODELLED",
@@ -97,242 +132,194 @@ def test_the_seven_states_wire_their_gate_sections():
         ModelState.TRUST_MODELLED: ("trust_model",),
         ModelState.TRUST_ASSUMPTIONS_WRITTEN: ("assumptions",),
         ModelState.VULNERABILITIES_WRITTEN: ("vulnerabilities",),
-        ModelState.IMPACT_ASSESSED: ("impact_assessment",),
+        ModelState.IMPACT_ASSESSED: (),
         ModelState.COMPLETED: ("threats",),
     }
 
 
-def test_the_row_carries_a_first_class_capability_and_the_disposition_is_precursor():
-    """The capability is first class on every row; the placeholder disposition
-    is retired and a legacy document still reads."""
-    assert SCHEMA_VERSION == 4
-    assert set(UnitThreatModel.model_fields) >= {
-        "prior_art", "impact_assessment", "precursors",
-    }
-    assert set(PriorArt.model_fields) == {"queries", "reused", "notes"}
-    assert set(Precursor.model_fields) == {
-        "id", "capability", "procedure", "evidence_refs",
-    }
+def test_the_assessment_row_is_the_scored_claim():
+    """The row carries the factors and the derived score, and the legacy
+    precursor list stays read-only (excluded from the persisted shape)."""
     assert set(ImpactAssessment.model_fields) == {
         "id",
         "vulnerability_ref",
         "disposition",
-        "damage",
+        "impact_description",
+        "exploitability_description",
         "capability",
         "capability_id",
         "capability_path",
         "evidence_refs",
+        "factors",
+        "risk",
+        "risk_vector",
         "precursor_refs",
     }
+    assert ImpactAssessment.model_fields["risk"].default == 0.0
+    assert ImpactAssessment.model_fields["risk_vector"].default == ""
+    assert "damage" not in ImpactAssessment.model_fields
+    assert "precursor_refs" not in row().model_dump()
+
+
+def test_the_v5_schema_carries_no_retired_risk_field():
+    assert "likelihood" not in Threat.model_fields
+    assert "likelihood_rationale" not in Threat.model_fields
+    assert "risk_factors" not in Threat.model_fields
+    assert "confidence" not in Threat.model_fields
+    assert "impact" not in Threat.model_fields
+    assert "impact_weight" not in Threat.model_fields
+    assert set(RiskProfile.model_fields) == {"total", "breakdown"}
+    assert "impact_breakdown" not in RiskProfile.model_fields
+    assert set(UnitThreatModel.model_fields) >= {"impact_assessment", "threats"}
+
+
+def test_the_model_writes_the_threat_without_a_risk_and_the_store_fills_it():
+    """`ThreatWrite` is the canonical threat minus `risk`; `ModelSections`
+    carries the write shape, so an authored score is an unknown field."""
+    assert set(Threat.model_fields) - set(ThreatWrite.model_fields) == {"risk"}
+    assert set(ModelSections.model_fields) == {
+        "technical_sharpening",
+        "prior_art",
+        "trust_model",
+        "assumptions",
+        "vulnerabilities",
+        "threats",
+    }
+    assert "impact_assessment" not in ModelSections.model_fields
+    write = {
+        "fault_ref": "F-1",
+        "vulnerability_ref": "V-1",
+        "canonical_class": "IDOR",
+        "evidences": [{"kind": "probe", "ref": "probe:1"}],
+        "impact_ref": "IA-1",
+    }
+    assert isinstance(ModelSections(threats=[write]).threats[0], ThreatWrite)
+    with pytest.raises(ValueError):
+        ModelSections(threats=[{**write, "risk": 9.2}])
+
+
+def test_the_precursor_disposition_reads_a_legacy_placeholder():
     assert ImpactDisposition.THREAT.value == "threat"
     assert ImpactDisposition.PRECURSOR.value == "precursor"
     assert "PLACEHOLDER" not in ImpactDisposition.__members__
-    row = ImpactAssessment(
+    legacy = ImpactAssessment(
         id="IA-1",
         vulnerability_ref="V-1",
         disposition="placeholder",
-        damage="no end damage",
-        capability="read the upload directory",
+        impact_description="No end damage follows.",
+        exploitability_description="One request distinguishes the handler.",
+        capability="distinguish a handler from a route",
         capability_id="P-1",
-    )
-    assert row.disposition is ImpactDisposition.PRECURSOR
-    assert row.capability == "read the upload directory"
-
-
-def test_the_threat_references_one_assessment_and_its_precursors():
-    """The threat keeps its scoring fields, gains `impact_ref` and
-    `enabling_precursors`, and its `impact` carries the three CIA metrics only."""
-    assert set(Threat.model_fields) >= {"impact_ref", "enabling_precursors"}
-    assert set(Impact.model_fields) == {
-        "confidentiality", "integrity", "availability",
-    }
-
-
-def test_the_threat_maps_each_required_capability_to_its_precursor():
-    """The enabling list is an ordered pair: required capability, provider."""
-    entity = Threat(
-        fault_ref="F-1",
-        vulnerability_ref="V-1",
-        canonical_class="fixation",
-        web_vulnerability_class="session-management",
-        likelihood=Likelihood.HIGH,
-        likelihood_rationale="proven write",
-        risk_factors=RiskFactors(
-            attack_vector=AttackVector.NETWORK,
-            attack_requirements=AttackRequirements.NONE,
-            privileges_required=PrivilegesRequired.NONE,
-            complexity=Complexity.LOW,
+        factors=factors(
+            confidentiality=ImpactLevel.NONE,
         ),
-        confidence=Confidence.OBSERVED,
-        evidences=[Evidence(kind=EvidenceKind.PROBE, ref="probe:1", detail="")],
-        impact_ref="IA-1",
-        enabling_precursors=[
-            ("ReverseProxy::P-5", "ReverseProxy::P-5"),
-            ("Service:sign-in::P-8", None),
-        ],
-        impact=impact(ImpactLevel.HIGH, ImpactLevel.HIGH),
     )
-    assert entity.enabling_precursors == [
-        ("ReverseProxy::P-5", "ReverseProxy::P-5"),
-        ("Service:sign-in::P-8", None),
-    ]
+    assert legacy.disposition is ImpactDisposition.PRECURSOR
 
 
 def test_a_legacy_enabling_id_list_reads_as_a_self_provided_chain():
-    entity = threat()
+    entity = threat(enabling=["P-1"])
     assert entity.enabling_precursors == [("P-1", "P-1")]
 
 
-def test_the_metric_weights_are_the_ratified_values():
-    assert IMPACT_METRIC_WEIGHTS == {
-        ImpactLevel.NONE: 0.00,
-        ImpactLevel.LOW: 0.22,
-        ImpactLevel.MEDIUM: 0.35,
-        ImpactLevel.HIGH: 0.56,
-    }
+# --- the factor findings ------------------------------------------------------
+
+def test_a_threat_row_needs_one_non_none_impact_value():
+    findings = validate_metrics(
+        factors(
+            confidentiality=ImpactLevel.NONE,
+            integrity=ImpactLevel.NONE,
+            availability=ImpactLevel.NONE,
+        ),
+        disposition=ImpactDisposition.THREAT.value,
+    )
+    assert len(findings) == 1
+    assert findings[0].startswith("factors.confidentiality")
 
 
-def test_the_impact_sub_score_matches_the_known_table():
-    """Known-good literals from the ADR formula, not a recomputation."""
-    cases = [
-        ((ImpactLevel.NONE, ImpactLevel.NONE, ImpactLevel.NONE), 0.0),
-        ((ImpactLevel.LOW, ImpactLevel.NONE, ImpactLevel.NONE), 0.22),
-        ((ImpactLevel.MEDIUM, ImpactLevel.NONE, ImpactLevel.NONE), 0.35),
-        ((ImpactLevel.HIGH, ImpactLevel.NONE, ImpactLevel.NONE), 0.56),
-        ((ImpactLevel.LOW, ImpactLevel.LOW, ImpactLevel.NONE), 0.3916),
-        ((ImpactLevel.MEDIUM, ImpactLevel.MEDIUM, ImpactLevel.NONE), 0.5775),
-        ((ImpactLevel.HIGH, ImpactLevel.HIGH, ImpactLevel.NONE), 0.8064),
-        ((ImpactLevel.HIGH, ImpactLevel.HIGH, ImpactLevel.HIGH), 0.914816),
+def test_a_precursor_row_needs_all_three_impact_values_none():
+    findings = validate_metrics(
+        factors(confidentiality=ImpactLevel.LOW),
+        disposition=ImpactDisposition.PRECURSOR.value,
+    )
+    assert findings == [
+        "factors.confidentiality=low on a precursor row "
+        "(a precursor row must have all three impact values none)",
     ]
-    for (confidentiality, integrity, availability), expected in cases:
-        value = impact(confidentiality, integrity, availability)
-        assert compute_impact(value) == pytest.approx(expected, abs=1e-6)
+    assert validate_metrics(
+        factors(confidentiality=ImpactLevel.NONE),
+        disposition=ImpactDisposition.PRECURSOR.value,
+    ) == []
 
 
-def test_the_ordinal_weight_maps_the_sub_score():
-    cases = [
-        (0.0, 0),
-        (0.22, 1),
-        (0.25, 1),
-        (0.2501, 2),
-        (0.35, 2),
-        (0.50, 2),
-        (0.5001, 3),
-        (0.56, 3),
-        (0.75, 3),
-        (0.7501, 4),
-        (0.8064, 4),
-        (1.0, 4),
-    ]
-    for sub_score, expected in cases:
-        assert impact_weight_from_sub_score(sub_score) == expected
+# --- the profile --------------------------------------------------------------
 
-
-def test_the_ordinal_weight_maps_the_metric_combinations():
-    assert impact_weight(impact(ImpactLevel.LOW)) == 1
-    assert impact_weight(impact(ImpactLevel.MEDIUM)) == 2
-    assert impact_weight(impact(ImpactLevel.HIGH)) == 3
-    assert impact_weight(impact(ImpactLevel.HIGH, ImpactLevel.HIGH)) == 4
-
-
-def test_impact_severity_names_the_five_levels():
-    assert impact_severity(0) is ImpactSeverity.NONE
-    assert impact_severity(1) is ImpactSeverity.LOW
-    assert impact_severity(2) is ImpactSeverity.MEDIUM
-    assert impact_severity(3) is ImpactSeverity.HIGH
-    assert impact_severity(4) is ImpactSeverity.CRITICAL
-
-
-def test_the_threat_risk_multiplies_likelihood_and_impact():
-    high_impact = impact(ImpactLevel.HIGH, ImpactLevel.NONE, ImpactLevel.NONE)
-    critical_impact = impact(ImpactLevel.HIGH, ImpactLevel.HIGH, ImpactLevel.HIGH)
-    assert threat_risk(Likelihood.HIGH, high_impact) == 9
-    assert threat_risk(Likelihood.CRITICAL, critical_impact) == 16
-    assert threat_risk(Likelihood.NONE, critical_impact) == 0
-    assert threat_risk(Likelihood.LOW, Impact.none()) == 0
-
-
-def test_the_profile_sums_the_threat_risk_and_counts_both_breakdowns():
+def test_the_profile_sums_the_risk_and_counts_the_severity_bands():
     threats = [
-        threat(likelihood=Likelihood.HIGH,
-             impact_value=impact(ImpactLevel.HIGH)),
-        threat(likelihood=Likelihood.MEDIUM,
-             impact_value=impact(ImpactLevel.MEDIUM)),
-        threat(likelihood=Likelihood.LOW, impact_value=Impact.none()),
-        threat(likelihood=Likelihood.CRITICAL,
-             impact_value=impact(ImpactLevel.HIGH, ImpactLevel.HIGH, ImpactLevel.HIGH)),
+        threat(impact_ref="IA-1", risk=HIGH_RISK),
+        threat(impact_ref="IA-2", risk=HIGH_RISK),
+        threat(impact_ref="IA-3", risk=LOW_RISK),
+        threat(impact_ref="IA-4", risk=0.0),
     ]
     profile = compute_risk_profile(threats)
-    assert profile.total == 9 + 4 + 0 + 16
-    assert profile.breakdown[Likelihood.HIGH] == 1
-    assert profile.breakdown[Likelihood.MEDIUM] == 1
-    assert profile.breakdown[Likelihood.LOW] == 1
-    assert profile.breakdown[Likelihood.CRITICAL] == 1
-    assert profile.breakdown[Likelihood.NONE] == 0
-    assert profile.impact_breakdown[ImpactSeverity.HIGH] == 1
-    assert profile.impact_breakdown[ImpactSeverity.MEDIUM] == 1
-    assert profile.impact_breakdown[ImpactSeverity.NONE] == 1
-    assert profile.impact_breakdown[ImpactSeverity.CRITICAL] == 1
-    assert profile.impact_breakdown[ImpactSeverity.LOW] == 0
-
-
-def test_the_ranking_is_risk_then_impact_then_likelihood_then_write_order():
-    critical = threat(
-        likelihood=Likelihood.HIGH,
-        impact_value=impact(ImpactLevel.HIGH, ImpactLevel.HIGH, ImpactLevel.HIGH),
-        canonical="critical",
-    )
-    first_tie = threat(
-        likelihood=Likelihood.MEDIUM,
-        impact_value=impact(ImpactLevel.HIGH, ImpactLevel.HIGH),
-        canonical="first tie",
-    )
-    second_tie = threat(
-        likelihood=Likelihood.MEDIUM,
-        impact_value=impact(ImpactLevel.HIGH, ImpactLevel.HIGH),
-        canonical="second tie",
-    )
-    lower_impact = threat(
-        likelihood=Likelihood.CRITICAL,
-        impact_value=impact(ImpactLevel.MEDIUM),
-        canonical="lower impact",
-    )
-    ordered = normalise_threats([lower_impact, first_tie, second_tie, critical])
-    assert [threat.canonical_class for threat in ordered] == [
-        "critical", "first tie", "second tie", "lower impact",
-    ]
-    assert [threat.id for threat in ordered] == ["threat-1", "threat-2", "threat-3", "threat-4"]
-    assert [threat.risk for threat in ordered] == [12, 8, 8, 8]
-    assert [threat.impact_weight for threat in ordered] == [4, 4, 4, 2]
-
-
-def test_a_threat_without_an_impact_contributes_zero():
-    legacy = threat()
-    assert legacy.impact == Impact.none()
-    assert legacy.risk == 0
-    assert legacy.impact_weight == 0
-    assert compute_risk_profile([legacy]).total == 0
-
-
-def test_the_risk_buckets_cover_the_combined_score():
-    from polymerhus.attack.hunting.threat_model import risk_bucket
-
-    assert risk_bucket(0) == "none"
-    assert risk_bucket(1) == "low"
-    assert risk_bucket(3) == "low"
-    assert risk_bucket(4) == "medium"
-    assert risk_bucket(7) == "medium"
-    assert risk_bucket(8) == "high"
-    assert risk_bucket(11) == "high"
-    assert risk_bucket(12) == "critical"
-    assert risk_bucket(16) == "critical"
-
-
-def test_the_likelihood_weights_are_unchanged():
-    assert RISK_WEIGHTS == {
-        Likelihood.NONE: 0,
-        Likelihood.LOW: 1,
-        Likelihood.MEDIUM: 2,
-        Likelihood.HIGH: 3,
-        Likelihood.CRITICAL: 4,
+    assert profile.total == round(HIGH_RISK + HIGH_RISK + LOW_RISK, 2)
+    assert profile.breakdown == {
+        SeverityBand.NONE: 1,
+        SeverityBand.LOW: 0,
+        SeverityBand.MEDIUM: 1,
+        SeverityBand.HIGH: 0,
+        SeverityBand.CRITICAL: 2,
     }
+
+
+def test_the_profile_rounds_the_total_to_the_score_precision():
+    profile = compute_risk_profile([threat(risk=9.25), threat(risk=6.95)])
+    assert profile.total == 16.2
+
+
+def test_an_empty_profile_is_zero_and_every_band_is_counted():
+    profile = compute_risk_profile([])
+    assert profile.total == 0.0
+    assert profile.breakdown == {band: 0 for band in SeverityBand}
+
+
+# --- the normaliser -----------------------------------------------------------
+
+def test_the_normaliser_fills_the_mirror_and_ranks_by_risk_then_write_order():
+    rows = [
+        row(id="IA-1", risk=LOW_RISK, vector=LOW_VECTOR),
+        row(id="IA-2", risk=HIGH_RISK),
+        row(id="IA-3", risk=HIGH_RISK),
+    ]
+    written = [
+        threat(impact_ref="IA-1", canonical="low"),
+        threat(impact_ref="IA-2", canonical="first high tie"),
+        threat(impact_ref="IA-3", canonical="second high tie"),
+    ]
+
+    ordered = normalise_threats(written, rows)
+
+    assert [item.canonical_class for item in ordered] == [
+        "first high tie", "second high tie", "low",
+    ]
+    assert [item.id for item in ordered] == ["threat-1", "threat-2", "threat-3"]
+    assert [item.risk for item in ordered] == [HIGH_RISK, HIGH_RISK, LOW_RISK]
+
+
+def test_the_normaliser_accepts_the_risk_map():
+    rows = {"IA-1": LOW_RISK, "IA-2": HIGH_RISK}
+
+    ordered = normalise_threats(
+        [threat(impact_ref="IA-1"), threat(impact_ref="IA-2")], rows)
+
+    assert [item.impact_ref for item in ordered] == ["IA-2", "IA-1"]
+    assert [item.risk for item in ordered] == [HIGH_RISK, LOW_RISK]
+
+
+def test_an_unresolved_reference_keeps_the_carried_risk_for_the_checker():
+    """A threat whose row is missing is the referential check's finding; the
+    normaliser never invents a score for it."""
+    ordered = normalise_threats([threat(impact_ref="IA-missing", risk=0.0)], [row()])
+
+    assert ordered[0].risk == 0.0
+    assert ordered[0].id == "threat-1"
