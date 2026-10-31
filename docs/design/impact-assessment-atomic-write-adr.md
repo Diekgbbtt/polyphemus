@@ -41,7 +41,8 @@ risk_vector                 derived string, never authored
 
 ### 2. The response is success or failure
 
-The tool returns `{ok: true}` or a coded rejection naming the field and the fix.
+The tool returns `{ok: true, hint: ...}` or a coded rejection naming the field and the fix.
+The `hint` is the existing gate-transition pointer, so the model knows the next state without a second read; it carries no score, vector, or factor echo.
 It does not return the score, the vector, or an echo of the factors.
 
 ### 3. The score is computed in the persistence commit

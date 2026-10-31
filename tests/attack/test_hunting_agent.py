@@ -100,6 +100,22 @@ def test_compose_grounding_renders_the_risk_and_the_assessment():
         assert gone not in text, gone
 
 
+def test_compose_grounding_renders_a_provider_less_capability():
+    """A required capability with no provider is rendered as an explicit null,
+    so the hunter sees the unfilled gap rather than an absent row."""
+    import copy
+
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+    from tests.hunting_fixtures import _hunter_payload
+
+    payload = copy.deepcopy(_hunter_payload())
+    payload["enabling_precursors"] = [["read another tenant's item", None]]
+
+    text = _compose_grounding(payload)
+
+    assert '[["read another tenant\'s item", null]]' in text
+
+
 def test_step_protocol_respecifies_the_phase_hint_as_a_transition_signal():
     """The step protocol says the ENDING tool response of a pass carries the
     hint; it does not claim every tool result carries one."""

@@ -217,8 +217,12 @@ def test_the_repository_rejects_a_malformed_threshold_naming_the_field(monkeypat
     for body, field in (
         ({"risk_threshold": -1.0}, "risk_threshold"),
         ({"risk_threshold": "high"}, "risk_threshold"),
+        ({"risk_threshold": float("nan")}, "risk_threshold"),
+        ({"risk_threshold": float("inf")}, "risk_threshold"),
         ({"promotion_risk_threshold": -1.0}, "promotion_risk_threshold"),
         ({"promotion_risk_threshold": "high"}, "promotion_risk_threshold"),
+        ({"promotion_risk_threshold": float("nan")}, "promotion_risk_threshold"),
+        ({"promotion_risk_threshold": float("inf")}, "promotion_risk_threshold"),
     ):
         with pytest.raises(ValueError) as excinfo:
             save_hunting_config("p1", body)

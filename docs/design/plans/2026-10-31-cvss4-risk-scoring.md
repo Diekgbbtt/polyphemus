@@ -89,13 +89,13 @@ It checks the spec, the outliers, the test breadth and depth, and the `src/polym
 | # | Status | Commit |
 |---|---|---|
 | T1 | done | 224b916a + review fixes |
-| T2 | pending | |
-| T3 | pending | |
-| T4 | pending | |
-| T5 | pending | |
-| T6 | pending | |
-| T7 | pending | |
-| T8 | pending | |
-| T9 | pending | |
-| T10 | pending | |
-| T11 | pending | |
+| T2 | done | 882d36ac |
+| T3 | done | 5eb1f710 |
+| T4 | done | 81232bb1 |
+| T5 | done | df7995c7 |
+| T6 | done | 3f6d1dbc |
+| T7 | done | 123ce4e2 |
+| T8 | done | c522b43d |
+| T9 | done | d3bba8f3 |
+| T10 | done | 328583a3 |
+| T11 | done | review approved; polish commit pending |

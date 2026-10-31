@@ -715,6 +715,41 @@ def test_a_v4_document_reads_raw_and_is_never_re_scored(tmp_path):
     assert threats["matches"][0]["summary"].startswith("An anonymous caller")
 
 
+def test_a_v4_document_and_a_v5_document_coexist_in_one_store(tmp_path):
+    """Schema 5 spec 11: the schema version is a per-document property, so one
+    project root can hold archived v4 evidence and a live v5 model. The v5
+    document is normalised; the v4 document is raw; neither leaks into the
+    other."""
+    store = ThreatModelStore(tmp_path)
+    v4_name = "Service-v4-archive"
+    v4_dir = (
+        tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / v4_name)
+    v4_dir.mkdir(parents=True)
+    (v4_dir / f"{v4_name}.yaml").write_text(
+        yaml.safe_dump({
+            "schema_version": 4,
+            "unit_id": "Service:v4-archive",
+            "unit_kind": "service",
+            "run_id": RUN,
+            "state": "COMPLETED",
+            "impact_assessment": [],
+            "threats": [],
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    _write_gates(store, unit_id="Service:v5-live")
+
+    v4 = store.read_model(PROJECT, "Service:v4-archive")
+    v5 = store.read_model(PROJECT, "Service:v5-live")
+
+    assert v4["schema_version"] == 4
+    assert "risk_profile" not in v4
+    assert v5["schema_version"] == 5
+    assert v5["unit_id"] == "Service:v5-live"
+    assert v5["threats"] == []
+    assert v4["unit_id"] == "Service:v4-archive"
+
+
 def test_a_v4_write_is_refused(tmp_path):
     """Schema 5 spec 11: a stale model is never mixed into a v5 run."""
     store = ThreatModelStore(tmp_path)
@@ -1678,6 +1713,20 @@ def test_the_impact_assessed_gate_accepts_no_model_section(tmp_path):
     assert raised.value.fields == ["impact_assessment"]
     assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
     assert store.read_model(PROJECT, UNIT)["impact_assessment"] == []
+
+
+def test_the_impact_assessed_gate_refuses_an_empty_hunts_store_write(tmp_path):
+    """The `assess_impact` tool owns the transition, so `hunts_store` cannot
+    advance the gate with an empty payload either."""
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+
+    with pytest.raises(ThreatModelIdentityError) as raised:
+        store.write_sections(
+            PROJECT, UNIT, "IMPACT_ASSESSED", {}, run_id=RUN)
+
+    assert raised.value.fields == ["state"]
+    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
 
 
 def test_the_threat_file_carries_the_denormalised_impact_block(tmp_path):

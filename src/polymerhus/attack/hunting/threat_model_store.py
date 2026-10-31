@@ -1493,6 +1493,12 @@ class ThreatModelStore(BoundedRecordStore):
                 f"threat model store: state {gate.value} accepts only "
                 f"{allowed}; got {tuple(unexpected)}",
             )
+        if gate is ModelState.IMPACT_ASSESSED:
+            raise ThreatModelIdentityError(
+                ["state"],
+                "threat model store: the IMPACT_ASSESSED gate is owned by the "
+                "assess_impact tool; hunts_store cannot advance it",
+            )
         unit_id = unit_id if isinstance(unit_id, str) else str(unit_id or "")
         if not unit_id:
             raise ThreatModelIdentityError(
@@ -1851,16 +1857,13 @@ class ThreatModelStore(BoundedRecordStore):
         for prior in model.impact_assessment:
             if prior.id == row.id:
                 continue
-            if (
-                prior.vulnerability_ref == row.vulnerability_ref
-                and prior.capability_id == row.capability_id
-            ):
+            if prior.capability_id == row.capability_id:
                 raise ImpactAssessmentError(
                     ["capability_id"],
                     f"threat model store: capability_id {row.capability_id!r} "
-                    f"already keys row {prior.id!r} of vulnerability "
-                    f"{row.vulnerability_ref!r}; a second manner needs a "
-                    f"distinct capability id",
+                    f"already keys row {prior.id!r}; a capability id is "
+                    f"unique in the unit, so a second manner needs a distinct "
+                    f"capability id",
                 )
         local = {
             prior.capability_id: prior

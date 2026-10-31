@@ -292,12 +292,14 @@ def threat_risk(record: Mapping[str, Any]) -> float | None:
     """The CVSS 4.0 severity score one threat file carries, or None when it is
     unreadable.
 
-    The persisted top-level `risk` is authoritative: a v5 file carries a float, a
-    v4 file an int, and both read as a float (spec 11, the tolerant reader). A
-    file without the stored score is unreadable: the retired likelihood route to
-    a score is gone, and no fallback may recompute one. The promotion predicate,
-    the gate, the completion audit, and the dispatch validity predicate share
-    this read, so they can never disagree on a threat's risk."""
+    The persisted top-level `risk` is authoritative: a v5 file carries a
+    float, an older or hand-written record may carry a numeric int, and both
+    read as a float (spec 11, the tolerant reader). A v4 threat file written by
+    the retired writer carries no top-level `risk`, so it is unreadable here:
+    the retired likelihood route to a score is gone, and no fallback may
+    recompute one. The promotion predicate, the gate, the completion audit, and
+    the dispatch validity predicate share this read, so they can never disagree
+    on a threat's risk."""
     if not isinstance(record, Mapping):
         return None
     raw = record.get("risk")
