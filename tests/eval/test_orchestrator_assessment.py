@@ -277,6 +277,119 @@ def test_an_invalid_impact_review_is_a_schema_failure(tmp_path) -> None:
     ) == "invalid"
 
 
+# --- the impact review schema (schema-5 rows) ---------------------------------
+
+# The five fields a schema-5 assessment row carries: the review of a row is
+# judged from them, so a review row may record them as its audit snapshot.
+V5_REVIEWED_ROW = {
+    "impact_description": (
+        "An unauthenticated caller reads live session material from the process "
+        "dump."
+    ),
+    "exploitability_description": (
+        "A crafted remember-me cookie reaches the deserializer without a login."
+    ),
+    "factors": {
+        "attack_vector": "network",
+        "attack_complexity": "low",
+        "attack_requirements": "none",
+        "privileges_required": "none",
+        "user_interaction": "none",
+        "confidentiality": "high",
+        "integrity": "none",
+        "availability": "none",
+    },
+    "risk": 9.2,
+    "risk_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N",
+}
+
+
+def _write_review(tmp_path, review: dict):
+    files = FileStore()
+    path = tmp_path / "impact_review.yaml"
+    files.write_text(path, yaml.safe_dump(review, sort_keys=False))
+    return files, path
+
+
+def test_the_review_accepts_the_v5_scored_row_fields(tmp_path) -> None:
+    review = _valid_review()
+    review["units"][0]["rows"][0].update(V5_REVIEWED_ROW)
+    files, path = _write_review(tmp_path, review)
+
+    (unit,) = impact_review.load_review(path, files=files)
+
+    row = unit.rows[0]
+    assert row.impact_description.startswith("An unauthenticated caller")
+    assert row.exploitability_description.startswith("A crafted remember-me")
+    assert row.factors == V5_REVIEWED_ROW["factors"]
+    assert row.risk == 9.2
+    assert row.risk_vector == V5_REVIEWED_ROW["risk_vector"]
+
+
+def test_the_review_refuses_the_retired_damage_field(tmp_path) -> None:
+    review = _valid_review()
+    review["units"][0]["rows"][0]["damage"] = "the retired field"
+    files, path = _write_review(tmp_path, review)
+
+    with pytest.raises(impact_review.ReviewError, match="damage"):
+        impact_review.load_review(path, files=files)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("impact_description", 3),
+        ("exploitability_description", ""),
+        ("risk", "high"),
+        ("risk", True),
+        ("risk_vector", ["CVSS:4.0"]),
+        ("factors", {"attack_vector": "network"}),
+    ],
+)
+def test_a_malformed_v5_row_field_is_named(tmp_path, field, value) -> None:
+    review = _valid_review()
+    review["units"][0]["rows"][0].update(V5_REVIEWED_ROW)
+    review["units"][0]["rows"][0][field] = value
+    files, path = _write_review(tmp_path, review)
+
+    with pytest.raises(impact_review.ReviewError, match=field):
+        impact_review.load_review(path, files=files)
+
+
+def test_the_review_refuses_an_unknown_row_field(tmp_path) -> None:
+    review = _valid_review()
+    review["units"][0]["rows"][0]["mining_quality"] = "sufficient"
+    files, path = _write_review(tmp_path, review)
+
+    with pytest.raises(impact_review.ReviewError, match="mining_quality"):
+        impact_review.load_review(path, files=files)
+
+
+def test_the_assessment_gate_accepts_a_v5_row_review(tmp_path) -> None:
+    """The close gate reads the review the assessor writes from the v5 rows:
+    a review that copies the scored identity is present, not invalid."""
+    files, root, chain = seed_chain(tmp_path)
+    request = make_request(tmp_path, files, chain)
+    verdicts.write_verdicts(
+        request.destination,
+        valid_payload(chain),
+        files=files,
+        data_root=root,
+        eval_sha=SHA,
+        stack_fingerprint=FINGERPRINT,
+    )
+    review = _valid_review()
+    review["units"][0]["rows"][0].update(V5_REVIEWED_ROW)
+    files.write_text(
+        impact_review.review_path(request.destination),
+        yaml.safe_dump(review, sort_keys=False),
+    )
+
+    assert assessment.check_verdicts(
+        request, files=files, eval_sha=SHA, stack_fingerprint=FINGERPRINT,
+    ) == "present"
+
+
 def test_the_review_is_required_only_when_configured(tmp_path) -> None:
     files, root, chain = seed_chain(tmp_path)
     request = make_request(tmp_path, files, chain)

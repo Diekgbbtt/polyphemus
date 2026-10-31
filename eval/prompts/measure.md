@@ -100,7 +100,7 @@ Report the full-core result.
 `threat_candidate` is the existence of a threat for the expected unit and a compatible fault/class.
 Score `sharpness` 0 to 3 from the plan.
 Read the threat and its parent model.
-Check the trust assumption, the evidence, the confidence, the risk factors, and the uniqueness of the direction.
+Check the trust assumption with its assumption confidences, the evidence, the risk, the band, the vector, the factors, and the uniqueness of the direction.
 A generic statement that could be written for any unit is at most 1.
 A direction that names the concrete interface, state transition, or data flow, and that a hunter can walk, is at least 2.
 A direction that also carries a falsification condition and a concrete probe shape is 3.
@@ -119,19 +119,23 @@ It is the primary impact metric.
 
 - `impact_rows` is every impact-assessment row.
 - `threats` is the rows with `disposition=threat`. `precursor_rows` is the rows with `disposition=precursor`. `capability_rows` is the rows with a non-empty `capability`.
-- `red` is a row with all CIA values none. `green` is a row with any CIA value not none.
+- `green` is a row whose three impact values are not all `none`; `red` is a row the assessor labels `scope=out` or `mining=under_mined`.
 - `green_share` is `green / (green + red)` when an `impact_review.yaml` exists, else `green / impact_rows`. `threat_share` is `threats / impact_rows`. `precursor_share` is `precursor_rows / impact_rows`.
-- `cia` is the distribution of each metric over `none / low / medium / high`.
+- `cia` is the distribution of the three impact values over `none / low / medium / high`. A v5 row uses only `high`, `low`, and `none`; `medium` is legacy only.
+- `risk_total` is the sum of the dispatchable threat files' derived risk and `risk_breakdown` is their split over the `none / low / medium / high / critical` bands. Both are v5 only.
+- `rows` is the v5 scored claim of every assessment row: the impact description, the exploitability description, the eight factors, the derived risk, the risk vector, the band, and the review labels. It is `null` for a v4, v3, or v2 block.
 - `capability_rows` is the number of rows that carry a capability. `prior_art_reused` is the number of prior-art records the modeller reused.
 - `class_binding_rate` is a diagnostic, never a gate.
 
-A `threat` row must name a concrete victim and damaged property in its `damage` field.
+A v5 `threat` row must name a concrete victim and damaged property in its `impact_description`.
 A `precursor` row states why no end damage follows and still names the capability gained.
-Read the damage text and judge whether it is concrete.
-A row whose damage names only a capability or a route, while a concrete end damage was achievable, is a precursor row marked `under_mined` by the assessor.
+Read the impact description and the exploitability description, and judge whether the damage is concrete and the chain is the one that reaches it.
+A row whose impact description names only a capability or a route, while a concrete end damage was achievable, is a precursor row marked `under_mined` by the assessor.
+The severity band is derived from the risk on read; never treat a band as an authored value.
 The class-based green gate is retired.
 The old class figure may be quoted beside the impact figure, marked superseded.
-A v2 block is a legacy recomputation: report it separately and never mix it with a v3 result.
+A v4 or v3 block reports the persisted CIA vector raw: it is never re-scored.
+A v2 block is a legacy recomputation: report it separately and never mix it with a v5 result.
 
 ### Hunter
 
@@ -206,7 +210,7 @@ official:
   missed: int
   identification_rate: number
 impact:
-  schema: v3 | v2 | mixed
+  schema: v5 | v4 | v3 | v2 | mixed
   legacy_recomputation: bool
   impact_rows: int
   threats: int | null
@@ -221,10 +225,14 @@ impact:
     confidentiality: {none: int, low: int, medium: int, high: int}
     integrity: {none: int, low: int, medium: int, high: int}
     availability: {none: int, low: int, medium: int, high: int}
+  risk_total: number | null
+  risk_breakdown: {none: int, low: int, medium: int, high: int, critical: int} | null
+  rows: [object] | null
   precursors: int | null
   prior_art_reused: int | null
   class_binding_rate: number | null
   legacy_v2: object | null
+  legacy_v4: object | null
   notes: string
 narrowing:
   threats_total: int
@@ -354,7 +362,7 @@ Use the experiment-results structure from the measure-experiment-results skill.
 Include:
 - the trial summary and identity;
 - the official discovery result;
-- the impact assessment: the red/green share, the threat and precursor split, the capability count, the CIA distribution, and the prior-art reuse;
+- the impact assessment: the red/green share, the threat and precursor split, the risk total and band split, the scored rows, the capability count, the CIA distribution, and the prior-art reuse;
 - the quality results by the six criteria;
 - the narrowing table: threat breadth, the spec count per threat, the primary axes, and whether the set is substantial and well-formed;
 - the token tax;

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import sys
 import urllib.error
@@ -520,6 +521,7 @@ def threat_text(threat_record: dict, model: dict) -> str:
     threat = as_dict(threat_record.get("threat"))
     return text_of([
         threat_record.get("unit_id"),
+        threat_record.get("risk"),
         threat_record.get("likelihood"),
         threat,
         resolve_model_text(model),
@@ -685,6 +687,54 @@ def load_pods(pod_dir: Path) -> list[dict]:
 CIA_METRICS = ("confidentiality", "integrity", "availability")
 IMPACT_LEVELS = ("none", "low", "medium", "high")
 
+# The standard CVSS 4.0 qualitative bands over a derived score. The hunting risk
+# module owns the table; this script imports no polymerhus module (it runs
+# standalone), so the table is repeated here and used only to LABEL a persisted
+# float - never to compute a score.
+BAND_UPPER_BOUNDS = ((3.9, "low"), (6.9, "medium"), (8.9, "high"))
+SEVERITY_BANDS = ("none", "low", "medium", "high", "critical")
+
+
+def schema_version(model: dict) -> int:
+    """A model document's `schema_version`, 0 when absent or unreadable."""
+    value = as_dict(model).get("schema_version")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def threat_schema(threat: dict) -> int:
+    """The schema version `load_models` stamped on a threat record, 0 unknown."""
+    value = as_dict(threat).get("_schema")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def as_float(value: Any) -> float | None:
+    """A finite number as a float, or None; a bool is not a score."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def severity_band(score: float) -> str:
+    """The standard CVSS band of a persisted score, `none` at zero."""
+    if score <= 0:
+        return "none"
+    for upper_bound, band in BAND_UPPER_BOUNDS:
+        if score <= upper_bound:
+            return band
+    return "critical"
+
+
+def file_risk(record: dict) -> float | None:
+    """The float `risk` a v5 threat file persists at its top level, or None.
+
+    The v5 writer scores at persistence, so the file's top-level `risk` is the
+    one value the mover and this metric read. A v4 file has no such key: its
+    score was the retired likelihood x impact product, so the raw path keeps
+    its `likelihood` and is never re-scored here.
+    """
+    return as_float(as_dict(record).get("risk"))
+
 
 def cia_levels(impact: Any) -> dict[str, str]:
     """The three CIA levels of one `impact` block, lowercased.
@@ -739,12 +789,20 @@ def impact_block(
     classes: list[str],
     class_index: dict[str, int] | None,
     review: dict | None = None,
+    risk_total: float | None = None,
+    risk_breakdown: dict[str, int] | None = None,
 ) -> dict:
     """The impact block: the red/green share, the split, the distribution.
 
     `rows` carries one `disposition` and one normalised `cia` vector each. The
-    disposition split is a v3 result only; a v2 legacy row has no disposition,
-    so its split and its precursor and prior-art counts stay unknown.
+    disposition split is a schema-3-and-later result only; a v2 legacy row has
+    no disposition, so its split and its precursor and prior-art counts stay
+    unknown.
+
+    A v5 block adds the scored-row detail (`rows`), the dispatchable threat
+    files' float risk total, and their band split. A v2/v3/v4 block keeps the
+    exact legacy shape: its raw rows are not a scored claim and are never
+    labelled with a derived band.
     """
     distribution = {
         metric: {level: 0 for level in IMPACT_LEVELS} for metric in CIA_METRICS
@@ -759,7 +817,7 @@ def impact_block(
     threat_rows = sum(1 for row in rows if row["disposition"] == "threat")
     precursor_rows = sum(1 for row in rows if row["disposition"] == "precursor")
     capability_rows = sum(1 for row in rows if row.get("capability"))
-    split = schema in ("v3", "v4")
+    split = schema in ("v3", "v4", "v5")
     reviewed = review is not None
     if reviewed:
         labels = as_dict(review).get("rows") or {}
@@ -774,7 +832,7 @@ def impact_block(
     else:
         red = total - green
         green_share = share(green, total)
-    return {
+    block = {
         "schema": schema,
         "legacy_recomputation": legacy_recomputation,
         "reviewed": reviewed,
@@ -795,6 +853,16 @@ def impact_block(
         "prior_art_reused": prior_art_reused,
         "class_binding_rate": class_binding_rate(classes, class_index),
     }
+    if schema == "v5":
+        block["risk_total"] = risk_total if risk_total is not None else 0.0
+        block["risk_breakdown"] = (
+            dict(risk_breakdown) if risk_breakdown
+            else {band: 0 for band in SEVERITY_BANDS}
+        )
+        # The scored rows the assessor's review judges: the two prose blocks,
+        # the eight factors, the derived score and vector, and the labels.
+        block["rows"] = rows
+    return block
 
 
 def v3_impact(
@@ -802,11 +870,12 @@ def v3_impact(
     class_index: dict[str, int] | None,
     review: dict | None = None,
 ) -> dict:
-    """The v3/v4 impact metric: one row per `impact_assessment` row.
+    """The v3/v4 RAW impact metric: one row per `impact_assessment` row.
 
     The CIA vector lives on the threat that references the row through
     `impact_ref`; a precursor row has no threat, so its vector is all-none. A
-    v3 `placeholder` reads as `precursor`.
+    v3 `placeholder` reads as `precursor`. A v4 model is reported raw from its
+    persisted vector: this path never derives, recomputes, or re-scores it.
     """
     rows: list[dict] = []
     classes: list[str] = []
@@ -815,7 +884,7 @@ def v3_impact(
     schema = "v3"
     for model in models:
         model = as_dict(model)
-        if int(model.get("schema_version") or 0) >= 4:
+        if schema_version(model) >= 4:
             schema = "v4"
         threats_by_ref: dict[str, dict] = {}
         for threat in as_list(model.get("threats")):
@@ -851,6 +920,94 @@ def v3_impact(
         classes=classes,
         class_index=class_index,
         review=review,
+    )
+
+
+def v5_impact(
+    models: list[dict],
+    threats: list[dict],
+    class_index: dict[str, int] | None,
+    review: dict | None = None,
+) -> dict:
+    """The v5 impact metric: one row per assessment row, scored in CVSS terms.
+
+    Schema 5 moves the score onto the assessment row: `factors` holds the eight
+    authored base factors, `risk` / `risk_vector` the derived score and vector,
+    `impact_description` / `exploitability_description` the two prose blocks.
+    The green signal is the persisted derivation: a row with any impact value
+    above `none` is damage-bearing, which is exactly the `threat` row the split
+    counts (the retired CIA vector held the same three values).
+
+    The dispatchable THREAT FILES carry the float risk the mover reads, so the
+    block reports their total and band split beside the rows. Nothing here
+    derives a v5 score: the metric reads what the store persisted.
+    """
+    rows: list[dict] = []
+    classes: list[str] = []
+    precursors = 0
+    prior_art_reused = 0
+    for model in models:
+        model = as_dict(model)
+        for threat in as_list(model.get("threats")):
+            classes.append(
+                str(as_dict(threat).get("web_vulnerability_class") or ""))
+        unit_id = str(model.get("unit_id") or "")
+        for assessment in as_list(model.get("impact_assessment")):
+            assessment = as_dict(assessment)
+            assessment_id = str(assessment.get("id") or "")
+            disposition = norm(assessment.get("disposition"))
+            if disposition == "placeholder":
+                disposition = "precursor"
+            factors = as_dict(assessment.get("factors"))
+            risk = as_float(assessment.get("risk"))
+            rows.append({
+                "id": assessment_id,
+                "key": f"{unit_id}::{assessment_id}",
+                "unit": unit_id,
+                "disposition": disposition,
+                "capability": str(assessment.get("capability") or ""),
+                "impact_description": str(
+                    assessment.get("impact_description") or ""),
+                "exploitability_description": str(
+                    assessment.get("exploitability_description") or ""),
+                "factors": factors,
+                "risk": risk,
+                "band": severity_band(risk) if risk is not None else None,
+                "risk_vector": str(assessment.get("risk_vector") or ""),
+                "cia": cia_levels(factors),
+                "mining": None,
+                "scope": None,
+            })
+        precursors += len(as_list(model.get("precursors")))
+        prior_art_reused += len(
+            as_list(as_dict(model.get("prior_art")).get("reused")))
+    labels = as_dict(as_dict(review).get("rows")) if review is not None else {}
+    scope = as_dict(as_dict(review).get("scope")) if review is not None else {}
+    for row in rows:
+        if review is not None:
+            row["mining"] = labels.get(row["key"])
+            row["scope"] = scope.get(row["key"])
+    risk_total = 0.0
+    risk_breakdown = {band: 0 for band in SEVERITY_BANDS}
+    for threat in threats:
+        if threat_schema(threat) < 5:
+            continue
+        risk = file_risk(threat)
+        if risk is None:
+            continue
+        risk_total += risk
+        risk_breakdown[severity_band(risk)] += 1
+    return impact_block(
+        rows,
+        schema="v5",
+        legacy_recomputation=False,
+        precursors=precursors,
+        prior_art_reused=prior_art_reused,
+        classes=classes,
+        class_index=class_index,
+        review=review,
+        risk_total=round(risk_total, 2),
+        risk_breakdown=risk_breakdown,
     )
 
 
@@ -890,11 +1047,20 @@ def impact_metric(
 ) -> dict:
     """The impact metric of one trial over the files the loader read.
 
-    A v3 model carries `impact_assessment` rows and the threats that hold the
-    CIA vector. A v2 model carries neither: its ranked artifacts ARE the rows,
-    and the legacy `impact` record holds the vector, so its block is a legacy
-    recomputation. No readable model yields a zero-row block with unknown
-    shares, never a failure.
+    The path is selected by the DOCUMENT's schema version, never by the fields a
+    file happens to carry:
+
+    - a v5 model is scored: its assessment rows are the claims and its threat
+      files carry the derived float risk;
+    - a v3/v4 model is raw: its persisted CIA vector is reported as written and
+      never re-scored;
+    - a v2 model carries neither, so its ranked artifacts ARE the rows and the
+      legacy `impact` record holds the vector (a legacy recomputation).
+
+    No readable model yields a zero-row block with unknown shares, never a
+    failure. A v5 store holding a raw v4 or v2 unit reports the v5 block as
+    primary and the raw block beside it (`schema: mixed`), so no unit's rows
+    vanish.
 
     An abandoned copy is a degraded retry of the same unit, not a second damage
     claim. The loader reads it for the artifact inventory; the primary metric
@@ -908,10 +1074,13 @@ def impact_metric(
         threat for threat in threats
         if as_dict(threat).get("_family") != "abandoned"
     ]
+    v5_models = [model for model in models if schema_version(model) >= 5]
     v3_models = [
         model for model in models
-        if as_list(as_dict(model).get("impact_assessment"))
+        if schema_version(model) < 5
+        and as_list(as_dict(model).get("impact_assessment"))
     ]
+    v5 = v5_impact(v5_models, threats, class_index, impact_review) if v5_models else None
     v3 = v3_impact(v3_models, class_index, impact_review) if v3_models else None
     v2_threats = [
         threat for threat in threats
@@ -919,6 +1088,15 @@ def impact_metric(
         or as_dict(threat).get("_legacy")
     ]
     v2 = v2_impact(v2_threats, class_index) if v2_threats else None
+    if v5 is not None:
+        if v3 is not None:
+            v5["schema"] = "mixed"
+            v5["legacy_v4"] = v3
+        if v2 is not None:
+            v5["schema"] = "mixed"
+            v5["legacy_recomputation"] = True
+            v5["legacy_v2"] = v2
+        return v5
     if v3 is not None and v2 is not None:
         v3["schema"] = "mixed"
         v3["legacy_recomputation"] = True
@@ -1076,12 +1254,18 @@ def main() -> int:
             # unit: the artifact exists and the class is the benchmark's, so
             # zeroing it hides real work behind a unit-identity miss.
             if unit_match or class_match:
+                risk = file_risk(threat_record)
                 threat_rows.append({
                     "path": threat_record.get("_path"),
                     "unit_id": threat_record.get("unit_id"),
                     "threat_id": threat_record.get("threat_id"),
                     "dispatch_id": threat_record.get("dispatch_id"),
+                    # The v4 raw value and the v5 derived float, side by side:
+                    # a v5 file carries `risk` and no `likelihood`, and the
+                    # metric never converts one into the other.
                     "likelihood": threat_record.get("likelihood"),
+                    "risk": risk,
+                    "band": severity_band(risk) if risk is not None else None,
                     "unit_match": unit_match,
                     "class_match": class_match,
                     "candidate": bool(unit_match and class_match),

@@ -949,18 +949,29 @@ UNIT_NAME = "Service-web-soupmarket"
 
 
 def _write_seed_unit(source: Path, *, run_id: str = "source-run") -> Path:
-    """One pre-mined unit tree: a consumable model document plus a valid threat."""
+    """One pre-mined unit tree: a consumable v5 model plus a valid threat file.
+
+    The fixture is the schema-5 shape the store writes: the model carries the
+    section defaults and a valid completion record, and the threat file carries
+    the derived float `risk` the mover's validity predicate reads.
+    """
     unit_dir = source / UNIT_NAME
     unit_dir.mkdir(parents=True)
     (unit_dir / f"{UNIT_NAME}.yaml").write_text(
         yaml.safe_dump(
             {
-                "schema_version": 3,
+                "schema_version": 5,
                 "unit_id": UNIT,
                 "unit_kind": "service",
                 "run_id": run_id,
+                "created_at": "2026-10-31T00:00:00Z",
+                "updated_at": "2026-10-31T00:00:00Z",
                 "state": "COMPLETED",
-                "validation": {"valid": True},
+                "validation": {
+                    "checked_at": "2026-10-31T00:00:00Z",
+                    "parseable": True,
+                    "valid": True,
+                },
             },
             sort_keys=False,
         ),
@@ -974,16 +985,14 @@ def _write_seed_unit(source: Path, *, run_id: str = "source-run") -> Path:
                 "unit_kind": "service",
                 "run_id": run_id,
                 "dispatch_id": f"{UNIT_NAME}__threat-1",
-                "likelihood": "high",
+                "risk": 9.2,
                 "threat": {
                     "id": "threat-1",
                     "fault_ref": "fault-1",
                     "vulnerability_ref": "v-1",
                     "canonical_class": "IDOR",
                     "web_vulnerability_class": "idor",
-                    "likelihood": "high",
-                    "likelihood_rationale": "the item id is attacker-controlled",
-                    "confidence": "INFERRED",
+                    "risk": 9.2,
                     "evidences": [],
                 },
             },
@@ -1029,7 +1038,12 @@ def test_a_premined_threat_is_rebound_to_the_launched_run_and_dispatches(tmp_pat
     threat = yaml.safe_load((produced / "threat-1.yaml").read_text(encoding="utf-8"))
     assert model["run_id"] == "h1"
     assert threat["run_id"] == "h1"
-    assert model["validation"] == {"valid": True}
+    # The rebind touches the run id ONLY: the v5 completion record it reads as
+    # consumable survives verbatim.
+    assert model["schema_version"] == 5
+    assert model["validation"]["valid"] is True
+    assert model["validation"]["parseable"] is True
+    assert threat["risk"] == 9.2
 
     store = ThreatModelStore(root_dir=tmp_path / "data")
     entries = store.read_produced_threats("pid")

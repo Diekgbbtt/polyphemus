@@ -74,14 +74,24 @@ units:
       - id: IA-1
         mining: sufficient | under_mined
         rationale: string
+        impact_description: string
+        exploitability_description: string
+        factors: {attack_vector, attack_complexity, attack_requirements, privileges_required, user_interaction, confidentiality, integrity, availability}
+        risk: number
+        risk_vector: string
 ```
 
 `scope` labels the unit against the injected `threat_model_scope`.
-An `out` unit is one the scope fences off, so its rows do not count as assessed damage.
+An `out` unit is one the scope fences off, so its rows do not count as scored damage.
 `mining` labels one row: `sufficient` when the row's capability is the honest end of that
 exploitation, `under_mined` when a concrete end damage was achievable and the row stopped
 at a capability. A `threat` row is always `sufficient`.
-Write one entry per unit whose model carries `impact_assessment` rows.
+Copy the row's `impact_description`, `exploitability_description`, `factors`, `risk`, and
+`risk_vector` verbatim beside the label, so the review pairs each label with the claim it judged.
+The factors are the eight CVSS 4.0 base factors; `risk` is the derived CVSS 4.0 base score
+and the severity band follows from it on read, so never author a band.
+The retired `damage` field is refused: the old vocabulary must not return.
+Write one entry per unit whose model carries assessment rows.
 
 ## Termination
 

@@ -226,6 +226,30 @@ def test_trial_dry_run_prints_and_executes_nothing(sample_setup, tmp_path, capsy
     assert "poll" in out.lower()
 
 
+def test_trial_dry_run_prints_float_hunting_thresholds(
+    sample_setup, tmp_path, capsys
+) -> None:
+    """The CLI carries the CVSS 4.0 thresholds as floats: the plan's
+    `hunting/config` body must not truncate 112.5 or 2.5 to an int."""
+    sample_setup["instances"][0]["targets"][0]["hunting"] = {
+        "pipeline_sync": "batched",
+        "promotion_risk_threshold": 2.5,
+        "risk_threshold": 112.5,
+    }
+    setup_path = _write_setup(tmp_path, sample_setup)
+
+    code = cli.main(
+        ["trial", setup_path, "arm-a", "jetlinks-1", "--dry-run"],
+        runner_factory=_explode,
+        api_factory=_explode,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert '"risk_threshold": 112.5' in out
+    assert '"promotion_risk_threshold": 2.5' in out
+
+
 def test_trial_executes_through_the_injected_api_and_runner(
     sample_setup, tmp_path, recording_runner, fake_result
 ) -> None:

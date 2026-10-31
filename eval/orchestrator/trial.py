@@ -166,7 +166,8 @@ class TrialConfig:
     recon_jobs: tuple[str, ...] = ()
     # The frozen hunting policy applied to the project at bootstrap, before recon
     # launches: `pipeline_sync`, `pod_batch_size`, `promotion_risk_threshold`,
-    # `risk_threshold`. Empty means every project default stands.
+    # `risk_threshold`. The two thresholds are CVSS 4.0 floats carried unchanged
+    # to the API. Empty means every project default stands.
     hunting: Mapping[str, object] | None = None
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     # The trial-wide token budget (capped tokens: new output + uncached input)

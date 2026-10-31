@@ -111,13 +111,15 @@ class HuntingSettings:
     `promotion_risk_threshold` is inclusive and explicit: `0` is a stored value
     that promotes every threat (the control arm), while an unset field leaves
     the project default in place. `risk_threshold` is the cumulative halt, a
-    different knob from the per-threat promotion floor.
+    different knob from the per-threat promotion floor. Both thresholds are
+    floats on the CVSS 4.0 `risk` scale (one decimal point is meaningful), so a
+    fractional setup value must survive unchanged.
     """
 
     pipeline_sync: str | None = None
     pod_batch_size: int | None = None
-    promotion_risk_threshold: int | None = None
-    risk_threshold: int | None = None
+    promotion_risk_threshold: float | None = None
+    risk_threshold: float | None = None
 
     def payload(self) -> dict[str, object]:
         """Only the fields the setup set, so a partial block stays partial.
@@ -442,9 +444,10 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
 def _parse_hunting(payload: object, where: str) -> HuntingSettings:
     """The optional per-target hunting policy, validated like the REST body.
 
-    Unknown keys, an unknown sync mode, a non-integer, and an out-of-range value
+    Unknown keys, an unknown sync mode, a non-number, and an out-of-range value
     all fail loud and name the field, so a typo cannot silently leave the
-    project default in place.
+    project default in place. `pod_batch_size` stays an integer; the two
+    thresholds are CVSS 4.0 points and parse as floats.
     """
     if payload is None:
         return HuntingSettings()
@@ -469,10 +472,10 @@ def _parse_hunting(payload: object, where: str) -> HuntingSettings:
         pipeline_sync=mode,
         pod_batch_size=_optional_int_at_least(
             mapping, "pod_batch_size", where, minimum=1),
-        promotion_risk_threshold=_optional_int_at_least(
-            mapping, "promotion_risk_threshold", where, minimum=0),
-        risk_threshold=_optional_int_at_least(
-            mapping, "risk_threshold", where, minimum=0),
+        promotion_risk_threshold=_optional_float_at_least(
+            mapping, "promotion_risk_threshold", where, minimum=0.0),
+        risk_threshold=_optional_float_at_least(
+            mapping, "risk_threshold", where, minimum=0.0),
     )
 
 
@@ -488,6 +491,25 @@ def _optional_int_at_least(
         raise SetupError(
             f"{where}.{key}: expected an integer >= {minimum}, got {value}")
     return value
+
+
+def _optional_float_at_least(
+    mapping: Mapping, key: str, where: str, *, minimum: float,
+) -> float | None:
+    """A threshold on the CVSS 4.0 scale: an int or a float, never a bool.
+
+    A bool is an int in Python and a numeric string is not a number, so both are
+    refused by the type test rather than coerced; the comparison is inclusive.
+    """
+    value = mapping.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise SetupError(f"{where}.{key}: expected a number or null")
+    if value < minimum:
+        raise SetupError(
+            f"{where}.{key}: expected a number >= {minimum}, got {value}")
+    return float(value)
 
 
 def _parse_preloaded_artifacts(payload: object, where: str) -> PreloadedArtifacts | None:

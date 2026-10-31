@@ -15,14 +15,16 @@
 #   pipeline_sync            batched
 #   pod_batch_size           3
 #   promotion_risk_threshold 0     (stored, inclusive; 0 promotes every threat)
-#   risk_threshold           180   (cumulative halt, up from 110 in iteration B)
+#   risk_threshold           112.5 (cumulative halt; the old 180 scaled by 0.625)
 #
-# The promotion floor is deliberately inert: this is the control arm for the
-# impact system, so every produced threat reaches a hunter and the promotion
-# filter is proven wired without being exercised.
+# Both thresholds are CVSS 4.0 points on the 0..10 scale, so the setup reader
+# and the project API carry them as floats. The promotion floor is deliberately
+# inert: this is the control arm for the impact system, so every produced threat
+# reaches a hunter and the promotion filter is proven wired without being
+# exercised. Scaling the stored 0 keeps that invariant.
 #
 # Instance `.env` for this arm:
-#   HUNT_RISK_THRESHOLD=180
+#   HUNT_RISK_THRESHOLD=112.5
 #   SKILL_EVOLUTION_ENABLED=0
 #   LLM_HUNTING_THREAT_MODELLER=opencode-go:deepseek-v4.1-flash
 #   LLM_HUNTING_HUNTER=opencode-go:deepseek-v4.1-flash
@@ -63,4 +65,4 @@ instances:
           pipeline_sync: batched
           pod_batch_size: 3
           promotion_risk_threshold: 0
-          risk_threshold: 180
+          risk_threshold: 112.5

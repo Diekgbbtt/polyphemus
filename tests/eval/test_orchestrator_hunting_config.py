@@ -47,8 +47,9 @@ def test_hunting_block_is_parsed() -> None:
             {
                 "pipeline_sync": "batched",
                 "pod_batch_size": 3,
-                "promotion_risk_threshold": 0,
-                "risk_threshold": 180,
+                # The CVSS 4.0 scale: the iteration D values scaled by 0.625.
+                "promotion_risk_threshold": 2.5,
+                "risk_threshold": 112.5,
             }
         )
     )
@@ -56,13 +57,32 @@ def test_hunting_block_is_parsed() -> None:
     (run,) = parsed.instances[0].targets
     assert run.hunting.pipeline_sync == "batched"
     assert run.hunting.pod_batch_size == 3
-    assert run.hunting.promotion_risk_threshold == 0
-    assert run.hunting.risk_threshold == 180
+    assert run.hunting.promotion_risk_threshold == 2.5
+    assert run.hunting.risk_threshold == 112.5
     assert run.hunting.payload() == {
         "pipeline_sync": "batched",
         "pod_batch_size": 3,
-        "promotion_risk_threshold": 0,
-        "risk_threshold": 180,
+        "promotion_risk_threshold": 2.5,
+        "risk_threshold": 112.5,
+    }
+
+
+def test_the_float_thresholds_round_trip_unchanged() -> None:
+    """The thresholds are CVSS 4.0 points: a fractional value must survive the
+    reader and the project-side payload without truncation."""
+    parsed = setup_mod.parse_eval_setup(
+        _setup_with_hunting({
+            "promotion_risk_threshold": 2.5,
+            "risk_threshold": 112.5,
+        })
+    )
+
+    (run,) = parsed.instances[0].targets
+    assert isinstance(run.hunting.promotion_risk_threshold, float)
+    assert isinstance(run.hunting.risk_threshold, float)
+    assert run.hunting.payload() == {
+        "promotion_risk_threshold": 2.5,
+        "risk_threshold": 112.5,
     }
 
 
@@ -98,8 +118,11 @@ def test_bad_pipeline_sync_is_named() -> None:
     [
         ("pod_batch_size", 0),
         ("pod_batch_size", True),
-        ("promotion_risk_threshold", -1),
-        ("risk_threshold", -1),
+        ("promotion_risk_threshold", -0.5),
+        ("risk_threshold", -1.0),
+        # A bool is not a score, and a numeric string is not a number.
+        ("risk_threshold", True),
+        ("promotion_risk_threshold", "2.5"),
     ],
 )
 def test_out_of_range_hunting_value_is_named(field, value) -> None:
@@ -128,7 +151,12 @@ def test_trial_applies_hunting_config_before_recon(tmp_path) -> None:
     _run_with_hunting(
         tmp_path,
         api_runner,
-        {"pipeline_sync": "batched", "pod_batch_size": 3, "risk_threshold": 180},
+        {
+            "pipeline_sync": "batched",
+            "pod_batch_size": 3,
+            "promotion_risk_threshold": 2.5,
+            "risk_threshold": 112.5,
+        },
     )
 
     call = next(
@@ -139,7 +167,8 @@ def test_trial_applies_hunting_config_before_recon(tmp_path) -> None:
     assert call.body == {
         "pipeline_sync": "batched",
         "pod_batch_size": 3,
-        "risk_threshold": 180,
+        "promotion_risk_threshold": 2.5,
+        "risk_threshold": 112.5,
     }
     paths = [c.path for c in api_runner.calls]
     assert paths.index("/projects/pid/hunting/config") < next(
