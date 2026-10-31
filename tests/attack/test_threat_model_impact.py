@@ -323,3 +323,29 @@ def test_an_unresolved_reference_keeps_the_carried_risk_for_the_checker():
 
     assert ordered[0].risk == 0.0
     assert ordered[0].id == "threat-1"
+
+
+def test_the_normaliser_mirrors_only_the_matching_exploitation():
+    """The row is the scored claim for one vulnerability: a threat of another
+    vulnerability, or one naming a precursor row, is not mirrored; the checker
+    reports it and the model is never dispatched."""
+    matching = row(id="IA-1", risk=HIGH_RISK)
+    precursor = row(
+        id="IA-2",
+        risk=HIGH_RISK,
+        disposition=ImpactDisposition.PRECURSOR,
+    )
+    foreign = row(id="IA-3", risk=HIGH_RISK).model_copy(
+        update={"vulnerability_ref": "V-2"})
+
+    ordered = normalise_threats(
+        [
+            threat(impact_ref="IA-1"),
+            threat(impact_ref="IA-2"),
+            threat(impact_ref="IA-3"),
+        ],
+        [matching, precursor, foreign],
+    )
+
+    assert [item.impact_ref for item in ordered] == ["IA-1", "IA-2", "IA-3"]
+    assert [item.risk for item in ordered] == [HIGH_RISK, 0.0, 0.0]

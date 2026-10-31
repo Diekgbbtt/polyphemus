@@ -28,6 +28,7 @@ from polymerhus.attack.hunting.threat_model import (
     check_completion,
 )
 from polymerhus.attack.hunting.threat_model_store import (
+    ImpactAssessmentError,
     ThreatModelDirectoryError,
     ThreatModelIdentityError,
     ThreatModelSchemaVersionError,
@@ -378,11 +379,13 @@ def _write_gates(
 def _seed_assessments(path: Path, rows: list[dict]) -> None:
     """Seed the assessment rows the `assess_impact` tool writes (ticket #406).
 
-    A schema-5 assessment row has no model-facing gate write, and the tool's
-    store method is not part of this change. The store tests therefore write
-    the document the tool will write (state `IMPACT_ASSESSED`, the scored rows)
-    and then drive every other write through the real store, so the merge, the
-    COMPLETED commit, the ranking, and the completion checker all run for real.
+    A schema-5 assessment row has no model-facing gate write; its sole writer
+    is `ThreatModelStore.write_impact_assessment`. These tests seed the document
+    the tool writes (state `IMPACT_ASSESSED`, the scored rows) so a fixture can
+    also drive a row set the write would reject (a tampered score, a duplicate
+    capability id), and then drive every OTHER write through the real store, so
+    the merge, the COMPLETED commit, the ranking, and the completion checker all
+    run for real.
     """
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     document["state"] = "IMPACT_ASSESSED"
@@ -1241,6 +1244,44 @@ def test_check_completion_reports_a_threat_row_with_no_impact_value(tmp_path):
         finding.startswith("impact_assessment:ia-1.factors.confidentiality")
         for finding in validation.missing
     )
+
+
+def test_check_completion_recomputes_the_assessment_score_and_vector(tmp_path):
+    """The row's `risk` and `risk_vector` are DERIVED: a row whose values do not
+    recompute from its factors was hand-edited, so the checker reports it (the
+    completion check's regression rule, spec 5)."""
+    store = ThreatModelStore(tmp_path)
+    document = _completed_document(store)
+    document["impact_assessment"][0]["risk"] = 0.0
+    document["impact_assessment"][0]["risk_vector"] = ""
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert validation.valid is False
+    assert "impact_assessment:ia-1.risk" in validation.missing
+    assert "impact_assessment:ia-1.risk_vector" in validation.missing
+
+
+def test_completion_reports_a_vulnerability_without_an_assessment_row(tmp_path):
+    """Spec 5: every non-dropped vulnerability carries at least one scored row."""
+    store = ThreatModelStore(tmp_path)
+    path = _write_gates(store)
+    second = {
+        **_vulnerabilities()[0],
+        "id": "v-2",
+        "canonical_class": "Path Traversal",
+        "characterisation": "An anonymous caller reads a file outside the root.",
+    }
+    store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": [_vulnerabilities()[0], second]}, run_id=RUN)
+    _seed_assessments(path, _impact_assessment())
+    store.write_sections(PROJECT, UNIT, "COMPLETED", {"threats": []}, run_id=RUN)
+
+    validation = check_completion(
+        UnitThreatModel.model_validate(store.read_model(PROJECT, UNIT)))
+
+    assert "vulnerability:v-2.impact_assessment" in validation.unclosed
 
 
 def _completed_document(store) -> dict:
@@ -2421,3 +2462,342 @@ def test_a_self_qualified_capability_resolves_locally(tmp_path):
     model = store.read_model(PROJECT, UNIT)
     assert model["validation"]["valid"] is True
     assert model["validation"]["referential_errors"] == []
+
+
+# --- the assessment write (the `assess_impact` seam, ticket #406) -------------
+
+def _assessment_args(**overrides) -> dict:
+    """The v5 row fields one `write_impact_assessment` call carries.
+
+    The fixture row's derived `risk` and `risk_vector` are deliberately dropped:
+    the store is the only authority that computes them.
+    """
+    row = _impact_assessment()[0]
+    return {
+        "id": row["id"],
+        "vulnerability_ref": row["vulnerability_ref"],
+        "disposition": row["disposition"],
+        "impact_description": row["impact_description"],
+        "exploitability_description": row["exploitability_description"],
+        "capability": row["capability"],
+        "capability_id": row["capability_id"],
+        "capability_path": row["capability_path"],
+        "evidence_refs": row["evidence_refs"],
+        "factors": row["factors"],
+        **overrides,
+    }
+
+
+def test_write_impact_assessment_computes_the_score_and_persists_the_row(tmp_path):
+    """The row's `risk` and `risk_vector` are DERIVED at the write: the caller
+    authors the eight factors only, and the persisted document carries the
+    score the CVSS 4.0 library gives the factor set."""
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+
+    row = store.write_impact_assessment(PROJECT, UNIT, RUN, **_assessment_args())
+
+    assert row.id == "ia-1"
+    assert row.risk == TOP_RISK
+    assert row.risk_vector == TOP_VECTOR
+    model = store.read_model(PROJECT, UNIT)
+    assert model["state"] == "IMPACT_ASSESSED"
+    assert model["impact_assessment"][0]["risk"] == TOP_RISK
+    assert model["impact_assessment"][0]["risk_vector"] == TOP_VECTOR
+    assert model["impact_assessment"][0]["factors"] == _factors("high")
+
+
+def test_the_first_assessment_advances_the_state_and_a_later_call_appends(tmp_path):
+    """The first successful call owns the `IMPACT_ASSESSED` transition; a second
+    row for the same vulnerability is admitted with its own capability id."""
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
+
+    store.write_impact_assessment(PROJECT, UNIT, RUN, **_assessment_args())
+    assert store.read_model(PROJECT, UNIT)["state"] == "IMPACT_ASSESSED"
+
+    store.write_impact_assessment(PROJECT, UNIT, RUN, **{
+        **_assessment_args(),
+        "id": "ia-2",
+        "capability_id": "p-2",
+        "capability": "change another tenant's item",
+        "impact_description": (
+            "An anonymous caller changes another tenant's item."),
+    })
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["state"] == "IMPACT_ASSESSED"
+    assert [row["id"] for row in model["impact_assessment"]] == ["ia-1", "ia-2"]
+
+
+def test_a_duplicate_row_id_replaces_the_row(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+    store.write_impact_assessment(PROJECT, UNIT, RUN, **_assessment_args())
+
+    row = store.write_impact_assessment(PROJECT, UNIT, RUN, **{
+        **_assessment_args(),
+        "impact_description": "An amended claim.",
+        "factors": _factors("low"),
+    })
+
+    rows = store.read_model(PROJECT, UNIT)["impact_assessment"]
+    assert len(rows) == 1
+    assert rows[0]["impact_description"] == "An amended claim."
+    assert row.risk == LOWER_RISK
+    assert rows[0]["risk"] == LOWER_RISK
+    assert rows[0]["risk_vector"] == LOWER_VECTOR
+
+
+def test_a_duplicate_capability_id_on_the_same_vulnerability_is_rejected(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+    store.write_impact_assessment(PROJECT, UNIT, RUN, **_assessment_args())
+
+    with pytest.raises(ImpactAssessmentError) as raised:
+        store.write_impact_assessment(
+            PROJECT, UNIT, RUN, **{**_assessment_args(), "id": "ia-2"})
+
+    assert raised.value.fields == ["capability_id"]
+    assert [
+        row["id"] for row in store.read_model(PROJECT, UNIT)["impact_assessment"]
+    ] == ["ia-1"]
+
+
+def test_an_unknown_vulnerability_ref_is_rejected(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+
+    with pytest.raises(ImpactAssessmentError) as raised:
+        store.write_impact_assessment(
+            PROJECT, UNIT, RUN,
+            **{**_assessment_args(), "vulnerability_ref": "v-missing"})
+
+    assert raised.value.fields == ["vulnerability_ref"]
+    assert store.read_model(PROJECT, UNIT)["impact_assessment"] == []
+
+
+def test_a_precursor_row_with_a_non_none_impact_is_rejected(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+
+    with pytest.raises(ImpactAssessmentError) as raised:
+        store.write_impact_assessment(
+            PROJECT, UNIT, RUN,
+            **{**_assessment_args(), "disposition": "precursor"})
+
+    assert raised.value.fields == ["factors"]
+    assert store.read_model(PROJECT, UNIT)["impact_assessment"] == []
+
+
+def test_a_malformed_assessment_id_is_rejected(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+
+    with pytest.raises(ImpactAssessmentError) as raised:
+        store.write_impact_assessment(
+            PROJECT, UNIT, RUN, **{**_assessment_args(), "id": "row-1"})
+
+    assert raised.value.fields == ["id"]
+
+
+def test_the_assessment_write_is_accepted_only_at_prior_art_or_impact_assessed(
+        tmp_path):
+    """The `IMPACT_ASSESSED` gate is tool-only, so the write needs the gate
+    below it: a model still writing vulnerabilities has nothing to assess."""
+    store = ThreatModelStore(tmp_path)
+    store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": _vulnerabilities()}, run_id=RUN)
+
+    with pytest.raises(ImpactAssessmentError) as raised:
+        store.write_impact_assessment(PROJECT, UNIT, RUN, **_assessment_args())
+
+    assert raised.value.fields == ["state"]
+    assert store.read_model(PROJECT, UNIT)["impact_assessment"] == []
+
+
+def test_the_assessment_write_resolves_a_capability_path(tmp_path):
+    """A path element resolves to a local capability row and to another unit's
+    qualified capability; an unresolved element is a coded rejection."""
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+    store.write_impact_assessment(PROJECT, UNIT, RUN, **_assessment_args())
+
+    row = store.write_impact_assessment(PROJECT, UNIT, RUN, **{
+        **_assessment_args(),
+        "id": "ia-2",
+        "capability_id": "p-2",
+        "capability": "change another tenant's item",
+        "capability_path": ["p-1"],
+    })
+    assert row.capability_path == ["p-1"]
+
+    with pytest.raises(ImpactAssessmentError) as raised:
+        store.write_impact_assessment(PROJECT, UNIT, RUN, **{
+            **_assessment_args(),
+            "id": "ia-3",
+            "capability_id": "p-3",
+            "capability_path": ["p-missing"],
+        })
+    assert raised.value.fields == ["capability_path"]
+
+
+def test_the_assessment_write_resolves_a_capability_of_another_unit(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    first = "First"
+    second = "Second"
+    _write_gates(store, unit_id=first)
+    store.write_impact_assessment(PROJECT, first, RUN, **_assessment_args(
+        id="ia-1",
+        disposition="precursor",
+        capability="enumerate the item ids",
+        factors=_factors("none"),
+    ))
+    _write_gates(store, unit_id=second)
+
+    row = store.write_impact_assessment(
+        PROJECT, second, RUN,
+        **_assessment_args(capability_path=[f"{first}::p-1"]))
+
+    assert row.capability_path == [f"{first}::p-1"]
+
+
+def test_a_v4_document_is_refused_for_the_assessment_write(tmp_path):
+    """Schema 5 spec 11: the v5 assessment writer refuses a v4 document and
+    leaves it untouched; the v4 read stays raw."""
+    store = ThreatModelStore(tmp_path)
+    name = "Service-catalogue-and-discovery"
+    unit_dir = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / name
+    unit_dir.mkdir(parents=True)
+    document = unit_dir / f"{name}.yaml"
+    document.write_text(
+        yaml.safe_dump({
+            "schema_version": 4,
+            "unit_id": UNIT,
+            "state": "IMPACT_ASSESSED",
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    before = document.read_bytes()
+
+    with pytest.raises(ThreatModelSchemaVersionError) as raised:
+        store.write_impact_assessment(PROJECT, UNIT, RUN, **_assessment_args())
+
+    assert raised.value.version == 4
+    assert document.read_bytes() == before
+    assert store.read_model(PROJECT, UNIT)["schema_version"] == 4
+
+
+# --- the COMPLETED risk mirror (schema-5 spec 3) -----------------------------
+
+def test_the_completed_write_mirrors_the_row_risk_and_rejects_a_mismatch(tmp_path):
+    """The threat file's score is the assessment row's derived score; a threat
+    whose mirror disagrees is a completion finding, so the model is never
+    consumable."""
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+    store.write_impact_assessment(PROJECT, UNIT, RUN, **_assessment_args())
+    store.write_sections(
+        PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["threats"][0]["risk"] == TOP_RISK
+    assert model["validation"]["valid"] is True
+    assert store.read_threat_files(PROJECT, UNIT)[0]["risk"] == TOP_RISK
+
+    model["threats"][0]["risk"] = 0.0
+    validation = check_completion(UnitThreatModel.model_validate(model))
+
+    assert validation.valid is False
+    assert "threat:threat-1.risk" in validation.missing
+
+
+def test_the_completed_mirror_never_takes_another_vulnerability_row(tmp_path):
+    """The assessment is the scored claim for THAT exploitation: a threat of
+    v-2 that names v-1's row is not scored from it, so the mismatch is rejected
+    (no threat file, the checker's finding) instead of silently dispatched."""
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+    second_vulnerability = {
+        **_vulnerabilities()[0],
+        "id": "v-2",
+        "canonical_class": "Path Traversal",
+        "characterisation": "An anonymous caller reads a file outside the root.",
+    }
+    path = store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": [_vulnerabilities()[0], second_vulnerability]},
+        run_id=RUN,
+    )
+    _seed_assessments(path, _impact_assessment())
+    store.write_sections(
+        PROJECT, UNIT, "COMPLETED",
+        {"threats": [{
+            **_write_shape(_threat("high")),
+            "vulnerability_ref": "v-2",
+            "canonical_class": "Path Traversal",
+        }]},
+        run_id=RUN,
+    )
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["threats"][0]["risk"] == 0.0
+    assert store.read_threat_files(PROJECT, UNIT) == []
+    assert "threat:threat-1.impact_ref" in model["validation"]["unclosed"]
+
+
+def test_the_v5_threat_file_carries_no_retired_risk_key(tmp_path):
+    """The threat file carries the float score and the v5 assessment block; the
+    retired likelihood, confidence, risk-factor, and CIA vocabulary is gone."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+
+    record = store.read_threat_files(PROJECT, UNIT)[0]
+
+    assert record["risk"] == TOP_RISK
+    assert isinstance(record["risk"], float)
+    assert record["threat"]["risk"] == TOP_RISK
+    for key in (
+        "likelihood", "likelihood_rationale", "risk_factors", "confidence",
+        "impact_weight",
+    ):
+        assert key not in record["threat"]
+        assert key not in record
+    assert "impact" not in record["threat"]
+    assert set(record["impact"]) == {
+        "impact_ref",
+        "impact_description",
+        "exploitability_description",
+        "disposition",
+        "capability",
+        "capability_id",
+        "capability_path",
+        "factors",
+        "risk",
+        "risk_vector",
+        "chain",
+    }
+
+
+def test_the_v5_threat_view_paths_resolve(tmp_path):
+    """The `threat` view merges the threat file with its assessment row, so the
+    v5 paths resolve at the view level (schema-5 spec 10)."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+
+    result = store.query_prior_art(
+        PROJECT,
+        kind="threat",
+        filters=[
+            {"path": "risk", "regex": f"^{TOP_RISK}$"},
+            {"path": "risk_vector", "regex": "^CVSS:4.0/"},
+            {"path": "impact_description", "regex": "tenant"},
+            {"path": "exploitability_description", "regex": "unauthenticated"},
+            {"path": "factors.confidentiality", "regex": "^high$"},
+        ],
+    )
+
+    assert result["count"] == 1
+    assert result["matches"][0]["record_id"] == "threat-1"

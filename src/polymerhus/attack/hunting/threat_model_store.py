@@ -30,6 +30,12 @@ Write contract:
   files first, then commits the model document. A gate write below COMPLETED
   deletes stale produced threat files (crash repair); the next COMPLETED write
   rewrites the whole set.
+- The assessment write (schema-5 spec 2/4): `write_impact_assessment` is the
+  sole writer of one `impact_assessment` row. It loads the produced v5
+  document, accepts the row at `PRIOR_ART`/`IMPACT_ASSESSED`, validates the row
+  and its references, DERIVES `risk`/`risk_vector` from the authored factors
+  inside the commit, merges by row id, advances the state to
+  `IMPACT_ASSESSED`, and commits atomically. A v4 document is refused.
 - A move-aware write (S2 4.5): a write whose identity already lives in
   `consumed/` is a no-op success returning the consumed path. The store never
   recreates a consumed file.
@@ -95,20 +101,24 @@ from .threat_model import (
     SCHEMA_VERSION,
     STATE_ORDER,
     FieldFilter,
+    ImpactAssessment,
     ImpactDisposition,
     ModelState,
     PartialThreatModel,
     PriorArtKind,
     RawThreatModel,
+    RiskMetrics,
     ThreatQueryMatch,
     ThreatQueryResult,
     UnitThreatModel,
     check_completion,
+    compute_risk,
     compute_risk_profile,
     document_of,
     normalise_threats,
     prior_art_paths,
     unit_kind_from_unit_id,
+    validate_metrics,
 )
 
 # The oldest read-only legacy schema: the intake and the measurement read a v2
@@ -212,6 +222,23 @@ def threat_file_name(threat_id: str) -> str:
 _THREAT_ID_RE = re.compile(r"threat-\d+")
 
 
+# The assessment-row id and capability-id forms (schema-5 spec 2): the model
+# authors both, so the assessment write validates them before the row joins the
+# document. Case-insensitive, because the contract's prefixes are `IA-`/`P-` and
+# the fixtures write them lowercase.
+_IMPACT_ID_RE = re.compile(r"IA-[A-Za-z0-9][A-Za-z0-9._-]*", re.IGNORECASE)
+_CAPABILITY_ID_RE = re.compile(r"P-[A-Za-z0-9][A-Za-z0-9._-]*", re.IGNORECASE)
+
+# The gates at which one assessment row may be written (schema-5 spec 4). The
+# `assess_impact` tool is the row's sole writer; the gate below `PRIOR_ART` has
+# no vulnerabilities to reference yet, and a `COMPLETED` model is decided and is
+# never extended.
+_ASSESSMENT_WRITE_STATES: tuple[ModelState, ...] = (
+    ModelState.PRIOR_ART,
+    ModelState.IMPACT_ASSESSED,
+)
+
+
 def is_threat_id(value: Any) -> bool:
     """True for a store-owned threat id (`threat-<rank>`, S2 10.2). The ONE form
     check: the store's write keys and the mover's dispatch validity predicate
@@ -239,6 +266,21 @@ class ThreatModelIdentityError(ValueError):
     """A write whose derivation input is missing or malformed (the coded
     teaching rejection of the store-write decisions). `fields` names the
     attribute(s) so the tool can return a field-naming rejection."""
+
+    def __init__(self, fields: list[str], message: str):
+        super().__init__(message)
+        self.fields = list(fields)
+
+
+class ImpactAssessmentError(ValueError):
+    """An assessment row the store refuses (a coded teaching rejection).
+
+    `fields` names the row field(s) the caller must correct, so the
+    `assess_impact` tool can return its field-naming rejection instead of a
+    bare raise. The store owns the row validation because the referential
+    checks and the factor rules belong to the document, not to the tool's
+    argument shape.
+    """
 
     def __init__(self, fields: list[str], message: str):
         super().__init__(message)
@@ -505,7 +547,9 @@ def _threat_view(
     which the threat file does not carry (S2 section 7). The overlay carries
     BOTH generations: a v4 row's `damage`, and a v5 row's two prose blocks, its
     factors, its score, and its vector, so a raw v4 model and a v5 model are
-    queryable through one catalog.
+    queryable through one catalog. The v5 fields are ALSO flattened onto the
+    view itself, because the threat catalog names `risk_vector`, `factors.*`,
+    and the two prose blocks at this level (schema-5 spec 10).
     """
     threat_value = record.get("threat")
     threat = dict(threat_value) if isinstance(threat_value, Mapping) else {}
@@ -545,6 +589,15 @@ def _threat_view(
         "unit_id": str(document.get("unit_id") or record.get("unit_id") or ""),
         "run_id": str(record.get("run_id") or document.get("run_id") or ""),
         "risk": record.get("risk", threat.get("risk")),
+        # The v5 assessment paths, flattened beside the threat file's own keys:
+        # `PRIOR_ART_PATHS[THREAT]` names `risk_vector`, `factors.*`, and the
+        # two prose blocks at this level, so a v5 threat is queryable through
+        # one catalog; a raw v4 row still fills the prose from `damage`.
+        "risk_vector": row.get("risk_vector", ""),
+        "impact_description": (
+            row.get("impact_description") or row.get("damage") or ""),
+        "exploitability_description": row.get("exploitability_description", ""),
+        "factors": dict(row.get("factors") or {}),
         "likelihood": record.get("likelihood") or threat.get("likelihood") or "",
         "threat": threat,
         "impact": impact,
@@ -1567,6 +1620,295 @@ class ThreatModelStore(BoundedRecordStore):
             self._delete_threat_files(produced_dir)
         self._dump_yaml_atomic(model_path, model.model_dump(mode="json"))
 
+    # --- the assessment write (schema-5 spec 2 and 4) ---------------------------
+
+    def write_impact_assessment(
+        self,
+        project_id: str,
+        unit_id: str,
+        run_id: str,
+        *,
+        id: str,
+        vulnerability_ref: str,
+        disposition: ImpactDisposition | str,
+        impact_description: str,
+        exploitability_description: str,
+        capability: str,
+        capability_id: str,
+        capability_path: Sequence[str] = (),
+        evidence_refs: Sequence[str] = (),
+        factors: RiskMetrics | Mapping[str, Any],
+    ) -> ImpactAssessment:
+        """Write ONE assessment row: the sole writer of a schema-5 row.
+
+        The row is the scored claim (schema-5 spec 2), so the STORE derives
+        `risk` and `risk_vector`: `compute_risk` runs inside this commit, from
+        the authored factors, and the caller never supplies either value. The
+        first successful call advances the state to `IMPACT_ASSESSED`; the
+        state is monotonic, so a later row keeps it. A row whose `id` already
+        exists REPLACES it (a correction is one call); every other row is
+        appended.
+
+        Refused with a coded rejection, never a silent write:
+
+        - a document that is not v5 (a raw v4/legacy read, an unreadable body,
+          or no document at all) - a stale model is never mixed into a v5 run;
+        - a state outside `PRIOR_ART`/`IMPACT_ASSESSED` (the gate contract);
+        - a malformed `id` (`IA-*`) or `capability_id` (`P-*`);
+        - an unknown `vulnerability_ref`;
+        - a `capability_id` already held by another row of the SAME
+          vulnerability (a second manner needs a distinct capability);
+        - a `capability_path` element that resolves to no capability (local,
+          self-qualified, or another unit's);
+        - a factor set its disposition forbids (`risk_score.validate_metrics`).
+
+        The document is committed atomically (`_commit`), so a killed write
+        leaves the previous complete model.
+        """
+        row = self._assessment_row(
+            id=id,
+            vulnerability_ref=vulnerability_ref,
+            disposition=disposition,
+            impact_description=impact_description,
+            exploitability_description=exploitability_description,
+            capability=capability,
+            capability_id=capability_id,
+            capability_path=capability_path,
+            evidence_refs=evidence_refs,
+            factors=factors,
+        )
+        if not isinstance(unit_id, str) or not unit_id:
+            raise ImpactAssessmentError(
+                ["unit_id"],
+                "threat model store: assessment write needs a non-empty "
+                "harness-bound unit id",
+            )
+        if not run_id:
+            raise ImpactAssessmentError(
+                ["run_id"],
+                "threat model store: assessment write needs a non-empty "
+                "harness-bound run id",
+            )
+        with self._lock_for(project_id):
+            unit_name = self._unit_name_for_write(project_id, unit_id)
+            if self._model_path(project_id, unit_name, "consumed").exists():
+                raise ImpactAssessmentError(
+                    ["state"],
+                    f"threat model store: the model of {unit_id!r} already "
+                    f"lives in consumed/ (decided); an assessment is never "
+                    f"written after the move",
+                )
+            model_path = self._model_path(project_id, unit_name, "produced")
+            existing = self._load_document(model_path)
+            if existing is None:
+                if model_path.exists():
+                    raise ThreatModelSchemaVersionError(
+                        model_path, self._raw_version(model_path))
+                raise ImpactAssessmentError(
+                    ["state"],
+                    f"threat model store: no produced model for {unit_id!r} to "
+                    f"assess; write its gate sections first",
+                )
+            if not isinstance(existing, PartialThreatModel):
+                # A v4 (and older) document reads raw but is never written: a
+                # stale model is never mixed into a v5 run (schema-5 spec 11).
+                raise ThreatModelSchemaVersionError(
+                    model_path, existing.schema_version)
+            if existing.state not in _ASSESSMENT_WRITE_STATES:
+                accepted = " or ".join(
+                    state.value for state in _ASSESSMENT_WRITE_STATES)
+                raise ImpactAssessmentError(
+                    ["state"],
+                    "threat model store: an assessment row is written at "
+                    f"{accepted}; the model is at {existing.state.value}",
+                )
+            self._validate_assessment_row(existing, row, project_id)
+            # The score is computed in the commit, synchronously, from the
+            # authored factors (schema-5 spec 3): no pending state, no second
+            # state machine.
+            result = compute_risk(row.factors)
+            row = row.model_copy(update={
+                "risk": result.score,
+                "risk_vector": result.vector,
+            })
+            rows = [
+                row if prior.id == row.id else prior
+                for prior in existing.impact_assessment
+            ]
+            if not any(
+                prior.id == row.id for prior in existing.impact_assessment
+            ):
+                rows.append(row)
+            now = datetime.now(timezone.utc)
+            merged = self._merged_document(
+                document_of(existing), unit_id, run_id,
+                ModelState.IMPACT_ASSESSED,
+                {"impact_assessment": rows},
+                now, model_path,
+                project_id=project_id,
+            )
+            self._commit(
+                project_id, unit_name, merged, ModelState.IMPACT_ASSESSED, now)
+            return next(
+                persisted for persisted in merged.impact_assessment
+                if persisted.id == row.id
+            )
+
+    @staticmethod
+    def _assessment_row(
+        *,
+        id: str,
+        vulnerability_ref: str,
+        disposition: ImpactDisposition | str,
+        impact_description: str,
+        exploitability_description: str,
+        capability: str,
+        capability_id: str,
+        capability_path: Sequence[str],
+        evidence_refs: Sequence[str],
+        factors: RiskMetrics | Mapping[str, Any],
+    ) -> ImpactAssessment:
+        """One typed assessment row from its authored fields.
+
+        The id and the capability id are the model-authored symbols, so their
+        forms are validated here before the row joins the document. The derived
+        `risk` and `risk_vector` stay at their schema defaults: only the commit
+        computes them.
+        """
+        row_id = id.strip() if isinstance(id, str) else ""
+        if _IMPACT_ID_RE.fullmatch(row_id) is None:
+            raise ImpactAssessmentError(
+                ["id"],
+                f"threat model store: assessment id {id!r} is not of the "
+                f"`IA-*` form (for example `IA-1`)",
+            )
+        capability_key = (
+            capability_id.strip() if isinstance(capability_id, str) else "")
+        if _CAPABILITY_ID_RE.fullmatch(capability_key) is None:
+            raise ImpactAssessmentError(
+                ["capability_id"],
+                f"threat model store: capability_id {capability_id!r} is not "
+                f"of the `P-*` form (for example `P-1`)",
+            )
+        path = list(capability_path or ())
+        if any(not isinstance(ref, str) or not ref for ref in path):
+            raise ImpactAssessmentError(
+                ["capability_path"],
+                "threat model store: capability_path is an ordered list of "
+                "non-empty capability ids; a malformed element was supplied",
+            )
+        try:
+            row_disposition = ImpactDisposition(disposition)
+        except ValueError as exc:
+            raise ImpactAssessmentError(
+                ["disposition"],
+                f"threat model store: unknown disposition {disposition!r}; "
+                f"known: {', '.join(member.value for member in ImpactDisposition)}",
+            ) from exc
+        try:
+            metrics = RiskMetrics.model_validate(factors)
+        except ValueError as exc:
+            raise ImpactAssessmentError(
+                ["factors"],
+                f"threat model store: the eight factors are invalid: {exc}",
+            ) from exc
+        return ImpactAssessment(
+            id=row_id,
+            vulnerability_ref=vulnerability_ref,
+            disposition=row_disposition,
+            impact_description=impact_description,
+            exploitability_description=exploitability_description,
+            capability=capability,
+            capability_id=capability_key,
+            capability_path=path,
+            evidence_refs=list(evidence_refs or ()),
+            factors=metrics,
+        )
+
+    def _validate_assessment_row(
+        self,
+        model: PartialThreatModel,
+        row: ImpactAssessment,
+        project_id: str,
+    ) -> None:
+        """The referential and factor invariants of one assessment row.
+
+        The row joins the document only when it names a real vulnerability, its
+        capability id is free for that vulnerability, every path element
+        resolves, and its factor set matches its disposition. `validate_metrics`
+        owns the impact-value rule; the referential rules mirror the completion
+        checker's, so the write and the checker cannot disagree.
+        """
+        vulnerability_ids = {
+            vulnerability.id for vulnerability in model.vulnerabilities}
+        if row.vulnerability_ref not in vulnerability_ids:
+            raise ImpactAssessmentError(
+                ["vulnerability_ref"],
+                f"threat model store: vulnerability_ref "
+                f"{row.vulnerability_ref!r} names no vulnerability of "
+                f"{model.unit_id!r}; known: "
+                f"{', '.join(sorted(vulnerability_ids)) or 'none'}",
+            )
+        for prior in model.impact_assessment:
+            if prior.id == row.id:
+                continue
+            if (
+                prior.vulnerability_ref == row.vulnerability_ref
+                and prior.capability_id == row.capability_id
+            ):
+                raise ImpactAssessmentError(
+                    ["capability_id"],
+                    f"threat model store: capability_id {row.capability_id!r} "
+                    f"already keys row {prior.id!r} of vulnerability "
+                    f"{row.vulnerability_ref!r}; a second manner needs a "
+                    f"distinct capability id",
+                )
+        local = {
+            prior.capability_id: prior
+            for prior in model.impact_assessment
+            if prior.capability_id and prior.id != row.id
+        }
+        # The project index is read only for a genuinely foreign ref: a local or
+        # empty path costs no scan of every other unit's document.
+        foreign: Mapping[str, Any] | None = None
+        for ref in row.capability_path:
+            if "::" in ref and not ref.startswith(f"{model.unit_id}::"):
+                if foreign is None:
+                    foreign = self._capability_index(project_id)
+            if self._resolve_capability_ref(
+                ref, model.unit_id, local, foreign or {}
+            ) is None:
+                raise ImpactAssessmentError(
+                    ["capability_path"],
+                    f"threat model store: capability_path ref {ref!r} resolves "
+                    f"to no capability; name an existing local `P-*`, the "
+                    f"unit-qualified `<unit_id>::P-*`, or another unit's "
+                    f"`<unit_id>::P-*`",
+                )
+        findings = validate_metrics(
+            row.factors, disposition=row.disposition.value)
+        if findings:
+            raise ImpactAssessmentError(["factors"], "; ".join(findings))
+
+    @staticmethod
+    def _resolve_capability_ref(
+        ref: str,
+        unit_id: str,
+        local: Mapping[str, Any],
+        foreign: Mapping[str, Any],
+    ) -> Any | None:
+        """One path element resolved locally, self-qualified, or across units.
+
+        The same resolution the completion checker uses: an unqualified ref is
+        local, `<unit_id>::P-*` is local, and any other `<unit>::P-*` is the
+        project index. The row being written is never its own provider.
+        """
+        if ref.startswith(f"{unit_id}::"):
+            return local.get(ref.split("::", 1)[1])
+        if "::" in ref:
+            return foreign.get(ref)
+        return local.get(ref)
+
     def _capability_index(self, project_id: str) -> dict[str, dict]:
         """Every capability id in the project, keyed `Unit::P-*`.
 
@@ -1603,13 +1945,20 @@ class ThreatModelStore(BoundedRecordStore):
 
         A threat is dispatchable when its mirrored risk is above zero and its
         `impact_ref` resolves to a `threat` assessment: the file carries the
-        top-level `risk` (the derived score the mover reads) and the
+        top-level float `risk` (the derived score the mover reads) and the
         denormalised `impact` block (the row's prose, factors, score, vector,
-        the precursors on its capability path, and the path), so the hunter
-        needs no model document for the assessment context. A precursor row never
-        has a threat, and a threat whose reference does not resolve emits no
-        file - the completion check reports it and the model is never
-        consumable.
+        the precursors on its capability path, and the path).
+
+        The shape is the LEAN self-contained one: the threat row and its one
+        assessment row, repeated here as the `impact` block, so the mover and
+        the payload need no model document for the assessment context (the
+        model document moves with the unit's LAST threat file, so a consumed
+        threat could not read it anyway). The threat row carries no retired
+        likelihood / risk-factor / confidence / CIA vocabulary, and the block
+        carries the prose, factors, score, and vector instead of a second
+        scoring record. A threat with no resolving `impact` row (or one whose
+        row belongs to another vulnerability) emits no file: the completion
+        check reports it and the model is never consumable.
         """
         produced_dir = self._unit_dir(project_id, unit_name, "produced")
         assessments = {

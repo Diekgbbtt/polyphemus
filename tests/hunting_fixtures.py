@@ -526,10 +526,11 @@ def _seed_assessments(path, rows) -> None:
     """Seed the assessment section of one produced model document.
 
     The `assess_impact` tool (ticket #406) is the sole writer of a schema-5
-    assessment row, and its store method does not exist on this ticket's
-    branch. A fixture that needs a scored model writes the document that tool
-    will write and then drives the model's own COMPLETED write through the
-    real store, so the commit, the ranking, and the checker all run for real.
+    assessment row, through `ThreatModelStore.write_impact_assessment`. This
+    fixture seeds the document directly instead, because the worked example's
+    fan-out declares its own risk tiers and the real write DERIVES the score
+    from the factors. Every other gate, the COMPLETED write, the ranking, and
+    the checker still run through the real store.
     """
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     document["state"] = "IMPACT_ASSESSED"

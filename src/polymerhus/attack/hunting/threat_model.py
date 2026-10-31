@@ -29,7 +29,9 @@ Rules this module owns:
 - The threat normalisation (S2 5.6): a stable sort by mirrored risk descending,
   ties in the modeller's write order, ids renumbered `threat-1..n`.  The store
   owns the id, so the write schema defaults `Threat.id` empty; the store also
-  fills the mirror from the assessment rows, so the model cannot author it.
+  fills the mirror from the assessment rows, so the model cannot author it.  A
+  mirror is filled only from a `threat` row of the threat's own vulnerability:
+  a mismatched reference mirrors nothing and the checker rejects it.
 - The completion checker (S2 5.7): the loose necessary-attribute set, the
   prior-art query requirement (one threat, one vulnerability, and one precursor
   query, each with a filter, plus the phase note), the referential integrity,
@@ -441,6 +443,10 @@ PRIOR_ART_PATHS: dict[PriorArtKind, tuple[str, ...]] = {
         "run_id",
         "risk",
         "risk_vector",
+        # The assessment row's two prose blocks, flattened into the threat view
+        # beside the threat file's own keys (schema-5 spec 10).
+        "impact_description",
+        "exploitability_description",
         # The v4 threat file's top-level key stays queryable in a raw model.
         "likelihood",
         *_FACTOR_PATHS,
@@ -975,19 +981,33 @@ def compute_risk_profile(threats: list[Threat]) -> RiskProfile:
 
 
 def _risk_by_assessment(
+    threats: Sequence[Threat],
     assessments: Mapping[str, float] | Sequence[ImpactAssessment] | None,
-) -> dict[str, float]:
-    """The `{impact_ref: risk}` map the mirror is filled from.
+) -> dict[tuple[str, str], float]:
+    """The `{(impact_ref, vulnerability_ref): risk}` map the mirror reads.
 
-    The store passes its assessment rows; a caller that already holds the map
-    passes it directly. A missing map leaves every threat's own `risk` in
-    place, which the completion checker then reports as a mirror mismatch.
+    A row is matched only when it carries the threat's OWN vulnerability and is
+    a `threat` row: the assessment is the scored claim for one exploitation, so
+    a reference to another vulnerability's row or to a precursor row mirrors
+    nothing and the checker reports it. A caller that already holds a
+    `{impact_ref: risk}` map passes it directly; it is authoritative for the
+    threat that names the reference. A missing map leaves every threat's own
+    `risk` in place, which the completion checker then reports as a mismatch.
     """
     if assessments is None:
         return {}
     if isinstance(assessments, Mapping):
-        return {str(ref): float(risk) for ref, risk in assessments.items()}
-    return {row.id: row.risk for row in assessments}
+        return {
+            (threat.impact_ref, threat.vulnerability_ref):
+                float(assessments[threat.impact_ref])
+            for threat in threats
+            if threat.impact_ref in assessments
+        }
+    return {
+        (row.id, row.vulnerability_ref): row.risk
+        for row in assessments
+        if row.id and row.disposition is ImpactDisposition.THREAT
+    }
 
 
 def normalise_threats(
@@ -999,19 +1019,24 @@ def normalise_threats(
     The store fills the risk mirror from the assessment rows FIRST, then sorts
     stable by risk descending with the modeller's write order as the tie-break,
     and renumbers `threat-1..n` in that order. Rank 1 is the highest risk. The
-    assessment is the scored claim, so a threat whose `impact_ref` names no row
-    keeps whatever `risk` it carried (zero for a model-written threat) and the
-    checker reports it.
+    assessment is the scored claim, so a threat whose `impact_ref` names no
+    matching row keeps whatever `risk` it carried (zero for a model-written
+    threat) and the checker reports it.
     """
-    risks = _risk_by_assessment(assessments)
+    risks = _risk_by_assessment(threats, assessments)
     ordered = sorted(
         enumerate(threats),
-        key=lambda pair: (-risks.get(pair[1].impact_ref, pair[1].risk), pair[0]),
+        key=lambda pair: (
+            -risks.get(
+                (pair[1].impact_ref, pair[1].vulnerability_ref), pair[1].risk),
+            pair[0],
+        ),
     )
     return [
         threat.model_copy(update={
             "id": f"threat-{rank}",
-            "risk": risks.get(threat.impact_ref, threat.risk),
+            "risk": risks.get(
+                (threat.impact_ref, threat.vulnerability_ref), threat.risk),
         })
         for rank, (_index, threat) in enumerate(ordered, start=1)
     ]
@@ -1092,7 +1117,14 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
             missing.append(f"impact_assessment:{assessment.id}.capability")
         if not assessment.capability_id:
             missing.append(f"impact_assessment:{assessment.id}.capability_id")
-        if not assessment.risk_vector:
+        # The score and the vector are DERIVED at the assessment write. A row
+        # whose values do not recompute from its factors was hand-edited or
+        # written outside the store, so the checker reports it - the same
+        # REGRESSION discipline as the stored risk profile (spec 5).
+        computed = compute_risk(assessment.factors)
+        if assessment.risk != computed.score:
+            missing.append(f"impact_assessment:{assessment.id}.risk")
+        if assessment.risk_vector != computed.vector:
             missing.append(f"impact_assessment:{assessment.id}.risk_vector")
         missing.extend(
             f"impact_assessment:{assessment.id}.{finding}"
