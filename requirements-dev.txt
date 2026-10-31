@@ -1,6 +1,9 @@
 pytest==8.3.4
 pytest-timeout==2.4.0
 pydantic==2.13.4
+# The CVSS 4.0 library (LGPLv3+, with a file-level BSD-2-Clause notice on
+# `cvss4.py`): the unit tier imports it through `attack/hunting/risk_score.py`.
+cvss==3.6
 psycopg[binary]==3.2.3
 langgraph-checkpoint-postgres==3.1.0
 neo4j==5.27.0
