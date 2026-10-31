@@ -33,18 +33,16 @@ The final ticket is the live walkthrough.
 | # | Ticket | Blocked by | Delivers |
 |---|---|---|---|
 | T1 | Risk module and known-vector tests | none | `compute_risk`, `build_vector`, `severity_band`, `validate_metrics`, `FACTOR_DESCRIPTIONS` over `cvss==3.6`. |
-| T2 | Schema v5 expand | T1 | `RiskMetrics`, `SeverityBand`, the v5 assessment and threat shapes, the v5 profile, the v4 read path. |
-| T3 | `assess_impact` tool and store method | T2 | One atomic assessment write, the state advance, the success/fail response, the commit-time score. |
-| T4 | Modeller pass and prompt switch | T3 | The tool in the surface, the `hunts_store` section removed, the factor semantics and examples in the prompt. |
-| T5 | Store v5 and threat mirror | T4 | The v5 completion, the threat risk mirror, the v5 threat file, the v5 prior-art paths, the v4 write refusal. |
-| T6 | Hunter payload and prompt | T5 | The payload renders the score, the band, the vector, the factors, the two prose blocks, and the assumption confidences. |
-| T7 | Per-threat dispatch queue | T5 | Float risk in the mover, the float promotion floor, the global threat order, no per-unit cap. |
-| T8 | Run lifecycle and risk accumulator | T5 | Float total, band breakdown, the scaled default, the float env parse. |
-| T9 | Settings API and repository | T8 | Float thresholds in the API, the repository, and the setup reader. |
-| T10 | Eval metric and impact review | T5 | The v5 metric path, the v4 raw path, the review schema, the setup floats. |
-| T11 | Contract and documentation convergence | T6, T7, T8, T9, T10 | Delete the likelihood and impact code, the old tests, and the old docs; the full documentation pass. |
-| T12 | Scripted end-to-end walkthrough | T7, T10, T11 | One v5 model written through the tool, scored, and dispatched through the queue. |
-| T13 | Final adversarial review | T12 | The compliance, coverage, and pattern review. |
+| T2 | Schema v5 models and v4 raw read | T1 | `RiskMetrics`, `SeverityBand`, the v5 assessment and threat shapes, the v5 profile, the v4 raw read, the model validators. |
+| T3 | Store v5 write, completion, and threat mirror | T2 | The tool-only assessment write, the state advance, the threat risk mirror, the v5 threat file, the v5 prior-art paths, the v4 write refusal. |
+| T4 | `assess_impact` tool, modeller pass, and prompt | T3 | The tool in the surface, the `hunts_store` section removed, the factor semantics and examples in the prompt, the gate hints. |
+| T5 | Threat file, prior-art, payload, and hunter prompt | T4 | The payload renders the score, the band, the vector, the factors, the two prose blocks, and the assumption confidences. |
+| T6 | Per-threat dispatch queue and float mover | T3 | Float risk in the mover, the float promotion floor, the global threat order, no per-unit cap. |
+| T7 | Run lifecycle and settings API | T3 | Float total, band breakdown, the scaled default, the float environment parse, the float API and repository. |
+| T8 | Eval metric and impact review | T5 | The v5 metric path, the v4 raw path, the review schema, the setup floats. |
+| T9 | Contract deletion and documentation convergence | T5, T6, T7, T8 | Delete the likelihood and impact code, the old tests, and the old docs; the full documentation pass. |
+| T10 | Scripted end-to-end walkthrough | T6, T8, T9 | One v5 model written through the tool, scored, and dispatched through the queue. |
+| T11 | Final adversarial review | T10 | The compliance, coverage, and pattern review. |
 
 ## The loop per ticket
 
@@ -102,5 +100,3 @@ It checks the spec, the outliers, the test breadth and depth, and the `src/polym
 | T9 | pending | |
 | T10 | pending | |
 | T11 | pending | |
-| T12 | pending | |
-| T13 | pending | |
