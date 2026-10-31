@@ -98,4 +98,4 @@ It checks the spec, the outliers, the test breadth and depth, and the `src/polym
 | T8 | done | c522b43d |
 | T9 | done | d3bba8f3 |
 | T10 | done | 328583a3 |
-| T11 | done | review approved; polish commit pending |
+| T11 | done | 14e6e4b6 (review approved) |
