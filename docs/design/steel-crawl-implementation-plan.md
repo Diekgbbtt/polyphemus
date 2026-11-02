@@ -146,25 +146,25 @@ The issue number is recorded in this plan's execution log below.
 
 | ID | Issue | Commit | Tests | Status |
 | - | - | - | - | - |
-| SC-00 | | | | pending |
-| SC-01 | | | | pending |
-| SC-02 | | | | pending |
-| SC-03 | | | | pending |
-| SC-04 | | | | pending |
-| SC-05 | | | | pending |
-| SC-06 | | | | pending |
-| SC-07 | | | | pending |
-| SC-08 | | | | pending |
-| SC-09 | | | | pending |
-| SC-10 | | | | pending |
-| SC-11 | | | | pending |
-| SC-12 | | | | pending |
-| SC-13 | | | | pending |
-| SC-14 | | | | pending |
-| SC-15 | | | | pending |
-| SC-16 | | | | pending |
-| SC-17 | | | | pending |
-| SC-18 | | | | pending |
-| SC-19 | | | | pending |
-| SC-20 | | | | pending |
-| SC-21 | | | | pending |
+| SC-00 | #416 | | | pending |
+| SC-01 | #417 | | | pending |
+| SC-02 | #418 | | | pending |
+| SC-03 | #419 | | | pending |
+| SC-04 | #420 | | | pending |
+| SC-05 | #421 | | | pending |
+| SC-06 | #422 | | | pending |
+| SC-07 | #423 | | | pending |
+| SC-08 | #424 | | | pending |
+| SC-09 | #425 | | | pending |
+| SC-10 | #426 | | | pending |
+| SC-11 | #427 | | | pending |
+| SC-12 | #428 | | | pending |
+| SC-13 | #429 | | | pending |
+| SC-14 | #430 | | | pending |
+| SC-15 | #431 | | | pending |
+| SC-16 | #432 | | | pending |
+| SC-17 | #433 | | | pending |
+| SC-18 | #434 | | | pending |
+| SC-19 | #435 | | | pending |
+| SC-20 | #436 | | | pending |
+| SC-21 | #437 | | | pending |
