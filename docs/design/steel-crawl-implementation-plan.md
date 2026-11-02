@@ -144,6 +144,9 @@ The issue number is recorded in this plan's execution log below.
 
 ## 10. Execution log
 
+SC-10 was completed by the controller after the implementation subagent provider refused connections three times. The partial worktree from the first dispatch was reviewed, completed with TDD, and committed.
+
+
 Unrelated test repair: `887c19bf` supplies the required `SpecWrite` fields in the artifact schema test, so the whole `tests/recon` tier is green (1439 passed, 20 skipped).
 
 | ID | Issue | Commit | Tests | Status |
@@ -158,7 +161,7 @@ Unrelated test repair: `887c19bf` supplies the required `SpecWrite` fields in th
 | SC-07 | #423 | 8bab21a6 | 273 passed | done |
 | SC-08 | #424 | b3526af5 + 97e49c9c | 324 passed | done |
 | SC-09 | #425 | b3b93dca | 346 passed | done |
-| SC-10 | #426 | | | pending |
+| SC-10 | #426 | 43776069 | 358 passed | done |
 | SC-11 | #427 | | | pending |
 | SC-12 | #428 | | | pending |
 | SC-13 | #429 | | | pending |
