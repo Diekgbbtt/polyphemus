@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "data": [
+    {
+      "id": "9f8e7d6c-5b4a-4321-8765-fedcba987654",
+      "mode": "local",
+      "name": "crawl-fixture",
+      "status": "live",
+      "viewerUrl": "https://app.example.test/sessions/9f8e7d6c-5b4a-4321-8765-fedcba987654"
+    }
+  ]
+}

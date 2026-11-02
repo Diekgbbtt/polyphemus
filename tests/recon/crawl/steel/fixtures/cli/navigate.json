@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "data": {
+    "url": "https://example.test/products?page=2",
+    "title": "Products",
+    "status": 200
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "events": [
+    {
+      "method": "Debugger.scriptParsed",
+      "params": {
+        "scriptId": "10",
+        "url": "https://example.test/static/app.js",
+        "startLine": 0,
+        "startColumn": 0,
+        "endLine": 40,
+        "endColumn": 0,
+        "executionContextId": 1,
+        "hash": "fixture-hash",
+        "sourceMapURL": "https://example.test/static/app.js.map"
+      }
+    },
+    {
+      "method": "Page.frameNavigated",
+      "params": {
+        "frame": {
+          "id": "FRAME-1",
+          "loaderId": "L1",
+          "url": "https://example.test/products",
+          "domainAndRegistry": "example.test",
+          "mimeType": "text/html",
+          "securityOrigin": "https://example.test",
+          "secure": true
+        },
+        "type": "Navigation"
+      }
+    },
+    {
+      "method": "Page.javascriptDialogOpening",
+      "params": {
+        "url": "https://example.test/products",
+        "message": "Discard changes?",
+        "type": "confirm",
+        "hasBrowserHandler": false,
+        "defaultPrompt": ""
+      }
+    }
+  ],
+  "bodies": {}
+}

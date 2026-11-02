@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "data": {
+    "url": "https://example.test/",
+    "title": "Example Shop",
+    "tree": "- link \"Home\" [ref=e1]\n- link \"Partner site\" [ref=e2]\n- form \"Search\" [ref=e5]\n  - searchbox \"Search products\" [ref=e6]\n  - combobox \"Category\" [ref=e7]\n  - button \"Search\" [ref=e8]\n- button \"Load more\" [ref=e9]"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "events": [
+    {
+      "method": "Network.requestWillBeSent",
+      "params": {
+        "requestId": "1000.1",
+        "loaderId": "L1",
+        "documentURL": "https://example.test/",
+        "request": {
+          "url": "https://example.test/api/items?page=2",
+          "method": "GET",
+          "headers": {"Accept": "application/json"},
+          "resourceType": "XHR",
+          "hasPostData": false
+        },
+        "frameId": "FRAME-1",
+        "type": "XHR",
+        "wallTime": 1762000000.5,
+        "initiator": {"type": "script", "lineNumber": 0, "columnNumber": 61, "scriptId": "10"}
+      }
+    },
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "requestId": "1000.1",
+        "loaderId": "L1",
+        "timestamp": 1000.7,
+        "type": "XHR",
+        "response": {
+          "url": "https://example.test/api/items?page=2",
+          "status": 200,
+          "statusText": "OK",
+          "headers": {"Content-Type": "application/json"},
+          "mimeType": "application/json",
+          "connection": "keep-alive",
+          "protocol": "http/1.1",
+          "encodedDataLength": 39
+        },
+        "frameId": "FRAME-1"
+      }
+    },
+    {
+      "method": "Network.loadingFinished",
+      "params": {"requestId": "1000.1", "timestamp": 1000.9, "encodedDataLength": 39}
+    }
+  ],
+  "bodies": {
+    "1000.1": "{\"items\":[\"alpha\",\"beta\"],\"page\":2}"
+  }
+}

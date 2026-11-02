@@ -1,0 +1,27 @@
+{
+  "url": "https://example.test/products?page=2",
+  "title": "Products",
+  "nodes": [
+    {"tag": "a", "ref": "e20", "role": "link", "name": "Home", "attributes": {"href": "/"}},
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {"tag": "a", "ref": "e21", "role": "link", "name": "Alpha", "attributes": {"href": "/products/alpha"}}
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {"tag": "a", "ref": "e22", "role": "link", "name": "Beta", "attributes": {"href": "/products/beta"}}
+          ]
+        }
+      ]
+    },
+    {"tag": "button", "ref": "e23", "role": "button", "name": "Add to cart", "attributes": {"type": "button", "onclick": "addToCart()"}},
+    {"tag": "button", "ref": "e24", "role": "button", "name": "Delete item", "attributes": {"type": "button"}},
+    {"tag": "iframe", "ref": "e25", "name": "Reviews", "attributes": {"src": "/reviews"}}
+  ]
+}

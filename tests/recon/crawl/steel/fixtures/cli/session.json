@@ -1,0 +1,16 @@
+{
+  "success": true,
+  "data": {
+    "id": "9f8e7d6c-5b4a-4321-8765-fedcba987654",
+    "name": "crawl-fixture",
+    "status": "live",
+    "viewerUrl": "https://app.example.test/sessions/9f8e7d6c-5b4a-4321-8765-fedcba987654",
+    "debugUrl": "https://app.example.test/sessions/9f8e7d6c-5b4a-4321-8765-fedcba987654/debug",
+    "debuggerUrl": "https://app.example.test/sessions/9f8e7d6c-5b4a-4321-8765-fedcba987654/debugger",
+    "websocketUrl": "wss://cdp.example.test/v1/sessions/9f8e7d6c-5b4a-4321-8765-fedcba987654",
+    "createdAt": "2026-11-02T10:00:00Z",
+    "remainingMs": 298900,
+    "inactivityTimeoutMs": 300000,
+    "source": "catalogue"
+  }
+}

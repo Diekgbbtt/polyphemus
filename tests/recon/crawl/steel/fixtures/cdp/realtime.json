@@ -1,0 +1,58 @@
+{
+  "events": [
+    {
+      "method": "Network.webSocketCreated",
+      "params": {
+        "requestId": "2000.1",
+        "url": "wss://example.test/socket",
+        "initiator": {"type": "script", "scriptId": "10"}
+      }
+    },
+    {
+      "method": "Network.webSocketWillSendHandshakeRequest",
+      "params": {
+        "requestId": "2000.1",
+        "timestamp": 2000.1,
+        "wallTime": 1762000001.0,
+        "request": {
+          "headers": {"Upgrade": "websocket", "Connection": "Upgrade"},
+          "method": "GET",
+          "url": "wss://example.test/socket"
+        }
+      }
+    },
+    {
+      "method": "Network.webSocketHandshakeResponseReceived",
+      "params": {
+        "requestId": "2000.1",
+        "timestamp": 2000.2,
+        "response": {
+          "status": 101,
+          "statusText": "Switching Protocols",
+          "headers": {"Upgrade": "websocket", "Connection": "Upgrade"}
+        }
+      }
+    },
+    {
+      "method": "Network.webSocketFrameSent",
+      "params": {
+        "requestId": "2000.1",
+        "timestamp": 2000.3,
+        "response": {"opcode": 1, "mask": true, "payloadData": "{\"subscribe\":\"items\"}"}
+      }
+    },
+    {
+      "method": "Network.webSocketFrameReceived",
+      "params": {
+        "requestId": "2000.1",
+        "timestamp": 2000.4,
+        "response": {"opcode": 1, "mask": false, "payloadData": "{\"event\":\"ready\"}"}
+      }
+    },
+    {
+      "method": "Network.webSocketClosed",
+      "params": {"requestId": "2000.1", "timestamp": 2000.5}
+    }
+  ],
+  "bodies": {}
+}

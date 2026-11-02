@@ -1,0 +1,85 @@
+{
+  "url": "https://example.test/",
+  "title": "Example Shop",
+  "nodes": [
+    {
+      "tag": "header",
+      "children": [
+        {"tag": "a", "ref": "e1", "role": "link", "name": "Home", "attributes": {"href": "/"}},
+        {"tag": "a", "ref": "e2", "role": "link", "name": "Partner site", "attributes": {"href": "https://partner.example.test/"}}
+      ]
+    },
+    {
+      "tag": "nav",
+      "children": [
+        {"tag": "a", "ref": "e3", "role": "menuitem", "name": "Products", "attributes": {"href": "/products", "role": "menuitem"}},
+        {"tag": "a", "ref": "e4", "role": "menuitem", "name": "Support", "attributes": {"href": "/support", "role": "menuitem"}}
+      ]
+    },
+    {
+      "tag": "form",
+      "ref": "e5",
+      "role": "form",
+      "name": "Search",
+      "attributes": {"action": "/search", "method": "get"},
+      "children": [
+        {"tag": "input", "ref": "e6", "role": "searchbox", "name": "Search products", "attributes": {"type": "search", "name": "q"}},
+        {
+          "tag": "select",
+          "ref": "e7",
+          "role": "combobox",
+          "name": "Category",
+          "attributes": {"name": "category"},
+          "children": [
+            {"tag": "option", "name": "All", "attributes": {"value": "all"}},
+            {"tag": "option", "name": "Books", "attributes": {"value": "books"}}
+          ]
+        },
+        {"tag": "button", "ref": "e8", "role": "button", "name": "Search", "attributes": {"type": "submit"}}
+      ]
+    },
+    {"tag": "button", "ref": "e9", "role": "button", "name": "Load more", "attributes": {"type": "button", "onclick": "loadMore()"}},
+    {
+      "tag": "dialog",
+      "ref": "e10",
+      "role": "dialog",
+      "name": "Newsletter",
+      "attributes": {"open": "", "aria-modal": "true"},
+      "children": [
+        {"tag": "input", "ref": "e11", "role": "textbox", "name": "Email", "attributes": {"type": "email", "name": "email"}},
+        {"tag": "button", "ref": "e12", "role": "button", "name": "Subscribe", "attributes": {"type": "button"}}
+      ]
+    },
+    {
+      "tag": "div",
+      "attributes": {"hidden": ""},
+      "children": [
+        {"tag": "button", "ref": "e13", "role": "button", "name": "Delete account", "attributes": {"type": "button"}}
+      ]
+    },
+    {
+      "tag": "div",
+      "attributes": {"aria-hidden": "true"},
+      "children": [
+        {"tag": "a", "ref": "e14", "role": "link", "name": "Skip link", "attributes": {"href": "/skip"}}
+      ]
+    },
+    {
+      "tag": "div",
+      "visible": false,
+      "attributes": {"style": "display: none"},
+      "children": [
+        {"tag": "a", "ref": "e15", "role": "link", "name": "Hidden style link", "attributes": {"href": "/hidden"}}
+      ]
+    },
+    {"tag": "product-card", "ref": "e16", "role": "button", "name": "Featured product", "attributes": {"role": "button", "onclick": "openProduct()"}},
+    {"tag": "product-rating", "ref": "e17", "name": "4 out of 5", "attributes": {}},
+    {
+      "tag": "details",
+      "children": [
+        {"tag": "summary", "ref": "e18", "role": "button", "name": "Shipping", "attributes": {}},
+        {"tag": "p", "text": "Ships in two days."}
+      ]
+    }
+  ]
+}
