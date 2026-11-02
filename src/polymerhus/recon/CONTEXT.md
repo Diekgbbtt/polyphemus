@@ -382,3 +382,86 @@ Every LLM construction (`app/llm/providers.py::build_chat_model`) sends a genero
 **asset_context**:
 The context string threaded end-to-end into every pod for the designed-not-built context-memory scaffold; today always the empty string.
 _Status_: scaffolded, not built.
+
+## The authenticated browser crawl
+
+**steel_crawl**:
+One authenticated crawl of one web application, driven only through the Steel CLI and observed only through a passive raw-CDP sidecar.
+It attaches to a pre-authenticated session, never starts one, and writes a graph-ready manifest plus the HTTP-history evidence.
+_Avoid_: a browser automation job; a login flow.
+
+**CrawlJob**:
+The run lifecycle that attaches, runs the authenticated-context oracle once, starts capture, traverses, emits page and action records, and finalizes on every exit.
+It owns no traversal decision and no safety decision.
+_Avoid_: crawl loop, orchestrator.
+
+**CrawlRun**:
+The production wiring of the frontier, element map, command mapper, capture sidecar, form unit, and ledger.
+It is the run loop, not the lifecycle.
+_Avoid_: job, pod.
+
+**SteelSession** / **SteelSessionRegistry**:
+The typed pre-authenticated session record and the observation store that distinguishes a never-live name from a vanished live one.
+The websocket URL is a secret and never enters a log.
+_Avoid_: browser profile, connection.
+
+**BrowserState** / **PageInstance**:
+The snapshot cache, consumed sets, visited set, and document-generation token, keyed by the page's navigation identity.
+A page instance is one node in the navigation tree and carries the observability page visit id.
+_Avoid_: page cache, DOM state.
+
+**DocumentGeneration**:
+The ref-validity token. A new document mints a new generation and stales every reference captured under an older one; a restore is a navigation and mints a new generation.
+_Avoid_: ref counter, DOM version.
+
+**ElementMap**:
+The pure projection from a snapshot to the closed `ElementType` model, the offer/collect/ignore channels, the impact and capture defaults, and the change semantics with control facts.
+_Avoid_: scraper, selector engine.
+
+**Frontier**:
+One unified depth-first traversal over page instances; a navigation and a local action are both normal candidates.
+The stack of parent pages and the per-page consumed set drive the backtracking.
+_Avoid_: BFS queue, page crawler.
+
+**CaptureSidecar**:
+The passive raw-CDP observer of one page target. It enables the capture domains, records the request/response lifecycle, WebSocket handshake and frames, scripts, frames, dialogs, and HTTP/3 flows, and never sends a browser action.
+_Avoid_: proxy, mitmproxy.
+
+**Flow**:
+One captured HTTP lifecycle with request, response, body, connection, timing, error, and page/action attribution.
+_Avoid_: HTTP record, request log.
+
+**RunLedger**:
+The append-only durable record of every artifact and manifest the run produced; `finalize` reads it on success and on every failure.
+_Avoid_: queue, spool.
+
+**Manifest v2** (`steel-crawl/v2`):
+The graph input carrying run, endpoints, parameters, scripts, realtime, errors, and stats.
+Pages and actions stay in the observability platform; flows stay in the HTTP history.
+_Avoid_: crawl report, export.
+
+**Jev policy**:
+The sole owner of the next-action choice and the unsafety decision, through `choose_removed`, `choose_chosen`, and `choose_value`.
+The forbidden categories are auth state, payment, and destruction; account registration is a safe write.
+_Avoid_: symbolic guard, keyword classifier.
+
+**FormLedger**:
+The per-state submission ledger. A form submits once in a state on a selector-independent fingerprint; a failed submission does not close it.
+_Avoid_: dedup cache, form cache.
+
+**DeclaredEndpoint** / **DeclaredField**:
+The DOM contract a collected form contributes to the graph, carrying `provenance="declared"` and the field contract, never a value.
+_Avoid_: form record, static parameter.
+
+**ObservedParameter**:
+The shape-only record of a parameter seen in a network flow, keyed by `(endpoint_key, location, name, kind)`.
+It carries `provenance="observed"` and never the value.
+_Avoid_: parameter value, input record.
+
+**HTTP-history edge**:
+The separate authenticated Kali process on port 8001 that accepts normalized artifacts and body bytes in batches and calls `record_if_absent`; it is never an MCP tool.
+_Avoid_: MCP tool, ingest job.
+
+**policy_provider_error**:
+The typed failure for a decision provider that did not answer; it is distinct from a stale or invalid answer and never executes.
+_Avoid_: model error, retry.

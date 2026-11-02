@@ -1,9 +1,9 @@
 # steel_crawl specification: authenticated full-surface crawl
 
-**Status:** design specification, 2026-10-31.
+**Status:** design specification, 2026-10-31; implementation unit and contract tiers complete, 2026-11-02.
 **P0:** passed on the local Steel deployment.
 **Prototype:** passed on the public fixture.
-**Implementation:** not started.
+**Implementation:** the unit and contract tiers are complete; the live P1 to P5 gate is deferred to the next batch.
 **Design history:** `docs/design/steel-crawl-workbench.md`.
 **P0 evidence:** `docs/experiments/p0-steel-cdp-sidecar.md`.
 **Prototype:** `docs/experiments/crawl_proto_local.py` and `docs/experiments/runs/crawl-proto-20261031T164759Z/`.
@@ -172,13 +172,16 @@ src/polymerhus/recon/crawl/steel/
 ├── state.py            # BrowserState: page node, snapshot cache, consumed set
 ├── command.py          # Action -> SteelCommand -> SteelResult -> error
 ├── enumerate.py        # Snapshot -> compact candidates -> Element
+├── forms.py            # FormLedger and the declared-form collector
 ├── policy/
 │   ├── port.py         # Policy protocol
 │   ├── jev.py          # choose_removed, choose_chosen, choose_value
-│   └── prompts.py      # the prompt contract
+│   ├── prompts.py      # the prompt contract
+│   └── select.py       # choice outcome and value selection
 ├── safety.py           # forbidden categories and removal bookkeeping
 ├── parameters.py       # observed and declared records
 ├── frontier.py         # unified DFS, page stack, backtracking
+├── run.py              # the real run loop wiring
 ├── capture/
 │   ├── sidecar.py      # raw CDP attach, targets, events
 │   ├── flow.py         # flow records and body store
@@ -914,6 +917,8 @@ The v2 parser is additive.
 | `stale_element` | Executor | Consume the candidate; record the gap. |
 | `policy_stale_removal` | Policy | Protocol error; do not execute. |
 | `policy_invalid_choice` | Policy | Protocol error; do not execute. |
+| `policy_provider_error` | Policy | The decision provider failed; do not execute; record and finalize. |
+| `capture_close_failed` | Finalize | Record the close failure; the run stays partial. |
 | `manifest_write_failed` | Output | Fail the run; keep the ledger. |
 | `http_history_flush_failed` | Output | Retry with the cursor; keep the ledger. |
 | `graph_ingest_failed` | Output | Record the failure; the partial run is not complete. |
@@ -979,6 +984,25 @@ The production acceptance requires the Jev policy, an authenticated target, the 
 | P3 | Can the crawl capture the full network surface? | Fixture ground truth matched; endpoints and parameters emitted. |
 | P4 | Does Jev improve the action choice? | Coverage at or above the deterministic baseline; no safety regression. |
 | P5 | Does the crawl survive an expired session? | One resurrection and resume, or a clean named failure. |
+
+### 14.4 Implementation status (2026-11-02)
+
+The implementation is complete in the unit and contract tiers.
+The crawl package contains every module in section 3.1 plus the `forms.py`, `run.py`, and `policy/select.py` seams the integration needed.
+
+- P1 is covered by the session, auth, state, and command suites.
+- P2 is covered by the element-map and frontier suites and the two-page fixture application.
+- P3 is covered by the capture, normalization, history-client, manifest-writer, and manifest-parser suites and the HTTP-history edge suite.
+- P4 is covered by the policy, prompt, removal, choice, and value-selection suites.
+- P5 is covered by the job lifecycle, the bounded session boundary, and the finalize suites.
+
+The deterministic gate is `tests/recon/crawl/steel`.
+The edge gate is `tests/kali/test_http_history_edge.py`.
+The full unit tier is the regression gate.
+
+The live P1 to P5 run against White Jotter is deferred to the next batch.
+The implementation subagent provider was unavailable for part of the batch; the remaining tickets were completed directly with tests and committed on `feat/steel-crawl`.
+The authz residual risk and the coarse effect signal remain accepted as recorded in sections 5.4 and 16.
 
 ## 15. Rollout and compatibility
 

@@ -1,11 +1,24 @@
-import subprocess, psycopg
+import os
+import subprocess
+
+import psycopg
+
 from tests.conftest import wait_for
 
-DSN = "postgresql://polymerhus:polymerhus@localhost:5432/polymerhus"
+DSN = os.environ.get(
+    "POSTGRES_DSN", "postgresql://polymerhus:polymerhus@localhost:5432/polymerhus"
+)
+
 
 def test_postgres_schema():
-    subprocess.run(["docker", "compose", "up", "-d", "postgres"], check=True)
-    wait_for(lambda: psycopg.connect(DSN, connect_timeout=3).close() or True, timeout=120)
+    # Host live runs start the compose service; the in-network integration tier
+    # already has POSTGRES_DSN pointing at the `postgres` service.
+    if "@localhost" in DSN:
+        subprocess.run(["docker", "compose", "up", "-d", "postgres"], check=True)
+    wait_for(
+        lambda: psycopg.connect(DSN, connect_timeout=3).close() or True,
+        timeout=120,
+    )
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         cur.execute("SELECT extname FROM pg_extension WHERE extname='vector'")
         assert cur.fetchone() is not None
