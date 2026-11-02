@@ -201,7 +201,7 @@ def select_chosen(
     chosen = live.get(answer.choice)
     if chosen is None:
         raise PolicyInvalidChoice(
-            "choose_chosen", answer.choice, _answer_space(live)
+            "choose_chosen", answer.choice, answer_space(live)
         )
     return chosen
 
@@ -219,12 +219,12 @@ def select_value(
         return None
     if answer.choice not in catalogue:
         raise PolicyInvalidChoice(
-            "choose_value", answer.choice, _answer_space(catalogue)
+            "choose_value", answer.choice, answer_space(catalogue)
         )
     return answer.choice
 
 
-def _answer_space(keys: Iterable[str]) -> tuple[str, ...]:
+def answer_space(keys: Iterable[str]) -> tuple[str, ...]:
     """The answer space, with `none` present exactly once and the keys in order."""
     valid = tuple(keys)
     return valid if NONE_CHOICE in valid else (*valid, NONE_CHOICE)
@@ -240,6 +240,7 @@ __all__ = [
     "PolicyProtocolError",
     "PolicyStaleRemoval",
     "QuestionKind",
+    "answer_space",
     "select_chosen",
     "select_removed",
     "select_value",

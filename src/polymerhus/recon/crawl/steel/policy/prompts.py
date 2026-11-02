@@ -89,7 +89,7 @@ VALUE_INSTRUCTIONS = (
 # The field contract of an offered form (spec 8.1), in the order the request
 # renders it. A field value is never one of these keys, so projecting the
 # contract keeps every value out of the request.
-_FIELD_CONTRACT = (
+FIELD_CONTRACT = (
     "name",
     "type",
     "label",
@@ -253,7 +253,7 @@ def _overlays(overlays: Iterable[str]) -> list[str]:
 
 def _field_state(field: Mapping[str, Any]) -> dict[str, Any]:
     """The field contract only: a value the field carries never reaches the model."""
-    return {key: field[key] for key in _FIELD_CONTRACT if key in field}
+    return {key: field[key] for key in FIELD_CONTRACT if key in field}
 
 
 def _catalogue_state(catalogue: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -306,6 +306,7 @@ def _bounded(value: str, limit: int) -> str:
 
 __all__ = [
     "CHOICE_INSTRUCTIONS",
+    "FIELD_CONTRACT",
     "FORBIDDEN_CATEGORIES",
     "IMPACT_ORDER",
     "REMOVAL_INSTRUCTIONS",
