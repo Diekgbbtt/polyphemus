@@ -1,0 +1,109 @@
+{
+  "run": {
+    "run_id": "crawl-det4-20261102T105859Z",
+    "session": "steel-det4-20261102T105859Z",
+    "stop_reason": "action_budget",
+    "started_at": "2026-11-02T10:58:59.825015+00:00",
+    "finished_at": "2026-11-02T11:02:17.205755+00:00",
+    "duration_ms": 197379,
+    "target": "http://172.20.0.1:49017",
+    "max_actions": 20
+  },
+  "counts": {
+    "pages": 6,
+    "actions": 20,
+    "removed": 37,
+    "flows": 256,
+    "xhr_fetch": 50,
+    "scripts": 11,
+    "endpoints": 21,
+    "parameters": 0,
+    "forms_attempted": 0,
+    "forms_succeeded": 0,
+    "errors": 0,
+    "declared": 0
+  },
+  "quality": {
+    "impact_order_compliance": 1.0,
+    "impact_order_checks": 20,
+    "local_state_actions": 17,
+    "navigate_actions": 9,
+    "form_submission_success_rate": null,
+    "form_field_coverage": null,
+    "form_network_field_coverage": null,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "xhr_total": 50,
+    "xhr_with_response": 50,
+    "xhr_with_body": 50,
+    "safety_recall": 1.0,
+    "safety_precision": 1.0,
+    "safety_ground_truth": 36,
+    "safety_removed": 37,
+    "safety_over_removed": 0,
+    "safety_guard_blocks": 37,
+    "unsafe_actions_executed": 0,
+    "policy_fallbacks": 0,
+    "stale_elements": 0,
+    "no_op_actions": 5,
+    "form_method_mismatches": 0,
+    "removed_modal_openers": 2,
+    "removed_declared_endpoints": 0,
+    "boundary_breaches": 0,
+    "auth_classification": "authenticated",
+    "anonymous_api_requests": 0,
+    "api_requests_checked": 47,
+    "api_with_cookie": 47
+  },
+  "capture": {
+    "bytes": 5446682,
+    "phase_flows": {
+      "bootstrap": 54,
+      "oracle": 3,
+      "crawl": 199
+    },
+    "http_versions": {
+      "http/1.1": 215,
+      "h2": 19,
+      "data": 21,
+      "unknown": 1
+    },
+    "resource_types": {
+      "Document": 9,
+      "Stylesheet": 18,
+      "Script": 54,
+      "Image": 116,
+      "Font": 9,
+      "Fetch": 2,
+      "XHR": 48
+    },
+    "realtime_events": 0,
+    "console_events": 21,
+    "exceptions": 0
+  },
+  "policy": "deterministic",
+  "jev": {
+    "calls": 0,
+    "errors": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cost_usd": 0.0,
+    "latency_ms": {
+      "p50": null,
+      "p95": null
+    }
+  },
+  "errors": [],
+  "session": {
+    "info": {
+      "connectUrl": "ws://192.33.91.87:3000/",
+      "id": "818bff08-6d2a-4ab8-ac50-e32fd2fccf82",
+      "inactivityTimeoutMs": 300000,
+      "liveUrl": "http://192.33.91.87:3000/",
+      "mode": "local",
+      "name": "steel-det4-20261102T105859Z",
+      "remainingMs": 898992
+    },
+    "catalogue": []
+  }
+}

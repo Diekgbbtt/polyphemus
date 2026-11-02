@@ -1,0 +1,104 @@
+{
+  "run": {
+    "run_id": "crawl-dry2-20261102T103234Z",
+    "session": "steel-dry2-20261102T103234Z",
+    "stop_reason": "error",
+    "started_at": "2026-11-02T10:32:34.815456+00:00",
+    "finished_at": "2026-11-02T10:33:14.222673+00:00",
+    "duration_ms": 39407,
+    "target": "http://172.20.0.1:49017",
+    "max_actions": 25
+  },
+  "counts": {
+    "pages": 2,
+    "actions": 0,
+    "removed": 0,
+    "flows": 101,
+    "xhr_fetch": 4,
+    "scripts": 10,
+    "endpoints": 14,
+    "parameters": 2,
+    "forms_attempted": 1,
+    "forms_succeeded": 0,
+    "errors": 1,
+    "declared": 0
+  },
+  "quality": {
+    "impact_order_compliance": 1.0,
+    "impact_order_checks": 1,
+    "local_state_actions": 0,
+    "navigate_actions": 0,
+    "form_submission_success_rate": 0.0,
+    "form_field_coverage": 0.0,
+    "form_network_field_coverage": 0.0,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "xhr_total": 4,
+    "xhr_with_response": 4,
+    "xhr_with_body": 4,
+    "safety_recall": null,
+    "safety_precision": null,
+    "safety_ground_truth": 0,
+    "safety_removed": 0,
+    "safety_over_removed": 0,
+    "safety_guard_blocks": 0,
+    "unsafe_actions_executed": 0,
+    "policy_fallbacks": 1,
+    "stale_elements": 0,
+    "no_op_actions": 0,
+    "auth_classification": "authenticated",
+    "anonymous_api_requests": 0,
+    "api_requests_checked": 3,
+    "api_with_cookie": 3
+  },
+  "capture": {
+    "bytes": 2205378,
+    "http_versions": {
+      "http/1.1": 87,
+      "h2": 6,
+      "data": 8
+    },
+    "resource_types": {
+      "Document": 4,
+      "Stylesheet": 8,
+      "Script": 20,
+      "Image": 62,
+      "Font": 3,
+      "Fetch": 2,
+      "XHR": 2
+    },
+    "realtime_events": 0,
+    "console_events": 7,
+    "exceptions": 0
+  },
+  "jev": {
+    "calls": 0,
+    "errors": 2,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cost_usd": 0.0,
+    "latency_ms": {
+      "p50": null,
+      "p95": null
+    }
+  },
+  "errors": [
+    {
+      "ts": "2026-11-02T10:33:12.244325+00:00",
+      "stage": "run",
+      "error": "EventLog.__call__() got multiple values for argument 'kind'"
+    }
+  ],
+  "session": {
+    "info": {
+      "connectUrl": "ws://192.33.91.87:3000/",
+      "id": "7d56ae33-b221-49af-a335-d0d78cc0cf2d",
+      "inactivityTimeoutMs": 300000,
+      "liveUrl": "http://192.33.91.87:3000/",
+      "mode": "local",
+      "name": "steel-dry2-20261102T103234Z",
+      "remainingMs": 898938
+    },
+    "catalogue": []
+  }
+}

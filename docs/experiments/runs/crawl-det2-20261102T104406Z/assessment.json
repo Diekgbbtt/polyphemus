@@ -1,0 +1,447 @@
+{
+  "run": "docs/experiments/runs/crawl-det2-20261102T104406Z",
+  "counts": {
+    "pages": 7,
+    "actions": 60,
+    "forms": 1,
+    "removed": 39,
+    "flows": 376,
+    "xhr_fetch": 87,
+    "endpoints": 28,
+    "observed_endpoints": 26,
+    "declared_endpoints": 2
+  },
+  "forms": {
+    "attempted": 1,
+    "succeeded": 1,
+    "success_rate": 1.0,
+    "fields_total": 5,
+    "fields_filled": 5,
+    "field_coverage": 1.0,
+    "network_fields": 5,
+    "network_field_coverage": 1.0,
+    "method_mismatches": 1,
+    "records": [
+      {
+        "submit": "注册",
+        "synthetic": false,
+        "success": true,
+        "status": 200,
+        "url": "http://172.20.0.1:49017/api/register",
+        "method": "GET",
+        "request_method": "POST",
+        "fields": 5,
+        "network_fields": [
+          "email",
+          "name",
+          "password",
+          "phone",
+          "username"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "removed": 39,
+    "by_ground_truth": {
+      "auth_state": 4,
+      "destruction": 35
+    },
+    "unsafe_removed": 39,
+    "safe_removed": 0,
+    "precision": 1.0,
+    "removed_modal_openers": 2,
+    "records": [
+      {
+        "type": "BUTTON",
+        "name": "批量添加用户",
+        "truth": "auth_state",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量删除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "添加角色",
+        "truth": "auth_state",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量删除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "FORM",
+        "name": "角色名 角色描述 功能配置 用户管理 角色管理 内容管理 菜单配置 首页 用户管理 内容管理 系统配置",
+        "truth": "auth_state",
+        "source": "guard"
+      },
+      {
+        "type": "FORM",
+        "name": "确 定",
+        "truth": "auth_state",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量删除",
+        "truth": "destruction",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量删除",
+        "truth": "destruction",
+        "source": "guard"
+      }
+    ]
+  },
+  "actions": {
+    "total": 60,
+    "navigated": 13,
+    "local_state": 48,
+    "navigate": 12,
+    "errors": 0,
+    "unsafe_executed": 0
+  },
+  "capture": {
+    "phases": {
+      "bootstrap": 56,
+      "oracle": 1,
+      "crawl": 319
+    },
+    "xhr_fetch": 87,
+    "xhr_with_response": 87,
+    "xhr_with_body": 87,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "statuses": {
+      "200": 87
+    }
+  },
+  "boundary": {
+    "observed_unsafe": [
+      {
+        "method": "PUT",
+        "path": "/api/admin/role",
+        "url": "http://172.20.0.1:49017/api/admin/role"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/admin/role/menu",
+        "url": "http://172.20.0.1:49017/api/admin/role/menu?rid=2"
+      }
+    ],
+    "declared_unsafe": [],
+    "bootstrap_unsafe_flows": [
+      {
+        "method": "POST",
+        "url": "http://172.20.0.1:49017/api/login"
+      }
+    ],
+    "crawl_unsafe_flows": [
+      {
+        "method": "PUT",
+        "url": "http://172.20.0.1:49017/api/admin/role"
+      },
+      {
+        "method": "PUT",
+        "url": "http://172.20.0.1:49017/api/admin/role/menu?rid=2"
+      }
+    ]
+  },
+  "manifest": {
+    "schema_version": "steel-crawl/v2",
+    "keys": [
+      "endpoints",
+      "errors",
+      "parameters",
+      "realtime",
+      "run",
+      "schema_version",
+      "scripts",
+      "stats"
+    ],
+    "run": {
+      "crawl_run_id": "crawl-det2-20261102T104406Z",
+      "session_name": "steel-det2-20261102T104406Z",
+      "account": "admin",
+      "started_at": "2026-11-02T10:44:06.514614+00:00",
+      "finished_at": "2026-11-02T10:51:07.929692+00:00",
+      "stop_reason": "action_budget",
+      "partial": true,
+      "scope": [
+        "172.20.0.1:49017"
+      ],
+      "auth": {
+        "mode": "pre_authenticated_session",
+        "oracle": {
+          "ts": "2026-11-02T10:44:21.940204+00:00",
+          "probe_url": "/api/authentication",
+          "probe_source": "legacy_surface_gate",
+          "note": "overview.auth_probe.url is missing",
+          "raw": "{\"status\":200,\"redirected\":false,\"url\":\"http://172.20.0.1:49017/api/authentication\",\"body\":\"身份认证成功\",\"local\":\"\\\"admin\\\"\"}",
+          "error": null,
+          "classification": "authenticated",
+          "client_state": "\"admin\""
+        }
+      }
+    },
+    "stats": {
+      "endpoints": 28,
+      "parameters": 23,
+      "flows": 376,
+      "bytes": 7901375,
+      "duration_ms": 421414,
+      "removed_elements": 39,
+      "unrecoverable_pages": 0,
+      "pages": 7,
+      "actions": 60
+    }
+  },
+  "metrics_quality": {
+    "impact_order_compliance": 1.0,
+    "impact_order_checks": 60,
+    "local_state_actions": 48,
+    "navigate_actions": 13,
+    "form_submission_success_rate": 1.0,
+    "form_field_coverage": 1.0,
+    "form_network_field_coverage": 1.0,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "xhr_total": 87,
+    "xhr_with_response": 87,
+    "xhr_with_body": 87,
+    "safety_recall": 1.0,
+    "safety_precision": 1.0,
+    "safety_ground_truth": 38,
+    "safety_removed": 39,
+    "safety_over_removed": 0,
+    "safety_guard_blocks": 39,
+    "unsafe_actions_executed": 0,
+    "policy_fallbacks": 0,
+    "stale_elements": 0,
+    "no_op_actions": 34,
+    "form_method_mismatches": 1,
+    "removed_modal_openers": 2,
+    "removed_declared_endpoints": 2,
+    "auth_classification": "authenticated",
+    "anonymous_api_requests": 0,
+    "api_requests_checked": 82,
+    "api_with_cookie": 82
+  },
+  "metrics_jev": {
+    "calls": 0,
+    "errors": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cost_usd": 0.0,
+    "latency_ms": {
+      "p50": null,
+      "p95": null
+    }
+  },
+  "invariants": {
+    "auth_precondition_authenticated": true,
+    "unsafe_actions_executed_zero": true,
+    "anonymous_api_requests_zero": true,
+    "manifest_v2_keys": true,
+    "crawl_unsafe_endpoints_zero": false,
+    "bootstrap_unsafe_flows_isolated": true,
+    "declared_unsafe_not_observed": true,
+    "form_success": true,
+    "xhr_response_complete": true
+  }
+}

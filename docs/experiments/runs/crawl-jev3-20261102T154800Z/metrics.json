@@ -1,0 +1,107 @@
+{
+  "run": {
+    "run_id": "crawl-jev3-20261102T154800Z",
+    "session": "steel-jev3-20261102T154800Z",
+    "stop_reason": "session_deadline",
+    "started_at": "2026-11-02T15:48:00.910810+00:00",
+    "finished_at": "2026-11-02T15:56:09.989979+00:00",
+    "duration_ms": 489078,
+    "target": "http://172.20.0.1:49017",
+    "max_actions": 70
+  },
+  "counts": {
+    "pages": 7,
+    "actions": 59,
+    "removed": 35,
+    "flows": 343,
+    "xhr_fetch": 73,
+    "scripts": 12,
+    "endpoints": 24,
+    "parameters": 5,
+    "forms_attempted": 1,
+    "forms_succeeded": 1,
+    "errors": 0,
+    "declared": 0
+  },
+  "quality": {
+    "impact_order_compliance": 1.0,
+    "impact_order_checks": 59,
+    "local_state_actions": 49,
+    "navigate_actions": 10,
+    "form_submission_success_rate": 1.0,
+    "form_submissions_dispatched": 1,
+    "form_submissions_2xx": 1,
+    "form_skipped_duplicate": 0,
+    "form_field_coverage": 1.0,
+    "form_network_field_match": 1.0,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "xhr_total": 73,
+    "xhr_with_response": 73,
+    "xhr_with_body": 73,
+    "safety_removed": 35,
+    "safety_source": "jev",
+    "policy_fallbacks": 0,
+    "stale_elements": 1,
+    "no_op_actions": 25,
+    "no_op_local_state_rate": 0.5102040816326531,
+    "no_op_all_actions_rate": 0.423728813559322,
+    "form_method_mismatches": 1,
+    "removed_modal_openers": 0,
+    "removed_declared_endpoints": 0,
+    "auth_classification": "authenticated",
+    "anonymous_api_requests": 0,
+    "api_requests_checked": 68,
+    "api_with_cookie": 68
+  },
+  "capture": {
+    "bytes": 7745357,
+    "phase_flows": {
+      "bootstrap": 56,
+      "oracle": 1,
+      "crawl": 286
+    },
+    "http_versions": {
+      "http/1.1": 298,
+      "h2": 22,
+      "data": 23
+    },
+    "resource_types": {
+      "Document": 13,
+      "Stylesheet": 26,
+      "Script": 75,
+      "Image": 144,
+      "Font": 12,
+      "Fetch": 2,
+      "XHR": 71
+    },
+    "realtime_events": 0,
+    "console_events": 29,
+    "exceptions": 0
+  },
+  "policy": "jev",
+  "jev": {
+    "calls": 153,
+    "errors": 0,
+    "input_tokens": 411882,
+    "output_tokens": 36916,
+    "cost_usd": 0.017299,
+    "latency_ms": {
+      "p50": 208,
+      "p95": 302
+    }
+  },
+  "errors": [],
+  "session": {
+    "info": {
+      "connectUrl": "ws://192.33.91.87:3000/",
+      "id": "58ca9924-89eb-4895-a166-49a628a80704",
+      "inactivityTimeoutMs": 300000,
+      "liveUrl": "http://192.33.91.87:3000/",
+      "mode": "local",
+      "name": "steel-jev3-20261102T154800Z",
+      "remainingMs": 898992
+    },
+    "catalogue": []
+  }
+}

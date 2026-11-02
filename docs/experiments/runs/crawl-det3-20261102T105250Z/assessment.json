@@ -1,0 +1,198 @@
+{
+  "run": "docs/experiments/runs/crawl-det3-20261102T105250Z",
+  "counts": {
+    "pages": 5,
+    "actions": 50,
+    "forms": 1,
+    "removed": 1,
+    "flows": 251,
+    "xhr_fetch": 12,
+    "endpoints": 20,
+    "observed_endpoints": 20,
+    "declared_endpoints": 0
+  },
+  "forms": {
+    "attempted": 1,
+    "succeeded": 1,
+    "success_rate": 1.0,
+    "fields_total": 5,
+    "fields_filled": 5,
+    "field_coverage": 1.0,
+    "network_fields": 5,
+    "network_field_coverage": 1.0,
+    "method_mismatches": 1,
+    "records": [
+      {
+        "submit": "注册",
+        "synthetic": false,
+        "success": true,
+        "status": 200,
+        "url": "http://172.20.0.1:49017/api/register",
+        "method": "GET",
+        "request_method": "POST",
+        "fields": 5,
+        "network_fields": [
+          "email",
+          "name",
+          "password",
+          "phone",
+          "username"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "removed": 1,
+    "by_ground_truth": {
+      "payment": 1
+    },
+    "unsafe_removed": 1,
+    "safe_removed": 0,
+    "precision": 1.0,
+    "removed_modal_openers": 0,
+    "records": [
+      {
+        "type": "CUSTOM",
+        "name": "奢侈与逸乐 [英]马克辛·伯格 / 2019-3 / 中国工人出版社 本书探讨了十八世纪英国新式、时尚的消费品的发明、制造和购买。",
+        "truth": "payment",
+        "source": "guard"
+      }
+    ]
+  },
+  "actions": {
+    "total": 50,
+    "navigated": 4,
+    "local_state": 40,
+    "navigate": 10,
+    "errors": 1,
+    "unsafe_executed": 0
+  },
+  "capture": {
+    "phases": {
+      "bootstrap": 56,
+      "oracle": 1,
+      "crawl": 194
+    },
+    "xhr_fetch": 12,
+    "xhr_with_response": 12,
+    "xhr_with_body": 12,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "statuses": {
+      "200": 12
+    }
+  },
+  "boundary": {
+    "observed_unsafe": [],
+    "declared_unsafe": [],
+    "bootstrap_unsafe_flows": [
+      {
+        "method": "POST",
+        "url": "http://172.20.0.1:49017/api/login"
+      }
+    ],
+    "crawl_unsafe_flows": []
+  },
+  "manifest": {
+    "schema_version": "steel-crawl/v2",
+    "keys": [
+      "endpoints",
+      "errors",
+      "parameters",
+      "realtime",
+      "run",
+      "schema_version",
+      "scripts",
+      "stats"
+    ],
+    "run": {
+      "crawl_run_id": "crawl-det3-20261102T105250Z",
+      "session_name": "steel-det3-20261102T105250Z",
+      "account": "admin",
+      "started_at": "2026-11-02T10:52:50.412249+00:00",
+      "finished_at": "2026-11-02T10:58:35.434750+00:00",
+      "stop_reason": "action_budget",
+      "partial": true,
+      "scope": [
+        "172.20.0.1:49017"
+      ],
+      "auth": {
+        "mode": "pre_authenticated_session",
+        "oracle": {
+          "ts": "2026-11-02T10:53:05.909717+00:00",
+          "probe_url": "/api/authentication",
+          "probe_source": "legacy_surface_gate",
+          "note": "overview.auth_probe.url is missing",
+          "raw": "{\"status\":200,\"redirected\":false,\"url\":\"http://172.20.0.1:49017/api/authentication\",\"body\":\"身份认证成功\",\"local\":\"\\\"admin\\\"\"}",
+          "error": null,
+          "classification": "authenticated",
+          "client_state": "\"admin\""
+        }
+      }
+    },
+    "stats": {
+      "endpoints": 20,
+      "parameters": 9,
+      "flows": 251,
+      "bytes": 3925488,
+      "duration_ms": 345022,
+      "removed_elements": 1,
+      "unrecoverable_pages": 0,
+      "pages": 5,
+      "actions": 50
+    }
+  },
+  "metrics_quality": {
+    "impact_order_compliance": 1.0,
+    "impact_order_checks": 50,
+    "local_state_actions": 40,
+    "navigate_actions": 4,
+    "form_submission_success_rate": 1.0,
+    "form_field_coverage": 1.0,
+    "form_network_field_coverage": 1.0,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "xhr_total": 12,
+    "xhr_with_response": 12,
+    "xhr_with_body": 12,
+    "safety_recall": 1.0,
+    "safety_precision": 1.0,
+    "safety_ground_truth": 1,
+    "safety_removed": 1,
+    "safety_over_removed": 0,
+    "safety_guard_blocks": 1,
+    "unsafe_actions_executed": 0,
+    "policy_fallbacks": 0,
+    "stale_elements": 1,
+    "no_op_actions": 28,
+    "form_method_mismatches": 1,
+    "removed_modal_openers": 0,
+    "removed_declared_endpoints": 0,
+    "auth_classification": "authenticated",
+    "anonymous_api_requests": 0,
+    "api_requests_checked": 5,
+    "api_with_cookie": 5
+  },
+  "metrics_jev": {
+    "calls": 0,
+    "errors": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cost_usd": 0.0,
+    "latency_ms": {
+      "p50": null,
+      "p95": null
+    }
+  },
+  "invariants": {
+    "auth_precondition_authenticated": true,
+    "unsafe_actions_executed_zero": true,
+    "anonymous_api_requests_zero": true,
+    "manifest_v2_keys": true,
+    "crawl_unsafe_endpoints_zero": true,
+    "bootstrap_unsafe_flows_isolated": true,
+    "declared_unsafe_not_observed": true,
+    "form_success": true,
+    "xhr_response_complete": true
+  }
+}

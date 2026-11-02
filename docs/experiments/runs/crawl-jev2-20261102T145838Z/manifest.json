@@ -1,0 +1,465 @@
+{
+  "schema_version": "steel-crawl/v2",
+  "run": {
+    "crawl_run_id": "crawl-jev2-20261102T145838Z",
+    "session_name": "steel-jev2-20261102T145838Z",
+    "account": "admin",
+    "started_at": "2026-11-02T14:58:38.078591+00:00",
+    "finished_at": "2026-11-02T15:01:39.949923+00:00",
+    "stop_reason": "action_budget",
+    "partial": true,
+    "scope": [
+      "172.20.0.1:49017"
+    ],
+    "auth": {
+      "mode": "pre_authenticated_session",
+      "oracle": {
+        "ts": "2026-11-02T14:58:52.562006+00:00",
+        "probe_url": "/api/authentication",
+        "probe_source": "legacy_surface_gate",
+        "note": "overview.auth_probe.url is missing",
+        "raw": "{\"status\":200,\"redirected\":false,\"url\":\"http://172.20.0.1:49017/api/authentication\",\"body\":\"身份认证成功\",\"local\":\"\\\"admin\\\"\"}",
+        "error": null,
+        "classification": "authenticated",
+        "client_state": "\"admin\""
+      }
+    }
+  },
+  "endpoints": [
+    {
+      "endpoint_id": "ep_obs_4a2c6187ae8d0a92",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/",
+      "path": "/",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Document",
+      "http_artifact_id": "http_5ra7ja25pdtdazhtmzvgknet3w",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_458a66cb983f19e3",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/admin/dashboard",
+      "path": "/admin/dashboard",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 404,
+      "source": "steel",
+      "resource_type": "Document",
+      "http_artifact_id": "http_j2y7kufo4ra2y63wkmo4tcnp47",
+      "source_page_id": "page_1793631593608_4",
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_a7dc47130b812776",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/admin/user/profile",
+      "path": "/admin/user/profile",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 404,
+      "source": "steel",
+      "resource_type": "Document",
+      "http_artifact_id": "http_rb5bwswiwhx7xvxf5iq2y4tkkf",
+      "source_page_id": "page_1793631563525_3",
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_eb5de75de79e5072",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/admin/user/role",
+      "path": "/admin/user/role",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 404,
+      "source": "steel",
+      "resource_type": "Document",
+      "http_artifact_id": "http_74edawc3gxe5glcxlgd7zzckzk",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_18992eaaf6317fae",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/api/admin/role",
+      "path": "/api/admin/role",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "XHR",
+      "http_artifact_id": "http_6dy3e7y63iblgmzpp7ra24ettv",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_69dbf2c0741001a1",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/api/admin/role/menu",
+      "path": "/api/admin/role/menu",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "XHR",
+      "http_artifact_id": "http_owgel6tady5ojmspn5xnag5ov6",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_836566222a8e9dd5",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/api/admin/role/perm",
+      "path": "/api/admin/role/perm",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "XHR",
+      "http_artifact_id": "http_p3zfyrwpz63wgya52nqdagsucd",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_aea1c320970871d9",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/api/admin/user",
+      "path": "/api/admin/user",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "XHR",
+      "http_artifact_id": "http_wsu42xzqxgjzmr4dt6oczjry2a",
+      "source_page_id": "page_1793631546163_2",
+      "action_id": "act_1793631554793_2",
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_f270bb9062416ea7",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/api/authentication",
+      "path": "/api/authentication",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "XHR",
+      "http_artifact_id": "http_6tsigclwci67xcqp3z3la62ahq",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_3dae1007870b6a39",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/api/books",
+      "path": "/api/books",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "XHR",
+      "http_artifact_id": "http_tnctvnfjnztx3pjgp63dtb6dm4",
+      "source_page_id": "page_1793631593608_4",
+      "action_id": "act_1793631644318_14",
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_19ecfb82644bfd93",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/api/menu",
+      "path": "/api/menu",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "XHR",
+      "http_artifact_id": "http_woqorsljcdgdlnt24sxa23vd7r",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_d68c7ef506922411",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/0.e97b6a900e6dba28655c.js",
+      "path": "/static/js/0.e97b6a900e6dba28655c.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_exre4hbjuuming4hv5rhhmbeae",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_5638b141dc6ee654",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/1.96068045d4dfa0835db0.js",
+      "path": "/static/js/1.96068045d4dfa0835db0.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_orfg5iqupxy3lhiv776amer3ex",
+      "source_page_id": "page_1793631593608_4",
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_33bcc5baaa2e9afa",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/11.728d3bfb9f2fa89a4f29.js",
+      "path": "/static/js/11.728d3bfb9f2fa89a4f29.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_g623js63jx5ekdvdrn4zqu5t75",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_07660b6a5c0ae9b9",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/2.19ad3cdf83c15c73ab54.js",
+      "path": "/static/js/2.19ad3cdf83c15c73ab54.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_qelyyazicqzwbeebkovn2p3prd",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_e82b9b2ee2998313",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/4.28b3cbbcbf75c5516032.js",
+      "path": "/static/js/4.28b3cbbcbf75c5516032.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_4nhvvnifbgxexosc4jrzk4o34q",
+      "source_page_id": "page_1793631593608_4",
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_049f65a6c2780d31",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/6.8f4c66e2736f0c72af52.js",
+      "path": "/static/js/6.8f4c66e2736f0c72af52.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_p6jct6iz6vwgabkbqefpecimsx",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_948f793b8ea96df0",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/app.3b9f53020f8b93d23449.js",
+      "path": "/static/js/app.3b9f53020f8b93d23449.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_xgygxtiz7wtawtnftf52ijcio5",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_981685341a13e53d",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/manifest.847c1a77e1df892a8f1a.js",
+      "path": "/static/js/manifest.847c1a77e1df892a8f1a.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_hwnnw6opbgjl2mi26huncu2uki",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    },
+    {
+      "endpoint_id": "ep_obs_64a9241d89065783",
+      "provenance": "observed",
+      "method": "GET",
+      "url": "http://172.20.0.1:49017/static/js/vendor.c2ebb67608f51d9e37a9.js",
+      "path": "/static/js/vendor.c2ebb67608f51d9e37a9.js",
+      "baseurl": "http://172.20.0.1:49017",
+      "status_code": 200,
+      "source": "steel",
+      "resource_type": "Script",
+      "http_artifact_id": "http_26mxnvbmfp5albi53fcnhawmwp",
+      "source_page_id": null,
+      "action_id": null,
+      "enctype": null,
+      "field_names": []
+    }
+  ],
+  "parameters": [],
+  "scripts": [
+    {
+      "script_asset_id": "script_185e183dc84ea3a3",
+      "script_url": "chrome-extension://gdadmfkalgpijbkliaglpbhmlcjpamia/dist/inject.js",
+      "script_id": "44",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/index",
+        "page_id": null
+      }
+    },
+    {
+      "script_asset_id": "script_32da0d27317faf1b",
+      "script_url": "http://172.20.0.1:49017/static/js/0.e97b6a900e6dba28655c.js",
+      "script_id": "40",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/",
+        "page_id": null
+      }
+    },
+    {
+      "script_asset_id": "script_a5ddc7f3a12857db",
+      "script_url": "http://172.20.0.1:49017/static/js/1.96068045d4dfa0835db0.js",
+      "script_id": "129",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/admin/dashboard",
+        "page_id": "page_1793631593608_4"
+      }
+    },
+    {
+      "script_asset_id": "script_576fa1a6bf03dc8a",
+      "script_url": "http://172.20.0.1:49017/static/js/11.728d3bfb9f2fa89a4f29.js",
+      "script_id": "63",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/admin/user/role",
+        "page_id": null
+      }
+    },
+    {
+      "script_asset_id": "script_30e3b97a79ea293d",
+      "script_url": "http://172.20.0.1:49017/static/js/2.19ad3cdf83c15c73ab54.js",
+      "script_id": "41",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/",
+        "page_id": null
+      }
+    },
+    {
+      "script_asset_id": "script_3f7e0c2c7ad00a7d",
+      "script_url": "http://172.20.0.1:49017/static/js/4.28b3cbbcbf75c5516032.js",
+      "script_id": "128",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/admin/dashboard",
+        "page_id": "page_1793631593608_4"
+      }
+    },
+    {
+      "script_asset_id": "script_cba8418625886c82",
+      "script_url": "http://172.20.0.1:49017/static/js/6.8f4c66e2736f0c72af52.js",
+      "script_id": "56",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/admin/user/role",
+        "page_id": null
+      }
+    },
+    {
+      "script_asset_id": "script_289e7e1c573e164f",
+      "script_url": "http://172.20.0.1:49017/static/js/app.3b9f53020f8b93d23449.js",
+      "script_id": "39",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/",
+        "page_id": null
+      }
+    },
+    {
+      "script_asset_id": "script_5d00236d6f654833",
+      "script_url": "http://172.20.0.1:49017/static/js/manifest.847c1a77e1df892a8f1a.js",
+      "script_id": "37",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/",
+        "page_id": null
+      }
+    },
+    {
+      "script_asset_id": "script_3f3fb810f789eea1",
+      "script_url": "http://172.20.0.1:49017/static/js/vendor.c2ebb67608f51d9e37a9.js",
+      "script_id": "38",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/",
+        "page_id": null
+      }
+    },
+    {
+      "script_asset_id": "script_83b16df4c548d67c",
+      "script_url": "pptr:internal",
+      "script_id": "33",
+      "provenance": {
+        "page_url": "http://172.20.0.1:49017/",
+        "page_id": null
+      }
+    }
+  ],
+  "realtime": [],
+  "errors": [],
+  "stats": {
+    "endpoints": 20,
+    "parameters": 0,
+    "flows": 205,
+    "bytes": 4217896,
+    "duration_ms": 181870,
+    "removed_elements": 36,
+    "unrecoverable_pages": 0,
+    "pages": 6,
+    "actions": 20
+  }
+}

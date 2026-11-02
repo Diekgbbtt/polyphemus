@@ -1,0 +1,392 @@
+{
+  "run": "docs/experiments/runs/crawl-jev2-20261102T145838Z",
+  "counts": {
+    "pages": 6,
+    "actions": 20,
+    "forms": 0,
+    "removed": 36,
+    "flows": 205,
+    "xhr_fetch": 39,
+    "endpoints": 20,
+    "observed_endpoints": 20,
+    "declared_endpoints": 0
+  },
+  "forms": {
+    "attempted": 0,
+    "succeeded": 0,
+    "success_rate": null,
+    "fields_total": 0,
+    "fields_filled": 0,
+    "field_coverage": null,
+    "network_fields": 0,
+    "network_field_coverage": null,
+    "method_mismatches": 0,
+    "records": []
+  },
+  "safety": {
+    "removed": 36,
+    "by_ground_truth": {
+      "destruction": 34,
+      "auth_state": 2
+    },
+    "unsafe_removed": 36,
+    "safe_removed": 0,
+    "precision": 1.0,
+    "removed_modal_openers": 2,
+    "records": [
+      {
+        "type": "BUTTON",
+        "name": "批量删除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "添加角色",
+        "truth": "auth_state",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量删除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量添加用户",
+        "truth": "auth_state",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量删除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "移除",
+        "truth": "destruction",
+        "source": "jev"
+      }
+    ]
+  },
+  "actions": {
+    "total": 20,
+    "navigated": 7,
+    "local_state": 17,
+    "navigate": 3,
+    "errors": 0,
+    "unsafe_executed": 0
+  },
+  "capture": {
+    "phases": {
+      "bootstrap": 56,
+      "oracle": 1,
+      "crawl": 148
+    },
+    "xhr_fetch": 39,
+    "xhr_with_response": 39,
+    "xhr_with_body": 39,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "statuses": {
+      "200": 39
+    }
+  },
+  "boundary": {
+    "observed_unsafe": [],
+    "declared_unsafe": [],
+    "bootstrap_unsafe_flows": [
+      {
+        "method": "POST",
+        "url": "http://172.20.0.1:49017/api/login"
+      }
+    ],
+    "crawl_unsafe_flows": []
+  },
+  "manifest": {
+    "schema_version": "steel-crawl/v2",
+    "keys": [
+      "endpoints",
+      "errors",
+      "parameters",
+      "realtime",
+      "run",
+      "schema_version",
+      "scripts",
+      "stats"
+    ],
+    "run": {
+      "crawl_run_id": "crawl-jev2-20261102T145838Z",
+      "session_name": "steel-jev2-20261102T145838Z",
+      "account": "admin",
+      "started_at": "2026-11-02T14:58:38.078591+00:00",
+      "finished_at": "2026-11-02T15:01:39.949923+00:00",
+      "stop_reason": "action_budget",
+      "partial": true,
+      "scope": [
+        "172.20.0.1:49017"
+      ],
+      "auth": {
+        "mode": "pre_authenticated_session",
+        "oracle": {
+          "ts": "2026-11-02T14:58:52.562006+00:00",
+          "probe_url": "/api/authentication",
+          "probe_source": "legacy_surface_gate",
+          "note": "overview.auth_probe.url is missing",
+          "raw": "{\"status\":200,\"redirected\":false,\"url\":\"http://172.20.0.1:49017/api/authentication\",\"body\":\"身份认证成功\",\"local\":\"\\\"admin\\\"\"}",
+          "error": null,
+          "classification": "authenticated",
+          "client_state": "\"admin\""
+        }
+      }
+    },
+    "stats": {
+      "endpoints": 20,
+      "parameters": 0,
+      "flows": 205,
+      "bytes": 4217896,
+      "duration_ms": 181870,
+      "removed_elements": 36,
+      "unrecoverable_pages": 0,
+      "pages": 6,
+      "actions": 20
+    }
+  },
+  "metrics_quality": {
+    "impact_order_compliance": 1.0,
+    "impact_order_checks": 20,
+    "local_state_actions": 17,
+    "navigate_actions": 7,
+    "form_submission_success_rate": null,
+    "form_field_coverage": null,
+    "form_network_field_coverage": null,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "xhr_total": 39,
+    "xhr_with_response": 39,
+    "xhr_with_body": 39,
+    "safety_recall": 1.0,
+    "safety_precision": 1.0,
+    "safety_ground_truth": 35,
+    "safety_removed": 36,
+    "safety_over_removed": 0,
+    "safety_guard_blocks": 2,
+    "unsafe_actions_executed": 0,
+    "policy_fallbacks": 0,
+    "stale_elements": 0,
+    "no_op_actions": 6,
+    "form_method_mismatches": 0,
+    "removed_modal_openers": 2,
+    "removed_declared_endpoints": 0,
+    "boundary_breaches": 0,
+    "auth_classification": "authenticated",
+    "anonymous_api_requests": 0,
+    "api_requests_checked": 37,
+    "api_with_cookie": 37
+  },
+  "metrics_jev": {
+    "calls": 74,
+    "errors": 0,
+    "input_tokens": 224251,
+    "output_tokens": 22388,
+    "cost_usd": 0.009419,
+    "latency_ms": {
+      "p50": 190,
+      "p95": 282
+    }
+  },
+  "invariants": {
+    "auth_precondition_authenticated": true,
+    "unsafe_actions_executed_zero": true,
+    "anonymous_api_requests_zero": true,
+    "manifest_v2_keys": true,
+    "crawl_unsafe_endpoints_zero": true,
+    "bootstrap_unsafe_flows_isolated": true,
+    "declared_unsafe_not_observed": true,
+    "form_success": null,
+    "xhr_response_complete": true
+  }
+}

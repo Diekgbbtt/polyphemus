@@ -1,0 +1,242 @@
+{
+  "run": "docs/experiments/runs/crawl-jev1-20261102T144953Z",
+  "counts": {
+    "pages": 6,
+    "actions": 60,
+    "forms": 3,
+    "removed": 4,
+    "flows": 366,
+    "xhr_fetch": 21,
+    "endpoints": 26,
+    "observed_endpoints": 25,
+    "declared_endpoints": 1
+  },
+  "forms": {
+    "attempted": 3,
+    "succeeded": 3,
+    "success_rate": 1.0,
+    "fields_total": 6,
+    "fields_filled": 6,
+    "field_coverage": 1.0,
+    "network_fields": 3,
+    "network_field_coverage": 0.5,
+    "method_mismatches": 0,
+    "records": [
+      {
+        "submit": "搜索",
+        "synthetic": true,
+        "success": true,
+        "status": 200,
+        "url": "http://172.20.0.1:49017/api/search?keywords=test",
+        "method": "",
+        "request_method": "GET",
+        "fields": 3,
+        "network_fields": [
+          "keywords"
+        ]
+      },
+      {
+        "submit": "搜索",
+        "synthetic": true,
+        "success": true,
+        "status": 200,
+        "url": "http://172.20.0.1:49017/api/search?keywords=test",
+        "method": "",
+        "request_method": "GET",
+        "fields": 2,
+        "network_fields": [
+          "keywords"
+        ]
+      },
+      {
+        "submit": "搜索",
+        "synthetic": true,
+        "success": true,
+        "status": 200,
+        "url": "http://172.20.0.1:49017/api/search?keywords=test",
+        "method": "",
+        "request_method": "GET",
+        "fields": 1,
+        "network_fields": [
+          "keywords"
+        ]
+      }
+    ]
+  },
+  "safety": {
+    "removed": 4,
+    "by_ground_truth": {
+      "safe": 1,
+      "payment": 1,
+      "destruction": 1,
+      "auth_state": 1
+    },
+    "unsafe_removed": 3,
+    "safe_removed": 1,
+    "precision": 0.75,
+    "removed_modal_openers": 1,
+    "records": [
+      {
+        "type": "FORM",
+        "name": "注册",
+        "truth": "safe",
+        "source": "jev"
+      },
+      {
+        "type": "CUSTOM",
+        "name": "奢侈与逸乐 [英]马克辛·伯格 / 2019-3 / 中国工人出版社 本书探讨了十八世纪英国新式、时尚的消费品的发明、制造和购买。",
+        "truth": "payment",
+        "source": "guard"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量删除",
+        "truth": "destruction",
+        "source": "jev"
+      },
+      {
+        "type": "BUTTON",
+        "name": "批量添加用户",
+        "truth": "auth_state",
+        "source": "guard"
+      }
+    ]
+  },
+  "actions": {
+    "total": 60,
+    "navigated": 7,
+    "local_state": 44,
+    "navigate": 13,
+    "errors": 0,
+    "unsafe_executed": 0
+  },
+  "capture": {
+    "phases": {
+      "bootstrap": 56,
+      "oracle": 1,
+      "crawl": 309
+    },
+    "xhr_fetch": 21,
+    "xhr_with_response": 21,
+    "xhr_with_body": 21,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "statuses": {
+      "200": 21
+    }
+  },
+  "boundary": {
+    "observed_unsafe": [],
+    "declared_unsafe": [],
+    "bootstrap_unsafe_flows": [
+      {
+        "method": "POST",
+        "url": "http://172.20.0.1:49017/api/login"
+      }
+    ],
+    "crawl_unsafe_flows": []
+  },
+  "manifest": {
+    "schema_version": "steel-crawl/v2",
+    "keys": [
+      "endpoints",
+      "errors",
+      "parameters",
+      "realtime",
+      "run",
+      "schema_version",
+      "scripts",
+      "stats"
+    ],
+    "run": {
+      "crawl_run_id": "crawl-jev1-20261102T144953Z",
+      "session_name": "steel-jev1-20261102T144953Z",
+      "account": "admin",
+      "started_at": "2026-11-02T14:49:53.672952+00:00",
+      "finished_at": "2026-11-02T14:57:17.505635+00:00",
+      "stop_reason": "action_budget",
+      "partial": true,
+      "scope": [
+        "172.20.0.1:49017"
+      ],
+      "auth": {
+        "mode": "pre_authenticated_session",
+        "oracle": {
+          "ts": "2026-11-02T14:50:08.101418+00:00",
+          "probe_url": "/api/authentication",
+          "probe_source": "legacy_surface_gate",
+          "note": "overview.auth_probe.url is missing",
+          "raw": "{\"status\":200,\"redirected\":false,\"url\":\"http://172.20.0.1:49017/api/authentication\",\"body\":\"身份认证成功\",\"local\":\"\\\"admin\\\"\"}",
+          "error": null,
+          "classification": "authenticated",
+          "client_state": "\"admin\""
+        }
+      }
+    },
+    "stats": {
+      "endpoints": 26,
+      "parameters": 11,
+      "flows": 366,
+      "bytes": 4589571,
+      "duration_ms": 443832,
+      "removed_elements": 4,
+      "unrecoverable_pages": 0,
+      "pages": 6,
+      "actions": 60
+    }
+  },
+  "metrics_quality": {
+    "impact_order_compliance": 0.9666666666666667,
+    "impact_order_checks": 60,
+    "local_state_actions": 44,
+    "navigate_actions": 7,
+    "form_submission_success_rate": 1.0,
+    "form_field_coverage": 1.0,
+    "form_network_field_coverage": 0.0,
+    "xhr_capture_rate": 1.0,
+    "xhr_body_rate": 1.0,
+    "xhr_total": 21,
+    "xhr_with_response": 21,
+    "xhr_with_body": 21,
+    "safety_recall": 1.0,
+    "safety_precision": 0.75,
+    "safety_ground_truth": 3,
+    "safety_removed": 4,
+    "safety_over_removed": 1,
+    "safety_guard_blocks": 2,
+    "unsafe_actions_executed": 0,
+    "policy_fallbacks": 0,
+    "stale_elements": 0,
+    "no_op_actions": 27,
+    "form_method_mismatches": 0,
+    "removed_modal_openers": 1,
+    "removed_declared_endpoints": 1,
+    "boundary_breaches": 0,
+    "auth_classification": "authenticated",
+    "anonymous_api_requests": 0,
+    "api_requests_checked": 8,
+    "api_with_cookie": 8
+  },
+  "metrics_jev": {
+    "calls": 122,
+    "errors": 0,
+    "input_tokens": 338985,
+    "output_tokens": 23461,
+    "cost_usd": 0.014237,
+    "latency_ms": {
+      "p50": 206,
+      "p95": 361
+    }
+  },
+  "invariants": {
+    "auth_precondition_authenticated": true,
+    "unsafe_actions_executed_zero": true,
+    "anonymous_api_requests_zero": true,
+    "manifest_v2_keys": true,
+    "crawl_unsafe_endpoints_zero": true,
+    "bootstrap_unsafe_flows_isolated": true,
+    "declared_unsafe_not_observed": true,
+    "form_success": true,
+    "xhr_response_complete": true
+  }
+}

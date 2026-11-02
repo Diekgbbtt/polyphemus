@@ -1,0 +1,89 @@
+{
+  "session": "dialog-probe-20261102T110352Z",
+  "target": "http://172.20.0.1:49017/admin/user/role",
+  "steps": [
+    {
+      "step": "start",
+      "success": true,
+      "data": {
+        "connectUrl": "ws://192.33.91.87:3000/",
+        "id": "0157674a-8aa8-495c-97bc-6c5ed15d706a",
+        "inactivityTimeoutMs": 180000,
+        "liveUrl": "http://192.33.91.87:3000/",
+        "mode": "local",
+        "name": "dialog-probe-20261102T110352Z",
+        "remainingMs": 298988
+      },
+      "error": null
+    },
+    {
+      "step": "auth",
+      "success": true,
+      "data": "{\"status\":200,\"redirected\":false,\"body\":\"{\\\"code\\\":200,\\\"message\\\":\\\"成功\\\",\\\"result\\\":\\\"admin\\\"}\"}",
+      "error": null
+    },
+    {
+      "step": "navigate_role",
+      "success": true,
+      "error": null
+    },
+    {
+      "step": "click_edit",
+      "success": true,
+      "error": null,
+      "selector": "table > tbody > tr:nth-of-type(1) > td:nth-of-type(6) > div > button:nth-of-type(1)"
+    },
+    {
+      "step": "stop",
+      "success": true,
+      "data": {
+        "stoppedSessions": [
+          "dialog-probe-20261102T110352Z"
+        ]
+      }
+    }
+  ],
+  "role_page": {
+    "url": "http://172.20.0.1:49017/admin/user/role",
+    "candidates": 40,
+    "groups": 0,
+    "edit_buttons": 9,
+    "edit_selectors": [
+      "table > tbody > tr:nth-of-type(1) > td:nth-of-type(6) > div > button:nth-of-type(1)",
+      "table > tbody > tr:nth-of-type(2) > td:nth-of-type(6) > div > button:nth-of-type(1)",
+      "table > tbody > tr:nth-of-type(3) > td:nth-of-type(6) > div > button:nth-of-type(1)"
+    ]
+  },
+  "dialog": {
+    "url": "http://172.20.0.1:49017/admin/user/role",
+    "candidates": 42,
+    "groups": 2,
+    "dialog_candidates": [
+      {
+        "type": "FORM",
+        "name": "角色名 角色描述 功能配置 用户管理 角色管理 内容管理 菜单配置 首页 用户管理 内容管理 系统配置",
+        "text": "角色名 角色描述 功能配置 用户管理 角色管理 内容管理 菜单配置 首页 用户管理 内容管理 系统配置",
+        "selector": "form",
+        "dialog_text": null,
+        "truth": "auth_state"
+      },
+      {
+        "type": "FORM",
+        "name": "确 定",
+        "text": "修改角色信息",
+        "selector": "section > section > main > div > div:nth-of-type(1) > div",
+        "dialog_text": null,
+        "truth": "auth_state"
+      }
+    ],
+    "raw_dialog_buttons": "[{\"t\":\"\",\"c\":\"el-dialog__headerbtn\"},{\"t\":\"取 消\",\"c\":\"el-button el-button--default\"},{\"t\":\"确 定\",\"c\":\"el-button el-button--primary\"},{\"t\":\"\",\"c\":\"el-dialog__headerbtn\"}]",
+    "all_dialog_controls_unsafe": true,
+    "cancel_or_confirm_offered": []
+  },
+  "ok": true,
+  "stopped": {
+    "stoppedSessions": [
+      "dialog-probe-20261102T110352Z"
+    ]
+  }
+}

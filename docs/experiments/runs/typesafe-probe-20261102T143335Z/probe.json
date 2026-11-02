@@ -1,0 +1,147 @@
+{
+  "ts": "2026-11-02T14:33:36.368075+00:00",
+  "base_url": "https://api.typesafe.ai/v1",
+  "model": "jev-latest",
+  "key_present": true,
+  "key_length": 108,
+  "openai_sdk": "2.41.1",
+  "models": {
+    "openai_models_list": {
+      "ok": false,
+      "duration_ms": 405,
+      "error_type": "TypeError",
+      "status": null,
+      "error": "'NoneType' object is not iterable"
+    },
+    "raw_get": {
+      "ok": true,
+      "duration_ms": 242,
+      "value": {
+        "status": 200,
+        "json": {
+          "models": [
+            {
+              "name": "jev-latest",
+              "description": "The latest iteration of TypeSafe's System One Model: Jev",
+              "release_date": "2026-10-22T02:00:00+00:00"
+            },
+            {
+              "name": "jev-preview",
+              "description": "Preview the next version of Jev before it gets promoted to jev-latest. Most of the time this is the same as jev-latest",
+              "release_date": "2026-10-14T20:14:00+00:00"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "chat_openai_sdk": {
+    "ok": false,
+    "duration_ms": 128,
+    "error_type": "NotFoundError",
+    "status": 404,
+    "error": "Error code: 404 - {'detail': 'Not Found'}"
+  },
+  "chat_langchain": {
+    "ok": false,
+    "duration_ms": 159,
+    "error_type": "NotFoundError",
+    "status": 404,
+    "error": "Error code: 404 - {'detail': 'Not Found'}"
+  },
+  "systemone_openai_post_object": {
+    "ok": true,
+    "duration_ms": 176,
+    "value": {
+      "model": "jev-1.14.0",
+      "answers": {
+        "next": {
+          "type": "choice",
+          "choice": "signin",
+          "confidence": 0.89,
+          "probabilities": {
+            "signin": 0.93,
+            "forgot": 0.04,
+            "register": 0.03
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 443,
+        "output_tokens": 38
+      }
+    }
+  },
+  "systemone_openai_post_dict": {
+    "ok": false,
+    "duration_ms": 183,
+    "error_type": "ValueError",
+    "status": null,
+    "error": "not enough values to unpack (expected 2, got 0)"
+  },
+  "systemone_openai_post_raw": {
+    "ok": true,
+    "duration_ms": 310,
+    "value": {
+      "status": 200,
+      "json": {
+        "model": "jev-1.14.0",
+        "answers": {
+          "next": {
+            "type": "choice",
+            "choice": "signin",
+            "confidence": 0.89,
+            "probabilities": {
+              "signin": 0.93,
+              "forgot": 0.04,
+              "register": 0.03
+            }
+          }
+        },
+        "usage": {
+          "input_tokens": 443,
+          "output_tokens": 38
+        }
+      }
+    }
+  },
+  "systemone_async": {
+    "ok": true,
+    "duration_ms": 262,
+    "value": {
+      "model": "jev-1.14.0",
+      "answers": {
+        "next": {
+          "type": "choice",
+          "choice": "signin",
+          "confidence": 0.89,
+          "probabilities": {
+            "signin": 0.93,
+            "forgot": 0.04,
+            "register": 0.03
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 443,
+        "output_tokens": 38
+      }
+    }
+  },
+  "litellm": {
+    "openai/jev-latest": {
+      "ok": false,
+      "duration_ms": 183,
+      "error_type": "NotFoundError",
+      "status": 404,
+      "error": "litellm.NotFoundError: NotFoundError: OpenAIException - Error code: 404 - {'detail': 'Not Found'}"
+    },
+    "typesafe/jev-latest": {
+      "ok": false,
+      "duration_ms": 6,
+      "error_type": "BadRequestError",
+      "status": 400,
+      "error": "litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=typesafe/jev-latest\n Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers"
+    }
+  }
+}

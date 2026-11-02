@@ -1,0 +1,8 @@
+{"page_id": "page_1793465301736_3", "element_key": "clickable|button||delete|||", "kind": "clickable", "name": "Delete", "reason": "forbidden_control"}
+{"page_id": "page_1793465287310_1", "element_key": "clickable|button||delete|||", "kind": "clickable", "name": "Delete", "reason": "forbidden_control"}
+{"page_id": "page_1793465341453_7", "element_key": "clickable|a||delete|||", "kind": "clickable", "name": "delete", "reason": "forbidden_control"}
+{"page_id": "page_1793465287310_1", "element_key": "clickable|a||delete|||", "kind": "clickable", "name": "delete", "reason": "forbidden_control"}
+{"page_id": "page_1793465740945_50", "element_key": "form|form||e-mail retrieve password||https://the-internet.herokuapp.com/forgot_password|post|email", "kind": "form", "name": "E-mail Retrieve password", "reason": "forbidden_form"}
+{"page_id": "page_1793465498585_21", "element_key": "form|form||e-mail retrieve password||https://the-internet.herokuapp.com/forgot_password|post|email", "kind": "form", "name": "E-mail Retrieve password", "reason": "forbidden_form"}
+{"page_id": "page_1793465749443_51", "element_key": "form|form||username password login||https://the-internet.herokuapp.com/authenticate|post|password,username", "kind": "form", "name": "Username Password Login", "reason": "forbidden_form"}
+{"page_id": "page_1793465498585_21", "element_key": "form|form||username password login||https://the-internet.herokuapp.com/authenticate|post|password,username", "kind": "form", "name": "Username Password Login", "reason": "forbidden_form"}
