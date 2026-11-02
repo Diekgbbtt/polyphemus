@@ -234,6 +234,9 @@ class CaptureSidecar:
         request_id = _opt_str(params.get("requestId"))
         if request_id is None:
             return
+        if request_id in self._flows:
+            # A repeated pump must not re-attribute a flow that already started.
+            return
         request = params.get("request")
         if not isinstance(request, Mapping):
             return
@@ -298,6 +301,8 @@ class CaptureSidecar:
         request_id = _opt_str(params.get("requestId"))
         request = params.get("request")
         if request_id is None or not isinstance(request, Mapping):
+            return
+        if request_id in self._flows:
             return
         url = _opt_str(request.get("url")) or self._websockets.get(request_id, "")
         self._flows[request_id] = Flow(
