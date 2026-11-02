@@ -110,14 +110,20 @@ class AppExec:
     def __init__(self) -> None:
         self.current_url = ROOT
         self.commands: list[list[str]] = []
+        self.stopped = False
 
     def __call__(self, command: list[str]) -> dict[str, Any]:
         self.commands.append(list(command))
         if command == ["steel", "browser", "sessions", "--json"]:
+            if self.stopped:
+                return {"success": True, "data": []}
             return load_cli("catalogue").model_dump(mode="json")
         if "sessions" in command and "get" in command:
             return load_cli("session").model_dump(mode="json")
         verb = command[2] if len(command) > 2 else ""
+        if verb == "stop":
+            self.stopped = True
+            return {"success": True, "data": {"stoppedSessions": ["crawl-fixture"]}}
         try:
             index = command.index("--json")
             args = command[index + 1 :]

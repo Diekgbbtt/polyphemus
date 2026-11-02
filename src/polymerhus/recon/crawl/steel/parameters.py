@@ -87,6 +87,20 @@ class FormField(BaseModel):
     checked: bool = False
     selector: str = ""
 
+    def to_policy_field(self) -> dict[str, Any]:
+        """The field contract mapping the value selector consumes, value-free."""
+        return {
+            "name": self.name,
+            "type": self.type,
+            "label": self.label,
+            "options": list(self.options),
+            "pattern": self.pattern,
+            "min": self.min,
+            "max": self.max,
+            "checked": self.checked,
+            "selector": self.selector,
+        }
+
 
 class FormContract(BaseModel):
     """The declared shape of one offered form (spec 8.1).

@@ -1868,7 +1868,7 @@ It does not fetch source maps and does not derive a chunk hint.
 ## 11. Implementation outcome (2026-11-02)
 
 The implementation landed on `feat/steel-crawl`.
-The unit and contract tiers are green: 422 tests in `tests/recon/crawl/steel`, 21 HTTP-history edge and store tests, and the full recon tier at 1633 passed with 20 pre-existing skips.
+The unit and contract tiers are green: 424 tests in `tests/recon/crawl/steel`, 21 HTTP-history edge and store tests, and the full recon tier at 1643 passed with 20 pre-existing skips.
 
 The delivered modules are the session and catalogue client, the auth oracle, the browser state and stale-ref guard, the command mapper, the element map, the policy port and Jev adapter, the removal and value-selection loop, the unified DFS frontier, the form contract and parameter records, the passive CDP sidecar with WebSocket/HTTP3/script/frame/dialog capture, the flow normalizer and HTTP-history client, the manifest v2 writer and parser, the run ledger and finalize path, the HTTP-history ingest edge, the job lifecycle, the run-loop wiring, and the bounded session-loss boundary.
 

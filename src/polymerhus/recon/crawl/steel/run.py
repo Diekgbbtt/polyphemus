@@ -222,6 +222,8 @@ class CrawlRun:
             ElementType.LINK,
             ElementType.AREA,
             ElementType.META_REFRESH,
+            ElementType.IFRAME,
+            ElementType.FRAME,
         }:
             return Action(
                 verb="navigate",

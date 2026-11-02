@@ -41,6 +41,7 @@ class FakeSession:
         self.failure = failure
         self.attached: str | None = None
         self.start_calls = 0
+        self.stopped = False
 
     def attach(self, name: str) -> Any:
         if self.failure is not None:
@@ -50,6 +51,9 @@ class FakeSession:
 
     def start(self, *args: Any) -> None:
         self.start_calls += 1
+
+    def stop(self) -> None:
+        self.stopped = True
 
 
 class FakeSidecar:
@@ -165,6 +169,7 @@ def test_the_job_runs_the_lifecycle_and_emits_page_and_action_records():
 
     assert session.attached == "session-1"
     assert session.start_calls == 0
+    assert session.stopped is True
     assert sidecar.attached is True
     assert sidecar.closed is True
     assert len(run_calls) == 1
@@ -204,6 +209,7 @@ def test_an_auth_failure_is_partial_and_never_traverses():
 
     assert run_calls == []
     assert sidecar.attached is False
+    assert session.stopped is True
     assert result.status == "partial"
     assert result.stop_reason == "auth_precondition_failed"
     assert result.error is not None
@@ -220,6 +226,7 @@ def test_a_deadline_stops_before_the_traversal():
 
     assert run_calls == []
     assert sidecar.attached is False
+    assert session.stopped is True
     assert result.status == "partial"
     assert result.stop_reason == "session_deadline"
 
@@ -233,6 +240,7 @@ def test_a_missing_session_is_a_typed_stop_and_never_traverses():
 
     assert run_calls == []
     assert sidecar.attached is False
+    assert session.stopped is False
     assert result.status == "partial"
     assert result.stop_reason == "session_missing"
     assert "the session is gone" in (result.error or "")

@@ -999,6 +999,8 @@ The crawl package contains every module in section 3.1 plus the `forms.py`, `run
 The deterministic gate is `tests/recon/crawl/steel`.
 The edge gate is `tests/kali/test_http_history_edge.py`.
 The full unit tier is the regression gate.
+The job stops the owned session through the session client and proves the catalogue clean on the finalize path.
+The form executor fills the fields, validates the chosen values, submits with the command mapper, and marks the ledger only after the dispatch-plus-2xx check.
 
 The live P1 to P5 run against White Jotter is deferred to the next batch.
 The implementation subagent provider was unavailable for part of the batch; the remaining tickets were completed directly with tests and committed on `feat/steel-crawl`.

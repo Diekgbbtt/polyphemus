@@ -13,13 +13,22 @@ the collector has no browser and the ledger has no executor.
 from __future__ import annotations
 
 from polymerhus.recon.crawl.steel.enumerate import (
+    ChangeSemantics,
     Element,
     ElementMap,
+    ElementType,
     SnapshotNode,
 )
-from polymerhus.recon.crawl.steel.forms import DeclaredCollector, FormLedger
+from polymerhus.recon.crawl.steel.forms import (
+    DeclaredCollector,
+    FormExecutor,
+    FormLedger,
+)
+from polymerhus.recon.crawl.steel.parameters import FormContract, FormField
+from polymerhus.recon.crawl.steel.policy.select import DEFAULT_VALUE_CATALOGUE
 from polymerhus.recon.crawl.steel.state import BrowserState, PageInstance
 from tests.recon.crawl.steel.fixtures import DomNode, load_dom
+from tests.recon.crawl.steel.support import FakeDecisionClient
 
 
 def to_snapshot_node(record: DomNode) -> SnapshotNode:
@@ -105,3 +114,114 @@ def test_the_collector_writes_the_declared_endpoint_and_its_fields():
         assert field.content_type == "application/x-www-form-urlencoded"
     assert (query.field_type, query.label) == ("search", "Search products")
     assert (category.field_type, category.options) == ("select-one", ("all", "books"))
+
+
+class FakeMapper:
+    def __init__(self) -> None:
+        self.actions: list = []
+
+    def execute(self, action, page):
+        self.actions.append(action)
+
+
+def test_the_form_executor_fills_and_submits_a_form_once():
+    state = BrowserState()
+    page = state.open_page(
+        page_visit_id="page_exec",
+        url="https://example.test/",
+        final_url="https://example.test/",
+        title="Exec",
+        snapshot=(),
+    )
+    form = FormContract(
+        root_selector="@form",
+        action="https://example.test/search",
+        method="GET",
+        fields=(
+            FormField(name="q", type="text", label="Query", selector="@q"),
+            FormField(
+                name="category",
+                type="select-one",
+                label="Category",
+                options=("all", "books"),
+                selector="@c",
+            ),
+        ),
+        submit_selector="@s",
+        submit_text="Search",
+    )
+    element = Element(
+        element_id="form",
+        fingerprint="fp-form",
+        element_type=ElementType.FORM,
+        name="Search",
+        selector="@form",
+        impact="write",
+        capture="network",
+        change=ChangeSemantics(impact="write", capture="network"),
+        form=form,
+    )
+    mapper = FakeMapper()
+    executor = FormExecutor(
+        mapper=mapper,
+        policy=FakeDecisionClient(values=["search"]),
+        catalogue=DEFAULT_VALUE_CATALOGUE,
+    )
+
+    submission = executor.submit(page, element, generation=page.document_generation)
+
+    assert submission.submitted is True
+    assert submission.value_keys == ("search", "first")
+    assert [action.verb for action in mapper.actions] == ["fill", "select", "submit"]
+    assert mapper.actions[0].value == "test"
+    assert mapper.actions[1].value == "all"
+    assert mapper.actions[2].selector == "@form"
+    assert executor.ledger.should_submit(form, page.state_key) is False
+
+    second = executor.submit(page, element, generation=page.document_generation)
+
+    assert second.skipped == "duplicate"
+    assert len(mapper.actions) == 3
+    assert "value" not in form.fields[0].to_policy_field()
+
+
+def test_a_form_submit_without_a_2xx_is_not_marked():
+    state = BrowserState()
+    page = state.open_page(
+        page_visit_id="page_fail",
+        url="https://example.test/",
+        final_url="https://example.test/",
+        title="Fail",
+        snapshot=(),
+    )
+    form = FormContract(
+        root_selector="@form",
+        action="https://example.test/search",
+        method="GET",
+        fields=(FormField(name="q", type="text", label="Query", selector="@q"),),
+        submit_selector="@s",
+        submit_text="Search",
+    )
+    element = Element(
+        element_id="form",
+        fingerprint="fp-form",
+        element_type=ElementType.FORM,
+        name="Search",
+        selector="@form",
+        impact="write",
+        capture="network",
+        change=ChangeSemantics(impact="write", capture="network"),
+        form=form,
+    )
+    executor = FormExecutor(
+        mapper=FakeMapper(),
+        policy=FakeDecisionClient(values=["search"]),
+        catalogue=DEFAULT_VALUE_CATALOGUE,
+        submit_check=lambda value: False,
+    )
+
+    submission = executor.submit(page, element, generation=page.document_generation)
+
+    assert submission.submitted is False
+    assert submission.skipped == "submit_failed"
+    assert executor.ledger.should_submit(form, page.state_key) is True

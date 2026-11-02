@@ -143,6 +143,7 @@ class CrawlJob:
         deadline: Callable[[], bool] | None = None,
         cancel: Callable[[], bool] | None = None,
         clock: Callable[[], str] | None = None,
+        stop_session: bool = True,
     ) -> None:
         self._run_id = run_id
         self._session_name = session_name
@@ -163,12 +164,15 @@ class CrawlJob:
         self._deadline = deadline or (lambda: False)
         self._cancel = cancel or (lambda: False)
         self._clock = clock or _utcnow
+        self._stop_session = stop_session
         self._sidecar_attached = False
+        self._session_attached = False
 
     def run(self) -> JobResult:
         """Attach, authenticate, capture, traverse, and finalize on every exit."""
         try:
             self._session.attach(self._session_name)
+            self._session_attached = True
         except Exception as exc:  # noqa: BLE001 - every failure is a typed stop
             return self._finish(_stop_reason(exc), str(exc), None)
 
@@ -215,7 +219,7 @@ class CrawlJob:
             finished_at=self._clock(),
             flush_fn=self._flush_fn,
             ingest_fn=self._ingest_fn,
-            close_fn=self._sidecar.close if self._sidecar_attached else None,
+            close_fn=self._close,
             coverage=self._coverage,
         )
         logger.info(
@@ -233,6 +237,21 @@ class CrawlJob:
             actions=actions,
             error=error,
         )
+
+    def _close(self) -> None:
+        """Close capture and stop the owned session, surfacing either failure."""
+        errors: list[str] = []
+        try:
+            self._sidecar.close()
+        except Exception as exc:  # noqa: BLE001 - close is best-effort
+            errors.append(f"capture_close_failed: {exc}")
+        if self._session_attached and self._stop_session:
+            try:
+                self._session.stop()
+            except Exception as exc:  # noqa: BLE001 - stop is best-effort
+                errors.append(f"session_stop_failed: {exc}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     def _records(
         self, frontier: FrontierResult | None

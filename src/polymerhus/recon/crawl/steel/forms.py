@@ -20,14 +20,24 @@ importing this module performs no I/O (CODING_STANDARD section 6).
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
+from polymerhus.recon.crawl.steel.command import Action, CommandMapper
 from polymerhus.recon.crawl.steel.enumerate import Element
 from polymerhus.recon.crawl.steel.parameters import (
     DeclaredEndpoint,
     DeclaredField,
     FormContract,
+    FormField,
     declared_endpoint,
     declared_fields,
+)
+from polymerhus.recon.crawl.steel.policy.port import Policy
+from polymerhus.recon.crawl.steel.policy.select import (
+    ValueCatalogue,
+    choose_field_value,
+    validate_value,
 )
 from polymerhus.recon.crawl.steel.state import PageInstance
 
@@ -119,8 +129,154 @@ class DeclaredCollector:
             self._sink(endpoint, fields)
 
 
+@dataclass(frozen=True)
+class FormSubmission:
+    """One form attempt: submitted once, skipped, or refused before any field."""
+
+    form: FormContract | None
+    submitted: bool
+    skipped: str | None = None
+    value_keys: tuple[str, ...] = ()
+    result: Any = None
+
+
+class FormExecutor:
+    """Fill and submit one live form through the real command mapper.
+
+    The field choice comes from `choose_field_value` (the single-match shortcut
+    or Jev), the value is validated against the field contract, and the command
+    mapper types it locally. A successful submit marks the form in the ledger;
+    a duplicate is skipped before any command. The executor never records a
+    value in the manifest: only the chosen keys ride the submission.
+    """
+
+    def __init__(
+        self,
+        *,
+        mapper: CommandMapper,
+        policy: Policy,
+        catalogue: ValueCatalogue,
+        ledger: FormLedger | None = None,
+        submit_check: Callable[[FormContract], bool] | None = None,
+    ) -> None:
+        self._mapper = mapper
+        self._policy = policy
+        self._catalogue = catalogue
+        self.ledger = ledger or FormLedger()
+        self._submit_check = submit_check
+
+    def submit(
+        self, page: PageInstance, element: Element, generation: int
+    ) -> FormSubmission:
+        """Fill the fields and submit the form once in the page's state."""
+        form = element.form
+        if form is None:
+            return FormSubmission(form=None, submitted=False, skipped="no_contract")
+        if not self.ledger.should_submit(form, page.state_key):
+            return FormSubmission(form=form, submitted=False, skipped="duplicate")
+        keys: list[str] = []
+        for field in form.fields:
+            contract = field.to_policy_field()
+            choice = choose_field_value(contract, self._catalogue, self._policy)
+            if choice.skip_form:
+                return FormSubmission(
+                    form=form, submitted=False, skipped="required"
+                )
+            if choice.skip_field:
+                continue
+            validation = validate_value(choice.value or "", contract)
+            if not validation.ok:
+                continue
+            self._fill(page, field, choice.value or "", generation)
+            if choice.key:
+                keys.append(choice.key)
+        result = self._mapper.execute(
+            Action(
+                verb="submit",
+                impact="write",
+                capture="network",
+                document_generation=generation,
+                selector=form.root_selector,
+            ),
+            page,
+        )
+        failed = result is not None and getattr(result, "error", None) is not None
+        checked = True if self._submit_check is None else self._submit_check(form)
+        if failed or not checked:
+            return FormSubmission(
+                form=form,
+                submitted=False,
+                skipped="submit_failed",
+                value_keys=tuple(keys),
+                result=result,
+            )
+        self.ledger.mark_submitted(form, page.state_key)
+        return FormSubmission(
+            form=form, submitted=True, value_keys=tuple(keys), result=result
+        )
+
+    def _fill(
+        self,
+        page: PageInstance,
+        field: FormField,
+        value: str,
+        generation: int,
+    ) -> None:
+        """Type one resolved value with the verb its field type needs."""
+        if field.type in {"select-one", "select-multiple"}:
+            self._mapper.execute(
+                Action(
+                    verb="select",
+                    impact="local_state",
+                    capture="dom",
+                    document_generation=generation,
+                    selector=field.selector,
+                    value=value,
+                ),
+                page,
+            )
+        elif field.type in {"checkbox", "radio"}:
+            if value:
+                self._mapper.execute(
+                    Action(
+                        verb="check",
+                        impact="local_state",
+                        capture="dom",
+                        document_generation=generation,
+                        selector=field.selector,
+                    ),
+                    page,
+                )
+        elif field.type == "file":
+            self._mapper.execute(
+                Action(
+                    verb="upload",
+                    impact="local_state",
+                    capture="dom",
+                    document_generation=generation,
+                    selector=field.selector,
+                    value=value,
+                ),
+                page,
+            )
+        else:
+            self._mapper.execute(
+                Action(
+                    verb="fill",
+                    impact="local_state",
+                    capture="dom",
+                    document_generation=generation,
+                    selector=field.selector,
+                    value=value,
+                ),
+                page,
+            )
+
+
 __all__ = [
     "DeclaredCollector",
     "DeclaredSink",
+    "FormExecutor",
     "FormLedger",
+    "FormSubmission",
 ]
