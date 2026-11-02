@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Iterator, Mapping
 from typing import Any, Protocol
+from urllib.parse import urljoin
 
 from polymerhus.recon.crawl.steel.capture.flow import (
     DEFAULT_MAX_RESPONSE_BYTES,
@@ -28,6 +29,12 @@ from polymerhus.recon.crawl.steel.capture.flow import (
     Attribution,
     BodyStore,
     Flow,
+)
+from polymerhus.recon.crawl.steel.capture.typing import (
+    DialogRecord,
+    FrameNavigation,
+    RealtimeRecord,
+    ScriptAsset,
 )
 
 # The five enable commands, in the order spec 9.1 lists them. Nothing here
@@ -102,6 +109,13 @@ class CaptureSidecar:
         )
         self._flows: dict[str, Flow] = {}
         self._finished: list[str] = []
+        self._scripts: dict[str, ScriptAsset] = {}
+        self._script_urls: set[str] = set()
+        self._realtime: list[RealtimeRecord] = []
+        self._frames: list[FrameNavigation] = []
+        self._dialogs: list[DialogRecord] = []
+        self._websockets: dict[str, str] = {}
+        self._document_url: str | None = None
         self._page_id: str | None = None
         self._action_id: str | None = None
         self._attached = False
@@ -120,6 +134,26 @@ class CaptureSidecar:
     def flows(self) -> tuple[Flow, ...]:
         """Every completed flow, in the order it finished."""
         return tuple(self._flows[request_id] for request_id in self._finished)
+
+    @property
+    def scripts(self) -> tuple[ScriptAsset, ...]:
+        """Every parsed script, deduplicated by absolute URL."""
+        return tuple(self._scripts.values())
+
+    @property
+    def realtime(self) -> tuple[RealtimeRecord, ...]:
+        """Every WebSocket lifecycle record, in arrival order."""
+        return tuple(self._realtime)
+
+    @property
+    def frames(self) -> tuple[FrameNavigation, ...]:
+        """Every observed frame navigation, in arrival order."""
+        return tuple(self._frames)
+
+    @property
+    def dialogs(self) -> tuple[DialogRecord, ...]:
+        """Every JavaScript dialog the sidecar auto-dismissed."""
+        return tuple(self._dialogs)
 
     def attach(self) -> None:
         """Enable the capture domains; never send a browser action.
@@ -170,6 +204,26 @@ class CaptureSidecar:
                 flow = self._record_failed(event.params)
                 if flow is not None:
                     completed.append(flow)
+            elif event.method == "Network.webSocketCreated":
+                self._record_websocket_created(event.params)
+            elif event.method == "Network.webSocketWillSendHandshakeRequest":
+                self._record_handshake_request(event.params)
+            elif event.method == "Network.webSocketHandshakeResponseReceived":
+                flow = self._record_handshake_response(event.params)
+                if flow is not None:
+                    completed.append(flow)
+            elif event.method == "Network.webSocketFrameSent":
+                self._record_frame(event.params, "sent")
+            elif event.method == "Network.webSocketFrameReceived":
+                self._record_frame(event.params, "received")
+            elif event.method == "Network.webSocketClosed":
+                self._record_closed(event.params)
+            elif event.method == "Debugger.scriptParsed":
+                self._record_script(event.params)
+            elif event.method == "Page.frameNavigated":
+                self._record_frame_navigation(event.params)
+            elif event.method == "Page.javascriptDialogOpening":
+                self._handle_dialog(event.params)
         return tuple(completed)
 
     def _record_request(self, params: Mapping[str, Any]) -> None:
@@ -216,6 +270,176 @@ class CaptureSidecar:
                 "encoded_data_length": _opt_int(response.get("encodedDataLength")),
                 "http_version": _opt_str(response.get("protocol")),
             }
+        )
+
+    def _record_websocket_created(self, params: Mapping[str, Any]) -> None:
+        """Record the WebSocket creation; the handshake flow starts next."""
+        request_id = _opt_str(params.get("requestId"))
+        if request_id is None:
+            return
+        url = _opt_str(params.get("url")) or ""
+        self._websockets[request_id] = url
+        self._realtime.append(
+            RealtimeRecord(
+                request_id=request_id,
+                kind="websocket_created",
+                url=url,
+                page_id=self._page_id,
+                action_id=self._action_id,
+            )
+        )
+
+    def _record_handshake_request(self, params: Mapping[str, Any]) -> None:
+        """The handshake request is an HTTP flow (spec 9.3), not a frame."""
+        request_id = _opt_str(params.get("requestId"))
+        request = params.get("request")
+        if request_id is None or not isinstance(request, Mapping):
+            return
+        url = _opt_str(request.get("url")) or self._websockets.get(request_id, "")
+        self._flows[request_id] = Flow(
+            request_id=request_id,
+            page_id=self._page_id,
+            action_id=self._action_id,
+            attribution=_attribution(self._page_id, self._action_id),
+            method=_opt_str(request.get("method")) or "GET",
+            url=url,
+            request_headers=_headers(request.get("headers")),
+            request_body=_opt_str(request.get("postData")),
+            resource_type="WebSocket",
+            initiator=_mapping(params.get("initiator")),
+            received_at=_opt_float(params.get("wallTime")),
+        )
+        self._realtime.append(
+            RealtimeRecord(
+                request_id=request_id,
+                kind="handshake_request",
+                url=url,
+                headers=_headers(request.get("headers")),
+                timestamp=_opt_float(params.get("timestamp")),
+                page_id=self._page_id,
+                action_id=self._action_id,
+            )
+        )
+
+    def _record_handshake_response(self, params: Mapping[str, Any]) -> Flow | None:
+        """The `101` handshake response closes the HTTP flow and is kept as realtime."""
+        request_id = _opt_str(params.get("requestId"))
+        flow = self._flows.get(request_id or "")
+        response = params.get("response")
+        if flow is None or not isinstance(response, Mapping):
+            return None
+        status = _opt_int(response.get("status"))
+        headers = _headers(response.get("headers"))
+        self._realtime.append(
+            RealtimeRecord(
+                request_id=flow.request_id,
+                kind="handshake_response",
+                url=flow.url,
+                status=status,
+                headers=headers,
+                timestamp=_opt_float(params.get("timestamp")),
+                page_id=flow.page_id,
+                action_id=flow.action_id,
+            )
+        )
+        return self._finish(
+            flow.model_copy(
+                update={
+                    "status": status,
+                    "response_headers": headers,
+                    "http_version": _opt_str(response.get("protocol")) or "http/1.1",
+                    "finished": True,
+                }
+            )
+        )
+
+    def _record_frame(
+        self, params: Mapping[str, Any], direction: str
+    ) -> None:
+        """One WebSocket frame direction is one realtime record (spec 9.3)."""
+        request_id = _opt_str(params.get("requestId"))
+        response = params.get("response")
+        if request_id is None or not isinstance(response, Mapping):
+            return
+        self._realtime.append(
+            RealtimeRecord(
+                request_id=request_id,
+                kind="frame_sent" if direction == "sent" else "frame_received",
+                direction=direction,
+                opcode=_opt_int(response.get("opcode")),
+                payload=_opt_str(response.get("payloadData")),
+                timestamp=_opt_float(params.get("timestamp")),
+                page_id=self._page_id,
+                action_id=self._action_id,
+            )
+        )
+
+    def _record_closed(self, params: Mapping[str, Any]) -> None:
+        request_id = _opt_str(params.get("requestId"))
+        if request_id is None:
+            return
+        self._realtime.append(
+            RealtimeRecord(
+                request_id=request_id,
+                kind="closed",
+                timestamp=_opt_float(params.get("timestamp")),
+                page_id=self._page_id,
+                action_id=self._action_id,
+            )
+        )
+
+    def _record_script(self, params: Mapping[str, Any]) -> None:
+        """One parsed script becomes a `ScriptAsset`; a source map is never fetched."""
+        script_id = _opt_str(params.get("scriptId"))
+        url = _opt_str(params.get("url"))
+        if script_id is None or not url:
+            return
+        absolute = urljoin(self._document_url or "", url)
+        if not absolute or absolute in self._script_urls:
+            return
+        self._script_urls.add(absolute)
+        self._scripts[script_id] = ScriptAsset(
+            script_url=absolute, script_id=script_id
+        )
+
+    def _record_frame_navigation(self, params: Mapping[str, Any]) -> None:
+        """Record one frame navigation and use its URL as the document base."""
+        frame = params.get("frame")
+        if not isinstance(frame, Mapping):
+            return
+        frame_id = _opt_str(frame.get("id"))
+        url = _opt_str(frame.get("url"))
+        if frame_id is None or not url:
+            return
+        self._document_url = url
+        self._frames.append(
+            FrameNavigation(
+                frame_id=frame_id,
+                url=url,
+                parent_frame_id=_opt_str(frame.get("parentId")),
+                page_id=self._page_id,
+            )
+        )
+
+    def _handle_dialog(self, params: Mapping[str, Any]) -> None:
+        """Auto-dismiss the JavaScript dialog and record the attempt (spec 9.2)."""
+        message = _opt_str(params.get("message")) or ""
+        dialog_type = _opt_str(params.get("type")) or "unknown"
+        url = _opt_str(params.get("url"))
+        error: str | None = None
+        try:
+            self._transport.send(
+                "Page.handleJavaScriptDialog", {"accept": True, "promptText": "test"}
+            )
+        except Exception as exc:  # noqa: BLE001 - the dialog is still recorded
+            error = str(exc)
+        self._dialogs.append(
+            DialogRecord(
+                message=message,
+                dialog_type=dialog_type,
+                url=url,
+                error=error,
+            )
         )
 
     def _record_finished(self, params: Mapping[str, Any]) -> Flow | None:
