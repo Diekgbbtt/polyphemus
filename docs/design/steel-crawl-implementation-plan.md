@@ -144,6 +144,8 @@ The issue number is recorded in this plan's execution log below.
 
 ## 10. Execution log
 
+Unrelated test repair: `887c19bf` supplies the required `SpecWrite` fields in the artifact schema test, so the whole `tests/recon` tier is green (1439 passed, 20 skipped).
+
 | ID | Issue | Commit | Tests | Status |
 | - | - | - | - | - |
 | SC-00 | #416 | 73a5fde6 | 48 passed | done |
@@ -151,7 +153,7 @@ The issue number is recorded in this plan's execution log below.
 | SC-02 | #418 | 748d3173 | 114 passed | done |
 | SC-03 | #419 | f146af42 + f4ca9dad | 123 passed | done |
 | SC-04 | #420 | 932ca98a | 197 passed | done |
-| SC-05 | #421 | | | pending |
+| SC-05 | #421 | a0f4c5d8 | 220 passed | done |
 | SC-06 | #422 | | | pending |
 | SC-07 | #423 | | | pending |
 | SC-08 | #424 | | | pending |
