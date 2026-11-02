@@ -9,12 +9,26 @@ from .cdp import CdpCommand, FakeCdpTransport
 from .decision import DecisionQuestion, DecisionQueueExhausted, FakeDecisionClient
 from .exec_fn import ExecQueueExhausted, FakeExecFn
 from .golden import assert_matches_golden
+from .jev import (
+    MISSING_ANSWER,
+    AskCall,
+    AskQueueExhausted,
+    AsyncAskCall,
+    FakeAskClient,
+    FakeAsyncTypeSafe,
+)
 
 __all__ = [
+    "MISSING_ANSWER",
+    "AskCall",
+    "AskQueueExhausted",
+    "AsyncAskCall",
     "CdpCommand",
     "DecisionQuestion",
     "DecisionQueueExhausted",
     "ExecQueueExhausted",
+    "FakeAskClient",
+    "FakeAsyncTypeSafe",
     "FakeCdpTransport",
     "FakeDecisionClient",
     "FakeExecFn",
