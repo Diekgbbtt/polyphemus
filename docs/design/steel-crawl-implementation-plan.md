@@ -147,7 +147,7 @@ The issue number is recorded in this plan's execution log below.
 | ID | Issue | Commit | Tests | Status |
 | - | - | - | - | - |
 | SC-00 | #416 | 73a5fde6 | 48 passed | done |
-| SC-01 | #417 | | | pending |
+| SC-01 | #417 | 7cd600f3 | 72 passed | done |
 | SC-02 | #418 | | | pending |
 | SC-03 | #419 | | | pending |
 | SC-04 | #420 | | | pending |
