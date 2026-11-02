@@ -65,6 +65,12 @@ def parse(stdout: str) -> list[AssetDelta]:
     if not isinstance(manifest, dict):
         return []
 
+    if manifest.get("schema_version") == "steel-crawl/v2":
+        return _parse_v2(manifest)
+    return _parse_v1(manifest)
+
+
+def _parse_v1(manifest: dict) -> list[AssetDelta]:
     deltas: list[AssetDelta] = []
 
     endpoints = manifest.get("endpoints") or []
@@ -132,3 +138,142 @@ def parse(stdout: str) -> list[AssetDelta]:
             deltas.extend(url_to_deltas(url, method="GET", source="steel-js"))
 
     return deltas
+
+
+def _parse_v2(manifest: dict) -> list[AssetDelta]:
+    """Parse the `steel-crawl/v2` graph input (spec 11, 8.4).
+
+    Endpoints and parameters carry both provenances; the manifest is the only
+    place the two are distinct, so the parser preserves the `provenance` prop
+    rather than merging the records. A parameter whose endpoint is not in the
+    manifest is skipped: the graph anchor would be missing. Scripts mint their
+    script URL as an Endpoint; realtime and error records are not graph nodes.
+    """
+    deltas: list[AssetDelta] = []
+    endpoint_by_id: dict[str, dict] = {}
+    endpoints = manifest.get("endpoints") or []
+    if isinstance(endpoints, list):
+        for entry in endpoints:
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get("url")
+            if not isinstance(url, str) or not base_and_path(url):
+                continue
+            endpoint_deltas = url_to_deltas(
+                url,
+                method=entry.get("method") or "GET",
+                source=entry.get("source") or "steel-crawl",
+                extra_endpoint_props=_present(
+                    {
+                        "provenance": entry.get("provenance"),
+                        "status_code": entry.get("status_code"),
+                        "resource_type": entry.get("resource_type"),
+                        "http_artifact_id": entry.get("http_artifact_id"),
+                        "source_page_id": entry.get("source_page_id"),
+                        "action_id": entry.get("action_id"),
+                        "enctype": entry.get("enctype"),
+                        "field_names": list(entry.get("field_names") or []),
+                    }
+                ),
+                query_params=[],
+                body_params=[],
+            )
+            # The v2 manifest owns the parameter records (both provenances), so
+            # the URL's automatic query projection is dropped here; otherwise a
+            # manifest parameter and its URL twin would both mint the same node.
+            endpoint_deltas = [
+                delta for delta in endpoint_deltas if delta.type != "Parameter"
+            ]
+            endpoint = next(
+                (delta for delta in endpoint_deltas if delta.type == "Endpoint"),
+                None,
+            )
+            if endpoint is None:
+                continue
+            endpoint_id = entry.get("endpoint_id")
+            if isinstance(endpoint_id, str) and endpoint_id:
+                endpoint_by_id[endpoint_id] = endpoint.identity
+            deltas.extend(endpoint_deltas)
+
+    parameters = manifest.get("parameters") or []
+    if isinstance(parameters, list):
+        for entry in parameters:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            endpoint_id = entry.get("endpoint_id")
+            identity = (
+                endpoint_by_id.get(endpoint_id)
+                if isinstance(endpoint_id, str)
+                else None
+            )
+            if identity is None:
+                continue
+            options = entry.get("options")
+            props = _present(
+                {
+                    "provenance": entry.get("provenance"),
+                    "value_shape": entry.get("value_shape"),
+                    "http_artifact_id": entry.get("http_artifact_id"),
+                    "content_type": entry.get("content_type"),
+                    "field_type": entry.get("field_type"),
+                    "label": entry.get("label"),
+                    "options": list(options) if isinstance(options, list) else None,
+                    "pattern": entry.get("pattern"),
+                    "min": entry.get("min"),
+                    "max": entry.get("max"),
+                }
+            )
+            deltas.append(
+                AssetDelta(
+                    type="Parameter",
+                    identity={
+                        "name": name,
+                        "position": entry.get("position") or "query",
+                        "endpoint_path": entry.get("endpoint_path")
+                        or identity["path"],
+                        "baseurl": entry.get("baseurl") or identity["baseurl"],
+                    },
+                    props=props,
+                    edges=[
+                        Edge(
+                            rel="HAS_PARAMETER",
+                            dir="in",
+                            node_type="Endpoint",
+                            node_identity=identity,
+                        )
+                    ],
+                )
+            )
+
+    scripts = manifest.get("scripts") or []
+    if isinstance(scripts, list):
+        for entry in scripts:
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get("script_url")
+            if not isinstance(url, str) or not base_and_path(url):
+                continue
+            deltas.extend(
+                url_to_deltas(
+                    url,
+                    method="GET",
+                    source="steel-script",
+                    extra_endpoint_props=_present(
+                        {
+                            "script_id": entry.get("script_id"),
+                            "provenance": entry.get("provenance"),
+                        }
+                    ),
+                    query_params=[],
+                    body_params=[],
+                )
+            )
+    return deltas
+
+
+def _present(values: dict) -> dict:
+    """Drop absent keys; a present empty list or dict is still meaningful."""
+    return {key: value for key, value in values.items() if value is not None}
