@@ -120,6 +120,37 @@ def test_the_home_snapshot_maps_forms_buttons_disclosures_and_roles():
     assert elements["e18"].channel is Channel.OFFER
 
 
+def test_an_offered_form_carries_its_declared_contract():
+    elements = by_id(project("home"))
+    form = elements["e5"]
+
+    assert form.form is not None
+    assert form.form.root_selector == "@e5"
+    # The action is absolute against the page URL, and the method and enctype
+    # are the form's own values with the HTML defaults (spec 8.1).
+    assert form.form.action == "https://example.test/search"
+    assert form.form.method == "GET"
+    assert form.form.enctype == "application/x-www-form-urlencoded"
+    # The descendant fields are the contract, even though they are not
+    # candidates: name, type, label, options, and selector, in document order.
+    assert [
+        (field.name, field.type, field.label, field.options, field.selector)
+        for field in form.form.fields
+    ] == [
+        ("q", "search", "Search products", (), "@e6"),
+        ("category", "select-one", "Category", ("all", "books"), "@e7"),
+    ]
+    # The submit control is the form's submit surface, not a second field.
+    assert form.form.submit_selector == "@e8"
+    assert form.form.submit_text == "Search"
+    # A form element's resolved action and method agree with its contract.
+    assert form.change.action == form.form.action
+    assert form.change.method == form.form.method
+    # The submit control is the same form, so it carries the same submission.
+    assert elements["e8"].form is not None
+    assert elements["e8"].form.fingerprint == form.form.fingerprint
+
+
 def test_the_home_snapshot_drops_the_exclusion_set_and_keeps_its_signal_free_customs():
     elements = by_id(project("home"))
 

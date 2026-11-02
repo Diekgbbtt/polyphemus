@@ -23,12 +23,18 @@ fingerprint hashes the stable semantic fields and the DOM path, so two
 projections of one snapshot agree while a changed label, href, action, type, or
 path changes the fingerprint. The compact projection (`render_projection`) is
 the bounded surface the policy and the control facts read.
+
+A `FORM`-typed element also carries the form's declared contract (spec 8.1). The
+contract is the DOM fact, so a form and its submit control carry the same one;
+the channel decides whether it is offered, collected, or ignored. The fields are
+part of the contract while staying out of the candidate list: the form is the
+unit, and the values are network-observed.
 """
 from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Literal
@@ -37,6 +43,12 @@ from urllib.parse import urljoin, urlsplit
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.recon.crawl.steel.command import CaptureChannel, ImpactClass
+from polymerhus.recon.crawl.steel.parameters import (
+    DEFAULT_ENCTYPE,
+    DEFAULT_METHOD,
+    FormContract,
+    FormField,
+)
 from polymerhus.recon.crawl.steel.state import BrowserState, PageInstance
 
 # The handler vocabulary of the change semantics (spec 6.5).
@@ -169,7 +181,9 @@ class Element(BaseModel):
     `selector` is what the command mapper resolves before acting: the
     document-scoped `@ref` when the snapshot carries one, else a deterministic
     CSS-ish path. `fingerprint` is what the consumed set stores; `element_id` is
-    the stable identity the decision records cite.
+    the stable identity the decision records cite. `form` is the declared
+    contract of a `FORM` candidate (spec 8.1), for the form element and for its
+    submit control alike; it is `None` for every other type.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -186,6 +200,7 @@ class Element(BaseModel):
     impact: ImpactClass = "local_state"
     capture: CaptureChannel = "dom"
     change: ChangeSemantics
+    form: FormContract | None = None
     synthetic: bool = False
     disabled: bool = False
     visible: bool = True
@@ -446,6 +461,15 @@ def _attr(node: SnapshotNode, name: str) -> str | None:
     return None
 
 
+def _attr_text(node: SnapshotNode, name: str) -> str | None:
+    """One attribute as stripped non-empty text, or `None` when absent or empty."""
+    value = _attr(node, name)
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None
+
+
 def _has_attr(node: SnapshotNode, name: str) -> bool:
     return _attr(node, name) is not None
 
@@ -525,12 +549,18 @@ class _Classified:
 
 @dataclass(frozen=True)
 class _Draft:
-    """One classified node with the DOM identity its element will carry."""
+    """One classified node with the DOM identity its element will carry.
+
+    `form` and `form_css` are the nearest enclosing form element, so a submit
+    control can carry its form's declared contract.
+    """
 
     node: SnapshotNode
     path: tuple[int, ...]
     css: str
     classified: _Classified
+    form: SnapshotNode | None = None
+    form_css: str | None = None
 
 
 @dataclass(frozen=True)
@@ -596,6 +626,8 @@ class ElementMap:
                     draft.css,
                     draft.classified,
                     settings,
+                    form=draft.form,
+                    form_css=draft.form_css,
                     controls=controls,
                     control_facts=facts,
                 )
@@ -658,6 +690,7 @@ def _walk(
     form: SnapshotNode | None,
     settings: ProjectElementSettings | None,
     drafts: list[_Draft],
+    form_css: str | None = None,
     ignore_own_hidden: bool = False,
 ) -> None:
     """Classify one node, then recurse into its children in document order.
@@ -672,8 +705,9 @@ def _walk(
         return
     classified = _classify(node, base, form, settings)
     if classified is not None:
-        drafts.append(_Draft(node, path, css, classified))
+        drafts.append(_Draft(node, path, css, classified, form, form_css))
     child_form = node if _tag(node) == "form" else form
+    child_form_css = css if _tag(node) == "form" else form_css
     for index, child in enumerate(node.children):
         _walk(
             child,
@@ -683,6 +717,7 @@ def _walk(
             form=child_form,
             settings=settings,
             drafts=drafts,
+            form_css=child_form_css,
         )
 
 
@@ -733,7 +768,15 @@ def _control_facts(
             ignore_own_hidden=True,
         )
         target_elements = [
-            _element(draft.node, draft.path, draft.css, draft.classified, settings)
+            _element(
+                draft.node,
+                draft.path,
+                draft.css,
+                draft.classified,
+                settings,
+                form=draft.form,
+                form_css=draft.form_css,
+            )
             for draft in target_drafts
         ]
         unconsumed = state.unconsumed(page, target_elements)
@@ -1071,6 +1114,9 @@ def _element(
     css: str,
     classified: _Classified,
     settings: ProjectElementSettings | None,
+    *,
+    form: SnapshotNode | None = None,
+    form_css: str | None = None,
     controls: tuple[str, ...] = (),
     control_facts: tuple[ControlFact, ...] = (),
 ) -> Element:
@@ -1122,11 +1168,150 @@ def _element(
         impact=impact,
         capture=capture,
         change=change,
+        form=_declared_contract(node, css, classified, form, form_css),
         synthetic=classified.synthetic,
         disabled=_has_attr(node, "disabled")
         or (_attr(node, "aria-disabled") or "").strip().lower() == "true",
         visible=node.visible,
     )
+
+
+# The types that describe a form, whether offered, collected, or ignored (spec
+# 6.2). The contract is the DOM fact; the channel decides what to do with it.
+_FORM_TYPES = frozenset({ElementType.FORM, ElementType.EXTERNAL_FORM})
+
+# The form-field types of spec 8.1, keyed by tag. A submit, reset, or plain
+# button is a control, never a field, so it never enters the field list.
+_FIELD_TYPES = {
+    "input": "text",
+    "select": "select-one",
+    "textarea": "textarea",
+}
+_NON_FIELD_INPUT_TYPES = frozenset({"button", "image", "reset", "submit"})
+
+
+def _declared_contract(
+    node: SnapshotNode,
+    css: str,
+    classified: _Classified,
+    form: SnapshotNode | None,
+    form_css: str | None,
+) -> FormContract | None:
+    """The declared form contract a `FORM`-typed element carries (spec 8.1).
+
+    The contract describes the form, so a submit control carries exactly its
+    form's contract: `root_selector` is the form element's selector, and the
+    submit control is the form's first one. A node typed `FORM` without a form
+    element or without a resolved action has no contract to describe.
+    """
+    if classified.element_type not in _FORM_TYPES:
+        return None
+    root = node if _tag(node) == "form" else form
+    if root is None or not classified.resolved:
+        return None
+    root_css = css if root is node else (form_css or "")
+    submit_selector, submit_text = _submit_control(root, root_css)
+    return FormContract(
+        root_selector=_selector(root, root_css),
+        action=classified.resolved,
+        method=classified.method or DEFAULT_METHOD,
+        enctype=(_attr_text(root, "enctype") or DEFAULT_ENCTYPE).lower(),
+        fields=_form_fields(root, root_css),
+        submit_selector=submit_selector,
+        submit_text=submit_text,
+    )
+
+
+def _form_fields(root: SnapshotNode, root_css: str) -> tuple[FormField, ...]:
+    """The form's field contract, in document order, values excluded (spec 8.1)."""
+    fields: list[FormField] = []
+    for node, css in _descendants(root, root_css):
+        field = _form_field(node, css)
+        if field is not None:
+            fields.append(field)
+    return tuple(fields)
+
+
+def _form_field(node: SnapshotNode, css: str) -> FormField | None:
+    """One field contract, or `None` for a control that is not a field."""
+    tag = _tag(node)
+    default_type = _FIELD_TYPES.get(tag)
+    if default_type is None:
+        return None
+    field_type = default_type
+    if tag == "input":
+        field_type = (_attr_text(node, "type") or default_type).lower()
+        if field_type in _NON_FIELD_INPUT_TYPES:
+            return None
+    elif tag == "select" and _has_attr(node, "multiple"):
+        field_type = "select-multiple"
+    return FormField(
+        name=(_attr_text(node, "name") or ""),
+        type=field_type,
+        label=(node.name or "").strip(),
+        options=_option_values(node) if tag == "select" else (),
+        pattern=_attr_text(node, "pattern"),
+        min=_attr_text(node, "min"),
+        max=_attr_text(node, "max"),
+        checked=_has_attr(node, "checked"),
+        selector=_selector(node, css),
+    )
+
+
+def _option_values(node: SnapshotNode) -> tuple[str, ...]:
+    """The option values of a select in document order.
+
+    An option without a `value` attribute submits its own text, so the text is
+    the value; the option text itself is not part of the contract.
+    """
+    values: list[str] = []
+    for child, _ in _descendants(node, ""):
+        if _tag(child) == "option":
+            value = _attr(child, "value")
+            values.append(
+                value if value is not None else (child.text or child.name or "").strip()
+            )
+    return tuple(values)
+
+
+def _submit_control(root: SnapshotNode, root_css: str) -> tuple[str | None, str]:
+    """The form's submit control: its selector and its label (spec 8.1).
+
+    The first submit control in document order is the form's submit surface. A
+    button with no explicit type is a submit inside a form; a submit or image
+    input submits too. A form with no submit control reports none, so the
+    executor submits it through `requestSubmit()` instead.
+    """
+    for node, css in _descendants(root, root_css):
+        if _is_submit_control(node):
+            return _selector(node, css), _control_text(node)
+    return None, ""
+
+
+def _is_submit_control(node: SnapshotNode) -> bool:
+    tag = _tag(node)
+    if tag == "button":
+        return (_attr_text(node, "type") or "submit").lower() == "submit"
+    if tag == "input":
+        return (_attr_text(node, "type") or "").lower() in {"image", "submit"}
+    return False
+
+
+def _control_text(node: SnapshotNode) -> str:
+    """A submit control's label: its text, its name, else its value attribute."""
+    return (
+        (node.text or "").strip()
+        or (node.name or "").strip()
+        or (_attr_text(node, "value") or "")
+    )
+
+
+def _descendants(node: SnapshotNode, css: str) -> Iterator[tuple[SnapshotNode, str]]:
+    """Every descendant in document order, with the selector path it would carry."""
+    for index, child in enumerate(node.children):
+        child_css = f"{css} > {_tag(child) or '*'}:nth-child({index + 1})"
+        yield child, child_css
+        yield from _descendants(child, child_css)
 
 
 def _channel_for(
