@@ -27,6 +27,7 @@ from polymerhus.recon.crawl.steel.policy.jev import JevPolicy
 from polymerhus.recon.crawl.steel.policy.port import PolicyInvalidChoice
 from polymerhus.recon.crawl.steel.policy.select import (
     DEFAULT_VALUE_CATALOGUE,
+    ValueCatalogue,
     ValueEntry,
     ValueValidation,
     choose_field_value,
@@ -211,6 +212,35 @@ def test_the_default_catalogue_is_the_spec_value_catalogue():
     }
 
 
+def test_a_catalogue_with_a_run_id_resolves_the_email_placeholder():
+    catalogue = ValueCatalogue(
+        entries=DEFAULT_VALUE_CATALOGUE.entries, run_id="run-123"
+    )
+
+    assert catalogue.value_for("email") == "qa-crawl+run-123@example.test"
+    choice = choose_field_value(
+        {"name": "contact", "type": "email"}, catalogue, FakeDecisionClient()
+    )
+    assert choice.value == "qa-crawl+run-123@example.test"
+
+
+def test_an_empty_run_id_only_removes_the_placeholder():
+    # The documented empty-run behaviour: the placeholder is removed and no
+    # other entry value is touched. The executor's pattern check decides whether
+    # the resulting address is usable for the field.
+    catalogue = ValueCatalogue(entries=DEFAULT_VALUE_CATALOGUE.entries)
+
+    assert catalogue.run_id == ""
+    assert catalogue.value_for("email") == "qa-crawl+@example.test"
+    assert catalogue.value_for("search") == "test"
+    assert catalogue.value_for("url") == "https://example.test/"
+
+
+def test_value_for_a_none_or_unknown_key_is_none():
+    assert DEFAULT_VALUE_CATALOGUE.value_for("none") is None
+    assert DEFAULT_VALUE_CATALOGUE.value_for("missing") is None
+
+
 @pytest.mark.parametrize(
     ("field_type", "kind"),
     [
@@ -268,12 +298,15 @@ def test_the_matching_keys_are_the_entries_of_the_field_kind_excluding_none():
 
 def test_one_matching_entry_is_used_without_asking_the_policy():
     field = {"name": "contact", "type": "email"}
+    catalogue = ValueCatalogue(
+        entries=DEFAULT_VALUE_CATALOGUE.entries, run_id="run-123"
+    )
     policy = FakeDecisionClient()
 
-    choice = choose_field_value(field, DEFAULT_VALUE_CATALOGUE, policy)
+    choice = choose_field_value(field, catalogue, policy)
 
     assert choice.key == "email"
-    assert choice.value == "qa-crawl+<run>@example.test"
+    assert choice.value == "qa-crawl+run-123@example.test"
     assert choice.source == "single"
     assert choice.skip_field is False
     assert choice.skip_form is False

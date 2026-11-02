@@ -43,6 +43,10 @@ ValueKind = Literal["email", "text", "number", "date", "url", "file", "option", 
 # (spec 8.2); it is never typed literally.
 FIRST_OPTION = "__first_option__"
 
+# The run-id placeholder of a catalogue value. The prototype substitutes the
+# run id so the typed email is unique per run; an empty run id removes it.
+_RUN_PLACEHOLDER = "<run>"
+
 
 @dataclass(frozen=True)
 class ChoiceOutcome:
@@ -89,13 +93,30 @@ class ValueEntry:
 
 @dataclass(frozen=True)
 class ValueCatalogue:
-    """The value catalogue: one entry per key, keys in catalogue order (spec 8.2)."""
+    """The value catalogue: one entry per key, keys in catalogue order (spec 8.2).
+
+    `run_id` substitutes the `<run>` placeholder in every entry value, so one
+    configured catalogue fills a per-run email without the value ever entering a
+    policy request. An empty run id removes the placeholder.
+    """
 
     entries: Mapping[str, ValueEntry]
+    run_id: str = ""
+
+    def value_for(self, key: str) -> str | None:
+        """The resolved value for a catalogue key, or `None` for no value.
+
+        A `none` key, an entry whose value is null, and an unknown key all mean
+        "nothing to type". Every `<run>` in a value is replaced by `run_id`.
+        """
+        entry = self.entries.get(key)
+        if entry is None or entry.kind == "none" or entry.value is None:
+            return None
+        return entry.value.replace(_RUN_PLACEHOLDER, self.run_id)
 
 
 # The exact default catalogue of spec 8.2, `none` included. The email's `<run>`
-# is the spec's placeholder and stays literal: no run substitution is specified.
+# is the run-id placeholder, substituted by `ValueCatalogue.value_for`.
 DEFAULT_VALUE_CATALOGUE = ValueCatalogue(
     entries={
         "email": ValueEntry(
@@ -220,39 +241,40 @@ def choose_field_value(
     if not keys:
         return _declined(field)
     if len(keys) == 1:
-        key = keys[0]
-        return _resolved(field, key, catalogue.entries[key], source="single")
+        return _resolved(field, keys[0], catalogue, source="single")
     answer = policy.choose_value(_field_contract(field), catalogue.entries)
     if answer is None or answer == NONE_CHOICE:
         return _declined(field)
-    entry = catalogue.entries.get(answer)
-    if entry is None:
+    if answer not in catalogue.entries:
         raise PolicyInvalidChoice(
             "choose_value", answer, answer_space(catalogue.entries)
         )
-    return _resolved(field, answer, entry, source="jev")
+    return _resolved(field, answer, catalogue, source="jev")
 
 
 def _resolved(
     field: Mapping[str, Any],
     key: str,
-    entry: ValueEntry,
+    catalogue: ValueCatalogue,
     *,
     source: ValueSource,
 ) -> ValueChoice:
     """The choice for one resolved entry, skipped when it resolves to no value."""
-    value = _resolved_value(entry, field)
+    value = _resolved_value(key, catalogue, field)
     if value is None:
         return _skipped(field, key=key, source=source)
     return ValueChoice(key=key, value=value, source=source)
 
 
-def _resolved_value(entry: ValueEntry, field: Mapping[str, Any]) -> str | None:
-    """The value to type: the entry's own, or the field's first non-empty option."""
-    if entry.kind == "none" or entry.value is None:
+def _resolved_value(
+    key: str, catalogue: ValueCatalogue, field: Mapping[str, Any]
+) -> str | None:
+    """The value to type: the entry's run-resolved value, or the first option."""
+    value = catalogue.value_for(key)
+    if value is None:
         return None
-    if entry.value != FIRST_OPTION:
-        return entry.value
+    if value != FIRST_OPTION:
+        return value
     for option in _option_values(field.get("options")):
         if option.strip():
             return option.strip()
