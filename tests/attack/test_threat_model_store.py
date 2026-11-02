@@ -1054,16 +1054,17 @@ def test_completion_reports_referential_errors(tmp_path):
         store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
     vulnerabilities = _vulnerabilities()
     vulnerabilities[0]["fault_ref"] = "fault-missing"
-    store.write_sections(
+    path = store.write_sections(
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": vulnerabilities}, run_id=RUN,
     )
 
-    store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
+    _write_completed_document(store, path, _completed_sections())
 
-    validation = store.read_model(PROJECT, UNIT)["validation"]
-    assert validation["valid"] is False
-    assert "vulnerability:v-1.fault_ref='fault-missing'" in validation["referential_errors"]
+    validation = check_completion(
+        UnitThreatModel.model_validate(store.read_model(PROJECT, UNIT)))
+    assert validation.valid is False
+    assert "vulnerability:v-1.fault_ref='fault-missing'" in validation.referential_errors
 
 
 def test_completion_reports_an_unresolved_violation_transition_ref(tmp_path):
@@ -1082,16 +1083,16 @@ def test_completion_reports_an_unresolved_violation_transition_ref(tmp_path):
     store.write_sections(
         PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
         {"assumptions": _assumptions()}, run_id=RUN)
-    store.write_sections(
+    path = store.write_sections(
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": _vulnerabilities()}, run_id=RUN)
-    store.write_sections(
-        PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
+    _write_completed_document(store, path, _completed_sections())
 
-    validation = store.read_model(PROJECT, UNIT)["validation"]
-    assert validation["valid"] is False
+    validation = check_completion(
+        UnitThreatModel.model_validate(store.read_model(PROJECT, UNIT)))
+    assert validation.valid is False
     assert "violation:vi-1.transition_ref='tr-missing'" in \
-        validation["referential_errors"]
+        validation.referential_errors
 
 
 def test_completion_reports_an_unclosed_assumption(tmp_path):
@@ -1309,7 +1310,7 @@ def test_completion_reports_a_vulnerability_without_an_assessment_row(tmp_path):
         PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
         {"vulnerabilities": [_vulnerabilities()[0], second]}, run_id=RUN)
     _seed_assessments(path, _impact_assessment())
-    store.write_sections(PROJECT, UNIT, "COMPLETED", {"threats": []}, run_id=RUN)
+    _write_completed_document(store, path, {"threats": []})
 
     validation = check_completion(
         UnitThreatModel.model_validate(store.read_model(PROJECT, UNIT)))
@@ -1726,6 +1727,36 @@ def test_the_impact_assessed_gate_refuses_an_empty_hunts_store_write(tmp_path):
             PROJECT, UNIT, "IMPACT_ASSESSED", {}, run_id=RUN)
 
     assert raised.value.fields == ["state"]
+    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
+
+
+def _write_completed_document(store, path: Path, sections: dict) -> Path:
+    """Write a COMPLETED document out of band.
+
+    The store now refuses a COMPLETED write that skips a non-dropped
+    vulnerability's assessment. The checker tests need an invalid document, so
+    they write it directly; the checker remains the unit under test."""
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document.update(sections)
+    document["state"] = "COMPLETED"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def test_a_completed_write_without_an_assessment_is_rejected(tmp_path):
+    """The pass cannot skip the impact assessment: a COMPLETED write that
+    leaves a non-dropped vulnerability without a scored row is a coded
+    rejection, so the model re-enters with the assess_impact feedback instead
+    of the run archiving the unit as degraded."""
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store)
+
+    with pytest.raises(ThreatModelIdentityError) as raised:
+        store.write_sections(
+            PROJECT, UNIT, "COMPLETED", {"threats": [_threat()]}, run_id=RUN)
+
+    assert raised.value.fields == ["impact_assessment"]
+    assert "assess_impact" in str(raised.value)
     assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
 
 
@@ -2774,20 +2805,19 @@ def test_the_completed_mirror_never_takes_another_vulnerability_row(tmp_path):
         run_id=RUN,
     )
     _seed_assessments(path, _impact_assessment())
-    store.write_sections(
-        PROJECT, UNIT, "COMPLETED",
-        {"threats": [{
-            **_write_shape(_threat("high")),
-            "vulnerability_ref": "v-2",
-            "canonical_class": "Path Traversal",
-        }]},
-        run_id=RUN,
-    )
+    _write_completed_document(store, path, {"threats": [{
+        **_write_shape(_threat("high")),
+        "vulnerability_ref": "v-2",
+        "canonical_class": "Path Traversal",
+    }]})
 
-    model = store.read_model(PROJECT, UNIT)
-    assert model["threats"][0]["risk"] == 0.0
+    model = UnitThreatModel.model_validate(store.read_model(PROJECT, UNIT))
+    validation = check_completion(model)
+    assert validation.valid is False
+    assert any(
+        finding.startswith("threat:") and finding.endswith(".impact_ref")
+        for finding in validation.unclosed)
     assert store.read_threat_files(PROJECT, UNIT) == []
-    assert "threat:threat-1.impact_ref" in model["validation"]["unclosed"]
 
 
 def test_the_v5_threat_file_carries_no_retired_risk_key(tmp_path):
