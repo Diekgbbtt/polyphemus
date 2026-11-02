@@ -6,9 +6,14 @@
 # user agent after a named `browser start`. A cloud deployment has no endpoint,
 # so every argument passes through unchanged. The skill never learns either
 # branch.
+#
+# The real CLI lives in a private subdirectory of the persisted binary volume.
+# Only the directory itself is on PATH, so neither `steel` nor `steel-real`
+# resolves to the real binary; both names are this wrapper, and the wrapper
+# calls the guard.
 set -u
 
-REAL="${STEEL_REAL_BINARY:-/opt/localbin/steel-real}"
+REAL="${STEEL_REAL_BINARY:-/opt/localbin/.steel/steel}"
 ENDPOINT="${STEEL_BROWSER_API_URL:-}"
 LOCAL_UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
 

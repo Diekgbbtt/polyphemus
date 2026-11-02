@@ -36,11 +36,14 @@ def _account(credentials: dict) -> dict:
             "credentials": credentials}
 
 
-def _project_dir(tmp_path: Path, accounts: dict) -> Path:
+def _project_dir(tmp_path: Path, accounts: dict, *, auth_probe: bool = True) -> Path:
     auth = tmp_path / "auth"
     auth.mkdir(parents=True, exist_ok=True)
+    overview = {"login_endpoint": "/api/login"}
+    if auth_probe:
+        overview["auth_probe"] = {"url": "/api/authentication"}
     (auth / "overview.yaml").write_text(
-        yaml.safe_dump({"login_endpoint": "/api/login"}), encoding="utf-8"
+        yaml.safe_dump(overview), encoding="utf-8"
     )
     (auth / "credentials.yaml").write_text(
         yaml.safe_dump({"accounts": accounts}), encoding="utf-8"
@@ -57,6 +60,20 @@ def _base_credentials(**overrides) -> dict:
 def test_a_path_login_url_is_accepted(tmp_path):
     project = _project_dir(tmp_path, {"alice": _account(_base_credentials())})
     assert [e for e in tool.check_auth(project) if ".login_url" in e] == []
+
+
+def test_a_declared_surface_without_the_oracle_is_refused(tmp_path):
+    project = _project_dir(
+        tmp_path, {"alice": _account(_base_credentials())}, auth_probe=False
+    )
+    errors = tool.check_auth(project)
+    assert any("auth_probe" in e for e in errors), errors
+
+
+def test_a_declared_surface_with_the_oracle_is_accepted(tmp_path):
+    project = _project_dir(tmp_path, {"alice": _account(_base_credentials())})
+    errors = tool.check_auth(project)
+    assert not any("auth_probe" in e for e in errors), errors
 
 
 def test_an_absolute_login_url_is_refused(tmp_path):

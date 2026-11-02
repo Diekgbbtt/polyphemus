@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -42,6 +43,40 @@ def _run(tmp_path, *argv, endpoint=None):
         json.loads(line) for line in calls.read_text().splitlines()
     ] if calls.exists() else []
     return result, recorded
+
+
+def test_the_wrapper_default_real_binary_is_private():
+    """A real binary in a PATH directory can be invoked directly and skips the
+    guard. The default must point into the private subdirectory."""
+    text = WRAPPER.read_text(encoding="utf-8")
+    assert 'REAL="${STEEL_REAL_BINARY:-/opt/localbin/.steel/steel}"' in text
+    assert "/opt/localbin/steel-real" not in text
+
+
+def test_the_compatibility_name_routes_through_the_wrapper(tmp_path):
+    """`steel-real` remains callable, but it is a symlink to the wrapper. A
+    nested shell that names it must still get local mode and the guard."""
+    real, calls = _fake_real(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    wrapper = bin_dir / "steel"
+    shutil.copyfile(WRAPPER, wrapper)
+    wrapper.chmod(0o755)
+    (bin_dir / "steel-real").symlink_to("steel")
+    env = {
+        **os.environ,
+        "STEEL_REAL_BINARY": str(real),
+        "STEEL_BROWSER_API_URL": "http://steel.test:3000/v1",
+    }
+
+    result = subprocess.run(
+        [str(bin_dir / "steel-real"), "browser", "cookies", "--json"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    recorded = [json.loads(line) for line in calls.read_text().splitlines()]
+    assert recorded == [["--local", "browser", "cookies", "--json"]]
 
 
 def test_local_browser_command_gets_the_local_flag(tmp_path):

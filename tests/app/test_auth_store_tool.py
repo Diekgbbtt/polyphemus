@@ -8,7 +8,11 @@ Pilot posture throughout: state is seeded via the store seam, round-tripped
 via the tool; no production seam binding is touched here.
 """
 from polymerhus.app.auth.store import AuthStore
-from polymerhus.app.auth.tool import AUTH_STORE_CONTRACT, build_auth_store_tool
+from polymerhus.app.auth.tool import (
+    AUTH_STORE_CONTRACT,
+    REDACTED,
+    build_auth_store_tool,
+)
 
 PROJECT = "proj-auth-tool-1"
 
@@ -165,6 +169,34 @@ def test_read_scalar_leaf_returns_the_scalar(tmp_path):
                    "value": "operator ground truth"}
 
 
+def test_read_redacts_every_secret_value_in_the_read_write_binding(tmp_path):
+    """The model-facing view never carries a secret, including on the
+    read/write binding used by the gateway. The store keeps the material for
+    the internal replay seam."""
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(PROJECT, accounts={"root": {
+        "credentials": {"username": "u", "password": "p",
+                        "login_url": "/login"},
+        "tokens": {"session": {"value": "tok-1", "location": "cookie"}},
+        "snapshot": {
+            "cookies": [{"name": "sid", "value": "cookie-secret"}],
+            "headers": {"Authorization": "Bearer header-secret"},
+            "params": {"token": "param-secret"},
+        },
+    }})
+    tool = build_auth_store_tool(PROJECT, store)
+
+    value = tool.invoke({"command": "read", "path": "accounts.root"})["value"]
+
+    assert value["credentials"]["password"] == REDACTED
+    assert value["tokens"]["session"]["value"] == REDACTED
+    assert value["snapshot"]["cookies"][0]["value"] == REDACTED
+    assert value["snapshot"]["headers"]["Authorization"] == REDACTED
+    assert value["snapshot"]["params"]["token"] == REDACTED
+    assert store.read(PROJECT, "accounts.root.credentials.password") == "p"
+    assert store.read(PROJECT, "accounts.root.tokens.session")["value"] == "tok-1"
+
+
 def test_read_missing_path_is_a_valid_empty(tmp_path):
     tool = build_auth_store_tool(PROJECT, _seeded_store(tmp_path))
     out = tool.invoke({"command": "read", "path": "accounts.nobody"})
@@ -190,7 +222,8 @@ def test_unknown_command_is_an_auth_invalid_envelope(tmp_path):
 # --- writes: single-field merges, null deletes, creates, coded refusals ------
 
 def test_write_single_field_merges_and_round_trips(tmp_path):
-    tool = build_auth_store_tool(PROJECT, _seeded_store(tmp_path))
+    store = _seeded_store(tmp_path)
+    tool = build_auth_store_tool(PROJECT, store)
     out = tool.invoke({"command": "write", "path": "accounts.alice.tokens.session",
                        "value": {"value": "tok-1", "location": "header"}})
     assert out == {"ok": True, "command": "write",
@@ -198,7 +231,10 @@ def test_write_single_field_merges_and_round_trips(tmp_path):
                    "value": {"value": "tok-1", "location": "header"}}
     assert tool.invoke({"command": "read",
                         "path": "accounts.alice.tokens.session"})["value"] == {
-        "value": "tok-1", "location": "header"}
+        "value": REDACTED, "location": "header"}
+    # The model-facing view is redacted; the store itself keeps the material
+    # for the gateway's internal replay seam.
+    assert store.read(PROJECT, "accounts.alice.tokens.session")["value"] == "tok-1"
     assert tool.invoke({"command": "read",
                         "path": "accounts.alice.notes"})["value"] == "agent-minted note"
 
@@ -266,7 +302,8 @@ def test_write_to_an_operator_stamped_account_lands(tmp_path):
     record = tool.invoke({"command": "read", "path": "accounts.root"})["value"]
     assert isinstance(record.pop("updated_at"), str)
     assert record["origin"] == "operator"
-    assert record["tokens"]["session"]["value"] == "tok-1"
+    assert record["tokens"]["session"]["value"] == REDACTED
+    assert store.read(PROJECT, "accounts.root.tokens.session")["value"] == "tok-1"
 
 
 def test_create_of_a_known_name_signals_duplicate_auth(tmp_path):

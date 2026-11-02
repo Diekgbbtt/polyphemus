@@ -89,6 +89,31 @@ def test_cookies_list_is_not_rewritten_and_passes_the_cli_error():
     assert "unrecognized subcommand" in classified["stderr"]
 
 
+def test_known_but_gone_session_returns_recreate_session():
+    out = sanitize_steel_command(
+        'steel browser eval "1" --session wj-gone --json',
+        live_sessions=set(),
+        known_sessions={"wj-gone"},
+    )
+    assert isinstance(out, ContractError)
+    assert out.code == "session_missing"
+    assert out.fatal is True
+    assert out.recovery["action"] == "recreate_session"
+    assert out.recovery["requires_state_restore"] is True
+
+
+def test_a_typo_is_still_an_unknown_session():
+    out = sanitize_steel_command(
+        'steel browser eval "1" --session wj-typo --json',
+        live_sessions={"wj-live"},
+        known_sessions={"wj-live"},
+    )
+    assert isinstance(out, ContractError)
+    assert out.code == "unknown_session"
+    assert out.fatal is False
+    assert out.recovery["action"] == "use_live"
+
+
 def test_target_lost_returns_tab_new_recovery():
     command = 'steel browser eval "document.body.innerText" --session wj-live --json'
     out = classify_result(
@@ -241,3 +266,25 @@ def test_non_browser_steel_command_is_allowed():
     assert isinstance(out, BrowserCommand)
     assert out.verb == ""
     assert out.session is None
+
+
+def test_a_batch_element_needs_its_own_boundary():
+    out = sanitize_shell_command(
+        "steel browser batch --session wj-live --json -- "
+        "'snapshot -i' 'fill @e6 42'",
+        live_sessions=LIVE,
+    )
+    assert isinstance(out, ContractError)
+    assert out.code == "variadic_boundary"
+    assert "fill" in out.message
+
+
+def test_a_batch_element_with_its_own_boundary_passes():
+    out = sanitize_shell_command(
+        "steel browser batch --session wj-live --json -- "
+        "'snapshot -i' 'fill @e6 -- 42'",
+        live_sessions=LIVE,
+    )
+    assert isinstance(out, tuple)
+    assert out[0].verb == "batch"
+    assert out[0].session == "wj-live"

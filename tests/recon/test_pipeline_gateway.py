@@ -194,7 +194,8 @@ def test_browser_only_verdict_prunes_to_the_steel_crawl(tmp_path):
         accounts=_account())
 
     _run(calls, factory, fake_run_job, fake_read_assets,
-         subset=["subfinder", "httpx", "katana", "steel_crawl"])
+         subset=["subfinder", "httpx", "katana", "steel_crawl"],
+         auth_store=store)
 
     ran = {tool for _, tool in calls["order"]}
     assert ran == {"steel_crawl"}
@@ -259,30 +260,32 @@ def test_anonymous_verdict_runs_all_phases_without_account(tmp_path):
                for job in ("subfinder", "httpx"))
 
 
-def test_failed_verdict_runs_collection_loudly_without_account(tmp_path, caplog):
-    """D223-2: a failed authentication is explicit and loud, never
-    silent-anonymous - collection still runs, unauthenticated."""
+def test_failed_verdict_stops_collection(tmp_path, caplog):
+    """D223-21: a failed authentication is a fail-closed stop. No job runs,
+    and the run never reads as an anonymous success."""
     import logging
     store, calls, factory, fake_run_job, fake_read_assets = _harness(
         tmp_path, model_steps=[[_verdict_call(outcome="failed", account=None,
-                                              rationale="space exhausted")]],
-        overview={"login_endpoint": "https://x/login"}, accounts=_account())
+                                              rationale="oracle failed")]],
+        overview={"login_endpoint": "https://x/login",
+                  "auth_probe": {"url": "/api/me"}},
+        accounts=_account())
+    registry = _FakeRegistry()
 
-    with caplog.at_level(logging.WARNING):
-        _run(calls, factory, fake_run_job, fake_read_assets)
+    with caplog.at_level(logging.ERROR):
+        _run(calls, factory, fake_run_job, fake_read_assets, registry=registry)
 
-    assert {tool for _, tool in calls["order"]} == {"subfinder", "httpx"}
-    assert all("auth_account" not in calls[job]["extra"]
-               for job in ("subfinder", "httpx"))
-    assert "unauthenticated" in caplog.text.lower()
+    assert calls["order"] == []
+    assert any("failed" in str(s) for s in registry.statuses)
+    assert "fail-closed" in caplog.text.lower()
 
 
 # --- failure posture ------------------------------------------------------------------
 
 
-def test_missing_credentials_stops_the_run_loudly(tmp_path, caplog):
-    """D223-17 fail-close: a declared surface with no credentials stops the
-    run - no job runs, the run is marked failed, never complete."""
+def test_gateway_stop_stops_the_run_loudly(tmp_path, caplog):
+    """D223-21 fail-close: a missing bootstrap prerequisite stops the run -
+    no job runs, the run is marked failed, never complete."""
     import logging
 
     class _Stopper:
@@ -306,9 +309,9 @@ def test_missing_credentials_stops_the_run_loudly(tmp_path, caplog):
     assert "fail-close" in caplog.text.lower() or "stopping the run" in caplog.text.lower()
 
 
-def test_degraded_gateway_fails_open_with_all_phases(tmp_path, caplog):
-    """D223-10 residual: a degraded gateway (no verdict) runs every phase
-    unauthenticated, loudly."""
+def test_degraded_gateway_stops_collection(tmp_path, caplog):
+    """D223-21: a gateway with no verdict proves nothing, so the run stops.
+    It never falls back to an unauthenticated collection."""
     import logging
 
     class _Degraded:
@@ -321,11 +324,32 @@ def test_degraded_gateway_fails_open_with_all_phases(tmp_path, caplog):
         async def stop(self): pass
 
     _, calls, _, fake_run_job, fake_read_assets = _harness(tmp_path, model_steps=[[]])
-    with caplog.at_level(logging.WARNING):
-        _run(calls, _Degraded, fake_run_job, fake_read_assets)
+    registry = _FakeRegistry()
+    with caplog.at_level(logging.ERROR):
+        _run(calls, _Degraded, fake_run_job, fake_read_assets, registry=registry)
 
-    assert {tool for _, tool in calls["order"]} == {"subfinder", "httpx"}
-    assert "fail-open" in caplog.text.lower()
+    assert calls["order"] == []
+    assert any("failed" in str(s) for s in registry.statuses)
+    assert "fail-closed" in caplog.text.lower()
+
+
+def test_authenticated_verdict_without_an_account_stops_collection(tmp_path, caplog):
+    """D223-21: an authenticated verdict with no account is a contradiction;
+    running unauthenticated would be a silent anonymous run."""
+    import logging
+    store, calls, factory, fake_run_job, fake_read_assets = _harness(
+        tmp_path, model_steps=[[_verdict_call(outcome="authenticated",
+                                              account=None)]],
+        overview={"login_endpoint": "https://x/login",
+                  "auth_probe": {"url": "/api/me"}},
+        accounts=_account())
+    registry = _FakeRegistry()
+    with caplog.at_level(logging.ERROR):
+        _run(calls, factory, fake_run_job, fake_read_assets, registry=registry)
+
+    assert calls["order"] == []
+    assert any("failed" in str(s) for s in registry.statuses)
+    assert "names no account" in caplog.text.lower()
 
 
 def test_mid_run_steering_seam_is_gone(tmp_path):
@@ -343,6 +367,6 @@ def test_mid_run_steering_seam_is_gone(tmp_path):
         overview={"login_endpoint": "https://x/login"}, accounts=_account())
 
     _run(calls, factory, fake_run_job, fake_read_assets,
-         subset=["subfinder", "httpx"])
+         subset=["subfinder", "httpx"], auth_store=store)
 
     assert {tool for _, tool in calls["order"]} == {"subfinder", "httpx"}

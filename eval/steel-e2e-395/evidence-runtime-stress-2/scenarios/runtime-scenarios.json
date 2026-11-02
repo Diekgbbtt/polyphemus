@@ -1,0 +1,289 @@
+{
+  "run_id": "1793227530-1617",
+  "mcp_url": "http://kali:8001/mcp",
+  "session": "wj-c2-masked",
+  "loss_session": "wj-c2-loss",
+  "passed": true,
+  "scenarios": [
+    {
+      "scenario": "composition/script",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by binary_guard, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 1,
+        "gate": "binary_guard",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "binary_guard"
+      }
+    },
+    {
+      "scenario": "composition/bash_c",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by binary_guard, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 1,
+        "gate": "binary_guard",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "binary_guard"
+      }
+    },
+    {
+      "scenario": "composition/env",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by binary_guard, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 1,
+        "gate": "binary_guard",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "binary_guard"
+      }
+    },
+    {
+      "scenario": "composition/command",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by binary_guard, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 1,
+        "gate": "binary_guard",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "binary_guard"
+      }
+    },
+    {
+      "scenario": "composition/sh_c",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by binary_guard, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 1,
+        "gate": "binary_guard",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "binary_guard"
+      }
+    },
+    {
+      "scenario": "composition/path_prefix",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by binary_guard, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 1,
+        "gate": "binary_guard",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "binary_guard"
+      }
+    },
+    {
+      "scenario": "composition/absolute",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by mcp_precheck, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 0,
+        "gate": "mcp_precheck",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "mcp_precheck"
+      }
+    },
+    {
+      "scenario": "composition/xargs",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 123, caught by binary_guard, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": 123,
+        "strays": [],
+        "events": 1,
+        "gate": "binary_guard",
+        "stdout": "",
+        "expected_shell_returncode": 123,
+        "expected_gate": "binary_guard"
+      }
+    },
+    {
+      "scenario": "composition/shell_continue",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by mcp_precheck, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 0,
+        "gate": "mcp_precheck",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "mcp_precheck"
+      }
+    },
+    {
+      "scenario": "composition/steel_real_direct",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by mcp_precheck, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 0,
+        "gate": "mcp_precheck",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "mcp_precheck"
+      }
+    },
+    {
+      "scenario": "composition/steel_real_bash",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by binary_guard, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 1,
+        "gate": "binary_guard",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "binary_guard"
+      }
+    },
+    {
+      "scenario": "composition/steel_real_absolute",
+      "pass": true,
+      "expected": "unknown_session with policy rc 2 and shell rc 2, caught by mcp_precheck, and no stray session",
+      "observed": {
+        "error": "unknown_session",
+        "returncode": 2,
+        "shell_returncode": null,
+        "strays": [],
+        "events": 0,
+        "gate": "mcp_precheck",
+        "stdout": "",
+        "expected_shell_returncode": 2,
+        "expected_gate": "mcp_precheck"
+      }
+    },
+    {
+      "scenario": "masked/output_suppression",
+      "pass": true,
+      "expected": "same code, message, stderr, and rc as the unmasked failure; the masked shell rc is preserved separately",
+      "observed": {
+        "direct": {
+          "error": "invalid_command",
+          "returncode": 2,
+          "shell_returncode": null
+        },
+        "masked": {
+          "error": "invalid_command",
+          "returncode": 2,
+          "shell_returncode": 0
+        },
+        "same_error": true
+      }
+    },
+    {
+      "scenario": "masked/second_command",
+      "pass": true,
+      "expected": "the second command's failure is reported with rc 2 while both printable commands still ran",
+      "observed": {
+        "error": "invalid_command",
+        "returncode": 2,
+        "shell_returncode": 0,
+        "stdout": "pre\npost\n"
+      }
+    },
+    {
+      "scenario": "session_loss/known_session_disappears",
+      "pass": true,
+      "expected": "known live -> stopped -> session_missing + recreate_session + rc 2",
+      "observed": {
+        "live_returncode": 0,
+        "stop_returncode": 0,
+        "error": "session_missing",
+        "fatal": true,
+        "recovery": "recreate_session",
+        "returncode": 2
+      }
+    },
+    {
+      "scenario": "session_lifecycle/start_then_loss",
+      "pass": true,
+      "expected": "start recorded -> catalogue-invisible stop -> session_missing with state restore",
+      "observed": {
+        "start_returncode": 0,
+        "start_events": 2,
+        "stop_returncode": 0,
+        "error": "session_missing",
+        "fatal": true,
+        "recovery": "recreate_session",
+        "requires_state_restore": true
+      }
+    },
+    {
+      "scenario": "timeout/background_child_cleanup",
+      "pass": true,
+      "expected": "timeout is 124 and the background child is gone",
+      "observed": {
+        "returncode": 124,
+        "stderr": "timeout after 2s",
+        "leaked": false
+      }
+    },
+    {
+      "scenario": "trace/catalogue_fact",
+      "pass": true,
+      "expected": "a sessions command that needs no catalogue records not-required, never unavailable",
+      "observed": {
+        "catalogue": "not-required",
+        "returncode": 0
+      }
+    }
+  ],
+  "known_limits": [
+    {
+      "limit": "private-core absolute path",
+      "path": "/opt/localbin/.steel/steel",
+      "error": null,
+      "returncode": 0,
+      "created": [
+        "wj-sc-1793227530-1617-private"
+      ],
+      "cleaned": true,
+      "scope": "requires knowing the private path; not reachable by any public name or PATH lookup"
+    }
+  ]
+}

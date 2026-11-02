@@ -58,6 +58,7 @@ from polymerhus.recon.control.scope import (
     parse_scope,
     resolve_seed,
     seed_probe_target,
+    target_origin,
 )
 from polymerhus.recon.domain.types import AssetDelta
 
@@ -354,9 +355,10 @@ async def run_pipeline(
     and its ONE gateway turn resolves before phase 0, under heartbeat. The
     typed verdict configures the run: browser-only prunes the plan to the
     Steel crawl, and the selected account's identifier (never its material)
-    rides the pipeline state for `use_auth` jobs. A degraded gateway fails
-    open (every phase, unauthenticated, loudly); missing credentials stop the
-    run loudly (`GatewayStop` -> `failed`, nothing runs). `orchestrator_factory`
+    rides the pipeline state for `use_auth` jobs. A degraded gateway or a
+    failed/indeterminate oracle stops the run (fail-closed, D223-21); a
+    missing bootstrap prerequisite stops the run loudly (`GatewayStop` ->
+    `failed`, nothing runs). `orchestrator_factory`
     builds the actor (tests inject the production actor over scripted models
     and temp stores); the actor is stopped in the `finally` so no task leaks.
 
@@ -473,20 +475,27 @@ async def run_pipeline(
     try:
         try:
             gateway_verdict = await orchestrator.run_gateway(project_id=project_id)
-        except GatewayStop:
-            # D223-17 fail-close: a declared surface with no credentials is a
-            # missing bootstrap prerequisite, not a gateway failure - stop the
-            # run loudly, run nothing, mark failed (never complete).
-            logger.error("run %s stopped by the auth gateway (fail-close: no credentials)", run_id)
+        except GatewayStop as exc:
+            # Fail-close: a missing bootstrap prerequisite stops the run
+            # loudly, runs nothing, and marks it failed (never complete).
+            logger.error("run %s stopped by the auth gateway (fail-close: %s)",
+                         run_id, exc)
             await asyncio.to_thread(registry.set_run_status, run_id, "failed")
             return
         if gateway_verdict is None:
-            logger.warning("run %s gateway degraded (no verdict); fail-open: every phase runs unauthenticated", run_id)
-        elif gateway_verdict.outcome == "anonymous":
+            # Fail-closed (D223-21): a gateway with no verdict proves nothing,
+            # so unauthenticated collection would be a silent anonymous run.
+            logger.error("run %s gateway degraded (no verdict); fail-closed: "
+                         "collection will not run", run_id)
+            await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+            return
+        if gateway_verdict.outcome == "anonymous":
             logger.warning("run %s no authenticated surface; running the full plan anonymously", run_id)
         elif gateway_verdict.outcome == "failed":
-            logger.warning("run %s authentication failed (%s); fail-open: collection runs unauthenticated",
-                           run_id, gateway_verdict.rationale)
+            logger.error("run %s authentication failed (%s); fail-closed: "
+                         "collection will not run", run_id, gateway_verdict.rationale)
+            await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+            return
         elif gateway_verdict.branch == "browser_only":
             plan = prune_plan(plan, "browser_only")
             if not any(plan):
@@ -505,11 +514,21 @@ async def run_pipeline(
             logger.warning("run %s browser-only release: pruned to the Steel crawl alone", run_id)
             if gateway_verdict.account:
                 auth_account = gateway_verdict.account
+            else:
+                logger.error("run %s browser-only verdict names no account; "
+                             "fail-closed: collection will not run", run_id)
+                await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+                return
         elif gateway_verdict.account:
             auth_account = gateway_verdict.account
             logger.info("run %s authenticated as account %s", run_id, auth_account)
         else:
-            logger.warning("run %s authenticated verdict names no account; running unauthenticated", run_id)
+            # An authenticated verdict without an account is a contradiction.
+            # Fail-closed rather than run unauthenticated (D223-21).
+            logger.error("run %s authenticated verdict names no account; "
+                         "fail-closed: collection will not run", run_id)
+            await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+            return
         if gateway_verdict is not None and gateway_verdict.replayability_resolved:
             logger.warning("run %s in-loop replayability resolved to %s (persisted to the overview by the loop)",
                            run_id, gateway_verdict.replayability)
@@ -575,11 +594,23 @@ async def run_pipeline(
                         # serialises it per tool at fill time); the
                         # agent-driven crawl gets the resolved session-state
                         # path and the browser auth material. `use_auth` stays
-                        # the single eligibility gate; a dead account fails
-                        # open (unauthenticated, loudly - resolve_account warns).
+                        # the single eligibility gate; a selected account that
+                        # no longer resolves stops the run (D223-21).
                         extra["auth_account"] = auth_account
                         account = resolve_account(
                             project_id, auth_account, store=auth_store)
+                        if not account:
+                            # The gateway proved this account, but its record
+                            # vanished before assembly. Running the job
+                            # unauthenticated would be a silent anonymous run
+                            # (D223-21): stop instead.
+                            logger.error(
+                                "run %s selected account %s does not resolve "
+                                "at assembly; fail-closed: collection will not run",
+                                run_id, auth_account)
+                            await asyncio.to_thread(
+                                registry.set_run_status, run_id, "failed")
+                            return
                         if account:
                             # The header fact single-sources on the overview's
                             # required_headers; the snapshot supplies cookies.
@@ -597,7 +628,9 @@ async def run_pipeline(
                                             "auth feed: invalid steel.state %r for "
                                             "account %s; crawling without state",
                                             state_ref, auth_account)
-                                browser_auth = project_browser_auth(account, overview)
+                                browser_auth = project_browser_auth(
+                                    account, overview,
+                                    origin=target_origin(settings))
                                 if browser_auth:
                                     extra["browser_auth"] = browser_auth
                             else:

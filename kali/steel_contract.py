@@ -202,10 +202,41 @@ def _boundary_gap(tokens: list[str]) -> str | None:
     return None
 
 
+def _batch_boundary_gap(tokens: list[str]) -> str | None:
+    """Check the variadic verbs INSIDE a canonical outer batch.
+
+    `batch` has its own boundary before the command strings. Each string is
+    a complete browser command and carries its own grammar, so a variadic
+    element without its own `--` is refused instead of letting clap fold a
+    trailing option into the value.
+    """
+    browser_at = _browser_index(tokens)
+    if browser_at is None or browser_at + 1 >= len(tokens):
+        return None
+    if tokens[browser_at + 1] != "batch":
+        return None
+    try:
+        boundary = tokens.index(_BOUNDARY)
+    except ValueError:
+        return None
+    for command in tokens[boundary + 1:]:
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            continue
+        if not parts:
+            continue
+        verb = os.path.basename(parts[0])
+        if verb in _VARIADIC_VERBS and _BOUNDARY not in parts:
+            return verb
+    return None
+
+
 def _parse_browser_segment(
     segment: list[str],
     *,
     live_sessions: set[str] | None,
+    known_sessions: set[str] | None = None,
 ) -> BrowserCommand | ContractError:
     binary = _first_binary(segment)
     if binary is None:
@@ -279,6 +310,18 @@ def _parse_browser_segment(
             canonical_command=canonical,
         )
 
+    batch_gap = _batch_boundary_gap(segment)
+    if batch_gap is not None:
+        return _contract_error(
+            "variadic_boundary",
+            f"steel browser batch element {batch_gap!r} needs its own "
+            "-- boundary before the value",
+            retryable=True,
+            recovery={"action": "fix_command", "reason": "insert -- in the batch element"},
+            suggestion=f"steel browser batch -- '<verb> <selector> -- <value>'",
+            canonical_command=canonical,
+        )
+
     if session is not None and live_sessions is not None:
         live = session in live_sessions
         if verb == "start":
@@ -304,6 +347,25 @@ def _parse_browser_segment(
             # A --session value on sessions is a filter, not a target.
             pass
         elif not live:
+            if known_sessions and session in known_sessions:
+                # The name was live earlier in this runtime but the catalogue
+                # no longer lists it. That is a session loss, not a typo: the
+                # caller needs the state-restoring recreation directive.
+                return _contract_error(
+                    "session_missing",
+                    f"session {session!r} was live and is now gone",
+                    session=session,
+                    retryable=False,
+                    fatal=True,
+                    recovery={
+                        "action": "recreate_session",
+                        "reason": "the live session disappeared; recreate it and restore state",
+                        "requires_state_restore": True,
+                        "command": "steel browser start --session <new-name> --json",
+                    },
+                    platform_state={"session_live": False, "session_known": True},
+                    canonical_command=canonical,
+                )
             return _contract_error(
                 "unknown_session",
                 f"session {session!r} is not live",
@@ -333,6 +395,7 @@ def sanitize_shell_command(
     command: str,
     *,
     live_sessions: set[str] | None,
+    known_sessions: set[str] | None = None,
 ) -> tuple[BrowserCommand, ...] | ContractError:
     """Validate every embedded ``steel browser`` command in a shell string.
 
@@ -354,7 +417,11 @@ def sanitize_shell_command(
     for segment in _split_segments(tokens):
         if _first_binary(segment) is None:
             continue
-        parsed = _parse_browser_segment(segment, live_sessions=live_sessions)
+        parsed = _parse_browser_segment(
+            segment,
+            live_sessions=live_sessions,
+            known_sessions=known_sessions,
+        )
         if isinstance(parsed, ContractError):
             return parsed
         commands.append(parsed)
@@ -377,9 +444,12 @@ def sanitize_steel_command(
     command: str,
     *,
     live_sessions: set[str] | None,
+    known_sessions: set[str] | None = None,
 ) -> BrowserCommand | ContractError:
     """Validate one browser command, used by the dedicated ``steel_exec``."""
-    parsed = sanitize_shell_command(command, live_sessions=live_sessions)
+    parsed = sanitize_shell_command(
+        command, live_sessions=live_sessions, known_sessions=known_sessions
+    )
     if isinstance(parsed, ContractError):
         return parsed
     if not parsed:
@@ -445,6 +515,10 @@ def classify_result(
     are preserved. The caller executes any recovery command in ``error``.
     """
     out = dict(result)
+    # The binary guard already classified the real invocation. Keep its
+    # authoritative error rather than re-deriving one from composed shell text.
+    if isinstance(out.get("error"), dict) and out["error"].get("code"):
+        return out
     stdout = str(out.get("stdout") or "")
     stderr = str(out.get("stderr") or "")
     returncode = int(out.get("returncode") or 0)
@@ -627,7 +701,7 @@ def classify_result(
         if isinstance(data, dict):
             text_value = data.get("text")
             blank = text_value in ("", None) if text_value is not None else False
-        if blank:
+        if blank and "warning" not in out:
             out["warning"] = {
                 "code": "empty_target",
                 "message": "the page read returned no target content",

@@ -34,7 +34,7 @@ Whatever the target, establish and record these two facts before you record its 
 4. Replay the trusted context surgically. When a browser session holds the trusted context, attempt to reproduce it with a plain HTTP client. Start from the overview's `required_headers` (the single source of the required header fact), the account `snapshot` (cookies, params) and the stored tokens with their locations. Identify line by line what carries the trust: header set and order, cookies, token values and locations, user-agent and client hints, query and body parameters, request and network parameters you control, and TLS/HTTP signature specifics where your tooling lets you control them. Change one variable at a time and read the response; iterate until the replay reaches the authenticated state or you can name what blocks it.
 5. Record the verdict honestly. When a plain-client replay reaches the authenticated state, record `http-client-replayability: true` and record which shape elements are static (replayable as-is) and which are dynamic (must be re-minted or are browser-bound): the continuation facts a follower needs. When replay cannot reach the authenticated state, record `http-client-replayability: false`; browser-only is a complete, honest result, never a failure.
 6. Script-driven logins. When the sign-in is programmed by client-side script, fetch and read the script; replay the exact request shape it builds (endpoints, headers, nonces, parameter order); where the script derives values dynamically (nonces, signatures, fingerprints), say so and treat those parts as browser-bound.
-7. Re-verify stale state. Treat an expired or missing session as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
+7. Re-verify stale state. Treat an expired or missing session as a loud failure. Re-run the oracle before recording or replaying; never fall back silently to anonymous state. The oracle is a 2xx-only URL, not a landing-page heuristic.
 8. Persist through the operator seed face. Write both facts into the overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. This seed face is your write path: the in-process agent store tool is the in-system agents' path (their writes merge into the same overview, D220-12), so never use it here and never put `origin` in the payload.
 
 Two rules bind every target: facts live in the store, steps live in the skill; secret values stay in the store, the skill cites names only."""
@@ -197,8 +197,12 @@ def test_bootstrap_prompt_cites_the_mechanics_skill():
 
 def test_browser_discipline_reuses_a_live_session_and_logs_in_only_on_failure():
     body = _body()
-    assert "reuse the live session" in body
-    assert "Log in when the live session does not yield the authenticated landing" in body
+    assert "reuse it" in body
+    assert "start a FREE name" in body
+    assert "--inactivity-timeout 300000" in body
+    assert "session_taken" in body
+    assert "session_missing" in body
+    assert "Log in when the live session does not pass the oracle" in body
     assert "programmatic crawl provider restores state" in body
     assert "profile" not in body.lower()
 
@@ -207,11 +211,49 @@ def test_bootstrap_prompt_reuses_a_live_session_and_cannot_restore_state():
     prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
         encoding="utf-8"
     )
-    assert "Start or reuse a named live session" in prompt
+    assert "Survey the catalogue first" in prompt
+    assert "If the named session is live, reuse it" in prompt
+    assert "start a FREE name" in prompt
+    assert "--inactivity-timeout <inactivity_timeout_ms>" in prompt
+    assert "session_taken" in prompt
+    assert "session_missing" in prompt
     assert "pinned CLI has no state field" in prompt
     assert "Do not claim that a new CLI session restored state" in prompt
     assert "profile" not in prompt.lower()
     assert "--profile" not in prompt
+
+
+def test_skill_teaches_the_oracle_and_the_mint_path():
+    body = _body()
+    assert "auth_probe" in body
+    assert "2xx" in body
+    assert "401" in body and "403" in body and "3xx" in body
+    assert "indeterminate" in body.lower()
+    assert "auth-oracle.sh" in body
+    assert "mint" in body.lower()
+    assert "fail open" not in body.lower() or "never fails open" in body.lower()
+
+
+def test_bootstrap_prompt_proves_both_oracle_polarities():
+    prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    assert "auth_probe" in prompt
+    assert "both polarities" in prompt.lower()
+    assert "2xx" in prompt
+    assert "401" in prompt and "403" in prompt and "3xx" in prompt
+    assert "auth-oracle.sh" in prompt
+    assert "login page is never the oracle" in prompt.lower()
+
+
+def test_generated_procedure_uses_the_redacted_material_path():
+    body = _body()
+    assert "REDACTED" in body
+    assert "search_http_history" in body
+    assert "replay_http_request" in body
+    assert "never instructs a model-facing follower to read or paste a value" in body
+    assert "reuse the operator-owned live session" in body
+    assert "never start a replacement" in body
 
 
 def test_mechanics_skill_paces_the_login_and_sizes_the_clock():

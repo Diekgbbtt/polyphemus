@@ -205,6 +205,24 @@ def test_first_probe_enters_validation_and_counts():
     assert state["injected_hint"] is None
 
 
+def test_http_history_replay_is_a_validation_probe():
+    state = L.initial_state()
+    state = L.push_transition(state, "retrieve", _obs(
+        "auth_store", {"command": "read", "path": "accounts"},
+        _read_envelope("accounts", _accounts_payload(("alice",)))))
+    replay = _obs("replay_http_request", {"project_id": "p1", "artifact_id": "a1"})
+    assert L.detect_transition(replay) == "probe"
+    state = L.push_transition(state, "probe", replay)
+    assert state["phase"] == "VALIDATION"
+    assert state["probe_count"] == 1
+    assert state["injected_hint"] == L.VALIDATION_HINT
+
+
+def test_search_http_history_alone_is_not_a_validation_probe():
+    search = _obs("search_http_history", {"project_id": "p1"})
+    assert L.detect_transition(search) == "none"
+
+
 def test_not_valid_assertion_enters_generation():
     state = L.initial_state()
     state = L.push_transition(state, "retrieve", _obs(
@@ -351,9 +369,12 @@ def test_no_auth_marker_is_structural_mechanism_none():
     assert L.has_no_auth_marker(None) is False
 
 
-def test_gate_declared_surface_without_accounts_is_missing_credentials():
-    assert L.classify_gate({"login_endpoint": "https://x/login"}, {}) == "missing_credentials"
-    assert L.classify_gate({"anti-bot": "waf:x"}, {}) == "missing_credentials"
+def test_gate_declared_surface_without_accounts_runs_the_loop_to_mint():
+    # D223-21: the orchestrator mints a new account through the authn skill's
+    # sign-up procedure; the terminal failed verdict is the stop, not the gate.
+    assert L.classify_gate({"login_endpoint": "https://x/login"}, {}) == "run_loop"
+    assert L.classify_gate({"anti-bot": "waf:x"}, {}) == "run_loop"
+    assert L.classify_gate({"auth_probe": {"url": "/api/me"}}, {}) == "run_loop"
 
 
 def test_gate_marker_wins_over_a_declared_surface():

@@ -26,6 +26,8 @@ Reusing an existing model key via many-to-one is the established pattern (the an
 
 ### D223-2 - Authentication failure is fail-open for collection; no fabricated persistence
 
+*Superseded 2026-10-29 by D223-21: authentication failure is fail-closed. A failed or indeterminate oracle stops collection, and the gateway mints a new credential when the authn skill provides a sign-up path.*
+
 When the authenticated context cannot be established, the collection runs anyway, without authentication material in the tool-call command lines (concretely: without headers carrying auth material in the CLI options).
 Recording the failure would be optimal, but no harness or wider control-plane primitive exists today to persist it; no bespoke persistence or logging machinery is to be fabricated for it.
 Only existing primitives (structured logs, Langfuse spans) may carry it, and the exact loudness contract belongs to the workflow-overview pass.
@@ -82,6 +84,8 @@ This narrows assumption (b) to "the orchestrator is first on start".
 
 ### D223-10 - Gateway failure posture: ride the harness suite; asymptotic behaviour is fail-open, loudly (F3)
 
+*Amended 2026-10-29 by D223-21: the harness suite and the wall-clock bounds remain, but the asymptotic behaviour is fail-closed. A turn with no verdict returns `failed` and the pipeline stops collection.*
+
 No new failure-handling machinery is built for the auth gateway.
 The gateway turn rides the existing harness error-handling suite, and when that suite is exhausted the behaviour is fail-open, loudly.
 
@@ -108,6 +112,8 @@ Accepted residual: on persistent harness failure the run proceeds unauthenticate
 That hazard is knowingly absorbed into the asymptotic fail-open behaviour by this ruling (D223-8's consequence).
 
 ### D223-11 - The consumed attribute contract: null replayability is resolved in-loop (C1)
+
+*Amended 2026-10-29 by D223-20: the session verdict is the authenticated-context oracle. The branch selection still consumes `anti-bot` and `http-client-replayability`; an unresolved request fact never overrides a passing session oracle.*
 
 The gateway's branch selection consumes the operator-written overview facts `anti-bot` and `http-client-replayability` (produced per #237):
 
@@ -187,6 +193,8 @@ The only hard bounds are the harness's generic ones: LangGraph's recursion limit
 Rationale: the agent's judgment owns "tweaking space exhausted"; a mechanical cap was judged a false boundary, and the generic bounds already guarantee the turn cannot run forever.
 
 ### D223-17 - Missing-data states: no-auth-surface vs un-bootstrapped, and the ordered fallbacks (L3)
+
+*Amended 2026-10-29 by D223-20/D223-21: a declared surface with no accounts runs the loop so the orchestrator can mint; the old missing-credentials stop is removed. A missing mint/sign-in data dependency stops the run at the terminal failed verdict.*
 
 The "no accounts AND no `authn` skill" state has two distinct causes, discriminated structurally in the store - never inferred from the target's behaviour:
 
@@ -539,3 +547,74 @@ live through the current faces, but the mechanical eval-target e2e
 assertion tier for the gateway is unverified on-branch: the dataset must be
 brought current (seed faces plus the `skills/authn` bundle, no blob auth)
 before evals run against it.
+## Amendment 2026-10-29 - the authenticated-context oracle and fail-closed authentication
+
+*Operator ruling. Supersedes the verification-by-token-replay and
+verification-by-landing-page readings of D223-2, D223-10, D223-11, D223-14,
+and D223-17. The identifier-transport, lazy-feed, session-only, and redaction
+rules remain in force.*
+
+### D223-20 - The authenticated-context oracle is the only verification method
+
+The gateway verifies the loaded browser session against ONE recorded URL:
+`overview.auth_probe.url`.
+
+- The value is a deployment-neutral path (`/api/authentication`), never a host.
+  The model-facing auth-store read and the crawl feed resolve it against the
+  project's canonical origin, the same fact that resolves `login_url` (#384).
+- The oracle is a URL that answers 2xx only with an authenticated context.
+- The external bootstrapper proves BOTH polarities before recording it:
+  authenticated -> 2xx with no followed redirect; anonymous -> 401, 403, or a
+  3xx. A URL that answers 2xx anonymously is not an oracle. A login page is
+  never the oracle.
+- The recon gateway may establish and persist the oracle when the bootstrap
+  left it absent, but it must prove both polarities first. If the skill names
+  no oracle and no proof is possible, the gateway stops.
+- A browser request to the oracle is the verdict, not a cookie-name check, a
+  token comparison, or a landing-page heuristic:
+  - 2xx with `redirected: false` -> authenticated;
+  - 401, 403, or any 3xx (`redirected: true` included) -> unauthenticated;
+  - anything else (network error, 5xx, any other 4xx) -> indeterminate.
+- A 3xx is a failure even when the browser follows it to a 200 login or SPA
+  page. `steel browser navigate` reports a followed 302 as `success: true`
+  with the final URL, so a navigation envelope is never the oracle.
+- The crawl provider asks the same oracle before its first authenticated
+  navigation. Without a recorded oracle it keeps the legacy surface gate and
+  records the missing oracle loudly.
+
+Why the previous readings fail:
+
+- Replaying stored request state required raw values. The model-facing store
+  read is redacted (#364), so the instruction could not be executed. The
+  redaction is correct; the instruction was not.
+- "Authenticated landing" is not a status. A login page can render at 200 and
+  a stale session can follow a 302 to a 200 page. Both look alive to a
+  navigation envelope.
+- A token comparison proves a value exists, not that the server accepts it.
+
+### D223-21 - Authentication failure is fail-closed; the gateway mints
+
+Supersedes D223-2 and the asymptotic fail-open half of D223-10/D223-17.
+
+- A failed or indeterminate oracle stops the run with no collection. It never
+  runs unauthenticated.
+- A degraded gateway turn (no verdict, harness failure, timeout) returns a
+  `failed` verdict. The pipeline marks the run `failed` and runs nothing.
+- An `authenticated` verdict without an account is a contradiction and stops
+  the run.
+- The gateway may mint a NEW valid credential through the authn skill's
+  sign-up procedure:
+  - use synthetic identity data (a fake email address and fake personal
+    details), never real personal data;
+  - write the new account record with its `credentials` and `status: valid`;
+    writes are accepted and reads stay redacted;
+  - re-run the oracle; a 2xx with no followed redirect is the only success.
+- The gateway never reads an existing secret. If the selected account's
+  session is dead and the skill provides no mint path, the run stops loudly
+  with the missing data dependency.
+- The external bootstrapper remains the owner of the sign-up/sign-in data
+  dependencies (the procedure, any invite code, a seed identity, a session it
+  pre-authenticated). The gateway consumes them; it does not invent them.
+- `classify_gate` no longer stops a declared surface with zero accounts. It
+  returns `run_loop` so the orchestrator can mint. The terminal `failed`
+  verdict is the stop.

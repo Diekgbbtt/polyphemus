@@ -58,8 +58,11 @@ the middleware base class is imported lazily inside the factory, never at import
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import logging
+import threading
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Sequence
 
@@ -69,6 +72,13 @@ from polymerhus.app.llm.providers import attempt_timeouts, resolve_fallback
 from polymerhus.app.llm.session import SessionTurn, arun_session_turn
 
 logger = logging.getLogger(__name__)
+
+# The logical turn currently executing in this actor task. The delivery
+# middleware and the degraded hook share it, so a real reply and a no-decision
+# reply for the same turn are one delivery, not two.
+_CURRENT_TURN_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "polymerhus_actor_turn_id", default=None
+)
 
 
 async def _sleep(seconds: float) -> None:
@@ -240,6 +250,7 @@ async def run_session_agent(
     extra_tags: Sequence[str] | None = None,
     usage_scope: str | None = None,
     on_turn_degraded: Callable[[str, Exception], Awaitable[None] | None] | None = None,
+    on_turn_complete: Callable[[str | None], Awaitable[None] | None] | None = None,
     context: dict | None = None,
 ) -> AgentRunResult:
     """Run an async-native agent that stays ACTIVE after its turn, listening on `inbox`.
@@ -260,7 +271,13 @@ async def run_session_agent(
     `on_turn_degraded(thread_id, exc)` (default None) is the #186 degradation hook: a
     turn that exhausts its retry budget (or raises non-retryably) does NOT kill the
     actor - the hook is called so the caller can wake its parent with a no-decision
-    (`None`) reply, and the loop keeps listening for the next message."""
+    (`None`) reply, and the loop keeps listening for the next message.
+
+    `on_turn_complete(turn_id)` (default None) fires after every turn returns or
+    degrades, including on cancellation. Delivery is posted at the end of the
+    graph turn, which can precede the final checkpoint write by a moment; a
+    caller that closes its checkpointer on the reply uses this signal to wait
+    for the turn to settle."""
     inbox = inbox or AgentInbox()
     result = AgentRunResult(thread_id=thread_id)
 
@@ -311,12 +328,19 @@ async def run_session_agent(
         schedule = attempt_timeouts()
         attempt = 0
         last_exc: Exception | None = None
+        # One logical turn spans every retry attempt. The delivery middleware
+        # and the degraded hook share this id, so a turn that delivered a real
+        # reply and then failed (or retried) never posts a second reply.
+        _CURRENT_TURN_ID.set(uuid.uuid4().hex)
         while attempt < len(schedule):
             rotated = rotate_conversation(thread_id, attempt)
             try:
                 turn = await _run_turn_attempt(
                     messages,
-                    read_timeout_s=(None if attempt == 0 else schedule[attempt]),
+                    # Every attempt, including the first, is bounded. An
+                    # unbounded first attempt can hold the actor (and the
+                    # gateway await) far past the harness deadline.
+                    read_timeout_s=schedule[attempt],
                     conversation_id=rotated,
                 )
                 result.turns.append(turn)
@@ -362,9 +386,30 @@ async def run_session_agent(
             await _coerce(on_turn_degraded(thread_id, degrade_cause))
         return None
 
+    async def _turn_and_settle(
+        messages: Sequence[BaseMessage],
+    ) -> SessionTurn | None:
+        """Take one turn, then signal settlement even on a degraded or
+        cancelled turn. The delivery middleware can post the parent reply
+        before the graph's final checkpoint write; this signal is what lets a
+        caller close its checkpointer without racing that write."""
+        try:
+            return await _turn(messages)
+        finally:
+            if on_turn_complete is not None:
+                try:
+                    outcome = on_turn_complete(_CURRENT_TURN_ID.get())
+                    if inspect.isawaitable(outcome):
+                        await outcome
+                except Exception as exc:  # noqa: BLE001 - settlement never kills the actor
+                    logger.warning(
+                        "on_turn_complete failed for %s/%s: %s",
+                        role_id, thread_id, exc,
+                    )
+
     last_turn: SessionTurn | None = None
     if initial_messages:
-        last_turn = await _turn(initial_messages)
+        last_turn = await _turn_and_settle(initial_messages)
 
     while True:
         if max_turns is not None and len(result.turns) >= max_turns:
@@ -388,7 +433,7 @@ async def run_session_agent(
             result.stop_reason = "handler_stop"
             break
         if follow:
-            last_turn = await _turn(follow)  # another turn on the same thread: memory carries
+            last_turn = await _turn_and_settle(follow)  # another turn on the same thread: memory carries
 
     return result
 
@@ -439,17 +484,42 @@ def subagent_completion_hook(
     return hook
 
 
-def _turn_result_payload(state: dict, thread_id: str | None) -> dict:
+def _turn_result_payload(
+    state: dict,
+    thread_id: str | None,
+    turn_id: str | None = None,
+    *,
+    degraded: bool = False,
+) -> dict:
     """Shape the agent state at a post-call hook into a delivery payload: the `content`
     mirroring `SessionTurn` (the parsed `structured_response` when a schema is set, else
     the last message's text), the full post-turn `messages` trail, and the `thread_id`
     the session ran on - the same shape `arun_session_turn` reports, so a parent that
-    receives this can route on the agent's actual answer."""
+    receives this can route on the agent's actual answer. ``turn_id`` lets the inbox
+    dedupe a real reply and a degraded reply for one logical turn."""
     messages = state.get("messages") or []
     content = state.get("structured_response")
     if content is None and messages:
         content = messages[-1].content
-    return {"content": content, "messages": list(messages), "thread_id": thread_id}
+    payload = {
+        "content": content,
+        "messages": list(messages),
+        "thread_id": thread_id,
+    }
+    if turn_id is not None:
+        payload["turn_id"] = turn_id
+    if degraded:
+        payload["degraded"] = True
+    return payload
+
+
+@dataclass
+class _DeliveryState:
+    """Per delivery-pair record of turn ids already posted. The middleware and
+    the degraded hook share it; the lock covers a thread-safe hook call."""
+
+    delivered: set[str] = field(default_factory=set)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def build_inbox_middleware(
@@ -458,6 +528,7 @@ def build_inbox_middleware(
     kind: str = "subagent_update",
     source: str | None = None,
     on: str = "after_agent",
+    delivery_state: _DeliveryState | None = None,
 ):
     """Build a `create_agent` middleware that posts the sub-agent's result to a parent's
     inbox at the post-call hook point: `after_agent` (once, when the whole session turn
@@ -474,14 +545,20 @@ def build_inbox_middleware(
 
     hook = inbox_post_hook(inbox, kind=kind, source=source)
 
-    def _deliver(state) -> None:
+    def _deliver(agent_state) -> None:
         config = {}
         try:
             config = get_config()
         except Exception:
             pass  # not inside a graph run: no thread id to report
         thread_id = (config.get("configurable") or {}).get("thread_id")
-        hook(_turn_result_payload(state, thread_id))
+        turn_id = _CURRENT_TURN_ID.get()
+        if delivery_state is not None and turn_id is not None:
+            with delivery_state.lock:
+                if turn_id in delivery_state.delivered:
+                    return
+                delivery_state.delivered.add(turn_id)
+        hook(_turn_result_payload(agent_state, thread_id, turn_id))
 
     class InboxDispatchMiddleware(AgentMiddleware):
         """Notifies a parent inbox with the sub-agent's turn result at the post-call
@@ -519,12 +596,24 @@ def build_inbox_delivery(
     is wired."""
     if inbox is None:
         return None, None
-    middleware = build_inbox_middleware(inbox, kind=kind, source=source, on=on)
+    delivery_state = _DeliveryState()
+    middleware = build_inbox_middleware(
+        inbox, kind=kind, source=source, on=on, delivery_state=delivery_state
+    )
     hook = inbox_post_hook(inbox, kind=kind, source=source)
 
     def degraded_hook(thread_id: str | None, exc: Exception) -> None:
+        turn_id = _CURRENT_TURN_ID.get()
+        if turn_id is not None:
+            with delivery_state.lock:
+                if turn_id in delivery_state.delivered:
+                    # The turn already delivered its real result; a later
+                    # checkpointer/transport failure must not post a second
+                    # reply for the same logical turn.
+                    return
+                delivery_state.delivered.add(turn_id)
         logger.warning("actor turn degraded on %s (%s); posting a no-decision reply",
                        thread_id, exc)
-        hook(_turn_result_payload({}, thread_id))
+        hook(_turn_result_payload({}, thread_id, turn_id, degraded=True))
 
     return middleware, degraded_hook

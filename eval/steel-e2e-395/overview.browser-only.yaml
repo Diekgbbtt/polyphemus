@@ -42,6 +42,8 @@ technical_conditions:
       {"code":200,"result":"注册成功"}.
 anti-bot: steel-e2e-browser-only-fixture
 http-client-replayability: false
+auth_probe:
+  url: /api/authentication
 notes: >-
   White Jotter (Spring Boot + Apache Shiro + Vue 2 SPA) served behind a
   path-stripping proxy at the target root. Authentication is a JSON password
@@ -58,3 +60,6 @@ notes: >-
   http-client-replayability false to force the browser-only branch for this
   test. This is not a claim that the target requires a browser. The live Steel
   session wj-gateway-e2e holds the pre-authenticated browser context.
+  THE ORACLE: GET /api/authentication answers 2xx with the authenticated
+  session and 302 /nowhere without it. 2xx passes, 401/403/3xx fails, anything
+  else is indeterminate and stops the run.

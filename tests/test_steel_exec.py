@@ -71,7 +71,11 @@ def _write_steel_stub(bindir, calls, version_line):
         '  *"browser sessions"*)\n'
         '    echo \'{"success":true,"data":[{"id":"uuid-1","mode":"cloud",'
         '"name":"taken-sess","status":"live",'
-        '"viewerUrl":"https://app.steel.dev/sessions/uuid-1"}]}\' ;;\n'
+        '"viewerUrl":"https://app.steel.dev/sessions/uuid-1"},'
+        '{"id":"uuid-2","mode":"cloud","name":"s1","status":"live",'
+        '"viewerUrl":"https://app.steel.dev/sessions/uuid-2"},'
+        '{"id":"uuid-3","mode":"cloud","name":"s3","status":"live",'
+        '"viewerUrl":"https://app.steel.dev/sessions/uuid-3"}]}\' ;;\n'
         '  *) echo "{\\"stub\\": true}" ;;\n'
         "esac\n"
     )
@@ -89,8 +93,9 @@ def test_non_steel_command_refused_never_executed(workroot, steel_stub):
     assert out["returncode"] != 0
     assert "refused" in out["stderr"] and "steel" in out["stderr"]
     assert _calls(steel_stub) == []
-    # Refusal carries the unchanged envelope shape.
-    assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
+    # Refusal carries the typed error plus the legacy envelope.
+    assert {"stdout", "stderr", "returncode", "duration_ms"} <= set(out)
+    assert out["error"]["code"] == "not-steel-command"
 
 
 def test_ambiguous_inputs_refused_never_executed(workroot, steel_stub):
@@ -136,12 +141,15 @@ def test_py_script_runs_and_bad_lang_refused(workroot, steel_stub):
 
 
 def test_steel_command_passes_through_with_envelope(workroot, steel_stub):
-    out = _steel_exec(command="steel browser cookies --json", session_id="s1")
+    out = _steel_exec(
+        command="steel browser cookies --session s1 --json", session_id="s1")
     assert out["returncode"] == 0
     assert json.loads(out["stdout"]) == {"stub": True}
     assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
-    # The pinned-version probe runs first, then the command itself.
-    assert _calls(steel_stub) == ["--version", "browser cookies --json"]
+    # The pinned-version probe, the session pre-check, then the command.
+    assert _calls(steel_stub) == [
+        "--version", "browser sessions --json",
+        "browser cookies --session s1 --json"]
 
 
 def test_taken_session_name_refused_with_name(workroot, steel_stub):
@@ -149,9 +157,9 @@ def test_taken_session_name_refused_with_name(workroot, steel_stub):
     out = _steel_exec(command="steel browser start --session taken-sess --json",
                      session_id="s1")
     assert out["returncode"] != 0
-    assert out["stderr"].startswith("refused:session-taken")
-    assert "taken-sess is already used" in out["stderr"]
-    assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
+    assert out["error"]["code"] == "session_taken"
+    assert "taken-sess" in out["stderr"] and "live" in out["stderr"]
+    assert {"stdout", "stderr", "returncode", "duration_ms"} <= set(out)
     calls = _calls(steel_stub)
     assert any("browser sessions" in c for c in calls)
     assert not any("start" in c for c in calls)
@@ -166,18 +174,19 @@ def test_free_session_name_proceeds_to_start(workroot, steel_stub):
     assert any("start" in c and "fresh-sess" in c for c in calls)
 
 
-def test_guard_only_watches_command_mode_starts(workroot, steel_stub):
-    # A non-start command carrying --session never reads the catalogue.
-    out = _steel_exec(command="steel browser navigate https://x --session taken-sess --json",
-                     session_id="s1")
+def test_command_mode_validates_every_named_session_and_scripts_are_not_scanned(
+        workroot, steel_stub):
+    # Every command-mode browser invocation is checked against the catalogue.
+    out = _steel_exec(
+        command="steel browser navigate https://x --session taken-sess --json",
+        session_id="s1")
     assert out["returncode"] == 0, out
-    assert not any("browser sessions" in c for c in _calls(steel_stub))
-    # Script text is never scanned: skill-constructed names bypass the guard.
+    assert any("browser sessions" in c for c in _calls(steel_stub))
+    # Script text is not parsed by the gateway; the binary boundary owns it.
     script = "steel browser start --session taken-sess --json\necho done\n"
     out = _steel_exec(script=script, script_lang="sh", session_id="s2")
     assert out["returncode"] == 0, out
     assert "done" in out["stdout"]
-    assert not any("browser sessions" in c for c in _calls(steel_stub))
 
 
 def test_unreadable_catalogue_fails_open(workroot, tmp_path, monkeypatch):
@@ -213,9 +222,11 @@ def test_steel_wait_within_budget_proceeds(workroot, steel_stub):
         session_id="s1")
     assert out["returncode"] == 0, out
     # The shell strips the quotes before the stub logs argv; the --timeout
-    # value surviving verbatim is the plumbing proof.
+    # value surviving verbatim is the plumbing proof. The catalogue probe runs
+    # before the command under the universal session check.
     assert _calls(steel_stub) == [
-        "--version", "browser wait -t Secure Area --timeout 10000 --session s1 --json"]
+        "--version", "browser sessions --json",
+        "browser wait -t Secure Area --timeout 10000 --session s1 --json"]
 
 
 def test_steel_wait_exceeding_budget_refused_never_executed(workroot, steel_stub):
@@ -242,7 +253,8 @@ def test_stale_steel_version_refused_never_executed(workroot, steel_stub_stale):
     assert out["returncode"] != 0
     assert out["stderr"].startswith("refused:steel-version-mismatch")
     assert "0.5.0-preview.6" in out["stderr"]
-    assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
+    assert {"stdout", "stderr", "returncode", "duration_ms"} <= set(out)
+    assert out["error"]["code"] == "steel-version-mismatch"
     assert _calls(steel_stub_stale) == ["--version"]
 
 
@@ -251,7 +263,7 @@ def test_misordered_variadic_refused_never_executed(workroot, steel_stub):
     # value silently. Every variadic verb without the `--` boundary is refused,
     # so the encoded-boundary rule never has to guess where the value ends.
     for command in (
-        "steel browser fill '#user-name' 'standard_user' --json",
+        "steel browser fill --session s1 '#user-name' 'standard_user' --json",
         "steel browser fill '#user-name' 'standard_user' --session taken-sess --json",
         "steel browser type --session s1 '#user-name' 'standard_user' --json",
         "steel browser setvalue --session s1 '#user-name' 'standard_user'",
@@ -260,11 +272,13 @@ def test_misordered_variadic_refused_never_executed(workroot, steel_stub):
     ):
         out = _steel_exec(command=command, session_id="s1")
         assert out["returncode"] != 0, command
-        assert out["stderr"].startswith("refused:variadic-boundary"), (command, out)
-        assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
-    # Only the version probe ran; no refused command reached the steel binary.
+        assert out["error"]["code"] == "variadic_boundary", (command, out)
+        assert "boundary" in out["stderr"], (command, out)
+        assert {"stdout", "stderr", "returncode", "duration_ms"} <= set(out)
+    # Only the version and catalogue probes ran; no refused command reached
+    # the steel binary.
     calls = _calls(steel_stub)
-    assert calls and set(calls) == {"--version"}
+    assert calls and set(calls) == {"--version", "browser sessions --json"}
 
 
 def test_canonical_text_entry_passes_through_byte_identical(workroot, steel_stub):
@@ -302,13 +316,13 @@ def test_batch_boundary_required_at_both_levels(workroot, steel_stub):
     out = _steel_exec(
         command="steel browser batch 'snapshot -i' 'click @e4' --session s1 --json",
         session_id="s1")
-    assert out["stderr"].startswith("refused:variadic-boundary"), out
+    assert out["error"]["code"] == "variadic_boundary", out
     assert "batch" in out["stderr"]
     # Inner: an element that is itself variadic carries its own boundary.
     out = _steel_exec(
         command="steel browser batch --session s1 --json -- 'snapshot -i' 'fill @e6 42'",
         session_id="s1")
-    assert out["stderr"].startswith("refused:variadic-boundary"), out
+    assert out["error"]["code"] == "variadic_boundary", out
     assert "fill" in out["stderr"]
     # Canonical at both levels passes byte-identical.
     command = "steel browser batch --session s1 --json -- 'snapshot -i' 'fill @e6 -- 42'"
@@ -324,7 +338,8 @@ def test_quoted_double_dash_value_is_not_the_boundary(workroot, steel_stub):
     out = _steel_exec(
         command="steel browser fill --session s1 --json '#x' 'a -- b'",
         session_id="s1")
-    assert out["stderr"].startswith("refused:variadic-boundary"), out
+    assert out["error"]["code"] == "variadic_boundary", out
+    assert "boundary" in out["stderr"]
 
 
 def test_non_variadic_verbs_accept_trailing_flags(workroot, steel_stub):
@@ -355,9 +370,10 @@ def test_script_text_not_scanned_for_boundary(workroot, steel_stub):
 def test_gateway_passes_the_command_through_without_local_injection(
         workroot, steel_stub, monkeypatch):
     monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
-    out = _steel_exec(command="steel browser cookies --json", session_id="s1")
+    out = _steel_exec(
+        command="steel browser cookies --session s1 --json", session_id="s1")
     assert out["returncode"] == 0, out
-    assert _calls(steel_stub)[-1] == "browser cookies --json"
+    assert _calls(steel_stub)[-1] == "browser cookies --session s1 --json"
 
 
 def test_script_text_is_verbatim_and_leaves_runtime_selection_to_the_wrapper(

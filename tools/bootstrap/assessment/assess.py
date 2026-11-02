@@ -397,18 +397,22 @@ def assess_auth(project_dir: Path) -> dict[str, dict]:
     credentials = _read_yaml(project_dir / "auth" / "credentials.yaml") or {}
     accounts = credentials.get("accounts") if isinstance(credentials, dict) else {}
     n_accounts = len(accounts) if isinstance(accounts, dict) else 0
+    probe = overview.get("auth_probe") if isinstance(overview, dict) else None
+    probe_present = isinstance(probe, dict) and bool(probe.get("url"))
     skill = project_dir / "skills" / "authn" / "SKILL.md"
     if errors:
         d1 = _criterion(1 if skill.is_file() or n_accounts else 0,
-                        {"validator_errors": len(errors), "n_accounts": n_accounts},
+                        {"validator_errors": len(errors), "n_accounts": n_accounts,
+                         "auth_probe_present": probe_present},
                         errors[:5])
     else:
         d1 = _criterion(
-            4 if n_accounts >= 2 and skill.is_file()
-            else 3 if n_accounts >= 1
-            else 2,  # valid empty bundle = an unauthenticated target
+            4 if n_accounts >= 2 and skill.is_file() and probe_present
+            else 3 if n_accounts >= 1 and probe_present
+            else 2 if not n_accounts else 1,  # valid empty = unauthenticated target
             {"n_accounts": n_accounts,
              "skill_present": skill.is_file(),
+             "auth_probe_present": probe_present,
              "overview_present": bool(overview)})
     return {"D1": d1}
 

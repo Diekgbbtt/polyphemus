@@ -105,6 +105,31 @@ def test_an_explicit_domain_is_never_overwritten(tmp_path):
     assert out["value"]["domain"] == "keep.example"
 
 
+def _probe_store(tmp_path, url="/api/authentication"):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "overview", {"auth_probe": {"url": url}},
+                origin="operator")
+    return store
+
+
+def test_the_oracle_path_resolves_against_the_project_origin(tmp_path):
+    tool = build_auth_store_tool(
+        PROJECT, _probe_store(tmp_path), settings_fn=_settings("t-abc.target")
+    )
+    out = tool.invoke({"command": "read", "path": "overview.auth_probe"})
+    assert out["value"]["url"] == "http://t-abc.target/api/authentication"
+
+
+def test_an_absolute_oracle_is_left_untouched(tmp_path):
+    absolute = "https://live.example/api/authentication"
+    tool = build_auth_store_tool(
+        PROJECT, _probe_store(tmp_path, absolute),
+        settings_fn=_settings("t-abc.target"),
+    )
+    out = tool.invoke({"command": "read", "path": "overview.auth_probe"})
+    assert out["value"]["url"] == absolute
+
+
 def test_no_seed_leaves_paths_untouched(tmp_path):
     tool = build_auth_store_tool(
         PROJECT, _store(tmp_path), settings_fn=_settings(None)

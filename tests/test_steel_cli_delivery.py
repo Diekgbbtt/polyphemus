@@ -55,8 +55,10 @@ def test_postrun_checksum_verifies_both_arches():
 def test_postrun_stanza_is_idempotent_and_best_effort():
     text = _postrun_text()
     # Idempotent: skip when the pinned version is already present. The real
-    # binary lives beside the wrapper (#395), so the probe names steel-real.
-    assert "steel-real --version" in text
+    # binary lives in a private subdirectory, so the probe goes through the
+    # private path rather than a public PATH name.
+    assert "_STEEL_REAL" in text
+    assert '"$_STEEL_REAL" --version' in text
     assert "0.5.0-preview.6" in text
     # Best-effort: never abort boot (no active `set -e` command line -
     # the header only names it in a comment; script always exits 0).
@@ -67,6 +69,18 @@ def test_postrun_stanza_is_idempotent_and_best_effort():
     assert text.rstrip().endswith("exit 0")
     # Installs into the persisted binary dir like the other gap-fills.
     assert "/opt/localbin" in text
+
+
+def test_postrun_keeps_the_real_cli_off_path_and_shims_the_public_name():
+    text = _postrun_text()
+    # The real binary is private: a PATH search must never resolve to it.
+    assert '_STEEL_PRIVATE_DIR=/opt/localbin/.steel' in text
+    assert '_STEEL_REAL="$_STEEL_PRIVATE_DIR/steel"' in text
+    # Both public names route through the wrapper; steel-real is a symlink.
+    assert "rm -f /opt/localbin/steel-real" in text
+    assert "ln -s steel /opt/localbin/steel-real" in text
+    # An existing pre-hardening binary is migrated before the shim replaces it.
+    assert 'cp /opt/localbin/steel-real "$_STEEL_REAL"' in text
 
 
 def test_compose_kali_wires_steel_key_only():

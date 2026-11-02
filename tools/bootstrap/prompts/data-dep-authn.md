@@ -34,7 +34,10 @@ Write to (`<staging>` is the staging root from the Substitutions block, `<projec
 ### File shapes (from `docs/design/auth-store-220-decisions.md` D220-3)
 
 `overview.yaml` - the operator-owned login-mechanism header:
-`{login_endpoint?, required_headers? (list of "Name: value"), mechanism?, defences?, fingerprinting?, technical_conditions? (list of {name, check}), anti-bot? (a vendor/challenge name or null), http-client-replayability? (true|false; unset = UNKNOWN), notes?}`.
+`{login_endpoint?, required_headers? (list of "Name: value"), mechanism?, defences?, fingerprinting?, technical_conditions? (list of {name, check}), anti-bot? (a vendor/challenge name or null), http-client-replayability? (true|false; unset = UNKNOWN), auth_probe? ({url: <path>} - the authenticated-context oracle), notes?}`.
+`auth_probe.url` is a deployment-neutral path such as `/api/authentication`, never a host.
+Prove that it answers 2xx only with an authenticated context: 401, 403, or 3xx without one.
+The recon gateway uses it as the only authentication oracle; a target with a declared surface and no oracle is an incomplete bootstrap.
 
 `credentials.yaml` - accounts keyed by name:
 `{accounts: {<username>-<minting_context>: {origin, procedure?, credentials? (username, password, login_url, domain?, selectors?), tokens? ({<name>: {value, location: cookie|header|storage, target?, expiry?}}), steel? ({state}), snapshot? ({headers, cookies, params, captured_at}), roles?, default_role?, notes?}}}`.
@@ -45,7 +48,8 @@ Secret values live in `credentials.yaml` and NEVER in the skill.
 `skills/authn/SKILL.md` - the replayable procedure per P5: valid frontmatter (`name: authn`, a `description`, `metadata.version`), the mandatory anti-bot block verbatim, sign-up and sign-in as SEPARATE named procedures, each step citing its tool AND reason, secret NAMES only (never values), and login-specific scripts under `references/`.
 
 The skill is CONSUMED by the L1 crawl, which runs immediately after you and reuses the running target.
-So the skill must be self-describing enough for a fresh agent to reproduce the login without your session: name every required secret, the exact request shape, the endpoint, and how to verify the authenticated landing.
+So the skill must be self-describing enough for a fresh agent to reproduce the login without your session: name every required secret, the exact request shape, the endpoint, and the oracle verification step.
+The oracle is the only pass/fail signal: 2xx with no followed redirect passes; 401, 403, or 3xx fails; anything else is indeterminate and is not a pass.
 Record the **session snapshot** (`snapshot.headers`, `snapshot.cookies`, and any token) in `credentials.yaml` with `captured_at`, so the L1 crawl can replay the session without re-running sign-in; the crawl falls back to the skill's sign-in procedure when the snapshot is stale or not portable.
 
 ## Execution
@@ -57,7 +61,9 @@ Record the **session snapshot** (`snapshot.headers`, `snapshot.cookies`, and any
 - Request-replayable: reproduce the sign-up/sign-in request shape with curl, verify a fresh session cookie + a non-login landing, then capture the account's cookies/tokens into `credentials.yaml`.
 - If a defence signal forces the browser: the Steel CLI may not be authenticated in this environment - if it is unavailable, record `http-client-replayability: false` honestly and author the browser steps anyway, flagging the gap in your report. Never fake a replay.
 - New accounts are minted with synthetic identity data (a fake email and fake personal details), never real personal data; the exact values are recorded in the account's `credentials`.
-- Re-run the P3 verification predicate before recording; treat an expired/missing session as a loud failure, never a silent anonymous fallback.
+- Find and prove the authenticated-context oracle before recording: a same-origin path that returns 2xx with the authenticated session and 401/403/3xx without it.
+  A login page is never the oracle.
+- Re-run the oracle before recording; treat an expired/missing session as a loud failure, never a silent anonymous fallback.
 
 ## Validate and stop
 
@@ -70,4 +76,4 @@ PYTHONPATH=src python3 tools/bootstrap/validate_data_dependencies.py --auth-only
 Fix every error until it prints OK.
 Then STOP. Do not author the L1 surface; a second prompt covers that and reuses your running target and this skill.
 
-Report concisely (under 30 lines): the mode decision with its forcing evidence (status/headers/markers); `anti-bot` name or null; `http-client-replayability` verdict with its static/dynamic continuation facts; the account name(s) and token names/locations (redacted values); the written skill path; and any error verbatim. No secret VALUES in the report.
+Report concisely (under 30 lines): the mode decision with its forcing evidence (status/headers/markers); `anti-bot` name or null; `http-client-replayability` verdict with its static/dynamic continuation facts; the oracle path with both observed polarities (authenticated 2xx, anonymous 401/403/3xx); the account name(s) and token names/locations (redacted values); the written skill path; and any error verbatim. No secret VALUES in the report.

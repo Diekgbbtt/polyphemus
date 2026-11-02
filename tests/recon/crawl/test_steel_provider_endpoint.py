@@ -157,6 +157,36 @@ def test_cdp_falls_back_to_the_cloud_only_without_the_field():
     )
 
 
+def test_session_payload_exposes_a_shared_player_as_not_addressable():
+    session = SimpleNamespace(
+        id="session-1",
+        session_viewer_url="http://host:3000/",
+        websocket_url="ws://host:3000/",
+        debug_url="http://host:3000/v1/sessions/debug",
+        debugger_url="http://host:3000/v1/devtools/inspector.html",
+    )
+
+    steel_session, payload = steel_provider._session_payload(session)
+
+    assert steel_session.session_id == "session-1"
+    assert payload["viewer_url"] == "http://host:3000/"
+    assert payload["live_view"]["kind"] == "player"
+    assert payload["live_view"]["addressable"] is False
+
+
+def test_session_payload_marks_a_cloud_viewer_addressable():
+    session = SimpleNamespace(
+        id="session-1",
+        session_viewer_url="https://app.steel.dev/sessions/session-1",
+        websocket_url="wss://connect.steel.dev?sessionId=session-1",
+    )
+
+    _, payload = steel_provider._session_payload(session)
+
+    assert payload["live_view"]["kind"] == "viewer"
+    assert payload["live_view"]["addressable"] is True
+
+
 def test_finish_returns_an_empty_manifest_after_a_failed_auth_gate(fake_steel):
     async def _close():
         return None

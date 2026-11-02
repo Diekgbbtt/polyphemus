@@ -23,7 +23,14 @@ try:
         sanitize_shell_command,
         sanitize_steel_command,
     )
-except ImportError:  # the deployed 8001 layout runs flat in /tmp/polymerhus-e2e/kali
+    from kali.steel_guard import (
+        guard_env,
+        known_session_names,
+        read_events,
+        record_live_sessions,
+    )
+    from kali.process_group import run_in_process_group
+except ImportError:  # the deployed flat layout beside mcp_server.py
     from steel_contract import (  # type: ignore[no-redef]
         BrowserCommand,
         ContractError,
@@ -31,6 +38,13 @@ except ImportError:  # the deployed 8001 layout runs flat in /tmp/polymerhus-e2e
         sanitize_shell_command,
         sanitize_steel_command,
     )
+    from steel_guard import (  # type: ignore[no-redef]
+        guard_env,
+        known_session_names,
+        read_events,
+        record_live_sessions,
+    )
+    from process_group import run_in_process_group  # type: ignore[no-redef]
 
 os.environ["PATH"] = ":".join([
     "/opt/localbin", "/root/go/bin", "/opt/venv/bin", "/usr/local/go/bin", os.environ.get("PATH", ""),
@@ -109,6 +123,80 @@ def _sanitize_output(text: str) -> str:
     return _ANSI.sub("", text or "")
 
 
+def _new_trace(workdir: str) -> str:
+    descriptor, path = tempfile.mkstemp(
+        prefix="steel-trace-", suffix=".jsonl", dir=workdir
+    )
+    os.close(descriptor)
+    return path
+
+
+def _compact_event(event: dict) -> dict:
+    keys = (
+        "verb",
+        "session",
+        "session_id",
+        "remaining_ms",
+        "decision",
+        "returncode",
+        "duration_ms",
+        "error",
+        "warning",
+        "catalogue",
+    )
+    return {key: event[key] for key in keys if event.get(key) is not None}
+
+
+def _apply_steel_events(result: dict, events: list[dict]) -> dict:
+    """Merge the binary guard's per-invocation events into a tool result.
+
+    The guard is the only component that sees every real Steel invocation,
+    including ones hidden behind nested shells, scripts, pipes, and output
+    suppression. Its trace is therefore authoritative for browser-state
+    failures. ``stdout`` and ``stderr`` stay unchanged. When the guard reports
+    an error, the envelope's ``returncode`` follows the error and the
+    composition's own rc is preserved as ``shell_returncode``.
+    """
+    if not events:
+        return result
+    out = dict(result)
+    out["steel_events"] = [_compact_event(event) for event in events]
+    error_event = next(
+        (
+            event
+            for event in events
+            if isinstance(event.get("error"), dict) and event["error"].get("code")
+        ),
+        None,
+    )
+    if error_event is not None:
+        error = error_event["error"]
+        out["error"] = error
+        if not out.get("stderr"):
+            out["stderr"] = str(error.get("message") or "")
+        # The error object is authoritative. A shell composition can return a
+        # different rc for the same failure (`xargs` maps a denied child to
+        # 123; `|| true` maps it to 0). Keep the composition's rc available as
+        # `shell_returncode`, but make the primary rc agree with the error.
+        error_rc = int(error_event.get("returncode") or 2)
+        shell_rc = int(out.get("returncode") or 0)
+        if shell_rc != error_rc:
+            out["shell_returncode"] = shell_rc
+            out["returncode"] = error_rc
+    else:
+        warning = next(
+            (
+                event["warning"]
+                for event in events
+                if isinstance(event.get("warning"), dict)
+            ),
+            None,
+        )
+        if warning is not None:
+            out["warning"] = warning
+    return out
+
+
 def _error_payload(exc: Exception) -> dict:
     import sqlite3
 
@@ -162,7 +250,9 @@ async def execute_command(
     steel_commands = ()
     if "steel" in command:
         live = _live_session_names()
-        sanitized = sanitize_shell_command(command, live_sessions=live)
+        sanitized = sanitize_shell_command(
+            command, live_sessions=live,
+            known_sessions=known_session_names())
         if isinstance(sanitized, ContractError):
             env = sanitized.envelope()
             env.update({"exec_id": "", "http_artifact_refs": [],
@@ -207,13 +297,28 @@ async def execute_command(
                 "canonical_command": command,
             },
         }
+    # Belt and braces for an unguarded deployment: a successful start is
+    # remembered immediately, not only at the next catalogue query. The guard
+    # does the same at the binary boundary.
+    if result.get("returncode") == 0 and steel_commands:
+        started = [
+            item.session for item in steel_commands
+            if item.verb == "start" and item.session
+        ]
+        if started:
+            record_live_sessions(started)
     result["stdout"] = _sanitize_output(result["stdout"])
     result["stderr"] = _sanitize_output(result["stderr"])
-    if steel_commands:
+    events = result.pop("steel_events", None) or []
+    guard_error = any(
+        isinstance(event.get("error"), dict) and event["error"].get("code")
+        for event in events
+    )
+    if steel_commands and not guard_error:
         session = next((item.session for item in steel_commands if item.session), None)
         result = classify_result(command, result, session=session,
                                  live_sessions=live)
-    return result
+    return _apply_steel_events(result, events)
 
 
 async def search_http_history(
@@ -310,17 +415,31 @@ def _refused(kind: str, detail: str, *, recovery: dict | None = None) -> dict:
 
 def _run(command: str, session_id: str, timeout_s: int) -> dict:
     # The one exec implementation both tools share: per-session workdir,
-    # ANSI-stripped {stdout, stderr, returncode, duration_ms} envelope.
+    # ANSI-stripped {stdout, stderr, returncode, duration_ms} envelope, plus
+    # the binary guard's events when the guard is deployed.
     workdir = _workdir(session_id)
-    start = time.time()
-    try:
-        proc = subprocess.run(command, shell=True, cwd=workdir,
-                              capture_output=True, text=True, timeout=timeout_s)
-        rc, out, err = proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as e:
-        rc, out, err = 124, (e.stdout or ""), f"timeout after {timeout_s}s"
-    return {"stdout": _ANSI.sub("", out), "stderr": _ANSI.sub("", err),
-            "returncode": rc, "duration_ms": int((time.time() - start) * 1000)}
+    trace_path = _new_trace(workdir)
+    env = guard_env(trace_path=trace_path, timeout_s=timeout_s)
+    # The guard times out the browser command at timeout_s and writes its
+    # event. The outer runner needs one more second to reap and report; it
+    # never shortens the guard's own budget. A command with no Steel token
+    # keeps the requested timeout exactly.
+    steel_invoked = bool(_STEEL_TOKEN.search(command))
+    outer_timeout = (
+        timeout_s + 1
+        if steel_invoked and env.get("STEEL_REAL_BINARY")
+        else timeout_s
+    )
+    outcome = run_in_process_group(
+        command, shell=True, cwd=workdir, env=env,
+        timeout_s=outer_timeout, text=True
+    )
+    events = read_events(trace_path)
+    result = {"stdout": _ANSI.sub("", outcome.stdout),
+              "stderr": _ANSI.sub("", outcome.stderr),
+              "returncode": outcome.returncode,
+              "duration_ms": outcome.duration_ms}
+    return _apply_steel_events(result, events)
 
 def _live_session_names() -> set[str] | None:
     # The session catalogue (re-probed live 2026-09-16): `steel browser
@@ -336,12 +455,14 @@ def _live_session_names() -> set[str] | None:
         proc = subprocess.run(
             "steel browser sessions --json",
             shell=True, capture_output=True, text=True,
-            timeout=_CATALOGUE_TIMEOUT_S)
+            timeout=_CATALOGUE_TIMEOUT_S, env=guard_env())
         data = json.loads(proc.stdout or "").get("data")
         if not isinstance(data, list):
             return None
-        return {s["name"] for s in data
-                if isinstance(s, dict) and isinstance(s.get("name"), str)}
+        names = {s["name"] for s in data
+                 if isinstance(s, dict) and isinstance(s.get("name"), str)}
+        record_live_sessions(names)
+        return names
     except Exception:
         return None
 
@@ -353,7 +474,8 @@ def _steel_version_ok() -> bool:
     # own shell error instead of a version verdict.
     try:
         proc = subprocess.run("steel --version", shell=True, capture_output=True,
-                              text=True, timeout=_VERSION_TIMEOUT_S)
+                              text=True, timeout=_VERSION_TIMEOUT_S,
+                              env=guard_env())
         out = (proc.stdout or "") + (proc.stderr or "")
         if proc.returncode != 0 or not out.strip():
             return True
@@ -392,10 +514,17 @@ def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh
             return _refused("timeout-ordering",
                             f"longest steel wait {max(waits)}s needs tool timeout_s above it, got {timeout_s}")
         live = _live_session_names()
-        parsed = sanitize_steel_command(command, live_sessions=live)
+        parsed = sanitize_steel_command(
+            command, live_sessions=live,
+            known_sessions=known_session_names())
         if isinstance(parsed, ContractError):
             return parsed.envelope()
         result = _run(command, session_id, timeout_s)
+        if (result.get("returncode") == 0 and parsed.verb == "start"
+                and parsed.session):
+            # The guard records this too when deployed; this keeps the
+            # unguarded path correct as well.
+            record_live_sessions([parsed.session])
         return classify_result(command, result, session=parsed.session,
                                live_sessions=live)
     if script_lang not in _SCRIPT_RUNNERS:
@@ -442,4 +571,8 @@ for _fn in (
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8000, path="/mcp")
+    # The eval harness runs a second, isolated server on 8001. The default
+    # stays 8000, so the image entrypoint and every existing deployment are
+    # unchanged.
+    port = int(os.environ.get("KALI_MCP_PORT", "8000"))
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=port, path="/mcp")

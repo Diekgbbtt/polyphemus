@@ -2,11 +2,11 @@
 name: authn
 description: >-
   Browser-only fixture for the Steel session end-to-end run. Reuse the
-  pre-authenticated Steel session wj-gateway-e2e, prove the administrator
-  session through the browser, assert it in the auth store, and never replay
-  the login over HTTP.
+  pre-authenticated Steel session wj-gateway-e2e, prove the authenticated
+  context with the oracle at /api/authentication, assert it in the auth store,
+  and never replay the login over HTTP.
 metadata:
-  version: '2.0-steel-e2e'
+  version: '2.1.0'
 ---
 
 # White Jotter authentication skill - browser-only fixture
@@ -43,14 +43,33 @@ It stores no credentials and no roles.
    When replay cannot reach the authenticated state, record `http-client-replayability: false`; browser-only is a complete, honest result, never a failure.
 6. Re-verify stale state.
    Treat an expired or missing session as a loud failure.
-   Re-run the verification predicate before recording or replaying, and never fall back silently to anonymous state.
+   Re-run the oracle before recording or replaying, and never fall back silently to anonymous state.
+
+## The authenticated-context oracle
+
+The overview records `auth_probe: {url: /api/authentication}`.
+The app resolves the path against the live project origin.
+This is the ONLY pass/fail signal for the session:
+
+- 2xx with no followed redirect: authenticated.
+- 401, 403, or any 3xx (including a followed redirect): not authenticated.
+- Anything else (network error, 5xx, other 4xx): indeterminate, which stops the run.
+
+A 302 from `/api/authentication` to `/nowhere` is a 3xx and fails, even when the browser follows it and renders a page.
+The login page is never the oracle.
+
+Run the oracle in the live session:
+
+```
+steel browser eval "(async()=>{const r=await fetch('http://t-1618c524.target/api/authentication',{redirect:'follow',credentials:'include',cache:'no-store'});return {status:r.status,redirected:r.redirected,url:r.url}})()" --session wj-gateway-e2e --json
+```
 
 ## Mode decision for this fixture
 
 - The overview records `anti-bot: steel-e2e-browser-only-fixture` and `http-client-replayability: false`.
 - The branch directive is therefore `browser_only`.
 - Do not attempt a request replay.
-- Do not start a new Steel session.
+- Do not start a new Steel session while `wj-gateway-e2e` is live.
 - Reuse `wj-gateway-e2e` exactly as the operator created it.
 - The hash forms `/#/login` and `/#/register` are wrong for this SPA because the Vue router runs in history mode.
   The real paths are `/login` and `/register`.
@@ -65,49 +84,60 @@ It stores no credentials and no roles.
 
 1. Confirm the live session catalogue.
    Command: `steel browser sessions --json`.
-   Reason: the operator owns `wj-gateway-e2e`; if the name is absent, the fixture cannot mint a new session because the account has no credentials.
-   On absence, skip to the failure branch.
-2. Reattach to the authenticated admin surface.
-   Command: `steel browser navigate http://t-1618c524.target/admin/dashboard --wait-until domcontentloaded --session wj-gateway-e2e --json`.
-   Then run `steel browser snapshot -i --session wj-gateway-e2e --json`.
-   Reason: the admin dashboard proves that the browser session reached the application, while the API probes below prove that the server accepted its httpOnly cookie.
-3. Prove the live server session.
-   Command: `steel browser navigate http://t-1618c524.target/api/authentication --wait-until domcontentloaded --session wj-gateway-e2e --json`.
-   Then run `steel browser eval "document.body.innerText" --session wj-gateway-e2e --json`.
-   Reason: `GET /api/authentication` answers `身份认证成功` only when the httpOnly `JSESSIONID` is sent and valid.
-   An unauthenticated or stale request answers `302` with `Location: /nowhere`.
-4. Probe the privileged feature.
-   Command: `steel browser navigate http://t-1618c524.target/api/admin/user --wait-until domcontentloaded --session wj-gateway-e2e --json`.
-   Then run `steel browser eval "document.body.innerText" --session wj-gateway-e2e --json`.
-   Reason: the response must carry `code: 200` and the administrator entry with role `sysAdmin`.
-   The member session would receive an empty `200` body.
-5. Assert the account in the store.
+   Reason: the operator owns `wj-gateway-e2e`.
+   If the name is absent, go to the mint branch.
+2. Run the oracle.
+   Command: the `steel browser eval` fetch above, with the absolute URL read from `overview.auth_probe`.
+   Reason: it answers 2xx only when the httpOnly `JSESSIONID` is accepted; 401, 403, or 3xx is not authenticated.
+   Judge the `{status, redirected}` result, never the shell return code.
+3. If the oracle passes, prove the fixture's administrator role.
+   Command: `steel browser navigate http://t-1618c524.target/api/admin/role --wait-until domcontentloaded --session wj-gateway-e2e --json`, then `steel browser eval "document.body.innerText" --session wj-gateway-e2e --json`.
+   Reason: the fixture expects the `sysAdmin` role with the `users_management` permission.
+   This is an authorization check on top of authentication, not the oracle.
+   A member session would receive an empty 200 body.
+4. Assert the account in the store.
    Tool call: `auth_store` with `{"command": "write", "path": "accounts.admin-sessiononly-e2e.status", "value": "valid"}`.
    Reason: the store already holds the token and the snapshot.
    A root write to `accounts.admin-sessiononly-e2e` is a create and refuses a pre-seeded account with `duplicate_auth`.
    The leaf write merges and is the assertion the authn loop expects.
    Never rewrite the token value.
-6. Run the outer skill-judging loop.
-   Re-read this skill only if the turn produced a durable route, selector, or runtime fact.
+5. Run the outer skill-judging loop.
+   Re-read this skill only if the turn produced a durable route, selector, runtime fact, or oracle correction.
    If a durable lesson exists, use `write_skill` with `{"skill": "authn", "target": "procedure", "content": "<the complete updated procedure>"}`.
    Otherwise skip the write.
    Never put a token, a cookie value, or a credential in the skill.
-7. Emit the gateway verdict.
+6. Emit the gateway verdict.
    The verdict must be `outcome: authenticated`, `account: admin-sessiononly-e2e`, and `branch: browser_only`.
    Leave `replayability_resolved` false because the overview already records the known `http-client-replayability: false`.
-   The rationale must cite the `身份认证成功` marker and the administrator entry with role `sysAdmin`.
+   The rationale must cite the oracle status and the `sysAdmin` role with the `users_management` permission.
    The rationale must not contain the token, a cookie value, or any credential.
+
+## Mint branch (the session is gone)
+
+The target has self-service sign-up.
+The gateway may mint a NEW account; it never reads an existing secret.
+
+1. If `wj-gateway-e2e` is absent, or the oracle returns 401, 403, or 3xx, do not start a replacement session.
+2. Navigate to `http://t-1618c524.target/register` and register a new account with synthetic identity data (a fake email address and fake personal details).
+   Use a fresh username and password that you generate.
+3. Write the new account record with its `credentials` and `status: valid` through `auth_store` at `accounts.<new-account>`.
+4. Re-run the oracle in the same live browser context.
+   A 2xx with no followed redirect is the only success.
+5. Emit `outcome: authenticated`, naming the new account.
+   If sign-up fails or the oracle still fails, write `not_valid` when an account record exists, emit `outcome: failed`, and stop; never fail open.
 
 ## Failure branch
 
-- If `wj-gateway-e2e` is absent from `sessions --json`, do not start a replacement.
-  Write `accounts.admin-sessiononly-e2e.status` as `not_valid`, emit `outcome: failed`, and report that the operator must re-mint the session.
-- If `/api/authentication` answers `302 /nowhere`, the server session is stale or absent.
+- If the tool returns `session_missing` or `unknown_session`, treat the designated session as absent: do not start a blank replacement, use the mint branch, and report the operator if minting fails.
+- A `session_taken` response means the designated session is live: reuse it; never start a twin.
+- If the oracle returns 401, 403, or 3xx, the session is not authenticated.
+  Use the mint branch.
   Do not fall back to a request login.
-  Write `not_valid`, emit `failed`, and report that the operator must re-mint the session.
-- If `/api/admin/user` returns an empty body while `/api/authentication` succeeds, the session is valid but the account lacks the administrator role.
-  Do not retry the login.
-  Emit `failed` with the role-gate evidence.
+- If the oracle is indeterminate (network error, 5xx, other 4xx), stop with `outcome: failed` and the evidence.
+  Do not fail open.
+- If the oracle passes but `/api/admin/role` is empty, the session is authenticated as a member.
+  Report the role-gate evidence.
+  Authentication succeeded; authorization did not.
 - If the admin dashboard does not render, the browser path is broken, not the session.
   Capture the page URL and the snapshot, then emit `failed` with the browser evidence.
 - The operator owns the session lifecycle.

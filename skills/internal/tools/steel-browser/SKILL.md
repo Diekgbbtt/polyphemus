@@ -8,7 +8,7 @@ description: >-
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '2.0'
+  version: '2.2.0'
 ---
 
 # Steel browser operation
@@ -25,14 +25,36 @@ Do not add a runtime flag or a hosting branch to a command.
 ## The tool surface
 
 The `steel_exec` gateway takes exactly one of `command` (a string carrying a `steel` token) or `script` with `script_lang` in `sh`/`py`.
-Script text is not scanned, so a script owns its own timeout ordering, session-name uniqueness, and variadic boundary.
+Script text is not parsed as a command string, but every real invocation is checked at the binary boundary, including a `steel` called from a script.
+A script still owns its timeout ordering, session-name uniqueness, and variadic boundary.
 A refusal is typed and nothing runs (`returncode` 2): `refused:ambiguous-input`, `refused:not-steel-command`, `refused:steel-version-mismatch`, `refused:timeout-ordering`, `refused:unsupported-script-lang`, `refused:session-taken`, `refused:variadic-boundary`.
 Fix the input and reissue; a refusal is not a transient to retry.
 On a bare shell `exec` that runs the CLI directly, you hold the same guards yourself.
 
+Every result carries the legacy fields plus `error`, `warning`, `steel_events`, and `shell_returncode`.
+The error object is authoritative.
+A guard error sets `returncode` to the error's rc, while `shell_returncode` preserves the composition's own rc.
+Read `references/contract.md` for the code and recovery table.
+
 The pinned CLI is 0.5.0-preview.6.
-`--session-timeout` is enforced by the daemon, and `timeout: 0` means no expiry.
-The server may still ignore a create-time timeout (upstream issue #350), so it does not expire a session on its own.
+`--session-timeout` and `--inactivity-timeout` are create-time clocks.
+Use a finite inactivity window such as `86400000`.
+A zero window was observed to release a session after the default idle period.
+A `start` on a catalogued live name is refused with `session_taken`; do not rely on silent attach.
+`remainingMs` on receipt sits below what you asked for - provisioning spends the session clock.
+
+## Records and replay
+
+A session leaves metadata, a live viewer URL, an accessibility snapshot, a screenshot file, and a snapshot or screenshot diff.
+`sessions get --session <name> --json` returns the runtime id, status, duration, event count, viewer and debugger URLs, dimensions, and user agent.
+A viewer URL may be a shared base; only an addressable view carries the specific session id in the URL.
+`references/session-records.py` returns `live_view.addressable` and `live_view.scope`; publish the session id with the URL and never rebuild the URL.
+`browser diff snapshot|screenshot` compares the current page against a baseline and returns `changed`, `additions`, and a unified diff.
+The guard also leaves one event per real invocation in `steel_events`.
+The stack separately records HTTP history with deterministic replay, LangGraph checkpoints, and run evidence.
+Those records outlive the tool call; Langfuse is one exporter among them.
+The event-log and trace probes are not available in every runtime.
+A `not_found` from them is an unsupported probe, not a lost session.
 
 ## The path: survey, open, operate, close
 
@@ -46,8 +68,9 @@ survey -> open or reuse -> OPERATE ... -> close
 
 **Survey.** `steel browser sessions --json` lists every live session this key owns as `{id, mode, name, status, viewerUrl}`, and `{"data":[]}` when none is live. Read it before opening anything.
 
-**Open, or reuse.** A live session's name is already addressable, so reuse one rather than start a twin. Otherwise `steel browser start --session <name> --session-timeout 600000 --json`, naming it `polymerhus-<flow>-<id>`.
-`start` silently attaches to a live name, so check the catalogue first: `steel_exec` refuses a command-mode start on a catalogued name with `<name> is already used`, and a script holds its own check.
+**Open, or reuse.** A live session's name is already addressable, so reuse one rather than start a twin. Otherwise `steel browser start --session <name> --session-timeout 600000 --inactivity-timeout 300000 --json`, naming it `polymerhus-<flow>-<id>`.
+A `start` on a catalogued live name is refused with `session_taken`; reuse the live session instead.
+A script holds its own catalogue check; a `session_taken` race is a refusal, not permission to reuse or stop a foreign session.
 `remainingMs` on receipt sits below what you asked for - provisioning spends the session clock.
 
 **State.** The browser keeps cookies, localStorage, sessionStorage, and indexedDB for the life of the session.
@@ -89,7 +112,7 @@ Never log, print, or paste cookie values, storage values, or the state file. Pri
 
 **Shell**
 - Single-quote every literal value fed through the shell; a trailing `$` or a backtick inside double quotes expands silently and submits the wrong value with no error; a runtime value rides a variable, interpolated as `"${VALUE}"`, which never re-expands its contents; a single-quoted `eval` payload obeys the same rule, and its `success:true` is no proof of arrival - a shell-mangled payload still reports success with a wrong result, so read the returned data, not the envelope.
-- `eval` takes one inline JS expression - JS source, not a file path (a path parses as a regex literal). A proven snippet graduates to a script, which feeds it back through shell substitution.
+- `eval` takes one inline JS expression - JS source, not a file path (a path parses as a regex literal). For a larger program, use `references/load-eval.py --eval-file`; it passes the file content as one argv, not through the shell.
 - Drive a control from `eval` by setting each value with the events the page listens for (`input`, `change`), then invoking the control's own behaviour: `element.click()`, a dispatched pointer/mouse sequence, and `form.requestSubmit()` all honour submit handlers and native validation - prefer them (an empty `required` field under `requestSubmit()` fires exactly 2 `invalid` events, 0 `submit`, and no navigation, so the route is proven; while counting `invalid`, call `checkValidity()` in a separate measurement, since it fires its own) - while `form.submit()` and a framework `trigger("submit")` bypass both and are the last resort; a missing selector answers `{"data":null,"success":true}` (silent) and a thrown payload answers a typed evaluation error.
 - Read `batch ... --json` line by line, because a failing batch has two shapes: an op-level failure writes the results envelope (line 1, carrying `data.results`) then a second `{"error":"One or more batch commands failed"}` line with exit 1, while a batch-level failure (a usage error, an empty session name) writes a single `{"error":...}` line with no results envelope and a clap usage error exits 2 with no stdout - so a whole-stdout parse dies on `Extra data`, line 1 carrying `data.results` is the structural discriminator, and `--bail` only decides how many ops run.
 - Validate before parsing even a one-line success, which is not guaranteed strict JSON (an embedded tree can carry a control character), and re-read a bounded slice on a parse failure; no op-count ceiling appeared up to 100 ops (~22 s), so the session clock is the bound.
@@ -97,19 +120,25 @@ Never log, print, or paste cookie values, storage values, or the state file. Pri
 **Synchronisation**
 - Steel's `--timeout` (milliseconds) governs a wait; keep the tool `timeout_s` above it so the outer clock never cuts a wait short. `steel_exec` refuses a wait that reaches `timeout_s` (`refused:timeout-ordering`); on a bare CLI you enforce it.
 - Submit once, then wait on the condition: a blind resubmit is an `AUTOMATION`-shaped bot signal, so read the outcome and escalate on the marker instead of clicking again.
-- Size the session clock for the slowest human step in the flow: `--session-timeout` covers a solve, and `--inactivity-timeout` raised (or `0`) keeps the session alive while a person acts, since the 120 s default releases it mid-solve.
+- Size the session clock for the slowest human step in the flow: `--session-timeout` covers the whole flow, and a finite `--inactivity-timeout` below it keeps the session alive while a person acts, since the 120 s default releases it mid-solve.
+  A window at or above the session window has no effect and the CLI warns.
+  A zero inactivity window was observed to release the session after the default window; use a finite value.
 
 **Lifecycle**
 - Every session gets a stop owner. One script invocation owns it with `trap ... EXIT INT TERM`; a flow spanning separate calls arms a dead-man watchdog (`references/stop-owner.sh`) or wraps the calls in a stopping script.
-- Mark the session name before `start` (after the catalogue guard, so a foreign name is never addressed) and let the trap attempt the named stop whenever that mark is set, never on a flag set only after `start` returns: a signal landing inside the `start` window otherwise skips the stop and orphans the session, while a stop on a name that never started is a harmless no-op.
-- A command that resolves `--session` to an empty or missing name auto-provisions a live `default` session that persists and bills until its session or idle clock expires; a `default` present before your call is foreign and untouchable, while one that appeared because of your call is yours and must be stopped by name, so compare the pre-call catalogue.
+- Mark ownership only after `start` returns success.
+  A `session_taken` denial means the name is foreign, and a trap that stops on a pre-start mark could stop another agent's session.
+  A signal inside the start window can orphan a just-created session; the finite session clock reaps it.
+- On a bare CLI, a command that resolves `--session` to an empty or missing name can auto-provision a live `default` session that persists and bills until its clock expires; the gateway refuses it before execution (`missing_session`).
+  A `default` present before your call is foreign and untouchable, while one that appeared because of your call is yours and must be stopped by name, so compare the pre-call catalogue.
 - Stop by the name you own, which leaves a foreign `default` alive (`stop --all` kills it). `stop --json` returns only `stoppedSessions`; the catalogue is the liveness proof.
 
 **State and gates**
 - Clear a consent, region, or guest gate before snapshotting for refs; the gate's own click changes cookie and storage state, so take any pre-state baseline after it settles.
 - Decide a state change on a UI signal plus a pre/post baseline, never on cookie names alone: `PHPSESSID` and `PrestaShop-<hash>` exist pre-login, and login changes their values, not their names. Read the pre/post signal as a `get count` of the selector - presence and how many match, which a hidden twin cannot fool; reserve `is visible` for the distinct question of whether a specific first-matching element is shown. A surprising read is in-flight absence, not a stale value (a session whose `start` has not returned is legitimately missing), so re-read once before believing it.
 - Pass `get count` a CSS selector, never a ref: it does not resolve refs and returns `count 0` for a ref or a missing selector alike, so a 0 means no CSS match.
-- For an authenticated crawl, the provider replicates cookies, required headers, header-located tokens, and storage-located tokens, then gates the attempt on the application state or the response to an authenticated part of the surface. A login redirect, a 401, or a 403 fails the gate; a failure is reduced coverage, never a silent authenticated crawl.
+- For an authenticated crawl, the provider replicates cookies, required headers, header-located tokens, and storage-located tokens, then asks the recorded authenticated-context oracle (`overview.auth_probe`). A browser request to it answers 2xx only for an authenticated context; 401, 403, or any 3xx fails, and anything else is indeterminate and fails the gate. A login redirect is a 3xx: it never passes, even when the browser follows it to a 200 page. A failure is reduced coverage, never a silent authenticated crawl.
+  When no oracle is recorded, the legacy surface gate is the fallback; record the missing oracle loudly.
 
 ## Command families
 
@@ -120,6 +149,10 @@ The `steel scrape` family is sessionless and carries only `--json`.
 - `--stealth` on `start` bundles humanization with automatic CAPTCHA solving; on a challenge, wait on the challenge's own marker with a bounded timeout and escalate to the operator - the solving half is excluded by operator ruling (D237-15).
 - Navigation: `navigate <url> [--wait-until load|domcontentloaded|networkidle]` (aliases `open`, `goto`), `back`, `forward`, `reload`. Settle on a condition (`wait --url`/`wait --text`) for a login or SPA page: `networkidle` never arrives on a continuously-active page and burns the whole timeout.
 - Page reading: `snapshot [-i] [-c] [-s css] [-d n] [-u]`, `get text|html|value|attr|url|title|count|box|styles`, `find <css>`, `content`, `is visible|enabled|checked`.
+- DOM family selection: `browser find <css>` returns `{elements:[{index,tagName,text,visible}], selector}`; for attributes or a larger projection, use `eval` with `querySelectorAll` and read `references/select-elements.py`.
+- Evidence: `screenshot [-o path] [--full-page] [--selector css]`, `diff snapshot --baseline <text|file>`, `diff screenshot --baseline <image>`, `live` (viewer URL).
+- Records: `sessions list --json`, `sessions get --session <name> --json`.
+  The event-log and trace probes may answer `not_found`; that is an unsupported probe, not a lost session.
 - Interaction: `click`, `dblclick`, `press`, `hover`, `focus`, `check`, `uncheck`, `clear`, `selectall`, `scroll`, `scrollintoview`, `drag`.
 - Variadic verbs (boundary mandatory, options before the `--`): text entry `fill`, `type`, `setvalue`; `select`; `upload`.
 - Waiting: `wait -t <text> | --selector <css> | -u <substr> | -f <js> | -l <load-state>` with `--timeout <ms>`.
@@ -131,9 +164,15 @@ The `steel scrape` family is sessionless and carries only `--json`.
 
 ## References
 
-Runnable scripts beside this skill; each is self-guarding, `--json`, bounded output, and runs verbatim through `steel_exec(script, script_lang="sh")` or `bash <file>`.
+Runnable scripts beside this skill; each is self-guarding, `--json`, bounded output, and runs verbatim through `steel_exec` (`script_lang="sh"` or `"py"`) or the matching interpreter.
 
+- `references/contract.md` - the envelope, error and recovery table, session lifecycle, and the platform record surface.
+- `references/load-eval.py` - load one URL, wait for a selector or text, evaluate one JS expression or file, return bounded JSON.
+- `references/select-elements.py` - select a DOM family by CSS, project tag, text, chosen attributes, and visibility, return bounded JSON.
+- `references/session-records.py` - session metadata, snapshot, screenshot, the addressable live-view candidate, and the record probes the runtime supports.
+  These three read scripts require a live session and never start or stop one.
 - `references/catalogue.sh` - list live sessions; the survey read.
+- `references/auth-oracle.sh` - ask the authenticated-context oracle in a live session: 2xx passes, 401/403/3xx fails, anything else is indeterminate. It never starts or stops a session.
 - `references/session-lifecycle.sh` - survey, open a free name, use it, release under a trap, prove the catalogue clean.
 - `references/stop-owner.sh` - arm or defuse a dead-man watchdog for a flow that spans separate calls.
 - `references/navigate-read.sh` - navigate, then read title, URL, and a compact tree slice.
