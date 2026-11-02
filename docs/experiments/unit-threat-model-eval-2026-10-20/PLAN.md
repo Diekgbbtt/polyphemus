@@ -3,7 +3,9 @@
 ## Status
 
 Plan written before the first trial.
-Deployment and preflight are in progress.
+Canary 4 is measured.
+The ComfyUI hunting retest reached the 3M cap and is measured.
+The white-jotter trial is held because the retest gate did not pass.
 The eight-target run has not started.
 
 ## Objective
@@ -83,9 +85,10 @@ LightRAG:
 - The embedding model remains `nvidia/nemotron-3-embed-1b` at dimension `2048`, because the existing KB store is indexed at that shape.
 - A model change without a reindex would invalidate retrieval.
 
-The eight data dependencies live at `/root/eval-dd/data/<target>/`.
+The eight data-dependency upload sources live at `/root/eval-dd/data/<target>/`.
 Each target has `operator_kb.md`, `l1-surface.yaml`, `auth/overview.yaml`, and `auth/credentials.yaml`.
-Seven have `skills/authn/SKILL.md`.
+Seven have the staging source `skills/authn/SKILL.md`.
+The auth files are placed under the app data root; the authn bundle is placed in the live skills root's `target-specific-procedure/<project_id>/authn/` branch, not under the data root.
 ComfyUI has no authn skill and no authentication surface, so its omission is not a blocker.
 The preflight must re-check presence and the AuthContext validators before every target.
 
@@ -445,3 +448,52 @@ Then verify:
 - every quality claim cites an artifact or a Langfuse observation;
 - the report separates structural limitations from model quality;
 - the report names the 0/6 verdict result and the F-017 cause.
+
+## ComfyUI hunting retest - 2026-10-21
+
+The retest is a seeded hunting-only run on the same ComfyUI project.
+The setup is `eval/setups/comfyui-utm-hunting-retest.yaml`.
+The measured code is `dev` at `d17560e0`.
+The run ID is `cdf0918c-6ff1-4abd-893c-18d018113523`.
+The reconstructed trial record is `/opt/polymerhus-dev/eval/runs-utm-20261020/comfyui-1/comfyui-1-20261021T140000-1fc05262-retest/trial.yaml`.
+
+Result:
+- the first attempt spent 990,160 capped tokens and stopped on a provider 429 with `quota_exhausted=true`;
+- the new provider key was applied to the instance `.env` and the agent was recreated;
+- 13 consumed loops were restored manually because the resume path did not recover them; F-022 adds the durable recovery;
+- the run refused to resume until `stats.quota_exhausted` was cleared in PostgreSQL; F-023 is deferred;
+- the resume produced 13 hunter sessions, 39 specs, and 19 pod directories;
+- two pods reached terminal exports, both `unsuccessful` with `iterations: 0` and the same reasoning 400: F-009 false negatives, not domain evidence;
+- the watchdog stopped the project at 3,355,148 capped tokens, an overshoot of 355,148 against the 3,000,000 budget; F-024 is deferred;
+- the run status is `stopped`, not `complete`;
+- the deterministic result is 0 of 6 unit-level candidates, 5 of 6 class-level candidates, and 0 confirmed pod symptoms.
+
+Gate result: fail.
+The white-jotter trial is held until the fixed code is deployed and validated.
+The retest exposed F-022, F-023, F-024, and F-025, plus F-026 (one child failure stopped the whole run); F-009 recurred. F-022, F-025, F-026, and F-009 are fixed locally.
+
+Next:
+- deploy and validate F-022 consumed-loop recovery, F-025 one-spec writes, F-026 per-child retry, and F-009 reasoning replay;
+- keep F-023 forced resume and F-024 pre-emptive cap enforcement deferred;
+- only then start the 7M white-jotter trial.
+
+## White-jotter 7M result - 2026-10-22
+
+Trial: `white-jotter-1-20261022T030303-1618c524` on project `4786aefc-c3fd-46c1-a2ab-45b05cc38e25`.
+Code: `5789ad3f` on the instance; fresh project; one trial.
+
+- terminal `stopped` at the 7M cap; spent 7,002,218 capped tokens (overshoot 3,405);
+- phases: recon `complete`, analysis `drained`, hunting `stopped` at intake position 5 of 27;
+- 7 COMPLETED unit models, all valid; 23 loops, 42 specs, 27 pod directories;
+- 4 ground-truth pod confirmations and 13 non-ground-truth confirmations;
+- official assessor: 1 identified (`white-jotter-002`), 2 partial (`001`, `003`), 4 missed (`004`-`007`);
+- identification 14.29%; partial-or-identified 42.86%; loop candidate recall 28.57%; spec candidate recall 14.29%; core floor 100%; full core 28.57%;
+- risk total 33/250: the 7M cap, not the risk threshold, is the binding terminator.
+
+The four misses are cap-coverage misses: the units that own the JNDI flow, the catalogue keyword path, the media-asset cover path, and the public registration handler were never modelled.
+`white-jotter-001` is a scoping miss (the pod confirmed `admin/123`, but the loop targeted rate limiting); `white-jotter-003` is a partial (storage confirmed, no output-encoding test).
+
+Decision: the pipeline is functional end to end.
+The next experiment settles the cap-versus-coverage tradeoff: a larger white-jotter budget, an intake that reaches the high-value units earlier, or a scoped fix for the weak-credential and stored-XSS loop classes.
+The official records are `trial.yaml`, `verdicts.yaml`, `diagnoses.yaml`, and `metrics.yaml` in the trial directory.
+The `eval-measurer` narrative was blocked by the opencode-go quota; the deterministic metrics and the assessor/diagnoser records are complete.

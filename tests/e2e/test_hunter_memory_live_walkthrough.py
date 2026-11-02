@@ -3,14 +3,14 @@
 
 The walkthrough runs the stack at RUNTIME STATE through the hunter's proper
 interface: the real turn-by-turn ReAct host (`build_sync_hunting_agent` ->
-`dispatch_fn(loop payload)`, the seam the inbox surfer feeds) with the REAL model
+`dispatch_fn(threat payload)`, the seam the inbox surfer feeds) with the REAL model
 resolved through the co-located gateway (`LLM_HUNTING_HUNTER`), the real
 per-project `HunterMemoryStore` on the filesystem, the real five-tool surface,
 and the real compiled state graph. The LLM drives the full happy path -
 grounding -> collect -> discriminate -> generate -> well-formedness ->
 verify-claims -> complete - with
 the phase-transition hints riding the tool responses and the graph tracking the
-loop. Every terminal quantity is read back from the real YAML files.
+threat. Every terminal quantity is read back from the real YAML files.
 
 Qualitative by design (like the tier's other live walkthroughs): the model is
 the live edge, so the assertions hold on the memory-system invariants - the
@@ -50,23 +50,51 @@ root = Path("/tmp/hunter-memory-live") / ("e1-%d" % int(time.time()))
 store = HunterMemoryStore(root_dir=root)
 project_id = "proj-live-e1"
 unit_id = "Service:slug:a"
-hunt_key = "Service-slug-a__loop-1"
+hunt_key = "Service-slug-a__threat-1"
 
 payload = {
     "dispatch_id": hunt_key,
     "run_id": "run-live-e1",
-    "loop_id": "loop-1",
+    "threat_id": "threat-1",
     "unit_id": unit_id,
     "unit_kind": "service",
-    "loop": {
-        "id": "loop-1",
+    "risk": 8.3,
+    "severity_band": "high",
+    "risk_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:H/VA:N/SC:N/SI:H/SA:N",
+    "factors": {
+        "attack_vector": "network",
+        "attack_complexity": "low",
+        "attack_requirements": "none",
+        "privileges_required": "none",
+        "user_interaction": "passive",
+        "confidentiality": "none",
+        "integrity": "high",
+        "availability": "none",
+    },
+    "impact_description": "the victim's account state is changed without their intent",
+    "exploitability_description": "one cross-site form post rides the victim's "
+                                  "ambient session; no defence checks the origin",
+    "capability": "change the victim's state",
+    "capability_id": f"{unit_id}::p-1",
+    "capability_path": [],
+    "enabling_precursors": [],
+    "assumptions": [{
+        "id": "as-1",
+        "statement": "the state-changing form carries no verified token",
+        "fault_ref": "fault-1",
+        "boundary_ref": "ta-1",
+        "confidence": "ASSUMED",
+        "evidence_refs": ["POST /api/a"],
+    }],
+    "threat": {
+        "id": "threat-1",
         "fault_ref": "fault-1",
         "vulnerability_ref": "v-1",
         "canonical_class": "CSRF",
         "web_vulnerability_class": "csrf",
-        "likelihood": "high",
-        "likelihood_rationale": "the public form accepts cross-site posts",
-        "confidence": "INFERRED",
+        "impact_ref": "ia-1",
+        "enabling_precursors": [],
+        "risk": 8.3,
         "evidences": [{"kind": "request", "ref": "POST /api/a"}],
     },
     "technical_sharpening": {
@@ -88,10 +116,7 @@ payload = {
     "canonical_class": "CSRF",
     "web_vulnerability_class": "csrf",
     "evidence": [{"kind": "request", "ref": "POST /api/a"}],
-    "likelihood": "high",
-    "likelihood_rationale": "the public form accepts cross-site posts",
     "vulnerability_rationale": "a cross-site post changes the victim's state",
-    "confidence": "INFERRED",
     "target_context": {"unit_id": unit_id, "unit_kind": "service",
                        "baseline_refs": ["POST /api/a"]},
 }
@@ -104,7 +129,7 @@ agent = build_sync_hunting_agent(
 )
 result = agent(payload)
 
-# the harness BINDS the loop dispatch id at tool construction - walk the REAL
+# the harness BINDS the threat dispatch id at tool construction - walk the REAL
 # topology the store persisted
 project_root = root / project_id / "hunting" / "hunter"
 specs_dir = project_root / "test-specs"

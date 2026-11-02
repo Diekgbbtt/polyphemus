@@ -3,7 +3,7 @@ pass (retired from the planner in T2b, #386).
 
 The coupled gap to the parsing-error fix: when turns keep returning a
 no-decision outcome, the pass used to fail-open each state and move on at full
-speed, so a poisoned actor thread became a hot loop. The breaker counts
+speed, so a poisoned actor thread became a hot threat. The breaker counts
 CONSECUTIVE no-decision turn outcomes (reset on any real gate write), applies a
 bounded exponential backoff, and aborts the pass with a typed,
 operator-visible failure after K - without ever fabricating a model below the
@@ -24,7 +24,7 @@ from polymerhus.attack.hunting.threat_modeller import (
 )
 from polymerhus.attack.hunting.threat_modeller_tools import ModellerTools
 
-from tests.hunting_fixtures import modeller_gate_payloads
+from tests.hunting_fixtures import write_gate
 
 PROJECT = "p"
 RUN = "r"
@@ -36,13 +36,24 @@ def _tools(tmp_path, **kwargs) -> ModellerTools:
                          project_id=PROJECT, run_id=RUN, **kwargs)
 
 
-def _gate_writer(turn, store):
-    """The turn seam's real-decision action: the BOUND store tool's gate write."""
-    tool = next(t for t in turn.tools if t.name == "hunts_store")
-    return tool.invoke({
-        "cmd": "write", "state": turn.state.value,
-        "sections": modeller_gate_payloads()[turn.state],
-    })
+def _gate_writer(turn):
+    """The turn seam's real-decision action: the BOUND tools' gate write.
+
+    The assessment rows have ONE writer, `assess_impact`; every other gate is a
+    `hunts_store` write. The well-formedness pseudo-phase writes its exit note
+    and advances to PRIOR_ART - the state the assessment write accepts - so a
+    seam that writes every turn never re-enters the phase."""
+    if turn.phase == "WELLFORMEDNESS":
+        notes = next(t for t in turn.tools if t.name == "notes")
+        notes.invoke({
+            "cmd": "write", "option": "append",
+            "note_name": "wellformedness", "kind": "wellformedness",
+            "body": "every threat checked",
+        })
+        # the phase exit advances to PRIOR_ART; the assessment write accepts
+        # this state (the store refuses a row before it)
+        return write_gate({t.name: t for t in turn.tools}, ModelState.PRIOR_ART)
+    return write_gate({t.name: t for t in turn.tools}, turn.state)
 
 
 def _run(tmp_path, turns):
@@ -157,8 +168,8 @@ def test_pass_aborts_after_k_consecutive_no_decision_turns(tmp_path, monkeypatch
 
 
 def test_pass_a_real_decision_resets_consecutive_failures(tmp_path, monkeypatch):
-    """None, gate, None, None, None: the gate write resets the counter, so with
-    abort=4 the two later no-decisions stay below the threshold and the pass
+    """None, None, gate, None, None, gate: each gate write resets the counter, so
+    with abort=4 the trailing no-decisions stay below the threshold and the pass
     returns instead of aborting."""
     _set_breaker_env(monkeypatch, abort=4, warn=1, base=0.0)
     store = ThreatModelStore(root_dir=tmp_path)
@@ -166,8 +177,9 @@ def test_pass_a_real_decision_resets_consecutive_failures(tmp_path, monkeypatch)
 
     def turns(turn):
         seen.append(turn.state)
-        if turn.state == ModelState.TRUST_MODELLED:
-            _gate_writer(turn, store)
+        if turn.phase == "WELLFORMEDNESS" or turn.state in (
+                ModelState.TRUST_MODELLED, ModelState.PRIOR_ART):
+            _gate_writer(turn)
         return None
 
     outcome = asyncio.run(arun_modeller_pass(
@@ -191,7 +203,7 @@ def test_per_state_fail_open_below_the_threshold_is_unchanged(tmp_path,
     def turns(turn):
         if turn.state == ModelState.UNIT_TECHNICAL_SHARP:
             return None                      # one degraded state
-        _gate_writer(turn, store)
+        _gate_writer(turn)
         return None
 
     outcome = asyncio.run(arun_modeller_pass(

@@ -27,7 +27,7 @@ VALID_SPEC = {
     "assumptions": ["network egress allowed"],
     "rationale": "reachability",
     "provenance": {
-        "loop_id": "loop-1",
+        "threat_id": "threat-1",
         "unit_id": "service:web:soupmarket",
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
@@ -45,7 +45,10 @@ RETIRED_FIELDS = {
 
 def test_the_reduced_d4_round_trips():
     model = D4Spec.model_validate(VALID_SPEC)
-    assert model.model_dump() == {**VALID_SPEC, "parent_spec_ref": None, "skills": []}
+    assert model.model_dump() == {
+        **VALID_SPEC, "parent_spec_ref": None, "skills": [],
+        "discriminators": [], "skill_concretised_procedure": None,
+    }
 
 
 def test_the_retired_d4_fields_are_rejected_as_unknown():
@@ -172,3 +175,42 @@ def test_decision_vocabulary_is_enforced():
     assert any("verdict" in v for v in bad)
     assert any("terminal_reason" in v for v in bad)  # the OLD 4-value name is rejected
     assert any("clean" in v for v in bad)
+
+
+# --- the failure taxonomy (2026-10-26) ---------------------------------------
+
+def test_harness_terminal_reasons_are_known_but_not_triager_choices():
+    from polymerhus.attack.hunting.pod.types import (
+        CONTEXT_WINDOW_EXCEEDED,
+        DOMAIN_TERMINAL_REASONS,
+        GRAPH_LIMIT,
+        HARNESS_TERMINAL_REASONS,
+        NODE_TIMEOUT,
+        POD_WATCHDOG_TIMEOUT,
+        TERMINAL_REASONS,
+        TOOL_TIMEOUT,
+    )
+
+    for reason in (NODE_TIMEOUT, CONTEXT_WINDOW_EXCEEDED, GRAPH_LIMIT,
+                   TOOL_TIMEOUT, POD_WATCHDOG_TIMEOUT):
+        assert reason in TERMINAL_REASONS
+        assert reason in HARNESS_TERMINAL_REASONS
+        assert reason not in DOMAIN_TERMINAL_REASONS
+        violations = validate_decision({
+            "verdict": "unsuccessful",
+            "terminal_reason": reason,
+            "clean": False,
+        })
+        assert violations, reason
+        assert "terminal_reason" in violations[0]
+
+
+def test_domain_terminal_reasons_remain_triager_choices():
+    from polymerhus.attack.hunting.pod.types import DOMAIN_TERMINAL_REASONS
+
+    for reason in DOMAIN_TERMINAL_REASONS:
+        assert validate_decision({
+            "verdict": "unsuccessful",
+            "terminal_reason": reason,
+            "clean": False,
+        }) == []

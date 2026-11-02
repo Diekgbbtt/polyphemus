@@ -42,12 +42,12 @@ from polymerhus.attack.hunting.mover import (
 )
 from tests.integration import hunting_wiring_stack as stack
 
-# The production identity conventions: the hunter memory key is the loop
-# dispatch id `<unit_name>__<loop_id>` (S3 8.9), and the CWE/class pair keys the
+# The production identity conventions: the hunter memory key is the threat
+# dispatch id `<unit_name>__<threat_id>` (S3 8.9), and the CWE/class pair keys the
 # seeded spec's identity.
 UNIT = "Service:slug:a"
 UNIT_NAME = "Service-slug-a"
-DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+DISPATCH_ID = f"{UNIT_NAME}__threat-1"
 FAULT = "fault-1"
 CLASS = "CSRF"
 SPEC = "sqli"
@@ -141,7 +141,7 @@ def _session_pause_until_registered(client, project_id: str, run_id: str,
 def test_E1_whole_pipeline_happy_path(client):
     """id: E1 - whole-pipeline happy path. The deterministic baseline: a run
     with no dispatchable model reaches `complete` immediately with no produced
-    loop files (real `hunting_runs` row read-back). Then a run seeded with a
+    threat files (real `hunting_runs` row read-back). Then a run seeded with a
     `ratified` spec and an experiment-log slice is driven so the surfer
     dispatches one pod through the REAL edge; the run is polled to a terminal
     row (complete on the happy path, fail-open otherwise) and the store
@@ -155,20 +155,20 @@ def test_E1_whole_pipeline_happy_path(client):
     base_rid = r.json()["hunting_run_id"]
     row = stack.wait_for_hunting_run_status(base, base_rid, status="complete")
     assert row["status"] == "complete"
-    # A whole run never fabricates dispatch input: the produced loop family is
+    # A whole run never fabricates dispatch input: the produced threat family is
     # empty on a project with no modeller pass.
-    assert stack.produced_loop_files(base) == []
+    assert stack.produced_threat_files(base) == []
 
     # Richer seeded-spec run through the REAL pod/hunter edge. Seed the
     # ratified spec + experiment log first (the pod work keeps the run alive
-    # while the loop is seeded), launch, then seed the COMPLETED unit threat
+    # while the threat is seeded), launch, then seed the COMPLETED unit threat
     # model under the LAUNCHED run id (S2 8.3: the mover's read is run-scoped,
     # so a pre-launch placeholder id would be inert).
     p = _new_project(client, "hw-e1")
     spec_file = stack.seed_test_spec(
         p, hunt_key=DISPATCH_ID, fault_keyword=SPEC, strategy_keyword=STRATEGY)
-    # T4b (#387): the loop file is the dispatch record; the seeded SPEC still
-    # drives the real POD edge. A hunter is dispatched from a produced loop
+    # T4b (#387): the threat file is the dispatch record; the seeded SPEC still
+    # drives the real POD edge. A hunter is dispatched from a produced threat
     # file (live after T6 #379), which needs the run's own modeller and the
     # production hunter prompt work phase (T7 #380) - never a fabricated
     # dispatch input.
@@ -177,14 +177,14 @@ def test_E1_whole_pipeline_happy_path(client):
     assert launch.status_code == 201, launch.text
     rid = launch.json()["hunting_run_id"]
     stack.seed_threat_model_unit(p, unit_id=UNIT, run_id=rid)
-    # The live mover can consume the seeded loop in the same tick, so the
+    # The live mover can consume the seeded threat in the same tick, so the
     # premise is that the identity is SEEN on the run's side (produced or
     # consumed), not that it is still produced at read time.
-    seeded_loop = f"{UNIT_NAME}/loop-1"
+    seeded_threat = f"{UNIT_NAME}/threat-1"
     assert (
-        seeded_loop in stack.produced_loop_files(p)
-        or seeded_loop in stack.consumed_loop_files(p)
-    ), "E1 seed premise: the seeded loop must exist in produced/ or consumed/"
+        seeded_threat in stack.produced_threat_files(p)
+        or seeded_threat in stack.consumed_threat_files(p)
+    ), "E1 seed premise: the seeded threat must exist in produced/ or consumed/"
     # The seeded pod drives REAL LLM turns + kali tool calls; on a loaded host
     # that pass can take longer than the 240s default - give it an honest
     # window. Fail-open: if the live LLM pass cannot drive the edge the run
@@ -197,11 +197,11 @@ def test_E1_whole_pipeline_happy_path(client):
     # the run-row read-back is asserted, never a fabricated non-empty statement.
     assert term["status"] in ("complete", "failed"), term
     if term["status"] == "complete":
-        # The loop file moved produced->consumed (the mover's at-least-once
+        # The threat file moved produced->consumed (the mover's at-least-once
         # marker), the ratified spec moved produced->consumed, and the pod
         # export + durable parent-keyed note exist.
-        assert f"{UNIT_NAME}/loop-1" in stack.consumed_loop_files(p), \
-            "expected the seeded loop file moved to consumed on a complete run"
+        assert f"{UNIT_NAME}/threat-1" in stack.consumed_threat_files(p), \
+            "expected the seeded threat file moved to consumed on a complete run"
         assert stack.consumed_spec_files(p, DISPATCH_ID), \
             "expected the ratified spec moved to consumed on a complete run"
         assert stack.pod_export_entries(p, spec_file), \
@@ -217,7 +217,7 @@ def test_E1_whole_pipeline_happy_path(client):
 
 def test_E2_cross_run_produced_spec_reconciliation(client):
     """id: E2 - cross-run produced-spec reconciliation (anti-wedge regression).
-    A produced `ratified` spec whose dispatch loop belongs to an EARLIER run
+    A produced `ratified` spec whose dispatch threat belongs to an EARLIER run
     (no live parent session) must still dispatch ONE pod through the own-STATUS
     gate and move produced->consumed; the export is recorded durably under the
     spec's dispatch id; and the run reaches `complete` - NEVER wedged on a
@@ -229,12 +229,12 @@ def test_E2_cross_run_produced_spec_reconciliation(client):
     # durable note is keyed by it regardless of any parent session.
     assert stack.consumed_spec_files(p, DISPATCH_ID) == []
 
-    # The earlier run consumed the parent loop file: seed the COMPLETED model,
-    # then move its loop to consumed/ through the store primitive (no live
+    # The earlier run consumed the parent threat file: seed the COMPLETED model,
+    # then move its threat to consumed/ through the store primitive (no live
     # parent session in THIS run).
     stack.seed_threat_model_unit(p, unit_id=UNIT, run_id="hw-e2-earlier")
-    assert stack.consume_seeded_loop(p, unit_id=UNIT) is True
-    assert stack.consumed_loop_files(p) == [f"{UNIT_NAME}/loop-1"]
+    assert stack.consume_seeded_threat(p, unit_id=UNIT) is True
+    assert stack.consumed_threat_files(p) == [f"{UNIT_NAME}/threat-1"]
 
     # Seed the produced `ratified` spec under the dispatch id.
     spec_file = stack.seed_test_spec(
@@ -312,8 +312,8 @@ def test_E3_mid_flight_stop(client):
 
 def test_E4_per_session_pause_resume_mid_graph(client):
     """id: E4 - per-session pause/resume mid-graph. Carried, blocked on T7
-    (#380): the per-loop hunter session id is derived from a produced loop file
-    (`<unit_name>__<loop_id>`), and driving a live hunt from one needs the
+    (#380): the per-threat hunter session id is derived from a produced threat file
+    (`<unit_name>__<threat_id>`), and driving a live hunt from one needs the
     production hunter prompt work phase. The per-session verbs themselves keep
     their own coverage in C19-C22 (pod sessions and the modeller pass) and E9
     (pod)."""
@@ -326,7 +326,7 @@ def test_E4_per_session_pause_resume_mid_graph(client):
 
     pytest.skip(
         f"carried, blocked on T7 #380: the hunter session {hunter_sid!r} needs "
-        f"a modeller-produced loop and the production hunter prompt work phase "
+        f"a modeller-produced threat and the production hunter prompt work phase "
         f"to drive a live hunt")
     pause = client.post(
         f"/projects/{p}/hunting/{rid}/sessions/{hunter_sid}/pause")
@@ -422,13 +422,13 @@ def test_E6_modeller_only_launch_creates_no_run_row(client):
         f"E6: synthetic run id must 404, got {g.status_code}"
 
     # A follow-up hunt enqueue is the LOUD retirement (T4b #387): it writes
-    # nothing into the live produced loop family.
+    # nothing into the live produced threat family.
     h = client.post(
         f"/projects/{p}/hunting/hunt",
         json={"unit_id": UNIT, "web_vulnerability_class": CLASS, "fault": FAULT})
     assert h.status_code == 410, h.text
     assert "retired" in h.json()["detail"].lower()
-    assert stack.produced_loop_files(p) == []
+    assert stack.produced_threat_files(p) == []
     # No run row yet even after the component launches.
     assert stack.hunting_run_rows(p) == []
 
@@ -444,7 +444,7 @@ def test_E7_one_live_run_guard(client):
     _need_pg()
     p = _new_project(client, "hw-e7")
     # Seed dispatching work (the live POD family) so the first run stays alive
-    # across the second POST. A hunter dispatches only from a produced loop
+    # across the second POST. A hunter dispatches only from a produced threat
     # file (T6 #379), and the production hunter prompt work phase (T7 #380)
     # drives a live hunt.
     stack.seed_test_spec(
@@ -473,10 +473,10 @@ def test_E7_one_live_run_guard(client):
 
 def test_E8_hunt_enqueue_is_retired_loudly(client):
     """id: E8 (re-pointed by T4b #387) - the hunter-only hunt-config enqueue
-    RETIRED with the config family: the loop file is the dispatch record and a
+    RETIRED with the config family: the threat file is the dispatch record and a
     live run's surfer dispatches it. The live stack answers a LOUD 410 naming
     the replacement instead of silently accepting a config into a family nothing
-    reads; nothing lands in the live produced loop family. The at-most-once
+    reads; nothing lands in the live produced threat family. The at-most-once
     replay predicate retired with the enqueue (no novelty gate is left); the
     whole-run one-live-run guard keeps its own at-most-once coverage in E7.
     The eval translation is T10 (#383)."""
@@ -488,8 +488,8 @@ def test_E8_hunt_enqueue_is_retired_loudly(client):
     assert "retired" in first.json()["detail"].lower()
     second = client.post(f"/projects/{p}/hunting/hunt", json=body)
     assert second.status_code == 410, second.text
-    assert stack.produced_loop_files(p) == [], (
-        "E8: the retired enqueue must not write the produced loop family")
+    assert stack.produced_threat_files(p) == [], (
+        "E8: the retired enqueue must not write the produced threat family")
 
 
 # =============================================================================

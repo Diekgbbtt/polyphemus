@@ -71,7 +71,12 @@ _SCHEMA = (
     "(name/position/endpoint_path/baseurl), BaseURL (url), Header "
     "(name/endpoint/baseurl; value/direction are props), Technology "
     "(name/version), Certificate (subject_cn), Secret (value_hash), "
-    "Observation (triager)\n"
+    "Observation (id)\n"
+    "identity rule: use the property named above. `n.label` is not a property; "
+    "labels are graph metadata, so test `labels(n)` or put the label in the "
+    "MATCH pattern. `key` is not an identity property either: use "
+    "business_function_slug, kind + discriminator, or Observation id. Every "
+    "identity also carries project_id.\n"
     "relationship types:\n"
     "- cross-layer: AGGREGATES ((:L1Service)-[:AGGREGATES]->(:L0)), EVIDENCED_BY "
     "((:L1System)-[:EVIDENCED_BY]->(:L0))\n"
@@ -80,7 +85,13 @@ _SCHEMA = (
     "- intra-L1: EXPOSED_VIA, ROUTED_BY, FRONTED_BY, AUTHENTICATED_BY, "
     "AUTHORIZED_BY\n"
     "- L0-internal: HAS_ENDPOINT ((:BaseURL)-[:HAS_ENDPOINT]->(:Endpoint)), "
-    "HAS_PARAMETER, HAS_HEADER, HAS_SECRET, HAS_OBSERVATION"
+    "HAS_PARAMETER, HAS_HEADER, HAS_CERTIFICATE "
+    "((:BaseURL)-[:HAS_CERTIFICATE]->(:Certificate)), HAS_SECRET, "
+    "USES_TECHNOLOGY ((:BaseURL|Service)-[:USES_TECHNOLOGY]->(:Technology))\n"
+    "- Observation anchor: (:Observation) is reached with "
+    "`(anchor)-[:HAS_OBSERVATION]->(o:Observation)`. The anchor is the other "
+    "end and carries the asset identity; the Observation carries `id`, "
+    "`macro_kind`, `severity`, `evidence`, and `rationale`."
 )
 
 _QUERY_PRIMITIVES = (

@@ -284,8 +284,8 @@ def test_preloaded_artifacts_parses_models_and_test_specs(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
         "models": "/mnt/models",
         "test_specs": [
-            {"path": "/mnt/specs/a.yaml", "dispatch_id": "unit_CWE-89_sqli__loop-1"},
-            {"path": "/mnt/specs/b.yaml", "dispatch_id": "svc_CWE-79_xss__loop-2"},
+            {"path": "/mnt/specs/a.yaml", "dispatch_id": "unit_CWE-89_sqli__threat-1"},
+            {"path": "/mnt/specs/b.yaml", "dispatch_id": "svc_CWE-79_xss__threat-2"},
         ],
     }
 
@@ -294,21 +294,21 @@ def test_preloaded_artifacts_parses_models_and_test_specs(sample_setup) -> None:
     pre = parsed.instances[0].targets[0].preloaded_hunting_artifacts
     assert pre.models == "/mnt/models"
     assert [(s.path, s.dispatch_id) for s in pre.test_specs] == [
-        ("/mnt/specs/a.yaml", "unit_CWE-89_sqli__loop-1"),
-        ("/mnt/specs/b.yaml", "svc_CWE-79_xss__loop-2"),
+        ("/mnt/specs/a.yaml", "unit_CWE-89_sqli__threat-1"),
+        ("/mnt/specs/b.yaml", "svc_CWE-79_xss__threat-2"),
     ]
 
 
 def test_preloaded_artifacts_accepts_specs_without_models(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
-        "test_specs": [{"path": "/mnt/specs/a.yaml", "dispatch_id": "unit__loop-1"}]
+        "test_specs": [{"path": "/mnt/specs/a.yaml", "dispatch_id": "unit__threat-1"}]
     }
 
     parsed = setup_mod.parse_eval_setup(sample_setup)
 
     pre = parsed.instances[0].targets[0].preloaded_hunting_artifacts
     assert pre.models is None
-    assert [s.dispatch_id for s in pre.test_specs] == ["unit__loop-1"]
+    assert [s.dispatch_id for s in pre.test_specs] == ["unit__threat-1"]
 
 
 def test_preloaded_test_spec_without_dispatch_id_is_named(sample_setup) -> None:
@@ -322,7 +322,7 @@ def test_preloaded_test_spec_without_dispatch_id_is_named(sample_setup) -> None:
 
 def test_preloaded_test_spec_without_path_is_named(sample_setup) -> None:
     _target(sample_setup)["preloaded_hunting_artifacts"] = {
-        "test_specs": [{"dispatch_id": "unit__loop-1"}]
+        "test_specs": [{"dispatch_id": "unit__threat-1"}]
     }
 
     with pytest.raises(setup_mod.SetupError, match="path"):

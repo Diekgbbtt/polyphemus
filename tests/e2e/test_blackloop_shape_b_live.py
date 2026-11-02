@@ -39,7 +39,7 @@ KNOBS = {
 }
 
 SEED = 206
-SENTINEL = "SENTINEL-ALPHA-blackloop-core-7f3a9c"
+SENTINEL = "SENTINEL-ALPHA-blackthreat-core-7f3a9c"
 
 
 def _run(cmd: list[str], *, timeout: int) -> subprocess.CompletedProcess:
@@ -83,7 +83,7 @@ from polymerhus.app.llm.checkpoints import (
 from polymerhus.app.llm.session import read_session_memory, run_session_turn
 
 SEED = 206
-SENTINEL = "SENTINEL-ALPHA-blackloop-core-7f3a9c"
+SENTINEL = "SENTINEL-ALPHA-blackthreat-core-7f3a9c"
 
 def noise(n, seed):
     rng = random.Random(seed)

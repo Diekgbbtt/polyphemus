@@ -45,18 +45,24 @@ from polymerhus.attack.hunting.pod.tools import (
 )
 from polymerhus.attack.hunting.pod.types import RunnerStep, TERMINAL_REASONS
 from polymerhus.recon.domain.types import ExecResult
+from tests.support.staged_triager_fake import (
+    StagedTriagerFake,
+    divergence_reply,
+    terminal_reply,
+    triage_reply,
+)
 
 VALID_SPEC = {
     "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "assumptions": ["network egress allowed"],
     "rationale": "reachability probe from H1",
-    "provenance": {"loop_id": "loop-1", "unit_id": "service:web:soupmarket",
+    "provenance": {"threat_id": "threat-1", "unit_id": "service:web:soupmarket",
                    "canonical_class": "IDOR", "web_vulnerability_class": "idor"},
 }
 
 # The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
-SPEC_ID = spec_identifier("sqli", "blind")
+SPEC_ID = spec_identifier("sqli", [{"axis": "technique", "value": "blind"}, {"axis": "payload-vector", "value": "boolean"}])
 
 # A spec whose symptom the symbolic recogniser cannot decide, so the Critic runs.
 SEMANTIC_SPEC = {**VALID_SPEC, "verification_symptoms": ["reflects the injected marker"]}
@@ -370,6 +376,27 @@ _TRIAGER_ABSENT = [
 ]
 
 
+def _staged_factory(runner_script, *, terminal_reason="space-exhausted",
+                    clean=True, note="the terminal stage: no populated procedure"):
+    """A role-keyed factory whose `pod_triager` model answers each staged schema.
+
+    The staged triager runs up to four structured turns on the SAME role; the
+    schema tool name discriminates them. The runner keeps its role script."""
+    def make(role_id):
+        if role_id == POD_TRIAGER_ROLE:
+            return StagedTriagerFake(by_schema={
+                "TriageDecision": triage_reply(
+                    note="the symptom is not confirmed by the observation"),
+                "DivergenceDecision": divergence_reply(
+                    note="the executed procedure followed the typed procedure"),
+                "TerminalDecision": terminal_reply(
+                    terminal_reason=terminal_reason, clean=clean, note=note),
+                "TriagerDecision": _TRIAGER_ABSENT,
+            })
+        return _FakeModel(replies=list(runner_script), idx={})
+    return make
+
+
 def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     """On P3 space exhaustion the production Runner writes the ONE consolidated
     `experiment_summary` as its FINAL tool call (D84-17/19); it lands as the
@@ -383,7 +410,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
         AIMessage(content="", tool_calls=[
             {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "order": 0,
+            {"name": "notes", "args": {"command": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the default probe returned HTTP 404 "
@@ -395,8 +422,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_factory({POD_RUNNER_ROLE: runner_script,
-                                POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
+        model_factory=_staged_factory(runner_script)))
 
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "space-exhausted"
@@ -525,9 +551,12 @@ def test_minted_variant_persists_to_its_variants_file(tmp_path):
 
 def test_tool_contract_rejects_foreign_params(tmp_path):
     """A `note` write carrying a parameter outside `NoteToolSpec` is REJECTED by
-    the args schema (`extra="forbid"`, D84-22) - a ValueError at the schema
-    boundary - and `_run` provably never executes. The harness does not
-    re-validate: the tool's OWN contract is the validator."""
+    the args schema (`extra="forbid"`, D84-22) and `_run` provably never
+    executes. The harness does not re-validate: the tool's OWN contract is the
+    validator. The shared `StoreToolBase` translates the known schema drift
+    (`extra_forbidden`) into the coded teaching rejection the model can act on,
+    instead of a bare validation raise (#209 contract); the call is still
+    rejected before `_run`."""
     store = PodMemoryStore(tmp_path)
     calls = []
 
@@ -537,10 +566,11 @@ def test_tool_contract_rejects_foreign_params(tmp_path):
             return super()._run(**kwargs)
 
     tool = SpyTool(store=store, spec_id="spec-x")
-    with pytest.raises(ValueError):
-        tool.invoke({"operation": "write", "order": 0,
-                     "note_name": "x", "kind": "experiment_summary",
-                     "body": "consolidation", "surprise_field": "oops"})
+    rejected = tool.invoke({"command": "write", "order": 0,
+                            "note_name": "x", "kind": "experiment_summary",
+                            "body": "consolidation", "surprise_field": "oops"})
+    assert "notes_args_rejected" in rejected
+    assert "surprise_field" in rejected
     assert calls == []                              # never reached _run
 
 
@@ -550,12 +580,12 @@ def test_tool_contract_coded_rejections(tmp_path):
     coded rejections, never executed, never persisted."""
     store = PodMemoryStore(tmp_path)
     tool = note_tool_for(store, "spec-x")
-    empty = tool.invoke({"operation": "write", "kind": "experiment_summary",
+    empty = tool.invoke({"command": "write", "kind": "experiment_summary",
                          "note_name": "x", "body": "   "})
-    assert empty.startswith(NOTES_EMPTY_BODY)
-    bad = tool.invoke({"operation": "write", "kind": "not-a-kind",
+    assert NOTES_EMPTY_BODY in empty
+    bad = tool.invoke({"command": "write", "kind": "not-a-kind",
                        "note_name": "x", "body": "body"})
-    assert bad.startswith(NOTES_BAD_KIND)
+    assert NOTES_BAD_KIND in bad
     assert store.read_notes("spec-x") == []         # nothing rejected persisted
 
 

@@ -3,7 +3,7 @@ runtime (#395).
 
 E2E tier. The Steel CLI 0.4.4 daemon read the self-hosted API's
 `timeout: 0` as an already-expired session, closed its Unix socket on the
-first loop iteration, and every `browser start` answered
+first threat iteration, and every `browser start` answered
 `Connection reset by peer`. The pin moved to 0.5.0-preview.6, the first
 release containing upstream PR #95, which maps `0` to "no expiry".
 
@@ -92,7 +92,7 @@ def test_pinned_cli_daemon_starts_against_the_local_runtime():
         assert payload["data"]["remainingMs"] > 0, payload
 
         # The daemon socket must still serve after start; 0.4.4 closed it on
-        # its first loop iteration, so this command is the failure detector.
+        # its first threat iteration, so this command is the failure detector.
         navigate = _run(["browser", "navigate", *options, "about:blank"])
         assert navigate.returncode == 0, (
             f"navigate failed (returncode {navigate.returncode}): "

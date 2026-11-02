@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from polymerhus.attack.hunting.pod.types import (
     ProbeChain,
     TargetIdentity,
-    TERMINAL_REASONS,
+    DOMAIN_TERMINAL_REASONS,
     TestImplementationSpec,
 )
 
@@ -104,6 +104,20 @@ def validate_spec(spec: dict | TestImplementationSpec) -> list[str]:
     return violations
 
 
+def init_route(violations: Sequence[str] | None) -> str:
+    """The pod INIT route: `reject` only when no probe URL exists.
+
+    Every other violation is recorded on the PodExport and the runner still
+    attempts a probe. This is the malformed fail-safe: a partial body must not
+    become a queue halt, and a consumed malformed spec must still land an
+    export. A spec without a URL cannot make a single call, so it stops.
+    """
+    for violation in violations or ():
+        if "target_identity.url" in str(violation):
+            return "reject"
+    return "runner"
+
+
 def validate_probe_chain(chain: ProbeChain | dict | None) -> list[str]:
     """The runner-output guard: a probe chain must carry at least one step, and
     exactly one core payload-carrying call. Returns the violations (empty =
@@ -140,8 +154,11 @@ def validate_decision(decision: dict | None) -> list[str]:
     if verdict not in ("successful", "unsuccessful"):
         violations.append(f"verdict {verdict!r} is not one of successful/unsuccessful")
     reason = decision.get("terminal_reason")
-    if reason not in TERMINAL_REASONS:
-        violations.append(f"terminal_reason {reason!r} is not in the Q3-amended vocabulary")
+    if reason not in DOMAIN_TERMINAL_REASONS:
+        violations.append(
+            f"terminal_reason {reason!r} is not a triager-selectable "
+            "Q3-amended vocabulary value"
+        )
     if not isinstance(decision.get("clean"), bool):
         violations.append("clean must be a boolean")
     return violations

@@ -58,15 +58,21 @@ def _stores(tmp_path):
 
 class _FakePg:
     """The fake pg accessors: mint a deterministic hunting_run_id, record every
-    status write in order, and fail on demand (the seam's fail-open paths)."""
+    status write in order, serve the project's hunting config, and fail on
+    demand (the seam's fail-open paths)."""
 
-    def __init__(self, *, fail_create: bool = False, fail_status: bool = False):
+    def __init__(self, *, fail_create: bool = False, fail_status: bool = False,
+                 hunting_settings: dict | None = None):
         self.fail_create = fail_create
         self.fail_status = fail_status
         self.statuses: list[tuple[str, str]] = []
         self.stats_writes: list[tuple[str, str, dict | None]] = []
         self.records: dict[str, dict] = {}
+        self.hunting_settings: dict = dict(hunting_settings or {})
         self.next_id = "rt-hunt-0001"
+
+    def get_hunting_settings(self, project_id: str) -> dict:
+        return dict(self.hunting_settings)
 
     def create_hunting_run(self, project_id: str) -> str:
         if self.fail_create:
@@ -105,7 +111,7 @@ class _FakePg:
 
 class _FakeControl:
     """The T4 session-capable control-plane fake: RUNS the dispatched/started
-    sessions as tasks on the current loop (so the whole pipeline is observable
+    sessions as tasks on the current threat (so the whole pipeline is observable
     through the bootstrap with no live runtime), mirrors the real manager's
     registry through the live-task set, and can refuse/close unadmitted
     sessions. Implements the mover's `DispatchControlPlane` verbs and the run
@@ -145,14 +151,16 @@ class _FakeControl:
         return self._gate
 
 
-async def _noop_hunter_dispatch(config):
-    """The fake hunt-session graph: concludes immediately (no specs
-    authored), so the run quiesces without producing pods."""
-    return None
-
-
 def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
-    return _noop_hunter_dispatch, None
+    """The fake hunt-session graph: concludes immediately (no specs authored)
+    and writes the zero-spec terminal set, so the F-022 threat recovery sees a
+    completed hunt and the run quiesces without producing pods."""
+    async def dispatch(config):
+        hunt_key = config.get("dispatch_id")
+        if hunt_key:
+            hunter_store.finalize_specs(project_id, hunt_key, run_id=run_id)
+        return None
+    return dispatch, None
 
 
 async def _noop_pod_builder(spec, **kw):
@@ -166,6 +174,9 @@ def _patch_pg(monkeypatch, fake):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
     monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    monkeypatch.setattr(
+        "polymerhus.app.clients.pg.get_hunting_settings",
+        fake.get_hunting_settings)
 
 
 def test_the_runtime_carries_no_hunt_store_threading():
@@ -173,7 +184,7 @@ def test_the_runtime_carries_no_hunt_store_threading():
 
     `start_hunting` and `report_dispatch_gap` take no hunt store, the run
     bootstrap constructs none, and no enqueue seam exists - the config family
-    has no producer and no dispatch consumer (the loop file is the dispatch
+    has no producer and no dispatch consumer (the threat file is the dispatch
     record, S2 8.4)."""
     import inspect
 
@@ -207,6 +218,88 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
 
     assert hid == "rt-hunt-0001"
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "complete")]
+
+
+# --- #438: the project scope read ---------------------------------------------
+
+PROJECT_SCOPE = (
+    "The target is assumed to have a request-rate limiter and a WAF in "
+    "blocking mode. The internal build network is out of scope.")
+
+
+def test_start_hunting_reads_the_project_scope_into_the_run_tools(
+        tmp_path, monkeypatch):
+    """#438: the run reads `settings.hunting.threat_model_scope` at its start
+    (the same settings read as the threshold) and arms the per-run tool seams,
+    so every unit's pass turns carry the one verbatim string."""
+    fake = _FakePg(hunting_settings={"threat_model_scope": PROJECT_SCOPE})
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    scopes: list = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        scopes.append(getattr(tools, "threat_model_scope", None))
+        return _outcome(unit_id)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project",
+        intake_units=[intake_unit(SERVICE_A), intake_unit(OTHER_UNIT)],
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert scopes == [PROJECT_SCOPE, PROJECT_SCOPE]
+
+
+def test_a_project_without_a_scope_runs_with_the_empty_scope(
+        tmp_path, monkeypatch):
+    """#438: an unset scope is the empty string, never a fabricated posture."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    scopes: list = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        scopes.append(getattr(tools, "threat_model_scope", None))
+        return _outcome(unit_id)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert scopes == [""]
+
+
+def test_the_run_record_does_not_duplicate_the_project_scope(
+        tmp_path, monkeypatch):
+    """#438: the scope rides the prompt, never the run record - the record's
+    stats stay the fixed key set (plus the frozen sync mode), so the same string
+    is not persisted twice."""
+    fake = _FakePg(hunting_settings={"threat_model_scope": PROJECT_SCOPE})
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
+        modeller_pass_fn=_recording_pass(),
+        control=_FakeControl(),
+        hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert fake.stats_writes  # the run wrote its record
+    for _run_id, _status, stats in fake.stats_writes:
+        assert "threat_model_scope" not in (stats or {})
+    assert "threat_model_scope" not in fake.records["rt-hunt-0001"]
 
 
 def test_the_injected_intake_snapshot_is_the_unit_set(monkeypatch):
@@ -385,14 +478,14 @@ def test_provider_abort_stops_the_runs_sessions_before_the_terminal(monkeypatch)
 
 def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     """#312: a provider failure inside a dispatched HUNTER - after the pass has
-    modelled and the surfer dispatched a produced loop file - must pause the run
+    modelled and the surfer dispatched a produced threat file - must pause the run
     as the resumable `interrupted` with the provider cause, never let it quiesce
     `complete` with zero specs and no reason. This is the trial-2 outcome: 11
     configs consumed, 0 specs authored, no typed reason. The #329/#331 fixes
     scoped the pass and the pod verdict; the hunter harness still swallowed the
     typed provider error and the run quiesced silently.
 
-    T4b (#387): the dispatch input is the produced loop file, not an enqueued
+    T4b (#387): the dispatch input is the produced threat file, not an enqueued
     config. The real harness's raw-raise classification is asserted at its own
     seam (`tests/attack/test_hunting_agent.py`); the run-terminal propagation is
     asserted here through the injected builder."""
@@ -430,7 +523,103 @@ def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     assert stats["quota_exhausted"] is True
 
 
-# T6 (#379): the production harness consumes the loop payload end to end. The
+# --- F-026 (B): transient child failures do not stop the fleet -----------------
+
+def test_a_transient_hunter_failure_requeues_only_that_threat_and_keeps_the_sibling_live(
+        tmp_path, monkeypatch):
+    """One child's 429 is not the run's failure: the failed threat is requeued
+    after its backoff (the consumed threat has no terminal set, so F-022 recovers
+    it) while the unaffected sibling finishes and finalizes. The run completes."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    run_id = "rt-hunt-0001"
+    produce_model(models, project_id="rt-project", unit_id=SERVICE_A,
+                  run_id=run_id)
+    produce_model(models, project_id="rt-project", unit_id=OTHER_UNIT,
+                  run_id=run_id)
+    attempts: dict[str, int] = {}
+    finalized: list[str] = []
+
+    def builder(*, run_id, project_id, hunter_store, **kw):
+        async def dispatch(payload):
+            did = payload["dispatch_id"]
+            attempts[did] = attempts.get(did, 0) + 1
+            if did.startswith("Service-slug-a") and attempts[did] == 1:
+                raise ProviderUnavailableError(
+                    "throttled", status_code=429, retry_after_s=0.01,
+                    quota_exhausted=False)
+            if did.startswith("GraphQLApi"):
+                # stay live long enough that the other child fails while this
+                # one is mid-graph - the sibling the old #331 handler killed
+                await asyncio.sleep(0.05)
+            hunter_store.finalize_specs(project_id, did, run_id=run_id)
+            finalized.append(did)
+        return dispatch, None
+
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", intake_units=[intake_unit(SERVICE_A),
+                                     intake_unit(OTHER_UNIT)],
+        modeller_pass_fn=_recording_pass(),
+        hunter_store=hunter, threat_store=models,
+        control=_FakeControl(),
+        hunter_builder=builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert fake.statuses[-1] == (hid, "complete")
+    assert attempts["Service-slug-a__threat-1"] == 2
+    assert attempts["GraphQLApi__threat-1"] == 1
+    assert sorted(finalized) == [
+        "GraphQLApi__threat-1", "Service-slug-a__threat-1"]
+    for did in finalized:
+        assert hunter.read_terminal_set("rt-project", did)["run_id"] == run_id
+
+
+def test_three_consecutive_transient_hunter_failures_pause_the_run(
+        tmp_path, monkeypatch):
+    """The backoff is bounded: the third consecutive transient failure of one
+    child is fatal, and the #331 handler pauses the run as `interrupted` with
+    the provider cause (quota_exhausted=false - a throttle, not consumed
+    credits)."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunter, models = _stores(tmp_path)
+    run_id = "rt-hunt-0001"
+    produce_model(models, project_id="rt-project", unit_id=SERVICE_A,
+                  run_id=run_id)
+    attempts = {"n": 0}
+
+    def builder(*, run_id, project_id, hunter_store, **kw):
+        async def dispatch(payload):
+            attempts["n"] += 1
+            raise ProviderUnavailableError(
+                "throttled", status_code=429, retry_after_s=0.001,
+                quota_exhausted=False)
+        return dispatch, None
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
+        modeller_pass_fn=_recording_pass(),
+        hunter_store=hunter, threat_store=models,
+        control=_FakeControl(),
+        hunter_builder=builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert attempts["n"] == 3
+    _, status, stats = fake.stats_writes[-1]
+    assert status == "interrupted"
+    assert stats["interrupted"] is True
+    assert stats["provider_status"] == 429
+    assert stats["quota_exhausted"] is False
+
+
+# T6 (#379): the production harness consumes the threat payload end to end. The
 # raw-raise classification AT that seam and the end-to-end run pause are
 # asserted below (`test_the_production_hunter_seam_...`) and in
 # `test_hunter_provider_failure_interrupts_the_run` above.
@@ -449,9 +638,9 @@ def test_build_production_hunting_agent_wires_real_seams(tmp_path):
     assert registry is not None
 
 
-def test_the_production_hunter_builder_consumes_the_loop_payload(tmp_path):
-    """T6 (#379): the production hunter builder hands the materialised loop
-    payload straight to the harness - no refusal marker, no `consumes_loop_payload`
+def test_the_production_hunter_builder_consumes_the_threat_payload(tmp_path):
+    """T6 (#379): the production hunter builder hands the materialised threat
+    payload straight to the harness - no refusal marker, no `consumes_threat_payload`
     flag, no `Mapping` discrimination. The raw provider error AT the real seam
     propagates as the typed pause cause (the #312 end-to-end variant restored
     once the harness consumed the payload)."""
@@ -471,7 +660,7 @@ def test_the_production_hunter_builder_consumes_the_loop_payload(tmp_path):
         build_memory_store,
     )
 
-    assert not hasattr(_default_hunter_builder, "consumes_loop_payload")
+    assert not hasattr(_default_hunter_builder, "consumes_threat_payload")
 
     dispatch, registry = build_production_hunting_agent(
         run_id="prod-run", project_id="p",
@@ -576,14 +765,14 @@ def test_hunting_module_context_sets_the_shared_module_seam():
 
     async def probe():
         async with hunting_runtime.hunting_module_context():
-            on_loop = C._MODULE_CTX.get()
+            module_context = C._MODULE_CTX.get()
             cp = C.get_session_checkpointer()
             offloaded = await asyncio.to_thread(C.get_session_checkpointer)
-            return on_loop, cp, offloaded
+            return module_context, cp, offloaded
 
-    on_loop, cp, offloaded = asyncio.run(probe())
+    module_context, cp, offloaded = asyncio.run(probe())
     fallback = C.get_session_checkpointer()
-    assert on_loop == "hunting"
+    assert module_context == "hunting"
     assert cp is not fallback
     assert cp._index.module == "hunting"
     assert offloaded is cp
@@ -704,7 +893,7 @@ def test_cancel_hunting_is_a_safe_no_op_with_no_active_run():
 # the modeller pass's sync lane still works through the module boundaries
 def test_explicit_root_store_trail_is_written(tmp_path):
     """The sync lane (`run_modeller_pass`) models one unit end to end: the five
-    gate writes land through the real store and the produced loop file exists."""
+    gate writes land through the real store and the produced threat file exists."""
     store = ThreatModelStore(root_dir=tmp_path)
     outcome = run_modeller_pass(
         "rt-project", "run-rt", UNIT,
@@ -713,8 +902,8 @@ def test_explicit_root_store_trail_is_written(tmp_path):
     )
     assert outcome.status == "completed"
     assert store.read_model("rt-project", UNIT)["state"] == "COMPLETED"
-    assert [loop["loop_id"] for loop in store.read_loop_files("rt-project", UNIT)] \
-        == ["loop-1"]
+    assert [threat["threat_id"] for threat in store.read_threat_files("rt-project", UNIT)] \
+        == ["threat-1"]
 
 
 def _modeller_tools(store):

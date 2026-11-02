@@ -1,5 +1,43 @@
 # Hunting agent spec: threat modeller
 
+## Amendment 2026-10-25: impact-first elicitation
+
+The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
+The decisions are in `docs/design/threat-model-impact-elicitation-adr.md`; the component map is `docs/design/threat-model-impact-elicitation-impact-map.md`.
+Where this document and the amendment disagree, the amendment wins.
+
+- A threat carries `VC`, `VI`, and `VA` plus a literal end impact. The store computes `impact = 1 - (1-VC)(1-VI)(1-VA)`, the ordinal weight, and `threat risk = likelihood_weight * impact_weight`.
+- The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
+- The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
+- The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
+
+## Amendment 2026-10-26: impact assessment system
+
+The impact-assessment system supersedes the 2026-10-25 impact-first amendment in this document.
+The authoritative spec is `docs/design/impact-assessment-system-spec.md`.
+The prototype is `docs/design/impact-assessment-system-prototype.md`.
+Where this document and the new spec disagree, the new spec wins.
+
+- The impact assessment is a first-class model section.
+  A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
+- A `precursor` is a capability entity, not a row.
+  The threat references its precursors through `enabling_precursors`.
+- The `damage` field merges the victim and the damage into one semantic field.
+  The damage-family and victim-class enums are removed.
+- The CIA score is authored after the impact assessment.
+  The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
+- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `PRIOR_ART`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `IMPACT_ASSESSED`, `COMPLETED`.
+- `hunts_store` gains `cmd=query`: a required `kind` plus a non-empty AND list of `{path, regex, flags}` filters over the threat-file and model fields. An empty filter, an invalid regex, or an unknown path is a coded rejection.
+- The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
+- The hunter payload carries the impact assessment and the precursors.
+  The spec contract and the pod contract are unchanged.
+  No damage symptom or damage verdict is added.
+- The class-based green gate is retired.
+  The impact metric is the CIA red/green share over all impact rows.
+
+
 *Status: spec (contract), NOT implementation. Tracker: [#373](https://github.com/Diekgbbtt/polyphemus/issues/373). This document is the build spec for the unit threat model redesign. It supersedes `docs/design/hunting-67-orchestrator-spec.md` in full for the modeller role. It is synthesised from the grilling record (`docs/design/unit-threat-model-workbench.md`), the workflow contract (`docs/design/unit-threat-model-workflow.md`), the tool-binding ADR (`docs/design/unit-threat-model-tools-adr.md`), and the ordering-halt ADR (`docs/design/unit-threat-model-ordering-halt-adr.md`). The artifact contract is `docs/design/hunting-67-threat-model-artifact-spec.md`; the impact map is `docs/design/unit-threat-model-spec-impact-map.md`.*
 
 ## 1. Problem statement
@@ -27,9 +65,9 @@ The pipeline needs an agent that builds the trust model per unit and publishes t
 
 The hunt-orchestrator is rewritten in place into the **threat modeller**.
 No new submodule is added and no role is split.
-For each discretely testable L1 unit, the modeller publishes one **unit threat model** with a ranked set of **loops**.
-A loop is a research direction: fault -> web vulnerability class -> failure-mode assessment -> likelihood.
-The model is the persisted artifact and the dispatch grain is the loop.
+For each discretely testable L1 unit, the modeller publishes one **unit threat model** with a ranked set of **threats**.
+A threat is a research direction: fault -> web vulnerability class -> failure-mode assessment -> likelihood.
+The model is the persisted artifact and the dispatch grain is the threat.
 
 The phase-2 attack-tree document is inspirational only, never a compatibility contract.
 The two paradigms abduct in opposite directions.
@@ -41,10 +79,10 @@ It never updates a threat model, because a model never evolves.
 
 The run consumes the L1 inventory in live-edge-count order.
 It models each unit until the progressive risk budget halts the intake.
-It publishes the model and its loop files.
-The surfer dispatches one hunter per loop.
-High and medium loops are dispatched first.
-Low loops stay dispatchable and are paused until the higher ranks are executed.
+It publishes the model and its threat files.
+The surfer dispatches one hunter per threat.
+High and medium threats are dispatched first.
+Low threats stay dispatchable and are paused until the higher ranks are executed.
 No direction is lost: a falsified vector lowers the likelihood, and a fundamental infeasibility is recorded as a backward correction.
 
 ## 3. User stories
@@ -60,13 +98,13 @@ No direction is lost: a falsified vector lowers the likelihood, and a fundamenta
 9. As an operator, I want mutating probes allowed for evidence with best-effort restoration, so that a probe can establish a state-changing agreement without damaging the target.
 10. As an operator, I want probes never destructive or data-exfiltrating, so that the modeller checks mechanics without exploiting.
 11. As an operator, I want a drop to require a fundamental infeasibility finding, so that a missing observation never masquerades as a missing mechanism.
-12. As an operator, I want a falsified vector to lower the likelihood instead of dropping the loop, so that the hunter keeps the room to find the vectors.
+12. As an operator, I want a falsified vector to lower the likelihood instead of dropping the threat, so that the hunter keeps the room to find the vectors.
 13. As an operator, I want failure modes kept in the model and never fed to the hunter, so that the hunter is not narrowed to one engineered procedure.
 14. As an operator, I want the model to cite the web-vulnerability skills suite class, so that the hunter can load the class procedure.
 15. As an operator, I want the model's likelihood score to use the CVSS-inspired four-factor reasoning, so that the score is grounded in attack vector, attack requirements, privileges, and complexity.
 16. As an operator, I want the five-level likelihood enum and monotonic weights, so that the per-unit sum is deterministic.
 17. As an operator, I want the threshold and the weights recorded in the run, so that the halt is reproducible.
-18. As an operator, I want the model to record an assumption-to-loop closure finding, so that an unclosed assumption is visible at review.
+18. As an operator, I want the model to record an assumption-to-threat closure finding, so that an unclosed assumption is visible at review.
 19. As an operator, I want a degraded unit recorded and skipped, so that an unreachable target never fabricates a model.
 20. As an operator, I want the run to resume from the recorded intake position and accumulator, so that a stopped run does not lose its ordering.
 21. As the threat modeller, I want the unit projection, the L1 application-surface overview, and the HTTP history as grounding inputs, so that I can sharpen the unit's interfaces, control flows, and data flows.
@@ -109,11 +147,11 @@ The provider environment variable `LLM_HUNTING_ORCHESTRATOR` remained a one-wind
 
 ### 4.2 Goal
 
-For each admitted L1 unit, build a formal trust model and publish a unit threat model whose loops are ranked by likelihood.
+For each admitted L1 unit, build a formal trust model and publish a unit threat model whose threats are ranked by likelihood.
 Consume the unit intake in live-edge-count descending order.
 Stop modelling when the progressive risk budget crosses its threshold.
 Record every outcome and every exclusion in the run.
-Never fabricate a model, a loop, or a verdict.
+Never fabricate a model, a threat, or a verdict.
 
 ### 4.3 Scope
 
@@ -143,7 +181,7 @@ A provider failure is classified through the shared provider-failure path and pa
 
 The run bootstrap launches one modeller pass and one run-scoped surfer.
 The modeller pass models units.
-The surfer dispatches loops and pods.
+The surfer dispatches threats and pods.
 The two run concurrently.
 The modeller never dispatches a hunter directly.
 
@@ -174,10 +212,10 @@ The L1 application-surface overview is a cross-workstream dependency; when it is
 
 ### 4.7 Output
 
-The output is one unit threat model document and, at completion, one loop file per dispatchable loop.
+The output is one unit threat model document and, at completion, one threat file per dispatchable threat.
 The artifact contract is S2.
-The model is consumable once it reaches COMPLETED with its loops written.
-The surfer materialises the per-loop hunter payload at dispatch time.
+The model is consumable once it reaches COMPLETED with its threats written.
+The surfer materialises the per-threat hunter payload at dispatch time.
 No `HuntConfig` entity is minted.
 
 ### 4.8 Honour clauses
@@ -272,16 +310,46 @@ Probe rules:
 
 ### 5.5 Auth store and skills
 
-The auth store is bound by replicating the recon-orchestrator coupling.
-The system prompt carries a concise verbatim on when and how to use it.
+The auth store is bound in READ-ONLY mode.
+The modeller reads the login overview and the account records.
+It never writes the store and never replays a secret.
+The binding goes through the shared `auth_capable_binding` `arm_exempt_surface` path.
+That path also carries the project `authn` skill.
+
 The project skill is bound through `load_skill`.
+The skill-usage lesson recorder is bound through `record_skill_lesson`.
 
 The web-vulnerability skills suite is bound through `skill_list` and `skill_load`.
 The suite class is the stored `web_vulnerability_class` of a vulnerability.
 The class name must equal a skills-suite directory name.
+`skill_list` requires a case-insensitive regex over skill names.
+A missing filter is `skill_filter_required`; an invalid regex is `skill_filter_invalid`; a no-match regex returns an empty `skills` list.
+A parent match returns the class parent plus its variant leaves; a leaf match returns the leaf plus its class parent, so an abbreviated leaf (`bfla-*`) still yields `broken-function-level-authorization`.
+The listing is capped at 20 entries and reports the omitted count.
 If the suite lands with different tool names, an adapter maps the assumed `skill_list` / `skill_load` names to the built tools.
 The role is enabled only when the suite contract test passes.
 The control plan binds that skill to the hunter prompts.
+
+The modeller's bound surface is:
+
+- `hunts_store`;
+- `notes`;
+- `search_http_history`;
+- `get_http_artifact`;
+- `exec`;
+- `skill_list`;
+- `skill_load`;
+- `load_skill`;
+- `record_skill_lesson`;
+- `auth_store` (read-only).
+
+The prompt's tool section names every tool in that list.
+The request tool definitions are the full surface.
+The system prompt carries no second description body.
+
+The 5xx rule is the shared target-front rule.
+The prompt points at it with the 502, 503, 504, and 404 semantics.
+It does not copy the full directive.
 
 ### 5.6 Not bound
 
@@ -313,7 +381,7 @@ The workflow contract is `docs/design/unit-threat-model-workflow.md`.
 | `TRUST_MODELLED` | `trust_model` | Trust agreements plus dynamic-state trust (states, transitions, violations) |
 | `TRUST_ASSUMPTIONS_WRITTEN` | `assumptions` | Assumptions, each naming an induced programming fault |
 | `VULNERABILITIES_WRITTEN` | `vulnerabilities` | Web vulnerability classes, each mapped to a suite class |
-| `COMPLETED` | `failure_modes`, `loops` | Failure modes for the map-back and the ranked loops; the store computes the risk profile; the completion checker runs |
+| `COMPLETED` | `failure_modes`, `threats` | Failure modes for the map-back and the ranked threats; the store computes the risk profile; the completion checker runs |
 
 The states are sequential.
 The harness accepts a forward jump and records the skipped states in the run record's `trajectory`.
@@ -339,7 +407,7 @@ Define the technical interface agreements, the control flows, and the data flows
 The gate write initialises the model.
 The phase material is the request-handling stack and the trust-boundary steps from the retired notes document, embedded in the prompt.
 The phase ends when the modeller can define the agreements formally and every probeable ASSUMED claim is resolved or explicitly carried.
-The grounding is an explore/exploit loop in the reasoning, not a harness loop state.
+The grounding is an explore/exploit threat in the reasoning, not a harness threat state.
 Completion needs nothing beyond context; the modeller re-queries the model if compression evicted it.
 
 **Trust mapping -> TRUST_MODELLED.**
@@ -372,11 +440,11 @@ Map each vulnerability back to one or more runtime failure modes, grounded in th
 The failure modes drive the feasibility assessment and the likelihood.
 They are never rendered into the hunter payload.
 Apply the drop rule.
-Rank the surviving loops by likelihood.
-Assign loop ids in ranked order.
-Write the ranked loops; the store computes the risk profile.
+Rank the surviving threats by likelihood.
+Assign threat ids in ranked order.
+Write the ranked threats; the store computes the risk profile.
 The completion checker runs and records its non-blocking outcome.
-The gate write finalises the model and emits the loop files.
+The gate write finalises the model and emits the threat files.
 
 ### 6.3 Confidence degrees
 
@@ -395,21 +463,21 @@ The content profile is repeatable and indexable.
 A claim carries a list of evidence entries.
 Each entry names the grounding that produced the confidence, for example a request record, an HTTP-history artifact, a probe, a note, a previous model, a framework default, or a document.
 
-The loop carries its own confidence degree.
-It grades the loop's load-bearing premise.
+The threat carries its own confidence degree.
+It grades the threat's load-bearing premise.
 It is authored at the COMPLETED write.
 It is one factor of the class assignment: the modeller lowers the class when the load-bearing premise is ASSUMED and records the reason.
 The harness weights only the class; the confidence is not an independent summand.
 
 The degrees freeze with the model at COMPLETED.
 
-### 6.4 Assumption-to-loop closure and dedup
+### 6.4 Assumption-to-threat closure and dedup
 
 The adopted closure check requires:
 
 - Every assumption names at least one programming fault.
 - Every fault closes to at least one vulnerability.
-- Every vulnerability that is not dropped closes to at least one failure mode and at least one loop.
+- Every vulnerability that is not dropped closes to at least one failure mode and at least one threat.
 - A dropped vulnerability records the fundamental infeasibility proof and the backward correction of the agreements it was mapped from.
 - An unclosed assumption is recorded as a validation finding.
 
@@ -421,7 +489,7 @@ It accepts the risk of false overlap rather than losing a research direction.
 
 The abduction research's boundary-record vocabulary is not adopted.
 The KILL verdict bounds it to the evaluated implementation.
-The two orthogonal disciplines are adopted: the drop-decision discipline and the assumption-to-loop closure check.
+The two orthogonal disciplines are adopted: the drop-decision discipline and the assumption-to-threat closure check.
 
 ### 6.5 The drop rule
 
@@ -443,8 +511,8 @@ The finding and the correction are recorded in place.
 The failure mode stays in the formal model for debugging.
 It is never fed forward.
 
-An unprobed carrier keeps its loop at ASSUMED.
-A loop with no feasible failure mode is retained with likelihood `none`.
+An unprobed carrier keeps its threat at ASSUMED.
+A threat with no feasible failure mode is retained with likelihood `none`.
 It contributes zero to the risk sum.
 It is not dispatched.
 
@@ -547,23 +615,23 @@ The resulting order is recorded in the run as `intake_order`.
 ### 7.3 The modelling interleave
 
 The modeller pass dequeues the next unit and models it to COMPLETED.
-The surfer moves and dispatches completed loops while the modeller models the next unit.
+The surfer moves and dispatches completed threats while the modeller models the next unit.
 The modeller does not wait for dispatch.
-The store's produced loop files are the handoff.
+The store's produced threat files are the handoff.
 The surfer's dispatch is idempotent and at-least-once.
 
 ### 7.4 Progressive risk budget
 
-The loop likelihood weights are `none: 0`, `low: 1`, `medium: 2`, `high: 3`, `critical: 4`.
+The threat likelihood weights are `none: 0`, `low: 1`, `medium: 2`, `high: 3`, `critical: 4`.
 
 The harness computes the unit total symbolically:
 
 ```
-unit_total = sum(weight(loop.likelihood) for loop in model.loops)
+unit_total = sum(weight(threat.likelihood) for threat in model.threats)
 ```
 
-The modeller writes the loops.
-The store computes the `risk_profile` from the loop likelihoods at the COMPLETED write.
+The modeller writes the threats.
+The store computes the `risk_profile` from the threat likelihoods at the COMPLETED write.
 The harness-owned total is authoritative.
 The modeller does not author the total.
 
@@ -614,16 +682,16 @@ Each `model_sums` entry carries the unit id, the total, and the per-level breakd
 `intake_position` is the index of the next unit to model.
 The `trajectory` entries are defined in 6.1.
 
-The per-level breakdown counts every loop, including `none`.
+The per-level breakdown counts every threat, including `none`.
 
 ### 7.5 Resume
 
 A stopped run resumes from the persisted run record.
 It re-enters at `intake_position`.
-It reads `risk_total`, `risk_threshold`, `intake_order`, and the model and loop files on disk.
+It reads `risk_total`, `risk_threshold`, `intake_order`, and the model and threat files on disk.
 It never re-models a unit whose model is complete.
-It resumes the pending dispatch of produced loop files.
-The pause of low loops survives a restart because it is filesystem state.
+It resumes the pending dispatch of produced threat files.
+The pause of low threats survives a restart because it is filesystem state.
 A resumed pass cannot update a completed model.
 The model document commits before the run-record update.
 On resume, the run recomputes `risk_total` from `model_sums` and the completed models, so a crash between the two writes cannot leave a stale total.
@@ -632,19 +700,19 @@ An interrupted run that predates the rename does NOT resume: the alias window is
 
 ### 7.6 Dispatch sequencing
 
-The surfer dispatches loops in likelihood order.
-`critical`, `high`, and `medium` loop files are dispatchable immediately.
-`low` loop files stay in `produced/` until no critical, high, or medium loop file is produced and no critical, high, or medium hunter session is live.
-`none` loops have no loop file and are never dispatched.
+The surfer dispatches threats in likelihood order.
+`critical`, `high`, and `medium` threat files are dispatchable immediately.
+`low` threat files stay in `produced/` until no critical, high, or medium threat file is produced and no critical, high, or medium hunter session is live.
+`none` threats have no threat file and are never dispatched.
 
 The sequencing is cross-unit.
-The surfer reads the run's produced loop files, not only the current unit's.
-A produced loop file from another run is left untouched.
-The low-loop pause is a per-tick condition; a later unit's high loop can arrive after an earlier low loop has been dispatched.
-This is accepted: the run is streaming and a later high loop cannot preempt work already admitted.
+The surfer reads the run's produced threat files, not only the current unit's.
+A produced threat file from another run is left untouched.
+The low-threat pause is a per-tick condition; a later unit's high threat can arrive after an earlier low threat has been dispatched.
+This is accepted: the run is streaming and a later high threat cannot preempt work already admitted.
 
-The model document moves with its last loop file.
-A unit with zero dispatchable loops has its model document consumed at COMPLETED and records zero dispatches.
+The model document moves with its last threat file.
+A unit with zero dispatchable threats has its model document consumed at COMPLETED and records zero dispatches.
 
 ### 7.7 Degraded and interrupted outcomes
 
@@ -658,7 +726,7 @@ If a partial model exists, the store moves its unit directory to `abandoned/`.
 The harness records the unit as degraded with the reason.
 The run continues to the next unit.
 A new run retries the unit because no completed model exists.
-A unit whose COMPLETED validation fails is handled the same way: the model is archived to `abandoned/`, the unit is recorded in `degraded_units`, and no loop is dispatched.
+A unit whose COMPLETED validation fails is handled the same way: the model is archived to `abandoned/`, the unit is recorded in `degraded_units`, and no threat is dispatched.
 
 The **escalated** run path is retired.
 There is no validation bound to exceed.
@@ -683,10 +751,10 @@ The system prompt must carry:
 - The evidence discipline: every claim carries evidence entries; no probe plans; no citations block.
 - The live-authority rule.
 - The retention-first drop rule and the fundamental-infeasibility criterion.
-- The assumption-to-loop closure check.
+- The assumption-to-threat closure check.
 - The risk-scoring ontology: attack vector, attack requirements, privileges required, complexity; the five-level enum; the monotonic weights; the likelihood-only rule.
 - The probe rules and the target-front availability directive.
-- The tool guidance for `hunts_store`, `notes`, HTTP history, `exec`, the auth store, and the skills suite.
+- The tool guidance for `hunts_store`, `notes`, HTTP history, `exec`, the auth store, the skills suite, `load_skill`, and `record_skill_lesson`.
 - The saturation stop.
 - The output contract for each gate.
 
@@ -699,7 +767,7 @@ The per-state material is embedded from the retired notes documents:
 - Completion: the map-back, the drop rule, and the scoring.
 
 No failure-mode detail is rendered into the hunter payload.
-The loop rationale stays vulnerability-level.
+The threat rationale stays vulnerability-level.
 
 ## 9. Implementation decisions
 
@@ -724,7 +792,7 @@ It reuses the established patterns:
 
 - `write_text_atomic` for every whole-file write (same-directory temp file, flush, fsync, replace).
 - `retain_bounded_records` for the notes store.
-- The derived-symbol discipline: the store owns the file name, the unit directory, the loop id, and the dispatch id.
+- The derived-symbol discipline: the store owns the file name, the unit directory, the threat id, and the dispatch id.
 - The move-aware write discipline: a write for a consumed identity is a no-op success.
 - The coded teaching rejection for a missing or malformed derivation input.
 - The shared `notes` tool base with a caller-bound handle.
@@ -749,7 +817,7 @@ The hints are:
 | `UNIT_TECHNICAL_SHARP` | Proceed to trust mapping: translate the interface agreements into trust agreements, then model dynamic-state trust. |
 | `TRUST_MODELLED` | Proceed to assumptions: each assumption names an induced programming fault. |
 | `TRUST_ASSUMPTIONS_WRITTEN` | Proceed to vulnerability citation: name the classes freely, then map them to the suite. |
-| `VULNERABILITIES_WRITTEN` | Proceed to failure-mode deduction and the ranked loops; apply the drop rule. |
+| `VULNERABILITIES_WRITTEN` | Proceed to failure-mode deduction and the ranked threats; apply the drop rule. |
 | `COMPLETED` | No hint. The model is published. |
 
 The hint text is finalised in the implementation prompt pass.
@@ -767,12 +835,12 @@ The crossing and blocked units are written when the halt fires.
 
 Anything in the eval assessment artifacts and in the assessor and diagnoser prompts that refers to hunt configs is translated:
 
-- `HuntConfig` -> loop payload.
+- `HuntConfig` -> threat payload.
 - `specified` -> `ratified`.
 - Hunt store -> threat model store.
-- `hunt_id` -> loop dispatch id.
+- `hunt_id` -> threat dispatch id.
 - `fault_class` -> web vulnerability class and fault.
-- `rationale` / `research_direction` -> loop rationale and trust-model overview.
+- `rationale` / `research_direction` -> threat rationale and trust-model overview.
 
 The eval fixtures, trial records, and challenge-location mapping are updated with the change.
 The eval's hypothesis-verdict derivation via `derive_verdict` is disabled or replaced; the verdict-consumption workflow remains out of scope.
@@ -787,7 +855,7 @@ The change updates:
 - `docs/design/evolution-paradigm.md`: a minimal citation only.
   It states that the phase-1 system now has a threat model feature with a different design model from attack-tree-based models.
   It states that the development of the attack-tree-based models should draw inspiration from the insights emerging from the use of the threat model feature.
-- The `CONTEXT.md` glossary: update the stale D4 term and sharpen the threat model, loop payload, and phase-summary terms.
+- The `CONTEXT.md` glossary: update the stale D4 term and sharpen the threat model, threat payload, and phase-summary terms.
 - The supersession notes listed in the impact map.
 
 The G7 check stands: the accumulator is symbolic run state, not an orchestrator graph stage, so G7 needs no amendment.
@@ -809,7 +877,7 @@ Keep every failure path fail-open and observable.
 - The pure ordering function: live-edge count, tie-break, exclusion.
 - The pure risk accumulator: weights, inclusive comparison, crossing unit, blocked unit.
 - The pure workflow tracker: gate detection, monotonic state, forward jump, trail-only backward signal, hint injection.
-- The store: merge, derived symbols, atomic write, move-aware write, loop-file emission, zero-loop consumption, completion checker.
+- The store: merge, derived symbols, atomic write, move-aware write, threat-file emission, zero-threat consumption, completion checker.
 - The tool contracts: `hunts_store`, `notes`, HTTP history, `exec`, skills.
 - The prompt contract: the five states, the gates, the evidence discipline, the drop rule, the scoring ontology, the live-authority rule.
 - The run lifecycle: intake freeze, exclusion, interleave, halt, resume, degraded unit, provider interruption.
@@ -833,12 +901,12 @@ The suite must cover:
   The product-submission and file-upload ranking scenarios are replayed over the prototype units.
   If a replay is not feasible before the build, the outcome is measured in the post-build eval and recorded as a risk.
 - Every gate's necessary-content check.
-- The drop rule: retained vector, `none` loop, fundamental drop with the backward correction.
+- The drop rule: retained vector, `none` threat, fundamental drop with the backward correction.
 - The closure check: closed and unclosed assumptions.
 - The ordering ties and the exclusion reasons.
 - The halt at the crossing unit and the blocked unit.
 - The resume from a stopped run.
-- The zero-loop unit and the low-loop pause.
+- The zero-threat unit and the low-threat pause.
 - The degraded unit.
 - The role rename: no old role name remains in a live path.
 
@@ -846,7 +914,7 @@ The suite must cover:
 
 - Surface recovery, recon, and analysis.
 - The hunter pass redesign, the harness FSM, and the pod contract.
-- The test-executor pod's internal loop.
+- The test-executor pod's internal threat.
 - Model evolution and change-driven re-modelling.
 - Alpha-omega (`#355`).
 - Full CVSS base metrics (`#368`).
@@ -872,3 +940,25 @@ The implementation work items are:
 - The documentation and hygiene pass.
 
 The tickets are cut from this spec set through `/to-tickets`.
+
+## 13. Context dedup amendment (2026-10-23)
+
+The shared decision record is `docs/design/hunting-context-dedup-2026-10-23-adr.md`.
+The impact map is `docs/design/hunting-context-dedup-impact-map.md`.
+
+The modeller changes are:
+
+- The six state and section families remain the same.
+  Their human projection is pinned to `ModelState`, `GATE_SECTIONS`, and `ModelSections` by tests.
+- The prompt names the full 10-tool surface.
+  `record_skill_lesson` is no longer hidden.
+- The auth store is read-only.
+  The `arm_exempt_surface` path no longer binds the write contract.
+- The 5xx paragraph is a pointer to the shared target-front rule.
+- The tool descriptions are shared constants.
+  The modeller surface falls from 18,594 to 6,850 chars.
+  Of that cut, 7,095 chars are shared description text and 4,649 chars are the auth-mode switch.
+- The first human context is pinned through compaction.
+
+The state, gate, and reference table generation remains a follow-up.
+The current tests pin the prompt projection to the typed sources so it cannot drift silently.

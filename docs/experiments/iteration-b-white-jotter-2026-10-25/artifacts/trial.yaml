@@ -1,0 +1,339 @@
+trial_id: white-jotter-1-20261026T031121-1618c524
+instance_id: eval-server-1
+target_id: white-jotter-1
+project_id: dda347be-abea-48e4-94e5-4a4039f41858
+start_phase: recon
+terminal: failed
+phases:
+- phase: recon
+  entered: true
+  status: complete
+  run_id: 7c3b92bc-8008-49b0-9429-a9b91b39873e
+  stop_run_id: 7c3b92bc-8008-49b0-9429-a9b91b39873e
+  blocks: []
+  notes: []
+  failure: null
+- phase: analysis
+  entered: true
+  status: drained
+  run_id: 7c3b92bc-8008-49b0-9429-a9b91b39873e:3eef11d6
+  stop_run_id: 7c3b92bc-8008-49b0-9429-a9b91b39873e
+  blocks: []
+  notes: []
+  failure: null
+- phase: hunting
+  entered: true
+  status: failed
+  run_id: null
+  stop_run_id: null
+  blocks: []
+  notes: []
+  failure: 'HTTP 0 POST /projects/dda347be-abea-48e4-94e5-4a4039f41858/execution/stop:
+    TimeoutError: timed out (after 1 attempt(s))'
+started_at: '2026-10-25T21:51:53+00:00'
+finished_at: '2026-10-26T03:11:21+00:00'
+token_budget: 7000000
+spent_tokens: 7017453
+spend_overshoot: null
+spend_baseline: 0
+spend_by_agent:
+  job_orchestrator:
+    context_tokens:
+      cached: 290560
+      uncached: 29684
+    generated_tokens:
+      reasoning: 4775
+      visible: 7030
+    total_tokens: 332049
+    capped_tokens: 41489
+    calls: 19
+    cache_detail_omitted: 0
+  triager:
+    context_tokens:
+      cached: 22528
+      uncached: 70567
+    generated_tokens:
+      reasoning: 4927
+      visible: 4076
+    total_tokens: 102098
+    capped_tokens: 79570
+    calls: 9
+    cache_detail_omitted: 0
+  assigner:
+    context_tokens:
+      cached: 79360
+      uncached: 33565
+    generated_tokens:
+      reasoning: 13415
+      visible: 2100
+    total_tokens: 128440
+    capped_tokens: 49080
+    calls: 9
+    cache_detail_omitted: 0
+  mechanism_typist:
+    context_tokens:
+      cached: 2088576
+      uncached: 227084
+    generated_tokens:
+      reasoning: 56671
+      visible: 39141
+    total_tokens: 2411472
+    capped_tokens: 322896
+    calls: 45
+    cache_detail_omitted: 0
+  hunting_threat_modeller:
+    context_tokens:
+      cached: 17880192
+      uncached: 382957
+    generated_tokens:
+      reasoning: 78991
+      visible: 120927
+    total_tokens: 18463067
+    capped_tokens: 582875
+    calls: 94
+    cache_detail_omitted: 0
+  hunting_hunter:
+    context_tokens:
+      cached: 35222272
+      uncached: 1530989
+    generated_tokens:
+      reasoning: 345191
+      visible: 300925
+    total_tokens: 37399377
+    capped_tokens: 2177105
+    calls: 648
+    cache_detail_omitted: 0
+  pod_runner:
+    context_tokens:
+      cached: 33987840
+      uncached: 2587142
+    generated_tokens:
+      reasoning: 512072
+      visible: 375796
+    total_tokens: 37462850
+    capped_tokens: 3475010
+    calls: 1604
+    cache_detail_omitted: 0
+  pod_triager:
+    context_tokens:
+      cached: 248576
+      uncached: 263524
+    generated_tokens:
+      reasoning: 17776
+      visible: 8128
+    total_tokens: 538004
+    capped_tokens: 289428
+    calls: 31
+    cache_detail_omitted: 0
+usage:
+  project_id: dda347be-abea-48e4-94e5-4a4039f41858
+  context_tokens:
+    cached: 89819904
+    uncached: 5125512
+  generated_tokens:
+    reasoning: 1033818
+    visible: 858123
+  total_tokens: 96837357
+  capped_tokens: 7017453
+  calls: 2459
+  cache_detail_omitted: 0
+  by_agent:
+    job_orchestrator:
+      context_tokens:
+        cached: 290560
+        uncached: 29684
+      generated_tokens:
+        reasoning: 4775
+        visible: 7030
+      total_tokens: 332049
+      capped_tokens: 41489
+      calls: 19
+      cache_detail_omitted: 0
+    triager:
+      context_tokens:
+        cached: 22528
+        uncached: 70567
+      generated_tokens:
+        reasoning: 4927
+        visible: 4076
+      total_tokens: 102098
+      capped_tokens: 79570
+      calls: 9
+      cache_detail_omitted: 0
+    assigner:
+      context_tokens:
+        cached: 79360
+        uncached: 33565
+      generated_tokens:
+        reasoning: 13415
+        visible: 2100
+      total_tokens: 128440
+      capped_tokens: 49080
+      calls: 9
+      cache_detail_omitted: 0
+    mechanism_typist:
+      context_tokens:
+        cached: 2088576
+        uncached: 227084
+      generated_tokens:
+        reasoning: 56671
+        visible: 39141
+      total_tokens: 2411472
+      capped_tokens: 322896
+      calls: 45
+      cache_detail_omitted: 0
+    hunting_threat_modeller:
+      context_tokens:
+        cached: 17880192
+        uncached: 382957
+      generated_tokens:
+        reasoning: 78991
+        visible: 120927
+      total_tokens: 18463067
+      capped_tokens: 582875
+      calls: 94
+      cache_detail_omitted: 0
+    hunting_hunter:
+      context_tokens:
+        cached: 35222272
+        uncached: 1530989
+      generated_tokens:
+        reasoning: 345191
+        visible: 300925
+      total_tokens: 37399377
+      capped_tokens: 2177105
+      calls: 648
+      cache_detail_omitted: 0
+    pod_runner:
+      context_tokens:
+        cached: 33987840
+        uncached: 2587142
+      generated_tokens:
+        reasoning: 512072
+        visible: 375796
+      total_tokens: 37462850
+      capped_tokens: 3475010
+      calls: 1604
+      cache_detail_omitted: 0
+    pod_triager:
+      context_tokens:
+        cached: 248576
+        uncached: 263524
+      generated_tokens:
+        reasoning: 17776
+        visible: 8128
+      total_tokens: 538004
+      capped_tokens: 289428
+      calls: 31
+      cache_detail_omitted: 0
+token_spectrum:
+  job_orchestrator:
+    visible: 7030
+    reasoning: 4775
+    cached_input: 290560
+    uncached_input: 29684
+    generated: 11805
+    total: 332049
+    capped: 41489
+    calls: 19
+    cache_detail_omitted: 0
+  triager:
+    visible: 4076
+    reasoning: 4927
+    cached_input: 22528
+    uncached_input: 70567
+    generated: 9003
+    total: 102098
+    capped: 79570
+    calls: 9
+    cache_detail_omitted: 0
+  assigner:
+    visible: 2100
+    reasoning: 13415
+    cached_input: 79360
+    uncached_input: 33565
+    generated: 15515
+    total: 128440
+    capped: 49080
+    calls: 9
+    cache_detail_omitted: 0
+  mechanism_typist:
+    visible: 39141
+    reasoning: 56671
+    cached_input: 2088576
+    uncached_input: 227084
+    generated: 95812
+    total: 2411472
+    capped: 322896
+    calls: 45
+    cache_detail_omitted: 0
+  hunting_threat_modeller:
+    visible: 120927
+    reasoning: 78991
+    cached_input: 17880192
+    uncached_input: 382957
+    generated: 199918
+    total: 18463067
+    capped: 582875
+    calls: 94
+    cache_detail_omitted: 0
+  hunting_hunter:
+    visible: 300925
+    reasoning: 345191
+    cached_input: 35222272
+    uncached_input: 1530989
+    generated: 646116
+    total: 37399377
+    capped: 2177105
+    calls: 648
+    cache_detail_omitted: 0
+  pod_runner:
+    visible: 375796
+    reasoning: 512072
+    cached_input: 33987840
+    uncached_input: 2587142
+    generated: 887868
+    total: 37462850
+    capped: 3475010
+    calls: 1604
+    cache_detail_omitted: 0
+  pod_triager:
+    visible: 8128
+    reasoning: 17776
+    cached_input: 248576
+    uncached_input: 263524
+    generated: 25904
+    total: 538004
+    capped: 289428
+    calls: 31
+    cache_detail_omitted: 0
+notes:
+- 'api transport failure: HTTP 0 POST /projects/dda347be-abea-48e4-94e5-4a4039f41858/execution/stop:
+  TimeoutError: timed out (after 1 attempt(s))'
+trial_dir: /opt/polymerhus-dev/eval/runs-iteration-b-20261025/white-jotter-1/white-jotter-1-20261026T031121-1618c524
+target_run_id: iterb-white-jotter
+seeded: false
+eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+trace_id: null
+assessment:
+  status: present
+  attempts:
+  - attempt: 1
+    outcome: dispatched
+    detail: null
+    at: '2026-10-26T03:28:22+00:00'
+  verdicts_path: /opt/polymerhus-dev/eval/runs-iteration-b-20261025/white-jotter-1/white-jotter-1-20261026T031121-1618c524/verdicts.yaml
+  failure: null
+diagnosis:
+  status: present
+  attempts:
+  - attempt: 1
+    outcome: dispatched
+    detail: null
+    at: '2026-10-26T03:43:29+00:00'
+  diagnoses_path: /opt/polymerhus-dev/eval/runs-iteration-b-20261025/white-jotter-1/white-jotter-1-20261026T031121-1618c524/diagnoses.yaml
+  entries_written: 7
+  issues_matched: 0
+  issues_proposed: 7
+  failure: null

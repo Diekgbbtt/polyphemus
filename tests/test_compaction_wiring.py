@@ -95,12 +95,12 @@ def test_recon_pod_triager_passes_compaction_middleware(monkeypatch):
 
     # The per-pod throttle turn retired with the steering machinery (#243),
     # so only the triager's stateful turn remains - still carrying the
-    # compaction middleware plus the L1 skill index (ADR A9: the triager is
-    # BOUND - it reads delivered web artefacts).
+    # compaction middleware plus the direct skill references (ADR A9: the
+    # triager is BOUND - it reads delivered web artefacts).
     assert set(seen) == {"triager"}
     assert len(seen["triager"]) == 2
     _assert_compaction_middleware(seen["triager"][0])
-    assert type(seen["triager"][1]).__name__ == "_skill_index"
+    assert type(seen["triager"][1]).__name__ == "_skill_references"
 
 
 def test_cached_role_middleware_is_shared_per_role():

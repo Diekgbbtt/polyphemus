@@ -81,7 +81,10 @@ def test_sync_registers_the_override_cost_in_model_info():
     # A no-change re-run is fully idle (the override is idempotent).
     writes = len(recorder.calls)
     assert _run(recorder) == S.SYNC_OK
-    assert all(call[0] == "GET" for call in recorder.calls[writes:]), (
+    assert all(
+        call[0] == "GET"
+        or (call[0] == "POST" and call[1] == "/v2/key/info")
+        for call in recorder.calls[writes:]), (
         "a converged override re-run must not write")
 
 

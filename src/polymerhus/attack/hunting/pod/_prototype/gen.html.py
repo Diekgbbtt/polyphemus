@@ -325,7 +325,7 @@ var SCENARIOS = {
     steps: ["init_validates","runner_tool_call","runner_kb_spaces",
       "runner_concludes_exhausted","write_consolidated_note",
       "triager_reads_note","verdict_space_exhausted"]},
-  "Variant loop then budget": {
+  "Variant threat then budget": {
     desc: "The triager mines variants up to HUNT_POD_MAX_ITERS (8); past the cap " +
       "budget-timeout terminates. Watch iteration climb and tool_calls reset.",
     steps: ["init_validates","mine_variant","mine_variant","mine_variant",

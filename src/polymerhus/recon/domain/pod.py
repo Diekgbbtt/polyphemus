@@ -812,7 +812,8 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
         from polymerhus.app.llm import compaction as C
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = auth_capable_binding("triager")
+        binding = auth_capable_binding(
+            "triager", project_id=ctx.project_id or None)
         result = stateful_turn("triager", ctx.address, messages,
                                checkpointer=ctx.checkpointer, schema=_ObservationBatch,
                                tools=binding.tools,

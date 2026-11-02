@@ -1,0 +1,43 @@
+# Iteration B - white-jotter from scratch, the impact-elicitation arm.
+#
+# One target, one fresh project, 7M capped tokens, full recon -> analysis ->
+# hunting. The recon subset is the documented single-host contract (no
+# steel_crawl / subdomain / whois jobs).
+#
+# The instance `.env` must carry the arm settings before the trial:
+#   HUNT_RISK_THRESHOLD=110
+#   SKILL_EVOLUTION_ENABLED=0
+#   LLM_HUNTING_THREAT_MODELLER=opencode-go:deepseek-v4.1-flash
+#   LLM_HUNTING_HUNTER=opencode-go:deepseek-v4.1-flash
+#
+# `pipeline_sync` defaults to `batched`; the run record freezes it.
+# The comparison baseline is `docs/experiments/white-jotter-batched-2026-10-24`.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: auth-bootstrap
+    status: incomplete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-1
+    env_file: eval-server-1/.env
+    targets:
+      - target_key: webexploitbench/white-jotter
+        target_id: white-jotter-1
+        target_run_id: iterb-white-jotter
+        token_budget: 7000000
+        target_config:
+          operator_kb: /root/eval-dd/data/white-jotter/operator_kb.md
+          data_dir: /root/eval-dd/data/white-jotter
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun]

@@ -139,21 +139,94 @@ def test_read_only_mode_keeps_the_shared_tool_name(tmp_path):
 
 def test_the_read_only_schema_cannot_express_a_write(tmp_path):
     """`value` is not on the read-only schema, so a write-shaped payload has no
-    field to ride; `command` and `path` are the whole request surface."""
+    field to ride; `command`, `path`, `view`, and `fields` are the whole
+    request surface."""
     tool = _readonly_tool(tmp_path)
-    assert set(tool.args) == {"command", "path"}
+    assert set(tool.args) == {"command", "path", "view", "fields"}
     assert "project_id" not in tool.args
     assert tool.args["command"]["description"].count("read") >= 1
-    assert "full redacted state" in tool.args["path"]["description"]
+    assert "summary" in tool.args["view"]["description"]
     assert "accounts.alice" in tool.args["path"]["description"]
 
 
 def test_the_read_view_reads_the_projects_state(tmp_path):
     tool = _readonly_tool(tmp_path)
-    out = tool.invoke({"command": "read", "path": ""})
+    out = tool.invoke({"command": "read"})
     assert out["ok"] is True and out["command"] == "read" and out["path"] == ""
+    assert out["view"] == "summary"
     assert out["value"]["overview"]["login_endpoint"] == "https://t.example/login"
-    assert "alice-bootstrap" in out["value"]["accounts"]
+    assert any(account["name"] == "alice-bootstrap"
+               for account in out["value"]["accounts"])
+
+
+def test_read_defaults_to_a_bounded_summary_without_secret_values(tmp_path):
+    """The default view is the concise core: the overview plus the account
+    index and token METADATA. Credential values, token values, selectors, role
+    credential sets, steel references, and snapshots are path-only."""
+    tool = _readonly_tool(tmp_path)
+    out = tool.invoke({"command": "read"})
+    assert out["view"] == "summary"
+    account = next(a for a in out["value"]["accounts"]
+                   if a["name"] == "alice-bootstrap")
+    assert account["origin"] == "agent"
+    assert account["procedure"] == "password-login"
+    assert account["roles"] == ["admin"]
+    assert account["default_role"] == "admin"
+    assert account["status"] == "valid"
+    assert account["tokens"]["X-Auth-Token"] == {
+        "location": "header", "expiry": "2026-11-01T00:00:00+00:00"}
+    assert account["tokens"]["session"] == {
+        "location": "cookie", "target": "t.example"}
+    for omitted in ("credentials", "steel", "snapshot"):
+        assert omitted not in account
+    text = json.dumps(out)
+    for secret in SECRETS:
+        assert secret not in text
+    assert len(text) < 6000
+
+
+def test_the_readonly_full_view_is_retired_with_a_narrowing_hint(tmp_path):
+    """The 2026-10-24 run spent 1.5M characters on 23 full reads. The
+    read-only binding retires the view and teaches the narrow replacement."""
+    tool = _readonly_tool(tmp_path)
+    out = tool.invoke({"command": "read", "view": "full"})
+    assert out["ok"] is False
+    assert out["error"] == "auth_full_view_retired"
+    assert "fields" in out["detail"] and "accounts.<name>" in out["detail"]
+
+
+def test_the_readonly_summary_projects_the_overview_header(tmp_path):
+    tool = _readonly_tool(tmp_path)
+    out = tool.invoke({"command": "read"})
+    overview = out["value"]["overview"]
+    assert overview["login_endpoint"] == "https://t.example/login"
+    assert "required_headers" in overview
+    assert "mechanism" in overview
+    assert "notes" not in overview or len(overview["notes"]) <= 503
+
+
+def test_the_readonly_read_is_bounded(tmp_path):
+    """A projection over the cap returns its keys and a narrowing hint."""
+    store = _seeded_store(tmp_path)
+    store.write(PROJECT, "overview.notes", "z" * 20_000)
+    tool = _readonly_tool(tmp_path, store)
+    out = tool.invoke({"command": "read", "path": "overview"})
+    assert out["ok"] is True
+    assert out.get("truncated") is True
+    assert "keys" in out and "hint" in out
+
+
+def test_read_fields_projects_named_fields(tmp_path):
+    tool = _readonly_tool(tmp_path)
+    out = tool.invoke({
+        "command": "read",
+        "fields": ["overview.login_endpoint",
+                   "accounts.alice-bootstrap.status"],
+    })
+    assert out["value"] == {
+        "overview.login_endpoint": "https://t.example/login",
+        "accounts.alice-bootstrap.status": "valid",
+    }
 
 
 def test_the_read_view_bound_to_one_project_never_reads_a_sibling(tmp_path):
@@ -229,10 +302,11 @@ def test_a_degraded_store_degrades_to_an_envelope(tmp_path):
     bucket.mkdir(parents=True)
     (bucket / "credentials.yaml").write_text("{{{not yaml", encoding="utf-8")
     out = build_auth_store_tool(PROJECT, store, read_only=True).invoke(
-        {"command": "read", "path": ""})
+        {"command": "read"})
     # An unreadable bucket reads as a valid empty (the store's own fail-open).
     assert out["ok"] is True
-    assert out["value"]["accounts"] == {}
+    assert out["view"] == "summary"
+    assert out["value"]["accounts"] == []
 
 
 # --- the redaction level (the decision the ticket requires) -------------------

@@ -3,7 +3,7 @@
 The `pod_runner` (actor) is a pure ReAct plan designer: ONE `create_agent` turn
 per stretch, `tools=[exec, note]` (plus the config-gated `query_lightrag` tool),
 the P0-P3 plan as `system_prompt`,
-the consumed inbox delta as `new_messages` (D84-9/10/11) - the tool-call loop
+the consumed inbox delta as `new_messages` (D84-9/10/11) - the tool-call threat
 lives INSIDE `create_agent`, with the harness middleware owning G1/G4/O7
 (D84-22). Its final tool call at P3 space-exhaustion writes the consolidated
 `experiment_summary` note (D84-17/19). The `pod_triager` (critic) is a third-party
@@ -37,7 +37,10 @@ from polymerhus.attack.hunting.http_history_contract import (
 )
 from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.prompts import (
+    load_pod_divergence_skill,
     load_pod_runner_skill,
+    load_pod_terminal_skill,
+    load_pod_triage_skill,
     load_pod_triager_skill,
 )
 from polymerhus.attack.hunting.pod.types import RawObservation, RunnerStep
@@ -50,9 +53,9 @@ class TriagerDecision(BaseModel):
 
     The variant fields carry the S5 8.6 material the graph resolves the basis
     from: `covered_gap_classes` is the triager's coverage assessment of the
-    executed D6 trail against the seven typed `SkillProcedure` fields (None =
-    no assessment stated), `failure_mode_plausible` is the fallback condition,
-    and the two trigger flags name a failed or diverged runner execution.
+    executed D6 trail against the nine typed `SkillProcedure` fields (None =
+    no assessment stated), and the two trigger flags name a failed or diverged
+    runner execution.
     `declined_attribute` is the triager's claimed basis; the graph reconciles it
     with the first-uncovered diff and records the RESOLVED basis."""
 
@@ -66,9 +69,72 @@ class TriagerDecision(BaseModel):
     variant_spec: dict = Field(default_factory=dict)
     feedback: str = ""
     covered_gap_classes: list[str] | None = None
-    failure_mode_plausible: bool = False
     runner_failed: bool = False
     runner_diverged: bool = False
+
+
+class TriageDecision(BaseModel):
+    """The FIRST staged triage decision: did the Runner execution fail, and did
+    the latest observation confirm the spec's verification symptom?
+
+    The compact stage receives no tool surface, no skill, no KB, no variants,
+    and no procedure excerpt; its only judgments are these two. A confirmed
+    symptom short-circuits to the deterministic export; a failed execution
+    mints the `runner-failure` recovery variant; anything else walks on to the
+    divergence and bounded-variant stages."""
+
+    runner_failed: bool = Field(
+        default=False,
+        description="True only when the Runner execution itself failed "
+                    "(a broken execution, not a negative observation).")
+    symptom_confirmed: bool = Field(
+        default=False,
+        description="True only when the latest observation establishes the "
+                    "spec's verification symptom.")
+    clean: bool = Field(
+        default=False,
+        description="True only when the confirming observation was completed "
+                    "and captured, not blocked, unreachable, or cut mid-flight.")
+    note: str = Field(
+        default="",
+        description="The reviewer-facing interpretation; the load-bearing fact, "
+                    "about 500 characters maximum.")
+
+
+class DivergenceDecision(BaseModel):
+    """The SECOND staged triage decision: did the execution DIVERGE from the
+    spec's typed skill procedure?
+
+    The stage receives the typed `SkillProcedure` excerpt and the executed
+    trail, and no tool surface. A divergence mints the `runner-divergence`
+    recovery variant; a negative observation that still followed the procedure
+    is not a divergence."""
+
+    runner_diverged: bool = Field(
+        default=False,
+        description="True only when the executed probes ignored or contradicted "
+                    "the spec's typed procedure (not merely a negative result).")
+    note: str = Field(
+        default="",
+        description="The reviewer-facing interpretation naming the diverging "
+                    "procedure field and probe; about 500 characters maximum.")
+
+
+class TerminalDecision(BaseModel):
+    """The terminal staged decision: the verdict, the terminal reason, and the
+    clean flag, when the spec carries no populated procedure attribute to bend
+    into a variant.
+
+    The stage mines nothing. It reads the note, the symptoms, the observation,
+    the probe trail, the variant bases, and the KB degraded flags, and applies
+    the binary terminal vocabulary."""
+
+    classification: str = ""
+    verdict: str = "unsuccessful"
+    terminal_reason: str = "no-symptom-evidence"
+    clean: bool = False
+    note: str = ""
+
 
 
 # Injected seam signatures (the graph owns the curated message lists).
@@ -106,7 +172,7 @@ def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> Runn
 
 async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
     """The PRODUCTION Runner (D84-16/17/22/29): ONE stateful `create_agent`
-    ReAct turn per stretch - the tool-call loop lives INSIDE the agent, the graph
+    ReAct turn per stretch - the tool-call threat lives INSIDE the agent, the graph
     never interrupts per tool result. Reads the typed session + run-scoped
     harness (exec/store/log/variant/model_factory) from the D84-7 binding
     (`pod_session()` / `pod_harness()`), binds `tools=[exec, note]` (plus the
@@ -152,7 +218,9 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
     # baseline at the binding; the index middleware renders each resolved
     # description into this turn's system prompt.
     binding = auth_capable_binding(
-        ctx.address.role_id, task_skills=hc.task_skills)
+        ctx.address.role_id, task_skills=hc.task_skills,
+        project_id=getattr(hc.capture_context, "project_id", "") or None,
+        with_readonly_auth_store=True)
     mw = list(pod_middleware()) + [harness_mw] + binding.middleware
     turn = await arun_session_turn(
         ctx.address.role_id, ctx.address, list(messages),
@@ -174,7 +242,7 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
     the verbatim P3 note + filtered triager context + memory guidance, D84-23).
     Bound tools: note read + (config-gated) query_lightrag (D84-27) - NEVER exec.
     Hard-fails on an unbound session/harness (D84-14); a FAILED turn degrades to
-    a safe honest terminal, never raises a DOMAIN failure into the loop - a
+    a safe honest terminal, never raises a DOMAIN failure into the threat - a
     provider failure propagates as the typed `ProviderUnavailableError` (#329)."""
     from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.context import _dicts_to_lc  # noqa: PLC0415
@@ -199,7 +267,9 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
         # #236: the spec's artifact-declared skills union into the pod_triager
         # baseline at the binding (the same ONE seam the runner uses).
         binding = auth_capable_binding(
-            ctx.address.role_id, task_skills=hc.task_skills)
+            ctx.address.role_id, task_skills=hc.task_skills,
+            project_id=getattr(hc.capture_context, "project_id", "") or None,
+            with_readonly_auth_store=True)
         result = stateful_turn(
             ctx.address.role_id, ctx.address, delta,
             checkpointer=ctx.checkpointer, schema=TriagerDecision,
@@ -225,6 +295,99 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
             classification="noise", action="terminate", verdict="unsuccessful",
             terminal_reason="no-symptom-evidence", clean=False,
             note=f"triager degraded: {exc}").model_dump()
+
+
+def _schema_stage_turn(schema, system_prompt: str, messages: list) -> dict:
+    """One no-tools structured stage turn (stages A, B, D).
+
+    The turn rides the SAME bound `pod_triager` session, checkpointer, compaction
+    middleware, and model factory as the full miner, but binds NO tools and no
+    skill surface: the fixed first-call tax loses the tool descriptions and the
+    skill index. A result the model did not produce is an unmet generation."""
+    from polymerhus.attack.hunting.pod.context import _dicts_to_lc  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.llm import (  # noqa: PLC0415
+        pod_harness,
+        pod_middleware,
+        pod_session,
+    )
+    from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
+
+    ctx = pod_session()
+    hc = pod_harness()
+    if ctx is None or hc is None:
+        raise RuntimeError(
+            "no bound pod session/harness for the staged triage turn (D84-14)")
+    result = stateful_turn(
+        ctx.address.role_id, ctx.address, _dicts_to_lc(list(messages)),
+        checkpointer=ctx.checkpointer, schema=schema, tools=(),
+        context=None, system_prompt=system_prompt,
+        middleware=list(pod_middleware()), model_factory=hc.model_factory,
+        usage_scope=getattr(hc.capture_context, "project_id", "") or "")
+    if result is None:
+        raise ValueError(f"unmet {schema.__name__} generation")
+    return result.model_dump()
+
+
+async def default_triage_fn(spec: dict, observation: RawObservation,
+                            messages: list, log) -> dict:
+    """Stage A: the compact failure and symptom-confirmation turn.
+
+    No tools, no skill, no KB, no procedure excerpt, no variants. A provider
+    failure propagates; any other failure degrades to a not-confirmed
+    assessment so the later stages still reach a terminal."""
+    from polymerhus.app.llm.provider_failure import as_provider_error  # noqa: PLC0415
+
+    try:
+        return _schema_stage_turn(
+            TriageDecision, load_pod_triage_skill(), messages)
+    except Exception as exc:  # noqa: BLE001 - fail-open compact assessment
+        failure = as_provider_error(exc)
+        if failure is not None:
+            raise failure from exc
+        return TriageDecision(
+            note=f"triage degraded: {exc}").model_dump()
+
+
+async def default_divergence_fn(spec: dict, observation: RawObservation,
+                                messages: list, log) -> dict:
+    """Stage B: the compact procedure-divergence turn.
+
+    The typed `SkillProcedure` excerpt and the executed trail ride the delta;
+    no tool surface is bound. A provider failure propagates; any other failure
+    degrades to not-diverged so the bounded variant or the terminal decides."""
+    from polymerhus.app.llm.provider_failure import as_provider_error  # noqa: PLC0415
+
+    try:
+        return _schema_stage_turn(
+            DivergenceDecision, load_pod_divergence_skill(), messages)
+    except Exception as exc:  # noqa: BLE001 - fail-open divergence assessment
+        failure = as_provider_error(exc)
+        if failure is not None:
+            raise failure from exc
+        return DivergenceDecision(
+            note=f"divergence degraded: {exc}").model_dump()
+
+
+async def default_terminal_fn(spec: dict, observation: RawObservation,
+                              messages: list, log) -> dict:
+    """Stage D: the compact terminal verdict when no procedure attribute can be
+    bent into a variant.
+
+    No tool surface and no variant mining; the stage applies the binary
+    terminal vocabulary to the note, the observation, the probe trail, and the
+    KB degraded flags. A provider failure propagates; any other failure
+    degrades to a safe `no-symptom-evidence` terminal."""
+    from polymerhus.app.llm.provider_failure import as_provider_error  # noqa: PLC0415
+
+    try:
+        return _schema_stage_turn(
+            TerminalDecision, load_pod_terminal_skill(), messages)
+    except Exception as exc:  # noqa: BLE001 - fail-open terminal
+        failure = as_provider_error(exc)
+        if failure is not None:
+            raise failure from exc
+        return TerminalDecision(
+            note=f"terminal degraded: {exc}").model_dump()
 
 
 # --- the pod roles' #95 compaction middleware (D9), resolved LAZILY ------------
@@ -256,7 +419,7 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
                        kb_fn=None, kb_lookup=None, graph_view_fn=None,
                        capture_context=None, replay_fn=None, project_id=""):
     """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
-    `note` (pod memory write/read), the single `query_lightrag` KB tool from the
+    `notes` (pod memory write/read), the single `query_lightrag` KB tool from the
     lightrag branch (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate
     is REMOVED, fail-open to a degraded bundle), and the ONE shared `graph_view`
     read-only L0/L1 tool (#197) the runner uses to locate the target's surface.
@@ -319,7 +482,7 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
 
 def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
                         log=None, variant_ref="", graph_view_fn=None):
-    """The Triager's bound-tool set (D84-27): note read + the always-bound
+    """The Triager's bound-tool set (D84-27): notes read + the always-bound
     `query_lightrag` KB tool + the shared `graph_view` L0/L1 tool (#197) - NEVER
     exec (the critic never touches the target). The triager's KB reads are
     CONTEXT reads (D84-27), so `log`/`variant_ref` may be unbound - a logless KB

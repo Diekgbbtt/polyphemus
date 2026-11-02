@@ -327,6 +327,23 @@ class _RecordingApi:
         return [f"{c.method} {c.path}" for c in self.calls]
 
 
+class _HeadRunner:
+    """A runner that answers the one read the resume performs: the worktree HEAD."""
+
+    def __init__(self, sha: str = "e" * 40) -> None:
+        self.sha = sha
+
+    def __call__(self, command):
+        from orchestrator.effects import CommandResult
+
+        if tuple(command.argv[-2:]) == ("rev-parse", "HEAD"):
+            return CommandResult(0, f"{self.sha}\n")
+        return CommandResult(0, "")
+
+
+_head_runner = _HeadRunner()
+
+
 def test_resume_trial_threads_the_record_cap_baseline(tmp_path, monkeypatch) -> None:
     """The CLI resume builds a TrialConfig carrying the record's baseline."""
     setup = setup_mod.parse_eval_setup(_setup_payload())
@@ -376,7 +393,7 @@ def test_resume_trial_threads_the_record_cap_baseline(tmp_path, monkeypatch) -> 
 
     trial_id = cli._resume_trial(
         args, setup, config, plan, tmp_path / "data",
-        lambda: object(), lambda base: object(),
+        lambda: _head_runner, lambda base: object(),
     )
 
     assert trial_id == "resumed-1"
@@ -432,7 +449,7 @@ def test_resume_trial_threads_the_record_spend_baseline(tmp_path, monkeypatch) -
 
     trial_id = cli._resume_trial(
         args, setup, config, plan, tmp_path / "data",
-        lambda: object(), lambda base: object(),
+        lambda: _head_runner, lambda base: object(),
     )
 
     assert trial_id == "resumed-1"

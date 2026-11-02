@@ -77,7 +77,7 @@ def test_AST_DEC_09_the_analyser_never_blocked_the_recon_job_loop(feed_stats):
     """The direct predicate, measured at the seam the decoupling changed.
 
     `advance_blocked_s_max` is the longest any single `feed.push` held the recon
-    job loop. Under the inline feed it IS the analyser pass duration (up to 1157 s
+    job threat. Under the inline feed it IS the analyser pass duration (up to 1157 s
     on run 64f2ccb8); under the queued feed it is an enqueue and must be ~0."""
     assert feed_stats.get("mode") == "queued", (
         "this gate judges a DECOUPLED run; set settings.recon.async_analysis_consumer"

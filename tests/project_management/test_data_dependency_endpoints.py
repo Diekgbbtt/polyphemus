@@ -135,6 +135,7 @@ def test_place_authn_skill_unpacks_tar_gz_and_writes_verbatim(monkeypatch, tmp_p
     bundle = tmp_path / "target-specific-procedure" / "p1" / "authn"
     assert (bundle / "SKILL.md").read_text() == SKILL_MD
     assert (bundle / "references" / "login.sh").read_text() == "#!/bin/sh\necho login\n"
+    assert not (tmp_path / "data" / "p1" / "skills" / "authn").exists()
 
 
 def test_place_authn_skill_unpacks_zip_with_wrapper_prefix(monkeypatch, tmp_path):

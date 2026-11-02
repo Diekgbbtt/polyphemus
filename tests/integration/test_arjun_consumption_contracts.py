@@ -7,7 +7,7 @@ enters as a plain list); expected values come from the grilling record, never
 recomputed from the code.
 
 These gate the verifier and are NOT selected by the tdd unit red/green loop
-(the unit tier drives the same mechanics during the loop; this tier is the
+(the unit tier drives the same mechanics during the threat; this tier is the
 gate's copy of the contract, at the compiled seam).
 
 - C1 - cluster dispatch: arjun pods == distinct route clusters, NOT endpoints.

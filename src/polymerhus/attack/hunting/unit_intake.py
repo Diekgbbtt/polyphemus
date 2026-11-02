@@ -77,7 +77,7 @@ class IntakeUnit:
     `live_edge_count` is the unit's live L1 edge count in both directions and
     `endpoint_count` the aggregated endpoint count the tie-break reads. The unit
     KIND is deliberately not carried: it is derived from the unit id wherever it
-    is needed (`threat_model.unit_kind_from_unit_id`, and the loop file's
+    is needed (`threat_model.unit_kind_from_unit_id`, and the threat file's
     `unit_kind`), so the snapshot holds no data nothing reads.
     """
 
@@ -211,7 +211,7 @@ STALE_REASON = "stale"
 # The producing-run statuses that still hold a produced model (S2 9.3): a
 # `running` run is live, and `stopped` (the operator's deliberate end, which
 # resumes from the persisted run record, S1 7.5) is RESUMABLE - the earlier run
-# must be resumed to drain its produced loops, so its model is in flight, never
+# must be resumed to drain its produced threats, so its model is in flight, never
 # stale. A status we cannot read (None) is treated as in flight too: the freeze
 # never destroys a produced model it cannot attribute.
 #

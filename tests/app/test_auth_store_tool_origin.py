@@ -57,7 +57,7 @@ def test_the_full_read_resolves_accounts_too(tmp_path):
     tool = build_auth_store_tool(
         PROJECT, _store(tmp_path), settings_fn=_settings("t-abc.target")
     )
-    value = tool.invoke({"command": "read", "path": ""})["value"]
+    value = tool.invoke({"command": "read", "view": "full"})["value"]
     assert (
         value["accounts"]["alice"]["credentials"]["login_url"]
         == "http://t-abc.target/api/login"

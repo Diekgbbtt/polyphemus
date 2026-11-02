@@ -142,7 +142,8 @@ class _TurnActor:
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
         binding = auth_capable_binding(
-            self._address.role_id, arm_exempt_surface=self._arm_exempt_surface)
+            self._address.role_id, arm_exempt_surface=self._arm_exempt_surface,
+            project_id=getattr(self, "project_id", "") or None)
         middleware = middleware + binding.middleware
         kwargs = {
             "checkpointer": self._checkpointer,
@@ -463,7 +464,7 @@ def _lightrag_author_tools() -> list:
     """Build the LightRAG query tool list for the author lane (lazy). Always
     attempted as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED.
     Fail-open to `[]` when the lightrag tool is unavailable (the author lane
-    then grounds on the loop payload alone)."""
+    then grounds on the threat payload alone)."""
     try:
         from lightrag.tool import build_lightrag_tool  # noqa: PLC0415
         return [build_lightrag_tool()]

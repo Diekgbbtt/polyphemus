@@ -1,5 +1,7 @@
 # Plan - TestImplementationSpecs QA measurement and the Q33-Q36 recording
 
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+
 Status: active, written 2026-10-17 in the unit-threat-model worktree.
 Authority: the operator directive of 2026-10-17 (answers to Q33-Q36 plus the measurement order).
 Scope: record the new decisions; file the CVSS-adoption ticket; initialise the measurement document with the quality-assessment ground truth; run the mock-hunter measurement over the 22 minted loops; assert the discrepancies; report the qualitative root causes; then open the next grilling round.

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import sys
 import urllib.error
@@ -369,7 +370,7 @@ def unit_metrics(index: dict, unit_spec: dict) -> dict:
 
 def load_models(store: Path) -> tuple[list[dict], list[dict]]:
     models: list[dict] = []
-    loops: list[dict] = []
+    threats: list[dict] = []
     for family in ("produced", "consumed", "abandoned"):
         family_dir = store / family
         if not family_dir.is_dir():
@@ -382,14 +383,40 @@ def load_models(store: Path) -> tuple[list[dict], list[dict]]:
                 model["_family"] = family
                 model["_unit_name"] = unit_dir.name
                 models.append(model)
-            for loop_path in sorted(unit_dir.glob("loop-*.yaml")):
-                record = load_mapping(loop_path)
-                if record:
-                    record["_path"] = str(loop_path)
-                    record["_family"] = family
-                    record["_unit_name"] = unit_dir.name
-                    loops.append(record)
-    return models, loops
+            # A v2 model names the ranked artifact `loop-*.yaml`; the v3 model
+            # names it `threat-*.yaml`. Both are rows of the legacy recomputation.
+            for threat_path in (
+                *sorted(unit_dir.glob("threat-*.yaml")),
+                *sorted(unit_dir.glob("loop-*.yaml")),
+            ):
+                record = load_mapping(threat_path)
+                if not record:
+                    continue
+                if threat_path.name.startswith("loop-"):
+                    record = legacy_threat_record(record)
+                record["_path"] = str(threat_path)
+                record["_family"] = family
+                record["_unit_name"] = unit_dir.name
+                record["_schema"] = (
+                    model.get("schema_version")
+                    if model else (2 if threat_path.name.startswith("loop-") else None)
+                )
+                threats.append(record)
+    return models, threats
+
+
+def legacy_threat_record(record: dict) -> dict:
+    """A v2 `loop-*.yaml` record under the threat vocabulary, one legacy row.
+
+    The v2 artifact names the ranked row `loop` and its id `loop_id`; the metric
+    names it `threat`. The record keeps its `loop` entity because the legacy CIA
+    vector lives on `loop.impact`.
+    """
+    mapped = dict(record)
+    mapped["threat_id"] = str(record.get("threat_id") or record.get("loop_id") or "")
+    mapped["threat"] = as_dict(record.get("threat")) or as_dict(record.get("loop"))
+    mapped["_legacy"] = True
+    return mapped
 
 
 def resolve_model_text(model: dict) -> str:
@@ -399,25 +426,112 @@ def resolve_model_text(model: dict) -> str:
         model.get("trust_model"),
         model.get("assumptions"),
         model.get("vulnerabilities"),
-        model.get("failure_modes"),
     ]
     return text_of(parts)
 
 
-def loop_text(loop_record: dict, model: dict) -> str:
-    loop = as_dict(loop_record.get("loop"))
+# --- breadth and downstream discrimination -----------------------------------
+
+
+def suite_index(root: Path) -> dict[str, int]:
+    """Map each suite class parent or leaf to its direct variant count.
+
+    A class directory with at least one direct child directory carrying a
+    `SKILL.md` is a parent (a broad class with variants); a class directory
+    with no such child is a leaf. A missing suite root yields an empty index,
+    so every breadth answer degrades to unknown instead of guessing.
+    """
+    index: dict[str, int] = {}
+    if not root.is_dir():
+        return index
+    for skill_md in sorted(root.rglob("SKILL.md")):
+        skill = skill_md.parent
+        index[skill.name] = sum(
+            1
+            for child in skill.iterdir()
+            if child.is_dir() and (child / "SKILL.md").is_file()
+        )
+    return index
+
+
+def is_broad_class(class_name: Any, index: dict[str, int]) -> bool | None:
+    """True when the bound class is a suite parent, False for a leaf, None
+    when the class is empty or absent from the index."""
+    name = norm(class_name)
+    if not name or name not in index:
+        return None
+    return index[name] > 0
+
+
+def _primary_axis(spec: dict) -> str:
+    discriminators = as_list(spec.get("discriminators"))
+    for discriminator in discriminators:
+        axis = str(as_dict(discriminator).get("axis") or "").strip()
+        if axis:
+            return axis
+    return ""
+
+
+def discrimination_summary(spec_rows: list[dict]) -> dict:
+    """The deterministic substrate for "substantial and well-formed".
+
+    Substantial means at least three specs. Well-formed means every spec
+    carries a discriminator and the primary discrimination axes do not overlap
+    (two specs separated on the same primary axis are one dimension, not two).
+    The measurement subagent judges the semantics; this function only records
+    the structural facts.
+    """
+    specs = [as_dict(spec) for spec in spec_rows]
+    primary_axes = [_primary_axis(spec) for spec in specs]
+    missing = sum(1 for axis in primary_axes if not axis)
+    present_axes = [axis for axis in primary_axes if axis]
+    overlap = len(set(present_axes)) != len(present_axes)
+    substantial = len(specs) >= 3
+    return {
+        "spec_count": len(specs),
+        "substantial": substantial,
+        "primary_axes": primary_axes,
+        "axes_overlap": overlap,
+        "missing_discriminators": missing,
+        "well_formed": bool(
+            substantial and missing == 0 and present_axes and not overlap
+        ),
+    }
+
+
+def threat_downstream(threat: dict, spec_rows: list[dict]) -> dict:
+    """The spec set a threat dispatched, linked by provenance threat id.
+
+    The dispatch-id fallback covers a spec whose provenance omits the threat id
+    but whose folder is the threat's own dispatch id.
+    """
+    threat_id = str(as_dict(threat).get("threat_id") or "")
+    dispatch = str(as_dict(threat).get("dispatch_id") or "")
+    linked = [
+        as_dict(spec)
+        for spec in spec_rows
+        if (threat_id and str(as_dict(spec).get("threat_id") or "") == threat_id)
+        or (not as_dict(spec).get("threat_id") and dispatch
+            and str(as_dict(spec).get("dispatch") or "") == dispatch)
+    ]
+    return discrimination_summary(linked)
+
+
+def threat_text(threat_record: dict, model: dict) -> str:
+    threat = as_dict(threat_record.get("threat"))
     return text_of([
-        loop_record.get("unit_id"),
-        loop_record.get("likelihood"),
-        loop,
+        threat_record.get("unit_id"),
+        threat_record.get("risk"),
+        threat_record.get("likelihood"),
+        threat,
         resolve_model_text(model),
     ])
 
 
-def model_for_loop(loop_record: dict, models: list[dict]) -> dict:
-    unit_id = str(loop_record.get("unit_id") or "")
-    family = str(loop_record.get("_family") or "")
-    unit_name = str(loop_record.get("_unit_name") or "")
+def model_for_threat(threat_record: dict, models: list[dict]) -> dict:
+    unit_id = str(threat_record.get("unit_id") or "")
+    family = str(threat_record.get("_family") or "")
+    unit_name = str(threat_record.get("_unit_name") or "")
     for model in models:
         if str(model.get("unit_id") or "") != unit_id:
             continue
@@ -463,6 +577,19 @@ def spec_text(spec: dict) -> str:
     return text_of(spec)
 
 
+def threat_id_of(provenance: dict) -> str:
+    """The store-owned threat id a spec provenance carries.
+
+    The hunter may write the dispatch id `<unit_name>__threat-<n>` into
+    `provenance.threat_id`; the threat file id is the suffix after the last
+    `__`. Normalise it so the spec links to its threat file.
+    """
+    value = str(as_dict(provenance).get("threat_id") or "").strip()
+    if "__" in value:
+        value = value.rsplit("__", 1)[-1]
+    return value
+
+
 def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
     target = as_dict(spec.get("target_identity"))
     provenance = as_dict(spec.get("provenance"))
@@ -471,7 +598,7 @@ def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
         provenance.get("canonical_class"),
         provenance.get("web_vulnerability_class"),
         provenance.get("fault"),
-        provenance.get("loop_id"),
+        provenance.get("threat_id"),
         spec.get("rationale"),
         spec.get("assumptions"),
         spec.get("verification_symptoms"),
@@ -500,6 +627,11 @@ def spec_metrics(spec: dict, vuln: dict, identity: dict) -> dict:
         "family": spec.get("_family"),
         "status": spec.get("status"),
         "unit_id": unit_id,
+        "threat_id": threat_id_of(provenance),
+        "web_vulnerability_class": str(provenance.get("web_vulnerability_class") or ""),
+        "canonical_class": str(provenance.get("canonical_class") or ""),
+        "discriminators": as_list(spec.get("discriminators")),
+        "primary_axis": _primary_axis(spec),
         "unit_match": unit_match,
         "class_match": class_match,
         "candidate": bool(unit_match and class_match),
@@ -550,7 +682,463 @@ def load_pods(pod_dir: Path) -> list[dict]:
     return pods
 
 
+# --- the impact metric (spec section 9) --------------------------------------
+
+CIA_METRICS = ("confidentiality", "integrity", "availability")
+IMPACT_LEVELS = ("none", "low", "medium", "high")
+
+# The standard CVSS 4.0 qualitative bands over a derived score. The hunting risk
+# module owns the table; this script imports no polymerhus module (it runs
+# standalone), so the table is repeated here and used only to LABEL a persisted
+# float - never to compute a score.
+BAND_UPPER_BOUNDS = ((3.9, "low"), (6.9, "medium"), (8.9, "high"))
+SEVERITY_BANDS = ("none", "low", "medium", "high", "critical")
+
+
+def schema_version(model: dict) -> int:
+    """A model document's `schema_version`, 0 when absent or unreadable."""
+    value = as_dict(model).get("schema_version")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def threat_schema(threat: dict) -> int:
+    """The schema version `load_models` stamped on a threat record, 0 unknown."""
+    value = as_dict(threat).get("_schema")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def as_float(value: Any) -> float | None:
+    """A finite number as a float, or None; a bool is not a score."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def severity_band(score: float) -> str:
+    """The standard CVSS band of a persisted score, `none` at zero."""
+    if score <= 0:
+        return "none"
+    for upper_bound, band in BAND_UPPER_BOUNDS:
+        if score <= upper_bound:
+            return band
+    return "critical"
+
+
+def file_risk(record: dict) -> float | None:
+    """The float `risk` a v5 threat file persists at its top level, or None.
+
+    The v5 writer scores at persistence, so the file's top-level `risk` is the
+    one value the mover and this metric read. A v4 file has no such key: its
+    score was the retired likelihood x impact product, so the raw path keeps
+    its `likelihood` and is never re-scored here.
+    """
+    return as_float(as_dict(record).get("risk"))
+
+
+def cia_levels(impact: Any) -> dict[str, str]:
+    """The three CIA levels of one `impact` block, lowercased.
+
+    A missing or unrecognised level reads as `none`: an absent vector is no
+    evidence of damage, so it can never make a row green.
+    """
+    block = as_dict(impact)
+    levels: dict[str, str] = {}
+    for metric in CIA_METRICS:
+        level = norm(block.get(metric))
+        levels[metric] = level if level in IMPACT_LEVELS else "none"
+    return levels
+
+
+def share(part: int, whole: int) -> float | None:
+    """A four-place share, or None when the denominator is zero."""
+    return round(part / whole, 4) if whole else None
+
+
+def is_bound_class(class_name: Any, index: dict[str, int]) -> bool:
+    """True when the class resolves to the suite, parent or leaf.
+
+    The binding question is not the breadth question: a leaf is bound, a
+    parent is bound, and an empty or absent name is not.
+    """
+    name = norm(class_name)
+    return bool(name) and name in index
+
+
+def class_binding_rate(
+    classes: list[str], class_index: dict[str, int] | None
+) -> float | None:
+    """The share of stored threats whose class resolves to the suite.
+
+    A diagnostic only: the retired class gate is never a pass/fail signal
+    (spec section 9). A missing suite index leaves the rate unknown.
+    """
+    if not classes or not class_index:
+        return None
+    bound = sum(1 for name in classes if is_bound_class(name, class_index))
+    return share(bound, len(classes))
+
+
+def impact_block(
+    rows: list[dict],
+    *,
+    schema: str | None,
+    legacy_recomputation: bool,
+    precursors: int | None,
+    prior_art_reused: int | None,
+    classes: list[str],
+    class_index: dict[str, int] | None,
+    review: dict | None = None,
+    risk_total: float | None = None,
+    risk_breakdown: dict[str, int] | None = None,
+) -> dict:
+    """The impact block: the red/green share, the split, the distribution.
+
+    `rows` carries one `disposition` and one normalised `cia` vector each. The
+    disposition split is a schema-3-and-later result only; a v2 legacy row has
+    no disposition, so its split and its precursor and prior-art counts stay
+    unknown.
+
+    A v5 block adds the scored-row detail (`rows`), the dispatchable threat
+    files' float risk total, and their band split. A v2/v3/v4 block keeps the
+    exact legacy shape: its raw rows are not a scored claim and are never
+    labelled with a derived band.
+    """
+    distribution = {
+        metric: {level: 0 for level in IMPACT_LEVELS} for metric in CIA_METRICS
+    }
+    green = 0
+    for row in rows:
+        if any(level != "none" for level in row["cia"].values()):
+            green += 1
+        for metric in CIA_METRICS:
+            distribution[metric][row["cia"][metric]] += 1
+    total = len(rows)
+    threat_rows = sum(1 for row in rows if row["disposition"] == "threat")
+    precursor_rows = sum(1 for row in rows if row["disposition"] == "precursor")
+    capability_rows = sum(1 for row in rows if row.get("capability"))
+    split = schema in ("v3", "v4", "v5")
+    reviewed = review is not None
+    if reviewed:
+        labels = as_dict(review).get("rows") or {}
+        scope = as_dict(review).get("scope") or {}
+        red = sum(
+            1 for row in rows
+            if scope.get(row.get("key") or row["id"]) == "out"
+            or labels.get(row.get("key") or row["id"]) == "under_mined"
+        )
+        denominator = green + red
+        green_share = share(green, denominator) if denominator else None
+    else:
+        red = total - green
+        green_share = share(green, total)
+    block = {
+        "schema": schema,
+        "legacy_recomputation": legacy_recomputation,
+        "reviewed": reviewed,
+        "impact_rows": total,
+        "threats": threat_rows if split else None,
+        "precursor_rows": precursor_rows if split else None,
+        "placeholders": precursor_rows if split else None,
+        "capability_rows": capability_rows,
+        "red": red,
+        "green": green,
+        "green_share": green_share,
+        "threat_share": share(threat_rows, total) if split else None,
+        "precursor_share": share(precursor_rows, total) if split else None,
+        "placeholder_share": share(precursor_rows, total) if split else None,
+        "capability_share": share(capability_rows, total),
+        "cia": distribution,
+        "precursors": precursors,
+        "prior_art_reused": prior_art_reused,
+        "class_binding_rate": class_binding_rate(classes, class_index),
+    }
+    if schema == "v5":
+        block["risk_total"] = risk_total if risk_total is not None else 0.0
+        block["risk_breakdown"] = (
+            dict(risk_breakdown) if risk_breakdown
+            else {band: 0 for band in SEVERITY_BANDS}
+        )
+        # The scored rows the assessor's review judges: the two prose blocks,
+        # the eight factors, the derived score and vector, and the labels.
+        block["rows"] = rows
+    return block
+
+
+def v3_impact(
+    models: list[dict],
+    class_index: dict[str, int] | None,
+    review: dict | None = None,
+) -> dict:
+    """The v3/v4 RAW impact metric: one row per `impact_assessment` row.
+
+    The CIA vector lives on the threat that references the row through
+    `impact_ref`; a precursor row has no threat, so its vector is all-none. A
+    v3 `placeholder` reads as `precursor`. A v4 model is reported raw from its
+    persisted vector: this path never derives, recomputes, or re-scores it.
+    """
+    rows: list[dict] = []
+    classes: list[str] = []
+    precursors = 0
+    prior_art_reused = 0
+    schema = "v3"
+    for model in models:
+        model = as_dict(model)
+        if schema_version(model) >= 4:
+            schema = "v4"
+        threats_by_ref: dict[str, dict] = {}
+        for threat in as_list(model.get("threats")):
+            threat = as_dict(threat)
+            ref = str(threat.get("impact_ref") or "")
+            if ref and ref not in threats_by_ref:
+                threats_by_ref[ref] = threat
+            classes.append(str(threat.get("web_vulnerability_class") or ""))
+        for assessment in as_list(model.get("impact_assessment")):
+            assessment = as_dict(assessment)
+            threat = threats_by_ref.get(str(assessment.get("id") or ""), {})
+            disposition = norm(assessment.get("disposition"))
+            if disposition == "placeholder":
+                disposition = "precursor"
+            unit_id = str(model.get("unit_id") or "")
+            assessment_id = str(assessment.get("id") or "")
+            rows.append({
+                "id": assessment_id,
+                "key": f"{unit_id}::{assessment_id}",
+                "disposition": disposition,
+                "capability": str(assessment.get("capability") or ""),
+                "cia": cia_levels(threat.get("impact")),
+            })
+        precursors += len(as_list(model.get("precursors")))
+        prior_art_reused += len(
+            as_list(as_dict(model.get("prior_art")).get("reused")))
+    return impact_block(
+        rows,
+        schema=schema,
+        legacy_recomputation=False,
+        precursors=precursors,
+        prior_art_reused=prior_art_reused,
+        classes=classes,
+        class_index=class_index,
+        review=review,
+    )
+
+
+def v5_impact(
+    models: list[dict],
+    threats: list[dict],
+    class_index: dict[str, int] | None,
+    review: dict | None = None,
+) -> dict:
+    """The v5 impact metric: one row per assessment row, scored in CVSS terms.
+
+    Schema 5 moves the score onto the assessment row: `factors` holds the eight
+    authored base factors, `risk` / `risk_vector` the derived score and vector,
+    `impact_description` / `exploitability_description` the two prose blocks.
+    The green signal is the persisted derivation: a row with any impact value
+    above `none` is damage-bearing, which is exactly the `threat` row the split
+    counts (the retired CIA vector held the same three values).
+
+    The dispatchable THREAT FILES carry the float risk the mover reads, so the
+    block reports their total and band split beside the rows. Nothing here
+    derives a v5 score: the metric reads what the store persisted.
+    """
+    rows: list[dict] = []
+    classes: list[str] = []
+    precursors = 0
+    prior_art_reused = 0
+    for model in models:
+        model = as_dict(model)
+        for threat in as_list(model.get("threats")):
+            classes.append(
+                str(as_dict(threat).get("web_vulnerability_class") or ""))
+        unit_id = str(model.get("unit_id") or "")
+        for assessment in as_list(model.get("impact_assessment")):
+            assessment = as_dict(assessment)
+            assessment_id = str(assessment.get("id") or "")
+            disposition = norm(assessment.get("disposition"))
+            if disposition == "placeholder":
+                disposition = "precursor"
+            factors = as_dict(assessment.get("factors"))
+            risk = as_float(assessment.get("risk"))
+            rows.append({
+                "id": assessment_id,
+                "key": f"{unit_id}::{assessment_id}",
+                "unit": unit_id,
+                "disposition": disposition,
+                "capability": str(assessment.get("capability") or ""),
+                "impact_description": str(
+                    assessment.get("impact_description") or ""),
+                "exploitability_description": str(
+                    assessment.get("exploitability_description") or ""),
+                "factors": factors,
+                "risk": risk,
+                "band": severity_band(risk) if risk is not None else None,
+                "risk_vector": str(assessment.get("risk_vector") or ""),
+                "cia": cia_levels(factors),
+                "mining": None,
+                "scope": None,
+            })
+        precursors += len(as_list(model.get("precursors")))
+        prior_art_reused += len(
+            as_list(as_dict(model.get("prior_art")).get("reused")))
+    labels = as_dict(as_dict(review).get("rows")) if review is not None else {}
+    scope = as_dict(as_dict(review).get("scope")) if review is not None else {}
+    for row in rows:
+        if review is not None:
+            row["mining"] = labels.get(row["key"])
+            row["scope"] = scope.get(row["key"])
+    risk_total = 0.0
+    risk_breakdown = {band: 0 for band in SEVERITY_BANDS}
+    for threat in threats:
+        if threat_schema(threat) < 5:
+            continue
+        risk = file_risk(threat)
+        if risk is None:
+            continue
+        risk_total += risk
+        risk_breakdown[severity_band(risk)] += 1
+    return impact_block(
+        rows,
+        schema="v5",
+        legacy_recomputation=False,
+        precursors=precursors,
+        prior_art_reused=prior_art_reused,
+        classes=classes,
+        class_index=class_index,
+        review=review,
+        risk_total=round(risk_total, 2),
+        risk_breakdown=risk_breakdown,
+    )
+
+
+def v2_impact(threats: list[dict], class_index: dict[str, int] | None) -> dict:
+    """The v2 legacy recomputation: one row per legacy ranked artifact.
+
+    A v2 model carries no disposition, no precursor entity, and no prior-art
+    section, so only the red/green share and the CIA distribution are
+    recomputed. The old artifact names the row `loop`; a schema-2 threat file
+    names it `threat`. Both keep the legacy `impact` record. The
+    `legacy_recomputation` marker keeps the block from being read as a v3
+    result (spec section 13).
+    """
+    rows: list[dict] = []
+    classes: list[str] = []
+    for record in threats:
+        record = as_dict(record)
+        entity = as_dict(record.get("loop")) or as_dict(record.get("threat"))
+        rows.append({"disposition": None, "cia": cia_levels(entity.get("impact"))})
+        classes.append(str(entity.get("web_vulnerability_class") or ""))
+    return impact_block(
+        rows,
+        schema="v2",
+        legacy_recomputation=True,
+        precursors=None,
+        prior_art_reused=None,
+        classes=classes,
+        class_index=class_index,
+    )
+
+
+def impact_metric(
+    models: list[dict],
+    threats: list[dict],
+    class_index: dict[str, int] | None = None,
+    impact_review: dict | None = None,
+) -> dict:
+    """The impact metric of one trial over the files the loader read.
+
+    The path is selected by the DOCUMENT's schema version, never by the fields a
+    file happens to carry:
+
+    - a v5 model is scored: its assessment rows are the claims and its threat
+      files carry the derived float risk;
+    - a v3/v4 model is raw: its persisted CIA vector is reported as written and
+      never re-scored;
+    - a v2 model carries neither, so its ranked artifacts ARE the rows and the
+      legacy `impact` record holds the vector (a legacy recomputation).
+
+    No readable model yields a zero-row block with unknown shares, never a
+    failure. A v5 store holding a raw v4 or v2 unit reports the v5 block as
+    primary and the raw block beside it (`schema: mixed`), so no unit's rows
+    vanish.
+
+    An abandoned copy is a degraded retry of the same unit, not a second damage
+    claim. The loader reads it for the artifact inventory; the primary metric
+    excludes it, so a retried unit is not counted twice.
+    """
+    models = [
+        model for model in models
+        if as_dict(model).get("_family") != "abandoned"
+    ]
+    threats = [
+        threat for threat in threats
+        if as_dict(threat).get("_family") != "abandoned"
+    ]
+    v5_models = [model for model in models if schema_version(model) >= 5]
+    v3_models = [
+        model for model in models
+        if schema_version(model) < 5
+        and as_list(as_dict(model).get("impact_assessment"))
+    ]
+    v5 = v5_impact(v5_models, threats, class_index, impact_review) if v5_models else None
+    v3 = v3_impact(v3_models, class_index, impact_review) if v3_models else None
+    v2_threats = [
+        threat for threat in threats
+        if as_dict(threat).get("_schema") == 2
+        or as_dict(threat).get("_legacy")
+    ]
+    v2 = v2_impact(v2_threats, class_index) if v2_threats else None
+    if v5 is not None:
+        if v3 is not None:
+            v5["schema"] = "mixed"
+            v5["legacy_v4"] = v3
+        if v2 is not None:
+            v5["schema"] = "mixed"
+            v5["legacy_recomputation"] = True
+            v5["legacy_v2"] = v2
+        return v5
+    if v3 is not None and v2 is not None:
+        v3["schema"] = "mixed"
+        v3["legacy_recomputation"] = True
+        v3["legacy_v2"] = v2
+        return v3
+    if v3 is not None:
+        return v3
+    if v2 is not None:
+        return v2
+    return impact_block(
+        [],
+        schema=None,
+        legacy_recomputation=False,
+        precursors=0,
+        prior_art_reused=0,
+        classes=[],
+        class_index=class_index,
+    )
+
+
 # --- official records ---------------------------------------------------------
+
+
+def load_impact_review(path: Path) -> dict | None:
+    """The assessor's per-row mining labels and per-unit scope labels."""
+    raw = load_mapping(path)
+    units = as_list(as_dict(raw).get("units")) if raw else []
+    if not units:
+        return None
+    rows: dict[str, str] = {}
+    scope: dict[str, str] = {}
+    for unit in units:
+        unit = as_dict(unit)
+        unit_scope = str(unit.get("scope") or "in")
+        for row in as_list(unit.get("rows")):
+            row = as_dict(row)
+            row_id = str(row.get("id") or "")
+            if row_id:
+                key = f"{unit.get('unit') or ''}::{row_id}"
+                rows[key] = str(row.get("mining") or "")
+                scope[key] = unit_scope
+    return {"rows": rows, "scope": scope}
 
 
 def load_verdicts(path: Path) -> list[dict]:
@@ -612,6 +1200,11 @@ def main() -> int:
     parser.add_argument("--api", default=os.environ.get("PH_API", "http://localhost:8080"))
     parser.add_argument("--graph", help="optional graph JSON path; otherwise read the API")
     parser.add_argument("--out", help="output path; default <trial>/metrics.yaml")
+    parser.add_argument(
+        "--skills-root",
+        default=str(Path(__file__).resolve().parents[1] / "skills" / "web-vulnerability-testing"),
+        help="the web-vulnerability suite root (class parents and variant leaves)",
+    )
     args = parser.parse_args()
 
     trial_dir = Path(args.trial)
@@ -625,6 +1218,7 @@ def main() -> int:
         return 2
 
     ground_truth = load_challenge(Path(args.ground_truth))
+    class_index = suite_index(Path(args.skills_root))
     corpus_target = Path(args.corpus) / args.target
     verdicts = load_verdicts(trial_dir / "verdicts.yaml")
     diagnoses = load_verdicts(trial_dir / "diagnoses.yaml")
@@ -633,9 +1227,13 @@ def main() -> int:
     index = graph_index(as_dict(graph))
 
     project_root = Path(args.data_root) / project_id / "hunting"
-    models, loops = load_models(project_root / "threat_modeller")
+    models, threats = load_models(project_root / "threat_modeller")
     specs = load_specs(project_root / "hunter" / "test-specs")
     pods = load_pods(project_root / "test-executor-pod")
+    impact = impact_metric(
+        models, threats, class_index,
+        impact_review=load_impact_review(trial_dir / "impact_review.yaml"),
+    )
 
     per_vuln: list[dict] = []
     for vuln in ground_truth:
@@ -646,33 +1244,44 @@ def main() -> int:
             "location": vuln.get("location", ""),
         }
         graph_metrics = unit_metrics(index, unit_spec) if unit_spec else {}
-        loop_rows = []
-        for loop_record in loops:
-            model = model_for_loop(loop_record, models)
-            candidate_text = loop_text(loop_record, model)
-            unit_match = unit_match_text(text_of(loop_record.get("unit_id")), identity)
+        threat_rows = []
+        for threat_record in threats:
+            model = model_for_threat(threat_record, models)
+            candidate_text = threat_text(threat_record, model)
+            unit_match = unit_match_text(text_of(threat_record.get("unit_id")), identity)
             class_match = class_matches(candidate_text, vuln.get("type", ""), identity.get("fault_class", ""))
             # Keep a class-level row even when the model bound a different L1
             # unit: the artifact exists and the class is the benchmark's, so
             # zeroing it hides real work behind a unit-identity miss.
             if unit_match or class_match:
-                loop_rows.append({
-                    "path": loop_record.get("_path"),
-                    "unit_id": loop_record.get("unit_id"),
-                    "dispatch_id": loop_record.get("dispatch_id"),
-                    "likelihood": loop_record.get("likelihood"),
+                risk = file_risk(threat_record)
+                threat_rows.append({
+                    "path": threat_record.get("_path"),
+                    "unit_id": threat_record.get("unit_id"),
+                    "threat_id": threat_record.get("threat_id"),
+                    "dispatch_id": threat_record.get("dispatch_id"),
+                    # The v4 raw value and the v5 derived float, side by side:
+                    # a v5 file carries `risk` and no `likelihood`, and the
+                    # metric never converts one into the other.
+                    "likelihood": threat_record.get("likelihood"),
+                    "risk": risk,
+                    "band": severity_band(risk) if risk is not None else None,
                     "unit_match": unit_match,
                     "class_match": class_match,
                     "candidate": bool(unit_match and class_match),
                     "class_candidate": class_match,
-                    "web_vulnerability_class": as_dict(loop_record.get("loop")).get("web_vulnerability_class"),
-                    "canonical_class": as_dict(loop_record.get("loop")).get("canonical_class"),
+                    "web_vulnerability_class": as_dict(threat_record.get("threat")).get("web_vulnerability_class"),
+                    "canonical_class": as_dict(threat_record.get("threat")).get("canonical_class"),
                 })
         spec_rows = []
         for spec in specs:
             row = spec_metrics(spec, vuln, identity)
             if row["unit_match"] or row.get("class_match"):
                 spec_rows.append(row)
+        for row in threat_rows:
+            row["bound_class_is_parent"] = is_broad_class(
+                row.get("web_vulnerability_class"), class_index)
+            row["downstream"] = threat_downstream(row, spec_rows)
         pod_rows = []
         for pod in pods:
             spec_dir = str(pod.get("spec_dir") or "")
@@ -694,10 +1303,10 @@ def main() -> int:
             "unit_expected": identity.get("expected_id"),
             "fault_class": identity.get("fault_class"),
             "graph": graph_metrics,
-            "loops": loop_rows,
-            "loop_candidate": any(row["candidate"] for row in loop_rows),
-            "loop_unit_candidate": any(row["unit_match"] for row in loop_rows),
-            "loop_class_candidate": any(row.get("class_candidate") for row in loop_rows),
+            "threats": threat_rows,
+            "threat_candidate": any(row["candidate"] for row in threat_rows),
+            "threat_unit_candidate": any(row["unit_match"] for row in threat_rows),
+            "threat_class_candidate": any(row.get("class_candidate") for row in threat_rows),
             "specs": spec_rows,
             "spec_candidate": any(row["candidate"] for row in spec_rows),
             "spec_unit_candidate": any(row["unit_match"] for row in spec_rows),
@@ -722,7 +1331,7 @@ def main() -> int:
         1 for v in per_vuln
         if all(bool(as_dict(v.get("graph")).get(key)) for key in ("unit_present", "l0_present", "link_present"))
     )
-    loops_all = [row for v in per_vuln for row in as_list(v.get("loops"))]
+    threats_all = [row for v in per_vuln for row in as_list(v.get("threats"))]
     specs_all = [row for v in per_vuln for row in as_list(v.get("specs"))]
     pods_all = [row for v in per_vuln for row in as_list(v.get("pods"))]
     mapped_spec_ids = {
@@ -731,6 +1340,18 @@ def main() -> int:
         for row in as_list(v.get("specs"))
         if row.get("candidate")
     }
+    narrow_without_well_formed = sum(
+        1
+        for row in threats_all
+        if row.get("bound_class_is_parent") is False
+        and not as_dict(row.get("downstream")).get("well_formed")
+    )
+    broad_without_well_formed = sum(
+        1
+        for row in threats_all
+        if row.get("bound_class_is_parent") is True
+        and not as_dict(row.get("downstream")).get("well_formed")
+    )
     confirmed_pods = [p for p in pods if int(p.get("confirmed") or 0) > 0]
     confirmed_non_gt = sum(
         1 for pod in confirmed_pods
@@ -755,9 +1376,9 @@ def main() -> int:
             "identified": identified,
             "partial": partial,
             "missed": missed,
-            "loop_candidates": sum(1 for v in per_vuln if v.get("loop_candidate")),
-            "loop_unit_candidates": sum(1 for v in per_vuln if v.get("loop_unit_candidate")),
-            "loop_class_candidates": sum(1 for v in per_vuln if v.get("loop_class_candidate")),
+            "threat_candidates": sum(1 for v in per_vuln if v.get("threat_candidate")),
+            "threat_unit_candidates": sum(1 for v in per_vuln if v.get("threat_unit_candidate")),
+            "threat_class_candidates": sum(1 for v in per_vuln if v.get("threat_class_candidate")),
             "spec_candidates": sum(1 for v in per_vuln if v.get("spec_candidate")),
             "spec_unit_candidates": sum(1 for v in per_vuln if v.get("spec_unit_candidate")),
             "spec_class_candidates": sum(1 for v in per_vuln if v.get("spec_class_candidate")),
@@ -766,20 +1387,52 @@ def main() -> int:
             "confirmed_non_gt": confirmed_non_gt,
             "core_floor": core_floor,
             "full_core": full_core,
-            "loops_total": len(loops),
+            "threats_total": len(threats),
             "specs_total": len(specs),
             "pods_total": len(pods),
-            "loop_rows_matched": len(loops_all),
+            "threat_rows_matched": len(threats_all),
             "spec_rows_matched": len(specs_all),
             "pod_rows_matched": len(pods_all),
+            "threats_broad": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is True),
+            "threats_narrow": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is False),
+            "threats_breadth_unknown": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is None),
+            "threats_substantial_specs": sum(
+                1 for row in threats_all
+                if as_dict(row.get("downstream")).get("substantial")),
+            "threats_well_formed_specs": sum(
+                1 for row in threats_all
+                if as_dict(row.get("downstream")).get("well_formed")),
+            "threats_narrow_without_well_formed": narrow_without_well_formed,
+            "threats_broad_without_well_formed": broad_without_well_formed,
         },
         "rates": {
             "identification_rate": round(identified / gt_total, 4) if gt_total else None,
             "partial_or_identified_rate": round((identified + partial) / gt_total, 4) if gt_total else None,
-            "loop_candidate_recall": round(sum(1 for v in per_vuln if v.get("loop_candidate")) / gt_total, 4) if gt_total else None,
+            "threat_candidate_recall": round(sum(1 for v in per_vuln if v.get("threat_candidate")) / gt_total, 4) if gt_total else None,
             "spec_candidate_recall": round(sum(1 for v in per_vuln if v.get("spec_candidate")) / gt_total, 4) if gt_total else None,
             "core_floor_rate": round(core_floor / gt_total, 4) if gt_total else None,
             "full_core_rate": round(full_core / gt_total, 4) if gt_total else None,
+        },
+        "impact": impact,
+        "narrowing": {
+            "threats_total": len(threats_all),
+            "broad": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is True),
+            "narrow": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is False),
+            "breadth_unknown": sum(
+                1 for row in threats_all if row.get("bound_class_is_parent") is None),
+            "substantial_specs": sum(
+                1 for row in threats_all
+                if as_dict(row.get("downstream")).get("substantial")),
+            "well_formed_specs": sum(
+                1 for row in threats_all
+                if as_dict(row.get("downstream")).get("well_formed")),
+            "narrow_without_well_formed": narrow_without_well_formed,
+            "broad_without_well_formed": broad_without_well_formed,
         },
         "tokens": token_summary(trial),
         "per_vuln": per_vuln,
@@ -790,12 +1443,12 @@ def main() -> int:
                     "state": m.get("state"),
                     "family": m.get("_family"),
                     "path": m.get("_path"),
-                    "loops": len(as_list(m.get("loops"))),
+                    "threats": len(as_list(m.get("threats"))),
                     "validation": as_dict(m.get("validation")),
                 }
                 for m in models
             ],
-            "loops": len(loops),
+            "threats": len(threats),
             "specs": len(specs),
             "pods": len(pods),
         },
@@ -815,6 +1468,7 @@ def main() -> int:
         "out": str(out),
         "counts": metrics["counts"],
         "rates": metrics["rates"],
+        "impact": metrics["impact"],
     }, indent=2))
     return 0
 

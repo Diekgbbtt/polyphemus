@@ -35,7 +35,7 @@ rationale: >-
   structural twins - the cleanest blind-boolean execution the pod can run and
   interpret from raw HTTP responses alone.
 provenance:
-  loop_id: loop-2
+  threat_id: threat-2
   unit_id: "service:web:soupmarket"
   canonical_class: injection
   web_vulnerability_class: sql-injection

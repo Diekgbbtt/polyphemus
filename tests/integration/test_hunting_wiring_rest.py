@@ -15,7 +15,7 @@ Run modes (per `hunting_wiring_stack`):
   never errors on a broken fixture.
 - Live `hunting_runs` row assertions ride `hunting_wiring_stack.hunting_run_rows`
   / `wait_for_hunting_run_status` (real PG reads); produced/consumed
-  quantities ride `produced_loop_files` / `produced_spec_files` (real store
+  quantities ride `produced_threat_files` / `produced_spec_files` (real store
   reads) - never the code's return, so no tautology.
 
 Policy notes:
@@ -41,10 +41,10 @@ import pytest
 from . import hunting_wiring_stack as stack
 
 # The production identity conventions, matching the contract-tier fixtures: the
-# hunter memory key is the loop dispatch id `<unit_name>__<loop_id>` (S3 8.9).
+# hunter memory key is the threat dispatch id `<unit_name>__<threat_id>` (S3 8.9).
 UNIT = "Service:slug:a"
 UNIT_NAME = "Service-slug-a"
-DISPATCH_ID = f"{UNIT_NAME}__loop-1"
+DISPATCH_ID = f"{UNIT_NAME}__threat-1"
 
 
 def _need_stack() -> None:
@@ -274,19 +274,19 @@ def test_C10_modeller_launch_canonical(client):
     assert body["component"] == "threat_modeller"
     assert body["dispatched_asynchronously"] is True
     assert isinstance(body.get("run_id"), str) and body["run_id"]
-    # The pass runs asynchronously on the live stack; any produced loop files
+    # The pass runs asynchronously on the live stack; any produced threat files
     # the real pass writes are read from the physical store (never the return
-    # value). Non-emptiness depends on the live LLM pass landing loops.
-    produced = stack.produced_loop_files(p)
-    # The read-back identity is `<unit_name>/loop-<rank>` (S2 8.4). The pass is
+    # value). Non-emptiness depends on the live LLM pass landing threats.
+    produced = stack.produced_threat_files(p)
+    # The read-back identity is `<unit_name>/threat-<rank>` (S2 8.4). The pass is
     # asynchronous, so non-emptiness depends on the live LLM pass; what is
     # asserted is the exact identity shape and its uniqueness, never a type
     # check the helper's f-string already implies.
     assert len(produced) == len(set(produced)), produced
     for identity in produced:
-        unit_name, _, loop_id = identity.partition("/")
-        assert unit_name and loop_id.startswith("loop-"), identity
-        assert loop_id.removeprefix("loop-").isdigit(), identity
+        unit_name, _, threat_id = identity.partition("/")
+        assert unit_name and threat_id.startswith("threat-"), identity
+        assert threat_id.removeprefix("threat-").isdigit(), identity
 
 
 def test_C11_modeller_unknown_project_404(client):
@@ -301,7 +301,7 @@ def test_C11_modeller_unknown_project_404(client):
 
 def test_C12_hunt_enqueue_is_retired_loudly(client):
     """C12 (re-pointed by T4b #387): the hunter-only hunt-config enqueue RETIRED
-    with the config family - a produced loop file is the dispatch record and a
+    with the config family - a produced threat file is the dispatch record and a
     live run's surfer dispatches it. The wire path must never silently accept a
     config into a family nothing reads: the live stack answers a LOUD 410 naming
     the replacement, and nothing lands in the retired produced family.
@@ -317,10 +317,10 @@ def test_C12_hunt_enqueue_is_retired_loudly(client):
     assert r.status_code == 410, r.text
     detail = r.json()["detail"]
     assert "retired" in detail.lower()
-    assert "loop file" in detail.lower()
+    assert "threat file" in detail.lower()
     assert "T10b" in detail and "#397" in detail
-    assert stack.produced_loop_files(p) == [], (
-        "the retired enqueue must not write the produced loop family")
+    assert stack.produced_threat_files(p) == [], (
+        "the retired enqueue must not write the produced threat family")
 
 
 def test_C16_pod_resume_canonical(client):

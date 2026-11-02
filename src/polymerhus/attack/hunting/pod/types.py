@@ -1,4 +1,4 @@
-"""The test-executor pod's typed records (D4 in, D5 + D6 out) and its loop state.
+"""The test-executor pod's typed records (D4 in, D5 + D6 out) and its threat state.
 
 The pod consumes the `TestImplementationSpec` (D4) via IA-3 and returns the
 `{verdict, evidence}` envelope (D5 + the D6 experiment log) via IA-4 - nothing
@@ -20,9 +20,10 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.spec_contract import (
-    SkillProcedure,
+    Discriminator,
+    SkillConcretisedProcedure,
     TargetIdentity,
-    skill_procedure_from,
+    skill_concretised_procedure_from,
 )
 
 # --- The Q3-amended terminal_reason vocabulary (D5) ----------------------------
@@ -33,10 +34,33 @@ SPECIFIC_DEFENCE_PREVENTION = "specific-defence-prevention"
 NO_SYMPTOM_EVIDENCE = "no-symptom-evidence"
 BUDGET_TIMEOUT = "budget-timeout"
 
-TERMINAL_REASONS = frozenset({
+# The harness-owned infrastructure terminals. They are pod results, never
+# triager choices: a critic cannot decide that a node timed out or that the
+# context window overflowed.
+NODE_TIMEOUT = "node-timeout"
+CONTEXT_WINDOW_EXCEEDED = "context-window-exceeded"
+GRAPH_LIMIT = "graph-limit"
+TOOL_TIMEOUT = "tool-timeout"
+POD_WATCHDOG_TIMEOUT = "pod-watchdog-timeout"
+SURFER_DISPATCH_DEGRADED = "surfer-dispatch-degraded"
+
+# The domain terminals a triager may choose.
+DOMAIN_TERMINAL_REASONS = frozenset({
     SYMPTOM_CONFIRMED, SPACE_EXHAUSTED, TECHNICAL_INFEASIBILITY,
-    SPECIFIC_DEFENCE_PREVENTION, NO_SYMPTOM_EVIDENCE, BUDGET_TIMEOUT,
+    SPECIFIC_DEFENCE_PREVENTION, NO_SYMPTOM_EVIDENCE,
 })
+
+# The harness terminals. `budget-timeout` is the pod's own lap budget; the
+# others are the pod graph's node, context, structure, and tool bounds plus the
+# surfer's last-resort backstop.
+HARNESS_TERMINAL_REASONS = frozenset({
+    BUDGET_TIMEOUT, NODE_TIMEOUT, CONTEXT_WINDOW_EXCEEDED, GRAPH_LIMIT,
+    TOOL_TIMEOUT, POD_WATCHDOG_TIMEOUT, SURFER_DISPATCH_DEGRADED,
+})
+
+# The whole PodExport vocabulary. `validate_decision` deliberately reads the
+# narrower DOMAIN set: the triager must never choose a harness reason.
+TERMINAL_REASONS = DOMAIN_TERMINAL_REASONS | HARNESS_TERMINAL_REASONS
 
 # The observation classes the Triager assigns (spec 6.4 INTERPRET).
 SYMPTOM_CONFIRMED_CLASS = "symptom-confirmed"
@@ -46,28 +70,31 @@ INFEASIBILITY_SIGNAL_CLASS = "infeasibility-signal"
 
 
 class TestImplementationSpec(BaseModel):
-    """The REDUCED D4 handoff (S5 8.4, S3 8.6): target identity, the concrete
-    observable verification symptoms, the technical assumptions the pod may
-    falsify, the vulnerability-level rationale, the variant lineage, and the
-    dispatch provenance.
+    """The REDUCED D4 handoff (S5 8.4, S3 8.6): target identity, the ordered
+    discrimination instances, the concrete observable verification symptoms,
+    the technical assumptions the pod may falsify, the vulnerability-level
+    rationale, the target-specific procedure concretisation, the variant
+    lineage, and the dispatch provenance.
 
-    The RETIRED `testing_pattern`, `payload_vector_space`, and
-    `interpretation_guidance` are rejected as unknown by `extra="forbid"`
-    instead of being silently dropped from a stale hunter's fields.
-    The declared fields default lenient so an INIT rejection collects the
-    mandatory URL/symptom violations instead of
-    raising; `verification.validate_spec` is the gate.
+    The RETIRED `testing_pattern`, `payload_vector_space`,
+    `interpretation_guidance`, `fault_keyword`, `strategy_keyword`, and the
+    copied `provenance.skill_procedure` are rejected as unknown by
+    `extra="forbid"` instead of being silently dropped from a stale hunter's
+    fields. The declared fields default lenient so an INIT rejection collects
+    the mandatory URL/symptom violations instead of raising;
+    `verification.validate_spec` is the gate.
 
-    `provenance` carries `loop_id`, `unit_id`, `canonical_class` (the freely
+    `provenance` carries `threat_id`, `unit_id`, `canonical_class` (the freely
     named taxonomy class), `web_vulnerability_class` (the suite directory
     name; empty when the class is a `suite_gap`), `baseline_ref` (optional),
-    `source_recon_refs`, `assumption_ref`, `playbook`, and the bounded typed
-    `skill_procedure` read by the triager (S3 8.6)."""
+    `source_recon_refs`, `assumption_ref`, and `playbook`."""
 
     target_identity: TargetIdentity = Field(default_factory=TargetIdentity)
+    discriminators: list[Discriminator] = Field(default_factory=list)
     verification_symptoms: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     rationale: str = ""
+    skill_concretised_procedure: SkillConcretisedProcedure | None = None
     # Variant lineage (D67-08): a derived variant records its parent + why.
     parent_spec_ref: str | None = None
     provenance: dict = Field(default_factory=dict)
@@ -101,14 +128,17 @@ def baseline_ref_from_spec(spec: dict | TestImplementationSpec | None) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def skill_procedure_from_spec(
-        spec: dict | TestImplementationSpec | None) -> SkillProcedure | None:
-    """The typed seven-field `SkillProcedure` carried by the spec provenance.
+def skill_concretised_procedure_from_spec(
+        spec: dict | TestImplementationSpec | None,
+) -> SkillConcretisedProcedure | None:
+    """The typed `SkillConcretisedProcedure` carried by the spec.
 
-    The type has ONE home (`spec_contract.SkillProcedure`); this is the pod's
-    read. A missing or malformed excerpt is None - the triager records the gap
-    and falls back to the failure-mode basis (S5 8.6)."""
-    return skill_procedure_from(spec_provenance(spec))
+    The type has ONE home (`spec_contract.SkillConcretisedProcedure`); this is
+    the pod's read. A missing or malformed object is None - the triager records
+    the gap and no variant basis is derivable (S5 8.6)."""
+    if isinstance(spec, TestImplementationSpec):
+        return spec.skill_concretised_procedure
+    return skill_concretised_procedure_from(spec)
 
 
 class ProbeStep(BaseModel):
@@ -259,7 +289,7 @@ class RunnerStep(BaseModel):
 
 
 class PodState(TypedDict, total=False):
-    """The LangGraph loop state. Injected side-effecting collaborators
+    """The LangGraph threat state. Injected side-effecting collaborators
     (runner/triager/exec/kb) read and extend it; the terminal node renders the
     `PodExport`. The D6 experiment log lives on the `log` object
     (`context.ExperimentLog`), mutated in place across nodes. The two message

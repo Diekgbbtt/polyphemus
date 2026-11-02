@@ -7,8 +7,14 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE TABLE IF NOT EXISTS settings (
     project_id  TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
-    recon       JSONB NOT NULL DEFAULT '{}'::jsonb
+    recon       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    hunting     JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+
+-- The hunting sibling blob (ADR `hunting-pipeline-sync-adr.md`, 2026-10-22):
+-- `hunting_pipeline_sync` (serial|batched|parallel, default batched) and the
+-- threat-modeller risk_threshold (DB wins over HUNT_RISK_THRESHOLD when set).
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS hunting JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 -- Recursive JSONB merge: like the `||` operator but descends into nested
 -- objects instead of replacing them wholesale. Used by save_settings so a

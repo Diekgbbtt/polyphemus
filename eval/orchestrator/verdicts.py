@@ -11,7 +11,7 @@ refused.
 T10b (#397) translated the match triple to the unit threat model vocabulary:
 the retired `fault_class` splits into the model's `web_vulnerability_class`
 (the suite directory name) and its `fault` (the assumption's named programming
-fault). The evidence chain's parent artifact is the threat-model loop file, not
+fault). The evidence chain's parent artifact is the threat-model threat file, not
 the retired hunt config.
 
 A malformed verdict is rejected loudly on write; the write itself is temp +
@@ -49,7 +49,7 @@ _ROW_FIELDS = (
     "stack_fingerprint",
 )
 _MATCHED_FIELDS = ("unit", "web_vulnerability_class", "fault", "symptom")
-_CHAIN_FIELDS = ("loop", "spec_dir", "experiment_logs", "pod_export", "reasoning")
+_CHAIN_FIELDS = ("threat", "spec_dir", "experiment_logs", "pod_export", "reasoning")
 
 
 class VerdictError(ValueError):
@@ -243,7 +243,7 @@ def _parse_chain(
         )
     try:
         chain = evidence.EvidenceChain(
-            loop=_non_empty(raw["loop"], "loop"),
+            threat=_non_empty(raw["threat"], "threat"),
             spec_dir=_non_empty(raw["spec_dir"], "spec_dir"),
             experiment_logs=tuple(logs),
             pod_export=_non_empty(raw["pod_export"], "pod_export"),

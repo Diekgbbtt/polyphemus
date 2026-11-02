@@ -1,0 +1,6451 @@
+{
+  "source": "langfuse v2 observations",
+  "project_id": "0c8cb6e6-7e91-4a01-880e-408896c0ce4a",
+  "window": {
+    "from": "2026-10-23T16:30:00Z",
+    "to": "2026-10-24T17:05:00Z"
+  },
+  "generations": 1608,
+  "roles": {
+    "analysis_chunk": {
+      "generations": 3,
+      "sessions": 1,
+      "valid_component_samples": 0,
+      "usage": {
+        "input_sum": 0,
+        "input_mean": 0,
+        "input_session_mean": 0,
+        "input_uncached_mean": 0,
+        "cache_mean": 0,
+        "output_mean": 0,
+        "total_mean": 0,
+        "cache_share": 0.0
+      },
+      "average_input_tokens": 0,
+      "session_input_mean": 0,
+      "components": {
+        "system": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_first": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_second": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_resp": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_visible": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_examples": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_first": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_second": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_resp": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_visible": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "tokens": 0.0,
+          "share": 0.0
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "fa616918-ddd2-4950-bb6a-353193c9aeba",
+          "generations": 3,
+          "input_mean": 0,
+          "components": {
+            "system": 0.0,
+            "human": 0.0,
+            "human_first": 0.0,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 0.0,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 0.0,
+            "system_examples": 0.0,
+            "system_map": 0.0,
+            "system_index": 0.0
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_first": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_second": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_resp": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_visible": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "tokens": 0.0,
+          "share": 0.0
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T16:30:23.075Z",
+        "session": "fa616918-ddd2-4950-bb6a-353193c9aeba",
+        "raw_chars": 0,
+        "messages": 0,
+        "truncated": true,
+        "usage": {
+          "input_uncached": 0,
+          "cache_read": 0,
+          "input_total": 0,
+          "output": 0,
+          "reasoning": 0,
+          "output_total": 0,
+          "total": 0
+        },
+        "components": {
+          "system": 0,
+          "human": 0,
+          "human_first": 0,
+          "human_second": 0,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 0,
+          "tool_desc": 0,
+          "tool_resp": 0,
+          "assistant_visible": 0,
+          "assistant_tool_args": 0,
+          "reasoning_input": 0,
+          "system_body": 0,
+          "system_examples": 0,
+          "system_map": 0,
+          "system_index": 0
+        },
+        "system_sections": [],
+        "tool_descriptions": [],
+        "loop": {},
+        "grounding": []
+      }
+    },
+    "assigner": {
+      "generations": 5,
+      "sessions": 1,
+      "valid_component_samples": 5,
+      "usage": {
+        "input_sum": 108073,
+        "input_mean": 21614.6,
+        "input_session_mean": 21614.6,
+        "input_uncached_mean": 3464.2,
+        "cache_mean": 18150.4,
+        "output_mean": 1916.4,
+        "total_mean": 23531,
+        "cache_share": 0.8397
+      },
+      "average_input_tokens": 21614.6,
+      "session_input_mean": 21614.6,
+      "components": {
+        "system": {
+          "chars": 12468,
+          "tokens": 4176.2,
+          "share": 0.1932
+        },
+        "human": {
+          "chars": 25741,
+          "tokens": 8622.0,
+          "share": 0.3989
+        },
+        "human_first": {
+          "chars": 1761,
+          "tokens": 589.9,
+          "share": 0.0273
+        },
+        "human_second": {
+          "chars": 23980,
+          "tokens": 8032.2,
+          "share": 0.3716
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 1761,
+          "tokens": 589.9,
+          "share": 0.0273
+        },
+        "tool_desc": {
+          "chars": 10681,
+          "tokens": 3577.6,
+          "share": 0.1655
+        },
+        "tool_resp": {
+          "chars": 14560.6,
+          "tokens": 4877.1,
+          "share": 0.2256
+        },
+        "assistant_visible": {
+          "chars": 564.8,
+          "tokens": 189.2,
+          "share": 0.0088
+        },
+        "assistant_tool_args": {
+          "chars": 515,
+          "tokens": 172.5,
+          "share": 0.008
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 8697,
+          "tokens": 2913.1,
+          "share": 0.1348
+        },
+        "system_examples": {
+          "chars": 2070,
+          "tokens": 693.4,
+          "share": 0.0321
+        },
+        "system_map": {
+          "chars": 1488,
+          "tokens": 498.4,
+          "share": 0.0231
+        },
+        "system_index": {
+          "chars": 213,
+          "tokens": 71.3,
+          "share": 0.0033
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 4072.3,
+          "share": 0.1884
+        },
+        "human": {
+          "tokens": 8407.5,
+          "share": 0.389
+        },
+        "human_first": {
+          "tokens": 575.2,
+          "share": 0.0266
+        },
+        "human_second": {
+          "tokens": 7832.3,
+          "share": 0.3624
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 575.2,
+          "share": 0.0266
+        },
+        "tool_desc": {
+          "tokens": 3488.6,
+          "share": 0.1614
+        },
+        "tool_resp": {
+          "tokens": 5267.2,
+          "share": 0.2437
+        },
+        "assistant_visible": {
+          "tokens": 198.6,
+          "share": 0.0092
+        },
+        "assistant_tool_args": {
+          "tokens": 180.5,
+          "share": 0.0083
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 2840.6,
+          "share": 0.1314
+        },
+        "system_examples": {
+          "tokens": 676.1,
+          "share": 0.0313
+        },
+        "system_map": {
+          "tokens": 486.0,
+          "share": 0.0225
+        },
+        "system_index": {
+          "tokens": 69.6,
+          "share": 0.0032
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "fa616918-ddd2-4950-bb6a-353193c9aeba:assigner",
+          "generations": 5,
+          "input_mean": 21614.6,
+          "components": {
+            "system": 4072.3,
+            "human": 8407.5,
+            "human_first": 575.2,
+            "human_second": 7832.3,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 575.2,
+            "tool_desc": 3488.6,
+            "tool_resp": 5267.2,
+            "assistant_visible": 198.6,
+            "assistant_tool_args": 180.5,
+            "reasoning_input": 0.0,
+            "system_body": 2840.6,
+            "system_examples": 676.1,
+            "system_map": 486.0,
+            "system_index": 69.6
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 20361.3,
+          "share": 0.1884
+        },
+        "human": {
+          "tokens": 42037.3,
+          "share": 0.389
+        },
+        "human_first": {
+          "tokens": 2875.9,
+          "share": 0.0266
+        },
+        "human_second": {
+          "tokens": 39161.4,
+          "share": 0.3624
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 2875.9,
+          "share": 0.0266
+        },
+        "tool_desc": {
+          "tokens": 17443.0,
+          "share": 0.1614
+        },
+        "tool_resp": {
+          "tokens": 26335.8,
+          "share": 0.2437
+        },
+        "assistant_visible": {
+          "tokens": 993.2,
+          "share": 0.0092
+        },
+        "assistant_tool_args": {
+          "tokens": 902.3,
+          "share": 0.0083
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 14203.0,
+          "share": 0.1314
+        },
+        "system_examples": {
+          "tokens": 3380.5,
+          "share": 0.0313
+        },
+        "system_map": {
+          "tokens": 2430.0,
+          "share": 0.0225
+        },
+        "system_index": {
+          "tokens": 347.8,
+          "share": 0.0032
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T16:30:23.555Z",
+        "session": "fa616918-ddd2-4950-bb6a-353193c9aeba:assigner",
+        "raw_chars": 49492,
+        "messages": 9,
+        "truncated": false,
+        "usage": {
+          "input_uncached": 5268,
+          "cache_read": 7168,
+          "input_total": 12436,
+          "output": 466,
+          "reasoning": 2098,
+          "output_total": 2564,
+          "total": 15000
+        },
+        "components": {
+          "system": 12468,
+          "human": 25741,
+          "human_first": 1761,
+          "human_second": 23980,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 1761,
+          "tool_desc": 10681,
+          "tool_resp": 0,
+          "assistant_visible": 0,
+          "assistant_tool_args": 0,
+          "reasoning_input": 0,
+          "system_body": 8697,
+          "system_examples": 2070,
+          "system_map": 1488,
+          "system_index": 213
+        },
+        "system_sections": [
+          [
+            "## The null hypothesis is that nothing owns it",
+            795
+          ],
+          [
+            "## Work each Endpoint in four moves",
+            1487
+          ],
+          [
+            "## What the ownership evidence is",
+            820
+          ],
+          [
+            "## Judge the surface in front of you, freshly",
+            386
+          ],
+          [
+            "## Read the recorded response - your widening seam, bounded",
+            2036
+          ],
+          [
+            "## When the widening seam fails, fail open - loudly",
+            1085
+          ],
+          [
+            "## Worked examples",
+            2070
+          ],
+          [
+            "# The cognitive architecture map",
+            221
+          ],
+          [
+            "## The data domains",
+            504
+          ],
+          [
+            "## How they relate",
+            976
+          ]
+        ],
+        "tool_descriptions": [
+          {
+            "name": "search_http_history",
+            "schema": 1542,
+            "description": 1119
+          },
+          {
+            "name": "get_http_artifact",
+            "schema": 817,
+            "description": 621
+          },
+          {
+            "name": "load_skill",
+            "schema": 1011,
+            "description": 739
+          },
+          {
+            "name": "record_skill_lesson",
+            "schema": 1403,
+            "description": 577
+          },
+          {
+            "name": "auth_store",
+            "schema": 2108,
+            "description": 642
+          },
+          {
+            "name": "L1DeltaBatch",
+            "schema": 3800,
+            "description": 350
+          }
+        ],
+        "loop": {},
+        "grounding": []
+      }
+    },
+    "hunting_hunter": {
+      "generations": 231,
+      "sessions": 10,
+      "valid_component_samples": 134,
+      "usage": {
+        "input_sum": 14198194,
+        "input_mean": 61464.0,
+        "input_session_mean": 62160.7,
+        "input_uncached_mean": 4126.7,
+        "cache_mean": 57337.4,
+        "output_mean": 1302.8,
+        "total_mean": 62766.8,
+        "cache_share": 0.9329
+      },
+      "average_input_tokens": 61464.0,
+      "session_input_mean": 62160.7,
+      "components": {
+        "system": {
+          "chars": 29215,
+          "tokens": 11638.8,
+          "share": 0.1894
+        },
+        "human": {
+          "chars": 13637.5,
+          "tokens": 5433.0,
+          "share": 0.0884
+        },
+        "human_first": {
+          "chars": 13637.5,
+          "tokens": 5433.0,
+          "share": 0.0884
+        },
+        "human_second": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 13637.5,
+          "tokens": 5433.0,
+          "share": 0.0884
+        },
+        "tool_desc": {
+          "chars": 23538,
+          "tokens": 9377.2,
+          "share": 0.1526
+        },
+        "tool_resp": {
+          "chars": 81790.7,
+          "tokens": 32584.2,
+          "share": 0.5301
+        },
+        "assistant_visible": {
+          "chars": 199.8,
+          "tokens": 79.6,
+          "share": 0.0013
+        },
+        "assistant_tool_args": {
+          "chars": 5901.9,
+          "tokens": 2351.2,
+          "share": 0.0383
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 18216,
+          "tokens": 7257.0,
+          "share": 0.1181
+        },
+        "system_examples": {
+          "chars": 9263,
+          "tokens": 3690.2,
+          "share": 0.06
+        },
+        "system_map": {
+          "chars": 1488,
+          "tokens": 592.8,
+          "share": 0.0096
+        },
+        "system_index": {
+          "chars": 248,
+          "tokens": 98.8,
+          "share": 0.0016
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 10117.8,
+          "share": 0.1628
+        },
+        "human": {
+          "tokens": 4741.0,
+          "share": 0.0763
+        },
+        "human_first": {
+          "tokens": 4741.0,
+          "share": 0.0763
+        },
+        "human_second": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 4741.0,
+          "share": 0.0763
+        },
+        "tool_desc": {
+          "tokens": 4562.3,
+          "share": 0.0734
+        },
+        "tool_resp": {
+          "tokens": 38487.4,
+          "share": 0.6192
+        },
+        "assistant_visible": {
+          "tokens": 108.0,
+          "share": 0.0017
+        },
+        "assistant_tool_args": {
+          "tokens": 4144.1,
+          "share": 0.0667
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 6308.6,
+          "share": 0.1015
+        },
+        "system_examples": {
+          "tokens": 3208.0,
+          "share": 0.0516
+        },
+        "system_map": {
+          "tokens": 515.3,
+          "share": 0.0083
+        },
+        "system_index": {
+          "tokens": 85.9,
+          "share": 0.0014
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-1:hunting_hunter",
+          "generations": 22,
+          "input_mean": 49399.0,
+          "components": {
+            "system": 8473.1,
+            "human": 3949.9,
+            "human_first": 3949.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 3949.9,
+            "tool_desc": 5342.3,
+            "tool_resp": 25980.9,
+            "assistant_visible": 23.7,
+            "assistant_tool_args": 5629.2,
+            "reasoning_input": 0.0,
+            "system_body": 5283.1,
+            "system_examples": 2686.5,
+            "system_map": 431.6,
+            "system_index": 71.9
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-2:hunting_hunter",
+          "generations": 26,
+          "input_mean": 64974.4,
+          "components": {
+            "system": 10811.8,
+            "human": 4747.7,
+            "human_first": 4747.7,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 4747.7,
+            "tool_desc": 5233.1,
+            "tool_resp": 37562.4,
+            "assistant_visible": 182.9,
+            "assistant_tool_args": 6436.5,
+            "reasoning_input": 0.0,
+            "system_body": 6741.3,
+            "system_examples": 3428.0,
+            "system_map": 550.7,
+            "system_index": 91.8
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-3:hunting_hunter",
+          "generations": 28,
+          "input_mean": 52192.0,
+          "components": {
+            "system": 9574.6,
+            "human": 4352.6,
+            "human_first": 4352.6,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 4352.6,
+            "tool_desc": 4510.1,
+            "tool_resp": 30151.8,
+            "assistant_visible": 55.1,
+            "assistant_tool_args": 3547.9,
+            "reasoning_input": 0.0,
+            "system_body": 5969.9,
+            "system_examples": 3035.7,
+            "system_map": 487.7,
+            "system_index": 81.3
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-4:hunting_hunter",
+          "generations": 22,
+          "input_mean": 68223.7,
+          "components": {
+            "system": 10956.2,
+            "human": 5530.1,
+            "human_first": 5530.1,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 5530.1,
+            "tool_desc": 2395.2,
+            "tool_resp": 46944.3,
+            "assistant_visible": 29.5,
+            "assistant_tool_args": 2368.4,
+            "reasoning_input": 0.0,
+            "system_body": 6831.4,
+            "system_examples": 3473.8,
+            "system_map": 558.0,
+            "system_index": 93.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-5:hunting_hunter",
+          "generations": 26,
+          "input_mean": 47352.0,
+          "components": {
+            "system": 10240.6,
+            "human": 4818.7,
+            "human_first": 4818.7,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 4818.7,
+            "tool_desc": 8250.7,
+            "tool_resp": 20002.5,
+            "assistant_visible": 26.9,
+            "assistant_tool_args": 4012.5,
+            "reasoning_input": 0.0,
+            "system_body": 6385.2,
+            "system_examples": 3246.9,
+            "system_map": 521.6,
+            "system_index": 86.9
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-6:hunting_hunter",
+          "generations": 19,
+          "input_mean": 74418.2,
+          "components": {
+            "system": 10065.1,
+            "human": 4381.2,
+            "human_first": 4381.2,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 4381.2,
+            "tool_desc": 3610.9,
+            "tool_resp": 55174.6,
+            "assistant_visible": 37.1,
+            "assistant_tool_args": 1149.3,
+            "reasoning_input": 0.0,
+            "system_body": 6275.7,
+            "system_examples": 3191.3,
+            "system_map": 512.6,
+            "system_index": 85.4
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-7:hunting_hunter",
+          "generations": 27,
+          "input_mean": 67899.6,
+          "components": {
+            "system": 10641.2,
+            "human": 5051.2,
+            "human_first": 5051.2,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 5051.2,
+            "tool_desc": 3295.8,
+            "tool_resp": 43200.4,
+            "assistant_visible": 27.7,
+            "assistant_tool_args": 5683.2,
+            "reasoning_input": 0.0,
+            "system_body": 6634.9,
+            "system_examples": 3373.9,
+            "system_map": 542.0,
+            "system_index": 90.3
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-8:hunting_hunter",
+          "generations": 26,
+          "input_mean": 62799.4,
+          "components": {
+            "system": 9180.4,
+            "human": 4513.7,
+            "human_first": 4513.7,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 4513.7,
+            "tool_desc": 3944.8,
+            "tool_resp": 38654.2,
+            "assistant_visible": 258.6,
+            "assistant_tool_args": 6247.7,
+            "reasoning_input": 0.0,
+            "system_body": 5724.1,
+            "system_examples": 2910.8,
+            "system_map": 467.6,
+            "system_index": 77.9
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-9:hunting_hunter",
+          "generations": 17,
+          "input_mean": 69656.9,
+          "components": {
+            "system": 11084.8,
+            "human": 5286.9,
+            "human_first": 5286.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 5286.9,
+            "tool_desc": 4246.6,
+            "tool_resp": 47098.8,
+            "assistant_visible": 109.5,
+            "assistant_tool_args": 1830.4,
+            "reasoning_input": 0.0,
+            "system_body": 6911.5,
+            "system_examples": 3514.6,
+            "system_map": 564.6,
+            "system_index": 94.1
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-10:hunting_hunter",
+          "generations": 18,
+          "input_mean": 64691.4,
+          "components": {
+            "system": 10150.3,
+            "human": 4778.6,
+            "human_first": 4778.6,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 4778.6,
+            "tool_desc": 4793.5,
+            "tool_resp": 40104.1,
+            "assistant_visible": 328.8,
+            "assistant_tool_args": 4536.1,
+            "reasoning_input": 0.0,
+            "system_body": 6328.9,
+            "system_examples": 3218.3,
+            "system_map": 517.0,
+            "system_index": 86.2
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 2331281.6,
+          "share": 0.1642
+        },
+        "human": {
+          "tokens": 1092030.2,
+          "share": 0.0769
+        },
+        "human_first": {
+          "tokens": 1092030.2,
+          "share": 0.0769
+        },
+        "human_second": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 1092030.2,
+          "share": 0.0769
+        },
+        "tool_desc": {
+          "tokens": 1065720.8,
+          "share": 0.0751
+        },
+        "tool_resp": {
+          "tokens": 8687583.7,
+          "share": 0.6119
+        },
+        "assistant_visible": {
+          "tokens": 24124.2,
+          "share": 0.0017
+        },
+        "assistant_tool_args": {
+          "tokens": 997453.5,
+          "share": 0.0703
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 1453589.8,
+          "share": 0.1024
+        },
+        "system_examples": {
+          "tokens": 739163.5,
+          "share": 0.0521
+        },
+        "system_map": {
+          "tokens": 118738.6,
+          "share": 0.0084
+        },
+        "system_index": {
+          "tokens": 19789.8,
+          "share": 0.0014
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T22:12:39.683Z",
+        "session": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-1:hunting_hunter",
+        "raw_chars": 67747,
+        "messages": 14,
+        "truncated": false,
+        "usage": {
+          "input_uncached": 15604,
+          "cache_read": 640,
+          "input_total": 16244,
+          "output": 132,
+          "reasoning": 0,
+          "output_total": 132,
+          "total": 16376
+        },
+        "components": {
+          "system": 29215,
+          "human": 13619,
+          "human_first": 13619,
+          "human_second": 0,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 13619,
+          "tool_desc": 23538,
+          "tool_resp": 0,
+          "assistant_visible": 0,
+          "assistant_tool_args": 0,
+          "reasoning_input": 0,
+          "system_body": 18216,
+          "system_examples": 9263,
+          "system_map": 1488,
+          "system_index": 248
+        },
+        "system_sections": [
+          [
+            "## The loop ontology",
+            876
+          ],
+          [
+            "## Your character",
+            471
+          ],
+          [
+            "## Discipline (binding)",
+            2199
+          ],
+          [
+            "## The tree",
+            1001
+          ],
+          [
+            "## The passes",
+            8084
+          ],
+          [
+            "## The spec body",
+            3799
+          ],
+          [
+            "## The tools",
+            1506
+          ],
+          [
+            "## Worked example 1 - the straight path",
+            3491
+          ],
+          [
+            "# Hunting-agent worked examples: the off-path shapes",
+            316
+          ],
+          [
+            "### Example 2 - well-formedness re-entry, then a merge",
+            2471
+          ],
+          [
+            "### Example 3 - a falsifying probe that runs out of insight",
+            1250
+          ],
+          [
+            "### Example 4 - worst case, graceful degradation",
+            1735
+          ],
+          [
+            "# The cognitive architecture map",
+            221
+          ],
+          [
+            "## The data domains",
+            504
+          ],
+          [
+            "## How they relate",
+            1011
+          ]
+        ],
+        "tool_descriptions": [
+          {
+            "name": "hunts_store",
+            "schema": 7436,
+            "description": 780
+          },
+          {
+            "name": "notes",
+            "schema": 3357,
+            "description": 710
+          },
+          {
+            "name": "graph_view",
+            "schema": 1614,
+            "description": 1311
+          },
+          {
+            "name": "kb_query",
+            "schema": 2584,
+            "description": 899
+          },
+          {
+            "name": "exec",
+            "schema": 788,
+            "description": 562
+          },
+          {
+            "name": "skill_list",
+            "schema": 472,
+            "description": 345
+          },
+          {
+            "name": "skill_load",
+            "schema": 406,
+            "description": 173
+          },
+          {
+            "name": "search_http_history",
+            "schema": 1542,
+            "description": 1119
+          },
+          {
+            "name": "get_http_artifact",
+            "schema": 817,
+            "description": 621
+          },
+          {
+            "name": "load_skill",
+            "schema": 1011,
+            "description": 739
+          },
+          {
+            "name": "record_skill_lesson",
+            "schema": 1403,
+            "description": 577
+          },
+          {
+            "name": "auth_store",
+            "schema": 2108,
+            "description": 642
+          }
+        ],
+        "loop": {},
+        "grounding": []
+      }
+    },
+    "hunting_threat_modeller": {
+      "generations": 442,
+      "sessions": 1,
+      "valid_component_samples": 14,
+      "usage": {
+        "input_sum": 101224256,
+        "input_mean": 229014.2,
+        "input_session_mean": 229014.2,
+        "input_uncached_mean": 5007.8,
+        "cache_mean": 224006.4,
+        "output_mean": 1784.2,
+        "total_mean": 230798.3,
+        "cache_share": 0.9781
+      },
+      "average_input_tokens": 229014.2,
+      "session_input_mean": 229014.2,
+      "components": {
+        "system": {
+          "chars": 23184,
+          "tokens": 42741.4,
+          "share": 0.1866
+        },
+        "human": {
+          "chars": 5005,
+          "tokens": 9227.1,
+          "share": 0.0403
+        },
+        "human_first": {
+          "chars": 5005,
+          "tokens": 9227.1,
+          "share": 0.0403
+        },
+        "human_second": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "chars": 25599,
+          "tokens": 47193.6,
+          "share": 0.2061
+        },
+        "tool_resp": {
+          "chars": 64422.4,
+          "tokens": 118767.3,
+          "share": 0.5186
+        },
+        "assistant_visible": {
+          "chars": 274.9,
+          "tokens": 506.7,
+          "share": 0.0022
+        },
+        "assistant_tool_args": {
+          "chars": 5737.8,
+          "tokens": 10578.0,
+          "share": 0.0462
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 21483,
+          "tokens": 39605.5,
+          "share": 0.1729
+        },
+        "system_examples": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "chars": 1488,
+          "tokens": 2743.2,
+          "share": 0.012
+        },
+        "system_index": {
+          "chars": 213,
+          "tokens": 392.7,
+          "share": 0.0017
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 43249.4,
+          "share": 0.1889
+        },
+        "human": {
+          "tokens": 14398.1,
+          "share": 0.0629
+        },
+        "human_first": {
+          "tokens": 6634.0,
+          "share": 0.029
+        },
+        "human_second": {
+          "tokens": 4493.6,
+          "share": 0.0196
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 343.8,
+          "share": 0.0015
+        },
+        "tool_resp": {
+          "tokens": 74157.3,
+          "share": 0.3238
+        },
+        "assistant_visible": {
+          "tokens": 5105.0,
+          "share": 0.0223
+        },
+        "assistant_tool_args": {
+          "tokens": 91760.5,
+          "share": 0.4007
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 34632.7,
+          "share": 0.1512
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 1972.3,
+          "share": 0.0086
+        },
+        "system_index": {
+          "tokens": 6644.4,
+          "share": 0.029
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:hunting_threat_modeller",
+          "generations": 442,
+          "input_mean": 229014.2,
+          "components": {
+            "system": 43249.4,
+            "human": 14398.1,
+            "human_first": 6634.0,
+            "human_second": 4493.6,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 343.8,
+            "tool_resp": 74157.3,
+            "assistant_visible": 5105.0,
+            "assistant_tool_args": 91760.5,
+            "reasoning_input": 0.0,
+            "system_body": 34632.7,
+            "system_examples": 0.0,
+            "system_map": 1972.3,
+            "system_index": 6644.4
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 19116237.0,
+          "share": 0.1889
+        },
+        "human": {
+          "tokens": 6363944.6,
+          "share": 0.0629
+        },
+        "human_first": {
+          "tokens": 2932218.6,
+          "share": 0.029
+        },
+        "human_second": {
+          "tokens": 1986186.2,
+          "share": 0.0196
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 151968.5,
+          "share": 0.0015
+        },
+        "tool_resp": {
+          "tokens": 32777541.7,
+          "share": 0.3238
+        },
+        "assistant_visible": {
+          "tokens": 2256407.6,
+          "share": 0.0223
+        },
+        "assistant_tool_args": {
+          "tokens": 40558156.6,
+          "share": 0.4007
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 15307637.5,
+          "share": 0.1512
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 871756.5,
+          "share": 0.0086
+        },
+        "system_index": {
+          "tokens": 2936842.9,
+          "share": 0.029
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T16:35:23.031Z",
+        "session": "a5f487fb-8329-431c-b95d-207799a038f9:hunting_threat_modeller",
+        "raw_chars": 54443,
+        "messages": 12,
+        "truncated": false,
+        "usage": {
+          "input_uncached": 2050,
+          "cache_read": 12288,
+          "input_total": 14338,
+          "output": 136,
+          "reasoning": 60,
+          "output_total": 196,
+          "total": 14534
+        },
+        "components": {
+          "system": 23184,
+          "human": 5005,
+          "human_first": 5005,
+          "human_second": 0,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 0,
+          "tool_desc": 25599,
+          "tool_resp": 0,
+          "assistant_visible": 0,
+          "assistant_tool_args": 0,
+          "reasoning_input": 0,
+          "system_body": 21483,
+          "system_examples": 0,
+          "system_map": 1488,
+          "system_index": 213
+        },
+        "system_sections": [
+          [
+            "# Threat modeller",
+            827
+          ],
+          [
+            "## The five states and their gates",
+            1579
+          ],
+          [
+            "## Reference fields",
+            1558
+          ],
+          [
+            "## Grounding: reverse-engineer the unit (UNIT_TECHNICAL_SHARP)",
+            3287
+          ],
+          [
+            "## Trust mapping (TRUST_MODELLED)",
+            2310
+          ],
+          [
+            "## Assumptions (TRUST_ASSUMPTIONS_WRITTEN)",
+            574
+          ],
+          [
+            "## Vulnerability citation (VULNERABILITIES_WRITTEN)",
+            849
+          ],
+          [
+            "## Evidence, confidence, and live authority",
+            1888
+          ],
+          [
+            "## Probing (the `exec` tool)",
+            2090
+          ],
+          [
+            "## Completion, the drop rule, and the ranking (COMPLETED)",
+            4180
+          ],
+          [
+            "## Tools",
+            1796
+          ],
+          [
+            "## Termination",
+            546
+          ],
+          [
+            "# The cognitive architecture map",
+            221
+          ],
+          [
+            "## The data domains",
+            504
+          ],
+          [
+            "## How they relate",
+            976
+          ]
+        ],
+        "tool_descriptions": [
+          {
+            "name": "hunts_store",
+            "schema": 14903,
+            "description": 1210
+          },
+          {
+            "name": "notes",
+            "schema": 2149,
+            "description": 862
+          },
+          {
+            "name": "search_http_history",
+            "schema": 1542,
+            "description": 1119
+          },
+          {
+            "name": "get_http_artifact",
+            "schema": 817,
+            "description": 621
+          },
+          {
+            "name": "exec",
+            "schema": 788,
+            "description": 562
+          },
+          {
+            "name": "skill_list",
+            "schema": 472,
+            "description": 345
+          },
+          {
+            "name": "skill_load",
+            "schema": 406,
+            "description": 173
+          },
+          {
+            "name": "load_skill",
+            "schema": 1011,
+            "description": 739
+          },
+          {
+            "name": "record_skill_lesson",
+            "schema": 1403,
+            "description": 577
+          },
+          {
+            "name": "auth_store",
+            "schema": 2108,
+            "description": 642
+          }
+        ],
+        "loop": {},
+        "grounding": []
+      }
+    },
+    "mechanism_typist": {
+      "generations": 15,
+      "sessions": 1,
+      "valid_component_samples": 12,
+      "usage": {
+        "input_sum": 809218,
+        "input_mean": 53947.9,
+        "input_session_mean": 53947.9,
+        "input_uncached_mean": 5026.3,
+        "cache_mean": 48921.6,
+        "output_mean": 1920.1,
+        "total_mean": 55867.9,
+        "cache_share": 0.9068
+      },
+      "average_input_tokens": 53947.9,
+      "session_input_mean": 53947.9,
+      "components": {
+        "system": {
+          "chars": 24217,
+          "tokens": 7763.0,
+          "share": 0.1439
+        },
+        "human": {
+          "chars": 94350,
+          "tokens": 30244.7,
+          "share": 0.5606
+        },
+        "human_first": {
+          "chars": 1761,
+          "tokens": 564.5,
+          "share": 0.0105
+        },
+        "human_second": {
+          "chars": 92589,
+          "tokens": 29680.2,
+          "share": 0.5502
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 1761,
+          "tokens": 564.5,
+          "share": 0.0105
+        },
+        "tool_desc": {
+          "chars": 15040,
+          "tokens": 4821.2,
+          "share": 0.0894
+        },
+        "tool_resp": {
+          "chars": 31050.2,
+          "tokens": 9953.4,
+          "share": 0.1845
+        },
+        "assistant_visible": {
+          "chars": 1266.8,
+          "tokens": 406.1,
+          "share": 0.0075
+        },
+        "assistant_tool_args": {
+          "chars": 2369.1,
+          "tokens": 759.4,
+          "share": 0.0141
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 14653,
+          "tokens": 4697.2,
+          "share": 0.0871
+        },
+        "system_examples": {
+          "chars": 7863,
+          "tokens": 2520.6,
+          "share": 0.0467
+        },
+        "system_map": {
+          "chars": 1488,
+          "tokens": 477.0,
+          "share": 0.0088
+        },
+        "system_index": {
+          "chars": 213,
+          "tokens": 68.3,
+          "share": 0.0013
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 7393.0,
+          "share": 0.137
+        },
+        "human": {
+          "tokens": 30007.5,
+          "share": 0.5562
+        },
+        "human_first": {
+          "tokens": 537.6,
+          "share": 0.01
+        },
+        "human_second": {
+          "tokens": 28541.7,
+          "share": 0.5291
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 537.6,
+          "share": 0.01
+        },
+        "tool_desc": {
+          "tokens": 3666.1,
+          "share": 0.068
+        },
+        "tool_resp": {
+          "tokens": 10485.5,
+          "share": 0.1944
+        },
+        "assistant_visible": {
+          "tokens": 1043.1,
+          "share": 0.0193
+        },
+        "assistant_tool_args": {
+          "tokens": 1352.7,
+          "share": 0.0251
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 4473.3,
+          "share": 0.0829
+        },
+        "system_examples": {
+          "tokens": 2400.4,
+          "share": 0.0445
+        },
+        "system_map": {
+          "tokens": 454.3,
+          "share": 0.0084
+        },
+        "system_index": {
+          "tokens": 65.0,
+          "share": 0.0012
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "fa616918-ddd2-4950-bb6a-353193c9aeba:mechanism_typist",
+          "generations": 15,
+          "input_mean": 53947.9,
+          "components": {
+            "system": 7393.0,
+            "human": 30007.5,
+            "human_first": 537.6,
+            "human_second": 28541.7,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 537.6,
+            "tool_desc": 3666.1,
+            "tool_resp": 10485.5,
+            "assistant_visible": 1043.1,
+            "assistant_tool_args": 1352.7,
+            "reasoning_input": 0.0,
+            "system_body": 4473.3,
+            "system_examples": 2400.4,
+            "system_map": 454.3,
+            "system_index": 65.0
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 110894.4,
+          "share": 0.137
+        },
+        "human": {
+          "tokens": 450112.4,
+          "share": 0.5562
+        },
+        "human_first": {
+          "tokens": 8064.0,
+          "share": 0.01
+        },
+        "human_second": {
+          "tokens": 428126.0,
+          "share": 0.5291
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 8064.0,
+          "share": 0.01
+        },
+        "tool_desc": {
+          "tokens": 54990.8,
+          "share": 0.068
+        },
+        "tool_resp": {
+          "tokens": 157283.1,
+          "share": 0.1944
+        },
+        "assistant_visible": {
+          "tokens": 15646.9,
+          "share": 0.0193
+        },
+        "assistant_tool_args": {
+          "tokens": 20290.3,
+          "share": 0.0251
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 67099.0,
+          "share": 0.0829
+        },
+        "system_examples": {
+          "tokens": 36006.2,
+          "share": 0.0445
+        },
+        "system_map": {
+          "tokens": 6813.8,
+          "share": 0.0084
+        },
+        "system_index": {
+          "tokens": 975.4,
+          "share": 0.0012
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T16:30:17.526Z",
+        "session": "fa616918-ddd2-4950-bb6a-353193c9aeba:mechanism_typist",
+        "raw_chars": 261558,
+        "messages": 32,
+        "truncated": true,
+        "usage": {
+          "input_uncached": 7561,
+          "cache_read": 69760,
+          "input_total": 77321,
+          "output": 276,
+          "reasoning": 388,
+          "output_total": 664,
+          "total": 77985
+        },
+        "components": {
+          "system": 24217,
+          "human": 114451,
+          "human_first": 1761,
+          "human_second": 103246,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 1761,
+          "tool_desc": 0,
+          "tool_resp": 38373,
+          "assistant_visible": 10549,
+          "assistant_tool_args": 11312,
+          "reasoning_input": 0,
+          "system_body": 14653,
+          "system_examples": 7863,
+          "system_map": 1488,
+          "system_index": 213
+        },
+        "system_sections": [
+          [
+            "## Reason by hypothesis, and verify",
+            1723
+          ],
+          [
+            "## Ground each hypothesis with the tools",
+            2383
+          ],
+          [
+            "## Name the witness (`evidence`) - the claim is anchored, not just described",
+            1353
+          ],
+          [
+            "## Link each System to its Services",
+            1708
+          ],
+          [
+            "## Judge each proposal critically",
+            1168
+          ],
+          [
+            "## Output contract",
+            1561
+          ],
+          [
+            "## Worked examples - imitate the REASONING SHAPE, never the domain",
+            7863
+          ],
+          [
+            "## Writing a System description",
+            3447
+          ],
+          [
+            "# The cognitive architecture map",
+            221
+          ],
+          [
+            "## The data domains",
+            504
+          ],
+          [
+            "## How they relate",
+            976
+          ]
+        ],
+        "tool_descriptions": [],
+        "loop": {},
+        "grounding": []
+      }
+    },
+    "pod_runner": {
+      "generations": 697,
+      "sessions": 27,
+      "valid_component_samples": 656,
+      "usage": {
+        "input_sum": 27733181,
+        "input_mean": 39789.4,
+        "input_session_mean": 37047.9,
+        "input_uncached_mean": 2506.3,
+        "cache_mean": 37283.1,
+        "output_mean": 787.6,
+        "total_mean": 40577.0,
+        "cache_share": 0.937
+      },
+      "average_input_tokens": 39789.4,
+      "session_input_mean": 37047.9,
+      "components": {
+        "system": {
+          "chars": 8408.5,
+          "tokens": 3218.1,
+          "share": 0.0809
+        },
+        "human": {
+          "chars": 4153.5,
+          "tokens": 1589.6,
+          "share": 0.04
+        },
+        "human_first": {
+          "chars": 4153.5,
+          "tokens": 1589.6,
+          "share": 0.04
+        },
+        "human_second": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "chars": 12962,
+          "tokens": 4960.8,
+          "share": 0.1247
+        },
+        "tool_resp": {
+          "chars": 69455.5,
+          "tokens": 26581.8,
+          "share": 0.6681
+        },
+        "assistant_visible": {
+          "chars": 1759.1,
+          "tokens": 673.2,
+          "share": 0.0169
+        },
+        "assistant_tool_args": {
+          "chars": 7226.9,
+          "tokens": 2765.9,
+          "share": 0.0695
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 6641,
+          "tokens": 2541.6,
+          "share": 0.0639
+        },
+        "system_examples": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "chars": 1488,
+          "tokens": 569.5,
+          "share": 0.0143
+        },
+        "system_index": {
+          "chars": 279.5,
+          "tokens": 107.0,
+          "share": 0.0027
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 2884.3,
+          "share": 0.0779
+        },
+        "human": {
+          "tokens": 1425.5,
+          "share": 0.0385
+        },
+        "human_first": {
+          "tokens": 1425.5,
+          "share": 0.0385
+        },
+        "human_second": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 4267.8,
+          "share": 0.1152
+        },
+        "tool_resp": {
+          "tokens": 25117.7,
+          "share": 0.678
+        },
+        "assistant_visible": {
+          "tokens": 651.6,
+          "share": 0.0176
+        },
+        "assistant_tool_args": {
+          "tokens": 2700.9,
+          "share": 0.0729
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 2277.8,
+          "share": 0.0615
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 510.4,
+          "share": 0.0138
+        },
+        "system_index": {
+          "tokens": 96.2,
+          "share": 0.0026
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_account-spread:pod_runner",
+          "generations": 35,
+          "input_mean": 36649.9,
+          "components": {
+            "system": 2973.0,
+            "human": 1446.8,
+            "human_first": 1446.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4588.7,
+            "tool_resp": 23586.5,
+            "assistant_visible": 471.9,
+            "assistant_tool_args": 3583.0,
+            "reasoning_input": 0.0,
+            "system_body": 2351.0,
+            "system_examples": 0.0,
+            "system_map": 526.8,
+            "system_index": 95.2
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_existence-preclassify:pod_runner",
+          "generations": 16,
+          "input_mean": 24269.1,
+          "components": {
+            "system": 2877.2,
+            "human": 1339.1,
+            "human_first": 1339.1,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4424.6,
+            "tool_resp": 13460.6,
+            "assistant_visible": 331.3,
+            "assistant_tool_args": 1836.4,
+            "reasoning_input": 0.0,
+            "system_body": 2266.9,
+            "system_examples": 0.0,
+            "system_map": 507.9,
+            "system_index": 102.4
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_parallel-burst:pod_runner",
+          "generations": 21,
+          "input_mean": 42560.3,
+          "components": {
+            "system": 2708.8,
+            "human": 1299.6,
+            "human_first": 1299.6,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4180.9,
+            "tool_resp": 31248.3,
+            "assistant_visible": 694.5,
+            "assistant_tool_args": 2428.1,
+            "reasoning_input": 0.0,
+            "system_body": 2142.1,
+            "system_examples": 0.0,
+            "system_map": 480.0,
+            "system_index": 86.8
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_sequential-brute:pod_runner",
+          "generations": 14,
+          "input_mean": 40668.3,
+          "components": {
+            "system": 2499.1,
+            "human": 1199.3,
+            "human_first": 1199.3,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3857.3,
+            "tool_resp": 30431.4,
+            "assistant_visible": 546.0,
+            "assistant_tool_args": 2135.2,
+            "reasoning_input": 0.0,
+            "system_body": 1976.3,
+            "system_examples": 0.0,
+            "system_map": 442.8,
+            "system_index": 80.1
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:account-existence-message-leak_fixed-wrong-secret-pair:pod_runner",
+          "generations": 15,
+          "input_mean": 20150.1,
+          "components": {
+            "system": 2833.7,
+            "human": 1366.3,
+            "human_first": 1366.3,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4353.4,
+            "tool_resp": 9796.1,
+            "assistant_visible": 386.4,
+            "assistant_tool_args": 1414.3,
+            "reasoning_input": 0.0,
+            "system_body": 2230.4,
+            "system_examples": 0.0,
+            "system_map": 499.8,
+            "system_index": 103.4
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:duplicate-row-exception-oracle_variant-name-poisoning:pod_runner",
+          "generations": 25,
+          "input_mean": 26917,
+          "components": {
+            "system": 2990.5,
+            "human": 1461.4,
+            "human_first": 1461.4,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4594.5,
+            "tool_resp": 14991.0,
+            "assistant_visible": 571.5,
+            "assistant_tool_args": 2308.1,
+            "reasoning_input": 0.0,
+            "system_body": 2353.9,
+            "system_examples": 0.0,
+            "system_map": 527.4,
+            "system_index": 109.2
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-not-regenerated_second-principal-rebind:pod_runner",
+          "generations": 23,
+          "input_mean": 44394.3,
+          "components": {
+            "system": 2752.4,
+            "human": 1286.9,
+            "human_first": 1286.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4247.7,
+            "tool_resp": 33881.7,
+            "assistant_visible": 485.0,
+            "assistant_tool_args": 1740.6,
+            "reasoning_input": 0.0,
+            "system_body": 2176.3,
+            "system_examples": 0.0,
+            "system_map": 487.6,
+            "system_index": 88.5
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:cleartext-session-id_wire-capture-replay:pod_runner",
+          "generations": 17,
+          "input_mean": 38417.9,
+          "components": {
+            "system": 2554.5,
+            "human": 1262.2,
+            "human_first": 1262.2,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3942.3,
+            "tool_resp": 29193.4,
+            "assistant_visible": 440.7,
+            "assistant_tool_args": 1024.7,
+            "reasoning_input": 0.0,
+            "system_body": 2019.8,
+            "system_examples": 0.0,
+            "system_map": 452.6,
+            "system_index": 82.1
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:rememberme-cleartext_post-logout-replay:pod_runner",
+          "generations": 38,
+          "input_mean": 42473.6,
+          "components": {
+            "system": 2805.0,
+            "human": 1277.4,
+            "human_first": 1277.4,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4328.9,
+            "tool_resp": 30466.8,
+            "assistant_visible": 960.8,
+            "assistant_tool_args": 2634.6,
+            "reasoning_input": 0.0,
+            "system_body": 2217.9,
+            "system_examples": 0.0,
+            "system_map": 496.9,
+            "system_index": 90.2
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:jsessionid-url-carriage_location-harvest-replay:pod_runner",
+          "generations": 13,
+          "input_mean": 41015.5,
+          "components": {
+            "system": 2560.3,
+            "human": 1174.2,
+            "human_first": 1174.2,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3951.2,
+            "tool_resp": 30835.1,
+            "assistant_visible": 508.8,
+            "assistant_tool_args": 1985.9,
+            "reasoning_input": 0.0,
+            "system_body": 2024.4,
+            "system_examples": 0.0,
+            "system_map": 453.6,
+            "system_index": 82.3
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:url-borne-session-id_cookie-less-bearer:pod_runner",
+          "generations": 29,
+          "input_mean": 43878.6,
+          "components": {
+            "system": 2847.7,
+            "human": 1356.9,
+            "human_first": 1356.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4394.8,
+            "tool_resp": 31669.5,
+            "assistant_visible": 693.3,
+            "assistant_tool_args": 2916.3,
+            "reasoning_input": 0.0,
+            "system_body": 2251.6,
+            "system_examples": 0.0,
+            "system_map": 504.5,
+            "system_index": 91.5
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:logout-get-unbound_forced-session-termination:pod_runner",
+          "generations": 15,
+          "input_mean": 43168.8,
+          "components": {
+            "system": 2681.7,
+            "human": 1324.7,
+            "human_first": 1324.7,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4145.5,
+            "tool_resp": 33186.2,
+            "assistant_visible": 313.4,
+            "assistant_tool_args": 1517.3,
+            "reasoning_input": 0.0,
+            "system_body": 2123.9,
+            "system_examples": 0.0,
+            "system_map": 475.9,
+            "system_index": 81.9
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-not-regenerated_login-boundary-carriage:pod_runner",
+          "generations": 11,
+          "input_mean": 38329.3,
+          "components": {
+            "system": 2480.3,
+            "human": 1258.9,
+            "human_first": 1258.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3827.8,
+            "tool_resp": 29270.5,
+            "assistant_visible": 335.5,
+            "assistant_tool_args": 1156.2,
+            "reasoning_input": 0.0,
+            "system_body": 1961.2,
+            "system_examples": 0.0,
+            "system_map": 439.4,
+            "system_index": 79.7
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:seeded-weak-pair_candidate-sweep:pod_runner",
+          "generations": 21,
+          "input_mean": 28002.4,
+          "components": {
+            "system": 2685.8,
+            "human": 1353.4,
+            "human_first": 1353.4,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4112.2,
+            "tool_resp": 17427.5,
+            "assistant_visible": 604.5,
+            "assistant_tool_args": 1819.0,
+            "reasoning_input": 0.0,
+            "system_body": 2106.9,
+            "system_examples": 0.0,
+            "system_map": 472.1,
+            "system_index": 106.9
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:logout-get-unbound_forced-persistent-identity-termination:pod_runner",
+          "generations": 24,
+          "input_mean": 42493.4,
+          "components": {
+            "system": 2903.4,
+            "human": 1450.8,
+            "human_first": 1450.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4488.2,
+            "tool_resp": 31789.3,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 1861.8,
+            "reasoning_input": 0.0,
+            "system_body": 2299.5,
+            "system_examples": 0.0,
+            "system_map": 515.2,
+            "system_index": 88.6
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:seeded-default-pair_rotation-absent:pod_runner",
+          "generations": 18,
+          "input_mean": 36272.8,
+          "components": {
+            "system": 2770.0,
+            "human": 1384.2,
+            "human_first": 1384.2,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4245.6,
+            "tool_resp": 25830.1,
+            "assistant_visible": 390.9,
+            "assistant_tool_args": 1652.0,
+            "reasoning_input": 0.0,
+            "system_body": 2175.2,
+            "system_examples": 0.0,
+            "system_map": 487.4,
+            "system_index": 107.4
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:seeded-default-pair_login-replay:pod_runner",
+          "generations": 18,
+          "input_mean": 20269.1,
+          "components": {
+            "system": 3065.7,
+            "human": 1473.8,
+            "human_first": 1473.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4711.1,
+            "tool_resp": 7498.9,
+            "assistant_visible": 1084.7,
+            "assistant_tool_args": 2435.0,
+            "reasoning_input": 0.0,
+            "system_body": 2413.7,
+            "system_examples": 0.0,
+            "system_map": 540.8,
+            "system_index": 111.2
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-url-carriage_referer-subresource-carriage:pod_runner",
+          "generations": 16,
+          "input_mean": 32140.6,
+          "components": {
+            "system": 2494.7,
+            "human": 1407.3,
+            "human_first": 1407.3,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3850.0,
+            "tool_resp": 21979.7,
+            "assistant_visible": 408.9,
+            "assistant_tool_args": 1999.9,
+            "reasoning_input": 0.0,
+            "system_body": 1972.5,
+            "system_examples": 0.0,
+            "system_map": 442.0,
+            "system_index": 80.2
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-url-carriage_gate-location-replay:pod_runner",
+          "generations": 14,
+          "input_mean": 42353.2,
+          "components": {
+            "system": 2597.4,
+            "human": 1475.4,
+            "human_first": 1475.4,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4008.5,
+            "tool_resp": 31444.2,
+            "assistant_visible": 547.8,
+            "assistant_tool_args": 2280.0,
+            "reasoning_input": 0.0,
+            "system_body": 2053.7,
+            "system_examples": 0.0,
+            "system_map": 460.2,
+            "system_index": 83.5
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:rememberme-cbc_tamper-oracle-forge:pod_runner",
+          "generations": 50,
+          "input_mean": 42315.7,
+          "components": {
+            "system": 3758.4,
+            "human": 1980.5,
+            "human_first": 1980.5,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4844.6,
+            "tool_resp": 21623.1,
+            "assistant_visible": 899.5,
+            "assistant_tool_args": 9209.6,
+            "reasoning_input": 0.0,
+            "system_body": 2951.0,
+            "system_examples": 0.0,
+            "system_map": 661.2,
+            "system_index": 146.2
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:display-identity_client-store-trust:pod_runner",
+          "generations": 42,
+          "input_mean": 53385,
+          "components": {
+            "system": 3164.4,
+            "human": 1620.1,
+            "human_first": 1620.1,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4414.6,
+            "tool_resp": 39988.8,
+            "assistant_visible": 892.6,
+            "assistant_tool_args": 3304.6,
+            "reasoning_input": 0.0,
+            "system_body": 2503.2,
+            "system_examples": 0.0,
+            "system_map": 560.9,
+            "system_index": 100.3
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:identity-label_case-space-echo:pod_runner",
+          "generations": 19,
+          "input_mean": 40829.8,
+          "components": {
+            "system": 2731.6,
+            "human": 1354.3,
+            "human_first": 1354.3,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4217.6,
+            "tool_resp": 30483.4,
+            "assistant_visible": 534.7,
+            "assistant_tool_args": 1508.3,
+            "reasoning_input": 0.0,
+            "system_body": 2160.9,
+            "system_examples": 0.0,
+            "system_map": 484.2,
+            "system_index": 86.6
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:nonunique-identity_credential-collapse:pod_runner",
+          "generations": 27,
+          "input_mean": 29673.4,
+          "components": {
+            "system": 2830.8,
+            "human": 1415.2,
+            "human_first": 1415.2,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4370.8,
+            "tool_resp": 17873.4,
+            "assistant_visible": 982.7,
+            "assistant_tool_args": 2200.5,
+            "reasoning_input": 0.0,
+            "system_body": 2239.4,
+            "system_examples": 0.0,
+            "system_map": 501.8,
+            "system_index": 89.7
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:duplicate-row_entry-race:pod_runner",
+          "generations": 24,
+          "input_mean": 19439.5,
+          "components": {
+            "system": 2490.7,
+            "human": 1280.2,
+            "human_first": 1280.2,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3845.6,
+            "tool_resp": 9680.6,
+            "assistant_visible": 454.7,
+            "assistant_tool_args": 1687.8,
+            "reasoning_input": 0.0,
+            "system_body": 1970.3,
+            "system_examples": 0.0,
+            "system_map": 441.5,
+            "system_index": 78.9
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:nonunique-identity_stranded-session:pod_runner",
+          "generations": 70,
+          "input_mean": 68232.1,
+          "components": {
+            "system": 3928.5,
+            "human": 1871.8,
+            "human_first": 1871.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2644.9,
+            "tool_resp": 49190.0,
+            "assistant_visible": 1584.4,
+            "assistant_tool_args": 9012.5,
+            "reasoning_input": 0.0,
+            "system_body": 3107.7,
+            "system_examples": 0.0,
+            "system_map": 696.3,
+            "system_index": 124.5
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:nonunique-identity_variant-spelling:pod_runner",
+          "generations": 42,
+          "input_mean": 35297.7,
+          "components": {
+            "system": 3760.0,
+            "human": 1624.0,
+            "human_first": 1624.0,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 5805.5,
+            "tool_resp": 17462.5,
+            "assistant_visible": 2082.3,
+            "assistant_tool_args": 4563.5,
+            "reasoning_input": 0.0,
+            "system_body": 2974.4,
+            "system_examples": 0.0,
+            "system_map": 666.5,
+            "system_index": 119.1
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-url-carriage_authenticated-request-line:pod_runner",
+          "generations": 40,
+          "input_mean": 26694.5,
+          "components": {
+            "system": 3131.5,
+            "human": 1743.4,
+            "human_first": 1743.4,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4832.8,
+            "tool_resp": 13890.4,
+            "assistant_visible": 387.5,
+            "assistant_tool_args": 2708.8,
+            "reasoning_input": 0.0,
+            "system_body": 2476.1,
+            "system_examples": 0.0,
+            "system_map": 554.8,
+            "system_index": 100.7
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 2130439.0,
+          "share": 0.0768
+        },
+        "human": {
+          "tokens": 1049671.0,
+          "share": 0.0378
+        },
+        "human_first": {
+          "tokens": 1049671.0,
+          "share": 0.0378
+        },
+        "human_second": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 2979063.0,
+          "share": 0.1074
+        },
+        "tool_resp": {
+          "tokens": 18525075.8,
+          "share": 0.668
+        },
+        "assistant_visible": {
+          "tokens": 551793.0,
+          "share": 0.0199
+        },
+        "assistant_tool_args": {
+          "tokens": 2497139.2,
+          "share": 0.09
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 1682569.8,
+          "share": 0.0607
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 377001.0,
+          "share": 0.0136
+        },
+        "system_index": {
+          "tokens": 70868.1,
+          "share": 0.0026
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T22:47:06.562Z",
+        "session": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_account-spread:pod_runner",
+        "raw_chars": 25974,
+        "messages": 10,
+        "truncated": false,
+        "usage": {
+          "input_uncached": 6359,
+          "cache_read": 0,
+          "input_total": 6359,
+          "output": 109,
+          "reasoning": 0,
+          "output_total": 109,
+          "total": 6468
+        },
+        "components": {
+          "system": 8398,
+          "human": 4087,
+          "human_first": 4087,
+          "human_second": 0,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 0,
+          "tool_desc": 12962,
+          "tool_resp": 0,
+          "assistant_visible": 0,
+          "assistant_tool_args": 0,
+          "reasoning_input": 0,
+          "system_body": 6641,
+          "system_examples": 0,
+          "system_map": 1488,
+          "system_index": 269
+        },
+        "system_sections": [
+          [
+            "# Role",
+            469
+          ],
+          [
+            "# Surgical conciseness (binding)",
+            219
+          ],
+          [
+            "# The spec you execute",
+            1300
+          ],
+          [
+            "# The stretch plan (P0-P3)",
+            2310
+          ],
+          [
+            "# Tools",
+            1272
+          ],
+          [
+            "# Memory",
+            218
+          ],
+          [
+            "# Constraints",
+            611
+          ],
+          [
+            "# Output",
+            243
+          ],
+          [
+            "# The cognitive architecture map",
+            221
+          ],
+          [
+            "## The data domains",
+            504
+          ],
+          [
+            "## How they relate",
+            1032
+          ]
+        ],
+        "tool_descriptions": [
+          {
+            "name": "exec",
+            "schema": 439,
+            "description": 264
+          },
+          {
+            "name": "note",
+            "schema": 1783,
+            "description": 669
+          },
+          {
+            "name": "query_lightrag",
+            "schema": 2590,
+            "description": 899
+          },
+          {
+            "name": "graph_view",
+            "schema": 1614,
+            "description": 1311
+          },
+          {
+            "name": "replay",
+            "schema": 2014,
+            "description": 1718
+          },
+          {
+            "name": "load_skill",
+            "schema": 1011,
+            "description": 739
+          },
+          {
+            "name": "record_skill_lesson",
+            "schema": 1403,
+            "description": 577
+          },
+          {
+            "name": "auth_store",
+            "schema": 2108,
+            "description": 642
+          }
+        ],
+        "loop": {},
+        "grounding": []
+      }
+    },
+    "pod_triager": {
+      "generations": 89,
+      "sessions": 27,
+      "valid_component_samples": 89,
+      "usage": {
+        "input_sum": 1427449,
+        "input_mean": 16038.8,
+        "input_session_mean": 10444.9,
+        "input_uncached_mean": 7836.7,
+        "cache_mean": 8202.1,
+        "output_mean": 1223.3,
+        "total_mean": 17262.1,
+        "cache_share": 0.5114
+      },
+      "average_input_tokens": 16038.8,
+      "session_input_mean": 10444.9,
+      "components": {
+        "system": {
+          "chars": 6865.4,
+          "tokens": 2432.6,
+          "share": 0.1517
+        },
+        "human": {
+          "chars": 13649.1,
+          "tokens": 4836.3,
+          "share": 0.3015
+        },
+        "human_first": {
+          "chars": 2988.6,
+          "tokens": 1058.9,
+          "share": 0.066
+        },
+        "human_second": {
+          "chars": 4812.8,
+          "tokens": 1705.3,
+          "share": 0.1063
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "chars": 6616.0,
+          "tokens": 2344.3,
+          "share": 0.1462
+        },
+        "tool_resp": {
+          "chars": 16899.5,
+          "tokens": 5988.0,
+          "share": 0.3733
+        },
+        "assistant_visible": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "chars": 1234.8,
+          "tokens": 437.5,
+          "share": 0.0273
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 5249.3,
+          "tokens": 1860.0,
+          "share": 0.116
+        },
+        "system_examples": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "chars": 1487.0,
+          "tokens": 526.9,
+          "share": 0.0329
+        },
+        "system_index": {
+          "chars": 129.2,
+          "tokens": 45.8,
+          "share": 0.0029
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 1733.2,
+          "share": 0.1659
+        },
+        "human": {
+          "tokens": 3243.3,
+          "share": 0.3105
+        },
+        "human_first": {
+          "tokens": 1038.9,
+          "share": 0.0995
+        },
+        "human_second": {
+          "tokens": 991.2,
+          "share": 0.0949
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 1497.7,
+          "share": 0.1434
+        },
+        "tool_resp": {
+          "tokens": 3710.1,
+          "share": 0.3552
+        },
+        "assistant_visible": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "tokens": 260.5,
+          "share": 0.0249
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 1234.9,
+          "share": 0.1182
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 471.9,
+          "share": 0.0452
+        },
+        "system_index": {
+          "tokens": 26.4,
+          "share": 0.0025
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_account-spread:pod_triager",
+          "generations": 1,
+          "input_mean": 3057,
+          "components": {
+            "system": 979.2,
+            "human": 1644.5,
+            "human_first": 1644.5,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 433.3,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 481.5,
+            "system_examples": 0.0,
+            "system_map": 497.6,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_existence-preclassify:pod_triager",
+          "generations": 4,
+          "input_mean": 14326,
+          "components": {
+            "system": 2281.3,
+            "human": 5043.3,
+            "human_first": 1243.2,
+            "human_second": 1919.9,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2203.9,
+            "tool_resp": 4562.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 235.5,
+            "reasoning_input": 0.0,
+            "system_body": 1745.1,
+            "system_examples": 0.0,
+            "system_map": 489.2,
+            "system_index": 47.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_parallel-burst:pod_triager",
+          "generations": 4,
+          "input_mean": 13564.5,
+          "components": {
+            "system": 2196.8,
+            "human": 4120.5,
+            "human_first": 772.2,
+            "human_second": 1652.3,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2143.6,
+            "tool_resp": 4831.2,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 272.4,
+            "reasoning_input": 0.0,
+            "system_body": 1693.0,
+            "system_examples": 0.0,
+            "system_map": 462.8,
+            "system_index": 40.9
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_sequential-brute:pod_triager",
+          "generations": 1,
+          "input_mean": 2067,
+          "components": {
+            "system": 843.6,
+            "human": 850.0,
+            "human_first": 850.0,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 373.4,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 414.9,
+            "system_examples": 0.0,
+            "system_map": 428.7,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:account-existence-message-leak_fixed-wrong-secret-pair:pod_triager",
+          "generations": 1,
+          "input_mean": 2468,
+          "components": {
+            "system": 904.0,
+            "human": 1164.0,
+            "human_first": 1164.0,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 400.0,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 444.6,
+            "system_examples": 0.0,
+            "system_map": 459.4,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:duplicate-row-exception-oracle_variant-name-poisoning:pod_triager",
+          "generations": 1,
+          "input_mean": 2455,
+          "components": {
+            "system": 919.4,
+            "human": 1128.8,
+            "human_first": 1128.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 406.9,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 452.1,
+            "system_examples": 0.0,
+            "system_map": 467.2,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-not-regenerated_login-boundary-carriage:pod_triager",
+          "generations": 1,
+          "input_mean": 2433,
+          "components": {
+            "system": 853.5,
+            "human": 1201.8,
+            "human_first": 1201.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 377.7,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 419.8,
+            "system_examples": 0.0,
+            "system_map": 433.8,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:cleartext-session-id_wire-capture-replay:pod_triager",
+          "generations": 4,
+          "input_mean": 11534.2,
+          "components": {
+            "system": 2097.1,
+            "human": 4064.1,
+            "human_first": 778.9,
+            "human_second": 1646.5,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2035.4,
+            "tool_resp": 3078.9,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 258.8,
+            "reasoning_input": 0.0,
+            "system_body": 1610.3,
+            "system_examples": 0.0,
+            "system_map": 447.9,
+            "system_index": 38.9
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:logout-get-unbound_forced-session-termination:pod_triager",
+          "generations": 5,
+          "input_mean": 15871,
+          "components": {
+            "system": 2592.8,
+            "human": 5231.5,
+            "human_first": 1000.6,
+            "human_second": 1971.3,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2643.7,
+            "tool_resp": 4961.8,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 441.2,
+            "reasoning_input": 0.0,
+            "system_body": 2060.2,
+            "system_examples": 0.0,
+            "system_map": 483.3,
+            "system_index": 49.2
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:seeded-default-pair_rotation-absent:pod_triager",
+          "generations": 1,
+          "input_mean": 2625,
+          "components": {
+            "system": 934.6,
+            "human": 1276.9,
+            "human_first": 1276.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 413.6,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 459.6,
+            "system_examples": 0.0,
+            "system_map": 474.9,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:seeded-weak-pair_candidate-sweep:pod_triager",
+          "generations": 6,
+          "input_mean": 17733,
+          "components": {
+            "system": 2694.1,
+            "human": 4851.4,
+            "human_first": 856.8,
+            "human_second": 1778.8,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2768.7,
+            "tool_resp": 6971.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 447.9,
+            "reasoning_input": 0.0,
+            "system_body": 2148.1,
+            "system_examples": 0.0,
+            "system_map": 476.4,
+            "system_index": 69.7
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:jsessionid-url-carriage_location-harvest-replay:pod_triager",
+          "generations": 1,
+          "input_mean": 2229,
+          "components": {
+            "system": 906.9,
+            "human": 920.8,
+            "human_first": 920.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 401.3,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 446.0,
+            "system_examples": 0.0,
+            "system_map": 460.9,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-not-regenerated_second-principal-rebind:pod_triager",
+          "generations": 5,
+          "input_mean": 15772,
+          "components": {
+            "system": 2620.5,
+            "human": 4586.6,
+            "human_first": 764.1,
+            "human_second": 1759.2,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2654.6,
+            "tool_resp": 5526.9,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 383.4,
+            "reasoning_input": 0.0,
+            "system_body": 2072.0,
+            "system_examples": 0.0,
+            "system_map": 496.2,
+            "system_index": 52.2
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:seeded-default-pair_login-replay:pod_triager",
+          "generations": 1,
+          "input_mean": 2104,
+          "components": {
+            "system": 870.7,
+            "human": 848.0,
+            "human_first": 848.0,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 385.3,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 428.2,
+            "system_examples": 0.0,
+            "system_map": 442.5,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:logout-get-unbound_forced-persistent-identity-termination:pod_triager",
+          "generations": 6,
+          "input_mean": 23438.8,
+          "components": {
+            "system": 3108.2,
+            "human": 6073.1,
+            "human_first": 1017.8,
+            "human_second": 2245.7,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3252.6,
+            "tool_resp": 9819.7,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 1185.2,
+            "reasoning_input": 0.0,
+            "system_body": 2514.7,
+            "system_examples": 0.0,
+            "system_map": 532.0,
+            "system_index": 61.5
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:url-borne-session-id_cookie-less-bearer:pod_triager",
+          "generations": 1,
+          "input_mean": 2440,
+          "components": {
+            "system": 875.0,
+            "human": 1177.8,
+            "human_first": 1177.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 387.2,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 430.3,
+            "system_examples": 0.0,
+            "system_map": 444.7,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:rememberme-cleartext_post-logout-replay:pod_triager",
+          "generations": 11,
+          "input_mean": 19626.7,
+          "components": {
+            "system": 2864.3,
+            "human": 5840.0,
+            "human_first": 1098.9,
+            "human_second": 2212.5,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2941.4,
+            "tool_resp": 7532.4,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 448.7,
+            "reasoning_input": 0.0,
+            "system_body": 2286.3,
+            "system_examples": 0.0,
+            "system_map": 519.7,
+            "system_index": 58.3
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:identity-label_case-space-echo:pod_triager",
+          "generations": 4,
+          "input_mean": 11909.2,
+          "components": {
+            "system": 2129.0,
+            "human": 4724.6,
+            "human_first": 1096.8,
+            "human_second": 1847.5,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2054.7,
+            "tool_resp": 2727.1,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 273.9,
+            "reasoning_input": 0.0,
+            "system_body": 1628.7,
+            "system_examples": 0.0,
+            "system_map": 461.7,
+            "system_index": 38.5
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-url-carriage_referer-subresource-carriage:pod_triager",
+          "generations": 6,
+          "input_mean": 18726.2,
+          "components": {
+            "system": 2829.4,
+            "human": 5464.7,
+            "human_first": 897.4,
+            "human_second": 2059.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2926.9,
+            "tool_resp": 6873.2,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 631.9,
+            "reasoning_input": 0.0,
+            "system_body": 2269.9,
+            "system_examples": 0.0,
+            "system_map": 501.2,
+            "system_index": 58.3
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:duplicate-row_entry-race:pod_triager",
+          "generations": 1,
+          "input_mean": 2341,
+          "components": {
+            "system": 862.3,
+            "human": 1097.1,
+            "human_first": 1097.1,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 381.6,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 424.1,
+            "system_examples": 0.0,
+            "system_map": 438.2,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-url-carriage_gate-location-replay:pod_triager",
+          "generations": 1,
+          "input_mean": 2808,
+          "components": {
+            "system": 863.9,
+            "human": 1561.8,
+            "human_first": 1561.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 382.3,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 424.9,
+            "system_examples": 0.0,
+            "system_map": 439.0,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:nonunique-identity_credential-collapse:pod_triager",
+          "generations": 6,
+          "input_mean": 21378.7,
+          "components": {
+            "system": 2663.7,
+            "human": 4089.5,
+            "human_first": 574.8,
+            "human_second": 1475.1,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2757.1,
+            "tool_resp": 11255.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 613.4,
+            "reasoning_input": 0.0,
+            "system_body": 2138.1,
+            "system_examples": 0.0,
+            "system_map": 471.5,
+            "system_index": 54.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:session-id-url-carriage_authenticated-request-line:pod_triager",
+          "generations": 1,
+          "input_mean": 2265,
+          "components": {
+            "system": 857.6,
+            "human": 1027.9,
+            "human_first": 1027.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 379.5,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 421.7,
+            "system_examples": 0.0,
+            "system_map": 435.8,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:display-identity_client-store-trust:pod_triager",
+          "generations": 4,
+          "input_mean": 18736.8,
+          "components": {
+            "system": 2173.1,
+            "human": 4468.0,
+            "human_first": 1025.5,
+            "human_second": 1691.9,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2119.3,
+            "tool_resp": 9696.9,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 279.4,
+            "reasoning_input": 0.0,
+            "system_body": 1674.3,
+            "system_examples": 0.0,
+            "system_map": 458.8,
+            "system_index": 40.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:nonunique-identity_variant-spelling:pod_triager",
+          "generations": 1,
+          "input_mean": 1933,
+          "components": {
+            "system": 835.5,
+            "human": 727.8,
+            "human_first": 727.8,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 369.7,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 410.9,
+            "system_examples": 0.0,
+            "system_map": 424.6,
+            "system_index": 0.0
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:nonunique-identity_stranded-session:pod_triager",
+          "generations": 6,
+          "input_mean": 13316.7,
+          "components": {
+            "system": 2211.4,
+            "human": 7683.4,
+            "human_first": 858.3,
+            "human_second": 1996.2,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 1982.7,
+            "tool_resp": 472.5,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 966.6,
+            "reasoning_input": 0.0,
+            "system_body": 1609.8,
+            "system_examples": 0.0,
+            "system_map": 566.4,
+            "system_index": 35.3
+          }
+        },
+        {
+          "session_id": "a5f487fb-8329-431c-b95d-207799a038f9:rememberme-cbc_tamper-oracle-forge:pod_triager",
+          "generations": 5,
+          "input_mean": 34854.4,
+          "components": {
+            "system": 2829.6,
+            "human": 6702.2,
+            "human_first": 1436.9,
+            "human_second": 2505.1,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2862.5,
+            "tool_resp": 21865.2,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 594.9,
+            "reasoning_input": 0.0,
+            "system_body": 2232.0,
+            "system_examples": 0.0,
+            "system_map": 528.1,
+            "system_index": 69.5
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 207776.9,
+          "share": 0.1456
+        },
+        "human": {
+          "tokens": 420124.1,
+          "share": 0.2943
+        },
+        "human_first": {
+          "tokens": 87620.0,
+          "share": 0.0614
+        },
+        "human_second": {
+          "tokens": 147877.2,
+          "share": 0.1036
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 202606.6,
+          "share": 0.1419
+        },
+        "tool_resp": {
+          "tokens": 556558.4,
+          "share": 0.3899
+        },
+        "assistant_visible": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "tokens": 40383.0,
+          "share": 0.0283
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 160118.4,
+          "share": 0.1122
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 43668.6,
+          "share": 0.0306
+        },
+        "system_index": {
+          "tokens": 3989.9,
+          "share": 0.0028
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T22:59:53.831Z",
+        "session": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_account-spread:pod_triager",
+        "raw_chars": 9733,
+        "messages": 3,
+        "truncated": false,
+        "usage": {
+          "input_uncached": 3057,
+          "cache_read": 0,
+          "input_total": 3057,
+          "output": 252,
+          "reasoning": 963,
+          "output_total": 1215,
+          "total": 4272
+        },
+        "components": {
+          "system": 2924,
+          "human": 4911,
+          "human_first": 4911,
+          "human_second": 0,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 0,
+          "tool_desc": 1294,
+          "tool_resp": 0,
+          "assistant_visible": 0,
+          "assistant_tool_args": 0,
+          "reasoning_input": 0,
+          "system_body": 1438,
+          "system_examples": 0,
+          "system_map": 1486,
+          "system_index": 0
+        },
+        "system_sections": [
+          [
+            "# Role",
+            351
+          ],
+          [
+            "# What you read",
+            161
+          ],
+          [
+            "# Decision order",
+            602
+          ],
+          [
+            "# Clean",
+            136
+          ],
+          [
+            "# Output",
+            189
+          ],
+          [
+            "# The cognitive architecture map",
+            221
+          ],
+          [
+            "## The data domains",
+            504
+          ],
+          [
+            "## How they relate",
+            761
+          ]
+        ],
+        "tool_descriptions": [
+          {
+            "name": "TriageDecision",
+            "schema": 1294,
+            "description": 492
+          }
+        ],
+        "loop": {},
+        "grounding": []
+      }
+    },
+    "skill_evolver": {
+      "generations": 122,
+      "sessions": 8,
+      "valid_component_samples": 97,
+      "usage": {
+        "input_sum": 6395498,
+        "input_mean": 52422.1,
+        "input_session_mean": 51070.5,
+        "input_uncached_mean": 7428.0,
+        "cache_mean": 44994.1,
+        "output_mean": 1373.6,
+        "total_mean": 53795.7,
+        "cache_share": 0.8583
+      },
+      "average_input_tokens": 52422.1,
+      "session_input_mean": 51070.5,
+      "components": {
+        "system": {
+          "chars": 18034,
+          "tokens": 8303.5,
+          "share": 0.1584
+        },
+        "human": {
+          "chars": 3007.6,
+          "tokens": 1384.8,
+          "share": 0.0264
+        },
+        "human_first": {
+          "chars": 2869.4,
+          "tokens": 1321.2,
+          "share": 0.0252
+        },
+        "human_second": {
+          "chars": 138.2,
+          "tokens": 63.6,
+          "share": 0.0012
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "chars": 15800,
+          "tokens": 7274.9,
+          "share": 0.1388
+        },
+        "tool_resp": {
+          "chars": 74199.2,
+          "tokens": 34163.9,
+          "share": 0.6517
+        },
+        "assistant_visible": {
+          "chars": 662.9,
+          "tokens": 305.2,
+          "share": 0.0058
+        },
+        "assistant_tool_args": {
+          "chars": 2149.8,
+          "tokens": 989.8,
+          "share": 0.0189
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 12050,
+          "tokens": 5548.2,
+          "share": 0.1058
+        },
+        "system_examples": {
+          "chars": 5984,
+          "tokens": 2755.2,
+          "share": 0.0526
+        },
+        "system_map": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "chars": 272,
+          "tokens": 125.2,
+          "share": 0.0024
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 6485.3,
+          "share": 0.127
+        },
+        "human": {
+          "tokens": 1027.8,
+          "share": 0.0201
+        },
+        "human_first": {
+          "tokens": 919.6,
+          "share": 0.018
+        },
+        "human_second": {
+          "tokens": 108.2,
+          "share": 0.0021
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 4467.8,
+          "share": 0.0875
+        },
+        "tool_resp": {
+          "tokens": 37726.0,
+          "share": 0.7387
+        },
+        "assistant_visible": {
+          "tokens": 371.2,
+          "share": 0.0073
+        },
+        "assistant_tool_args": {
+          "tokens": 992.4,
+          "share": 0.0194
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 4333.4,
+          "share": 0.0849
+        },
+        "system_examples": {
+          "tokens": 2152.0,
+          "share": 0.0421
+        },
+        "system_map": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "tokens": 97.8,
+          "share": 0.0019
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:webpage-analysis:skill_evolver",
+          "generations": 1,
+          "input_mean": 45872,
+          "components": {
+            "system": 6841.9,
+            "human": 671.9,
+            "human_first": 671.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 5994.4,
+            "tool_resp": 31900.2,
+            "assistant_visible": 188.6,
+            "assistant_tool_args": 275.1,
+            "reasoning_input": 0.0,
+            "system_body": 4571.6,
+            "system_examples": 2270.3,
+            "system_map": 0.0,
+            "system_index": 103.2
+          }
+        },
+        {
+          "session_id": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:session-management:skill_evolver",
+          "generations": 36,
+          "input_mean": 43088.1,
+          "components": {
+            "system": 6016.7,
+            "human": 1548.9,
+            "human_first": 1423.6,
+            "human_second": 125.2,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4612.0,
+            "tool_resp": 28264.7,
+            "assistant_visible": 506.6,
+            "assistant_tool_args": 2139.2,
+            "reasoning_input": 0.0,
+            "system_body": 4020.3,
+            "system_examples": 1996.5,
+            "system_map": 0.0,
+            "system_index": 90.7
+          }
+        },
+        {
+          "session_id": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:rate-limit-bypass:skill_evolver",
+          "generations": 23,
+          "input_mean": 74441.0,
+          "components": {
+            "system": 7802.2,
+            "human": 808.7,
+            "human_first": 808.7,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 2627.1,
+            "tool_resp": 62610.5,
+            "assistant_visible": 78.0,
+            "assistant_tool_args": 514.4,
+            "reasoning_input": 0.0,
+            "system_body": 5213.3,
+            "system_examples": 2588.9,
+            "system_map": 0.0,
+            "system_index": 117.7
+          }
+        },
+        {
+          "session_id": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:username-enumeration-oracle:skill_evolver",
+          "generations": 15,
+          "input_mean": 66848,
+          "components": {
+            "system": 7238.1,
+            "human": 1168.3,
+            "human_first": 849.7,
+            "human_second": 318.7,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3943.4,
+            "tool_resp": 53014.4,
+            "assistant_visible": 1090.1,
+            "assistant_tool_args": 393.7,
+            "reasoning_input": 0.0,
+            "system_body": 4836.4,
+            "system_examples": 2401.7,
+            "system_map": 0.0,
+            "system_index": 109.2
+          }
+        },
+        {
+          "session_id": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:csrf:skill_evolver",
+          "generations": 9,
+          "input_mean": 44957.2,
+          "components": {
+            "system": 6058.1,
+            "human": 683.9,
+            "human_first": 683.9,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 5307.6,
+            "tool_resp": 31723.6,
+            "assistant_visible": 216.7,
+            "assistant_tool_args": 967.2,
+            "reasoning_input": 0.0,
+            "system_body": 4047.9,
+            "system_examples": 2010.2,
+            "system_map": 0.0,
+            "system_index": 91.4
+          }
+        },
+        {
+          "session_id": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:deserialization-signed-forgery:skill_evolver",
+          "generations": 14,
+          "input_mean": 30477.4,
+          "components": {
+            "system": 5397.0,
+            "human": 805.5,
+            "human_first": 615.3,
+            "human_second": 190.2,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4728.4,
+            "tool_resp": 18790.6,
+            "assistant_visible": 349.8,
+            "assistant_tool_args": 406.2,
+            "reasoning_input": 0.0,
+            "system_body": 3606.2,
+            "system_examples": 1790.8,
+            "system_map": 0.0,
+            "system_index": 81.4
+          }
+        },
+        {
+          "session_id": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:defence-bypass:skill_evolver",
+          "generations": 9,
+          "input_mean": 48484.8,
+          "components": {
+            "system": 6212.3,
+            "human": 753.4,
+            "human_first": 753.4,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 4593.4,
+            "tool_resp": 36633.1,
+            "assistant_visible": 98.7,
+            "assistant_tool_args": 193.9,
+            "reasoning_input": 0.0,
+            "system_body": 4151.0,
+            "system_examples": 2061.4,
+            "system_map": 0.0,
+            "system_index": 93.7
+          }
+        },
+        {
+          "session_id": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:business-logic:skill_evolver",
+          "generations": 15,
+          "input_mean": 54395.4,
+          "components": {
+            "system": 6316.4,
+            "human": 1781.5,
+            "human_first": 1550.2,
+            "human_second": 231.3,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 3936.0,
+            "tool_resp": 38871.0,
+            "assistant_visible": 441.0,
+            "assistant_tool_args": 3049.5,
+            "reasoning_input": 0.0,
+            "system_body": 4220.5,
+            "system_examples": 2095.9,
+            "system_map": 0.0,
+            "system_index": 95.3
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 792204.0,
+          "share": 0.1239
+        },
+        "human": {
+          "tokens": 143490.8,
+          "share": 0.0224
+        },
+        "human_first": {
+          "tokens": 128070.7,
+          "share": 0.02
+        },
+        "human_second": {
+          "tokens": 15420.2,
+          "share": 0.0024
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 505948.2,
+          "share": 0.0791
+        },
+        "tool_resp": {
+          "tokens": 4746030.4,
+          "share": 0.7421
+        },
+        "assistant_visible": {
+          "tokens": 50922.5,
+          "share": 0.008
+        },
+        "assistant_tool_args": {
+          "tokens": 156902.0,
+          "share": 0.0245
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 529336.7,
+          "share": 0.0828
+        },
+        "system_examples": {
+          "tokens": 262867.3,
+          "share": 0.0411
+        },
+        "system_map": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "tokens": 11948.5,
+          "share": 0.0019
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T16:30:12.091Z",
+        "session": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:webpage-analysis:skill_evolver",
+        "raw_chars": 147445,
+        "messages": 24,
+        "truncated": false,
+        "usage": {
+          "input_uncached": 3120,
+          "cache_read": 42752,
+          "input_total": 45872,
+          "output": 867,
+          "reasoning": 526,
+          "output_total": 1393,
+          "total": 47265
+        },
+        "components": {
+          "system": 18034,
+          "human": 1771,
+          "human_first": 1771,
+          "human_second": 0,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 0,
+          "tool_desc": 15800,
+          "tool_resp": 84083,
+          "assistant_visible": 497,
+          "assistant_tool_args": 725,
+          "reasoning_input": 0,
+          "system_body": 12050,
+          "system_examples": 5984,
+          "system_map": 0,
+          "system_index": 272
+        },
+        "system_sections": [
+          [
+            "## Vocabulary, fixed",
+            1696
+          ],
+          [
+            "## Your character",
+            465
+          ],
+          [
+            "## The workflow, fixed order",
+            1737
+          ],
+          [
+            "## Verify by falsification",
+            2447
+          ],
+          [
+            "## Bias assessment",
+            759
+          ],
+          [
+            "## Transform or reject (inside this reasoning only)",
+            736
+          ],
+          [
+            "## The decision",
+            1335
+          ],
+          [
+            "## The single write",
+            1051
+          ],
+          [
+            "## Loop discipline",
+            1440
+          ],
+          [
+            "## Worked examples",
+            128
+          ],
+          [
+            "### Example 1 - verified and published: `broken-function-level-authorization`",
+            2748
+          ],
+          [
+            "### Example 2 - falsified, close without a write: `xss`",
+            1360
+          ],
+          [
+            "### Example 3 - a refusal, repaired once: `ssrf`",
+            1748
+          ]
+        ],
+        "tool_descriptions": [
+          {
+            "name": "load_skill",
+            "schema": 1011,
+            "description": 739
+          },
+          {
+            "name": "record_skill_lesson",
+            "schema": 1403,
+            "description": 577
+          },
+          {
+            "name": "write_skill",
+            "schema": 1976,
+            "description": 1187
+          },
+          {
+            "name": "search_http_history",
+            "schema": 1542,
+            "description": 1119
+          },
+          {
+            "name": "get_http_artifact",
+            "schema": 817,
+            "description": 621
+          },
+          {
+            "name": "auth_store",
+            "schema": 7437,
+            "description": 5291
+          },
+          {
+            "name": "graph_view",
+            "schema": 1614,
+            "description": 1311
+          }
+        ],
+        "loop": {},
+        "grounding": []
+      }
+    },
+    "unknown": {
+      "generations": 4,
+      "sessions": 1,
+      "valid_component_samples": 0,
+      "usage": {
+        "input_sum": 903116,
+        "input_mean": 225779,
+        "input_session_mean": 225779,
+        "input_uncached_mean": 56531,
+        "cache_mean": 169248,
+        "output_mean": 3494.5,
+        "total_mean": 229273.5,
+        "cache_share": 0.7496
+      },
+      "average_input_tokens": 225779,
+      "session_input_mean": 225779,
+      "components": {
+        "system": {
+          "chars": 3110,
+          "tokens": 225779.0,
+          "share": 1.0
+        },
+        "human": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_first": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_second": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_resp": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_visible": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "reasoning_input": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "chars": 3110,
+          "tokens": 225779.0,
+          "share": 1.0
+        },
+        "system_examples": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "chars": 0,
+          "tokens": 0.0,
+          "share": 0.0
+        }
+      },
+      "session_components": {
+        "system": {
+          "tokens": 225779.0,
+          "share": 1.0
+        },
+        "human": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_first": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_second": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_resp": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_visible": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 225779.0,
+          "share": 1.0
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "tokens": 0.0,
+          "share": 0.0
+        }
+      },
+      "session_rows": [
+        {
+          "session_id": "",
+          "generations": 4,
+          "input_mean": 225779,
+          "components": {
+            "system": 225779.0,
+            "human": 0.0,
+            "human_first": 0.0,
+            "human_second": 0.0,
+            "loop": 0.0,
+            "loop_grounding": 0.0,
+            "loop_tool_surface": 0.0,
+            "loop_state": 0.0,
+            "loop_step": 0.0,
+            "app_overview": 0.0,
+            "tool_desc": 0.0,
+            "tool_resp": 0.0,
+            "assistant_visible": 0.0,
+            "assistant_tool_args": 0.0,
+            "reasoning_input": 0.0,
+            "system_body": 225779.0,
+            "system_examples": 0.0,
+            "system_map": 0.0,
+            "system_index": 0.0
+          }
+        }
+      ],
+      "cumulative": {
+        "system": {
+          "tokens": 903116.0,
+          "share": 1.0
+        },
+        "human": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_first": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "human_second": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_grounding": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_tool_surface": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_state": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "loop_step": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "app_overview": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_desc": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "tool_resp": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_visible": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "assistant_tool_args": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "reasoning_input": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_body": {
+          "tokens": 903116.0,
+          "share": 1.0
+        },
+        "system_examples": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_map": {
+          "tokens": 0.0,
+          "share": 0.0
+        },
+        "system_index": {
+          "tokens": 0.0,
+          "share": 0.0
+        }
+      },
+      "first_call": {
+        "start": "2026-10-23T17:20:04.864Z",
+        "session": "",
+        "raw_chars": 260665,
+        "messages": 1,
+        "truncated": true,
+        "usage": {
+          "input_uncached": 115,
+          "cache_read": 225664,
+          "input_total": 225779,
+          "output": 1346,
+          "reasoning": 999,
+          "output_total": 2345,
+          "total": 228124
+        },
+        "components": {
+          "system": 3110,
+          "human": 0,
+          "human_first": 0,
+          "human_second": 0,
+          "loop": 0,
+          "loop_grounding": 0,
+          "loop_tool_surface": 0,
+          "loop_state": 0,
+          "loop_step": 0,
+          "app_overview": 0,
+          "tool_desc": 0,
+          "tool_resp": 0,
+          "assistant_visible": 0,
+          "assistant_tool_args": 0,
+          "reasoning_input": 0,
+          "system_body": 3110,
+          "system_examples": 0,
+          "system_map": 0,
+          "system_index": 0
+        },
+        "system_sections": [
+          [
+            "## Intention-keeping (highest priority)",
+            358
+          ],
+          [
+            "## Core concepts (fill EXACTLY these, no others)",
+            795
+          ],
+          [
+            "## Output template (markdown - fill EXACTLY this structure, no others)",
+            306
+          ],
+          [
+            "## Objective",
+            36
+          ],
+          [
+            "## Workflow",
+            34
+          ],
+          [
+            "## Environment State",
+            52
+          ],
+          [
+            "## Task Status",
+            112
+          ],
+          [
+            "## Dead Branches Probed",
+            114
+          ],
+          [
+            "## Previous Decisions with Rationale",
+            65
+          ],
+          [
+            "## Discovered Crucial Artifacts",
+            92
+          ],
+          [
+            "## Resume Point",
+            252
+          ],
+          [
+            "## Length",
+            85
+          ],
+          [
+            "## Rules",
+            523
+          ]
+        ],
+        "tool_descriptions": [],
+        "loop": {},
+        "grounding": []
+      }
+    }
+  },
+  "first_calls": [
+    {
+      "role": "analysis_chunk",
+      "start": "2026-10-23T16:30:23.075Z",
+      "session": "fa616918-ddd2-4950-bb6a-353193c9aeba",
+      "raw_chars": 0,
+      "messages": 0,
+      "truncated": true,
+      "usage": {
+        "input_uncached": 0,
+        "cache_read": 0,
+        "input_total": 0,
+        "output": 0,
+        "reasoning": 0,
+        "output_total": 0,
+        "total": 0
+      },
+      "components": {
+        "system": 0,
+        "human": 0,
+        "human_first": 0,
+        "human_second": 0,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 0,
+        "tool_desc": 0,
+        "tool_resp": 0,
+        "assistant_visible": 0,
+        "assistant_tool_args": 0,
+        "reasoning_input": 0,
+        "system_body": 0,
+        "system_examples": 0,
+        "system_map": 0,
+        "system_index": 0
+      },
+      "system_sections": [],
+      "tool_descriptions": [],
+      "loop": {},
+      "grounding": []
+    },
+    {
+      "role": "assigner",
+      "start": "2026-10-23T16:30:23.555Z",
+      "session": "fa616918-ddd2-4950-bb6a-353193c9aeba:assigner",
+      "raw_chars": 49492,
+      "messages": 9,
+      "truncated": false,
+      "usage": {
+        "input_uncached": 5268,
+        "cache_read": 7168,
+        "input_total": 12436,
+        "output": 466,
+        "reasoning": 2098,
+        "output_total": 2564,
+        "total": 15000
+      },
+      "components": {
+        "system": 12468,
+        "human": 25741,
+        "human_first": 1761,
+        "human_second": 23980,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 1761,
+        "tool_desc": 10681,
+        "tool_resp": 0,
+        "assistant_visible": 0,
+        "assistant_tool_args": 0,
+        "reasoning_input": 0,
+        "system_body": 8697,
+        "system_examples": 2070,
+        "system_map": 1488,
+        "system_index": 213
+      },
+      "system_sections": [
+        [
+          "## The null hypothesis is that nothing owns it",
+          795
+        ],
+        [
+          "## Work each Endpoint in four moves",
+          1487
+        ],
+        [
+          "## What the ownership evidence is",
+          820
+        ],
+        [
+          "## Judge the surface in front of you, freshly",
+          386
+        ],
+        [
+          "## Read the recorded response - your widening seam, bounded",
+          2036
+        ],
+        [
+          "## When the widening seam fails, fail open - loudly",
+          1085
+        ],
+        [
+          "## Worked examples",
+          2070
+        ],
+        [
+          "# The cognitive architecture map",
+          221
+        ],
+        [
+          "## The data domains",
+          504
+        ],
+        [
+          "## How they relate",
+          976
+        ]
+      ],
+      "tool_descriptions": [
+        {
+          "name": "search_http_history",
+          "schema": 1542,
+          "description": 1119
+        },
+        {
+          "name": "get_http_artifact",
+          "schema": 817,
+          "description": 621
+        },
+        {
+          "name": "load_skill",
+          "schema": 1011,
+          "description": 739
+        },
+        {
+          "name": "record_skill_lesson",
+          "schema": 1403,
+          "description": 577
+        },
+        {
+          "name": "auth_store",
+          "schema": 2108,
+          "description": 642
+        },
+        {
+          "name": "L1DeltaBatch",
+          "schema": 3800,
+          "description": 350
+        }
+      ],
+      "loop": {},
+      "grounding": []
+    },
+    {
+      "role": "hunting_hunter",
+      "start": "2026-10-23T22:12:39.683Z",
+      "session": "a5f487fb-8329-431c-b95d-207799a038f9:Service-sign-in__loop-1:hunting_hunter",
+      "raw_chars": 67747,
+      "messages": 14,
+      "truncated": false,
+      "usage": {
+        "input_uncached": 15604,
+        "cache_read": 640,
+        "input_total": 16244,
+        "output": 132,
+        "reasoning": 0,
+        "output_total": 132,
+        "total": 16376
+      },
+      "components": {
+        "system": 29215,
+        "human": 13619,
+        "human_first": 13619,
+        "human_second": 0,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 13619,
+        "tool_desc": 23538,
+        "tool_resp": 0,
+        "assistant_visible": 0,
+        "assistant_tool_args": 0,
+        "reasoning_input": 0,
+        "system_body": 18216,
+        "system_examples": 9263,
+        "system_map": 1488,
+        "system_index": 248
+      },
+      "system_sections": [
+        [
+          "## The loop ontology",
+          876
+        ],
+        [
+          "## Your character",
+          471
+        ],
+        [
+          "## Discipline (binding)",
+          2199
+        ],
+        [
+          "## The tree",
+          1001
+        ],
+        [
+          "## The passes",
+          8084
+        ],
+        [
+          "## The spec body",
+          3799
+        ],
+        [
+          "## The tools",
+          1506
+        ],
+        [
+          "## Worked example 1 - the straight path",
+          3491
+        ],
+        [
+          "# Hunting-agent worked examples: the off-path shapes",
+          316
+        ],
+        [
+          "### Example 2 - well-formedness re-entry, then a merge",
+          2471
+        ],
+        [
+          "### Example 3 - a falsifying probe that runs out of insight",
+          1250
+        ],
+        [
+          "### Example 4 - worst case, graceful degradation",
+          1735
+        ],
+        [
+          "# The cognitive architecture map",
+          221
+        ],
+        [
+          "## The data domains",
+          504
+        ],
+        [
+          "## How they relate",
+          1011
+        ]
+      ],
+      "tool_descriptions": [
+        {
+          "name": "hunts_store",
+          "schema": 7436,
+          "description": 780
+        },
+        {
+          "name": "notes",
+          "schema": 3357,
+          "description": 710
+        },
+        {
+          "name": "graph_view",
+          "schema": 1614,
+          "description": 1311
+        },
+        {
+          "name": "kb_query",
+          "schema": 2584,
+          "description": 899
+        },
+        {
+          "name": "exec",
+          "schema": 788,
+          "description": 562
+        },
+        {
+          "name": "skill_list",
+          "schema": 472,
+          "description": 345
+        },
+        {
+          "name": "skill_load",
+          "schema": 406,
+          "description": 173
+        },
+        {
+          "name": "search_http_history",
+          "schema": 1542,
+          "description": 1119
+        },
+        {
+          "name": "get_http_artifact",
+          "schema": 817,
+          "description": 621
+        },
+        {
+          "name": "load_skill",
+          "schema": 1011,
+          "description": 739
+        },
+        {
+          "name": "record_skill_lesson",
+          "schema": 1403,
+          "description": 577
+        },
+        {
+          "name": "auth_store",
+          "schema": 2108,
+          "description": 642
+        }
+      ],
+      "loop": {},
+      "grounding": []
+    },
+    {
+      "role": "hunting_threat_modeller",
+      "start": "2026-10-23T16:35:23.031Z",
+      "session": "a5f487fb-8329-431c-b95d-207799a038f9:hunting_threat_modeller",
+      "raw_chars": 54443,
+      "messages": 12,
+      "truncated": false,
+      "usage": {
+        "input_uncached": 2050,
+        "cache_read": 12288,
+        "input_total": 14338,
+        "output": 136,
+        "reasoning": 60,
+        "output_total": 196,
+        "total": 14534
+      },
+      "components": {
+        "system": 23184,
+        "human": 5005,
+        "human_first": 5005,
+        "human_second": 0,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 0,
+        "tool_desc": 25599,
+        "tool_resp": 0,
+        "assistant_visible": 0,
+        "assistant_tool_args": 0,
+        "reasoning_input": 0,
+        "system_body": 21483,
+        "system_examples": 0,
+        "system_map": 1488,
+        "system_index": 213
+      },
+      "system_sections": [
+        [
+          "# Threat modeller",
+          827
+        ],
+        [
+          "## The five states and their gates",
+          1579
+        ],
+        [
+          "## Reference fields",
+          1558
+        ],
+        [
+          "## Grounding: reverse-engineer the unit (UNIT_TECHNICAL_SHARP)",
+          3287
+        ],
+        [
+          "## Trust mapping (TRUST_MODELLED)",
+          2310
+        ],
+        [
+          "## Assumptions (TRUST_ASSUMPTIONS_WRITTEN)",
+          574
+        ],
+        [
+          "## Vulnerability citation (VULNERABILITIES_WRITTEN)",
+          849
+        ],
+        [
+          "## Evidence, confidence, and live authority",
+          1888
+        ],
+        [
+          "## Probing (the `exec` tool)",
+          2090
+        ],
+        [
+          "## Completion, the drop rule, and the ranking (COMPLETED)",
+          4180
+        ],
+        [
+          "## Tools",
+          1796
+        ],
+        [
+          "## Termination",
+          546
+        ],
+        [
+          "# The cognitive architecture map",
+          221
+        ],
+        [
+          "## The data domains",
+          504
+        ],
+        [
+          "## How they relate",
+          976
+        ]
+      ],
+      "tool_descriptions": [
+        {
+          "name": "hunts_store",
+          "schema": 14903,
+          "description": 1210
+        },
+        {
+          "name": "notes",
+          "schema": 2149,
+          "description": 862
+        },
+        {
+          "name": "search_http_history",
+          "schema": 1542,
+          "description": 1119
+        },
+        {
+          "name": "get_http_artifact",
+          "schema": 817,
+          "description": 621
+        },
+        {
+          "name": "exec",
+          "schema": 788,
+          "description": 562
+        },
+        {
+          "name": "skill_list",
+          "schema": 472,
+          "description": 345
+        },
+        {
+          "name": "skill_load",
+          "schema": 406,
+          "description": 173
+        },
+        {
+          "name": "load_skill",
+          "schema": 1011,
+          "description": 739
+        },
+        {
+          "name": "record_skill_lesson",
+          "schema": 1403,
+          "description": 577
+        },
+        {
+          "name": "auth_store",
+          "schema": 2108,
+          "description": 642
+        }
+      ],
+      "loop": {},
+      "grounding": []
+    },
+    {
+      "role": "mechanism_typist",
+      "start": "2026-10-23T16:30:17.526Z",
+      "session": "fa616918-ddd2-4950-bb6a-353193c9aeba:mechanism_typist",
+      "raw_chars": 261558,
+      "messages": 32,
+      "truncated": true,
+      "usage": {
+        "input_uncached": 7561,
+        "cache_read": 69760,
+        "input_total": 77321,
+        "output": 276,
+        "reasoning": 388,
+        "output_total": 664,
+        "total": 77985
+      },
+      "components": {
+        "system": 24217,
+        "human": 114451,
+        "human_first": 1761,
+        "human_second": 103246,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 1761,
+        "tool_desc": 0,
+        "tool_resp": 38373,
+        "assistant_visible": 10549,
+        "assistant_tool_args": 11312,
+        "reasoning_input": 0,
+        "system_body": 14653,
+        "system_examples": 7863,
+        "system_map": 1488,
+        "system_index": 213
+      },
+      "system_sections": [
+        [
+          "## Reason by hypothesis, and verify",
+          1723
+        ],
+        [
+          "## Ground each hypothesis with the tools",
+          2383
+        ],
+        [
+          "## Name the witness (`evidence`) - the claim is anchored, not just described",
+          1353
+        ],
+        [
+          "## Link each System to its Services",
+          1708
+        ],
+        [
+          "## Judge each proposal critically",
+          1168
+        ],
+        [
+          "## Output contract",
+          1561
+        ],
+        [
+          "## Worked examples - imitate the REASONING SHAPE, never the domain",
+          7863
+        ],
+        [
+          "## Writing a System description",
+          3447
+        ],
+        [
+          "# The cognitive architecture map",
+          221
+        ],
+        [
+          "## The data domains",
+          504
+        ],
+        [
+          "## How they relate",
+          976
+        ]
+      ],
+      "tool_descriptions": [],
+      "loop": {},
+      "grounding": []
+    },
+    {
+      "role": "pod_runner",
+      "start": "2026-10-23T22:47:06.562Z",
+      "session": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_account-spread:pod_runner",
+      "raw_chars": 25974,
+      "messages": 10,
+      "truncated": false,
+      "usage": {
+        "input_uncached": 6359,
+        "cache_read": 0,
+        "input_total": 6359,
+        "output": 109,
+        "reasoning": 0,
+        "output_total": 109,
+        "total": 6468
+      },
+      "components": {
+        "system": 8398,
+        "human": 4087,
+        "human_first": 4087,
+        "human_second": 0,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 0,
+        "tool_desc": 12962,
+        "tool_resp": 0,
+        "assistant_visible": 0,
+        "assistant_tool_args": 0,
+        "reasoning_input": 0,
+        "system_body": 6641,
+        "system_examples": 0,
+        "system_map": 1488,
+        "system_index": 269
+      },
+      "system_sections": [
+        [
+          "# Role",
+          469
+        ],
+        [
+          "# Surgical conciseness (binding)",
+          219
+        ],
+        [
+          "# The spec you execute",
+          1300
+        ],
+        [
+          "# The stretch plan (P0-P3)",
+          2310
+        ],
+        [
+          "# Tools",
+          1272
+        ],
+        [
+          "# Memory",
+          218
+        ],
+        [
+          "# Constraints",
+          611
+        ],
+        [
+          "# Output",
+          243
+        ],
+        [
+          "# The cognitive architecture map",
+          221
+        ],
+        [
+          "## The data domains",
+          504
+        ],
+        [
+          "## How they relate",
+          1032
+        ]
+      ],
+      "tool_descriptions": [
+        {
+          "name": "exec",
+          "schema": 439,
+          "description": 264
+        },
+        {
+          "name": "note",
+          "schema": 1783,
+          "description": 669
+        },
+        {
+          "name": "query_lightrag",
+          "schema": 2590,
+          "description": 899
+        },
+        {
+          "name": "graph_view",
+          "schema": 1614,
+          "description": 1311
+        },
+        {
+          "name": "replay",
+          "schema": 2014,
+          "description": 1718
+        },
+        {
+          "name": "load_skill",
+          "schema": 1011,
+          "description": 739
+        },
+        {
+          "name": "record_skill_lesson",
+          "schema": 1403,
+          "description": 577
+        },
+        {
+          "name": "auth_store",
+          "schema": 2108,
+          "description": 642
+        }
+      ],
+      "loop": {},
+      "grounding": []
+    },
+    {
+      "role": "pod_triager",
+      "start": "2026-10-23T22:59:53.831Z",
+      "session": "a5f487fb-8329-431c-b95d-207799a038f9:attempt-accounting-absent_account-spread:pod_triager",
+      "raw_chars": 9733,
+      "messages": 3,
+      "truncated": false,
+      "usage": {
+        "input_uncached": 3057,
+        "cache_read": 0,
+        "input_total": 3057,
+        "output": 252,
+        "reasoning": 963,
+        "output_total": 1215,
+        "total": 4272
+      },
+      "components": {
+        "system": 2924,
+        "human": 4911,
+        "human_first": 4911,
+        "human_second": 0,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 0,
+        "tool_desc": 1294,
+        "tool_resp": 0,
+        "assistant_visible": 0,
+        "assistant_tool_args": 0,
+        "reasoning_input": 0,
+        "system_body": 1438,
+        "system_examples": 0,
+        "system_map": 1486,
+        "system_index": 0
+      },
+      "system_sections": [
+        [
+          "# Role",
+          351
+        ],
+        [
+          "# What you read",
+          161
+        ],
+        [
+          "# Decision order",
+          602
+        ],
+        [
+          "# Clean",
+          136
+        ],
+        [
+          "# Output",
+          189
+        ],
+        [
+          "# The cognitive architecture map",
+          221
+        ],
+        [
+          "## The data domains",
+          504
+        ],
+        [
+          "## How they relate",
+          761
+        ]
+      ],
+      "tool_descriptions": [
+        {
+          "name": "TriageDecision",
+          "schema": 1294,
+          "description": 492
+        }
+      ],
+      "loop": {},
+      "grounding": []
+    },
+    {
+      "role": "skill_evolver",
+      "start": "2026-10-23T16:30:12.091Z",
+      "session": "skills:skill-evolution_0c8cb6e6-7e91-4a01-880e-408896c0ce4a:webpage-analysis:skill_evolver",
+      "raw_chars": 147445,
+      "messages": 24,
+      "truncated": false,
+      "usage": {
+        "input_uncached": 3120,
+        "cache_read": 42752,
+        "input_total": 45872,
+        "output": 867,
+        "reasoning": 526,
+        "output_total": 1393,
+        "total": 47265
+      },
+      "components": {
+        "system": 18034,
+        "human": 1771,
+        "human_first": 1771,
+        "human_second": 0,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 0,
+        "tool_desc": 15800,
+        "tool_resp": 84083,
+        "assistant_visible": 497,
+        "assistant_tool_args": 725,
+        "reasoning_input": 0,
+        "system_body": 12050,
+        "system_examples": 5984,
+        "system_map": 0,
+        "system_index": 272
+      },
+      "system_sections": [
+        [
+          "## Vocabulary, fixed",
+          1696
+        ],
+        [
+          "## Your character",
+          465
+        ],
+        [
+          "## The workflow, fixed order",
+          1737
+        ],
+        [
+          "## Verify by falsification",
+          2447
+        ],
+        [
+          "## Bias assessment",
+          759
+        ],
+        [
+          "## Transform or reject (inside this reasoning only)",
+          736
+        ],
+        [
+          "## The decision",
+          1335
+        ],
+        [
+          "## The single write",
+          1051
+        ],
+        [
+          "## Loop discipline",
+          1440
+        ],
+        [
+          "## Worked examples",
+          128
+        ],
+        [
+          "### Example 1 - verified and published: `broken-function-level-authorization`",
+          2748
+        ],
+        [
+          "### Example 2 - falsified, close without a write: `xss`",
+          1360
+        ],
+        [
+          "### Example 3 - a refusal, repaired once: `ssrf`",
+          1748
+        ]
+      ],
+      "tool_descriptions": [
+        {
+          "name": "load_skill",
+          "schema": 1011,
+          "description": 739
+        },
+        {
+          "name": "record_skill_lesson",
+          "schema": 1403,
+          "description": 577
+        },
+        {
+          "name": "write_skill",
+          "schema": 1976,
+          "description": 1187
+        },
+        {
+          "name": "search_http_history",
+          "schema": 1542,
+          "description": 1119
+        },
+        {
+          "name": "get_http_artifact",
+          "schema": 817,
+          "description": 621
+        },
+        {
+          "name": "auth_store",
+          "schema": 7437,
+          "description": 5291
+        },
+        {
+          "name": "graph_view",
+          "schema": 1614,
+          "description": 1311
+        }
+      ],
+      "loop": {},
+      "grounding": []
+    },
+    {
+      "role": "unknown",
+      "start": "2026-10-23T17:20:04.864Z",
+      "session": "",
+      "raw_chars": 260665,
+      "messages": 1,
+      "truncated": true,
+      "usage": {
+        "input_uncached": 115,
+        "cache_read": 225664,
+        "input_total": 225779,
+        "output": 1346,
+        "reasoning": 999,
+        "output_total": 2345,
+        "total": 228124
+      },
+      "components": {
+        "system": 3110,
+        "human": 0,
+        "human_first": 0,
+        "human_second": 0,
+        "loop": 0,
+        "loop_grounding": 0,
+        "loop_tool_surface": 0,
+        "loop_state": 0,
+        "loop_step": 0,
+        "app_overview": 0,
+        "tool_desc": 0,
+        "tool_resp": 0,
+        "assistant_visible": 0,
+        "assistant_tool_args": 0,
+        "reasoning_input": 0,
+        "system_body": 3110,
+        "system_examples": 0,
+        "system_map": 0,
+        "system_index": 0
+      },
+      "system_sections": [
+        [
+          "## Intention-keeping (highest priority)",
+          358
+        ],
+        [
+          "## Core concepts (fill EXACTLY these, no others)",
+          795
+        ],
+        [
+          "## Output template (markdown - fill EXACTLY this structure, no others)",
+          306
+        ],
+        [
+          "## Objective",
+          36
+        ],
+        [
+          "## Workflow",
+          34
+        ],
+        [
+          "## Environment State",
+          52
+        ],
+        [
+          "## Task Status",
+          112
+        ],
+        [
+          "## Dead Branches Probed",
+          114
+        ],
+        [
+          "## Previous Decisions with Rationale",
+          65
+        ],
+        [
+          "## Discovered Crucial Artifacts",
+          92
+        ],
+        [
+          "## Resume Point",
+          252
+        ],
+        [
+          "## Length",
+          85
+        ],
+        [
+          "## Rules",
+          523
+        ]
+      ],
+      "tool_descriptions": [],
+      "loop": {},
+      "grounding": []
+    }
+  ],
+  "limitations": [
+    "Langfuse truncates the stored input at roughly 261k chars; later turns are marked truncated.",
+    "The provider input anchor is input + input_cache_read; the output anchor is output + output_reasoning.",
+    "Component tokens are char-share estimates against the provider input anchor, not a second tokenizer."
+  ]
+}

@@ -52,8 +52,8 @@ UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
 UNIT_NAME = "Service-catalogue-and-discovery"
-DISPATCH_ID = f"{UNIT_NAME}__loop-1"
-SPEC_FILE = "sqli_blind"
+DISPATCH_ID = f"{UNIT_NAME}__threat-1"
+SPEC_FILE = "sqli__blind__boolean"
 ROLES = ("threat_modeller", "hunter", "pod")
 
 
@@ -78,13 +78,18 @@ def _wait_until_flat(seq, timeout=5.0):
 
 
 def _produce(threat):
-    """One produced COMPLETED valid model with its loop file (S2 8.1)."""
+    """One produced COMPLETED valid model with its threat file (S2 8.1)."""
     return produce_model(threat, project_id="p", unit_id=UNIT, run_id=RUN)
 
 
 def _spec(**overrides):
     data = {
-        "status": "ratified", "fault_keyword": "sqli", "strategy_keyword": "blind",
+        "status": "hypothesised",
+        "discriminators": [
+            {"axis": "fault", "value": "blind"},
+            {"axis": "technique", "value": "boolean"},
+        ],
+        "provenance": {"web_vulnerability_class": "sqli"},
         "verification_symptoms": ["a foreign item renders"],
     }
     data.update(overrides)
@@ -296,9 +301,9 @@ def test_C10_a_down_hunter_denies_hunter_dispatch(tmp_path):
     )
     assert control.calls == []
     assert report.refused == 1 and report.moved == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops("p")[0]["loops"]] == ["loop-1"]
-    # S6/E1 lower tier: while the hunter role is down its refused loop file is
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats("p")[0]["threats"]] == ["threat-1"]
+    # S6/E1 lower tier: while the hunter role is down its refused threat file is
     # still DISPATCHABLE work, so the quiesce predicate stays False and the run
     # can never reach `complete` (the E1 "run stays running" claim, without
     # Docker).
@@ -312,7 +317,9 @@ def test_C10_a_down_hunter_denies_hunter_dispatch(tmp_path):
 def test_C11_a_down_pod_denies_pod_dispatch(tmp_path):
     threat = ThreatModelStore(tmp_path / "threat")
     hunter = HunterMemoryStore(tmp_path / "hunter")
-    hunter.write_specs("p", DISPATCH_ID, [_spec()])
+    draft = _spec()
+    hunter.write_specs("p", DISPATCH_ID, [draft])
+    hunter.write_specs("p", DISPATCH_ID, [{**draft, "status": "ratified"}])
     control = _RecordingControl()
     report = run_delivery_tick(
         "p", RUN, threat_store=threat, hunter_store=hunter, control=control,

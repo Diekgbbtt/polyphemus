@@ -1,0 +1,70 @@
+# Iteration C.a - white-jotter, impact chaining as a first-class reasoning
+# concern, on the CVSS 4.0 risk-scoring branch.
+#
+# This arm does NOT re-run recon or analysis. It starts from a brand-new project
+# whose L0/L1 graph, auth context, and authn skill were copied from the
+# iteration C project (8e2e5dc7-a880-4451-aaa5-267cedd48264), with hunting/ and
+# usage/ excluded. Hunting starts from scratch on an unchanged data layer.
+#
+# The moving parts relative to iteration D:
+#   - `risk` is the CVSS 4.0 base score over chain-compiled factors, computed at
+#     persistence on the assessment row;
+#   - `assess_impact` is the sole assessment writer and the score is derived;
+#   - the dispatch queue is per-threat risk descending with no per-unit cap;
+#   - the pod watchdog is 90 minutes (`HUNT_POD_SESSION_TIMEOUT_S=5400`).
+#
+# The frozen hunting policy this arm pins:
+#   pipeline_sync            batched
+#   pod_batch_size           2
+#   promotion_risk_threshold 2.5  (inclusive, CVSS 4.0 points)
+#   risk_threshold           156.25 (the code default, CVSS 4.0 points)
+#   token_budget             7000000
+#
+# Instance `.env` for this arm:
+#   HUNT_RISK_THRESHOLD=156.25
+#   HUNT_POD_SESSION_TIMEOUT_S=5400
+#   SKILL_EVOLUTION_ENABLED=0
+#   LLM_HUNTING_THREAT_MODELLER=opencode-go:deepseek-v4.1-flash
+#   LLM_HUNTING_HUNTER=opencode-go:deepseek-v4.1-flash
+#   LLM_ANALYSER=opencode-go:deepseek-v4.1-flash
+#
+# The scope fence is stored verbatim on the project's
+# `settings.hunting.threat_model_scope`, because a seeded trial mutates nothing.
+#
+# The comparison baselines are iteration C and iteration D under
+# docs/experiments/hunt-enhancement/.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: auth-bootstrap
+    status: incomplete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-1
+    env_file: eval-server-1/.env
+    targets:
+      - target_key: webexploitbench/white-jotter
+        target_id: white-jotter-1
+        target_run_id: iterca-white-jotter
+        token_budget: 7000000
+        existing_project_id: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8
+        target_config:
+          operator_kb: /root/eval-dd/data/white-jotter/operator_kb.md
+          data_dir: /root/eval-dd/data/white-jotter
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun, ffuf, kiterunner]
+        hunting:
+          pipeline_sync: batched
+          pod_batch_size: 2
+          promotion_risk_threshold: 2.5
+          risk_threshold: 156.25

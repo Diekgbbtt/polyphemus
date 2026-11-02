@@ -48,18 +48,22 @@ def test_axis_empty_card_defaults():
 
 # --- the hunting roles join the LLM role registry (Q1, #93/#94) --------------
 
-def test_compose_grounding_renders_the_loop_payload():
-    """The first-step grounding renders the loop payload's context (S2 8.2):
-    the unit and loop, the two classes, the trust agreement, the programming
-    fault, the technical sharpening, the evidence and the target context - and
-    never a retired config field or a failure mode."""
+def test_compose_grounding_renders_the_threat_payload():
+    """The first-step grounding renders the threat payload's context (S2 8.2,
+    spec 9): the unit and threat, the derived risk, the two classes, the trust
+    agreement, the programming fault, the technical sharpening, the evidence and
+    the target context - and never a retired config field, a failure mode, or the
+    retired likelihood vocabulary."""
     from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
     from tests.hunting_fixtures import _hunter_payload
 
     payload = _hunter_payload()
     text = _compose_grounding(payload)
     assert "You are dispatched to hunt Service:slug:a" in text
-    assert "Loop: loop-1" in text and "Service-slug-a__loop-1" in text
+    assert "Threat: threat-1" in text and "Service-slug-a__threat-1" in text
+    assert "risk 9.2 (critical)" in text
+    assert "CVSS 4.0 vector over domain-mapped factors: CVSS:4.0/AV:N/AC:L" in text
+    assert "Factors:" in text and '"confidentiality": "high"' in text
     assert "Canonical class: IDOR" in text
     assert "web-vulnerability suite class: idor" in text
     assert "An anonymous caller reads another user's item." in text
@@ -67,8 +71,108 @@ def test_compose_grounding_renders_the_loop_payload():
     assert "ta-1" in text and "ia-1" in text
     assert "GET /api/a" in text
     for gone in ("HuntConfig", "failure_modes", "payload_vector_space",
-                 "technique_primitives", "prior_hunt_insights"):
-        assert gone not in text
+                 "technique_primitives", "prior_hunt_insights", "likelihood",
+                 "Likelihood", "Confidence degree"):
+        assert gone not in text, gone
+
+
+def test_compose_grounding_renders_the_risk_and_the_assessment():
+    """The hunter sees the risk that prioritised the threat and the shared
+    assessment as context, not as a gate: the symptoms it engineers remain
+    variant-specific, and the assumption confidences say what to verify."""
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+    from tests.hunting_fixtures import _hunter_payload
+
+    text = _compose_grounding(_hunter_payload())
+
+    assert "Impact description:" in text
+    assert "An anonymous caller reads another tenant's item" in text
+    assert "Exploitability description:" in text
+    assert "One unauthenticated request names the item id" in text
+    assert "Capability: read another tenant's item (Service:slug:a::p-1)" in text
+    assert "capability path: (none)" in text
+    assert "Enabling precursors (capability, provider): (none)" in text
+    assert "Assumption confidences (probe the ASSUMED premises):" in text
+    assert '"confidence": "ASSUMED"' in text
+    assert "The verification symptoms are variant-specific; the end damage is shared." in text
+    for gone in ("End impact:", "CIA:", "VC ", "Attacker position:",
+                 "Likelihood rationale:", "Impact assessment:"):
+        assert gone not in text, gone
+
+
+def test_compose_grounding_renders_a_provider_less_capability():
+    """A required capability with no provider is rendered as an explicit null,
+    so the hunter sees the unfilled gap rather than an absent row."""
+    import copy
+
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+    from tests.hunting_fixtures import _hunter_payload
+
+    payload = copy.deepcopy(_hunter_payload())
+    payload["enabling_precursors"] = [["read another tenant's item", None]]
+
+    text = _compose_grounding(payload)
+
+    assert '[["read another tenant\'s item", null]]' in text
+
+
+def test_step_protocol_respecifies_the_phase_hint_as_a_transition_signal():
+    """The step protocol says the ENDING tool response of a pass carries the
+    hint; it does not claim every tool result carries one."""
+    from polymerhus.attack.hunting.hunting_agent import _STEP_PROTOCOL  # noqa: PLC0415
+
+    assert "A result may carry" not in _STEP_PROTOCOL
+    assert "When the workflow transitions to a new pass" in _STEP_PROTOCOL
+    assert "ending tool response" in _STEP_PROTOCOL
+    assert "guidance, never a gate" in _STEP_PROTOCOL
+
+
+def test_compose_grounding_projects_technical_sharpening_to_load_bearing_fields():
+    """The first-step sharpening is a projection, not an evidence dump: every
+    agreement id and statement survives, while repeated evidence entries do not
+    inflate the block past its 4,000-char bound."""
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+
+    detail = "probe detail " * 200
+    agreement = {
+        "id": "IA-1",
+        "statement": "The download route authorises the report id against the caller's tenant.",
+        "confidence": "observed",
+        "evidences": [{"kind": "probe", "ref": "http_1", "detail": detail}],
+    }
+    control = {
+        "id": "CF-1",
+        "statement": "The handler loads the report before it checks ownership.",
+        "confidence": "inferred",
+        "evidences": [{"kind": "source", "ref": "src_1", "detail": detail}],
+    }
+    data = {
+        "id": "DF-1",
+        "statement": "The report id crosses the service boundary as a client value.",
+        "confidence": "assumed",
+        "evidences": [{"kind": "note", "ref": "n_1", "detail": detail}],
+    }
+    payload = {
+        "unit_id": "Service:reports:a",
+        "threat_id": "threat-1",
+        "technical_sharpening": {
+            "interface_agreements": [agreement],
+            "control_flows": [control],
+            "data_flows": [data],
+        },
+        "target_context": {"unit_id": "Service:reports:a"},
+    }
+
+    text = _compose_grounding(payload)
+    start = text.index("Technical sharpening")
+    block = text[start:text.index("Threat evidence", start)]
+
+    assert len(block) <= 4000
+    for token in ("IA-1", "CF-1", "DF-1", "authorises the report id",
+                  "loads the report before", "crosses the service boundary"):
+        assert token in block, token
+    assert "probe detail" not in block
+    assert "http_1" not in block
 
 
 def test_payload_gaps_flags_the_missing_grounding():
@@ -141,6 +245,25 @@ def _run_stubbed_dispatch(monkeypatch, turns, *, overview=None):
     return dispatch(_hunter_payload()), calls
 
 
+def test_hunter_binds_the_read_only_auth_store(monkeypatch):
+    """The hunter reads auth context; it never writes the store. The binding
+    must select the read-only contract, not the 5.8k full write contract."""
+    from polymerhus.app.auth import seams  # noqa: PLC0415
+    from langchain_core.messages import AIMessage  # noqa: PLC0415
+
+    captured: dict = {}
+    real = seams.auth_capable_binding
+
+    def spy(role_id, **kwargs):
+        captured.update(kwargs)
+        return real(role_id, **kwargs)
+
+    monkeypatch.setattr(seams, "auth_capable_binding", spy)
+    _run_stubbed_dispatch(monkeypatch, [{"answer": "done",
+                                         "message": AIMessage(content="done")}])
+    assert captured.get("with_readonly_auth_store") is True
+
+
 def test_skill_body_rides_system_prompt_not_first_human_message(monkeypatch):
     """(a) the skill body is served as `system_prompt` on the turn, never
     inside the first HumanMessage."""
@@ -168,9 +291,9 @@ def test_hunter_turns_thread_the_project_as_usage_scope(monkeypatch):
     assert calls[0]["usage_scope"] == "proj-a"
 
 
-def test_first_step_carries_the_dedicated_overview_message(monkeypatch):
-    """Q4: the hunt's first turn heads with the dedicated Overview-only
-    HumanMessage; the grounding/first-step message chains to it."""
+def test_first_step_carries_one_pinned_overview_and_threat_message(monkeypatch):
+    """The first human message carries the application overview and the threat
+    grounding together, so the compaction pin preserves both."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
 
     overview = {
@@ -187,13 +310,12 @@ def test_first_step_carries_the_dedicated_overview_message(monkeypatch):
         monkeypatch, [{"answer": "done", "message": AIMessage(content="done")}],
         overview=overview)
     first_turn = calls[0]["new_messages"]
-    assert len(first_turn) == 2
-    assert first_turn[0].content.startswith("APPLICATION OVERVIEW (")
-    assert "Domain: comfyui" in first_turn[0].content
-    grounded = first_turn[1].content
+    assert len(first_turn) == 1
+    grounded = first_turn[0].content
+    assert grounded.startswith("APPLICATION OVERVIEW (")
+    assert "Domain: comfyui" in grounded
     assert "Grounded in the application overview above" in grounded
-    assert "APPLICATION OVERVIEW" not in grounded
-    assert "fault-1" in grounded  # the loop grounding still rides the message
+    assert "fault-1" in grounded  # the threat grounding still rides the message
 
 
 def test_first_step_stays_single_message_without_an_overview(monkeypatch):
@@ -221,10 +343,10 @@ def test_skill_includes_the_off_path_examples_companion():
     assert "read `examples.md`" not in skill
 
 
-def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
+def test_first_human_message_carries_grounding_state_protocol_in_order(
         monkeypatch):
-    """(b) the first HumanMessage still carries grounding + surface + state +
-    protocol in order, and no skill body."""
+    """(b) the first HumanMessage carries grounding + state + protocol in order,
+    never the threat tool surface and never the skill body."""
     from langchain_core.messages import AIMessage  # noqa: PLC0415
     from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
         _load_hunting_agent_skill,
@@ -235,11 +357,11 @@ def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
                        "message": AIMessage(content="done")}])
     first_human = calls[0]["new_messages"][0].content
     assert _load_hunting_agent_skill() not in first_human
+    assert "Tool surface" not in first_human
     grounding = first_human.index("You are dispatched to hunt")
-    surface = first_human.index("Tool surface")
     state = first_human.index("state: grounding")
     protocol = first_human.index("Each turn you either call")
-    assert grounding < surface < state < protocol
+    assert grounding < state < protocol
 
 
 def test_two_step_scripted_dispatch_terminates_with_terminal_assembly(
@@ -300,16 +422,14 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
     )
 
     skill = _load_hunting_agent_skill()
-    from polymerhus.app.llm.skills import (  # noqa: PLC0415
-        render_skill_index,
-        skill_meta,
-        skills_for_role,
-    )
+    from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
+    from polymerhus.app.llm.skills import render_skill_references  # noqa: PLC0415
 
     # The role's bounded skill set rides the same system channel, after the
-    # skill: `skill` verbatim, blank line, L1 index (the shared renderer's
-    # exact composition - never hand-written here).
-    index = render_skill_index(skills_for_role("hunting_hunter"))
+    # skill: `skill` verbatim, blank line, the direct-reference line (the
+    # shared renderer's exact composition - never hand-written here).
+    binding = auth_capable_binding("hunting_hunter")
+    index = render_skill_references(binding.context["skills"])
     seen: list = []
     import tempfile  # noqa: PLC0415
 
@@ -328,10 +448,8 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
     assert len(seen) == 2
     for turn_messages in seen:
         assert turn_messages[0] == f"{skill}\n\n{index}"  # the leading SystemMessage
-        assert "steel-browser" in turn_messages[0]  # the bounded set is indexed
-        # ... and the line the model actually reads is the skill's frontmatter
-        # `description` VERBATIM (not a paraphrase, not a re-render).
-        assert skill_meta("steel-browser")["description"] in turn_messages[0]
+        assert "`steel-browser`" in turn_messages[0]  # the bounded set is named
+        assert "Skills available through the `load_skill` tool" not in turn_messages[0]
         assert skill not in turn_messages[1]  # the grounding HumanMessage
         assert "You are dispatched to hunt" in turn_messages[1]
 

@@ -4,7 +4,7 @@ The manual `assess` verb runs the configured agent command synchronously through
 the bounded runner (D6), handing it the prompt file, the trial record, the
 ground truth, the data root, and the destination `verdicts.yaml`. The monitor
 instead runs the assessor as an awaited native opencode child session (#350,
-D57). In both paths the agent writes that file and nothing else; the prompt
+D57). In both paths the agent writes those files and nothing else; the prompt
 states the contract.
 
 The eval-close phase (N16/D15) checks presence and schema for every trial,
@@ -24,7 +24,7 @@ from typing import Callable, Mapping, Sequence
 
 import yaml
 
-from orchestrator import subagents, trial, verdicts
+from orchestrator import impact_review, subagents, trial, verdicts
 from orchestrator.commands import Command
 from orchestrator.files import FileStore
 
@@ -57,6 +57,7 @@ class AssessmentRequest:
     data_root: Path
     destination: Path
     trace_id: str | None = None
+    require_impact_review: bool = False
 
 
 # The dispatch seam: run the configured agent command with the request. The
@@ -107,15 +108,18 @@ def launch_message(request: AssessmentRequest) -> str:
     the dispatcher can observe a terminal even before the file lands.
     """
     trace = request.trace_id or "(none)"
+    review = impact_review.review_path(request.destination)
     return (
         "Assess one completed polymerhus eval trial.\n"
         f"- trial record: {request.trial_record}\n"
         f"- ground truth: {request.ground_truth}\n"
         f"- data root: {request.data_root}\n"
         f"- destination: {request.destination}\n"
+        f"- impact review: {review}\n"
         f"- trace id: {trace}\n"
         "Read eval/prompts/assessment.md and follow it exactly. "
-        "Write only the destination file. When done, reply with a single "
+        "Write the destination file and its sibling impact review; write nothing "
+        "else. When done, reply with a single "
         "terminal line: `ASSESSMENT COMPLETE` or `ASSESSMENT FAILED: <reason>`."
     )
 
@@ -170,6 +174,14 @@ def check_verdicts(
         )
     except (verdicts.VerdictError, OSError):
         return "invalid"
+    review = impact_review.review_path(request.destination)
+    if files.exists(review):
+        try:
+            impact_review.load_review(review, files=files)
+        except (impact_review.ReviewError, OSError):
+            return "invalid"
+    elif request.require_impact_review:
+        return "missing"
     return "present"
 
 

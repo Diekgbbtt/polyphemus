@@ -10,9 +10,10 @@ Three data dependencies per target, the N12 work items of the eval harness:
 1. **L1 surface** - the target's business-function `Service`s and cross-cutting `System`s, grounded on the real deployed target.
    Consumed now as `operator_kb.md` (structured prose) through the platform scaffold (`src/polymerhus/analysis/scaffold.py`; the eval CLI wrapper is `eval/scaffold.py`); also emitted as a graph-ready RDF dataset (`l1-surface.yaml`).
 2. **AuthContext** - the store's `overview` (login mechanism, defences, required headers, anti-bot, replayability) and `accounts` (credentials, tokens, roles).
-   Consumed inline through `target_config.auth` -> `PUT /projects/{id}/auth`.
+   Placed through the data-dependency endpoints: the auth files land in the app data root `<data_root>/<project_id>/auth/`.
 3. **Project authn skill** - the replayable sign-in/sign-up procedure bundle.
-   Consumed as text through `target_config.auth.authn_skill` -> `<data_root>/<project_id>/skills/authn/SKILL.md`.
+   Placed through the authn-skill endpoint: the canonical live bundle is `<skills_root>/target-specific-procedure/<project_id>/authn/SKILL.md`.
+   The data root is not a skill location.
 
 ## 2. Where it lands (assumption)
 
@@ -28,7 +29,7 @@ eval/data/webexploitbench/<target>/
   research-notes.md     # human-readable research notes (existing convention)
 ```
 
-**AuthContext + authn skill** - a staging directory that REPLICATES the app-owned project data dir, so it can be mounted (or copied) as a data root at wire time:
+**AuthContext + authn skill** - the eval's upload source. It holds the auth files and the authn bundle; the data-dependency endpoints write the auth under the app data root and the authn under the live skills root. The staging directory is not a runtime data root:
 
 ```
 eval/data-dependencies/
@@ -42,7 +43,9 @@ eval/data-dependencies/
         references/      # login-specific scripts
 ```
 
-This mirrors `<data_root>/<project_id>/{auth,skills}` exactly, which is the layout the `AuthStore` (`src/polymerhus/app/auth/store.py`) and `SkillStore` read.
+The staging `auth/` layout mirrors the app data root; the staging `skills/authn/` bundle is the upload source for the canonical `skills/target-specific-procedure/<project_id>/authn/` bundle.
+The `AuthStore` (`src/polymerhus/app/auth/store.py`) reads the data root; the `SkillStore` reads the live skills root.
+The data root never carries skills.
 No seeding into a live store is required at build time: the creator authors these files directly, and the eval trial places them later through the data-dependency placement endpoints, from the per-target directory on the eval host (see "Wire time" below).
 
 `<target>` is the WebExploitBench target name (`comfyui`, `dify`, ...).
@@ -50,7 +53,8 @@ No seeding into a live store is required at build time: the creator authors thes
 ### Wire time - publishing to the eval host
 
 The eval system reads one directory per target at `/root/eval-dd/data/<target>/` on the eval host.
-The setups YAMLs pin that path through `operator_kb` and `data_dir`, and the trial's placement helper reads `auth/{overview,credentials}.yaml`, `skills/authn/`, and the operator KB from it.
+The setups YAMLs pin that path through `operator_kb` and `data_dir`, and the trial's placement helper reads the staging source (`auth/{overview,credentials}.yaml`, `skills/authn/`, and the operator KB) and uploads it.
+The app writes the auth under the data root and the authn under the live skills root.
 Publish the regenerated set there with:
 
 ```
@@ -174,7 +178,7 @@ Rules:
 One creator subagent per target.
 The order is **authn first, L1 second**: the L1 crawl is authenticated, so the authn artifacts must exist before it runs.
 
-- **Phase 1 (authn)** - deploy the target locally, then run the `authn-skill-writing` meta-skill P0-P6 against it; write `auth/{overview.yaml,credentials.yaml}` + `skills/authn/`, including the persisted session `snapshot`. Leave the target running. STOP.
+- **Phase 1 (authn)** - deploy the target locally, then run the `authn-skill-writing` meta-skill P0-P6 against it; write the staging source `auth/{overview.yaml,credentials.yaml}` + `skills/authn/`, including the persisted session `snapshot`. The upload places the authn in the canonical skills root's `target-specific-procedure/<project_id>/authn/` bundle. Leave the target running. STOP.
 - **Phase 2 (L1, authenticated)** - the same creator is resumed; it reads the AuthContext + skill, authenticates by replaying the persisted session snapshot (falling back to the skill's sign-in procedure with credentials when the snapshot is stale or not portable), then crawls both the anonymous and the post-login surface into `operator_kb.md` + `l1-surface.yaml` + `surface-map.md`/`research-notes.md`. STOP.
 
 Why this order:

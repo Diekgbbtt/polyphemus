@@ -60,11 +60,11 @@ def test_code_resolves_every_evidence_path_under_the_project_segment() -> None:
             Path(PROJECT_ID) / "hunting/threat_modeller" / side
         )
     dispatch = files.hunter_test_specs_family_dir(
-        DATA_ROOT, PROJECT_ID, "service-web-viewer__loop-1", "produced"
+        DATA_ROOT, PROJECT_ID, "service-web-viewer__threat-1", "produced"
     )
     assert dispatch.relative_to(DATA_ROOT) == (
         Path(PROJECT_ID)
-        / "hunting/hunter/test-specs/service-web-viewer__loop-1/produced"
+        / "hunting/hunter/test-specs/service-web-viewer__threat-1/produced"
     )
     assert files.pod_dir(DATA_ROOT, PROJECT_ID).relative_to(DATA_ROOT) == (
         Path(PROJECT_ID) / "hunting/test-executor-pod"

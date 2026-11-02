@@ -390,7 +390,9 @@ def test_the_bound_auth_view_carries_no_write_capability(tmp_path):
 
     store = _seeded_auth_store(tmp_path)
     tool = _bound_auth_tool(_auth_binding("assigner", AUTH_PROJECT, store).tools)
-    assert set(tool.args) == {"command", "path"}
+    # Read-only projection args are allowed; a write value must have no field.
+    assert set(tool.args) <= {"command", "path", "view", "fields"}
+    assert "value" not in tool.args
     out = tool.invoke({"command": "write", "path": "accounts.mallory",
                        "value": {"notes": "nope"}})
     assert out["ok"] is False

@@ -1,0 +1,495 @@
+{
+  "unique_calls": 44,
+  "calls": [
+    {
+      "role": "hunting_threat_modeller",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 10156,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"/api/login\", \"required_headers\": [\"Content-Type: applicati"
+    },
+    {
+      "role": "skill_evolver",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 10282,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"/api/login\", \"required_headers\": [\"Content-Type: applicati"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'summary', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'summary', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {usernam"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73920,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'full', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {username,p"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'summary', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {usernam"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'summary', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {usernam"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'summary', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "overview",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 1195,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"overview\", \"value\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,password} -> result.to"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73920,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'full', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {username,p"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73920,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'full', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {username,p"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "technical_conditions",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 76,
+      "head": "{'ok': True, 'command': 'read', 'path': 'technical_conditions', 'value': {}}"
+    },
+    {
+      "role": "skill_evolver",
+      "path": "overview",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 5342,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"overview\", \"value\": {\"login_endpoint\": \"/api/login\", \"required_headers\": [\"Content-Type: application/json\"], \"mechanism"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'summary', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {usernam"
+    },
+    {
+      "role": "hunting_hunter",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{'ok': True, 'command': 'read', 'path': '', 'view': 'summary', 'value': {'overview': {'login_endpoint': 'POST /api/authorize/login', 'mechanism': 'JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "skill_evolver",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 10282,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"/api/login\", \"required_headers\": [\"Content-Type: applicati"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "accounts.specmgr1618-hunting_profile_role_rebinding",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 620,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"accounts.specmgr1618-hunting_profile_role_rebinding\", \"value\": {\"procedure\": \"hunting_profile_role_rebinding\", \"credent"
+    },
+    {
+      "role": "pod_runner",
+      "path": "accounts.admin-hunting_misauthr",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 1273,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"accounts.admin-hunting_misauthr\", \"value\": {\"tokens\": {\"session\": {\"value\": \"<redacted>\", \"location\": \"header\", \"target"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "full",
+      "fields": [],
+      "command": "read",
+      "chars": 73934,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,p"
+    },
+    {
+      "role": "pod_runner",
+      "path": "",
+      "view": "summary",
+      "fields": [],
+      "command": "read",
+      "chars": 21017,
+      "head": "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+    }
+  ],
+  "shapes": [
+    {
+      "command": "read",
+      "view": "full",
+      "path": "",
+      "fields": [],
+      "calls": 23,
+      "chars": 1509358,
+      "roles": {
+        "hunting_threat_modeller": 1,
+        "skill_evolver": 2,
+        "pod_runner": 17,
+        "hunting_hunter": 3
+      },
+      "samples": [
+        "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"/api/login\", \"required_headers\": [\"Content-Type: applicati",
+        "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"full\", \"value\": {\"overview\": {\"login_endpoint\": \"/api/login\", \"required_headers\": [\"Content-Type: applicati"
+      ]
+    },
+    {
+      "command": "read",
+      "view": "summary",
+      "path": "",
+      "fields": [],
+      "calls": 16,
+      "chars": 336272,
+      "roles": {
+        "pod_runner": 9,
+        "hunting_hunter": 7
+      },
+      "samples": [
+        "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam",
+        "{\"ok\": true, \"command\": \"read\", \"path\": \"\", \"view\": \"summary\", \"value\": {\"overview\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {usernam"
+      ]
+    },
+    {
+      "command": "read",
+      "view": "summary",
+      "path": "overview",
+      "fields": [],
+      "calls": 2,
+      "chars": 6537,
+      "roles": {
+        "pod_runner": 1,
+        "skill_evolver": 1
+      },
+      "samples": [
+        "{\"ok\": true, \"command\": \"read\", \"path\": \"overview\", \"value\": {\"login_endpoint\": \"POST /api/authorize/login\", \"mechanism\": \"JSON {username,password} -> result.to",
+        "{\"ok\": true, \"command\": \"read\", \"path\": \"overview\", \"value\": {\"login_endpoint\": \"/api/login\", \"required_headers\": [\"Content-Type: application/json\"], \"mechanism"
+      ]
+    },
+    {
+      "command": "read",
+      "view": "summary",
+      "path": "technical_conditions",
+      "fields": [],
+      "calls": 1,
+      "chars": 76,
+      "roles": {
+        "hunting_hunter": 1
+      },
+      "samples": [
+        "{'ok': True, 'command': 'read', 'path': 'technical_conditions', 'value': {}}"
+      ]
+    },
+    {
+      "command": "read",
+      "view": "summary",
+      "path": "accounts.specmgr1618-hunting_profile_role_rebinding",
+      "fields": [],
+      "calls": 1,
+      "chars": 620,
+      "roles": {
+        "pod_runner": 1
+      },
+      "samples": [
+        "{\"ok\": true, \"command\": \"read\", \"path\": \"accounts.specmgr1618-hunting_profile_role_rebinding\", \"value\": {\"procedure\": \"hunting_profile_role_rebinding\", \"credent"
+      ]
+    },
+    {
+      "command": "read",
+      "view": "summary",
+      "path": "accounts.admin-hunting_misauthr",
+      "fields": [],
+      "calls": 1,
+      "chars": 1273,
+      "roles": {
+        "pod_runner": 1
+      },
+      "samples": [
+        "{\"ok\": true, \"command\": \"read\", \"path\": \"accounts.admin-hunting_misauthr\", \"value\": {\"tokens\": {\"session\": {\"value\": \"<redacted>\", \"location\": \"header\", \"target"
+      ]
+    }
+  ]
+}

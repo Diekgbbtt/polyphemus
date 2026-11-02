@@ -1,0 +1,68 @@
+# Iteration D - white-jotter, the capability-first impact modeller on a copied
+# data layer.
+#
+# This arm does NOT re-run recon or analysis. It starts from a brand-new project
+# whose L0/L1 graph, auth context, and authn skill were copied from the
+# iteration C project (8e2e5dc7-a880-4451-aaa5-267cedd48264), with hunting/ and
+# usage/ excluded. Hunting therefore starts from scratch on an unchanged data
+# layer, and the only moving part is the threat modeller and the run policy.
+#
+# The source copy is `copy_project.py` beside this file.
+#
+# The frozen hunting policy this arm pins:
+#   pipeline_sync            batched
+#   pod_batch_size           1
+#   promotion_risk_threshold 4     (inclusive; a threat at risk 4 or higher is promoted)
+#   risk_threshold           180   (cumulative halt, same as iteration C)
+#   token_budget             7000000 (same as iteration C)
+#
+# Instance `.env` for this arm:
+#   HUNT_RISK_THRESHOLD=180
+#   SKILL_EVOLUTION_ENABLED=0
+#   LLM_HUNTING_THREAT_MODELLER=opencode-go:deepseek-v4.1-flash
+#   LLM_HUNTING_HUNTER=opencode-go:deepseek-v4.1-flash
+#   LLM_ANALYSER=opencode-go:deepseek-v4.1-flash
+#
+# The scope fence is stored verbatim on the project's
+# `settings.hunting.threat_model_scope`, because a seeded trial mutates nothing.
+# It forbids modelling rate-limit defence properties, the plain-text nature of a
+# channel, and any direction that needs a preliminary step (for example
+# phishing) to reach full client-side code control.
+#
+# The comparison baselines are iteration C and iteration B under
+# docs/experiments/hunt-enhancement/.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: auth-bootstrap
+    status: incomplete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-1
+    env_file: eval-server-1/.env
+    targets:
+      - target_key: webexploitbench/white-jotter
+        target_id: white-jotter-1
+        target_run_id: iterd-white-jotter
+        token_budget: 7000000
+        existing_project_id: fe446230-1f19-41c7-bf2e-b7b4b9c6f0f5
+        target_config:
+          operator_kb: /root/eval-dd/data/white-jotter/operator_kb.md
+          data_dir: /root/eval-dd/data/white-jotter
+          recon_jobs: [httpx, httpx_reprofile, katana, jsluice, arjun, ffuf, kiterunner]
+        hunting:
+          pipeline_sync: batched
+          pod_batch_size: 1
+          promotion_risk_threshold: 4
+          risk_threshold: 180

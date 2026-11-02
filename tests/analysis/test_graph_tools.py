@@ -189,6 +189,19 @@ def test_schema_states_the_witness_identity_keys():
     assert L0_IDENTITY_KEYS["Technology"] == ("name", "version")
     assert L0_IDENTITY_KEYS["Certificate"] == ("subject_cn",)
 
+def test_schema_names_the_technology_edge_observation_identity_and_label_rule():
+    """F-010/F-012: the previous guide let the model guess `HAS_TECHNOLOGY`,
+    `l0.label`, and a generic `key`. The contract must name the real edge, the
+    Observation identity, and the label predicate rule explicitly."""
+    assert "USES_TECHNOLOGY" in GRAPH_VIEW_CONTRACT
+    assert "HAS_TECHNOLOGY" not in GRAPH_VIEW_CONTRACT
+    assert "Observation (id)" in GRAPH_VIEW_CONTRACT
+    assert "labels(n)" in GRAPH_VIEW_CONTRACT
+    assert "`n.label` is not a property" in GRAPH_VIEW_CONTRACT
+    assert "`key` is not an identity property" in GRAPH_VIEW_CONTRACT
+
+
+
 
 def test_a_system_neighbours_query_reads_its_witnesses():
     """The System -> L0 witness hop is a plain read through the tool: the EVIDENCED_BY

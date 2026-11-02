@@ -1,0 +1,76 @@
+- vuln_id: white-jotter-001
+  identified: partial
+  confidence: 0.45
+  matched:
+    unit: 'Service:sign-in'
+    web_vulnerability_class: rate-limit-bypass
+    fault: 'F-1: missing attempt throttling / lockout on the credential-verification transition'
+    symptom: 'POST /api/login with the shipped default administrator pair admin/123 returned HTTP 200 {"code":200,"message":"成功","result":"admin"} with a fresh JSESSIONID in the rate-limit pod''s own control probes, so the default-credential symptom is confirmed at the right locus, but the pod''s confirmed class and fault are rate-limit-bypass / F-1, not the weak-or-default-credential class, and no loop or spec was scoped to that class'
+  evidence_chain:
+    loop: dda347be-abea-48e4-94e5-4a4039f41858/hunting/threat_modeller/consumed/Service-sign-in/threat-1.yaml
+    spec_dir: dda347be-abea-48e4-94e5-4a4039f41858/hunting/hunter/test-specs/Service-sign-in__threat-1
+    experiment_logs:
+      - dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/rate-limit-bypass__burst-classification__sequential__canonical/experiment-log/0.yaml
+    pod_export: dda347be-abea-48e4-94e5-4a4039f41858/hunting/test-executor-pod/rate-limit-bypass__burst-classification__sequential__canonical/12d15890-47b2-43c2-bbe3-14c9626a2fdb.yaml
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+- vuln_id: white-jotter-002
+  identified: missed
+  confidence: 0.8
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+- vuln_id: white-jotter-003
+  identified: missed
+  confidence: 0.9
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+- vuln_id: white-jotter-004
+  identified: missed
+  confidence: 0.9
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+- vuln_id: white-jotter-005
+  identified: missed
+  confidence: 0.9
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+- vuln_id: white-jotter-006
+  identified: missed
+  confidence: 0.85
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6
+- vuln_id: white-jotter-007
+  identified: missed
+  confidence: 0.9
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: 81522a71f3f5fbb0dcd9f9bb3c71d59a5e2b9002
+  stack_fingerprint: eacbaf79e043443e1ea6bd7db5c1e0b36612505d36799609f22bbb2d68b313e6

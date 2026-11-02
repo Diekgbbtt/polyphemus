@@ -1,14 +1,15 @@
 """The hunting agent (S3 8.4-8.9, T6 #379): the turn-by-turn ReAct host.
 
-The harness drives the model through the ratified loop tool surface
+The harness drives the model through the ratified threat tool surface
 (`hunts_store` / `notes` / `graph_view` / `kb_query` / `exec` / `skill_list` /
 `skill_load`, R3/R1/R2, S3 8.7) as a turn-by-turn ReAct loop OVER the
-pass-chain tracker (`hunter_graph.py`). It is dispatched with ONE loop PAYLOAD
-(S2 8.2: the loop record, the unit context, the trust agreement or transition,
-the programming fault, the two classes, the evidence, the likelihood and the
-target context) - never a `HuntConfig` (retired T6). Persistence rides the
-per-project hunter memory store under the loop dispatch id
-`<unit_name>__<loop_id>` (S3 8.9), and the harness derives no verdict: the hunt
+pass-chain tracker (`hunter_graph.py`). It is dispatched with ONE threat PAYLOAD
+(S2 8.2: the threat record, the unit context, the trust agreement or transition,
+the programming fault, the two classes, the evidence, the derived risk and the
+assessment, and the target context) - never a `HuntConfig` (retired T6).
+Persistence rides the
+per-project hunter memory store under the threat dispatch id
+`<unit_name>__<threat_id>` (S3 8.9), and the harness derives no verdict: the hunt
 idles at END (R4/GP2-b).
 
 The harness is the TURN-BY-TURN DRIVER (ADR R4): per LLM step it runs ONE
@@ -89,6 +90,7 @@ from polymerhus.attack.hunting.hunting_tracing import (
     flush_hunting_traces,
     trace_span,
 )
+from polymerhus.attack.hunting.spec_contract import TargetIdentity
 from polymerhus.app.llm.provider_failure import (
     ProviderUnavailableError,
     as_provider_error,
@@ -101,7 +103,7 @@ logger = logging.getLogger(__name__)
 # differently from the role registry / session address.
 _HUNTER_ROLE = "hunting_hunter"
 
-# The step-budget safety bound: the turn-by-turn loop is the model's to conclude,
+# The step-budget safety bound: the turn-by-turn threat is the model's to conclude,
 # but a stalled or looping model must never pin a hunt forever (fail-open O3).
 _MAX_STEPS = 60
 
@@ -120,7 +122,7 @@ _MAX_STEPS = 60
 # --- the stable system prompt (single-sourced from the SKILL.md) ---------------
 
 # The stable system prompt is read directly from this module's `prompts/` dir:
-# `hunting-agent.md` (the role, the loop ontology, the discipline, the decision
+# `hunting-agent.md` (the role, the threat ontology, the discipline, the decision
 # tree, the eight passes, the spec body, and the tools) plus its companion
 # `examples.md` (the off-path worked examples Example 2-4 the main body points
 # at), concatenated into ONE prompt. Memoized on first call (no
@@ -149,9 +151,17 @@ def _load_hunting_agent_skill() -> str:
         from pathlib import Path  # noqa: PLC0415
 
         from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+        from polymerhus.attack.hunting.hunter_tools import (  # noqa: PLC0415
+            render_spec_contract,
+        )
 
         prompts = Path(__file__).resolve().parent / "prompts"
         main = (prompts / "hunting-agent.md").read_text(encoding="utf-8")
+        marker = "<!-- SPEC_BODY -->"
+        if marker not in main:
+            raise ValueError(
+                "hunting-agent.md is missing the generated spec-body marker")
+        main = main.replace(marker, render_spec_contract())
         examples = (prompts / "examples.md").read_text(encoding="utf-8")
         _HUNTING_AGENT_SKILL = with_cortex(
             main.rstrip("\n") + "\n\n" + examples)
@@ -182,7 +192,7 @@ def derive_technological_axis(card: dict | None) -> str:
 
 
 def _payload_gaps(payload: Mapping[str, Any]) -> list[str]:
-    """The O3 gap flags for a degraded loop payload: the agent still authors
+    """The O3 gap flags for a degraded threat payload: the agent still authors
     from the present parts and flags each missing part in the feedback."""
     gaps: list[str] = []
     if not payload.get("unit_id"):
@@ -205,7 +215,7 @@ def _payload_gaps(payload: Mapping[str, Any]) -> list[str]:
 
 # The step protocol: the structured-output contract the model follows every turn
 # (Structured Output + Chain-of-Thought). Never changes across steps - the
-# constant is the template; the variable parts (the loop grounding, the tool
+# constant is the template; the variable parts (the threat grounding, the tool
 # surface, the state) compose the first step below and the tool results carry
 # the later steps.
 _STEP_PROTOCOL = (
@@ -215,8 +225,10 @@ _STEP_PROTOCOL = (
     "below and 'args' is a JSON object conforming EXACTLY to that tool's JSON "
     "schema (the schemas are supplied with this request; unknown fields are "
     "rejected). The harness executes the tool and returns its result as the "
-    "next message. A result may carry a <phase-transition-hint> - follow it as "
-    "the next reasoning phase.\n"
+    "next message. When the workflow transitions to a new pass, the ending tool "
+    "response carries a <phase-transition-hint> naming the next pass; follow "
+    "it. A hint is guidance, never a gate: no call is refused for the pass the "
+    "state is in.\n"
     "- Conclude with a plain message carrying the final rationale (no tool "
     "call) only when the terminal spec-set write has landed or no pass has "
     "work left; the terminal write itself ends the hunt.\n"
@@ -225,16 +237,6 @@ _STEP_PROTOCOL = (
     "assumption check and never manufacture a symptom - the test-executor pod "
     "remains the only source of experimental evidence for a ratified spec."
 )
-
-# The tool surface the model requests against (Template reuse): derived from the
-# actual bound tools' own contracts (`hunter_tools.py`), name + description -
-# never a hand-written parallel copy (the tool contracts are the single source).
-# The model sees the surface here - the tools are executed by the harness
-# between steps, never by the agent itself.
-def _tool_surface(tools) -> str:
-    lines = "\n".join(f"- {t.name}: {t.description}" for t in tools)
-    return f"Tool surface - you request exactly ONE tool call per step:\n{lines}"
-
 
 def _render(value: Any) -> str:
     """Deterministic render of one payload slot: JSON for mappings/lists, the
@@ -250,39 +252,89 @@ def _render(value: Any) -> str:
     return str(value)
 
 
+_SHARPENING_AGREEMENT_FIELDS = ("id", "statement", "confidence")
+
+
+def _project_agreement(value: Any) -> Any:
+    """One technical-sharpening agreement projected to its load-bearing fields.
+
+    The agreement's evidence entries are already represented by the threat
+    evidence the payload carries; repeating them in the sharpening block is the
+    occupancy defect this projection removes. A non-mapping value passes
+    through unchanged so a malformed payload still degrades visibly."""
+    if not isinstance(value, Mapping):
+        return value
+    return {
+        field: value[field]
+        for field in _SHARPENING_AGREEMENT_FIELDS
+        if field in value
+    }
+
+
+def _project_sharpening(value: Any) -> Any:
+    """Project the payload's technical sharpening to ids, statements, and
+    confidence, preserving the three agreement families."""
+    if not isinstance(value, Mapping):
+        return value
+    projected: dict[str, Any] = {}
+    for family in ("interface_agreements", "control_flows", "data_flows"):
+        items = value.get(family)
+        if isinstance(items, (list, tuple)):
+            projected[family] = [_project_agreement(item) for item in items]
+        elif items is not None:
+            projected[family] = items
+    return projected
+
+
 def _compose_grounding(payload: Mapping[str, Any]) -> str:
-    """The loop payload rendered once, ahead of the first step (S2 8.2): the
-    loop's context (the unit, the trust agreement or dynamic-state transition,
-    the programming fault, the two classes), the technical sharpening, the
-    evidence the hunter may choose a baseline from, the likelihood/confidence
-    and the target context. The rationale stays vulnerability-level - the
-    payload carries no failure modes, no narrowed vector and no pre-authored
-    payload vector space, so the hunter keeps the room to engineer its
-    procedure."""
+    """The threat payload rendered once, ahead of the first step (S2 8.2, spec
+    9): the threat's derived risk (score, band, vector, factors), the assessment
+    prose, the capability chain, the assumption confidences, the unit context
+    (the trust agreement or dynamic-state transition, the programming fault, the
+    two classes), the technical sharpening, the evidence the hunter may choose a
+    baseline from, and the target context. The rationale stays vulnerability-
+    level - the payload carries no narrowed vector and no pre-authored payload
+    vector space, so the hunter keeps the room to engineer its procedure."""
     unit_id = str(payload.get("unit_id") or "(unknown unit)")
-    loop_id = str(payload.get("loop_id") or "(unknown loop)")
+    threat_id = str(payload.get("threat_id") or "(unknown threat)")
     sharpening = payload.get("technical_sharpening") or {}
     target = payload.get("target_context") or {}
+    risk = payload.get("risk")
+    risk_text = "(none)" if risk is None else str(risk)
+    capability = str(payload.get("capability") or "(none)")
+    capability_id = str(payload.get("capability_id") or "")
+    if capability_id:
+        capability = f"{capability} ({capability_id})"
     return (
-        f"You are dispatched to hunt {unit_id} for one threat-model loop.\n"
-        f"Loop: {loop_id} (dispatch id "
-        f"{payload.get('dispatch_id') or '(none)'}), likelihood "
-        f"{payload.get('likelihood') or '(none)'}.\n"
+        f"You are dispatched to hunt {unit_id} for one threat-model threat.\n"
+        f"Threat: {threat_id} (dispatch id "
+        f"{payload.get('dispatch_id') or '(none)'}), risk {risk_text} "
+        f"({payload.get('severity_band') or '(none)'}).\n"
+        f"CVSS 4.0 vector over domain-mapped factors: "
+        f"{payload.get('risk_vector') or '(none)'}\n"
+        f"Factors: {_render(payload.get('factors'))}\n"
         f"Canonical class: {payload.get('canonical_class') or '(none)'}; "
         f"web-vulnerability suite class: "
         f"{payload.get('web_vulnerability_class') or '(none)'}.\n"
         f"Vulnerability-level rationale: "
         f"{payload.get('vulnerability_rationale') or '(none)'}\n"
-        f"Likelihood rationale: "
-        f"{payload.get('likelihood_rationale') or '(none)'}\n"
-        f"Confidence degree: {payload.get('confidence') or '(none)'}\n"
+        f"Impact description: {payload.get('impact_description') or '(none)'}\n"
+        f"Exploitability description: "
+        f"{payload.get('exploitability_description') or '(none)'}\n"
+        f"Capability: {capability}; capability path: "
+        f"{_render(payload.get('capability_path'))}\n"
+        f"Enabling precursors (capability, provider): "
+        f"{_render(payload.get('enabling_precursors'))}\n"
+        "The verification symptoms are variant-specific; the end damage is shared.\n"
+        f"Assumption confidences (probe the ASSUMED premises): "
+        f"{_render(payload.get('assumptions'))}\n"
         f"Programming fault: {_render(payload.get('programming_fault'))}\n"
         f"Trust agreement: {_render(payload.get('trust_agreement'))}\n"
         f"Dynamic-state transition/violation: "
         f"{_render(payload.get('dynamic_state'))}\n"
         f"Technical sharpening (interface agreements, control flows, data "
-        f"flows): {_render(sharpening)}\n"
-        f"Loop evidence (choose a baseline from the request/http-history "
+        f"flows): {_render(_project_sharpening(sharpening))}\n"
+        f"Threat evidence (choose a baseline from the request/http-history "
         f"refs): {_render(payload.get('evidence'))}\n"
         f"Target context: {_render(target)}"
     )
@@ -305,9 +357,10 @@ def _state_summary(state: dict) -> str:
 
 
 def _store_write_ok(result: str) -> bool:
-    """True when a `hunts_store` tool response is the persisted-write success
-    (`{"ok": true, "specs": [...]}`); anything else - a coded rejection, a
-    duplicate signal, an unreadable result - is not a persisted set."""
+    """True when a `hunts_store` tool response is a persisted success
+    (`{"ok": true, ...}`), including a successful `finalize`; anything else - a
+    coded rejection, a duplicate signal, an unreadable result - is not a
+    persisted set."""
     try:
         payload = json.loads(result)
     except (TypeError, ValueError):
@@ -349,24 +402,27 @@ def _fold_persisted_specs(
                 "hunt %s spec-set read-back degraded (%s); folding the write "
                 "payload instead", hunt_key, exc)
     if not bodies:
-        bodies = [
-            entry for entry in (tool_args.get("specs") or [])
-            if isinstance(entry, Mapping)
-        ]
+        one = tool_args.get("spec")
+        bodies = [one] if isinstance(one, Mapping) else []
     folded: list[dict] = []
     for body in bodies:
+        provenance = body.get("provenance")
+        provenance = provenance if isinstance(provenance, Mapping) else {}
+        discriminators = body.get("discriminators")
+        if not isinstance(discriminators, list):
+            discriminators = []
         try:
             spec_id = spec_identifier(
-                str(body.get("fault_keyword") or ""),
-                str(body.get("strategy_keyword") or ""),
+                str(provenance.get("web_vulnerability_class")
+                    or provenance.get("canonical_class") or ""),
+                discriminators,
             )
         except ValueError:
             continue
         folded.append({
             "spec_id": spec_id,
             "status": str(body.get("status") or ""),
-            "fault_keyword": str(body.get("fault_keyword") or ""),
-            "strategy_keyword": str(body.get("strategy_keyword") or ""),
+            "discriminators": list(discriminators),
             "spec_ref": paths.get(spec_id, ""),
             "verification_symptoms": list(body.get("verification_symptoms") or []),
             "summary": str(body.get("rationale") or "")[:200],
@@ -376,8 +432,8 @@ def _fold_persisted_specs(
 
 
 _HUNTER_CHAIN = (
-    "Grounded in the application overview above, your loop payload, the tool "
-    "surface, the current state, and the step protocol follow."
+    "Grounded in the application overview above, your threat payload, the "
+    "current state, and the step protocol follow."
 )
 
 
@@ -400,15 +456,16 @@ def _overview_message_for(overview_fn, project_id: str) -> str:
     return overview_message(value)
 
 
-def _compose_first_step(payload: Mapping[str, Any], state: dict,
-                        tool_surface: str, *, chained: bool = False) -> str:
-    """The first step's HUMAN input: the loop grounding, the tool surface, the
-    current state, and the step protocol, in that order. The stable skill rides
-    the SYSTEM channel (`system_prompt=` on every turn - the orchestrator's
+def _compose_first_step(payload: Mapping[str, Any], state: dict, *,
+                        chained: bool = False) -> str:
+    """The first step's HUMAN input: the threat grounding, the current state, and
+    the step protocol, in that order. The stable skill rides the SYSTEM channel
+    (`system_prompt=` on every turn - the orchestrator's
     [SystemMessage(skill), HumanMessage(prompt)] composed-turn precedent), never
     this message: this message is per-dispatch instance data (the correct human
-    channel), while the skill is the stable system prompt. Later steps resume
-    the thread from the checkpoint, so the grounding/surface are never repeated
+    channel), while the skill is the stable system prompt. The request tool
+    schemas ride the request prefix; the threat does not repeat them. Later steps
+    resume the thread from the checkpoint, so the grounding is never repeated
     into the conversation.
 
     The Q4 model: the structured Overview rides its OWN dedicated HumanMessage
@@ -417,7 +474,6 @@ def _compose_first_step(payload: Mapping[str, Any], state: dict,
     lead = f"{_HUNTER_CHAIN}\n\n" if chained else ""
     return lead + "\n\n".join([
         _compose_grounding(payload),
-        tool_surface,
         _state_summary(state),
         _STEP_PROTOCOL,
     ])
@@ -459,6 +515,7 @@ def build_hunting_agent(
     http_get_fn=None,
     suite_classes=(),
     suite_read_fn=None,
+    suite_parents=None,
     overview_fn=None,
     checkpointer=None,
     middleware=None,
@@ -469,10 +526,12 @@ def build_hunting_agent(
 
     `run_id` / `project_id` are the hunt's run and project (the project keys the
     per-project `HunterMemoryStore`); `memory_store` is that per-project store;
-    each dispatch BINDS the loop's own hunt key (`<unit_name>__<loop_id>`,
+    each dispatch BINDS the threat's own hunt key (`<unit_name>__<threat_id>`,
     S3 8.9, the payload's `dispatch_id`) into the tool surface so the store
-    tools can only address that loop; `graph_view_fn` / `kb_fn` / `exec_fn` are
+    tools can only address that threat; `graph_view_fn` / `kb_fn` / `exec_fn` are
     the injected tool seams (each absent degrades fail-open, O3/O4/C2/C3).
+    `suite_classes` / `suite_read_fn` / `suite_parents` are the suite seam
+    (the filtered `skill_list` cascade uses the parent map).
     `checkpointer` defaults to `get_session_checkpointer()` under
     `module_context("hunting")`; `middleware` defaults to the R5 compaction
     middleware (`build_hunter_compaction_middleware`, #95 D9) - capability
@@ -480,11 +539,11 @@ def build_hunting_agent(
     injects a fake model for tests; `observe` toggles session observability.
     Returns `async dispatch_fn(payload: Mapping) -> dict` (the async-native
     harness; sync callers use `build_sync_hunting_agent`). The payload is the
-    loop dispatch record materialised by the surfer (S2 8.2).
+    threat dispatch record materialised by the surfer (S2 8.2).
 
     The closure binds the injected seams once; each dispatch (hunt) compiles
     its OWN in-memory state graph (OUTLIER-1, no graph-level checkpointer),
-    binds the per-hunt tool surface, and drives its turn-by-turn loop on its
+    binds the per-hunt tool surface, and drives its turn-by-turn threat on its
     `HuntSession(run_id, hunt_key)` thread."""
     import inspect
 
@@ -519,20 +578,35 @@ def build_hunting_agent(
         hunt_key = str(payload.get("dispatch_id") or "")
         if not hunt_key:
             # The store key and the session id derive from the dispatch id; a
-            # payload without one cannot address its own loop. Degrade loudly
+            # payload without one cannot address its own threat. Degrade loudly
             # rather than write into a fabricated folder.
             feedback.append(
-                "loop payload carries no dispatch_id; the hunt cannot address "
+                "threat payload carries no dispatch_id; the hunt cannot address "
                 "its own spec folder")
             return _assemble({"state": "grounding", "specs": [], "trail": []},
                              feedback)
         compiled = build_hunter_graph().compile()
+        # The target identity is symbolic: the dispatch context carries the
+        # canonical target URL, and the store injects it into every spec write.
+        target_context = payload.get("target_context")
+        target_context = (
+            target_context if isinstance(target_context, dict) else {})
+        target_url = str(target_context.get("target_url") or "").strip()
+        target_identity = (
+            TargetIdentity(
+                url=target_url,
+                unit_id=str(payload.get("unit_id")
+                            or target_context.get("unit_id") or ""),
+            )
+            if target_url else None
+        )
         tools = build_hunter_tools(
             store=memory_store, project_id=project_id, hunt_key=hunt_key,
-            run_id=run_id,
+            run_id=run_id, target_identity=target_identity,
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
             http_search_fn=http_search_fn, http_get_fn=http_get_fn,
             suite_classes=suite_classes, suite_read_fn=suite_read_fn,
+            suite_parents=suite_parents,
         )
         state: dict = {"state": "grounding", "specs": [], "trail": []}
 
@@ -544,12 +618,14 @@ def build_hunting_agent(
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        # The skill seams ride BOTH planes of the hybrid loop (the declaration /
+        # The skill seams ride BOTH planes of the hybrid threat (the declaration /
         # execution split): the binding's `load_skill` tool is declared
         # request-only alongside the five hunter tools AND registered in the
         # harness executor map, joined by the tool name; the index middleware
         # joins the turn middleware and carries the role's bounded skill set.
-        binding = auth_capable_binding(_HUNTER_ROLE)
+        binding = auth_capable_binding(
+            _HUNTER_ROLE, project_id=project_id or None,
+            with_readonly_auth_store=True)
         tools = list(tools) + binding.tools
         tools_by_name = {tool.name: tool for tool in tools}
         middleware = list(middleware) + binding.middleware
@@ -562,11 +638,12 @@ def build_hunting_agent(
         # never starts without its prompt.
         skill = _load_hunting_agent_skill()
         overview = _overview_message_for(overview_fn, project_id)
-        new_messages = (
-            ([HumanMessage(content=overview)] if overview else [])
-            + [HumanMessage(content=_compose_first_step(
-                payload, state, _tool_surface(tools), chained=bool(overview)))]
-        )
+        first_step = _compose_first_step(
+            payload, state, chained=bool(overview))
+        # ONE pinned instance-context message: the compaction pin preserves the
+        # application overview AND the threat grounding together.
+        first_content = f"{overview}\n\n{first_step}" if overview else first_step
+        new_messages = [HumanMessage(content=first_content)]
         # The five tools ride the generation request REQUEST-ONLY (the standard
         # tool interface): each `convert_to_openai_tool` dict carries its JSON
         # schema in the request's `tools` body - the model emits valid args per
@@ -641,15 +718,17 @@ def build_hunting_agent(
                 result = await _invoke_tool(tools_by_name, tool_name, tool_args)
                 # DETECTION + PUSH (S4 14): the signal is read off the model's
                 # REAL call, so the passive machine is never gated by the
-                # tool's own acceptance. The `specs` set write is the one
-                # AUTHORITATIVE exit (S4 14.8: the store writes remain
-                # authoritative for the spec set): a coded rejection (a
-                # duplicate identity, a missing derivation input) persists no
-                # set, so it is no exit and the tracker stays put. A persisted
-                # set folds into the `specs` channel, so the terminal
-                # `state: complete` follows the set the store holds.
+                # tool's own acceptance. The one-spec write (GENERATE) and the
+                # `finalize` call (VERIFY-CLAIMS) are the AUTHORITATIVE exits
+                # (S4 14.8: the store writes remain authoritative for the spec
+                # set): a coded rejection (a duplicate identity, a missing
+                # derivation input, an undecided draft) persists no exit, so it
+                # is no signal and the tracker stays put. A persisted set folds
+                # into the `specs` channel, so the terminal `state: complete`
+                # follows the set the store holds.
                 signal = detect_phase_signal(tool_name, tool_args)
-                if signal is not None and signal.get("kind") == "spec_set_write":
+                if signal is not None and signal.get("kind") in (
+                        "spec_set_write", "spec_set_finalize"):
                     if _store_write_ok(result):
                         _fold_persisted_specs(
                             state, memory_store, project_id, hunt_key,
@@ -691,7 +770,7 @@ def build_hunting_agent(
                 feedback.append(_terminal_feedback(state, ""))
                 return _assemble(state, feedback)
         else:
-            # A natural loop end (no break) is genuine budget exhaustion; the
+            # A natural threat end (no break) is genuine budget exhaustion; the
             # break paths above already reported their own degradation, so a
             # degraded turn must never surface a budget message.
             feedback.append(f"hunt {hunt_key} step budget exhausted ({_MAX_STEPS} steps)")
@@ -711,7 +790,7 @@ def build_hunting_agent(
 
     async def dispatch_fn(payload: Mapping[str, Any]) -> dict[str, Any]:
         payload = payload if isinstance(payload, Mapping) else {}
-        hunt_key = str(payload.get("dispatch_id") or "(unaddressed loop)")
+        hunt_key = str(payload.get("dispatch_id") or "(unaddressed threat)")
         feedback: list[str] = list(_payload_gaps(payload))
         # The seam pieces resolve lazily so this module stays driver-free at
         # import (CODING_STANDARD section 6): the checkpointer resolves under
@@ -768,7 +847,7 @@ def build_sync_hunting_agent(**kwargs):
     Sync injectable seams travel through `asyncio.to_thread` inside the canon;
     async seams are awaited natively. When called from a running event loop,
     `run_coro_blocking` runs the dispatch on a separate thread so `asyncio.run`
-    is never re-entered on the caller's loop."""
+    is never re-entered on the caller's threat."""
     from polymerhus.recon.control.async_bridge import run_coro_blocking  # noqa: PLC0415
 
     dispatch_fn = build_hunting_agent(**kwargs)

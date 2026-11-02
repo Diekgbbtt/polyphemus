@@ -28,9 +28,10 @@ services:
       - ./db:/srv/db
       - ./skills:/srv/skills
       - ./gateway:/srv/gateway
-      # The app-owned data root: the auth bucket (data/<project>/auth/) and the
-      # project skill bundle (data/<project>/skills/authn/) land here, visible
-      # to both the container and the host-side assertions.
+      # The app-owned data root holds the auth bucket (data/<project>/auth/).
+      # The project skill bundle lives in the live skills root's
+      # target-specific-procedure/<project_id>/ branch, visible through the
+      # ./skills mount above; the data root never carries skills.
       - ./data:/srv/data
     environment:
       NEO4J_URI: bolt://neo4j:7687

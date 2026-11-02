@@ -361,7 +361,7 @@ def test_streamed_analysis_data_path_after_bootstrap():
 
 def test_hunt_launch_boots_and_lands_terminal_hunting_runs_status():
     """A hunting launch boots the graph-engine orchestration pass on the worker
-    loop and lands a terminal `hunting_runs` status (#123, seam contract 3):
+    threat and lands a terminal `hunting_runs` status (#123, seam contract 3):
     the launch 201s (control plane live), the run row opens `running`, and the
     pass settles to a terminal status (`complete` - the graph engine alone,
     without the #83/#84 agents - or `failed` if the pass degraded; never a

@@ -50,10 +50,11 @@ class PhaseState:
     carries no read endpoint; the trial is its writer). `auth_surface` is the
     declared auth surface from the target config; `recon_run_id` is the run a
     later phase drains; `preloaded_configured` marks a trial that declared
-    pre-mined artifacts; `data_root` anchors the on-disk reads. `seeded` marks a
-    trial hunting against a pre-recon'd project (#277): its L1 is transferred in
-    and the settings/scaffold were the operator's, so the hunting gate asserts
-    the project and the L1 service count instead of the drain.
+    pre-mined artifacts; `data_root` anchors the data-root reads and
+    `skills_root` anchors the project-skill reads. `seeded` marks a trial
+    hunting against a pre-recon'd project (#277): its L1 is transferred in and
+    the settings/scaffold were the operator's, so the hunting gate asserts the
+    project and the L1 service count instead of the drain.
     """
 
     project_id: str
@@ -62,6 +63,7 @@ class PhaseState:
     recon_run_id: str | None = None
     preloaded_configured: bool = False
     data_root: Path | None = None
+    skills_root: Path | None = None
     seeded: bool = False
 
 
@@ -100,10 +102,12 @@ def recon_entry(
             blocks.append("L1 scaffold incomplete: 0 services")
 
     if state.auth_surface:
-        if state.data_root is None:
-            blocks.append("auth surface declared but no data root is configured")
+        if state.skills_root is None:
+            blocks.append("auth surface declared but no skills root is configured")
         else:
-            if not files.exists(authn_skill_path(state.data_root, state.project_id)):
+            if not files.exists(
+                authn_skill_path(state.skills_root, state.project_id)
+            ):
                 blocks.append(
                     "auth surface declared but project 'authn' skill is missing "
                     f"for {state.project_id}"
@@ -212,16 +216,16 @@ def hunting_entry(
             blocks.append("pre-mined hunting artifacts configured but no data root is set")
         else:
             # Presence counts both live artifact families: the threat-model
-            # loop files and each dispatch id's hunter test specs (a setup may
-            # pre-mine either). A loop file is the dispatch record (S2 8.4), so
+            # threat files and each dispatch id's hunter test specs (a setup may
+            # pre-mine either). A threat file is the dispatch record (S2 8.4), so
             # a model document alone is not dispatchable work and does not
-            # count. The rule is the store-owned `loop-<rank>.yaml` name.
+            # count. The rule is the store-owned `threat-<rank>.yaml` name.
             present = 0
             for side in ("produced", "consumed"):
                 for unit_dir in files.list_dirs(
                     threat_model_dir(state.data_root, state.project_id, side)
                 ):
-                    present += len(files.glob(unit_dir, "loop-*.yaml"))
+                    present += len(files.glob(unit_dir, "threat-*.yaml"))
             specs_root = hunter_test_specs_dir(state.data_root, state.project_id)
             for dispatch_dir in files.list_dirs(specs_root):
                 for side in ("produced", "consumed"):

@@ -14,9 +14,13 @@ eagerly, keeping the dependency `project_management -> recon` lazy.
 """
 from __future__ import annotations
 
+import logging
+import math
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from polymerhus.app import data_root
 from polymerhus.app.clients import pg
@@ -24,6 +28,8 @@ from polymerhus.app.config import config
 from polymerhus.recon.control.jobs import JOBS, validate_job_subset
 from polymerhus.recon.control.scope import resolve_seed, seed_kind
 from polymerhus.recon.domain.graph_read import fetch_project_graph
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectNotFound(Exception):
@@ -155,6 +161,159 @@ def save_project_settings(project_id: str, recon: dict) -> None:
     pg.save_settings(project_id, recon)
 
 
+# The hunting config vocabulary (`hunting_pipeline_sync`, ADR
+# `docs/design/hunting-pipeline-sync-adr.md`, 2026-10-22). The API's pydantic
+# Literal mirrors these values; the default is `batched` (the phase-barrier
+# mean between the fully interleaved `parallel` and the strict `serial`).
+HUNTING_SYNC_MODES: tuple[str, ...] = ("serial", "batched", "parallel")
+HUNTING_SYNC_DEFAULT = "batched"
+HUNTING_POD_BATCH_DEFAULT = 1
+
+
+def _stored_int(
+    stored: Mapping[str, Any], key: str, *, minimum: int, default: Any,
+) -> Any:
+    """One stored integer setting, or the documented default with a warning.
+
+    The settings are written as strict integers by the config PUT. A
+    hand-edited row carrying a string, a boolean, a float, or a value below the
+    floor reads back the default and warns, so the operator can see the drift."""
+    value = stored.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        logger.warning(
+            "hunting config: %s=%r is not an integer >= %d; reading %r",
+            key, value, minimum, default,
+        )
+        return default
+    return value
+
+
+def _threshold_float(value: Any, *, minimum: float) -> float | None:
+    """One threshold as a finite float at least `minimum`, or None when the
+    value is not one. The two hunting thresholds are floats on the CVSS 4.0
+    scale (spec 12, ADR 8); an int is read as its float, and a boolean is never
+    a threshold."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed < minimum:
+        return None
+    return parsed
+
+
+def _stored_threshold(
+    stored: Mapping[str, Any], key: str, *, minimum: float = 0.0,
+) -> float | None:
+    """One stored float threshold, or None with a warning.
+
+    An unset key and an explicit JSON null both read back as None (no override /
+    no promotion filter). A hand-edited row carrying a string, a boolean, a
+    negative, or a non-finite value reads back None and warns, so the operator
+    can see the drift."""
+    value = stored.get(key)
+    if value is None:
+        return None
+    parsed = _threshold_float(value, minimum=minimum)
+    if parsed is None:
+        logger.warning(
+            "hunting config: %s=%r is not a finite number >= %s; reading None",
+            key, value, minimum,
+        )
+    return parsed
+
+
+def read_hunting_config(project_id: str) -> dict:
+    """The project's hunting config (`{"pipeline_sync", "risk_threshold",
+    "pod_batch_size", "promotion_risk_threshold", "threat_model_scope"}`).
+
+    Unknown project -> ProjectNotFound; a known project that never stored a
+    blob reads back the documented defaults (mode `batched`, threshold None,
+    batch size 1, promotion threshold None - no filter, scope `""`). A stored
+    mode outside the enum (a hand-edited row) reads back as the default rather
+    than an error. The two thresholds are read back as FLOATS on the CVSS 4.0
+    scale (a v4-era int reads as its float); a malformed or out-of-range batch
+    size or threshold reads back the default with a warning; a stored scope that
+    is not a string reads back as the empty default."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    stored = dict(pg.get_hunting_settings(project_id) or {})
+    mode = stored.get("pipeline_sync")
+    if mode not in HUNTING_SYNC_MODES:
+        mode = HUNTING_SYNC_DEFAULT
+    scope = stored.get("threat_model_scope")
+    if not isinstance(scope, str):
+        scope = ""
+    return {
+        "pipeline_sync": mode,
+        "risk_threshold": _stored_threshold(stored, "risk_threshold"),
+        "pod_batch_size": _stored_int(
+            stored, "pod_batch_size", minimum=1,
+            default=HUNTING_POD_BATCH_DEFAULT),
+        "promotion_risk_threshold": _stored_threshold(
+            stored, "promotion_risk_threshold"),
+        "threat_model_scope": scope,
+    }
+
+
+def save_hunting_config(project_id: str, body: dict) -> None:
+    """Persist a PARTIAL hunting config PUT (deep-merged into the stored blob).
+
+    Only the provided keys land (`pipeline_sync`, `risk_threshold`,
+    `pod_batch_size`, `promotion_risk_threshold`, `threat_model_scope`). The
+    mode must be a known enum value; the two thresholds must be finite floats at
+    least 0 (spec 12, ADR 8: the CVSS 4.0 scale), stored as floats; an explicit
+    None clears `risk_threshold` back to the env/default basis and
+    `promotion_risk_threshold` to no filter; the batch size must be an integer
+    at least 1 (or an explicit None, which clears it to the default 1); the
+    scope is free text (an explicit None clears it). Raises ProjectNotFound if
+    unknown, ValueError naming the field on an invalid value - nothing lands on
+    a refusal."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    if "pipeline_sync" in body and body["pipeline_sync"] not in HUNTING_SYNC_MODES:
+        raise ValueError(
+            f"hunting_pipeline_sync must be one of {HUNTING_SYNC_MODES}; "
+            f"got {body['pipeline_sync']!r}"
+        )
+    if ("threat_model_scope" in body
+            and body["threat_model_scope"] is not None
+            and not isinstance(body["threat_model_scope"], str)):
+        raise ValueError("threat_model_scope must be a free-text string or null")
+    if "risk_threshold" in body and body["risk_threshold"] is not None:
+        threshold = _threshold_float(body["risk_threshold"], minimum=0.0)
+        if threshold is None:
+            raise ValueError(
+                "risk_threshold must be a finite number at least 0 or null")
+        body = {**body, "risk_threshold": threshold}
+    if "pod_batch_size" in body and body["pod_batch_size"] is not None:
+        raw_batch = body["pod_batch_size"]
+        if isinstance(raw_batch, bool) or not isinstance(raw_batch, int):
+            raise ValueError(
+                "pod_batch_size must be an integer at least 1 or null")
+        if raw_batch < 1:
+            raise ValueError(
+                "pod_batch_size must be an integer at least 1 or null")
+        body = {**body, "pod_batch_size": raw_batch}
+    if (
+        "promotion_risk_threshold" in body
+        and body["promotion_risk_threshold"] is not None
+    ):
+        promotion = _threshold_float(
+            body["promotion_risk_threshold"], minimum=0.0)
+        if promotion is None:
+            raise ValueError(
+                "promotion_risk_threshold must be a finite number at least 0 "
+                "or null"
+            )
+        body = {**body, "promotion_risk_threshold": promotion}
+    pg.save_hunting_settings(project_id, body)
+
+
 def _default_auth_store():
     """The production auth bucket store, resolved lazily per call
     (CODING_STANDARD §6: collaborators resolve lazily, never at import).
@@ -210,7 +369,12 @@ def write_authn_skill(project_id: str, data: bytes, *, store=None) -> dict:
     canonical `references/` (or `scripts/`/`assets/`) files are written verbatim
     through the skill store, overwriting on every call. Raises ProjectNotFound,
     `DataDependencyError` on a malformed/traversing archive, and `ValueError`
-    (`SkillInvalidError` / `SkillTargetError`) on a malformed bundle."""
+    (`SkillInvalidError` / `SkillTargetError`) on a malformed bundle.
+
+    The store is the only destination:
+    `skills/target-specific-procedure/<project_id>/authn/`. The data root keeps
+    the AuthContext only; no runtime copy of a project-specific skill lives
+    there."""
     from polymerhus.project_management import data_dependencies as dd
 
     _require_project(project_id)

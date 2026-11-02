@@ -251,3 +251,100 @@ def test_two_instances_share_the_eval_branch_detached(tmp_path, eval_repo) -> No
         assert symbolic.returncode != 0
     # The eval branch is still available for the next instance.
     assert _git(eval_repo, "rev-parse", "eval").strip() == eval_sha
+
+
+# --- the version identity the trial record names (D32) ------------------------
+
+
+def test_the_instance_head_is_the_commit_the_stack_loads(tmp_path, eval_repo) -> None:
+    """The agent container bind-mounts the instance worktree's `src/`, `lightrag/`,
+    `db/`, `skills/`, and `gateway/`, so the commit HEAD points to there IS the
+    code the eval instance loads (`docker-compose.dev.yml`)."""
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+    git = LocalRunner()
+    instances.ensure_worktree(paths, git)
+
+    expected = _git(paths.worktree, "rev-parse", "HEAD").strip()
+
+    assert instances.instance_head_sha(paths, git) == expected
+    assert len(expected) == 40
+
+
+def test_the_head_read_is_a_planned_command(tmp_path, eval_repo) -> None:
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+
+    command = instances.plan_head_sha(paths)
+
+    assert command.argv[0] == "git"
+    assert command.argv[-2:] == ("rev-parse", "HEAD")
+    assert str(paths.worktree) in command.argv
+
+
+def test_a_missing_worktree_fails_loud_naming_the_worktree(
+    tmp_path, eval_repo
+) -> None:
+    """A trial must never be written with a null identity: an unreadable HEAD is
+    an error naming where it looked, not a silent gap in the record."""
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+
+    with pytest.raises(instances.InstanceError, match="arm-a"):
+        instances.instance_head_sha(paths, LocalRunner())
+
+
+def test_a_non_sha_answer_is_refused(tmp_path, eval_repo, recording_runner, fake_result) -> None:
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+    (paths.worktree).mkdir(parents=True)
+    runner = recording_runner(default=fake_result(0, stdout="not-a-sha\n"))
+
+    with pytest.raises(instances.InstanceError, match="HEAD"):
+        instances.instance_head_sha(paths, runner)
+
+
+def test_a_clean_worktree_is_not_dirty(tmp_path, eval_repo) -> None:
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+    git = LocalRunner()
+    instances.ensure_worktree(paths, git)
+
+    assert instances.worktree_dirty(paths, git) is False
+
+
+def test_a_tracked_edit_marks_the_worktree_dirty(tmp_path, eval_repo) -> None:
+    """HEAD names the base commit only; a tracked edit means the loaded bytes
+    are not that commit, so the record must say so."""
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+    git = LocalRunner()
+    instances.ensure_worktree(paths, git)
+    (paths.worktree / "tracked.txt").write_text("v2\n", encoding="utf-8")
+
+    assert instances.worktree_dirty(paths, git) is True
+
+
+def test_untracked_operator_noise_does_not_mark_the_worktree_dirty(
+    tmp_path, eval_repo
+) -> None:
+    """A `.env.bak-*` or a log is not code the stack loads from the tree."""
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+    git = LocalRunner()
+    instances.ensure_worktree(paths, git)
+    (paths.worktree / ".env.bak-20261019").write_text("OLD=1\n", encoding="utf-8")
+
+    assert instances.worktree_dirty(paths, git) is False
+
+
+def test_the_dirty_read_ignores_untracked_paths(tmp_path, eval_repo) -> None:
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+
+    command = instances.plan_worktree_dirty(paths)
+
+    assert command.argv[-1] == "--untracked-files=no"
+
+
+def test_the_default_runner_is_the_production_one(tmp_path, eval_repo) -> None:
+    """The default seam must speak `Command`, not a bare argv: an un-injected
+    call is the production path the trial starter takes."""
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+    instances.ensure_worktree(paths, LocalRunner())
+    expected = _git(paths.worktree, "rev-parse", "HEAD").strip()
+
+    assert instances.instance_head_sha(paths) == expected
+    assert instances.worktree_dirty(paths) is False

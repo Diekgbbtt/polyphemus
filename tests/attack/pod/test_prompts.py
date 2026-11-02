@@ -12,13 +12,19 @@ from __future__ import annotations
 
 import polymerhus.attack.hunting.pod.prompts as prompts_mod
 from polymerhus.attack.hunting.pod.prompts import (
+    load_pod_divergence_skill,
     load_pod_runner_skill,
+    load_pod_terminal_skill,
+    load_pod_triage_skill,
     load_pod_triager_skill,
 )
 
 KB_TOOL = "query_lightrag"
 POD_RUNNER_SYSTEM = load_pod_runner_skill()
 POD_TRIAGER_SYSTEM = load_pod_triager_skill()
+POD_TRIAGE_SYSTEM = load_pod_triage_skill()
+POD_DIVERGENCE_SYSTEM = load_pod_divergence_skill()
+POD_TERMINAL_SYSTEM = load_pod_terminal_skill()
 
 
 # --- the Runner: the P0-P3 plan (D84-16) --------------------------------------
@@ -62,6 +68,34 @@ def test_runner_prompt_instructs_the_note_final_step():
     assert "final" in lc or "final tool call" in lc
 
 
+def test_runner_prompt_names_every_bound_tool():
+    for name in ("exec", "replay", "query_lightrag", "note", "graph_view",
+                 "load_skill", "record_skill_lesson", "auth_store"):
+        assert name in POD_RUNNER_SYSTEM, name
+
+
+def test_triager_prompt_variant_table_matches_the_typed_bases():
+    from polymerhus.attack.hunting.pod.variant_basis import VARIANT_BASES
+
+    for basis in VARIANT_BASES:
+        assert basis in POD_TRIAGER_SYSTEM, basis
+
+
+def test_triager_prompt_names_the_critics_terminal_reasons():
+    """`budget-timeout` is a harness terminal, not a critic choice; the prompt
+    must name the five reasons the triager can actually decide."""
+    for reason in ("symptom-confirmed", "technical-infeasibility",
+                   "specific-defence-prevention", "space-exhausted",
+                   "no-symptom-evidence"):
+        assert reason in POD_TRIAGER_SYSTEM, reason
+
+
+def test_triager_prompt_names_every_bound_tool():
+    for name in ("note", "query_lightrag", "graph_view", "load_skill",
+                 "record_skill_lesson", "auth_store"):
+        assert name in POD_TRIAGER_SYSTEM, name
+
+
 def test_runner_prompt_names_the_full_three_tool_surface():
     # D84-16/27: exec + query_lightrag + note all bound and all described.
     assert "exec" in POD_RUNNER_SYSTEM
@@ -86,7 +120,7 @@ def test_runner_prompt_names_the_baseline_not_the_retired_vector():
 
 def test_runner_prompt_names_the_reduced_spec_surface():
     for token in ("target_identity", "verification_symptoms", "assumptions",
-                  "rationale", "provenance", "skill_procedure"):
+                  "rationale", "provenance", "skill_concretised_procedure", "skills"):
         assert token in POD_RUNNER_SYSTEM, token
 
 
@@ -170,14 +204,15 @@ VARIANT_BASES = (
     "pro-tips",
     "advanced-technique",
     "preliminary-chaining",
+    "payload-vector",
+    "technology-misconfiguration",
     "interpretation-pitfall",
-    "failure-mode",
     "runner-failure",
     "runner-divergence",
 )
 
 
-def test_triager_prompt_names_all_ten_variant_bases():
+def test_triager_prompt_names_all_eleven_variant_bases():
     for basis in VARIANT_BASES:
         assert basis in POD_TRIAGER_SYSTEM, basis
 
@@ -186,14 +221,13 @@ def test_triager_prompt_carries_the_first_uncovered_order():
     lc = POD_TRIAGER_SYSTEM.lower()
     assert "first uncovered" in lc
     assert "table order" in lc
-    positions = [POD_TRIAGER_SYSTEM.index(b) for b in VARIANT_BASES[:7]]
+    positions = [POD_TRIAGER_SYSTEM.index(b) for b in VARIANT_BASES[:9]]
     assert positions == sorted(positions)
 
 
-def test_triager_prompt_reads_the_typed_procedure_from_the_provenance():
-    assert "provenance" in POD_TRIAGER_SYSTEM
-    assert "skill_procedure" in POD_TRIAGER_SYSTEM
-    assert "SkillProcedure" in POD_TRIAGER_SYSTEM
+def test_triager_prompt_reads_the_typed_concretisation_from_the_spec():
+    assert "skill_concretised_procedure" in POD_TRIAGER_SYSTEM
+    assert "SkillConcretisedProcedure" in POD_TRIAGER_SYSTEM
 
 
 def test_triager_prompt_states_the_skipped_section_and_absent_excerpt_rules():
@@ -203,12 +237,12 @@ def test_triager_prompt_states_the_skipped_section_and_absent_excerpt_rules():
     assert "recorded gap" in lc
 
 
-def test_triager_prompt_states_the_failure_mode_fallback():
+def test_triager_prompt_has_no_failure_mode_fallback():
     lc = POD_TRIAGER_SYSTEM.lower()
-    assert "failure-mode" in lc
+    assert "failure-mode" not in lc
+    assert "no variant basis is derivable" in lc
     assert "verification_symptoms" in POD_TRIAGER_SYSTEM
     assert "assumptions" in POD_TRIAGER_SYSTEM
-    assert "fallback" in lc
 
 
 def test_triager_prompt_states_the_execution_triggers():
@@ -226,9 +260,48 @@ def test_triager_prompt_states_the_duplicate_guard():
 def test_triager_prompt_names_the_coverage_assessment_fields():
     # The production tool schema carries the material the graph's deterministic
     # diff needs, so the prompt must name every field.
-    for field in ("covered_gap_classes", "failure_mode_plausible",
-                  "runner_failed", "runner_diverged", "declined_attribute"):
+    for field in ("covered_gap_classes", "runner_failed", "runner_diverged",
+                  "declined_attribute"):
         assert field in POD_TRIAGER_SYSTEM, field
+
+
+# --- the STAGED triage prompts (the compact stages) ---------------------------
+
+def test_the_triage_prompt_is_compact_and_has_no_variant_mining():
+    """Stage A carries only the failure and symptom-confirmation judgments; the
+    variant-mining material stays in the Stage C prompt. This is the structural
+    half of the first-call token claim: a smaller fixed prompt and no tool
+    descriptions."""
+    assert len(POD_TRIAGE_SYSTEM) < len(POD_TRIAGER_SYSTEM)
+    assert "runner_failed" in POD_TRIAGE_SYSTEM
+    assert "symptom_confirmed" in POD_TRIAGE_SYSTEM
+    assert "clean" in POD_TRIAGE_SYSTEM
+    assert "Variant minting" not in POD_TRIAGE_SYSTEM
+    for basis in VARIANT_BASES:
+        assert basis not in POD_TRIAGE_SYSTEM, basis
+
+
+def test_the_divergence_prompt_names_the_typed_procedure_and_divergence():
+    assert "SkillProcedure" in POD_DIVERGENCE_SYSTEM
+    assert "runner_diverged" in POD_DIVERGENCE_SYSTEM
+    assert "diverge" in POD_DIVERGENCE_SYSTEM.lower()
+    assert "procedure" in POD_DIVERGENCE_SYSTEM.lower()
+
+
+def test_the_terminal_prompt_keeps_the_binary_vocabulary():
+    for token in ("symptom-confirmed", "space-exhausted", "technical-infeasibility",
+                  "specific-defence-prevention", "no-symptom-evidence",
+                  "budget-timeout", "clean", "degraded"):
+        assert token in POD_TERMINAL_SYSTEM, token
+    assert "variant mining" not in POD_TERMINAL_SYSTEM.lower()
+
+
+def test_the_stage_prompts_carry_the_shared_cortex():
+    from polymerhus.attack.hunting.cortex import cognitive_architecture_map
+
+    cortex = cognitive_architecture_map()
+    for prompt in (POD_TRIAGE_SYSTEM, POD_DIVERGENCE_SYSTEM, POD_TERMINAL_SYSTEM):
+        assert prompt.endswith(cortex)
 
 
 # --- T9: the runner honours the basis, not the retired attribute decline ------
@@ -289,5 +362,17 @@ def test_prompts_carry_no_differential_reference():
 
     source = inspect.getsource(prompts_mod)
     assert "differential" not in source
-    assert "differential" not in POD_RUNNER_SYSTEM
-    assert "differential" not in POD_TRIAGER_SYSTEM
+    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM, POD_TRIAGE_SYSTEM,
+                   POD_DIVERGENCE_SYSTEM, POD_TERMINAL_SYSTEM):
+        assert "differential" not in prompt
+
+def test_terminal_prompt_names_the_harness_terminal_reasons():
+    for reason in ("node-timeout", "context-window-exceeded", "tool-timeout",
+                   "graph-limit", "pod-watchdog-timeout"):
+        assert reason in POD_TERMINAL_SYSTEM, reason
+
+
+def test_triager_prompt_does_not_offer_harness_terminal_reasons():
+    for reason in ("node-timeout", "context-window-exceeded", "tool-timeout",
+                   "graph-limit", "pod-watchdog-timeout"):
+        assert reason not in POD_TRIAGER_SYSTEM, reason

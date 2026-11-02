@@ -1,8 +1,15 @@
-"""Model-facing views of an artifact: no raw secrets, cookies, or bodies.
+"""Model-facing views of an artifact: no bodies, and redacted secrets.
 
 Raw material (authorization headers, cookies, query/form values, body content)
 stays in the store so a deterministic runtime can replay it. Anything an LLM or
 a Langfuse span can see goes through here first.
+
+The ONE exception is the search summary (`sanitize_summary`): its `url` and its
+selected request and response headers are rendered VERBATIM, by operator
+decision (2026-10-23 / 2026-10-25). A row shows the real `Authorization`,
+`Cookie`, and `Set-Cookie` values and the raw URL, including userinfo and
+sensitive query values, because the row must be the string the filter matched
+on. The full view (`sanitize_artifact`) keeps redacting.
 """
 from __future__ import annotations
 
@@ -30,6 +37,25 @@ _SENSITIVE_HEADERS = {
     "x-amz-security-token",
     "x-session-token",
 }
+
+# The triage headers a candidate row carries, per side. A header outside these
+# sets (`vary`, `date`, `user-agent`, `content-length`) is not rendered: the
+# sizes already carry the length, and the rest is noise on every row.
+SUMMARY_REQUEST_HEADERS = frozenset({
+    "authorization", "content-type", "cookie", "origin", "referer",
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+    "x-forwarded-protocol", "x-real-ip",
+})
+SUMMARY_RESPONSE_HEADERS = frozenset({
+    "access-control-allow-credentials", "access-control-allow-headers",
+    "access-control-allow-methods", "access-control-allow-origin",
+    "access-control-expose-headers", "access-control-max-age",
+    "content-security-policy", "content-security-policy-report-only",
+    "content-type", "location", "server", "set-cookie",
+    "www-authenticate", "x-cache", "x-cache-lookup", "x-frame-options",
+    "x-powered-by",
+})
+SUMMARY_HEADER_VALUE_MAX = 256
 
 
 def _redact_if_sensitive(name: str, value: str) -> str:
@@ -127,29 +153,61 @@ def sanitize_artifact(artifact: HttpArtifact) -> dict:
     }
 
 
+def _summary_headers(headers, selected: frozenset[str]) -> dict[str, list[str]]:
+    """Only the selected keys, lowercased, every value kept, value capped.
+
+    The search row is a menu: it shows the triage headers so the model can
+    choose a candidate without fetching it. Duplicates stay in recorded order;
+    a value over `SUMMARY_HEADER_VALUE_MAX` is truncated, never dropped.
+    """
+    out: dict[str, list[str]] = {}
+    for name, value in headers or []:
+        key = str(name).strip().lower()
+        if key not in selected:
+            continue
+        text = str(value)
+        if len(text) > SUMMARY_HEADER_VALUE_MAX:
+            text = text[:SUMMARY_HEADER_VALUE_MAX - 3] + "..."
+        out.setdefault(key, []).append(text)
+    return out
+
+
 def sanitize_summary(artifact: HttpArtifact) -> dict:
-    """The compact search-row projection: identity + safe scalars only."""
-    try:
-        host = urlsplit(artifact.request.url).hostname or ""
-    except ValueError:
-        host = ""
+    """The candidate-row projection: identity, triage scalars, and lineage.
+
+    The search row is a menu, not a record. The full view is
+    `sanitize_artifact`, which carries `capture_state`, timings, and the
+    connection record. Do not add a field here unless the search decision
+    needs it on every row. `request_headers` and `response_headers` carry only
+    the triage keys, and their values are verbatim. `url` is the recorded
+    string, not `sanitize_url` output: a predicate matched the raw URL, so the
+    row must display the same string.
+    """
     response = artifact.response
     status = response.status if response is not None else None
-    return {
+    summary = {
         "artifact_id": artifact.artifact_id,
-        "project_id": artifact.project_id,
-        "created_at": artifact.created_at,
         "method": artifact.request.method,
-        "url": sanitize_url(artifact.request.url),
-        "host": host,
+        "url": artifact.request.url,
         "status": status,
-        "status_class": f"{status // 100}xx" if isinstance(status, int) else None,
-        "http_version": artifact.request.http_version,
-        "request_size": artifact.request.body_size,
-        "response_size": response.body_size if response is not None else 0,
-        "timing_ms": artifact.timings.total_ms,
-        "tls": artifact.connection.tls,
-        "error_type": artifact.error.type if artifact.error is not None else None,
-        "derived_from": artifact.derived_from,
-        "replay_kind": artifact.replay_kind,
     }
+    if artifact.request.body_size:
+        summary["request_size"] = artifact.request.body_size
+    if response is not None and response.body_size:
+        summary["response_size"] = response.body_size
+    request_headers = _summary_headers(
+        artifact.request.headers, SUMMARY_REQUEST_HEADERS)
+    if request_headers:
+        summary["request_headers"] = request_headers
+    if response is not None:
+        response_headers = _summary_headers(
+            response.headers, SUMMARY_RESPONSE_HEADERS)
+        if response_headers:
+            summary["response_headers"] = response_headers
+    if artifact.derived_from:
+        summary["derived_from"] = artifact.derived_from
+    if artifact.replay_kind:
+        summary["replay_kind"] = artifact.replay_kind
+    if artifact.error is not None:
+        summary["error"] = artifact.error.type
+    return summary

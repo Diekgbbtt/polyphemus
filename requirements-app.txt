@@ -59,6 +59,11 @@ httpx==0.28.1
 pydantic>=2.0
 pyyaml>=6.0
 
+# The threat model's risk score (`attack/hunting/risk_score.py`) is the CVSS 4.0
+# base score. `cvss` is the CVSS 4.0 library (LGPLv3+, with a file-level
+# BSD-2-Clause notice on `cvss4.py`); no other module imports it.
+cvss==3.6
+
 # The live-tier test infrastructure (tests/e2e drives in-container probes and
 # the config contracts; fastmcp is the MCP server SDK the kali/test seams use).
 fastmcp>=2.14,<3

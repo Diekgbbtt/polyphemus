@@ -9,6 +9,7 @@ speak the SAME canned objects and the duplication stays in one place.
 """
 from __future__ import annotations
 
+import yaml
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -21,7 +22,7 @@ from polymerhus.attack.hunting.hunting_agent import build_sync_hunting_agent
 PROJECT = "proj-a"
 UNIT_ID = "Service:slug:a"
 UNIT_NAME = "Service-slug-a"
-HUNT_KEY = f"{UNIT_NAME}__loop-1"
+HUNT_KEY = f"{UNIT_NAME}__threat-1"
 
 
 class _ScriptedFake(BaseChatModel):
@@ -126,24 +127,43 @@ def _answer(text):
 
 
 def _hunter_payload(**overrides) -> dict:
-    """The canonical loop payload the surfer materialises at dispatch (S2 8.2)
-    for the `(Service:slug:a, loop-1)` pair - the SAME key set
-    `materialise_hunter_payload` emits."""
+    """The canonical threat payload the surfer materialises at dispatch (S2 8.2,
+    CVSS 4.0 spec 9) for the `(Service:slug:a, threat-1)` pair - the SAME key set
+    `materialise_hunter_payload` emits. The assessment values are the worked
+    example's known-good literals (`ITEM_*`), never recomputed here."""
     payload = {
         "dispatch_id": HUNT_KEY,
         "run_id": "run-1",
-        "loop_id": "loop-1",
+        "threat_id": "threat-1",
         "unit_id": UNIT_ID,
         "unit_kind": "service",
-        "loop": {
-            "id": "loop-1",
+        "risk": ITEM_RISK,
+        "severity_band": "critical",
+        "risk_vector": ITEM_VECTOR,
+        "factors": dict(ITEM_FACTORS),
+        "impact_description": IMPACT_DESCRIPTION,
+        "exploitability_description": EXPLOITABILITY_DESCRIPTION,
+        "capability": "read another tenant's item",
+        "capability_id": f"{UNIT_ID}::p-1",
+        "capability_path": [],
+        "enabling_precursors": [],
+        "assumptions": [{
+            "id": "as-1",
+            "statement": "The lookup omits the ownership check.",
+            "fault_ref": "fault-1",
+            "boundary_ref": "ta-1",
+            "confidence": "ASSUMED",
+            "evidence_refs": ["note:catalogue"],
+        }],
+        "threat": {
+            "id": "threat-1",
             "fault_ref": "fault-1",
             "vulnerability_ref": "v-1",
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",
-            "likelihood": "high",
-            "likelihood_rationale": "An anonymous caller controls the id.",
-            "confidence": "INFERRED",
+            "impact_ref": "ia-1",
+            "enabling_precursors": [],
+            "risk": ITEM_RISK,
             "evidences": [{"kind": "request", "ref": "GET /api/a"}],
         },
         "technical_sharpening": {
@@ -167,10 +187,7 @@ def _hunter_payload(**overrides) -> dict:
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
         "evidence": [{"kind": "request", "ref": "GET /api/a"}],
-        "likelihood": "high",
-        "likelihood_rationale": "An anonymous caller controls the id.",
         "vulnerability_rationale": "An anonymous caller reads another user's item.",
-        "confidence": "INFERRED",
         "target_context": {
             "unit_id": UNIT_ID,
             "unit_kind": "service",
@@ -275,16 +292,73 @@ def build_hunting_l1():
 
 # --- the threat modeller fixtures (T2, #375; the shared worked example) -------
 
+# The worked example's assessment factors (schema 5): a full-record read from
+# an unauthenticated network caller, no defence to beat. `ITEM_RISK` and
+# `ITEM_VECTOR` are the `cvss==3.6` CVSS 4.0 values for those factors
+# (`AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N` = 9.2); they are
+# known-good literals, never recomputed by the tests.
+ITEM_FACTORS = {
+    "attack_vector": "network",
+    "attack_complexity": "low",
+    "attack_requirements": "none",
+    "privileges_required": "none",
+    "user_interaction": "none",
+    "confidentiality": "high",
+    "integrity": "none",
+    "availability": "none",
+}
+ITEM_RISK = 9.2
+ITEM_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N"
+
+# The fan-out tiers the sequencing fixtures need: one known-good factor set per
+# `cvss==3.6` CVSS 4.0 base score, so a model can carry distinct risks and stay
+# internally valid (a seeded `risk` that its factors do not compute is reported
+# by the completion checker and the model is not consumable). The scores are the
+# library's reference values, never recomputed by a test.
+RISK_FACTORS: dict[float, dict[str, str]] = {
+    9.9: {**ITEM_FACTORS, "integrity": "high"},
+    9.3: {**ITEM_FACTORS, "availability": "high"},
+    9.2: dict(ITEM_FACTORS),
+    6.9: {**ITEM_FACTORS, "confidentiality": "low"},
+    5.3: {**ITEM_FACTORS, "confidentiality": "low", "user_interaction": "passive"},
+    2.0: {
+        **ITEM_FACTORS,
+        "confidentiality": "low",
+        "user_interaction": "passive",
+        "attack_complexity": "high",
+        "attack_requirements": "present",
+        "privileges_required": "high",
+    },
+}
+
+
+def risk_row(score: float, **overrides) -> dict:
+    """One COMPLETED threat row scored at `score` (a `RISK_FACTORS` tier).
+
+    The fan-out fixtures use this instead of a bare `risk` override: the
+    assessment's factors are the tier's known-good set, so the derived score and
+    vector are consistent and the model stays consumable."""
+    return threat_row(factors=dict(RISK_FACTORS[score]), **overrides)
+
+
 def _evidence(ref: str = "GET /catalogue") -> dict:
     return {"kind": "request", "ref": ref}
 
 
 def modeller_gate_payloads() -> dict:
-    """The five gate payloads, the minimum the completion checker needs.
+    """The gate payloads, the minimum the completion checker needs.
 
     The literal content is the T1 fixture shape (a known-good worked example),
     never derived from the code under test. Single home: the modeller's pass
-    tests and the runtime wiring tests drive the SAME example."""
+    tests, the runtime wiring tests, and the mover fixtures drive the SAME
+    example. The worked example's ONE high-scoring threat references the ONE
+    scored assessment row (`ia-1`) that `assessment_args` builds.
+
+    The `IMPACT_ASSESSED` payload is the `assess_impact` ARGS, never a
+    `hunts_store` section: schema 5's store surface carries no assessment
+    section, because the `assess_impact` tool (ticket #407) is that row's sole
+    writer and the persistence derives the score from the factors.
+    """
     from polymerhus.attack.hunting.threat_model import ModelState
 
     return {
@@ -298,7 +372,7 @@ def modeller_gate_payloads() -> dict:
                 }],
                 "control_flows": [{
                     "id": "cf-1",
-                    "statement": "The handler authorises before the lookup.",
+                    "statement": "The request handler authorises before the lookup.",
                     "confidence": "INFERRED",
                     "evidences": [_evidence("framework default")],
                 }],
@@ -308,6 +382,49 @@ def modeller_gate_payloads() -> dict:
                     "confidence": "OBSERVED",
                     "evidences": [_evidence()],
                 }],
+            },
+        },
+        ModelState.PRIOR_ART: {
+            "prior_art": {
+                # One query per kind the completion check requires (ticket 437):
+                # threat, vulnerability, precursor - each with at least one
+                # filter - plus the phase note.
+                "queries": [
+                    {
+                        "kind": "precursor",
+                        "filters": [{
+                            "path": "capability",
+                            "regex": "session|item",
+                            "flags": "i",
+                        }],
+                        "result_count": 2,
+                    },
+                    {
+                        "kind": "threat",
+                        "filters": [{
+                            "path": "threat.web_vulnerability_class",
+                            "regex": "session-management",
+                            "flags": "i",
+                        }],
+                        "result_count": 0,
+                    },
+                    {
+                        "kind": "vulnerability",
+                        "filters": [{
+                            "path": "canonical_class",
+                            "regex": "credential",
+                            "flags": "i",
+                        }],
+                        "result_count": 0,
+                    },
+                ],
+                "reused": [{
+                    "unit_id": "Service:sign-in",
+                    "record_id": "p-2",
+                    "kind": "precursor",
+                    "reason": "the item-read capability applies to the lookup surface",
+                }],
+                "notes": "No prior threat matched the item read.",
             },
         },
         ModelState.TRUST_MODELLED: {
@@ -368,45 +485,141 @@ def modeller_gate_payloads() -> dict:
                 "canonical_class": "IDOR",
                 "web_vulnerability_class": "idor",
                 "characterisation": "An anonymous caller reads another user's item.",
-                "confidence": "INFERRED",
                 "evidences": [_evidence()],
             }],
         },
+        # The `assess_impact` tool's args own this gate's content (ticket #407).
+        ModelState.IMPACT_ASSESSED: assessment_args(),
         ModelState.COMPLETED: {
-            "failure_modes": [{
-                "id": "fm-1",
-                "vulnerability_ref": "v-1",
-                "mode": "read of another tenant's item",
-                "feasibility": "feasible",
-                "feasibility_rationale": "The id is caller-supplied.",
-                "confidence": "INFERRED",
-                "evidences": [_evidence()],
-            }],
-            "loops": [{
+            "threats": [{
                 "fault_ref": "fault-1",
                 "vulnerability_ref": "v-1",
-                "failure_mode_refs": ["fm-1"],
                 "canonical_class": "IDOR",
                 "web_vulnerability_class": "idor",
-                "likelihood": "high",
-                "likelihood_rationale": "An anonymous caller controls the id.",
-                "risk_factors": {
-                    "attack_vector": "network",
-                    "attack_requirements": "none",
-                    "privileges_required": "none",
-                    "complexity": "low",
-                },
-                "confidence": "INFERRED",
+                "impact_ref": "ia-1",
+                "enabling_precursors": [],
                 "evidences": [_evidence()],
             }],
         },
     }
 
 
+# The worked example's one damage claim: the victim is the tenant user, the
+# property is the confidentiality of the persisted item data (S2 section 2).
+IMPACT_DESCRIPTION = (
+    "An anonymous caller reads another tenant's item from the catalogue "
+    "database."
+)
+EXPLOITABILITY_DESCRIPTION = (
+    "One unauthenticated request names the item id; no defence stands between "
+    "the caller and the lookup, and no victim action is needed."
+)
+
+
+def _assessment_row(
+    index: int = 1, *, risk: float = ITEM_RISK,
+    factors: dict[str, str] | None = None,
+) -> dict:
+    """One seeded assessment row.
+
+    A `factors` set derives the score and the vector through the real risk
+    module, exactly as the `assess_impact` write would, so the row is internally
+    consistent. Without it the worked example's known-good `risk`/`vector` land
+    unchanged (the legacy fan-out callers)."""
+    row_factors = dict(factors) if factors is not None else dict(ITEM_FACTORS)
+    if factors is not None:
+        from polymerhus.attack.hunting.risk_score import (  # noqa: PLC0415
+            RiskMetrics,
+            compute_risk,
+        )
+
+        result = compute_risk(RiskMetrics.model_validate(row_factors))
+        risk, vector = result.score, result.vector
+    else:
+        vector = ITEM_VECTOR
+    return {
+        "id": f"ia-{index}",
+        "vulnerability_ref": "v-1",
+        "disposition": "threat",
+        "impact_description": IMPACT_DESCRIPTION,
+        "exploitability_description": EXPLOITABILITY_DESCRIPTION,
+        "capability": "read another tenant's item",
+        "capability_id": f"p-{index}",
+        "capability_path": [],
+        "evidence_refs": ["GET /catalogue?id=2"],
+        "factors": row_factors,
+        "risk": risk,
+        "risk_vector": vector,
+    }
+
+
+def assessment_args(index: int = 1) -> dict:
+    """The `assess_impact` ARGS of the worked example's row `index`.
+
+    The derived `risk` and `risk_vector` are dropped: the tool's contract refuses
+    both, and the persistence computes them from the authored factors.
+    """
+    return {
+        key: value
+        for key, value in _assessment_row(index).items()
+        if key not in ("risk", "risk_vector")
+    }
+
+
+def write_gate(surface, state, *, payload=None):
+    """Write ONE gate through the BOUND tools.
+
+    The assessment rows have ONE writer, `assess_impact`; every other gate goes
+    through `hunts_store`. An EMPTY assessment payload writes nothing, for the
+    fixture whose model carries no row at all. `payload` defaults to the worked
+    example's content for that gate.
+    """
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    content = (
+        modeller_gate_payloads()[state] if payload is None else payload)
+    if state is ModelState.IMPACT_ASSESSED:
+        if not content:
+            return None
+        return surface["assess_impact"].invoke(dict(content))
+    return surface["hunts_store"].invoke({
+        "cmd": "write", "state": state.value, "sections": content})
+
+
+def _coherent_threats(threats):
+    """Renumber the supplied threat rows onto their OWN assessment rows (the
+    one-threat-one-assessment rule): threat i references `ia-<i>` and `p-<i>`,
+    so a fan-out fixture stays a valid COMPLETED model."""
+    return [
+        {
+            **row,
+            "impact_ref": f"ia-{index}",
+            "enabling_precursors": [],
+        }
+        for index, row in enumerate(threats, start=1)
+    ]
+
+
+def _seed_assessments(path, rows) -> None:
+    """Seed the assessment section of one produced model document.
+
+    The `assess_impact` tool (ticket #406) is the sole writer of a schema-5
+    assessment row, through `ThreatModelStore.write_impact_assessment`. This
+    fixture seeds the document directly instead, because the worked example's
+    fan-out declares its own risk tiers and the real write DERIVES the score
+    from the factors. Every other gate, the COMPLETED write, the ranking, and
+    the checker still run through the real store.
+    """
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["state"] = "IMPACT_ASSESSED"
+    document["impact_assessment"] = rows
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+
 # --- the produced-model fixtures (T4b, #387) ------------------------------------
 #
 # The ONE home of the produced-model ladder: a test that needs a dispatchable
-# loop file drives the REAL store, never a copied per-file helper.
+# threat file drives the REAL store, never a copied per-file helper.
 
 def produce_model(
     store,
@@ -414,46 +627,70 @@ def produce_model(
     project_id: str,
     unit_id: str,
     run_id: str,
-    loops=None,
+    threats=None,
 ) -> str:
-    """Drive a REAL `ThreatModelStore`'s five gates to COMPLETED for `unit_id` -
+    """Drive a REAL `ThreatModelStore`'s seven gates to COMPLETED for `unit_id` -
     the produced COMPLETED valid model the mover dispatches from.
 
     The one home of the worked example's ladder (T4b #387 lifted it out of the
     per-file test helpers, so the retired-config tests could be re-pointed at the
-    same produced model): `loops` overrides the COMPLETED write's loop rows
-    (the sequencing fixtures). The gate payloads are a KNOWN-GOOD literal
-    (`modeller_gate_payloads`), never derived from the code under test."""
+    same produced model): `threats` overrides the COMPLETED write's threat rows
+    (the sequencing fan-out fixtures) and the assessment rows are derived per
+    threat, so every fan-out row keeps its own claim. The `IMPACT_ASSESSED`
+    content is seeded as the `assess_impact` tool will write it (ticket #406);
+    every other gate and the COMPLETED commit run through the real store. The
+    gate payloads are a KNOWN-GOOD literal (`modeller_gate_payloads`), never
+    derived from the code under test."""
     payloads = modeller_gate_payloads()
     from polymerhus.attack.hunting.threat_model import ModelState
 
+    rows = _coherent_threats(threats) if threats is not None else None
+    path = None
     for state in ModelState:
+        if state is ModelState.IMPACT_ASSESSED:
+            # The rows a fan-out declares (each carrying its own score), else
+            # the worked example's one row.
+            assessment_rows = (
+                [
+                    _assessment_row(
+                        index,
+                        risk=float(row.get("risk", ITEM_RISK)),
+                        factors=row.get("factors"),
+                    )
+                    for index, row in enumerate(rows, start=1)
+                ]
+                if rows is not None else [_assessment_row()]
+            )
+            _seed_assessments(path, assessment_rows)
+            continue
         sections = dict(payloads[state])
-        if state is ModelState.COMPLETED and loops is not None:
-            sections["loops"] = loops
-        store.write_sections(project_id, unit_id, state, sections, run_id=run_id)
+        if state is ModelState.COMPLETED and rows is not None:
+            # The model's write shape: no authored score and no fixture-only
+            # factor set (the factors live on the assessment row).
+            sections["threats"] = [
+                {
+                    key: value for key, value in row.items()
+                    if key not in ("risk", "factors")
+                }
+                for row in rows
+            ]
+        path = store.write_sections(
+            project_id, unit_id, state, sections, run_id=run_id)
     return unit_id
 
 
-def loop_row(**overrides) -> dict:
-    """One COMPLETED-write loop row (the shared worked example): one `high`
-    loop over fault-1 / v-1 / fm-1. `overrides` carry the sequencing fixtures'
-    likelihood (or a distinct loop's rows)."""
+def threat_row(**overrides) -> dict:
+    """One COMPLETED-write threat row (the shared worked example): one
+    high-scoring threat over fault-1 / v-1 that references the worked example's
+    `ia-1` row. `overrides` carry the sequencing fixtures' distinct rows;
+    `produce_model` renumbers a fan-out onto its own rows."""
     row = {
         "fault_ref": "fault-1",
         "vulnerability_ref": "v-1",
-        "failure_mode_refs": ["fm-1"],
         "canonical_class": "IDOR",
         "web_vulnerability_class": "idor",
-        "likelihood": "high",
-        "likelihood_rationale": "The item id is attacker-controlled and unauthenticated.",
-        "risk_factors": {
-            "attack_vector": "network",
-            "attack_requirements": "none",
-            "privileges_required": "none",
-            "complexity": "low",
-        },
-        "confidence": "INFERRED",
+        "impact_ref": "ia-1",
+        "enabling_precursors": [],
         "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
     }
     row.update(overrides)
@@ -500,26 +737,47 @@ def build_intake_l1(*, units=(), systems=()):
 
 class ScriptedModellerTurns:
     """The fake modeller turn seam: each state's turn writes its gate through the
-    BOUND `hunts_store` tool (never the store directly), so a test drives exactly
-    what the model drives. Returns the tool responses and the turn inputs."""
+    BOUND tools (never the store directly), so a test drives exactly what the
+    model drives - `hunts_store` for every gate, `assess_impact` for the
+    assessment rows. Returns the tool responses and the turn inputs."""
 
     def __init__(self, states=None, payloads=None):
         from polymerhus.attack.hunting.threat_model import ModelState
 
         self.states = list(states if states is not None else ModelState)
-        self.payloads = payloads if payloads is not None else modeller_gate_payloads()
+        # `payloads` OVERRIDES the worked example's gate payloads (one gate's
+        # override, never a replacement of the other gates), so a test that
+        # rewrites the COMPLETED write still drives the full ladder.
+        self.payloads = {
+            **modeller_gate_payloads(), **(payloads if payloads is not None else {}),
+        }
         self.turn_inputs: list = []
         self.responses: list = []
 
     def store_tool(self, turn):
         return next(tool for tool in turn.tools if tool.name == "hunts_store")
 
+    def write_gate(self, turn, state):
+        """One gate through the BOUND tools: the assessment row through
+        `assess_impact`, every other gate through `hunts_store`."""
+        return write_gate({tool.name: tool for tool in turn.tools}, state,
+                          payload=self.payloads[state])
+
     def __call__(self, turn):
         self.turn_inputs.append(turn)
+        if turn.phase == "WELLFORMEDNESS":
+            notes = next(tool for tool in turn.tools if tool.name == "notes")
+            notes.invoke({
+                "cmd": "write", "option": "append",
+                "note_name": "wellformedness", "kind": "wellformedness",
+                "body": "every threat checked; no new assumption",
+            })
+            # The well-formedness note is the phase exit; PRIOR_ART and
+            # IMPACT_ASSESSED follow as their own turns.
+            return None
         if turn.state not in self.states:
             return None
-        payload = self.payloads[turn.state]
-        self.responses.append(self.store_tool(turn).invoke({
-            "cmd": "write", "state": turn.state.value, "sections": payload,
-        }))
+        response = self.write_gate(turn, turn.state)
+        if response is not None:
+            self.responses.append(response)
         return None

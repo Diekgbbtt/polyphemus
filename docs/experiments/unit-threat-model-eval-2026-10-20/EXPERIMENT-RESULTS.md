@@ -2,7 +2,7 @@
 artifact: experiment-results
 version: "1.0"
 created: 2026-10-21
-status: canary-results
+status: canary-and-retest-results
 ---
 
 # Experiment Results: Unit Threat Model Eval, ComfyUI Canary
@@ -25,6 +25,10 @@ This document reports the ComfyUI canary only.
 It is a single-case measurement, not a statistical experiment.
 No p-value or confidence interval is meaningful at this sample size.
 The full execution and evidence record is in `/opt/polymerhus-dev/eval/runs-utm-20261020/comfyui-1/comfyui-1-20261021T002730-1fc05262/measurements.md` on the eval server.
+
+A separate ComfyUI hunting-only retest ran on 2026-10-21 with a 3M capped-token budget.
+The retest result is at the end of this document.
+It measured discovery only, because the run stopped at the cap before pod completion.
 
 ## Hypothesis Recap
 
@@ -249,6 +253,120 @@ The fixes are critical, simple, and structural; they should be validated on a fr
 - F-017 lost eight admitted pod specs; the 0 of 6 result is not a clean model-quality baseline.
 - The deterministic matcher was corrected during measurement; the strict unit axis remains 0 of 6, while the class axis is 5 of 6 and the manual binding is 2 of 6.
 
+## ComfyUI Hunting Retest (2026-10-21)
+
+The retest used the seeded ComfyUI project and the repaired hunting pipeline.
+The setup is `eval/setups/comfyui-utm-hunting-retest.yaml`.
+The measured code is `dev` at `d17560e0`.
+The run ID is `cdf0918c-6ff1-4abd-893c-18d018113523`.
+The reconstructed trial record is `/opt/polymerhus-dev/eval/runs-utm-20261020/comfyui-1/comfyui-1-20261021T140000-1fc05262-retest/trial.yaml`.
+
+### Retest Result
+
+| Metric | Retest value | Note |
+|--------|--------------|------|
+| Terminal | `stopped` | The 3M watchdog stopped the project. The run did not reach a `complete` terminal. |
+| Capped tokens | 3,355,148 | Budget 3,000,000; overshoot 355,148 because in-flight calls finished after the stop. |
+| Calls | 1,204 | Project cumulative at the stop was 7,806,215 capped tokens. |
+| Loops | 15 | One `RESTApi:core-http` model. |
+| Hunter specs | 39 | 22 `ratified`, 16 `hypothesised`, 1 `dropped`; 9 loops produced specs. |
+| Hunter sessions | 13 | 13 of 15 loops dispatched a hunter; 2 loops were not dispatched. |
+| Pod directories | 19 | 5 pod runs measured; 2 terminal exports, both `unsuccessful`. |
+| Unit-level candidates | 0 of 6 | Strict benchmark axis. |
+| Class-level candidates | 5 of 6 | The specs bind `RESTApi:core-http`, not the corpus service units. |
+| Pod confirmations | 0 | Both terminal exports were F-009 false negatives (`iterations: 0`, same reasoning 400); no domain evidence. |
+| Identification | 0 of 6 | 0 partial. |
+
+### Retest Findings
+
+- The first attempt spent 990,160 capped tokens and lost 13 consumed loops when the provider returned 429. The operator restored them manually.
+- The new provider key restored weekly and monthly quota. The run still refused to resume because `quota_exhausted=true` is terminal. The operator cleared that flag in PostgreSQL.
+- The resumed run produced 39 specs and 19 pod directories. This is real discovery progress over the zero-spec first attempt.
+- The F-021 prompt fix worked at class level. The hunter wrote `/view` subfolder-decode, metadata-path-join, and viewvideo path-join specs.
+- The `/userdata` owner checks and the manager catalogue also produced specs.
+- The strict unit axis remained zero. Every spec bound `RESTApi:core-http`, not a corpus service unit.
+- Two pods produced terminal exports before the cap, both `unsuccessful` with `iterations: 0` and the same reasoning 400: `active-type-denylist-omission_userdata-blob-serve` and `type-selects-privileged-area_temp-read`. They are F-009 false negatives, not domain evidence. The F-017 recovery and the F-020 terminal-set guard were not exercised to completion.
+- The reason-replay 400 recurred. Two hunter turns degraded.
+- A five-spec `hunts_store` call was truncated at 3,686 characters. Five candidate specs were lost.
+
+### New Defects
+
+- F-022: a consumed hunting loop is lost when the run pauses on a provider failure. Fixed as `30a76375`.
+- F-023: a quota-exhausted run is terminal after a provider key rotation. Deferred.
+- F-024: the capped-token watchdog overshoots because the stop is asynchronous. Deferred.
+- F-025: a multi-spec `hunts_store` call is truncated before the typed contract can validate it. Fixed as `d3bfa6c7`.
+- F-026: one child provider failure stops the whole run. Fixed as `7491b5e7`.
+- F-009 recurred; fixed as `e45d41ea`.
+
+### Retest Gate
+
+The white-jotter trial is held.
+The retest did not pass the planned gate:
+
+- the run terminal is `stopped`, not `complete`;
+- the two terminal pod exports were F-009 false negatives; no ground-truth spec reached a confirmed export;
+- the strict unit axis is 0 of 6;
+- F-023 and F-024 remain deferred; F-022, F-025, F-026, and F-009 are fixed locally but not yet deployed.
+
+The next step is to deploy and validate the local fixes, then run the 7M white-jotter trial.
+
 ---
 
 *Results documented on 2026-10-21. Decision: iterate before the measured eight-target run.*
+
+---
+
+## White-jotter 7M trial (2026-10-22)
+
+The first white-jotter trial ran from scratch on the fixed pipeline (`5789ad3f`) with the 7M capped-token budget and the 4-hour phase deadline.
+The trial is `white-jotter-1-20261022T030303-1618c524` on project `4786aefc-c3fd-46c1-a2ab-45b05cc38e25`.
+
+### Result
+
+| Metric | Result |
+|---|---|
+| Terminal | `stopped` at the 7M cap (not `complete`) |
+| Capped tokens | 7,002,218 of 7,000,000; overshoot 3,405 |
+| Phases | recon `complete`; analysis `drained`; hunting `stopped` |
+| Intake position at stop | 5 of 27 |
+| COMPLETED unit models | 7, all valid (`degraded_units: 0`) |
+| Loops / specs / pod directories | 23 / 42 / 27 |
+| GT pod confirmations | 4 |
+| Non-GT pod confirmations | 13 |
+| Official verdicts | 1 identified, 2 partial, 4 missed |
+| Identification rate | 14.29% |
+| Partial-or-identified rate | 42.86% |
+| Loop candidate recall | 28.57% (2/7) |
+| Spec candidate recall | 14.29% (1/7) |
+| Core floor / full core | 100% / 28.57% |
+| Risk total at stop | 33 / 250 (the cap bound before the threshold) |
+
+### Verdicts
+
+- `white-jotter-002` (access-control bypass at `/api/`): **identified**.
+  The reverse proxy matches the literal path while Tomcat resolves the matrix segment, so the authorizing filter is skipped; `/api/;/admin/user` returns the admin roster while the canonical twin returns 0 bytes.
+- `white-jotter-001` (weak/default credentials at `/api/login`): **partial**.
+  A pod control probe authenticated `admin/123` and the minted session worked, but the loop was scoped to rate limiting, not weak/default credentials; no loop or spec targeted the class.
+- `white-jotter-003` (stored XSS at `/api/admin/content/article`): **partial**.
+  The article handler stored caller HTML verbatim and read it back, but no output encoding or script execution was tested.
+- `white-jotter-004` (RCE/JNDI), `white-jotter-005` (SQLi), `white-jotter-006` (arbitrary file read), `white-jotter-007` (IDOR/overwrite at `/api/register`): **missed**.
+  The diagnoses attribute all four to the cap: the run stopped at intake position 5, before the units that own the JNDI flow, the catalogue keyword path, the media-asset cover path, and the public registration handler were modelled.
+
+### What the run establishes
+
+- The F-027 reference-ID contract works: all 7 COMPLETED models are valid, and the pre-fix attempts show the failure mode (the model put `CF-*`/`DF-*` in `interface_agreement_refs`, prose in `maps_to_fault`, and renamed classes at the loop).
+- The one-spec F-025 cadence wrote 42 specs without a transport truncation.
+- The pipeline reached pod execution: 27 pod directories, 4 GT confirmations, 13 non-GT symptoms.
+- The 7M cap, not the risk threshold, is the binding terminator.
+  The four missed vulnerabilities are coverage misses from the cap, not clean model-quality misses.
+- The run had no provider interruption, so F-022 and F-026 were deployed but not exercised by this trial.
+
+### Next
+
+The cap is the primary coverage bound.
+The next decision is either a larger white-jotter budget, an intake that reaches the high-value units earlier, or a scoped fix for the weak-credential and stored-XSS loop classes.
+The four cap misses are not evidence of model quality until the units are actually modelled.
+
+---
+
+*White-jotter result documented on 2026-10-22. Decision: the pipeline is functional; the next experiment must settle the cap-versus-coverage tradeoff.*

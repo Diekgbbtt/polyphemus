@@ -1,5 +1,7 @@
 # Assertions - hunting-agent state-graph hunter (#164)
 
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+
 **SUPERSEDED 2026-10-18 for the lifecycle and FSM assertions.**
 The new harness contract is `docs/design/hunting-164-state-graph-spec.md` section 14.
 The new assertions are defined at the to-assertions phase.

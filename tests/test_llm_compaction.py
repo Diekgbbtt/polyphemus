@@ -564,6 +564,58 @@ def test_tail_messages_stay_byte_identical_when_compaction_fires():
     assert res.messages[-1].content == tail_human.content
 
 
+def test_pinned_first_human_stays_verbatim_at_the_head():
+    """The hunting roles pin the first human message (the application and unit
+    context). Compaction still summarises the later region, but the pinned
+    message stays byte-identical immediately after the leading system message."""
+    profile = CapabilityProfile(reasoning_in_response=True)
+    store = T.InMemoryToolOutputStore()
+    system = SystemMessage(content="role prompt")
+    pinned = HumanMessage(content="PINNED-TARGET-CONTEXT")
+    trail = [system, pinned, AIMessage(content="reason-one"),
+             HumanMessage(content="later question")]
+    res = C.compact_pass(
+        trail, thread_id="thr", profile=profile, store=store,
+        summariser=_good_summariser(),
+        replay_keep_tokens=C.approx_tokens([trail[-1]]),
+        pin_first_human=True,
+    )
+    assert res.messages[0] is system
+    assert res.messages[1] is pinned
+    assert res.messages[1].content == "PINNED-TARGET-CONTEXT"
+    assert res.messages[2].type == "system"
+    assert any("later question" in str(m.content) for m in res.messages)
+    assert not any("reason-one" in str(m.content) for m in res.messages)
+
+
+def test_pin_default_keeps_the_existing_fold_behavior():
+    """Without the pin, the first human is still region material and folds into
+    the summary when one fires - the default path is unchanged."""
+    profile = CapabilityProfile(reasoning_in_response=True)
+    trail = [HumanMessage(content="OLD-FIRST-HUMAN"),
+             AIMessage(content="reason-one"), AIMessage(content="reason-two")]
+    res = C.compact_pass(
+        trail, thread_id="thr", profile=profile,
+        store=T.InMemoryToolOutputStore(), summariser=_good_summariser(),
+        replay_keep_tokens=0,
+    )
+    assert not any(str(m.content) == "OLD-FIRST-HUMAN" for m in res.messages)
+
+
+def test_hunting_roles_pin_the_first_human_and_analysis_roles_do_not(monkeypatch):
+    """The four hunting roles opt into the pin through the ONE role builder;
+    analysis roles keep the existing fold behavior."""
+    import polymerhus.app.llm.summary as summary_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(summary_mod, "build_summariser", lambda role: (lambda *a, **k: None))
+    monkeypatch.setattr(C, "resolve_compaction_profile", lambda role: None)
+    for role in sorted(C.PIN_FIRST_HUMAN_ROLES):
+        middleware = C.build_role_compaction_middleware(role, window=_window())
+        assert middleware.manager.pin_first_human is True, role
+    middleware = C.build_role_compaction_middleware("assigner", window=_window())
+    assert middleware.manager.pin_first_human is False
+
+
 def test_region_human_inputs_fold_into_the_summary_when_one_is_produced():
     """D1: when a summary is produced, older turn INPUTS in the region BEFORE the
     tail fold into it too (the summary now carries the user's directives) - the

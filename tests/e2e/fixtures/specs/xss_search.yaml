@@ -35,7 +35,7 @@ rationale: >-
   marker) and a cheap control, so a handful of families cleanly separate
   confirmed from absent.
 provenance:
-  loop_id: loop-3
+  threat_id: threat-3
   unit_id: "service:web:soupmarket"
   canonical_class: injection
   web_vulnerability_class: cross-site-scripting

@@ -1,5 +1,17 @@
 # Unit threat model - grilling workbench
 
+> **Vocabulary note (2026-10-25).** The artifact called a **loop** in this historical document is now a **threat** in the module and the current documentation.
+> **Superseded 2026-10-26.** The impact-assessment system supersedes the impact-first and five-state model in this historical document.
+> The authoritative spec is `docs/design/impact-assessment-system-spec.md`; the prototype is `docs/design/impact-assessment-system-prototype.md`.
+> The current model is: `threat` (a concrete victim and damaged property), `placeholder` (no concrete damage), `precursor` (a capability entity), a first-class impact assessment, and a `hunts_store` query phase.
+
+> **Superseded 2026-10-25.** The likelihood-only risk score (Q33, R3-1) and the failure-mode artifact are amended by `docs/design/threat-model-impact-elicitation-adr.md`. The impact is now first-class (`VC/VI/VA`), the risk is `likelihood_weight * impact_weight`, and the failure modes are removed.
+
+> **Superseded 2026-10-31.** The risk formula is replaced by the CVSS 4.0 base score.
+> The authoritative spec is `docs/design/cvss4-risk-scoring-spec.md`; the decisions are `docs/design/threat-model-cvss4-risk-scoring-adr.md` and `docs/design/impact-assessment-atomic-write-adr.md`.
+> The likelihood, the ordinal impact weight, and the threat confidence are retired.
+
+
 - Change: the hunt-orchestrator (fault-space breadth explorer) is rewritten in place into the threat modeller, which publishes a formal unit threat model per discretely testable unit.
 - Branch: `design/unit-threat-model`.
 - Worktree: `/Users/diekgbbtt/.claude/worktrees/unit-threat-model`.
@@ -365,8 +377,9 @@ The ordering-halt coupling ADR is written (R1-4; `docs/design/unit-threat-model-
 Depends on: R1-3, R1-4.
 Blocks: R3-2.
 
-**R2-6 `[DECIDED 2026-10-18 (Q59)]` Dispatch interleave.**
+**R2-6 `[DECIDED 2026-10-18 (Q59); AMENDED 2026-10-23]` Dispatch interleave.**
 Dispatch per admitted unit while modelling continues; the quiesce predicate changes in `surfer.run_work_remaining` and `_ratified_config`; run stop and resume semantics with models in flight.
+As of the pipeline-sync decision (ADR `hunting-pipeline-sync-adr.md`), the interleave is the `parallel` sync mode only: the default `batched` (and `serial`) model the whole risk budget before any downstream dispatch, so the per-unit sequencing described below survives inside a batch/queue rather than across the modelling pass.
 Operator direction 2026-10-16 (Q20): cross-unit dispatch sequencing is IN SCOPE - the surfer dispatches the high and medium loops first and pauses the low ones until those are executed; the implementation design (store layout, mover deduction, execution-completion detection) is assessed in R5-1 and the mechanics land here.
 Closure (Q59): the direction is decided (Q20) and the layout plus sequencing design is settled by R5-1 (design B); the quiesce-predicate changes, the stop/resume mechanics, and the execution-completion detection ride the change spec.
 Depends on: R1-2, R1-3, R2-4 (decided), R5-1.

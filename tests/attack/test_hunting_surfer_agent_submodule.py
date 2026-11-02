@@ -36,21 +36,26 @@ UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
 UNIT_NAME = "Service-catalogue-and-discovery"
-LOOP_ID = "loop-1"
-DISPATCH_ID = f"{UNIT_NAME}__{LOOP_ID}"
+THREAT_ID = "threat-1"
+DISPATCH_ID = f"{UNIT_NAME}__{THREAT_ID}"
 HUNTER_SESSION = mover_mod.hunter_session_id(RUN, DISPATCH_ID)
-SPEC_FILE = "sqli_blind"
+SPEC_FILE = "sqli__blind__boolean"
 
 
 def _produce(threat):
-    """One produced COMPLETED valid model with its loop file (S2 8.1)."""
+    """One produced COMPLETED valid model with its threat file (S2 8.1)."""
     return produce_model(
         threat, project_id=PROJECT, unit_id=UNIT, run_id=RUN)
 
 
 def _spec(**overrides):
     data = {
-        "status": "ratified", "fault_keyword": "sqli", "strategy_keyword": "blind",
+        "status": "hypothesised",
+        "discriminators": [
+            {"axis": "fault", "value": "blind"},
+            {"axis": "technique", "value": "boolean"},
+        ],
+        "provenance": {"web_vulnerability_class": "sqli"},
         "verification_symptoms": ["a foreign item renders"],
     }
     data.update(overrides)
@@ -111,7 +116,7 @@ def _coro_for(threat, hunter, state, control):
 
 # --- C10/C11: a down role refuses dispatch, the item stays produced ----------
 
-def test_C10_down_hunter_role_refuses_loop_dispatch(stores):
+def test_C10_down_hunter_role_refuses_threat_dispatch(stores):
     threat, hunter = stores
     _produce(threat)
     control = _RecordingControl()
@@ -122,13 +127,15 @@ def test_C10_down_hunter_role_refuses_loop_dispatch(stores):
     )
     assert control.calls == []           # no coroutine was even admitted
     assert report.refused == 1 and report.moved == 0 and report.admitted == 0
-    assert [entry["loop_id"] for entry in
-            threat.read_produced_loops(PROJECT)[0]["loops"]] == [LOOP_ID]
+    assert [entry["threat_id"] for entry in
+            threat.read_produced_threats(PROJECT)[0]["threats"]] == [THREAT_ID]
 
 
 def test_C11_down_pod_role_refuses_spec_dispatch(stores):
     threat, hunter = stores
-    hunter.write_specs(PROJECT, DISPATCH_ID, [_spec()])
+    draft = _spec()
+    hunter.write_specs(PROJECT, DISPATCH_ID, [draft])
+    hunter.write_specs(PROJECT, DISPATCH_ID, [{**draft, "status": "ratified"}])
     control = _RecordingControl()
     report = run_delivery_tick(
         PROJECT, RUN, threat_store=threat, hunter_store=hunter,
@@ -175,6 +182,59 @@ def test_C12_up_hunter_dispatches_and_acquires_the_role_gate(monkeypatch, tmp_pa
     assert coro is not None            # up role -> a session coroutine
     asyncio.run(coro)
     assert log == ["enter", "exit"]    # the role gate bounded the stretch
+
+
+def test_run_pod_session_injects_the_role_compaction_middleware(monkeypatch, tmp_path):
+    """T5: the production pod dispatch passes the runner and triager
+    `after_model` compaction middleware to the pod builder."""
+    captured: dict = {}
+
+    async def _builder(spec, **kw):
+        captured.update(kw)
+        return {"verdict": "successful", "terminal_reason": "symptom-confirmed"}
+
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+
+    async def _go():
+        return await run_pod_session(
+            spec=_spec(), project_id=PROJECT, run_id=RUN, hunt_key=DISPATCH_ID,
+            spec_id=SPEC_FILE, inbox=None,
+            hunter_store=hunter, gate=None, pod_builder=_builder, pod_store=None,
+        )
+
+    asyncio.run(_go())
+    assert captured["runner_middleware"]
+    assert captured["triager_middleware"]
+
+
+def test_default_pod_builder_forwards_the_role_compaction_middleware(monkeypatch):
+    """The production builder accepts the surfer's middleware kwargs and
+    forwards them to `arun_pod` verbatim. Regression: the builder signature
+    lacked both kwargs, so every production pod degraded before execution."""
+    from polymerhus.attack.hunting import runtime as runtime_mod
+
+    captured: dict = {}
+
+    async def _fake_arun_pod(spec, **kw):
+        captured["spec"] = spec
+        captured.update(kw)
+        return {"verdict": "successful"}
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.pod.pod.arun_pod", _fake_arun_pod)
+    runner_middleware = (object(),)
+    triager_middleware = (object(),)
+
+    asyncio.run(runtime_mod._default_pod_builder(
+        _spec(), run_id=RUN, project_id=PROJECT, memory_store=None,
+        spec_id=SPEC_FILE,
+        runner_middleware=runner_middleware,
+        triager_middleware=triager_middleware,
+    ))
+
+    assert captured["runner_middleware"] == runner_middleware
+    assert captured["triager_middleware"] == triager_middleware
+    assert captured["spec_id"] == SPEC_FILE
 
 
 def test_C12_up_pod_session_acquires_the_role_gate(monkeypatch, tmp_path):

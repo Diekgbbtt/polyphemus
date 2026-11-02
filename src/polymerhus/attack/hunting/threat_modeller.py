@@ -1,18 +1,20 @@
-"""The threat modeller: the five-gate reasoning pass over one L1 unit (S1 4-6, 9).
+"""The threat modeller: the seven-gate reasoning pass over one L1 unit (S1 4-6, 9).
 
 The hunt-orchestrator planner was rewritten in place into the **threat modeller**
 (S1 2.1): for each admitted L1 unit it builds a formal trust model and publishes
-a ranked set of loops, one gate write at a time, into the per-project
+a ranked set of threats, one gate write at a time, into the per-project
 `ThreatModelStore` (T1, `threat_model_store.py`).
 
-The machine is an extended finite state machine of five states, whose gates are
+The machine is an extended finite state machine of seven states, whose gates are
 gate writes (S1 6.1):
 
     UNIT_TECHNICAL_SHARP      technical_sharpening
+    PRIOR_ART                 prior_art
     TRUST_MODELLED            trust_model
     TRUST_ASSUMPTIONS_WRITTEN assumptions
     VULNERABILITIES_WRITTEN   vulnerabilities
-    COMPLETED                 failure_modes, loops
+    IMPACT_ASSESSED           no model-facing section; the `assess_impact` rows
+    COMPLETED                 threats
 
 Three rules govern the harness side:
 
@@ -34,9 +36,10 @@ checker is non-blocking and never rejects a write.
 The tool surface (S1 5) is built by
 `threat_modeller_tools.build_modeller_tool_surface` over the seams in
 `threat_modeller_tools.ModellerTools`: `hunts_store` (the threat-model
-read/write), `notes` (the shared notes tool with the bound
-`<unit_name>:<note_name>` key), the HTTP-history read pair, the Kali `exec`
-probe, and the web-vulnerability suite pair (`skill_list` / `skill_load`). The
+read/write), `assess_impact` (the sole writer of one assessment row),
+`notes` (the shared notes tool with the bound `<unit_name>:<note_name>` key),
+the HTTP-history read pair, the Kali `exec` probe, and the web-vulnerability
+suite pair (`skill_list` / `skill_load`). The
 auth store and the project skill arrive through the role's `load_skill` binding
 (the recon-orchestrator coupling). Deliberately NOT bound: `graph_view` (the
 unit projection and the L1 application-surface overview reach the turn through
@@ -88,8 +91,8 @@ MODELLER_MODEL_KEY = "LLM_HUNTING_THREAT_MODELLER"
 # aid tool is withdrawn - the fault is induced from the trust model, never
 # copied from an outside repository.
 TOOL_SURFACE: tuple[str, ...] = (
-    "hunts_store", "notes", "search_http_history", "get_http_artifact", "exec",
-    "skill_list", "skill_load",
+    "hunts_store", "assess_impact", "notes", "search_http_history",
+    "get_http_artifact", "exec", "skill_list", "skill_load",
 )
 
 # The gate hints (S1 9.3): module constants injected in the gate write's tool
@@ -97,30 +100,52 @@ TOOL_SURFACE: tuple[str, ...] = (
 # hint only tells the model what the next state expects.
 GATE_HINTS: dict[ModelState, str] = {
     ModelState.UNIT_TECHNICAL_SHARP: (
-        "Proceed to trust mapping: translate the interface agreements into "
-        "trust agreements over data attributes, application contexts, and "
-        "principal privileges, then model dynamic-state trust (states, "
-        "transitions, trust-transition violations, TOCTOU, multi-step "
-        "business-logic bypass, forced state transitions). Write both branches' "
-        "outcomes with a hunts_store write for state TRUST_MODELLED."
+        "Proceed to trust mapping: work the four axes in order - identity, "
+        "spatial, temporal, controls_semantics. Name the artifact, the "
+        "controlling principal, the security-sensitive decision, and the "
+        "worst-case damage for each trust agreement. Write the outcomes "
+        "with a hunts_store write for state TRUST_MODELLED."
+    ),
+    ModelState.PRIOR_ART: (
+        "Proceed to the impact assessment: call `assess_impact` once per "
+        "assessment row, and at least once for every vulnerability that is not "
+        "dropped. Each call carries the two prose blocks (impact_description, "
+        "exploitability_description) and the eight factors; the tool validates "
+        "the row, the persistence derives the score, and the first successful "
+        "call advances the state to IMPACT_ASSESSED. Never author a score."
     ),
     ModelState.TRUST_MODELLED: (
-        "Proceed to assumptions: continue both perspectives and write the "
-        "assumptions that bend the trust agreements; each assumption names a "
-        "technical programming fault a developer could have made. Write them "
-        "with a hunts_store write for state TRUST_ASSUMPTIONS_WRITTEN."
+        "Proceed to assumptions: enumerate the security-relevant artifacts and "
+        "fields, the assumed component and data states, and the loose trust "
+        "checks. Each assumption names the trust agreement it bends, the "
+        "artifact, the controlling principal, the technical programming fault, "
+        "and the adversarial capability. Write them with a hunts_store write "
+        "for state TRUST_ASSUMPTIONS_WRITTEN."
     ),
     ModelState.TRUST_ASSUMPTIONS_WRITTEN: (
         "Proceed to vulnerability citation: for each programming fault name the "
         "web vulnerability classes freely from the canonical taxonomy first, "
-        "then map each named class to the suite class that covers it. Write them "
-        "with a hunts_store write for state VULNERABILITIES_WRITTEN."
+        "then bind each named class to a suite class parent or leaf. Technique "
+        "families are not classes. Write them with a hunts_store write for "
+        "state VULNERABILITIES_WRITTEN."
     ),
     ModelState.VULNERABILITIES_WRITTEN: (
-        "Proceed to failure-mode deduction and the ranked loops: map each "
-        "not-dropped vulnerability back to one or more runtime failure modes, "
-        "apply the retention-first drop rule, rank the surviving loops by "
-        "likelihood and write them with a hunts_store write for state COMPLETED."
+        "Proceed to the well-formedness phase: for every vulnerability whose "
+        "class will bound a threat, load the class skill, read its title, "
+        "overview, Trust Assumptions section, and closing summary, and add the "
+        "missed assumptions. Patch a local gap or return to the "
+        "undermodelled part for a structural gap. When the pass yields no new "
+        "assumption, write the wellformedness note, then run the PRIOR_ART "
+        "gate, then write the IMPACT_ASSESSED rows."
+    ),
+    ModelState.IMPACT_ASSESSED: (
+        "Proceed to completion: the risk is DERIVED from the assessment rows - "
+        "never author a score, a vector, or a factor. Verify the assessment "
+        "coverage (every non-dropped vulnerability has a row with both prose "
+        "blocks and its capability) and the enabling chains (every required "
+        "capability resolves to its provider, ordered in execution order). Then "
+        "write ONLY the threats section; the store mirrors the risk, ranks the "
+        "threats, computes the risk profile, and runs the completion checker."
     ),
 }
 
@@ -137,36 +162,81 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "flows, each with its confidence degree and evidence entries, and write "
         "the technical_sharpening section."
     ),
+    ModelState.PRIOR_ART: (
+        "Query the store after the vulnerability phase, before you assess the impacts. Use `hunts_store` "
+        "with cmd='query', a `kind` (threat, vulnerability, precursor, "
+        "assumption, or impact), a non-empty AND list of {path, regex, flags} "
+        "filters, and a limit. Search the other units' produced and consumed "
+        "models for the threats, vulnerabilities, and precursor capabilities "
+        "that bear on this unit. Record at least one query per kind (threat, "
+        "vulnerability, precursor) with its filters and its match count, every "
+        "record you reuse with the reason, and a prior_art note as the phase "
+        "exit. Write the prior_art section."
+    ),
     ModelState.TRUST_MODELLED: (
-        "Run the two trust-mapping branches sequentially: translate every "
-        "interface agreement into a trust agreement over the data attributes, "
-        "application contexts, and principal privileges; then model "
-        "dynamic-state trust from the application-states-flow perspective. "
-        "Write the trust_model section."
+        "Work the four trust axes in order: identity, spatial, temporal, "
+        "controls_semantics. Each axis carries the same weight; temporal may be "
+        "shorter when the unit has few transitions. For each trust agreement, "
+        "name the artifact, the controlling principal, the security-sensitive "
+        "decision, and the worst-case damage. Write the trust_model section."
     ),
     ModelState.TRUST_ASSUMPTIONS_WRITTEN: (
-        "Continue both perspectives and write the assumptions that bend the "
-        "trust agreements. Each assumption is induced from or to one technical "
-        "programming fault (with its label and description), and names the trust "
-        "agreement it bends. Write the assumptions section."
+        "Enumerate the security-relevant artifacts and fields, the assumed "
+        "component and data states, and the loose trust checks. Write the "
+        "assumptions that bend the trust agreements; each names the trust "
+        "agreement, the artifact, the controlling principal, and one technical "
+        "programming fault (with its label and description), and the adversarial "
+        "capability it yields. Write the assumptions section."
     ),
     ModelState.VULNERABILITIES_WRITTEN: (
         "Switch to the abduction world: for each programming fault, name the web "
         "vulnerability classes freely from the canonical taxonomy first, then "
-        "map each named class onto the suite class that covers it (skill_list "
-        "and skill_load). Where no suite class covers a name, keep the canonical "
-        "name, leave web_vulnerability_class empty, and set suite_gap. Write the "
-        "vulnerabilities section."
+        "bind each named class to a suite class parent or leaf (search the "
+        "suite with skill_list and a name regex, then skill_load). Technique "
+        "families are not classes; bind the nearest parent for a novel class "
+        "and never leave the class empty. Then run the well-formedness phase."
+    ),
+    ModelState.IMPACT_ASSESSED: (
+        "Assess each vulnerability through the `assess_impact` tool: once per "
+        "assessment row, and at least once for every vulnerability that is not "
+        "dropped. Each row carries impact_description (the victim and the "
+        "damaged property, or why no end damage follows), "
+        "exploitability_description (the chain, its capabilities, and its human "
+        "participation), capability, capability_id, capability_path, "
+        "evidence_refs, and the eight factors. A row with a concrete end damage "
+        "is a threat; a row without one is a precursor. The tool validates the "
+        "row and advances the gate; the score is derived, never authored."
     ),
     ModelState.COMPLETED: (
-        "Deduce the failure modes: map each not-dropped vulnerability back to "
-        "one or more runtime execution failure modes grounded in the technical "
-        "sharpening. Apply the retention-first drop rule, score each feasible "
-        "loop's likelihood from the four risk factors, and write ONLY the "
-        "failure_modes and loops sections. The store computes the risk profile "
-        "and runs the completion checker after your write."
+        "Rank the threats: apply the two-clause drop rule, reference each "
+        "threat's impact row (impact_ref) and its enabling_precursors, and copy "
+        "each threat's canonical_class and web_vulnerability_class verbatim "
+        "from its vulnerability. The risk is derived from the assessment rows: "
+        "do not author a score, a vector, or a factor. Verify that every "
+        "non-dropped vulnerability has an assessment row and that every "
+        "enabling chain resolves to its provider. Write ONLY the threats "
+        "section. The store mirrors the risk, computes the risk profile, and "
+        "runs the completion checker after your write; if validation.valid is "
+        "false, fix every finding and write COMPLETED again before ending the "
+        "pass."
     ),
 }
+
+# The well-formedness phase is a pass-level pseudo-phase between the
+# vulnerabilities write and the impact-assessed write. It is not a ModelState:
+# the enter signal is the `wellformedness` note, the re-entry signal is a
+# lower-gate write, and the exit is the IMPACT_ASSESSED write.
+WELLFORMEDNESS = "WELLFORMEDNESS"
+
+WELLFORMEDNESS_INSTRUCTION = (
+    "Run the well-formedness phase: for every vulnerability whose class will "
+    "bound a threat, load the class skill, read its title and overview, its "
+    "Trust Assumptions section, and its closing summary, and add the missed "
+    "assumptions. Patch a local gap or return to the undermodelled part "
+    "for a structural gap. When the pass yields no new assumption and every "
+    "vulnerability has a bound suite class, write ONE wellformedness note and "
+    "then the PRIOR_ART gate, then the IMPACT_ASSESSED rows."
+)
 
 # The last gate carries no hint: the model is published (S1 9.3).
 LAST_GATE = ModelState.COMPLETED
@@ -181,7 +251,11 @@ LAST_GATE = ModelState.COMPLETED
 # All four knobs are env-backed with sane defaults.
 
 _DEFAULT_DEGRADED_WARN_STREAK = 2
-_DEFAULT_DEGRADED_ABORT_STREAK = 5
+# The abort threshold must let a model that writes every gate in ONE
+# COMPLETED-turn jump survive: the pass asks one turn per gate, so a cold
+# forward jump is silent on the six states below COMPLETED. Anything lower
+# would abort a transition the pass is documented to accept.
+_DEFAULT_DEGRADED_ABORT_STREAK = 7
 _DEFAULT_DEGRADED_BACKOFF_BASE_S = 1.0
 _DEFAULT_DEGRADED_BACKOFF_MAX_S = 30.0
 
@@ -411,6 +485,12 @@ class TrackingThreatModelStore:
     def tracker(self) -> PassiveGateTracker:
         return self._tracker
 
+    def set_class_names(self, class_names) -> None:
+        """Delegate the suite class index to the wrapped store."""
+        setter = getattr(self._inner, "set_class_names", None)
+        if setter is not None:
+            setter(class_names)
+
     def write_sections(self, project_id: str, unit_id: str, state, sections,
                        *, run_id: str):
         try:
@@ -428,6 +508,20 @@ class TrackingThreatModelStore:
             return path
         self._tracker.observe(gate, sections)
         return path
+
+    def write_impact_assessment(self, project_id: str, unit_id: str,
+                                run_id: str, **fields):
+        """The assessment write is the `IMPACT_ASSESSED` gate (schema 5).
+
+        It is a store method of its own, not a `write_sections` call, so the
+        wrapper observes it here: the tool's first successful row advances the
+        tracked state, and the pass never re-asks the gate. A refused row raises
+        before this observation, so a rejected write is never counted."""
+        row = self._inner.write_impact_assessment(
+            project_id, unit_id, run_id, **fields)
+        self._tracker.observe(ModelState.IMPACT_ASSESSED,
+                              ("impact_assessment",))
+        return row
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
@@ -476,6 +570,7 @@ class ModellerTurnInput(BaseModel):
 
     unit_id: str
     state: ModelState
+    phase: str | None = None
     sections: tuple[str, ...]
     instruction: str
     model: dict | None = None
@@ -484,6 +579,10 @@ class ModellerTurnInput(BaseModel):
     projection: Any = None
     surface_overview: Any = None
     context_gaps: tuple[str, ...] = ()
+    # The project's free-text posture statement (#438), read once by the RUN
+    # (runtime._run_intake) and carried verbatim into every turn. Empty means
+    # the project set no scope: the composed turn appends nothing.
+    threat_model_scope: str = ""
     tools: Any = Field(default=None, exclude=True)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -498,7 +597,7 @@ class UnitOutcome(BaseModel):
 
     `status` is `completed` only when the persisted model reached COMPLETED and
     its completion validation is valid; everything else is `degraded` with the
-    reason recorded and no loop dispatched."""
+    reason recorded and no threat dispatched."""
 
     unit_id: str
     status: UnitStatus
@@ -524,6 +623,86 @@ async def _await_seam(fn, *args):
     return out
 
 
+def _has_wellformedness_note(tools, project_id: str, unit_id: str) -> bool:
+    """Whether the unit's exit memory exists. The note is the phase's exit
+    signal; the store owns the key and the kind."""
+    store = getattr(tools, "threat_store", None)
+    if store is None:
+        return False
+    from .threat_model_store import sanitise_unit_name  # noqa: PLC0415
+
+    key = f"{sanitise_unit_name(unit_id)}:wellformedness"
+    try:
+        notes = store.read_notes(project_id, key)
+    except Exception:  # noqa: BLE001 - a read failure is a missing note
+        return False
+    return any(note.get("kind") == "wellformedness" for note in notes)
+
+
+async def _run_wellformedness_turns(
+    *,
+    turn_fn,
+    breaker,
+    tracker,
+    tools,
+    project_id: str,
+    unit_id: str,
+    context: dict,
+    context_gaps: tuple[str, ...],
+    surface: dict,
+    threat_model_scope: str = "",
+) -> None:
+    """Ask the well-formedness turn until the model exits or re-enters.
+
+    The phase is not a ModelState. The tracker observes the gate writes: a
+    lower-gate write is the re-entry signal, the `wellformedness` note is the
+    exit memory, and the `IMPACT_ASSESSED` write is the exit. The harness never
+    gates the model; it only asks the turn again after a re-entry.
+    """
+    while tracker.state is None or _rank(tracker.state) < _rank(
+            ModelState.IMPACT_ASSESSED):
+        before_trail = len(tracker.trail)
+        await breaker.before_turn(WELLFORMEDNESS)
+        model = _read_model(tools, project_id, unit_id)
+        turn = ModellerTurnInput(
+            unit_id=unit_id,
+            state=ModelState.VULNERABILITIES_WRITTEN,
+            phase=WELLFORMEDNESS,
+            sections=(),
+            instruction=WELLFORMEDNESS_INSTRUCTION,
+            model=model,
+            projection=context.get("projection"),
+            surface_overview=context.get("surface_overview"),
+            context_gaps=context_gaps,
+            threat_model_scope=threat_model_scope,
+            tools=list(surface.values()),
+        )
+        cause: BaseException | None = None
+        try:
+            await _await_seam(turn_fn, turn)
+        except ThreatModellerDegradedError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a turn is a no-decision
+            logger.warning(
+                "threat modeller well-formedness turn failed (%s)", exc)
+            cause = exc
+        if tracker.state is not None and _rank(tracker.state) >= _rank(
+                ModelState.IMPACT_ASSESSED):
+            breaker.record_outcome(WELLFORMEDNESS, True)
+            return
+        reentered = any(
+            entry.kind == "lower_gate" for entry in tracker.trail[before_trail:]
+        )
+        if reentered:
+            breaker.record_outcome(WELLFORMEDNESS, True)
+            continue
+        if _has_wellformedness_note(tools, project_id, unit_id):
+            breaker.record_outcome(WELLFORMEDNESS, True)
+            return
+        breaker.record_outcome(WELLFORMEDNESS, None, cause=cause)
+        return
+
+
 async def arun_modeller_pass(
     project_id: str,
     run_id: str,
@@ -533,7 +712,7 @@ async def arun_modeller_pass(
     turn_fn: Callable[[ModellerTurnInput], Any] | None = None,
     actor_factory: Callable[[str], "ThreatModellerActor"] | None = None,
 ) -> UnitOutcome:
-    """Model ONE unit through the five gates (S1 6.2).
+    """Model ONE unit through the seven gates (S1 6.2).
 
     The pass asks for each state in workflow order; the model's gate writes are
     the only writer of the model document (the harness mints nothing). The
@@ -542,9 +721,9 @@ async def arun_modeller_pass(
     missing section for the completion checker to report.
 
     The pass returns after one turn per state at most. It never waits for
-    dispatch (S1 7.3). The store's produced loop files ARE the dispatch handoff:
-    T6 (#379) made the per-loop dispatch live end to end (the run-scoped surfer
-    materialises the payload and dispatches one hunter per loop file); the pass
+    dispatch (S1 7.3). The store's produced threat files ARE the dispatch handoff:
+    T6 (#379) made the per-threat dispatch live end to end (the run-scoped surfer
+    materialises the payload and dispatches one hunter per threat file); the pass
     itself never dispatches.
 
     ONE pass at a time per run: the pass mutates the shared `ModellerTools`
@@ -592,6 +771,10 @@ async def arun_modeller_pass(
                  if persisted and persisted.get("state") in set(ModelState)
                  else None)
     context, context_gaps = _grounding_context(tools, unit_id)
+    # #438: the RUN read the project's scope once at its start
+    # (runtime._run_intake arms this attribute); the pass copies that value onto
+    # every turn it asks, so the assumptions phase is bound on every pass.
+    threat_model_scope = getattr(tools, "threat_model_scope", "") or ""
     if _bindable(tools):
         # lazy: the tool layer imports this module's tracker and unit cell at
         # its own import time, so the dependency runs one way only (C_STD 6)
@@ -619,6 +802,7 @@ async def arun_modeller_pass(
             projection=context.get("projection"),
             surface_overview=context.get("surface_overview"),
             context_gaps=context_gaps,
+            threat_model_scope=threat_model_scope,
             tools=list(surface.values()),
         )
         cause: BaseException | None = None
@@ -638,6 +822,18 @@ async def arun_modeller_pass(
         breaker.record_outcome(state.value, outcome, cause=cause)
         if tracker.state is LAST_GATE:
             break
+        if state is ModelState.VULNERABILITIES_WRITTEN \
+                and tracker.state is not None \
+                and _rank(tracker.state) >= _rank(
+                    ModelState.VULNERABILITIES_WRITTEN):
+            await _run_wellformedness_turns(
+                turn_fn=turn_fn, breaker=breaker, tracker=tracker,
+                tools=tools, project_id=project_id, unit_id=unit_id,
+                context=context, context_gaps=context_gaps, surface=surface,
+                threat_model_scope=threat_model_scope,
+            )
+            if tracker.state is LAST_GATE:
+                break
 
     return _finalise(project_id, unit_id, tools, tracker,
                      first_write=first_write, first_trail=first_trail,
@@ -799,7 +995,7 @@ def _archive_degraded(store, project_id: str, unit_id: str,
 
 
 def run_modeller_pass(*args, **kwargs) -> UnitOutcome:
-    """The SYNC lane to one modeller pass, for a caller with no running loop."""
+    """The SYNC lane to one modeller pass, for a caller with no running threat."""
     from polymerhus.recon.control.async_bridge import run_coro_blocking  # noqa: PLC0415
 
     return run_coro_blocking(arun_modeller_pass(*args, **kwargs))
@@ -904,6 +1100,8 @@ __all__ = [
     "ThreatModellerDegradedError",
     "TrackingThreatModelStore",
     "UnitOutcome",
+    "WELLFORMEDNESS",
+    "WELLFORMEDNESS_INSTRUCTION",
     "arun_modeller_pass",
     "run_modeller_pass",
 ]
