@@ -186,6 +186,10 @@ class CaptureSidecar:
         self._page_id = None
         self._action_id = None
 
+    def close(self) -> None:
+        """Stop accepting events; the transport itself is owned by the caller."""
+        self._attached = False
+
     def pump(self) -> tuple[Flow, ...]:
         """Consume the inbound events and return the flows finished this pump."""
         if not self._attached:
