@@ -174,6 +174,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--api", default="http://127.0.0.1:8080")
     parser.add_argument("--project-id", required=True)
+    parser.add_argument("--run-id", default=None, help="the hunting run to poll")
     parser.add_argument("--data-root", type=pathlib.Path, default=pathlib.Path("/srv/data"))
     parser.add_argument("--out", type=pathlib.Path, required=True)
     parser.add_argument("--interval", type=int, default=120)
@@ -189,8 +190,13 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             usage = {"error": str(exc)}
         try:
-            runs = api(args.api, f"/projects/{args.project_id}/hunting")
-            run = (runs.get("runs") or [None])[0] if isinstance(runs, dict) else None
+            if args.run_id:
+                run = api(
+                    args.api,
+                    f"/projects/{args.project_id}/hunting/{args.run_id}")
+            else:
+                runs = api(args.api, f"/projects/{args.project_id}/hunting")
+                run = (runs.get("runs") or [None])[0] if isinstance(runs, dict) else None
         except Exception as exc:  # noqa: BLE001
             run = {"error": str(exc)}
         arts = snapshot(args.data_root / args.project_id / "hunting" / "threat_modeller")

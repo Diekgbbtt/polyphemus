@@ -83,21 +83,25 @@ The reload checks passed:
 
 Trail: `/tmp/monitor-ca.jsonl` inside the agent container.
 
-## Live state (2026-11-02T18:27Z)
+## Live state (2026-11-02T18:33Z)
 
 | Metric | Value |
 |---|---|
+| Run | `c84d2ada-e05c-42ba-bb12-8386119796f8` |
 | State | running (modeller pass) |
-| Intake | starting |
-| Capped tokens | 27,695 / 7,000,000 |
-| Calls | 5 |
+| Intake | 0 of 27 (`ReverseProxy` first) |
+| Risk | 0.0 / 156.25 |
+| Capped tokens | 58,512 / 7,000,000 |
+| Calls | 14 |
 | Impact rows | 0 |
 | Threats | 0 |
 | Chains | 0 |
 | Fence hits | 0 |
 
-The first poll caught the modeller at its first turn: five calls, 27,695 capped
-tokens, 1,254 reasoning and 974 visible generated tokens.
+The run row confirms the frozen policy: `pipeline_sync=batched`,
+`pod_batch_size=2`, `promotion_risk_threshold=2.5`, `risk_threshold=156.25`,
+`threshold_basis=db`. The 27-unit intake order starts with `ReverseProxy`,
+`Service:sign-in`, `RESTApi:api`, and `Service:library-catalog`.
 
 ## Results
 
