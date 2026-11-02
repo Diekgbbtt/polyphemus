@@ -44,6 +44,10 @@
 #   timeout `prisma migrate diff` check at startup - the schema itself is
 #   guaranteed current because the entrypoint migrated it moments earlier.
 
+# TypeSafe SystemOne is deliberately NOT a gateway model. LiteLLM 1.96.0 has
+# no `typesafe` provider, and `openai/jev-latest` would send
+# /chat/completions, which TypeSafe does not expose (404). The crawl policy
+# calls TypeSafe directly through polymerhus.app.llm.typesafe.
 model_list: []  # empty - T2 (#105) fills via management API
 
 general_settings:

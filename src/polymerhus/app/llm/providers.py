@@ -280,6 +280,8 @@ def invoke_with_escalating_timeout(call, *, conversation_id: str | None = None,
 
 
 
+# TypeSafe SystemOne is intentionally absent: it is not an OpenAI chat
+# endpoint. The direct client lives in polymerhus.app.llm.typesafe.
 PROVIDERS: dict[str, str] = {
     "openai":     "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
@@ -287,6 +289,11 @@ PROVIDERS: dict[str, str] = {
     "opencode":   "https://opencode.ai/zen/v1",
     "opencode-go": "https://opencode.ai/zen/go/v1",
 }
+
+# Decision-API providers that must never enter the chat client. TypeSafe has
+# no /chat/completions endpoint; LiteLLM has no `typesafe` provider. Use the
+# direct systemone client instead.
+SYSTEMONE_PROVIDERS = frozenset({"typesafe"})
 
 # --- Provider id-kind policy (D5, #100): how ids reach the upstream ----------
 #
@@ -959,6 +966,11 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
                      read_timeout: float | None = None,
                      max_retries: int | None = None,
                      thinking: "ThinkingLevel" = "off") -> ChatOpenAI:
+    if provider in SYSTEMONE_PROVIDERS:
+        raise LLMConfigError(
+            f"{provider!r} is a SystemOne decision provider, not an OpenAI chat "
+            "provider; use polymerhus.app.llm.typesafe.TypeSafeSystemOne"
+        )
     if provider not in PROVIDERS:
         raise LLMConfigError(f"unknown provider {provider!r}; known: {sorted(PROVIDERS)}")
     # #107 (D4 item 1): the gateway base_url resolution seam. Direct mode (UNSET)
