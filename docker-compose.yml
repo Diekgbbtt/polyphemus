@@ -118,6 +118,12 @@ services:
       # The #196 capture-plane environment (dev line).
       PYTHONPATH: /opt
       KALI_HTTP_HISTORY_ROOT: /data
+      # SC-16: the ingest edge is a separate process on 8001. It starts only
+      # when the shared bearer token is set; the crawler posts to it on the
+      # compose network, never through the MCP surface.
+      KALI_HTTP_HISTORY_EDGE_TOKEN: ${KALI_HTTP_HISTORY_EDGE_TOKEN:-}
+      KALI_HTTP_HISTORY_EDGE_HOST: 0.0.0.0
+      KALI_HTTP_HISTORY_EDGE_PORT: ${KALI_HTTP_HISTORY_EDGE_PORT:-8001}
       KALI_HTTP_CAPTURE_ENABLED: ${KALI_HTTP_CAPTURE_ENABLED:-true}
       KALI_HTTP_MAX_BODY_BYTES: ${KALI_HTTP_MAX_BODY_BYTES:-5242880}
       KALI_HTTP_NAMESPACE_POOL: ${KALI_HTTP_NAMESPACE_POOL:-8}
@@ -191,6 +197,8 @@ services:
       NEO4J_PASSWORD: polymerhus
       POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
       KALI_MCP_URL: http://kali:8000/mcp
+      KALI_HTTP_HISTORY_EDGE_URL: ${KALI_HTTP_HISTORY_EDGE_URL:-http://kali:8001}
+      KALI_HTTP_HISTORY_EDGE_TOKEN: ${KALI_HTTP_HISTORY_EDGE_TOKEN:-}
       PROJECT_ID: default
       LIGHTRAG_API_URL: http://lightrag:9621
       LIGHTRAG_BASE_API_URL: http://lightrag:9621

@@ -19,16 +19,22 @@ MITMDUMP_BIN="${KALI_HTTP_MITMDUMP_BIN:-/opt/mitmproxy-env/bin/mitmdump}"
 MITMDUMP_LISTEN_HOST="${KALI_HTTP_MITMDUMP_LISTEN_HOST:-0.0.0.0}"
 MITM_LOG="${KALI_HTTP_MITM_LOG:-/var/log/kali-mitmdump.log}"
 MCP_BIN="${KALI_HTTP_MCP_BIN:-/opt/venv/bin/python}"
+EDGE_TOKEN="${KALI_HTTP_HISTORY_EDGE_TOKEN:-}"
+EDGE_HOST="${KALI_HTTP_HISTORY_EDGE_HOST:-0.0.0.0}"
+EDGE_PORT="${KALI_HTTP_HISTORY_EDGE_PORT:-8001}"
+EDGE_LOG="${KALI_HTTP_HISTORY_EDGE_LOG:-/var/log/kali-http-edge.log}"
 
 mkdir -p "$STORE_ROOT" /run/kali-http "$MITM_CONFDIR" 2>/dev/null || true
 chmod 700 "$STORE_ROOT" /run/kali-http 2>/dev/null || true
 
 PROXY_PID=""
 MCP_PID=""
+EDGE_PID=""
 
 shutdown() {
   trap - EXIT TERM INT
   [ -n "$MCP_PID" ] && kill "$MCP_PID" 2>/dev/null || true
+  [ -n "$EDGE_PID" ] && kill "$EDGE_PID" 2>/dev/null || true
   [ -n "$PROXY_PID" ] && kill "$PROXY_PID" 2>/dev/null || true
   wait 2>/dev/null || true
 }
@@ -83,7 +89,26 @@ case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
     ;;
 esac
 
-# 2) MCP server. Runs in the foreground lane; the trap owns teardown.
+# 2) HTTP-history ingest edge. A separate process, never an MCP tool. It is
+#    enabled only when the shared bearer token is set; the crawler reaches it
+#    on the compose network and never through the MCP surface.
+if [ -n "$EDGE_TOKEN" ]; then
+  KALI_HTTP_HISTORY_EDGE_HOST="$EDGE_HOST" KALI_HTTP_HISTORY_EDGE_PORT="$EDGE_PORT" \
+    "$MCP_BIN" /opt/kali/http_history/edge.py >"$EDGE_LOG" 2>&1 &
+  EDGE_PID="$!"
+  for _ in $(seq 1 30); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$EDGE_PORT") 2>/dev/null; then
+      exec 3>&- 2>/dev/null || true
+      echo "[entrypoint] HTTP-history edge ready on $EDGE_HOST:$EDGE_PORT (pid $EDGE_PID)"
+      break
+    fi
+    sleep 0.2
+  done
+else
+  echo "[entrypoint] KALI_HTTP_HISTORY_EDGE_TOKEN unset; HTTP-history edge not started"
+fi
+
+# 3) MCP server. Runs in the foreground lane; the trap owns teardown.
 "$MCP_BIN" /opt/kali/mcp_server.py &
 MCP_PID="$!"
 wait "$MCP_PID"

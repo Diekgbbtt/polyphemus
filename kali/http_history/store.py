@@ -168,6 +168,19 @@ class HttpHistoryStore:
                 self._conn.rollback()
                 raise
 
+    def record_if_absent(self, artifact: HttpArtifact, bodies: dict[str, bytes] | None = None) -> bool:
+        """Persist ``artifact`` unless its id already exists.
+
+        Returns ``True`` when this call created the record and ``False`` when the
+        immutable baseline already held the id. A duplicate is a normal batch
+        outcome, not an error; a missing body or an invalid record still raises.
+        """
+        try:
+            self.record(artifact, bodies)
+        except ArtifactImmutableError:
+            return False
+        return True
+
     def _insert_record(self, artifact: HttpArtifact) -> None:
         self._conn.execute(
             "INSERT OR ABORT INTO flows "
