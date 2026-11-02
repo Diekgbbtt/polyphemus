@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 
 import pytest
 
@@ -146,14 +147,38 @@ def test_a_session_bound_command_carries_the_owned_session_and_json():
     envelope = client.execute("navigate", "https://example.test/")
 
     assert envelope["data"]["url"] == "https://example.test/products?page=2"
+    # `--session` and `--json` are options, so they precede the positional URL.
     assert exec_fn.last_command == [
         "steel",
         "browser",
         "navigate",
-        "https://example.test/",
         "--session",
         "crawl-fixture",
         "--json",
+        "https://example.test/",
+    ]
+
+
+def test_a_session_bound_command_keeps_the_options_before_the_variadic_boundary():
+    exec_fn = FakeExecFn(
+        load_cli("catalogue"), load_cli("session"), load_cli("fill")
+    )
+    client = SteelSessionClient(exec_fn=exec_fn)
+    client.attach("crawl-fixture")
+
+    envelope = client.execute("fill", "@e6", "--", "standard_user")
+
+    assert envelope["data"]["filled"] == "@e6"
+    assert exec_fn.last_command == [
+        "steel",
+        "browser",
+        "fill",
+        "--session",
+        "crawl-fixture",
+        "--json",
+        "@e6",
+        "--",
+        "standard_user",
     ]
 
 
@@ -284,6 +309,36 @@ def test_the_envelope_error_is_authoritative_over_the_return_code_and_text():
         {"success": True, "data": [], "returncode": 1}
     )
     assert SteelSessionClient(exec_fn=success_with_nonzero_exit).catalogue() == []
+
+
+def test_the_default_adapter_adds_the_process_facts_to_the_envelope(monkeypatch):
+    catalogue = load_cli("catalogue").model_dump(mode="json")
+    record = load_cli("session").model_dump(mode="json")
+    navigate = load_cli("navigate").model_dump(mode="json")
+
+    def fake_run(command, **kwargs):
+        if command[2] == "sessions" and len(command) == 4:
+            payload = catalogue
+        elif command[2] == "sessions":
+            payload = record
+        else:
+            # The CLI's own JSON claims a return code; the process fact wins.
+            payload = {**navigate, "returncode": 99}
+        return subprocess.CompletedProcess(
+            command, 3, stdout=json.dumps(payload), stderr="a warning"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = SteelSessionClient()
+    client.attach("crawl-fixture")
+
+    envelope = client.execute("navigate", "https://example.test/")
+
+    assert envelope["data"]["title"] == "Products"
+    assert envelope["returncode"] == 3
+    assert envelope["stderr"] == "a warning"
+    assert isinstance(envelope["duration_ms"], int)
+    assert envelope["duration_ms"] >= 0
 
 
 def test_the_crawl_never_starts_a_session():

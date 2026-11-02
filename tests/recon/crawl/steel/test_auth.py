@@ -335,8 +335,9 @@ def test_the_default_adapter_runs_one_eval_and_returns_the_fetch_record():
 
     command = exec_fn.last_command
     assert command[:3] == ["steel", "browser", "eval"]
-    assert command[-3:] == ["--session", "crawl-fixture", "--json"]
-    assert command[3] == (
+    # Options precede the positional script.
+    assert command[3:6] == ["--session", "crawl-fixture", "--json"]
+    assert command[6] == (
         "(async()=>{"
         'const r=await fetch("https://app.example.test/api/authentication",'
         '{redirect:"follow",credentials:"include",cache:"no-store"});'

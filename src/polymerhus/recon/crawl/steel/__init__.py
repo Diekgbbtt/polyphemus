@@ -2,5 +2,7 @@
 
 The module tree is the spec's (`docs/design/steel-crawl-spec.md` section 3.1):
 `session.py` owns the catalogue, attach, the CLI envelope, and stop; `state.py`
-owns the page instance, the snapshot cache, the consumed set, and ref validity.
+owns the page instance, the snapshot cache, the consumed set, and ref validity;
+`command.py` owns the action-to-command mapping, the variadic boundary, and the
+typed result.
 """

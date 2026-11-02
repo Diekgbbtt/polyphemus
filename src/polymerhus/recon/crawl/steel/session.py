@@ -4,8 +4,11 @@ Spec: `docs/design/steel-crawl-spec.md` sections 4, 4.1, 4.3, and 4.4.
 
 The crawl never starts a session: it attaches to exactly one pre-authenticated
 session by name and runtime id, sends every later command with `--session` and
-`--json`, and stops the session it owns. `start` is absent from the public
-surface by construction, so the lifecycle cannot be reached from this client.
+`--json`, and stops the session it owns. The two options are placed after the
+verb and before every positional, so a variadic verb's mandatory `--` boundary
+is the last thing before its value and no option can fold into the value text.
+`start` is absent from the public surface by construction, so the lifecycle
+cannot be reached from this client.
 
 `SteelSessionRegistry` only observes; it owns no lifecycle action and cannot
 start, stop, or release anything. The lifecycle owner calls the observations.
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
@@ -184,10 +188,19 @@ def _opt_int(value: Any) -> int | None:
 
 
 def _subprocess_exec(command: Sequence[str]) -> dict[str, Any]:
-    """Run one Steel CLI command and return its parsed JSON envelope."""
+    """Run one Steel CLI command and return its parsed JSON envelope.
+
+    The process facts are added to the CLI's own JSON: the process's own exit
+    code, its stderr, and the measured duration. The envelope's `error` stays
+    authoritative over the return code, so a successful envelope with a
+    non-zero process exit is still a success; the result carries the exit code
+    as evidence, not as the decision.
+    """
+    started = time.perf_counter()
     completed = subprocess.run(
         list(command), capture_output=True, text=True, check=False
     )
+    duration_ms = int((time.perf_counter() - started) * 1000)
     stdout = completed.stdout.strip()
     try:
         payload = json.loads(stdout) if stdout else None
@@ -201,6 +214,9 @@ def _subprocess_exec(command: Sequence[str]) -> dict[str, Any]:
             "the Steel CLI returned no JSON object "
             f"(exit {completed.returncode}): {completed.stderr.strip()[-200:]}"
         )
+    payload["returncode"] = completed.returncode
+    payload["stderr"] = completed.stderr
+    payload["duration_ms"] = duration_ms
     return payload
 
 
@@ -273,20 +289,36 @@ class SteelSessionClient:
         self._attached = session
         return session
 
-    def execute(self, verb: str, *args: str) -> Mapping[str, Any]:
-        """Run one session-bound command with the owned session and `--json`.
+    def command(self, verb: str, *args: str) -> list[str]:
+        """Build one session-bound command: options first, then positionals.
 
-        A command with no owned session is refused before `exec_fn` runs: the
-        envelope invariant is never left to the CLI to reject. `start` is
+        `--session` and `--json` are options, so they sit directly after the
+        verb, before every positional argument and before a variadic verb's
+        `--` boundary. A trailing option would be swallowed by a variadic verb
+        as value text, and a trailing `--session` would fold the command onto a
+        billable auto-provisioned `default` session (skill `steel-browser`,
+        variadic boundary).
+
+        A command with no owned session is refused before the command exists:
+        the envelope invariant is never left to the CLI to reject. `start` is
         refused outright: the crawl attaches to a pre-authenticated session and
         never creates one (spec 4.3).
         """
         if verb == "start":
             raise InvalidCommand("the crawl never starts a Steel session")
         session = self._require_attached(verb)
-        command = [*self._prefix, verb, *args]
-        command += ["--session", session.name, "--json"]
-        return self._run(command)
+        return [
+            *self._prefix,
+            verb,
+            "--session",
+            session.name,
+            "--json",
+            *args,
+        ]
+
+    def execute(self, verb: str, *args: str) -> Mapping[str, Any]:
+        """Run one session-bound command with the owned session and `--json`."""
+        return self._run(self.command(verb, *args))
 
     def stop(self) -> None:
         """Stop the owned session and prove the catalogue no longer lists it.
