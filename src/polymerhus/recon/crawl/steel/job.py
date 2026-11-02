@@ -109,6 +109,15 @@ RecordPageFn = Callable[[PageRecord], None]
 RecordActionFn = Callable[[ActionRecord], None]
 
 
+@dataclass(frozen=True)
+class BoundaryResult:
+    """The outcome of one bounded session-loss recovery attempt."""
+
+    result: JobResult
+    retries: int = 0
+    resurrection_requested: bool = False
+
+
 class CrawlJob:
     """One authenticated crawl's lifecycle, with every side effect injected."""
 
@@ -302,7 +311,43 @@ def _stop_reason(error: BaseException) -> str:
 
 __all__ = [
     "ActionRecord",
+    "BoundaryResult",
     "CrawlJob",
     "JobResult",
     "PageRecord",
+    "run_with_session_boundary",
 ]
+
+
+def run_with_session_boundary(
+    job_factory: Callable[[], CrawlJob],
+    *,
+    resurrect_fn: Callable[[], bool],
+    max_retries: int = 1,
+) -> BoundaryResult:
+    """Run a job, and after `session_missing` request one bounded resurrection.
+
+    The crawl never starts or recreates a session itself. It returns the typed
+    failure to the orchestrator, which owns the auth store and the state restore;
+    only after that owner reports success does the boundary build one new job and
+    try again. A second `session_missing` stops with the typed result, so there is
+    no retry loop. The failed job has already finalized its partial run.
+    """
+    retries = 0
+    requested = False
+    while True:
+        result = job_factory().run()
+        if result.stop_reason != "session_missing" or retries >= max_retries:
+            return BoundaryResult(
+                result=result,
+                retries=retries,
+                resurrection_requested=requested,
+            )
+        requested = True
+        if not resurrect_fn():
+            return BoundaryResult(
+                result=result,
+                retries=retries + 1,
+                resurrection_requested=True,
+            )
+        retries += 1
