@@ -162,7 +162,7 @@ Unrelated test repair: `887c19bf` supplies the required `SpecWrite` fields in th
 | SC-08 | #424 | b3526af5 + 97e49c9c | 324 passed | done |
 | SC-09 | #425 | b3b93dca | 346 passed | done |
 | SC-10 | #426 | 43776069 | 358 passed | done |
-| SC-11 | #427 | | | pending |
+| SC-11 | #427 | bd4feaf3 | 372 passed | done |
 | SC-12 | #428 | | | pending |
 | SC-13 | #429 | | | pending |
 | SC-14 | #430 | | | pending |
