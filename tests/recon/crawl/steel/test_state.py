@@ -162,6 +162,28 @@ def test_restore_navigates_once_and_returns_the_cached_snapshot():
     assert navigate.urls == [page.url, page.url]
 
 
+def test_a_restore_mints_a_new_generation_and_stales_the_pre_restore_reference():
+    snapshot = load_cli("snapshot").data
+    state = BrowserState()
+    page = open_home(state, snapshot=snapshot)
+    reference_generation = page.document_generation
+    navigate = FakeNavigate()
+
+    state.restore(page, navigate)
+
+    assert navigate.urls == [page.url]
+    # The page record keeps the generation it was opened under; the generation
+    # of the restored document is the one the cached facts now carry.
+    assert page.document_generation == reference_generation
+    restored = state.cached(page)
+    assert restored.snapshot is snapshot
+    assert restored.facts.document_generation > reference_generation
+    assert state.current_generation == restored.facts.document_generation
+    with pytest.raises(StaleElement) as excinfo:
+        state.resolve(page, reference_generation)
+    assert excinfo.value.code == "stale_element"
+
+
 def test_the_consumed_set_is_keyed_by_the_cache_key_not_the_state_key():
     state = BrowserState()
     page = open_home(state, facts=SnapshotFacts(ax_hash="ax-home"))
@@ -233,15 +255,12 @@ def test_a_navigation_mints_a_new_document_generation_and_stales_the_old_refs():
 def test_a_local_state_action_keeps_the_generation_and_the_cached_references():
     state = BrowserState()
     root = open_home(state)
-    generation = root.document_generation
-    navigate = FakeNavigate()
+    generation = state.current_generation
 
-    # A local_state impact loads no new document: the traversal restores the
-    # same page and keeps acting on the references cached for it.
-    restored = state.restore(root, navigate)
+    # A local_state impact loads no new document: it only consumes the action,
+    # so the generation stays current and the cached references stay valid.
     state.consume(root, "fp-load-more")
 
-    assert navigate.urls == [root.url]
-    assert restored is state.cached(root).snapshot
+    assert state.current_generation == generation
     assert state.cached(root).facts.document_generation == generation
     assert state.resolve(root, generation) is root

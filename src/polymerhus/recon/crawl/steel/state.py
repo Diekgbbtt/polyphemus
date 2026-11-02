@@ -7,12 +7,13 @@ set. A page instance is the navigation-tree node the observability platform
 records; the cache key is the page key, so a restore hits the cached snapshot by
 key instead of re-snapshotting or re-enumerating the DOM.
 
-`DocumentGeneration` is the ref-validity token. A new document (a fresh page
-load, which `open_page` registers) mints a new generation and invalidates every
-reference captured under an older one. A restore re-activates the generation of
-the document it navigates back to, because the cached snapshot is exactly the
-document whose references it is about to reuse. A local-state action mints
-nothing: it mutates the current document in place, so its references stay valid.
+`DocumentGeneration` is the ref-validity token. Every new browser document mints
+a new generation and invalidates every reference captured under an older one.
+`open_page` mints one for a freshly loaded page, and `restore` mints one too: a
+restore navigates, so it loads a new document even though it reuses the cached
+snapshot instead of re-snapshotting. A local-state action mints nothing: it
+mutates the current document in place, so its references stay valid. The live
+generation of a page key is the one its cached facts carry.
 
 Importing this module performs no I/O (CODING_STANDARD section 6): `open_page`
 receives the already-captured snapshot, and `restore` receives the navigation
@@ -101,8 +102,9 @@ class SnapshotFacts(BaseModel):
 
     `ax_hash` is the sorted hash of `(role, name)` for the visible interactive
     nodes and `overlay_flags` is the set of open dialog titles. `open_page`
-    stamps `document_generation` from the state's own counter, so a caller's
-    value is ignored: the state, never the caller, mints the ref-validity token.
+    stamps `document_generation` from the state's own counter and `restore`
+    advances it, so a caller's value is always ignored: the state, never the
+    caller, mints the ref-validity token.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -129,6 +131,8 @@ class PageInstance(BaseModel):
     cache key names the document actually loaded, so a redirect target is the
     page identity. `navigation_path` is the exact ordered list of navigation
     fingerprints that yielded the page; local-state actions never enter it.
+    `document_generation` is the generation the page was opened under; after a
+    restore the live generation of the page key is the one in its cached facts.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -148,7 +152,11 @@ class PageInstance(BaseModel):
 
 
 class CachedSnapshot(BaseModel):
-    """One cache entry: the opaque CLI DOM snapshot and its observed facts."""
+    """One cache entry: the opaque CLI DOM snapshot and its observed facts.
+
+    `facts.document_generation` is the live generation of this page key: the
+    document whose references the executor may act on.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -207,6 +215,11 @@ class BrowserState:
         """The state keys observed so far (spec 5.3)."""
         return frozenset(self._visited)
 
+    @property
+    def current_generation(self) -> DocumentGeneration:
+        """The generation of the live document. A restore mints the next one."""
+        return self._current_generation
+
     def open_page(
         self,
         *,
@@ -260,17 +273,23 @@ class BrowserState:
         return self._cache[page.cache_key]
 
     def restore(self, page: PageInstance, navigate_fn: NavigateFn) -> Any:
-        """Navigate to the page URL and return its cached snapshot (spec 5.2).
+        """Navigate to the page URL, return the cached snapshot, mint a generation.
 
-        It issues exactly one navigation and touches the cache; it never takes
-        or calls a snapshot or enumerate function, so a rollback cannot replay a
-        local-state action or rebuild the projection. The restored document is
-        now the live one, so its generation becomes current again - that is what
-        keeps the cached references usable after backtracking.
+        A restore is a navigation, so it loads a new browser document: the
+        snapshot is reused, never re-captured or re-enumerated, but every
+        reference captured before the restore belongs to a dead document and is
+        stale. The cached facts move to the new generation, so the caller
+        re-resolves the cached element identity against the restored document
+        before acting (spec 5.2).
         """
         navigate_fn(page.url)
         cached = self._cache[page.cache_key]
-        self._current_generation = page.document_generation
+        self._current_generation += 1
+        generation = self._current_generation
+        facts = cached.facts.model_copy(update={"document_generation": generation})
+        self._cache[page.cache_key] = CachedSnapshot(
+            snapshot=cached.snapshot, facts=facts
+        )
         return cached.snapshot
 
     def consume(self, page: PageInstance, fingerprint: str) -> None:
@@ -298,15 +317,15 @@ class BrowserState:
     ) -> PageInstance:
         """Prove a reference belongs to the live document, or raise `StaleElement`.
 
-        A reference is valid only inside the generation that captured it, and
-        that generation must still be the current one: any new document (a
-        navigation, or a re-opened page key) invalidates it. The caller consumes
-        the candidate on the failure, so a dead identity is never retried.
+        The page record keeps the generation it was opened under, so validity is
+        read from the page key's cached facts: that is the generation of the
+        document the executor is about to act against. A reference from an older
+        generation (before a restore) or one whose page is no longer live is
+        stale. The caller consumes the candidate on the failure, so a dead
+        identity is never retried.
         """
-        if (
-            generation != page.document_generation
-            or page.document_generation != self._current_generation
-        ):
+        current = self._cache[page.cache_key].facts.document_generation
+        if generation != current or current != self._current_generation:
             raise StaleElement(page, generation, self._current_generation)
         return page
 
