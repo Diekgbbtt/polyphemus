@@ -104,6 +104,26 @@ def test_the_hunter_and_pod_watchdogs_have_separate_defaults():
     assert state.pod_session_timeout_s == 3600.0
 
 
+def test_the_pod_watchdog_reads_the_env_override():
+    """The 90-minute boundary is an operator setting, not a code edit: the
+    resolver reads `HUNT_POD_SESSION_TIMEOUT_S` and falls back to the one-hour
+    backstop when unset. A malformed value fails fast at run start."""
+    from polymerhus.attack.hunting.surfer import resolve_pod_session_timeout_s
+
+    assert resolve_pod_session_timeout_s({}) == 3600.0
+    assert resolve_pod_session_timeout_s(
+        {"HUNT_POD_SESSION_TIMEOUT_S": "5400"}) == 5400.0
+    assert resolve_pod_session_timeout_s(
+        {"HUNT_POD_SESSION_TIMEOUT_S": "5400.0"}) == 5400.0
+    assert resolve_pod_session_timeout_s(
+        {"HUNT_POD_SESSION_TIMEOUT_S": ""}) == 3600.0
+
+    for bad in ("abc", "-1", "0", "nan", "inf"):
+        with pytest.raises(ValueError):
+            resolve_pod_session_timeout_s(
+                {"HUNT_POD_SESSION_TIMEOUT_S": bad})
+
+
 def test_a_cancelled_pod_session_writes_no_export_and_keeps_the_cursor(tmp_path):
     hunter = HunterMemoryStore(tmp_path / "hunter")
     pod = PodMemoryStore(tmp_path / "pod")

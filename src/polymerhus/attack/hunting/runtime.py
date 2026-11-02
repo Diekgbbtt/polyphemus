@@ -1226,6 +1226,7 @@ async def start_hunting(
             RunDispatchState,
             build_run_dispatch,
             post_settle,
+            resolve_pod_session_timeout_s,
             run_surfer_loop,
             surfer_session_id,
         )
@@ -1345,7 +1346,9 @@ async def start_hunting(
 
         run_threat_store = getattr(tools, "threat_store", None) or threat_store
         resolved_hunter_builder = hunter_builder or _default_hunter_builder
-        state = RunDispatchState()
+        state = RunDispatchState(
+            pod_session_timeout_s=resolve_pod_session_timeout_s(),
+        )
         coro_for = build_run_dispatch(
             project_id=project_id,
             run_id=hunting_run_id,

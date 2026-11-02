@@ -72,6 +72,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import os
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -218,6 +220,34 @@ DEFAULT_CHILD_RETRY_BACKOFF_S = 30.0
 # first; the surfer only bounds a genuinely wedged session.
 DEFAULT_HUNTER_SESSION_TIMEOUT_S = 2700.0
 DEFAULT_POD_SESSION_TIMEOUT_S = 3600.0
+POD_SESSION_TIMEOUT_ENV = "HUNT_POD_SESSION_TIMEOUT_S"
+
+
+def resolve_pod_session_timeout_s(
+    environ: Mapping[str, str] | None = None,
+) -> float:
+    """The pod watchdog ceiling, from `HUNT_POD_SESSION_TIMEOUT_S`.
+
+    Unset or empty is the one-hour backstop. A malformed value fails fast at
+    run start: a typo in the operator's `.env` must not silently restore the
+    default (or disable the watchdog). The value is seconds, finite and
+    positive; the pod graph's own run timeout stays below it, so the pod control
+    plane still writes the typed terminal first."""
+    raw = (os.environ if environ is None else environ).get(
+        POD_SESSION_TIMEOUT_ENV)
+    if raw is None or str(raw).strip() == "":
+        return DEFAULT_POD_SESSION_TIMEOUT_S
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{POD_SESSION_TIMEOUT_ENV} must be a positive number of seconds; "
+            f"got {raw!r}") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"{POD_SESSION_TIMEOUT_ENV} must be a finite positive number of "
+            f"seconds; got {raw!r}")
+    return value
 
 
 @dataclass
@@ -269,7 +299,8 @@ class RunDispatchState:
     # The watchdog ceilings for one dispatched hunter or pod session. A session
     # that exceeds its ceiling is classed degraded and the queue moves on; the
     # run state carries the values so a trial can tighten them without a code
-    # change. The pod ceiling sits above the pod graph's own run timeout, so the
+    # change (the pod ceiling is read from HUNT_POD_SESSION_TIMEOUT_S at run
+    # start). The pod ceiling sits above the pod graph's own run timeout, so the
     # pod control plane writes the terminal first.
     hunter_session_timeout_s: float = DEFAULT_HUNTER_SESSION_TIMEOUT_S
     pod_session_timeout_s: float = DEFAULT_POD_SESSION_TIMEOUT_S
