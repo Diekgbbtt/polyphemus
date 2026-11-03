@@ -42,7 +42,7 @@ It holds exactly two files.
 `credentials.yaml` maps account names to per-account bundles holding credentials, tokens, and Steel browser-state together: `{accounts: {<name>: {origin, procedure?, credentials?, tokens: {<token_name>: {value, location, target?, expiry?}}, steel?, snapshot?, notes?, roles?, default_role?}}}`.
 SUPERSEDED (as-built 2026-09-11): the `graph_evidence?` slot in the earlier shape is replaced by the concrete `snapshot?` (`{headers, cookies, params, captured_at}` per `records._check_snapshot`) - there are no stored graph queries in the store.
 `roles?` / `default_role?` ride the account as the FR-AUTH mirror (each role set validated by the same credential rules, `default_role` naming a configured role).
-`overview.yaml` is the operator-owned login-mechanism header: `{login_endpoint?, required_headers?, mechanism?, defences?, fingerprinting?, technical_conditions?, notes}` with `notes` as its distinct field.
+`overview.yaml` is the operator-owned login-mechanism header: `{login_endpoint?, required_headers?, mechanism?, defences?, fingerprinting?, technical_conditions?, anti-bot?, http-client-replayability?, auth_probe?: {url}, notes}` with `notes` as its distinct field.
 There is no `produced/`/`consumed/` topology: it is an inbox-dispatch protocol with a mover consumer, and auth records are durable named state with no consumer (first grill, unchanged).
 There is no separate tokens file and no separate notes file: per-account notes ride the account, shared notes ride the overview, and note content should graduate into the overview or `technical_conditions` wherever it generalises.
 Record identity is the account/token name; file names never encode identity.
@@ -136,7 +136,7 @@ This SUPERSEDES the `operator_immutable` refusal of D220-5, the "operator sectio
 It also supersedes #223 requirement 6 ("operator-seeded accounts stay immutable by agents, so that my ground truth remains trustworthy"), which requirement 15 (persist the profile key plus extracted tokens back to the account) cannot satisfy: the two requirements contradict, and 15 is the system's core loop.
 
 The replacement, decided and stated:
-- every agent write MERGES, into the overview and into operator-stamped accounts alike (tokens, status, snapshot, steel.profile, notes);
+- every agent write MERGES, into the overview and into operator-stamped accounts alike (tokens, status, snapshot, steel.state, notes);
 - `origin` is a PROVENANCE LABEL only (still server-stamped; an operator account keeps `origin: operator` through agent writes);
 - `updated_at` refreshes on every write and seed (the store owns it, D223-18);
 - `duplicate_auth` still protects account names and `duplicate_identity` still protects credential identities;
@@ -159,7 +159,7 @@ The store built under this ledger carries only the hooks (`procedure`, `technica
 
 ## Glossary candidates (ratify into `CONTEXT.md` with the implementation, not here)
 
-Auth store (the per-project `data/<project_id>/auth/` bucket), account record (one named bundle of credentials, tokens, and Steel browser-state), operator section vs agent section (the trust split inside `credentials.yaml` plus the operator-owned overview), technical condition (an optional assertable procedure condition for unexpected login failure), browser-profile reference (the minimal durable Steel profile key), concrete snapshot (point-in-time captured request state, never a stored query), operator seed (the `PUT /auth` replace-operator-state operation), procedure label (the store-to-skill coupling name).
+Auth store (the per-project `data/<project_id>/auth/` bucket), account record (one named bundle of credentials, tokens, and Steel browser-state), operator section vs agent section (the trust split inside `credentials.yaml` plus the operator-owned overview), technical condition (an optional assertable procedure condition for unexpected login failure), session-state reference (`steel.state`, the durable per-account Steel browser-state key; `steel.profile` is retired and ignored), concrete snapshot (point-in-time captured request state, never a stored query), operator seed (the `PUT /auth` replace-operator-state operation, retired for eval delivery in favour of the data-dependency placement endpoints), procedure label (the store-to-skill coupling name).
 Owning glossary: `src/polymerhus/recon/CONTEXT.md` (auth is recon execution vocabulary: `use_auth` jobs, selection, and now the store the tool serves); `src/polymerhus/project_management/CONTEXT.md` keeps the seed-endpoint pointer beside the existing `AuthContext` entry.
 `app/` itself gets no `CONTEXT.md` (helper rule, `CONTEXT-MAP.md`), following the session-seam precedent.
 

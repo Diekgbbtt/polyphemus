@@ -9,12 +9,15 @@ Three data dependencies per target, the N12 work items of the eval harness:
 
 1. **L1 surface** - the target's business-function `Service`s and cross-cutting `System`s, grounded on the real deployed target.
    Consumed now as `operator_kb.md` (structured prose) through the platform scaffold (`src/polymerhus/analysis/scaffold.py`; the eval CLI wrapper is `eval/scaffold.py`); also emitted as a graph-ready RDF dataset (`l1-surface.yaml`).
-2. **AuthContext** - the store's `overview` (login mechanism, defences, required headers, anti-bot, replayability, authenticated-context oracle) and `accounts` (credentials, tokens, roles).
+2. **AuthContext** - the store's `overview` (login mechanism, defences, required headers, anti-bot, replayability, authenticated-context oracle) and `accounts` (credentials, tokens, roles, and the `steel.state` session-state reference).
    The oracle is `auth_probe.url`: a deployment-neutral path that answers 2xx only with an authenticated context, and 401, 403, or 3xx without one.
-   It is the recon gateway's only pass/fail signal for authentication.
-   Consumed inline through `target_config.auth` -> `PUT /projects/{id}/auth`.
+   It is the recon gateway's only pass/fail signal for authentication, and the crawl's precondition.
+   Delivered by direct file write through `POST /projects/{id}/data-dependencies/auth-overview` and `auth-credentials`; the retired inline `target_config.auth` and `PUT /projects/{id}/auth` are not the eval path.
+   The account browser-state reference is `steel: {state: <key>}`.
+   The retired `steel.profile` object is not a valid reference: the store ignores it, and the data-dependency validator refuses it.
 3. **Project authn skill** - the replayable sign-in/sign-up procedure bundle.
-   Consumed as text through `target_config.auth.authn_skill` -> `<data_root>/<project_id>/skills/authn/SKILL.md`.
+   Delivered through `POST /projects/{id}/data-dependencies/authn-skill` (a single `.tar.gz`/`.zip` bundle), unpacked to `<data_root>/<project_id>/skills/authn/SKILL.md`; the retired `target_config.auth.authn_skill` is not the eval path.
+   The skill cites secret names and session names only, never a value.
 
 ## 2. Where it lands (assumption)
 

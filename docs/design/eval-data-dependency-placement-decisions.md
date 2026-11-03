@@ -129,6 +129,23 @@ The endpoint-surface change ripples across the eval system. Consumers of the old
 | `eval/prompts/{assessment,diagnoser,assessor-workflow,diagnoser-workflow}.md`, the monitor tool | describe post-execution workflow only | unchanged (no auth/provision wording) |
 | app API (`project_management/api.py`, `data_dependencies.py`) | - | the four multipart endpoints + archive unpack + OpenAPI stamp |
 
+## D7 - The AuthContext contract (converged on the authenticated-context oracle and session-only Steel)
+
+The AuthContext shape is the one the app's T1 validator (`app/auth/records.py`) enforces.
+The data-dependency staging and the validator use that same seam, so a committed artifact cannot disagree with what the placement endpoint accepts.
+
+- `overview.auth_probe` is `{url: <root-relative path>}`.
+  It is mandatory whenever the target declares an auth surface or stores accounts.
+  The path is deployment-neutral; the app resolves it against the project's canonical origin.
+  The oracle passes only a 2xx with `redirected: false`; `401`, `403`, any 3xx, or a followed redirect fails; anything else is indeterminate and fails closed.
+  A no-auth target may omit it; the crawl then logs the missing probe and uses the legacy surface gate.
+- `account.steel` is `{state: <session-state key>}`.
+  The retired `steel.profile` object is not the contract: the store ignores it, and the validator refuses it with a named error.
+  The state key names a caller-owned state file (`<data_root>/<project_id>/steel-state/<key>.json`) holding the four durable fields (`cookies`, `localStorage`, `sessionStorage`, `indexedDB`); the store holds the reference, never the state.
+- The accounts keep `credentials`, `tokens`, `snapshot`, `roles`, and `default_role` exactly as `records.validate_account` defines them.
+  The browser-only path stores a session snapshot and a `steel.state`; the request path stores the replayed credential material.
+- Secrets never enter git: `overview.yaml` is the only redaction-safe artifact that may be committed; `credentials.yaml`, the authn skill's reference scripts, and the state files stay in the staging root (`eval/data-dependencies/`, git-ignored) or the eval host (`/root/eval-dd/data/<target>/`).
+
 ## Non-goals
 
 - No direct `l1-surface.yaml` ingestion (would need a surface-to-delta converter).
