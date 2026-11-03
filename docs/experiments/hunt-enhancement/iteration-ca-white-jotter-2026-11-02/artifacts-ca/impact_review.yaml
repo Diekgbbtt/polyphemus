@@ -1,0 +1,998 @@
+units:
+- unit: IdentificationSystem
+  scope: in
+  scope_reason: The rows are session-lifetime and cross-site logout directions on
+    the target's own authentication surface; none depends on a volumetric defence,
+    a plain-text channel, or a preliminary step outside the target.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'The unbounded-identifier capability is the honest end here: the model
+      records that the copy is the holder''s own and the cross-origin channels that
+      would carry it to a third party are closed, so no concrete end damage was achievable
+      from this row.'
+    impact_description: 'No end damage is claimed by this row. Holding an identifier
+      without a lifetime bound damages nobody on its own: the copy that exists is
+      the holder''s own, the service publishes the second representation only into
+      the holder''s own address bar and history, and the cross-origin channels that
+      would carry a copy to a third party (a framed console, a cross-origin Referer)
+      are closed by browser defaults rather than by the application. What the row
+      records is the capability''s shape: this plane has no window that closes by
+      itself, so any future primitive that exposes an identifier - a delivery, a log,
+      a shared URL, a theft - is amplified from a bounded incident into permanent
+      authority. The damage such a chain would reach (an end user''s account confidentiality
+      and integrity) belongs to whichever unit finds the exposure, and the rotation
+      half of the composition is already scored by Service:sign-in.'
+    exploitability_description: 'No request achieves this: it is a property of the
+      plane, measured by comparing an identifier''s state across a long sequence of
+      requests (still 200 with no challenge, no reissue, no re-authentication) against
+      the two controls that show the store and the logout path are healthy (a fresh
+      identifier is terminated durably by the logout path, and an identifier logged
+      out earlier still answers 302). The gap is the missing exposure step, which
+      this surface does not provide; the capability is complete and waits for one.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+  - id: IA-2
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (a third-party navigation
+      can repeatedly terminate the victim''s authenticated session) and is always
+      sufficient.'
+    impact_description: 'Victim: a signed-in end user, and through them the availability
+      of the session they are working in. Damaged property: availability, low - a
+      third-party page or redirect can terminate the victim''s authenticated session
+      without the victim doing anything but visiting it, so the session ends, in-progress
+      work is lost and the user is forced to re-authenticate; the same mechanism can
+      be repeated whenever they sign in. The damage stops there by construction: the
+      transition only destroys the identifier, it does not disclose or alter anything
+      the identifier reaches, and every other state change on this surface requires
+      a JSON body on a non-GET method that a cross-site simple request cannot produce,
+      so no write of the back office is reachable this way.'
+    exploitability_description: 'One link or one redirect on an attacker-controlled
+      page, followed by the victim as a top-level navigation: the browser attaches
+      the identity cookie because no SameSite attribute is set and the Lax default
+      still covers top-level GETs, the route is unguarded so no second check applies,
+      there is no token to match anywhere on the surface, and the response is a bare
+      status that needs no rendering. Nothing has to be circumnavigated and no second
+      phase is needed; the only cost is the victim''s visit, which is why the interaction
+      is active rather than passive.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: active
+      confidentiality: none
+      integrity: none
+      availability: low
+    risk: 5.1
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:L/SC:N/SI:N/SA:L
+- unit: Service:navigation-menu
+  scope: in
+  scope_reason: The row is a role-revocation integrity direction on the target's own
+    console; it is not a volumetric, plain-text, or external preliminary-step direction.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (a revoked role keeps
+      its console navigation and authority) and is always sufficient.'
+    impact_description: 'Victim: the application''s authorization state and the entitlement
+      boundary of the account whose role was withdrawn. Damaged properties: integrity,
+      low - the operator''s disable is written to the role record and the console
+      reports it, but the derivation that decides the caller''s function set never
+      reads it, so a revocation control silently does nothing on this decision; and
+      confidentiality, low - the withdrawn role''s screen and route inventory stays
+      disclosed and rendered to its holders, who keep the back-office client''s entries
+      and therefore the function surface that role named. Bounded because the tree
+      is navigation metadata rather than data: what sits behind those routes is a
+      separate authorization decision owned by the controller units, and the grant
+      dimension of this same derivation is honoured immediately.'
+    exploitability_description: 'No special position and no further capability: the
+      caller holds an account that was granted the role - a basic authenticated role
+      - and the failing action is the operator''s own routine disable. The caller
+      does nothing but load the console; there is no defence to circumnavigate, no
+      second phase, and no victim interaction beyond the operator''s standard revocation.
+      The window is not bounded by the session either, since the derivation is evaluated
+      per request and the disable simply never reaches it.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: low
+      user_interaction: none
+      confidentiality: low
+      integrity: low
+      availability: none
+    risk: 5.3
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:L/SI:L/SA:N
+- unit: Service:register
+  scope: in
+  scope_reason: The rows are registration-uniqueness and name-canonicalisation directions
+    on the target's own registration surface, outside every fenced category.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (duplicate accounts
+      make the account store unresolvable and take the roster out of service) and
+      is always sufficient.'
+    impact_description: 'Victim: the application - specifically its account-administration
+      plane and the account store behind it. Damaged properties: availability, low
+      - the administrative account roster, the only surface that enumerates accounts,
+      answers the generic error envelope to every request and stayed that way for
+      the whole observation window, while the role catalogue, credential verification,
+      registration and the keyed account writes all kept working, so the loss is the
+      operator''s ability to see and account for the roster rather than the service
+      itself; and integrity, low - the store is left holding an identity that its
+      own uniqueness lookup calls free and its own credential lookup calls absent,
+      so the account data no longer reconciles with the service''s view of it. No
+      end user''s data is disclosed by this and no credential is exposed; the damage
+      is to the administrative plane''s integrity and observability, which is what
+      an auditor or an operator relies on.'
+    exploitability_description: 'One anonymous caller, no account, no victim and no
+      interaction: a handful of identical registration bodies submitted inside the
+      same commit window all receive the success envelope, because the uniqueness
+      verdict is taken in a read that nothing re-establishes at insert time. There
+      is no defence to circumnavigate and no second phase - the same request the service
+      offers to every visitor is the whole attack, and the durable consequence is
+      confirmed indirectly because the surface that would show the row set is the
+      surface that stopped answering (a re-submission is rejected by a store constraint
+      while the lookup reports the name free, and credential verification reports
+      no such account).'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: low
+      availability: low
+    risk: 6.9
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:L/VA:L/SC:N/SI:L/SA:L
+  - id: IA-2
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (a lookalike principal
+      occupies another account''s name for name-addressed administration) and is always
+      sufficient.'
+    impact_description: 'Victim: the end user whose account an operator intends to
+      administer, and the application''s account and authorization store. Damaged
+      property: integrity, low - the administration surface is addressed by account
+      name, and a name submitted with a leading space produces a second, distinct
+      principal that is indistinguishable from the original in every rendering the
+      operator is given, so a routine disable, credential reset or role grant performed
+      on the visible name can land on the lookalike instead of the intended account.
+      The boundary between the two identities exists only inside the store''s collation:
+      the response, the principal and the roster row all look the same, which is why
+      the operator''s ordinary flow - not an exotic one - is what completes the damage.
+      Confidentiality is not claimed: neither account''s records are disclosed by
+      the ambiguity itself.'
+    exploitability_description: 'One anonymous registration with a single leading
+      space, no credential and no second phase; nothing has to be beaten because the
+      service never normalises or constrains the name it stores as the identity key.
+      The remaining step is passive: an operator performing their ordinary roster
+      work on the name they can see, at which point the collation - invisible in every
+      surface the operator has - decides which row moves. That the observed writes
+      did hit only the lookalike is a property of the collation, not of any control
+      in this service, which is precisely why the ambiguity is the damage.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: passive
+      confidentiality: none
+      integrity: low
+      availability: none
+    risk: 5.3
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:L/VA:N/SC:N/SI:L/SA:N
+- unit: AuthenticationMechanism
+  scope: in
+  scope_reason: The row is a persistent-credential lifecycle direction on the target's
+    own authentication surface, not a volumetric, plain-text, or external preliminary-step
+    direction.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: The persistent rememberMe token admits nothing on its own - a caller
+      presenting only it is refused - so the capability is the honest end; the chains
+      that would turn it into damage are absent from this surface.
+    impact_description: 'No end damage is claimed by this row. The persistent token
+      admits nothing on its own - a caller presenting only it is refused by both the
+      state reporter and the guarded route, before and after sign-out - so possession
+      of the value grants no access and there is no victim whose data or authority
+      it reaches. The three chains that would turn a persistent credential into damage
+      are all absent here: no script in the origin can read it (HttpOnly), no network
+      position is in scope, and a cross-site delivery buys nothing because the token
+      does not authenticate. What the row records is exposure breadth for a chain
+      another unit owns: a 536-character bearer ciphertext is minted for every account
+      that ever signs in, lives three days, is re-minted on every login and cannot
+      be observably revoked, and is decrypted and deserialised back into a principal
+      on every request - the sink Service:sign-in measured, whose only gap is key
+      custody.'
+    exploitability_description: 'Obtaining the token is the ordinary act of signing
+      in: any caller who holds an account''s credential receives one whether or not
+      they ask, so the primitive costs a valid credential and nothing else (low privilege,
+      no interaction, no defence to beat). What it does not do is anything with it.
+      Turning it into an end damage requires a further capability this surface does
+      not provide - either a key-custody break at the deserialisation sink or a channel
+      that lifts the token out of an HttpOnly cookie - which is why the row stops
+      here and names the sink''s owner instead of claiming a chain.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: low
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+- unit: AuthorizationSystem
+  scope: in
+  scope_reason: The row is a permission-model integrity direction on the target's
+    own surface, outside every fenced category.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'The missing permission check is a legitimate hand-off: its data-access
+      end damage is filed as ReverseProxy IA-1/IA-2, the spelling primitive this row
+      explicitly cites as the only way the check becomes data access, so no unowned
+      end damage is left at the capability.'
+    impact_description: 'No end damage is claimed by this row. The missing check damages
+      nothing by itself: the resources the permission model names are answered empty
+      at the edge on their canonical spelling, so a caller who lacks a permission
+      and a caller who holds it receive the same nothing on the surface the model
+      describes. The only way the absent check becomes data access is through the
+      spelling primitive that reaches those handlers with no principal at all, and
+      that reach - confidentiality of the account roster and the RBAC model, integrity
+      of the account store through the same handlers - is measured and scored by ReverseProxy''s
+      two threats. What this row records is the capability that makes that reach total
+      rather than bounded: there is no function-level backstop, so every administrative
+      revocation the operator can perform on a permission has no effect on any request
+      outcome, and the model''s two halves may diverge without any component noticing.'
+    exploitability_description: 'Nothing to exploit on its own: the row is a property
+      of the pipeline, established by measurement rather than by a request. Three
+      observations fix it - the permission-named resources answer a permission-less
+      caller, the one guarded route admits a permission-less session and a fully permitted
+      one identically, and the served client has neither a permission branch nor a
+      denial rendering. Closing the gap needs one further capability, the spelling
+      primitive that reaches a handler without passing the guard, which another unit
+      holds and has scored; this row deliberately stops short of it.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+- unit: IntegrationSystem:cross-origin-policy
+  scope: out
+  scope_reason: The row's capability requires an attacker to first serve content on
+    http://localhost:8080 before the victim's browser acts; that is a preliminary
+    step outside the target's own attack surface to gain client-side code control,
+    which the injected scope fence excludes. Its rows therefore do not count as scored
+    damage.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'Even out of scope the row is the honest end: the credentialed half
+      never arrives because the identity cookie sets no SameSite attribute and browsers
+      apply Lax, so the authorised-origin capability damages nothing on its own.'
+    impact_description: 'No end damage is claimed by this row. The grant is real -
+      one origin outside the application''s control may read the API and preflight
+      every verb, with credentials allowed by policy - but the only data it can actually
+      read is data it can read without the grant. The credentialed half never arrives:
+      the identity cookie sets no SameSite attribute, so browsers apply Lax and omit
+      it from a cross-site fetch, which makes every authorised-origin read anonymous.
+      What remains anonymous is the public catalogue and article surface by design,
+      plus the roster and role model that the parameterised spelling reaches with
+      no cookie at all - and that reach is ReverseProxy''s measured damage, not a
+      second one: a page at the authorised origin gains no access the attacker does
+      not already have from a raw client. No victim''s confidentiality, integrity
+      or availability is reached through this entry today.'
+    exploitability_description: 'Exercising the grant costs no privilege and no victim
+      interaction from the application''s side: any page served from http://localhost:8080
+      in a victim''s browser is authorised automatically, and the preflight approves
+      every verb, so the chain needs nothing from the victim beyond loading that page.
+      The missing pieces are on the other side of the chain, not in the policy. First,
+      the page has to exist on the victim''s loopback port, which is a precondition
+      outside the target''s own surface. Second, a credentialed read would need the
+      session cookie to travel, which the browser''s Lax default prevents. Third,
+      the data reachable anonymously is public or already available through ReverseProxy''s
+      spelling bypass. That is why this row stops at the capability: the policy authorises
+      the right origin-and-verb combination and is missing only a victim-side delivery
+      and a credential-scope change to become a cross-origin data read.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+- unit: RESTApi:api
+  scope: in
+  scope_reason: The rows are catalogue-query injection and registration over-posting
+    directions on the target's own API surface, outside every fenced category.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (anonymous read of
+      database rows through the catalogue query) and is always sufficient.'
+    impact_description: 'Victim: the application''s persisted data, held in the same
+      database the API queries - the account records the roster endpoint exposes (username,
+      real name, telephone, e-mail, password hash, enabled state, role bindings),
+      the unpublished article and book rows behind the administrative routes, and
+      the role/permission model. Damaged property: confidentiality, high. The caller
+      controls the predicate of an anonymous statement and can append its own result
+      set to an eight-column projection that the API renders back as JSON fields,
+      so the read is not limited to rows the search was meant to match and not limited
+      to the catalogue table.'
+    exploitability_description: 'One anonymous GET per query: no account, no session,
+      no victim action, no second phase. The statement shape is already mapped (quote
+      to confirm the literal, comment to truncate the mapper''s LIKE wrapper, ORDER
+      BY to fix the arity at eight, UNION to align types), so extraction is a matter
+      of placing the target columns into the rendered positions. I verified the sink
+      and the projection using only caller-authored literals and deliberately extracted
+      no foreign row; the payload belongs to the hunter. The neighbouring credential
+      query was probed as a negative control and is bound, which localises the defect
+      to the search mapper rather than the layer as a whole.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: high
+      integrity: none
+      availability: none
+    risk: 9.2
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N
+  - id: IA-2
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (an unauthenticated
+      self-registration writes an administrative role binding) and is always sufficient.'
+    impact_description: 'Victim: the application''s persisted authorization data and,
+      through it, every account and catalogue record the granted role reaches. Damaged
+      property: integrity, high - a durable administrative role binding is written
+      into the authorization store by an unauthenticated self-registration, indistinguishable
+      from an administrator''s grant on every later read. Confidentiality, low as
+      measured: the account''s derived authority is directly visible (the full back-office
+      navigation tree renders for it), while reading the records behind those functions
+      needs the separate routing primitive that ReverseProxy already filed.'
+    exploitability_description: 'Two anonymous requests and one login: register with
+      the nested role array, then sign in as the new account. No account is needed
+      beforehand, no victim acts, no defence must be iterated, and the escalation
+      is not a race - it is a persisted association that survives every later session.
+      Measured entirely on an account I created for the purpose and returned to a
+      role-less state afterwards; the restore needed the same role-update write the
+      back office uses, which the escalated account itself was permitted to perform.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: low
+      integrity: high
+      availability: none
+    risk: 9.2
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:H/VA:N/SC:L/SI:H/SA:N
+- unit: ReverseProxy
+  scope: in
+  scope_reason: The rows are path-canonicalisation, namespace-masking, source-map
+    and reachability directions on the target's own edge and origin; none is a volumetric,
+    plain-text, or external preliminary-step direction.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (anonymous account-roster
+      and role-model read) and is always sufficient.'
+    impact_description: 'Victim: the end users of the application (their account records)
+      and the application''s persisted authorization data. Damaged property: confidentiality,
+      high. One anonymous request returns the complete account roster with username,
+      real name, telephone number, electronic-mail address, enabled state and granted
+      roles for every account (including the administrator), plus the complete role
+      model: which role carries which permission, the permission catalogue with its
+      target URLs, and the menu catalogue each role may reach. No redaction is applied
+      and no field requires a higher entitlement.'
+    exploitability_description: 'The chain is one request with no account, no cookie
+      and no victim participation. The caller sends a back-office path whose spelling
+      injects a literal '';'' path parameter into a filler segment (''/api/x/..;/admin/user''):
+      the edge decodes and dot-resolves the path for its own classification but forwards
+      the raw target, so the request is treated as an ordinary /api call and not as
+      the /api/admin namespace; the authorisation filter matches its patterns against
+      the same un-stripped path and finds no rule; the servlet container then strips
+      the path parameter, resolves the dot segment and dispatches to the real admin
+      controller, which executes with no principal. No defence must be iterated: the
+      spelling worked on the first attempt, and the remaining admin reads (role, permission
+      and menu catalogues) use the same shape. Human participation: none.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: high
+      integrity: none
+      availability: none
+    risk: 9.2
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:H/SI:N/SA:N
+  - id: IA-2
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (anonymous rewrite
+      of account attributes, state and role grants) and is always sufficient.'
+    impact_description: 'Victim: the application''s persisted authorization and account
+      data, and every end user whose account is a target. Damaged property: integrity,
+      high (confidentiality, low - the write responses confirm the affected account
+      name and message). The same bypass reaches the mutating back-office handlers:
+      an account''s personal attributes, its enabled state and its role grants can
+      be rewritten by an anonymous caller. Granting the sysAdmin role to an account
+      the attacker controls, or disabling the accounts that defend the catalogue,
+      is a durable change that survives the request and cannot be attributed to any
+      principal.'
+    exploitability_description: One request, unauthenticated. The capability of IA-1
+      (P-1) is used to read the roster and the role identifiers; the same '/api/x/..;/admin/...'
+      spelling then carries a PUT to the account-update and account-status handlers,
+      which reply with the application's success envelope. The request bodies observed
+      in the client bundle name the fields (username, name, phone, email, roles[];
+      enabled, username), so no further capability is needed to target an arbitrary
+      account. No victim action and no human participation are required; the only
+      additional phase beyond IA-1 is choosing the target from the roster already
+      read.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: low
+      integrity: high
+      availability: none
+    risk: 9.2
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:H/VA:N/SC:L/SI:H/SA:N
+  - id: IA-3
+    mining: sufficient
+    rationale: 'The namespace-masking capability is the honest end: the uniform empty
+      200 discloses and changes nothing, and its damage is owned by IA-1/IA-2.'
+    impact_description: 'No end damage follows from this row. The short-circuit returns
+      no data, changes no state and never establishes an identity, so there is no
+      victim and no damaged property; its owner learns nothing from it. It is the
+      masking half of the chain scored in IA-1 and IA-2: because the canonical spelling
+      always answers an empty 200, the namespace''s live state and the real coverage
+      of the guard cannot be measured from it, and the true state is only visible
+      through a different spelling. The capability is recorded so a later unit can
+      reference it.'
+    exploitability_description: A single unauthenticated request to the canonical
+      namespace, for any method, with or without a session - the answer does not depend
+      on identity. There is no chain to assemble and no human participation; the row
+      exists to name the observable '<em>namespace answers empty</em>' capability
+      that the read and write rows in this unit must be distinguished from.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+  - id: IA-4
+    mining: sufficient
+    rationale: The route-and-verdict oracle damages nothing by itself; it is the navigational
+      precursor already consumed by IA-1/IA-2.
+    impact_description: 'No end damage follows from this row: the answers compared
+      disclose no record and change nothing, so there is no victim and no damaged
+      property. The capability is a route-and-verdict oracle - which spelling the
+      edge classified as the privileged namespace, and whether a backend handler answered
+      when the response is either the 404 shell or the code-400 wrapper - which is
+      what makes the masking in IA-3 navigable. It is recorded as a precursor so a
+      later unit can chain it.'
+    exploitability_description: Ordinary unauthenticated requests, compared by status,
+      declared length and body bytes. No chain is needed and no human participation
+      is involved; the value of the row is the differential itself, not an effect
+      on the target.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+  - id: IA-5
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (complete client source
+      and route inventory disclosed anonymously) and is always sufficient.'
+    impact_description: 'Victim: the application itself - its source code and internal
+      structure. Damaged property: confidentiality, low. The disclosure is bounded
+      (the map carries no credential, key or token, and the served root refuses version-control
+      metadata, directory listings and traversal out of the root) but it is total
+      for what it does carry: the full Vue client source with its router table, its
+      store, and the exact request builders for the back-office API, including the
+      admin routes the front exposes.'
+    exploitability_description: 'One unauthenticated GET on the map file whose name
+      is the bundle name the shell already publishes plus ''.map''; the stylesheet
+      map is fetched the same way. No chain, no defence to beat, no victim action.
+      The capability is reconnaissance-grade: it does not by itself reach a record,
+      but it removes the route inventory from the attacker''s unknowns and names every
+      back-office operation the defect in IA-1 then reaches.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: low
+      integrity: none
+      availability: none
+    risk: 6.9
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:L/SI:N/SA:N
+- unit: Service:article-management
+  scope: in
+  scope_reason: The rows are stored-markup execution and anonymous article supply/destruction
+    directions on the target's own article routes; the reader is reached on the target's
+    own surface, not through an external preliminary step.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (caller-authored script
+      runs in every reader''s application origin) and is always sufficient.'
+    impact_description: 'Victim: every end user who opens the article - any reader
+      of the public journal, and by extension any signed-in editor or administrator
+      who reviews it. Damaged properties: confidentiality and integrity, both high.
+      The stored body is the product''s only markup context, so caller-authored script
+      runs in the application origin with the reader''s authority: it can read and
+      rewrite everything that reader can see in the console, act through that reader''s
+      session (the identity cookie is HttpOnly, so the script cannot copy the identifier,
+      but it does not need to - it can issue the requests), and present a fabricated
+      interface on the article page. The publication is instant and unmoderated, so
+      the payload is live for the next reader after the success envelope and stays
+      live until someone deletes the record; the record carries no owner, so nothing
+      in the store can even point at who wrote it.'
+    exploitability_description: 'Two phases, no account and no defence to beat. Phase
+      one is a single anonymous POST to the save route under the parameterised spelling
+      that the edge answers empty on its canonical form (ReverseProxy''s P-4, cited
+      as the precursor); the handler stores the rendered body exactly as sent, and
+      the responder returns the application''s success envelope. Phase two is passive
+      from the attacker: any reader who opens the article - which the public list
+      links to directly - receives the stored markup in an innerHTML assignment, with
+      no sanitizer on the write path, no context encoding at retrieval, and no content-security
+      policy to stop inline execution. The interaction is a routine reading flow,
+      which is why it is passive rather than active.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: passive
+      confidentiality: high
+      integrity: high
+      availability: none
+    risk: 9.3
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N
+  - id: IA-2
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (anonymous rewrite
+      and destruction of arbitrary articles) and is always sufficient.'
+    impact_description: 'Victim: the application''s persisted journal content and,
+      through it, the readers who rely on it. Damaged properties: integrity, high
+      - any article''s title, body, abstract, cover address and publication date can
+      be replaced by an unauthenticated caller, and because the record carries no
+      author or owner field the replacement is indistinguishable from the original
+      once written, with nothing in the store able to attribute it; availability,
+      low - the same access can delete records by identifier, and deleting every article
+      empties the public reading surface (the application itself stays up, which bounds
+      the loss). No end-user data is disclosed by this row: reading is public by design,
+      so the object-level failure here is on the supply and destruction side, and
+      the identifier - not a principal - is the whole authority needed.'
+    exploitability_description: 'One request per effect, anonymous: the save route
+      under the parameterised spelling binds whatever body and identifier the caller
+      sends, and the delete route takes the identifier from the path. There is no
+      principal to satisfy, no ownership field to match against and no confirmation
+      value in the body; the only capability the chain needs is knowing the spelling
+      that reaches the handler, which ReverseProxy''s P-4 supplies and its account-plane
+      measurements demonstrate. The overwrite face is inferred from the contract (the
+      client sends the identifier it loaded) rather than observed, because the shared
+      store reseeded during my run and an identifier changed hands mid-probe - which
+      is also the plainest evidence of the failure: the deletes I issued by identifier
+      landed on records I had not written.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: high
+      availability: low
+    risk: 9.2
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:H/VA:L/SC:N/SI:H/SA:L
+- unit: Service:library-catalog
+  scope: in
+  scope_reason: The rows are public-catalogue query and cover-delivery directions
+    on the target's own reading surface, outside every fenced category.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'The catalogue row-set capability is a legitimate hand-off: the database-read
+      end damage it could reach is filed as RESTApi:api IA-1, which owns the SQL-injection
+      disclosure, so this row leaves no unowned end damage.'
+    impact_description: 'No end damage is claimed by this row. Everything the catalogue
+      can reach is already public by its own contract - the rows carry no state, owner
+      or restriction field, and the whole store is returned to any anonymous caller
+      - so authoring the row set adds no disclosure here, and the data-theft outcome
+      the sink would otherwise reach (reading other tables of the same database, where
+      credentials and unpublished content live) is scored by RESTApi:api as its threat-1
+      and is not re-filed. What the row records is the capability itself: this read
+      interface cannot state what it published.'
+    exploitability_description: 'One anonymous request, no account and no victim:
+      the statement shape is mapped (quote, comment, ORDER BY for arity, UNION for
+      alignment), and even without the injection the zero selector returns the whole
+      store. The capability is complete on this interface; the missing piece is a
+      target whose rows are not already public, which is a property of another unit''s
+      data, not of this request.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+  - id: IA-2
+    mining: sufficient
+    rationale: 'The recorded delivery channel is the honest end reached by observation:
+      setting a cover needs the book-management write path, which this unit deliberately
+      did not exercise and which could not be exercised afterwards because the host
+      stopped serving the modelled application, so no concrete end damage was established
+      from this surface.'
+    impact_description: 'No end damage is claimed by this row. The channel is real
+      and already live - rows carry absolute third-party addresses and the client
+      fetches them - but the harm needs the field to be set by an authoring principal,
+      and the write path belongs to book-management and was deliberately not exercised,
+      so no reader was made to contact a host of my choosing. The capability recorded
+      is the delivery channel: whoever can write a cover value can direct every reader''s
+      browser at that host, disclosing the reader''s network identity and the fact
+      of the visit, and can present arbitrary imagery in the catalogue''s own card.'
+    exploitability_description: 'Reading the catalogue costs one anonymous request
+      and needs no interaction beyond visiting it; the writer''s side needs a book
+      write, which this unit did not perform because it is another unit''s surface
+      and would have stored attacker content. There is no defence to circumnavigate
+      on the read side: the value is republished as stored and the client binds it
+      without validation. The row therefore stops at the channel and names the write
+      capability as the missing piece.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+- unit: Service:sign-in
+  scope: in
+  scope_reason: The rows are credential-oracle, session-fixation, deserialisation,
+    principal-reading and session-state directions on the target's own authentication
+    surface, outside every fenced category.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (per-name account
+      existence and disabled state disclosed without a credential) and is always sufficient.'
+    impact_description: 'Victim: the end users whose accounts are in the directory,
+      and the account namespace itself. Damaged property: confidentiality, low. For
+      every name it is tried against, the service discloses whether an account exists
+      and, if it does, whether it is administratively disabled - two facts about an
+      account that no unauthenticated caller is entitled to. The disclosure is per-name,
+      exact (the message is the verdict, not a statistical signal) and reaches no
+      record contents, which bounds it to membership and administrative state.'
+    exploitability_description: One unauthenticated JSON POST per name, with any password;
+      the response wording carries the verdict and timing carries nothing (0.058-0.095
+      s across all three paths, so the oracle is not even timing-dependent). No account,
+      no session, no victim action and no second phase are needed; the only cost is
+      one request per name, which is ordinary fetch plus submit traffic. The primitive
+      is therefore usable as a directory-mapping step by any unauthenticated party.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: low
+      integrity: none
+      availability: none
+    risk: 6.9
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:L/SI:N/SA:N
+  - id: IA-2
+    mining: sufficient
+    rationale: 'The fixation precondition is the honest end on this surface: the delivery
+      phase needs a planting primitive the SPA does not carry a URL-borne identifier
+      into, so no concrete end damage was achievable from the row.'
+    impact_description: 'No end damage follows from this row on its own. The capability
+      is the fixation precondition - an identifier that is minted for anonymous callers,
+      is resolvable from a request path, and is not replaced when the session becomes
+      authenticated - but the delivery that would turn it into a victim''s authenticated
+      session is absent from this surface: the SPA never carries a URL-borne identifier
+      into its credential POST and the service plants no cookie when it adopts one
+      from the URL. No victim is reached without that step, so the row is a precursor
+      and names the gap.'
+    exploitability_description: 'The precondition costs one unauthenticated request:
+      any guarded route mints an identifier and publishes it in the Location header.
+      What remains unfilled is the delivery phase - putting that identifier into the
+      request in which a victim authenticates - which needs a planting primitive this
+      surface does not provide (an arbitrary value is refused, so only a service-minted
+      identifier can be used). The technical check of the invariant is a before-and-after
+      comparison of the identifier across a real login, which I ran on my own account.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+  - id: IA-3
+    mining: sufficient
+    rationale: 'The deserialisation sink is the honest end given the evidence: every
+      published default key was tested and falsified and a tampered value is deleted,
+      so no caller-chosen principal was shown reachable; the unprobed unsigned strip
+      path remains a hypothesis, not a demonstrated end damage.'
+    impact_description: 'No end damage is reached with the evidence in hand. The sink
+      exists - a caller-held value is decrypted and deserialised into a principal
+      on every request, with no integrity tag and no server-side revocation - but
+      the binding is enforced: a tampered value is deleted, and none of the forty
+      widely published Shiro default keys decrypts the issued value, so no caller
+      can mint one. No victim and no damaged property are reachable; the row is a
+      precursor whose only gap is key custody, and it records that the default-key
+      forgery direction was tested and falsified rather than assumed.'
+    exploitability_description: Reaching the sink requires no request capability at
+      all beyond carrying the cookie; reaching the effect requires the symmetric key
+      that the verifier holds. The strip path (an unsigned fallback that would accept
+      a base64 serialised stream directly) was deliberately not probed, because submitting
+      a serialisation stream is a payload rather than a mechanics probe; it remains
+      an unprobed gap beside the key. Everything else was measured offline against
+      a value the service itself issued.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+  - id: IA-4
+    mining: sufficient
+    rationale: 'The principal-reading divergence is the honest end: no second reader
+      of the credential body exists on this surface, so the duplicate member changes
+      no record and discloses nothing.'
+    impact_description: 'No end damage follows: the divergence needs a second reader
+      of the credential body that consumes the first duplicate member or the stored
+      spelling, and no such reader exists on this surface. The winning occurrence
+      is the one the credential is actually verified against, so the duplicate alone
+      changes no record and discloses nothing. The row is a precursor: the capability
+      it yields is a principal mismatch, which only damages something in a unit where
+      two readers of one request disagree.'
+    exploitability_description: Two ordinary unauthenticated requests establish the
+      precedence rule (both orderings), and one more establishes the case-folding
+      behaviour; no account, no victim action and no second phase. The precondition
+      is only that some other component treats the same body as authoritative - which
+      this unit cannot show.
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+  - id: IA-5
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (a live session survives
+      both credential reset and account disable) and is always sufficient.'
+    impact_description: 'Victim: the end user whose account is being remediated, and
+      the application''s access-control state. Damaged properties: confidentiality
+      and integrity, both low (bounded to what the already-issued session carried).
+      After an operator resets the account''s credential or disables it, the session
+      granted under the old state keeps answering as that user: the guarded route
+      returns the authenticated confirmation, while the old credential is refused,
+      the newly set credential is the only one that logs in, and a fresh login on
+      the disabled account is refused as disabled. The eviction the remediation was
+      meant to perform does not happen, so an intruder who already holds a session
+      keeps the account''s authority for the remaining lifetime of that identifier
+      - and nothing in the service can address that session per account.'
+    exploitability_description: 'The chain needs one application primitive the intruder
+      already has - a live session for the victim''s account - and then no further
+      action at all: the operator''s routine credential reset or account disable does
+      not touch it, and the session keeps passing the guarded chain on every subsequent
+      request (verified with repeated reads, so this is not a race). No victim interaction
+      beyond the routine remediation, no extra phase, and no defence to circumnavigate:
+      the eviction control simply is not wired to the session store. The proof was
+      run entirely on my own probe account, with the enabled flag restored afterwards
+      and only the credential left at the value the reset endpoint sets.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: low
+      user_interaction: none
+      confidentiality: low
+      integrity: low
+      availability: none
+    risk: 5.3
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:L/SI:L/SA:N
+- unit: Service:user-administration
+  scope: in
+  scope_reason: The row is a credential-recovery direction on the target's own administrative
+    surface, outside every fenced category.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'Threat row: it carries a CIA-bearing end damage (any named account,
+      including the administrator, is taken over through a reset to the published
+      default) and is always sufficient.'
+    impact_description: 'Victim: the end user whose account is named, and - through
+      the account that administers the system - the application and its whole persisted
+      state. Damaged properties: confidentiality, high, and integrity, high. The caller
+      holds the account: its credential is now a value the caller knows, the account''s
+      own personal data, its role-bound reach and, for the administrator, the complete
+      back-office surface are readable under the victim''s principal, and every write
+      the caller performs is attributed to the victim. The credential is replaced,
+      so the owner''s access is destroyed along with it - that lockout is the same
+      replacement seen from the other side and is not counted a second time as availability
+      loss. Integrity is high rather than low because the change is to the account''s
+      identity itself, not to one of its fields: the victim cannot undo it, an operator''s
+      roster is the only place it is visible, and that roster has answered the generic
+      error envelope since the registration unit''s fault.'
+    exploitability_description: 'Two requests. The reach is ReverseProxy''s measured
+      namespace reach - the parameterised spelling that answers an anonymous caller
+      and whose canonical twin is terminated at 200/0 B - so the reset handler is
+      treated as already reachable, not as a new primitive this row needs. One write
+      names the account and answers 重置密码成功; the console prints the value it wrote,
+      so the attacker does not have to derive it. One login with that value returns
+      200 as the named account. No account, no credential, no token, no ownership
+      claim and no victim action are needed; the victim does not have to be present,
+      and because the reset leaves the account''s earlier session answering, the takeover
+      is silent to its owner until their next sign-in is refused. The one capability
+      the chain needs beyond the reach is knowing the default, and that is published
+      in the client rather than obtained - so it adds no phase. Measured on one reader
+      account; the handler''s only input is the account name, which is what carries
+      the same two requests to any other name on the store. Enumeration is not a precondition:
+      names are user-chosen, the login route answers membership per name (Service:sign-in
+      threat-1), and the registration route answers it without a credential - the
+      roster read would have been the convenient source and it is currently broken,
+      which removes a gift rather than a step.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: high
+      integrity: high
+      availability: none
+    risk: 9.9
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N
+- unit: WebPresentation:jotter-reading::reading-pages
+  scope: in
+  scope_reason: The row is a forced-GET direction on the target's own public reading
+    route, outside every fenced category.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'The honest end of this primitive is the forced request itself: the
+      response never renders as an article and does not travel to the link''s author,
+      so no exfiltration end damage was achievable.'
+    impact_description: 'No end damage is claimed by this row, because the primitive''s
+      reach is bounded by what a GET can do on this surface and that reach is already
+      scored elsewhere. Reads land in the victim''s own page: the forced response
+      is not an article, so the page renders its three empty bindings and the data
+      never travels to the link''s author - there is no exfiltration channel, only
+      a request the reader did not intend. The one state-changing GET is logout, whose
+      damage IdentificationSystem''s threat-1 already measures as an end user''s session
+      availability, low; this row supplies a second, same-origin vehicle for that
+      damage rather than a second damage. The one refinement it adds to that row''s
+      scope is that no third-party page is needed: the application''s own client builds
+      the request, so a link on the application''s own origin - including an anchor
+      inside an article body - is enough to steer it.'
+    exploitability_description: 'The chain is one link and one click: the author writes
+      /jotter/article?id=../logout and the reader follows it, at which point the page
+      builds /api/article/../logout, the browser''s URL parser removes the dot segment,
+      and a GET for /api/logout leaves the reader''s browser with the reader''s cookie
+      attached - no third-party origin, no form, no payload and no privilege. The
+      victim''s action is specific rather than routine (following a crafted link),
+      which is why the interaction is active rather than passive. The steps that would
+      turn the same primitive into a data exposure are absent rather than merely hard:
+      the response is bound to a record shape it does not match, so the fetched data
+      stays inert in the victim''s page, and encoded separators are refused by the
+      container, so only the raw dot-segment form works.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: active
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N
+- unit: WebPresentation:register::registration-page
+  scope: in
+  scope_reason: The row is a duplicate-submission direction on the target's own registration
+    page, outside every fenced category.
+  rows:
+  - id: IA-1
+    mining: sufficient
+    rationale: 'The page-side capability is a legitimate hand-off: the resulting account-store
+      damage is filed as Service:register threat-1 IA-1, so no unowned end damage
+      is left at this capability.'
+    impact_description: 'No end damage is claimed by this row, because the damage
+      at the end of this chain belongs to another unit''s row. Service:register threat-1
+      already assesses it: the account store is left holding an identity whose own
+      uniqueness lookup calls the name free while its own constraint refuses a re-submission
+      and its own credential lookup reports the account absent, and the administrative
+      roster - the only surface that enumerates accounts - answered the generic error
+      envelope for the whole observation window. That is availability and integrity,
+      both low, on the application''s account-administration plane. What this unit
+      adds is not another instance of that damage but the observation that reaching
+      it costs nothing: a single double-click on a public form, over a check that
+      does not serialise, with no account required and no harness to build.'
+    exploitability_description: 'The chain needs no privilege, no account and no technique.
+      The page is public, so the prerequisite the duplication class assumes - a legitimate
+      authenticated user entitled to perform the operation once - does not even apply.
+      One activation posts five fields; nothing on the page records that a request
+      is in flight, so a second activation posts the same five fields again, and the
+      body carries no nonce or key by which the service could tell one intended registration
+      from two. The measured overlap the registration unit documented with a four-way
+      parallel harness is therefore reachable from the form''s own interface by an
+      ordinary impatient gesture - and by anyone who can send the same two requests
+      directly. I did not fire the burst: that measurement already stands, and the
+      store it broke has not recovered.'
+    factors:
+      attack_vector: network
+      attack_complexity: low
+      attack_requirements: none
+      privileges_required: none
+      user_interaction: none
+      confidentiality: none
+      integrity: none
+      availability: none
+    risk: 0.0
+    risk_vector: CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:N/SI:N/SA:N

@@ -155,6 +155,27 @@ def snapshot(root: pathlib.Path) -> dict:
         for t in (load(path).get("threats") or [])
         if isinstance(t, dict) and isinstance(t.get("risk"), (int, float))
     ), 2)
+    pod_root = root.parent / "test-executor-pod"
+    pod_dirs = [p for p in pod_root.iterdir() if p.is_dir()] if pod_root.is_dir() else []
+    terminal = []
+    resume = []
+    for pod_dir in pod_dirs:
+        for path in pod_dir.glob("*.yaml"):
+            if path.name.endswith(".resume.yaml") or path.name.endswith(".yaml.bak"):
+                resume.append(path)
+            else:
+                terminal.append(path)
+    verdicts = {"successful": 0, "unsuccessful": 0}
+    reasons: dict[str, int] = {}
+    for path in terminal:
+        body = load(path)
+        verdict = str(body.get("verdict") or "")
+        if verdict in verdicts:
+            verdicts[verdict] += 1
+        reason = str((body.get("evidence") or {}).get("terminal_reason") or "")
+        if reason:
+            reasons[reason] = reasons.get(reason, 0) + 1
+
     return {
         **totals,
         "models": models,
@@ -165,8 +186,11 @@ def snapshot(root: pathlib.Path) -> dict:
         "fence_hits": len(fence),
         "fence": fence[:8],
         "test_specs": len(list((root.parent / "hunter" / "test-specs").glob("*"))),
-        "pods": len(list((root.parent / "test-executor-pod").glob("*"))),
-        "pod_exports": len(list((root.parent / "test-executor-pod").glob("*/*.yaml"))),
+        "pods": len(pod_dirs),
+        "pod_exports": len(terminal),
+        "pod_resume_files": len(resume),
+        "pod_verdicts": verdicts,
+        "pod_reasons": reasons,
     }
 
 

@@ -1,0 +1,130 @@
+- vuln_id: white-jotter-001
+  identified: partial
+  confidence: 0.4
+  matched:
+    unit: Service:sign-in
+    web_vulnerability_class: username-enumeration-oracle
+    fault: 'F-1: Distinguishable refusal messages disclose account state'
+    symptom: 'A 29-name list walked against POST /api/login with one fixed wrong password
+      returned HTTP 200 with 密码错误 for existing names (admin, test) and 账号不存在 for invented
+      ones, and a tac-reversed second walk reproduced every per-name verdict. The
+      /api/login locus is confirmed, but the class and fault are an account-existence
+      oracle, not weak-or-default credentials: no default pair authenticated in any
+      pod run, so this is partial rather than identified.'
+  evidence_chain:
+    threat: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-sign-in/threat-1.yaml
+    spec_dir: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/Service-sign-in__threat-1
+    experiment_logs:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__list-walk/experiment-log/0.yaml
+    pod_export: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/username-enumeration-oracle__absent-vs-wrong-credential__exact-spelling__list-walk/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+  stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
+- vuln_id: white-jotter-002
+  identified: identified
+  confidence: 0.82
+  matched:
+    unit: ReverseProxy
+    web_vulnerability_class: broken-function-level-authorization
+    fault: 'F-1: Path guard and dispatcher canonicalise the request-target differently'
+    symptom: In the v1 confirmation window, GET /api/;/menu returned HTTP 200 application/json
+      with no Set-Cookie and no Location while the canonical GET /api/menu answered
+      302 with Set-Cookie JSESSIONID and Location /nowhere;jsessionid. The semicolon
+      path segment reaches the menu handler past the guard, reproducing the GT path-confusion
+      access control bypass at the /api/ locus; the same spelling also reached the
+      /api/;/admin/user/password handler anonymously in the account-recovery pod.
+  evidence_chain:
+    threat: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/ReverseProxy/threat-2.yaml
+    spec_dir: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/ReverseProxy__threat-2
+    experiment_logs:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__authc-filter__menu-read__read/experiment-log/0.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__authc-filter__menu-read__read/experiment-log/1.yaml
+    pod_export: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/broken-function-level-authorization__authc-filter__menu-read__read/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+  stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
+- vuln_id: white-jotter-003
+  identified: identified
+  confidence: 0.95
+  matched:
+    unit: Service:article-management
+    web_vulnerability_class: xss-stored
+    fault: 'F-1: Caller-supplied rendered body stored and republished without sanitisation
+      into the reader''s innerHTML sink'
+    symptom: Anonymous POST /api/;/admin/content/article returned 保存成功 and stored
+      the submitted articleContentHtml byte-for-byte; GET /api/article/21/24 returned
+      the same bytes with the <iframe srcdoc> element and its inner <script> unescaped;
+      a fresh steel browser load of /jotter/article?id=21 executed the nested document
+      on load (title PWNED_v48vv, window.__xss_marker=EXEC_OK) with no CSP or X-Frame-Options
+      on the reader route.
+  evidence_chain:
+    threat: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/Service-article-management/threat-1.yaml
+    spec_dir: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/Service-article-management__threat-1
+    experiment_logs:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/xss-stored__anonymous-create__srcdoc-frame/experiment-log/0.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/xss-stored__anonymous-create__srcdoc-frame/experiment-log/1.yaml
+    pod_export: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/xss-stored__anonymous-create__srcdoc-frame/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+  stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
+- vuln_id: white-jotter-004
+  identified: missed
+  confidence: 0.9
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+  stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
+- vuln_id: white-jotter-005
+  identified: identified
+  confidence: 0.96
+  matched:
+    unit: RESTApi:api
+    web_vulnerability_class: sql-injection
+    fault: 'F-1: Query parameter concatenated into SQL text instead of bound'
+    symptom: 'GET /api/search?keywords=x'' UNION SELECT 999,GROUP_CONCAT(DISTINCT
+      ENGINE),... FROM information_schema.ENGINES # returned HTTP 200 with result[0].id=999
+      (the caller-chosen value) and result[0].cover set to the MariaDB engine list
+      (Aria,CSV,InnoDB,MEMORY,MRG_MyISAM,MyISAM,PERFORMANCE_SCHEMA,SEQUENCE) in the
+      catalogue''s own select position, confirming caller-controlled SQL text in the
+      /api/search LIKE predicate.'
+  evidence_chain:
+    threat: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/RESTApi-api/threat-1.yaml
+    spec_dir: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/RESTApi-api__threat-1
+    experiment_logs:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/sql-injection__union-rendered__metadata-dialect/experiment-log/0.yaml
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/sql-injection__union-rendered__metadata-dialect/experiment-log/1.yaml
+    pod_export: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/sql-injection__union-rendered__metadata-dialect/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+  stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
+- vuln_id: white-jotter-006
+  identified: missed
+  confidence: 0.88
+  matched:
+    unit: null
+    web_vulnerability_class: null
+    fault: null
+    symptom: null
+  eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+  stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
+- vuln_id: white-jotter-007
+  identified: partial
+  confidence: 0.55
+  matched:
+    unit: RESTApi:api
+    web_vulnerability_class: mass-assignment
+    fault: 'F-2: Registration body bound onto the persisted account model including
+      its role association'
+    symptom: The mass-assignment pod's raw trail registered with roles:[{"id":1}]
+      and logged reg:200 login:200 menu:200 with a 1575-byte administrative menu (role
+      id 2 gave 1000 bytes), i.e. the GT /api/register privilege-escalation symptom
+      is present in the observations; however the pod's own terminal was pod-watchdog-timeout
+      (verdict unsuccessful), so no symptom-confirmed classification landed and the
+      verdict is partial rather than identified.
+  evidence_chain:
+    threat: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/threat_modeller/consumed/RESTApi-api/threat-2.yaml
+    spec_dir: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/hunter/test-specs/RESTApi-api__threat-2
+    experiment_logs:
+    - cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager/experiment-log/0.yaml
+    pod_export: cbd28a7d-30cb-498b-8e7a-eaa9bc8f37c8/hunting/test-executor-pod/mass-assignment__roles-array-multi__existing-sysadmin-plus-content-manager/c84d2ada-e05c-42ba-bb12-8386119796f8.yaml
+  eval_sha: f020dafd12f3f8f525fad2496c64141b6e4f8fc8
+  stack_fingerprint: 3d396661b0ad9bb7f96101d102feaeba216b9189cef5c57ece87b9f69b56ede5
