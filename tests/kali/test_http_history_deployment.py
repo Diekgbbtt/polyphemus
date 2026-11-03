@@ -41,8 +41,34 @@ def test_kali_environment_exposes_the_capture_knobs():
         "KALI_HTTP_PROJECT_MAX_BYTES",
         "KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S",
         "KALI_HTTP_UPSTREAM_CA",
+        "KALI_HTTP_HISTORY_EDGE_TOKEN",
+        "KALI_HTTP_HISTORY_EDGE_HOST",
+        "KALI_HTTP_HISTORY_EDGE_PORT",
     ):
         assert key in env
+
+
+def test_kali_exposes_the_edge_to_the_agent_without_a_port_collision():
+    compose = _compose()
+    kali_env = compose["services"]["kali"]["environment"]
+    agent_env = compose["services"]["agent"]["environment"]
+    edge_port = int(kali_env["KALI_HTTP_HISTORY_EDGE_PORT"])
+    mcp_port = int(kali_env.get("KALI_MCP_PORT", "8000"))
+    # The eval harness runs a second MCP server on 8001; the edge must not
+    # collide with either the default MCP port or that override.
+    assert edge_port == 8002
+    assert edge_port != mcp_port
+    assert agent_env["KALI_HTTP_HISTORY_EDGE_URL"] == f"http://kali:{edge_port}"
+    assert "KALI_HTTP_HISTORY_EDGE_TOKEN" in agent_env
+
+
+def test_entrypoint_reports_a_failed_edge_start():
+    script = (Path(__file__).resolve().parents[2] / "kali" / "entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "EDGE_READY" in script
+    assert "HTTP-history edge FAILED to start" in script
+    assert "KALI_HTTP_HISTORY_EDGE_TOKEN unset" in script
 
 
 def test_postrun_installs_the_operator_upstream_ca():

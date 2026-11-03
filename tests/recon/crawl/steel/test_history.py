@@ -23,6 +23,7 @@ from polymerhus.recon.crawl.steel.capture.history import (
     CaptureContext,
     HistoryClient,
     HistoryIngestError,
+    RequestRecord,
     content_id,
     normalize_cdp_flow,
 )
@@ -106,6 +107,35 @@ def test_the_normalizer_maps_a_cdp_flow_to_the_http_artifact_contract():
     from kali.http_history.models import HttpArtifact as KaliArtifact
 
     KaliArtifact.model_validate(artifact.model_dump(mode="json"))
+
+
+def test_the_normalizer_keeps_the_url_cap_fact():
+    """The URL cap is a capture fact. A capped flow must carry the flag and the
+    original length into the artifact; a silent field drop would make the edge
+    store a clipped URL as if it were the real one."""
+    long_url = "https://example.test/" + "a" * 3000
+    artifact, _ = normalize_cdp_flow(
+        flow(url=long_url, url_truncated=True, url_original_length=len(long_url)),
+        project_id="proj-1",
+        capture_context=context(),
+    )
+
+    assert artifact.request.url_truncated is True
+    assert artifact.request.url_original_length == len(long_url)
+
+
+def test_the_local_and_kali_request_records_agree_on_every_field():
+    """The normalizer builds the local record; the edge validates the Kali
+    record. A field added on one side only is silently dropped by pydantic's
+    default extra=ignore, so the two field sets must be identical."""
+    from kali.http_history.models import RequestRecord as KaliRequestRecord
+
+    local = set(RequestRecord.model_fields)
+    kali = set(KaliRequestRecord.model_fields)
+    assert local == kali, {
+        "local_only": sorted(local - kali),
+        "kali_only": sorted(kali - local),
+    }
 
 
 def test_the_content_id_is_deterministic_and_ignores_volatile_headers():

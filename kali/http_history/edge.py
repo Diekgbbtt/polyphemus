@@ -188,7 +188,7 @@ def create_edge_server(
     store_factory: Callable[[str], IngestStore],
     token: str,
     host: str = "0.0.0.0",
-    port: int = 8001,
+    port: int = 8002,
     *,
     max_artifacts: int = MAX_ARTIFACTS,
     max_bytes: int = MAX_BYTES,
@@ -212,7 +212,7 @@ def main() -> None:
             "KALI_HTTP_HISTORY_EDGE_TOKEN is required to start the HTTP-history edge"
         )
     host = os.environ.get("KALI_HTTP_HISTORY_EDGE_HOST", "0.0.0.0")
-    port = int(os.environ.get("KALI_HTTP_HISTORY_EDGE_PORT", "8001"))
+    port = int(os.environ.get("KALI_HTTP_HISTORY_EDGE_PORT", "8002"))
     root = os.environ.get("KALI_HTTP_HISTORY_ROOT", "/data")
     server = create_edge_server(StoreCache(root), token, host, port)
     try:

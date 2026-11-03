@@ -80,6 +80,8 @@ def _message_view(message, *, request: bool) -> dict:
     if request:
         view["method"] = message.method
         view["url"] = sanitize_url(message.url)
+        view["url_truncated"] = message.url_truncated
+        view["url_original_length"] = message.url_original_length
         view["query"] = [
             {"name": q.name, "value": _redact_if_sensitive(q.name, q.value)}
             for q in message.query
@@ -141,6 +143,8 @@ def sanitize_summary(artifact: HttpArtifact) -> dict:
         "created_at": artifact.created_at,
         "method": artifact.request.method,
         "url": sanitize_url(artifact.request.url),
+        "url_truncated": artifact.request.url_truncated,
+        "url_original_length": artifact.request.url_original_length,
         "host": host,
         "status": status,
         "status_class": f"{status // 100}xx" if isinstance(status, int) else None,

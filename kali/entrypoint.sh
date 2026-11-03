@@ -21,7 +21,7 @@ MITM_LOG="${KALI_HTTP_MITM_LOG:-/var/log/kali-mitmdump.log}"
 MCP_BIN="${KALI_HTTP_MCP_BIN:-/opt/venv/bin/python}"
 EDGE_TOKEN="${KALI_HTTP_HISTORY_EDGE_TOKEN:-}"
 EDGE_HOST="${KALI_HTTP_HISTORY_EDGE_HOST:-0.0.0.0}"
-EDGE_PORT="${KALI_HTTP_HISTORY_EDGE_PORT:-8001}"
+EDGE_PORT="${KALI_HTTP_HISTORY_EDGE_PORT:-8002}"
 EDGE_LOG="${KALI_HTTP_HISTORY_EDGE_LOG:-/var/log/kali-http-edge.log}"
 
 mkdir -p "$STORE_ROOT" /run/kali-http "$MITM_CONFDIR" 2>/dev/null || true
@@ -96,14 +96,21 @@ if [ -n "$EDGE_TOKEN" ]; then
   KALI_HTTP_HISTORY_EDGE_HOST="$EDGE_HOST" KALI_HTTP_HISTORY_EDGE_PORT="$EDGE_PORT" \
     "$MCP_BIN" /opt/kali/http_history/edge.py >"$EDGE_LOG" 2>&1 &
   EDGE_PID="$!"
+  EDGE_READY=0
   for _ in $(seq 1 30); do
     if (exec 3<>"/dev/tcp/127.0.0.1/$EDGE_PORT") 2>/dev/null; then
       exec 3>&- 2>/dev/null || true
       echo "[entrypoint] HTTP-history edge ready on $EDGE_HOST:$EDGE_PORT (pid $EDGE_PID)"
+      EDGE_READY=1
       break
     fi
     sleep 0.2
   done
+  if [ "$EDGE_READY" -ne 1 ]; then
+    # A token means the edge is expected. A silent failure here would turn
+    # every crawl flush into a partial run with no visible cause.
+    echo "[entrypoint] HTTP-history edge FAILED to start on $EDGE_HOST:$EDGE_PORT (pid $EDGE_PID); see $EDGE_LOG" >&2
+  fi
 else
   echo "[entrypoint] KALI_HTTP_HISTORY_EDGE_TOKEN unset; HTTP-history edge not started"
 fi

@@ -104,6 +104,17 @@ def test_projects_are_isolated_on_disk(tmp_path):
     assert other.get_raw("http_01J0000000000000000000000A") is None
 
 
+def test_a_schema_version_mismatch_fails_loud(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    store.close()
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE meta SET value='http-artifact/v0' WHERE key='schema_version'")
+        conn.commit()
+
+    with pytest.raises(RuntimeError, match="schema-version mismatch"):
+        HttpHistoryStore(tmp_path, "proj-1")
+
+
 def test_store_status_reports_paths_and_counts(tmp_path):
     store = HttpHistoryStore(tmp_path, "proj-1")
     artifact = _artifact()
