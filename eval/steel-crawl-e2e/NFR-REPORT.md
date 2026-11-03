@@ -79,3 +79,9 @@ STEEL_CRAWL_E2E=1 STEEL_CRAWL_E2E_REPO=/opt/steel-crawl-e2e \
 ```
 
 The catalogue (`ASSERTIONS.md`) names every predicate and its yielding assertion; the operator runbook (`OPERATOR.md`) names every prerequisite and failure branch.
+
+## 6. Final verification note
+
+The final PrestaShop run (`e2e-prestashop-20261103T075740Z`) reached `session_deadline` in 950.7 s and recorded `session_closed=true`.
+The operator SSH client was interrupted by its own timeout after the run finished, so the pytest process did not print its summary line.
+The run's persisted evidence was then checked with the test module's own `_assert_common` and the PrestaShop-specific assertions; all passed, including the graph counts, the safety fingerprints, the form check, the secret check, and the session lifecycle.
