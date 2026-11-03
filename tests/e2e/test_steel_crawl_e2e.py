@@ -12,8 +12,9 @@ deployed components; only the target stack and the Steel session are setup.
 
 Run on the eval server:
 
-    STEEL_CRAWL_E2E=1 /opt/steel-crawl-e2e/.venv/bin/python -m pytest \
-      tests/e2e/test_steel_crawl_e2e.py -k comfyui -s
+    STEEL_CRAWL_E2E=1 STEEL_CRAWL_E2E_REPO=/opt/steel-crawl-e2e \
+      /opt/eval-venv/bin/python -m pytest tests/e2e/test_steel_crawl_e2e.py \
+      -k comfyui -s --confcutdir=/opt/steel-crawl-e2e/tests/e2e
 """
 from __future__ import annotations
 

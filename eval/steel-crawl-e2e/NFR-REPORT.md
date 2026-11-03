@@ -73,7 +73,8 @@ rsync -a --delete --exclude .git --exclude .venv --exclude __pycache__ \
 ssh eval-server-polyphemus
 cd /opt/steel-crawl-e2e
 STEEL_CRAWL_E2E=1 STEEL_CRAWL_E2E_REPO=/opt/steel-crawl-e2e \
-  /opt/eval-venv/bin/python -m pytest tests/e2e/test_steel_crawl_e2e.py -k <target> -s -q
+  /opt/eval-venv/bin/python -m pytest tests/e2e/test_steel_crawl_e2e.py \
+  -k <target> -s -q --confcutdir=/opt/steel-crawl-e2e/tests/e2e
 ```
 
 The catalogue (`ASSERTIONS.md`) names every predicate and its yielding assertion; the operator runbook (`OPERATOR.md`) names every prerequisite and failure branch.
