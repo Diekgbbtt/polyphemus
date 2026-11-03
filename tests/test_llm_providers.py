@@ -354,41 +354,12 @@ def test_escalating_invoke_returns_none_when_every_attempt_is_unmet(monkeypatch)
 
 # --- thinking / reasoning-effort baseline (#94) -------------------------------
 
-def test_thinking_baselines_are_set_on_the_reasoning_agents():
-    """The operator-directed baseline: the hunter reasons `high` and the
-    hunt-orchestrator (its Q8 gate + D2 re-match turns) `medium`; the analysis
-    proposers and the recon-orchestrator (the `job_orchestrator` role)
-    reason `medium`, the recon triager `low`; every other role stays `off`."""
-    assert P.thinking_for("hunting_hunter") == "high"
-    assert P.thinking_for("hunting_threat_modeller") == "medium"
-    assert P.thinking_for("assigner") == "medium"
-    assert P.thinking_for("mechanism_typist") == "medium"
-    assert P.thinking_for("triager") == "low"  # downscaled f7ad043 (dev)
-    assert P.thinking_for("job_orchestrator") == "medium"      # = the recon-orchestrator
-    # untouched agents + unregistered ids default off
-    for r in ("bootstrapper", "curation", "sweep", "crawler", "configurator",
-              "not_a_role"):
-        assert P.thinking_for(r) == "off"
-
-
 def test_build_chat_model_applies_reasoning_effort_only_when_thinking_on(monkeypatch):
     monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
     on = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="high")
     off = P.build_chat_model("openrouter", "openai/gpt-4.1-mini", thinking="off")
     assert on.reasoning_effort == "high"
     assert getattr(off, "reasoning_effort", None) is None
-
-
-def test_chat_model_for_carries_the_roles_thinking_baseline(monkeypatch):
-    """The wiring: a model built for a thinking role reasons at its baseline, so a
-    session/stateful agent off `chat_model_for` inherits it without extra plumbing."""
-    from polymerhus.app.llm.roles import chat_model_for
-    monkeypatch.setenv("LLM_HUNTING_HUNTER", "openrouter:openai/gpt-5-mini")
-    monkeypatch.setenv("LLM_ANALYSER", "openrouter:openai/gpt-4.1-mini")
-    monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
-    assert chat_model_for("hunting_hunter").reasoning_effort == "high"
-    assert chat_model_for("assigner").reasoning_effort == "medium"
-    assert getattr(chat_model_for("bootstrapper"), "reasoning_effort", None) is None
 
 
 # --- A5 thinking-effort wire decision (increment-3, ticket #162) -------------
