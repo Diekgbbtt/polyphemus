@@ -41,7 +41,7 @@ SESSION = "crawl-fixture"
 HEAD = ["steel", "browser"]
 ATTACH_COMMANDS = [
     [*HEAD, "sessions", "--json"],
-    [*HEAD, "sessions", "get", "--session", SESSION, "--json"],
+    [*HEAD, "sessions", "--session", SESSION, "--json"],
 ]
 
 

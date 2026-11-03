@@ -550,7 +550,7 @@ def test_a_navigation_landing_out_of_scope_is_recorded_and_not_entered():
     assert duplicate.parent == root
     assert duplicate.element.element_id == "e-off"
     assert duplicate.page is not None
-    assert graph.restored == [ROOT, ROOT]
+    assert graph.restored == [ROOT]
     assert result.stop_reason == "frontier_empty"
 
 
@@ -572,7 +572,7 @@ def test_a_stale_element_is_consumed_and_the_page_continues():
         "https://example.test/a",
     ]
     assert graph.executed == [(ROOT, "e-stale"), (ROOT, "e-a")]
-    assert graph.restored == [ROOT]
+    assert graph.restored == []
     assert len(result.stale) == 1
     stale = result.stale[0]
     assert stale.page == root

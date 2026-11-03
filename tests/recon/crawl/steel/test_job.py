@@ -208,7 +208,8 @@ def test_an_auth_failure_is_partial_and_never_traverses():
     result = job.run()
 
     assert run_calls == []
-    assert sidecar.attached is False
+    assert sidecar.attached is True
+    assert sidecar.closed is True
     assert session.stopped is True
     assert result.status == "partial"
     assert result.stop_reason == "auth_precondition_failed"

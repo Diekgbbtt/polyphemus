@@ -229,10 +229,12 @@ class SteelSessionClient:
         exec_fn: ExecFn | None = None,
         prefix: Sequence[str] | None = None,
         registry: SteelSessionRegistry | None = None,
+        api_fn: Callable[[str], Mapping[str, Any]] | None = None,
     ) -> None:
         self._exec_fn = exec_fn or _subprocess_exec
         self._prefix = tuple(prefix) if prefix is not None else DEFAULT_PREFIX
         self._registry = registry if registry is not None else SteelSessionRegistry()
+        self._api_fn = api_fn
         self._attached: SteelSession | None = None
 
     @property
@@ -266,8 +268,11 @@ class SteelSessionClient:
     def attach(self, name: str) -> SteelSession:
         """Attach to one live pre-authenticated session by name.
 
-        The catalogue read proves the name is live; the full `sessions get`
-        record binds the runtime id, the websocket, and the session clocks.
+        The filtered catalogue read proves the name is live and binds the
+        runtime id. The optional `api_fn` reads the full runtime record by id
+        (the websocket and the session clocks) when the caller has one; the
+        CLI has no session-record verb, so a caller without it still has the
+        identity and status needed for every command.
         """
         live = self.catalogue()
         if not any(session.name == name for session in live):
@@ -277,14 +282,41 @@ class SteelSessionClient:
                 )
             raise UnknownSession(f"no live Steel session named {name!r}")
         envelope = self._run(
-            [*self._prefix, "sessions", "get", "--session", name, "--json"]
+            [*self._prefix, "sessions", "--session", name, "--json"]
         )
         data = envelope.get("data")
-        if not isinstance(data, Mapping):
+        item: Mapping[str, Any] | None = None
+        if isinstance(data, list):
+            item = next(
+                (
+                    entry
+                    for entry in data
+                    if isinstance(entry, Mapping) and entry.get("name") == name
+                ),
+                None,
+            )
+        elif isinstance(data, Mapping) and data.get("name") == name:
+            item = data
+        if item is None:
+            item = next(
+                (entry for entry in live if entry.name == name), None
+            )
+        if item is None:
             raise CommandFailed("the Steel session record is not an object")
-        record = SteelSession.from_api(data, name=name)
+        record = (
+            item
+            if isinstance(item, SteelSession)
+            else SteelSession.from_catalogue(item)
+        )
         if not record.session_id:
             raise CommandFailed("the Steel session record is missing its runtime id")
+        if self._api_fn is not None:
+            try:
+                full = self._api_fn(record.session_id)
+            except Exception:  # noqa: BLE001 - identity survives an API miss
+                full = None
+            if isinstance(full, Mapping):
+                record = record.merge(SteelSession.from_api(full, name=name))
         session = self._registry.observe_api(record)
         self._attached = session
         return session

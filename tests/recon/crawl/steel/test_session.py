@@ -61,8 +61,12 @@ def test_catalogue_uses_the_injected_prefix_with_an_api_url():
 
 
 def test_attach_binds_name_runtime_id_websocket_and_clocks():
-    exec_fn = FakeExecFn(load_cli("catalogue"), load_cli("session"))
-    client = SteelSessionClient(exec_fn=exec_fn)
+    record = load_cli("session").model_dump(mode="json")["data"]
+    record.pop("source", None)
+    exec_fn = FakeExecFn(load_cli("catalogue"), load_cli("catalogue"))
+    client = SteelSessionClient(
+        exec_fn=exec_fn, api_fn=lambda session_id: record
+    )
 
     session = client.attach("crawl-fixture")
 
@@ -72,7 +76,6 @@ def test_attach_binds_name_runtime_id_websocket_and_clocks():
             "steel",
             "browser",
             "sessions",
-            "get",
             "--session",
             "crawl-fixture",
             "--json",
@@ -81,7 +84,7 @@ def test_attach_binds_name_runtime_id_websocket_and_clocks():
     assert session.name == "crawl-fixture"
     assert session.session_id == "9f8e7d6c-5b4a-4321-8765-fedcba987654"
     assert session.status == "live"
-    assert session.source == "catalogue"
+    assert session.source == "api"
     assert session.viewer_url == (
         "https://app.example.test/sessions/9f8e7d6c-5b4a-4321-8765-fedcba987654"
     )
@@ -98,8 +101,11 @@ def test_attach_binds_name_runtime_id_websocket_and_clocks():
 
 
 def test_the_websocket_never_appears_in_repr_str_a_dump_or_a_log(caplog):
-    exec_fn = FakeExecFn(load_cli("catalogue"), load_cli("session"))
-    client = SteelSessionClient(exec_fn=exec_fn)
+    record = load_cli("session").model_dump(mode="json")["data"]
+    exec_fn = FakeExecFn(load_cli("catalogue"), load_cli("catalogue"))
+    client = SteelSessionClient(
+        exec_fn=exec_fn, api_fn=lambda session_id: record
+    )
     session = client.attach("crawl-fixture")
     assert session.websocket_url is not None
     secret = session.websocket_url.get_secret_value()
@@ -213,7 +219,6 @@ def test_stop_releases_the_owned_name_and_proves_the_catalogue_clean():
             "steel",
             "browser",
             "sessions",
-            "get",
             "--session",
             "crawl-fixture",
             "--json",
@@ -401,7 +406,11 @@ def test_the_runtime_id_is_the_tiebreaker_when_a_name_is_reused():
     }
     exec_fn = FakeExecFn(load_cli("catalogue"), reused_catalogue, reused_record)
     registry = SteelSessionRegistry()
-    client = SteelSessionClient(exec_fn=exec_fn, registry=registry)
+    client = SteelSessionClient(
+        exec_fn=exec_fn,
+        registry=registry,
+        api_fn=lambda session_id: reused_record["data"],
+    )
     client.catalogue()
 
     session = client.attach("crawl-fixture")

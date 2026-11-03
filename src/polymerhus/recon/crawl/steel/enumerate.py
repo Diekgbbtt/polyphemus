@@ -1331,6 +1331,9 @@ def _channel_for(
 
 
 def _selector(node: SnapshotNode, css: str) -> str:
+    explicit = _attr(node, "data-selector")
+    if explicit:
+        return explicit
     if node.ref:
         return f"@{node.ref}"
     return css

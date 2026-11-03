@@ -176,7 +176,10 @@ class Frontier:
         stale: list[StaleVisit] = []
         stack: list[PageInstance] = []
         current: PageInstance | None = root
-        needs_restore = True
+        # The root was just loaded by the page factory; its snapshot and refs
+        # are the live document's. A restore before the first projection would
+        # reload the page and invalidate those refs for no benefit.
+        needs_restore = False
 
         def finish(
             stop_reason: StopReason, error: str | None = None

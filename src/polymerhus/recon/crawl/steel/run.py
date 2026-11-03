@@ -13,7 +13,7 @@ output is the evidence the job finalizes.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from polymerhus.recon.crawl.steel.capture.flow import Flow
@@ -25,7 +25,7 @@ from polymerhus.recon.crawl.steel.capture.history import (
 from polymerhus.recon.crawl.steel.capture.sidecar import CaptureSidecar
 from polymerhus.recon.crawl.steel.command import Action, CommandMapper
 from polymerhus.recon.crawl.steel.enumerate import Element, ElementMap, ElementType
-from polymerhus.recon.crawl.steel.forms import DeclaredCollector, FormLedger
+from polymerhus.recon.crawl.steel.forms import DeclaredCollector, FormExecutor, FormLedger
 from polymerhus.recon.crawl.steel.frontier import (
     ExecutionResult,
     Frontier,
@@ -44,6 +44,7 @@ from polymerhus.recon.crawl.steel.session import SteelSessionClient
 from polymerhus.recon.crawl.steel.state import (
     BrowserState,
     PageInstance,
+    SnapshotFacts,
     normalize_url,
 )
 
@@ -68,6 +69,7 @@ class RunOutput:
     frontier: FrontierResult
     flows: tuple[Flow, ...] = ()
     artifacts: tuple[tuple[HttpArtifact, dict[str, bytes]], ...] = ()
+    flow_artifacts: Mapping[str, str] = field(default_factory=dict)
     parameters: tuple[ObservedParameter, ...] = ()
     removed: tuple[Element, ...] = ()
     forms: tuple[FormOutcome, ...] = ()
@@ -97,6 +99,8 @@ class CrawlRun:
         in_scope: Callable[[str], bool],
         deadline: Callable[[], bool],
         cancel: Callable[[], bool],
+        form_executor: FormExecutor | None = None,
+        recapture: Callable[[PageInstance], tuple[Any, SnapshotFacts]] | None = None,
     ) -> None:
         self._project_id = project_id
         self._capture_context = capture_context
@@ -114,6 +118,8 @@ class CrawlRun:
         self._in_scope = in_scope
         self._deadline = deadline
         self._cancel = cancel
+        self._form_executor = form_executor
+        self._recapture = recapture
         self._collector = _Collector(self)
         self._forms: list[FormOutcome] = []
         self._actions: list[Element] = []
@@ -138,6 +144,7 @@ class CrawlRun:
         result = frontier.run(root)
         self._sidecar.pump()
         artifacts: list[tuple[HttpArtifact, dict[str, bytes]]] = []
+        flow_artifacts: dict[str, str] = {}
         parameters: list[ObservedParameter] = []
         for flow in self._sidecar.flows:
             if flow.request_id in self._seen_flows:
@@ -150,6 +157,7 @@ class CrawlRun:
             )
             self._ledger.append_artifact(artifact, bodies)
             artifacts.append((artifact, bodies))
+            flow_artifacts[flow.request_id] = artifact.artifact_id
             parameters.extend(extract_parameters(_parameter_flow(flow)))
         declared_endpoints = tuple(
             endpoint for collector in self._declared.values() for endpoint in collector.endpoints
@@ -161,6 +169,7 @@ class CrawlRun:
             frontier=result,
             flows=self._sidecar.flows,
             artifacts=tuple(artifacts),
+            flow_artifacts=flow_artifacts,
             parameters=tuple(parameters),
             removed=result.removed,
             forms=tuple(self._forms),
@@ -182,6 +191,9 @@ class CrawlRun:
     def _restore(self, page: PageInstance) -> None:
         self._sidecar.set_context(page.page_visit_id)
         self._state.restore(page, self._navigate)
+        if self._recapture is not None:
+            snapshot, facts = self._recapture(page)
+            self._state.replace_snapshot(page, snapshot, facts)
 
     def _execute(self, page: PageInstance, element: Element) -> ExecutionResult:
         action_id = f"act_{len(self._actions) + 1}"
@@ -249,11 +261,25 @@ class CrawlRun:
         form = element.form
         if form is None:
             return FormOutcome(form=None, submitted=False, skipped="no_contract")
+        if self._form_executor is not None:
+            submission = self._form_executor.submit(
+                page, element, generation=self._state.current_generation
+            )
+            return FormOutcome(
+                form=form,
+                submitted=submission.submitted,
+                skipped=submission.skipped,
+            )
         if not self._form_ledger.should_submit(form, page.state_key):
             return FormOutcome(form=form, submitted=False, skipped="duplicate")
         self._submit_form(page, element)
         self._form_ledger.mark_submitted(form, page.state_key)
         return FormOutcome(form=form, submitted=True)
+
+    @property
+    def action_count(self) -> int:
+        """How many candidates the run has executed, for the test cap."""
+        return len(self._actions)
 
     def _current_url(self) -> str:
         envelope = self._session.execute("get", "url")

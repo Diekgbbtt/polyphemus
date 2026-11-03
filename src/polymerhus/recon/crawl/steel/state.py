@@ -292,6 +292,23 @@ class BrowserState:
         )
         return cached.snapshot
 
+    def replace_snapshot(
+        self, page: PageInstance, snapshot: Any, facts: SnapshotFacts
+    ) -> None:
+        """Replace a page key's cached snapshot after a restore re-captured it.
+
+        A CLI snapshot's refs are document-scoped: a restore reloads the
+        document, and the refs from the previous snapshot can no longer be
+        resolved by the CLI. The fresh snapshot is stamped with the current
+        generation, so the executor acts on refs that belong to the live
+        document.
+        """
+        generation = self._current_generation
+        self._cache[page.cache_key] = CachedSnapshot(
+            snapshot=snapshot,
+            facts=facts.model_copy(update={"document_generation": generation}),
+        )
+
     def consume(self, page: PageInstance, fingerprint: str) -> None:
         """Mark one action fingerprint consumed on this page key (spec 5.1).
 

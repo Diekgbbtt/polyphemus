@@ -78,6 +78,7 @@ class ActionRecord(BaseModel):
     capture: str
     outcome: str
     error: str | None = None
+    fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -181,6 +182,16 @@ class CrawlJob:
         if self._deadline():
             return self._finish("session_deadline", None, None)
 
+        # Capture starts before the root load: the root document and the
+        # oracle fetch are part of the surface, and the passive sidecar never
+        # acts. A capture failure still stops the run before the auth verdict,
+        # so a capture-less run can never be mistaken for a successful crawl.
+        try:
+            self._sidecar.attach()
+            self._sidecar_attached = True
+        except Exception as exc:  # noqa: BLE001 - capture must not be a false success
+            return self._finish("capture_unavailable", str(exc), None)
+
         try:
             root = self._prepare_fn()
             self._auth_fn(root)
@@ -188,12 +199,6 @@ class CrawlJob:
             return self._finish("auth_precondition_failed", str(exc), None)
         except Exception as exc:  # noqa: BLE001 - a load failure is a typed stop
             return self._finish(_stop_reason(exc), str(exc), None)
-
-        try:
-            self._sidecar.attach()
-            self._sidecar_attached = True
-        except Exception as exc:  # noqa: BLE001 - capture must not be a false success
-            return self._finish("capture_unavailable", str(exc), None)
 
         try:
             frontier = self._run_fn(root)
@@ -286,6 +291,7 @@ class CrawlJob:
                 impact=element.impact,
                 capture=element.capture,
                 outcome="ok",
+                fingerprint=element.fingerprint,
             )
             actions.append(record)
             _emit(self._record_action, record)
@@ -300,6 +306,7 @@ class CrawlJob:
                 capture=element.capture,
                 outcome="error",
                 error=stale.error.code,
+                fingerprint=element.fingerprint,
             )
             actions.append(record)
             _emit(self._record_action, record)

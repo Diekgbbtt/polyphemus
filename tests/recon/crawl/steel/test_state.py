@@ -162,6 +162,23 @@ def test_restore_navigates_once_and_returns_the_cached_snapshot():
     assert navigate.urls == [page.url, page.url]
 
 
+def test_replace_snapshot_stamps_the_restored_generation_and_keeps_the_page_live():
+    snapshot = load_cli("snapshot").data
+    state = BrowserState()
+    page = open_home(state, snapshot=snapshot)
+    navigate = FakeNavigate()
+    state.restore(page, navigate)
+    fresh = ("fresh-refs",)
+
+    state.replace_snapshot(page, fresh, SnapshotFacts(ax_hash="ax-fresh"))
+
+    cached = state.cached(page)
+    assert cached.snapshot == fresh
+    assert cached.facts.ax_hash == "ax-fresh"
+    assert cached.facts.document_generation == state.current_generation
+    assert state.resolve(page, state.current_generation) is page
+
+
 def test_a_restore_mints_a_new_generation_and_stales_the_pre_restore_reference():
     snapshot = load_cli("snapshot").data
     state = BrowserState()
