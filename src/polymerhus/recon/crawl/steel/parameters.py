@@ -33,12 +33,20 @@ from urllib.parse import parse_qsl, urlsplit
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from polymerhus.recon.crawl.steel.state import normalize_url
-from polymerhus.recon.domain.noise_filter import CACHE_BUST_KEYS
+from polymerhus.recon.domain.noise_filter import (
+    CACHE_BUST_KEYS,
+    is_static_file_path,
+)
 
 # A parameter name is a route word, a query key, or a field name, never a data
 # payload. A base64 blob used as a path segment would otherwise become a
 # 162 KiB "name" repeated on every flow; longer names are not parameter names.
 MAX_PARAMETER_NAME = 256
+
+# A static-file URL has no path parameters: the directory segments are not a
+# route (`/uploads/20181226/<hash>.png`, `/static/plugins/.../select2.js`).
+# The endpoint stays (uploads and JS are real surfaces); only the false
+# identifier is dropped.
 
 # The value shape types (spec 8.3). A shape is a type and a length band: `uuid`,
 # `hex`, and `token` are the identifier shapes the path detector recognises;
@@ -382,7 +390,13 @@ def _path_identifiers(path: str) -> tuple[_PathIdentifier, ...]:
     `{path, method, baseurl}` identity); the parameter records the segment and
     the name it mints, so the graph anchors the parameter to the endpoint the
     flow actually called.
+
+    A static-file path is exempt: its directory segments (`/uploads/20181226/`)
+    and its filename stem (`select2`) are not route parameters, even when they
+    look like a date or a token.
     """
+    if is_static_file_path(path):
+        return ()
     segments = path.split("/")
     identifiers: list[_PathIdentifier] = []
     for position, segment in enumerate(segments):

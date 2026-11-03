@@ -195,6 +195,24 @@ PRESERVE_SEGMENTS = frozenset({
     "avatar", "avatars", "user-content", "usercontent",
 })
 
+# A static-file URL has no path parameters. This set is wider than the
+# Endpoint static classification: a JavaScript endpoint stays graph surface
+# (D17), but its directory segments are not route parameters.
+STATIC_FILE_EXTENSIONS = frozenset({
+    ".avif", ".bmp", ".css", ".eot", ".gif", ".gz", ".ico", ".jpeg", ".jpg",
+    ".js", ".map", ".mjs", ".mp3", ".mp4", ".otf", ".pdf", ".png", ".rar",
+    ".svg", ".tar", ".ttf", ".wav", ".webm", ".webp", ".woff", ".woff2",
+    ".zip", ".7z",
+})
+
+
+def is_static_file_path(path: str) -> bool:
+    """Whether the path names a static file, judged by its final segment."""
+    filename = (path or "/").rsplit("/", 1)[-1]
+    if "." not in filename:
+        return False
+    return "." + filename.rsplit(".", 1)[-1].lower() in STATIC_FILE_EXTENSIONS
+
 # Fingerprinted content-hashed bundle: `app.4f3a2b1c.js`, `main-deadbeef.css`,
 # `x_1a2b3c4d.mjs`. A hex hash of >= 8 chars delimited before a js/css/mjs ext.
 _FINGERPRINT_RE = re.compile(r"[.\-_][0-9a-f]{8,}\.(?:js|css|mjs)$")
@@ -501,6 +519,15 @@ def filter_deltas(
             if is_malformed_concat_path(path):
                 continue
             if classify_endpoint(path) == "static":
+                continue
+            # A path parameter on a static file is a directory/date/stem false
+            # positive (`/uploads/20181226/<hash>.png` -> `uploads_id`,
+            # `/static/.../select2.full.min.js` -> `plugins_id`). The file
+            # endpoint stays; the fake route parameter does not.
+            if (
+                delta.identity.get("position") == "path"
+                and is_static_file_path(path)
+            ):
                 continue
         # www.<host> dedups to <host> (unconditional - the www convention holds
         # whether the seed was exact or wildcard).

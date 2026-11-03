@@ -256,6 +256,36 @@ def test_filter_drops_a_parameter_anchored_to_a_static_endpoint():
     assert filter_deltas([param]) == []
 
 
+def test_filter_drops_a_path_parameter_on_a_static_file():
+    for endpoint_path in (
+        "/uploads/20181226/a3a4245ec095da4903c6c81123fd480d.png",
+        "/static/plugins/AdminLTE/select2/js/select2.full.min.js",
+    ):
+        param = AssetDelta(
+            type="Parameter",
+            identity={
+                "name": "uploads_id",
+                "position": "path",
+                "endpoint_path": endpoint_path,
+                "baseurl": "https://h",
+            },
+        )
+        assert filter_deltas([param]) == []
+
+
+def test_filter_keeps_a_path_parameter_on_a_real_route():
+    param = AssetDelta(
+        type="Parameter",
+        identity={
+            "name": "items_id",
+            "position": "path",
+            "endpoint_path": "/api/items/421",
+            "baseurl": "https://h",
+        },
+    )
+    assert filter_deltas([param]) == [param]
+
+
 def test_filter_leaves_non_endpoint_labels_untouched():
     params = [
         AssetDelta(type="Parameter", identity={"name": "id", "position": "query",

@@ -95,6 +95,23 @@ def test_a_payload_sized_previous_segment_does_not_become_a_name():
     ] == [("id", "path", "hex"), ("id", "path", "number")]
 
 
+def test_a_static_file_url_mints_no_path_parameter():
+    for url in (
+        "https://example.test/uploads/20181226/a3a4245ec095da4903c6c81123fd480d.png",
+        "https://example.test/static/plugins/AdminLTE/select2/js/select2.full.min.js",
+    ):
+        records = extract_parameters(flow(url))
+        assert [record for record in records if record.location == "path"] == []
+
+
+def test_a_real_api_path_still_mints_its_identifier():
+    records = extract_parameters(flow("https://example.test/api/items/421"))
+
+    assert [(record.name, record.location) for record in records] == [
+        ("items_id", "path")
+    ]
+
+
 def test_the_extractor_records_identifier_path_segments_on_the_actual_endpoint():
     cases = [
         ("/orders/1234", "orders_id", "number"),
