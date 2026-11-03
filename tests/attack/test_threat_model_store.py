@@ -1760,6 +1760,30 @@ def test_a_completed_write_without_an_assessment_is_rejected(tmp_path):
     assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
 
 
+def test_a_completed_write_without_vulnerabilities_is_rejected(tmp_path):
+    """A unit that never wrote the vulnerability section is not complete.
+
+    The C.a run showed the dominant abandonment mode: the modeller wrote
+    COMPLETED from PRIOR_ART with an empty `vulnerabilities` list. The
+    assessment-coverage guard alone is vacuous there, because there is no
+    vulnerability to cover, so the write must refuse the missing section."""
+    store = ThreatModelStore(tmp_path)
+    sections = [
+        (state, payload)
+        for state, payload in _sections_below_completed()
+        if state != "VULNERABILITIES_WRITTEN"
+    ]
+    _write_gates(store, sections=sections)
+
+    with pytest.raises(ThreatModelIdentityError) as raised:
+        store.write_sections(
+            PROJECT, UNIT, "COMPLETED", {"threats": []}, run_id=RUN)
+
+    assert raised.value.fields == ["vulnerabilities"]
+    assert "vulnerability section" in str(raised.value)
+    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
+
+
 def test_the_threat_file_carries_the_denormalised_impact_block(tmp_path):
     """The threat file carries the damage context (the row, its precursors, and
     the capability path), so a consumer needs no model document for it."""

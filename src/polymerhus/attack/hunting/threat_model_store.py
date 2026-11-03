@@ -1545,14 +1545,24 @@ class ThreatModelStore(BoundedRecordStore):
 
     @staticmethod
     def _require_assessment_coverage(model: PartialThreatModel) -> None:
-        """A COMPLETED model needs one scored assessment per non-dropped
-        vulnerability.
+        """A COMPLETED model needs the vulnerability section and one scored
+        assessment per non-dropped vulnerability.
 
-        The completion checker already reports the missing section, but the
+        The completion checker already reports the missing sections, but the
         write is the last point where the model can be taught. Accepting the
         write archives the unit as degraded and loses the whole unit; a coded
-        rejection sends the model back to `assess_impact` with the missing
-        refs named."""
+        rejection sends the model back with the missing field named.
+
+        An empty `vulnerabilities` list is the C.a failure mode: the coverage
+        check is vacuous there, so the write must reject the missing section
+        itself."""
+        if not model.vulnerabilities:
+            raise ThreatModelIdentityError(
+                ["vulnerabilities"],
+                "threat model store: the COMPLETED write needs the "
+                "vulnerability section; write at least one vulnerability "
+                "(a dropped one is allowed) before the COMPLETED write.",
+            )
         covered = {row.vulnerability_ref for row in model.impact_assessment}
         missing = [
             vulnerability.id
