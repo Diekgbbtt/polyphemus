@@ -3,7 +3,8 @@
 **Status:** design specification, 2026-10-31; implementation unit and contract tiers complete, 2026-11-02.
 **P0:** passed on the local Steel deployment.
 **Prototype:** passed on the public fixture.
-**Implementation:** the unit and contract tiers are complete; the live P1 to P5 gate is deferred to the next batch.
+**Implementation:** the unit and contract tiers are complete.
+The live gate is the three-target e2e on the eval server (`eval/steel-crawl-e2e/`); the measured runs, predicates, and non-functional results are in `eval/steel-crawl-e2e/NFR-REPORT.md` and `eval/steel-crawl-e2e/ASSERTIONS.md`.
 **Design history:** `docs/design/steel-crawl-workbench.md`.
 **P0 evidence:** `docs/experiments/p0-steel-cdp-sidecar.md`.
 **Prototype:** `docs/experiments/crawl_proto_local.py` and `docs/experiments/runs/crawl-proto-20261031T164759Z/`.
@@ -387,13 +388,21 @@ The consumed set is keyed by the cache key.
 
 ### 5.2 Restore
 
-A rollback navigates to the page node's URL and hits the cached snapshot by key.
+A rollback navigates to the page node's URL.
 It does not replay local_state actions.
-It does not re-snapshot the DOM.
-It does not re-enumerate the page.
+It does not re-enumerate the page into a new page instance.
 
-The executor re-resolves the cached element identity to a live ref before acting.
-If the identity is gone, the action fails with `stale_element` and the candidate is consumed.
+The CLI's refs are document-scoped: a reload assigns a new ref registry, so the
+cached `@ref` values are dead even when the URL and the surface are unchanged.
+The executor therefore takes exactly one fresh snapshot after the reload and
+re-projects the cached page's candidates from it; that is a ref refresh, not a
+new page visit.
+The fresh snapshot is stamped with the new `DocumentGeneration`.
+The executor acts on a ref that belongs to the live document.
+If the cached element's fingerprint is absent from the fresh projection, the
+action fails with `stale_element` and the candidate is consumed.
+The root needs no initial restore: the page factory just loaded it, so its
+snapshot and refs are already the live document's.
 
 ### 5.3 Visited and state
 
@@ -791,6 +800,15 @@ The body fetch runs on `loadingFinished` for `Document`, `XHR`, `Fetch`, and `Sc
 The body is capped per response and per run.
 A truncated body carries the original size and the reason.
 
+A request URL is capped at 2 KiB.
+An analytics beacon can carry a payload as a path segment or a query value; the cap keeps one flow's URL, and every graph record derived from it, bounded.
+A capped URL carries `url_truncated=true` and its original length.
+
+A realtime frame always carries its direction, opcode, size, and SHA-256 digest.
+Its raw payload is a bounded prefix: 16 KiB per frame, an 8 MiB payload budget per run, and at most 20,000 frame records.
+A truncated frame carries `payload_truncated=true`.
+A chatty socket can therefore never grow the manifest without bound.
+
 ### 9.3 WebSocket and HTTP/3
 
 The WebSocket handshake request and the `101` response are an HTTP artifact.
@@ -871,8 +889,10 @@ The first writer's capture context is kept.
 ### 10.4 Finalize
 
 The crawler appends every artifact and manifest record to a durable ledger.
+A body is written to the ledger on its first occurrence only; a later artifact references the same digest, so the ledger stays proportional to the distinct capture budget, not to the flow count.
 `finalize` runs on success and on every failure path.
 It closes the sidecar, flushes the ledger in batches, assembles a partial manifest, and starts parse, triage, and curate with `partial=true` and a coverage report.
+The flush attaches each distinct body to the first artifact that references it; the edge resolves the digest for every later reference.
 The HTTP flush and the graph ingestion run in parallel.
 If the process is killed, the pipeline job's `finally` runs `finalize` from the ledger.
 A failed flush retries with a persisted cursor and leaves the ledger in place.
@@ -899,6 +919,10 @@ stats:      {endpoints, parameters, flows, bytes, duration_ms,
 ```
 
 There is no `pages`, no `actions`, no `flows`, no `artifacts`, no `declared_endpoints`, no `declared_fields`, and no `coverage` block.
+
+A parameter name is a route word, a query key, or a field name, never a data payload: a name longer than 256 characters is not a parameter (a base64 path segment is the canonical case).
+One parameter identity is one manifest record; the same `(name, position, endpoint_path, baseurl, kind)` observed on many flows is deduplicated.
+An endpoint identity is one record for the same reason.
 
 The v1 parser remains compatible.
 The v2 parser is additive.
