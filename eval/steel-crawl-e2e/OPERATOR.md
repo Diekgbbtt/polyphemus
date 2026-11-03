@@ -9,7 +9,7 @@ The assertions are in `ASSERTIONS.md`; the executable walkthroughs are in `tests
 - The instance stack `ph-dd131acc` with `agent`, `kali`, `postgres`, `neo4j`, and the shared front `ph-eval-front`.
 - The three target images under `ph/webexploitbench/{comfyui,prestashop,siyucms}:*` and the `/root/WebExploitBench` checkout (the `targetctl` runner).
 - `/root/eval-dd/data/<target>/{operator_kb.md,auth/overview.yaml,auth/credentials.yaml,skills/authn/}`.
-- The Steel runtime at `192.33.91.87:3000`; the instance `.env` carries `STEEL_API_KEY`, `STEEL_BROWSER_API_URL`, and `API_KEY_TYPESAFE`.
+- The Steel runtime at `192.33.91.87:3000`; the instance `.env` carries `STEEL_API_KEY`, `STEEL_BROWSER_API_URL`, and `API_KEY_TYPESAFE`. The scaffold copies the TypeSafe key as a mode-0600 file and the phase runner unlinks it after reading; the key never rides `docker exec -e` or the host process list.
 - The front alias `t-1618c524.target` resolvable from the Steel runtime. The scaffold swaps the front upstream per target and restores the White Jotter conf.
 
 The scaffold refuses a missing target, a missing data dependency, a missing Steel session, or a missing Agent container; it never substitutes a mock.
