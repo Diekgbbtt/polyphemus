@@ -62,9 +62,9 @@ if "--session" in args:
 
 if args[:1] == ["sessions"]:
     sub = args[1] if len(args) > 1 else ""
-    if sub == "get":
-        out({"data": {
-            "id": "sid-1", "status": "live",
+    if sub == "--session":
+        out({"data": [{
+            "id": "sid-1", "name": session, "status": "live",
             "createdAt": "2026-01-01T00:00:00Z", "duration": 12,
             "eventCount": 0, "timeout": 0,
             "sessionViewerUrl": "http://viewer",
@@ -72,7 +72,7 @@ if args[:1] == ["sessions"]:
             "debuggerUrl": "http://debugger",
             "dimensions": {"width": 1280, "height": 720},
             "userAgent": "UA",
-        }, "success": True})
+        }], "success": True})
     if sub in ("logs", "agent-logs", "traces"):
         out({"error": "Steel API request failed (404): not found",
              "error_code": "not_found", "success": False}, 5)
@@ -313,12 +313,16 @@ def test_session_records_scopes_expected_probe_errors(fake_steel, tmp_path):
     by_probe = {}
     for entry in traces:
         argv = entry["argv"]
-        if "sessions" in argv and "get" in argv:
-            by_probe["get"] = entry["trace"]
+        if (
+            len(argv) > 2
+            and argv[1] == "sessions"
+            and argv[2] == "--session"
+        ):
+            by_probe["metadata"] = entry["trace"]
         if "sessions" in argv and "logs" in argv:
             by_probe["logs"] = entry["trace"]
         if "browser" in argv and "snapshot" in argv:
             by_probe["snapshot"] = entry["trace"]
-    assert by_probe["get"] == "/tmp/outer-trace.jsonl"
+    assert by_probe["metadata"] == "/tmp/outer-trace.jsonl"
     assert by_probe["snapshot"] == "/tmp/outer-trace.jsonl"
     assert by_probe["logs"] is None
