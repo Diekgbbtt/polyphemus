@@ -58,6 +58,10 @@ See `recon-pipeline-design.md` §9.5 for the full designed-not-built L3 writeup,
 
 ## D3 - Agentic crawl engine: external Steel.dev (operator decision 2026-07-04) - phrasing corrected against the live client
 
+**Superseded for the live path (2026-11-02).** The production `steel_crawl` is now the deterministic engine in `crawl/steel/`: it drives the Steel CLI, attaches to a pre-authenticated session, observes the session through a passive raw-CDP sidecar, and lets the Jev policy choose actions.
+The ReAct provider described below remains as a compatibility path (`legacy_agentic_run_crawl_fn`).
+See `steel-crawl-spec.md` and `steel-crawl-integration-impact-map.md`.
+
 `steel_helpers.merge_steel_into_by_base_url` is only a **merge adapter** over a crawl manifest (`{endpoints:[...], js_urls:[...]}`).
 The manifest is produced by an agentic ReAct loop (`crawl_agentic.py`, vendored verbatim from the `redamon-agent` base image, now living at `agent/recon/crawl/crawl_agentic.py`) driving **Steel.dev tools** against a Steel browser service.
 
@@ -582,3 +586,50 @@ Ordering is not the blocker either: naabu (phase 0) mints the `Service` before h
 DEFERRED, documentation only.
 The provisional shape of a future fix: have `httpx_parser` emit an edge from the `BaseURL` to the `Service` identity it reconstructs from `host_ip` + `port` + scheme-derived name (idempotent `MERGE`, matching naabu's already-present node), or perform the join once at the curator chokepoint; ratify the edge type and direction against `domain-model.md` first, and pair it with the `Domain <-> IP` resolution edge so the two components fuse rather than gaining a single hop.
 The edge type name and direction stay provisional until the operator ratifies them.
+
+## D-JOBSET - the target-type job-set decision node (#336) (OPEN, 2026-11-03)
+
+**The gap.**
+The recon orchestrator configures the run only from the authentication posture.
+`build_phase_plan()` builds the full `PHASES` plan before the gateway.
+`_gate_plan_by_scope` narrows it by scope mode only.
+`prune_plan(plan, "browser_only")` is the only verdict-driven narrowing.
+There is no node that selects a job set from the observed target type.
+
+**The current interface agreement.**
+The orchestrator is the `job_orchestrator` role run as `ReconOrchestratorActor`.
+It takes one pre-pipeline turn and emits `GatewayVerdict` with `outcome`, `account`, `branch`, `replayability_resolved`, `replayability`, and `rationale`.
+The pipeline owns the plan.
+The orchestrator may prune only through `prune_plan`.
+The browser-only keep set is `BROWSER_ONLY_KEEP = {"steel_crawl"}`.
+The orchestrator never names a job outside `JOBS` and never builds a job list of its own.
+
+**The steel_crawl identity the decision node must account for.**
+`JOBS["steel_crawl"]` is `tool="steel_crawl"`, `skill="agentic_crawl"`, `consumes="BaseURL"`, `produces=["BaseURL", "Endpoint", "Parameter"]`, `use_auth=True`, `configurator_mode="agent"`, `consumption.skip_external=True`.
+It sits in the crawl phase with `katana` and `ffuf` (phase index 5).
+It survives every scope mode.
+It is the only browser-capable job and the browser-only fallback.
+
+**The decision node's required shape (when built).**
+- The input is the run's early L0 evidence: BaseURLs, profiles, technologies, and the auth posture, plus the `JOBS` and `PHASES` registry.
+- The output is a `JobSetDecision` with a selected subset, a reason per inclusion or exclusion, and a source (`deterministic`, `orchestrator_turn`, or `operator_subset`).
+- The subset is validated by `validate_job_subset` before it reaches `build_phase_plan`.
+- The subset is applied before the phase barrier and after the gateway verdict.
+- The decision can only narrow the plan. It never widens beyond `PHASES`.
+- The decision never hardcodes a phase list. It reads `JOBS` and `PHASES` so a new job is visible by construction.
+- `steel_crawl` is selected for CMS, SPA, JavaScript-heavy, and browser-only targets.
+- `steel_crawl` is not selected for a target with no reachable web origin.
+- The browser-only verdict still keeps `steel_crawl` even if the classifier would drop it, because the auth posture outranks the target-type preference.
+
+**Acceptance cases for #336.**
+- A CMS target selects `steel_crawl` and keeps the crawl phase.
+- A REST/GraphQL target may drop `steel_crawl` but keeps `httpx`, `httpx_reprofile`, `jsluice`, `arjun`, and `graphql-cop`.
+- An auth-only `browser_only` target runs exactly `steel_crawl`.
+- A subset that omits a producer fails `validate_job_subset` loudly.
+- The default full plan is unchanged when no decision node runs.
+
+**Why this is not built now.**
+The decision needs target-type evidence that is only reliable after the early phases, so it needs a second orchestrator turn or a deterministic classifier over early L0 nodes.
+The current batch closes the crawl plane and the HTTP-history database.
+The node is a separate design and implementation item.
+The identity and the interface above are recorded so the node cannot drift from the phase registry.

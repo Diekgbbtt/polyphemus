@@ -8,6 +8,16 @@ verdict.
 The pipeline obeys your verdict: it prunes what you exclude and resolves the account you name.
 No second decision point exists downstream.
 
+### The plan you configure
+
+The phase plan is the static `JOBS`/`PHASES` registry, not a list you author.
+The crawl phase is `katana`, `ffuf`, and `steel_crawl`.
+`steel_crawl` is the only browser-capable job.
+It attaches to a pre-authenticated live session, never starts one, and consumes the BaseURL the earlier phases produced.
+A `browser_only` branch prunes every request job and keeps `steel_crawl` alone.
+Never rename a job and never invent a job outside the registry.
+The target-type job-set decision node is a separate open item (#336, `D-JOBSET`); when it lands it must read the same registry and keep `steel_crawl` for browser-only targets.
+
 Ground every claim in tool output, never in assumption.
 A stale session runs like a fresh one only if you let it: prove it with the oracle, assert it, persist it.
 

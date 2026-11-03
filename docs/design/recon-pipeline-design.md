@@ -15,7 +15,7 @@ The system reached a sound real-target end-to-end validation run (memory `recon-
 
 **Built and validated (this document's primary subject):** an autonomous reconnaissance pipeline that runs 17 scheduled recon jobs against a target domain across 12 phases, optionally in an authenticated context, builds a Layer-0 descriptive attack-surface graph in Neo4j, and attaches natural-language `Observation` nodes to broad anchors.
 Single project (`project_id`) tenancy.
-A REST API launches and polls runs and writes settings; no web frontend.
+A REST API launches and polls runs and writes settings; a small CSR frontend renders runs and the graph.
 
 **Designed but NOT built** (carried here for completeness, clearly marked): the three-level context-memory scaffold (`recon_signals` / L1, coverage verdicts / L2, macro synthesis + finding-triggered extension / L3) - see §9.
 None of `PodSignal`, `CoverageVerdict`, `MacroDigest`, `recon_signals`, `synthesize_macro_observations`, or `JobState.job_context` exist in the codebase today (verified: zero matches across `src/polymerhus/recon/`).
@@ -47,8 +47,8 @@ flowchart LR
         TOOLS["subfinder / amass / whois / dnsx / puredns / subzy /<br/>naabu / httpx / gau / paramspider / katana / ffuf /<br/>kr / webpack_chunks / jsluice / graphql-cop / arjun"]
         MCP --> TOOLS
     end
-    subgraph STEELC[steel.dev cloud browser]
-        STEEL[Playwright-over-CDP session]
+    subgraph STEELC[Steel runtime]
+        STEEL[one pre-authenticated browser session<br/>Steel CLI + raw CDP]
     end
     POD -->|execute_command, langchain-mcp-adapters| MCP
     POD -->|steel_crawl job only| STEEL
@@ -57,7 +57,7 @@ flowchart LR
 ```
 
 **Execution boundary.** Tools run in the Kali container behind a single fastmcp tool, `execute_command`, returning `{stdout, stderr, returncode, duration_ms}` and creating a per-session working directory so concurrent pods never collide on files (design decision, real wiring: `src/polymerhus/recon/domain/pod.py:590-644` `default_exec_fn`, connecting via `langchain_mcp_adapters.client.MultiServerMCPClient` at `config.KALI_MCP_URL`, `transport="streamable_http"`).
-The agentic `steel_crawl` job (§4) is the one exception: it does not call `execute_command` at all - it drives an in-process Playwright-over-CDP session against steel.dev directly (`src/polymerhus/recon/crawl/steel_client.py:1-14`).
+The `steel_crawl` job (§4) is the one exception: it drives the Steel CLI through the Kali exec surface, attaches to a pre-authenticated Steel session, and observes the same session through a passive raw-CDP sidecar (`src/polymerhus/recon/crawl/steel/live.py`). It never starts a session and never sends a DOM-changing CDP method.
 
 ---
 
@@ -119,13 +119,13 @@ Node-by-node, with the real wiring (`src/polymerhus/recon/domain/pod.py::build_p
 `build_pod_graph` takes `exec_fn`/`curate_fn`/`triage_fn` as parameters specifically so `tests/recon/test_pod.py` never touches live Kali/LLM/Neo4j (`pod.py:1-13`).
 The module-level `pod_graph` (`pod.py:770`) wires the three real collaborators; importing `pod.py` performs no I/O (`default_exec_fn`/`default_triage_fn` resolve their clients lazily, `pod.py:590-644,707-769`).
 
-### 3.4 Crawl pod - the one agentic exception (`src/polymerhus/recon/crawl/crawl_pod.py::crawl_pod`)
+### 3.4 Crawl pod - the one agent-mode job
 
-`steel_crawl` is the only job with `configurator_mode="agent"` (`src/polymerhus/recon/control/jobs.py:359-366`).
-It replaces `configurator -> execute -> gate` with a single `crawl` node (`crawl_pod.py:161-184`) that runs the vendored ReAct loop (`crawl_agent.run_crawl`, wrapped synchronously via `async_bridge.run_coro_blocking`), then rejoins the shared `parse -> triager -> curator` shape.
-See §7.3 for its failure semantics in detail - it is the **best-effort exemplar** of the whole design: three distinct failure sources (`SteelProviderUnavailable`, any other exception, an empty manifest) all converge on the identical `fail` node.
-
----
+`steel_crawl` is the only job with `configurator_mode="agent"` (`src/polymerhus/recon/control/jobs.py`).
+It replaces `configurator -> execute -> gate` with a single `crawl` node (`crawl_pod.py`) that runs `run_live_crawl` synchronously, then rejoins the shared `parse -> triager -> curator` shape.
+The live run assembles `CrawlJob` and `CrawlRun`: the Steel session client attaches to the pre-authenticated session, the auth oracle runs once, the passive CDP sidecar captures flows, the frontier and the Jev policy traverse, the HTTP-history client flushes normalized artifacts to the edge, and `finalize` writes the v2 manifest and ledger on every exit.
+The legacy `crawl_agent.run_crawl` ReAct loop and the `steel_client` provider remain as a compatibility path (`legacy_agentic_run_crawl_fn`), but `default_run_crawl_fn` is `live_run_crawl_fn`.
+See `docs/design/steel-crawl-spec.md` for the module contract and `docs/design/steel-crawl-integration-impact-map.md` for the phase identity.
 
 ## 4. Interface agreements & data contracts
 
@@ -266,9 +266,10 @@ Role("crawler",          "LLM_CRAWLER",          "session")
 `resolve_role(role)` reads `LLM_{ROLE}` as `"<provider>:<model>"`, raising `LLMConfigError` if unset or malformed (`providers.py:431-445`).
 `build_chat_model` raises `LLMConfigError` on an unknown provider or a missing `API_KEY_{PROVIDER}` (`providers.py:683-688,716-717`) - **fail-fast at bootstrap**, not per-call: `validate_llm_config()` (`providers.py:771-789`) is called at startup so a misconfigured role is caught before any pod runs, not mid-run.
 Every `ChatOpenAI` instance is constructed with the Langfuse callbacks at build time (`providers.py:767`) so tracing survives being invoked inside a worker thread where LangGraph's callback contextvar does not propagate (`async_bridge.run_coro_blocking`).
-`chat_model_for(role)` (`roles.py:79`) is the one-line façade used by the crawl call site (`crawl_agent.py`).
-Three of the four recon roles are invoked today: `triager` (every job), `crawler` (the ReAct crawl loop), and `job_orchestrator` (the run's pre-pipeline auth gateway, §3.1).
-Only `configurator` remains dormant - deterministic mode never builds an LLM for it, and it is reserved for the #238 rate-limit work.
+`chat_model_for(role)` (`roles.py:79`) is the one-line façade used by the triager call site (`pod.py`).
+The invoked recon roles today are `triager` (every job) and `job_orchestrator` (the run's pre-pipeline auth gateway, §3.1).
+`crawler` is reserved for the legacy ReAct compatibility path; the live crawl uses the deterministic engine and the Jev policy.
+`configurator` remains dormant - deterministic mode never builds an LLM for it, and it is reserved for the #238 rate-limit work.
 
 The triager's structured output is no longer built inline with a hardcoded method. It runs through the session/role seams (`stateful_turn` when a pod session is bound, else `invoke_role`), and the structured-output method is capability-negotiated rather than fixed:
 
@@ -310,9 +311,9 @@ This supersedes the former `method="function_calling"` requirement: the open `Ob
 | `run_job` raises (whole job-agent invocation) | `pipeline._run_one` (`pipeline.py:631-636`) | caught, `registry.upsert_job(..., "degraded", error=...)` | degrades that job only; phase continues |
 | Job setup blip (`read_assets`/`registry.upsert_job` raises before dispatch) | `pipeline.run_pipeline`'s per-job try (`pipeline.py:609-614`) | caught, job marked `"degraded"`, loop `continue`s to the next job in the phase | that job never gets a `job_configs` entry, so it's excluded from the phase's `_run_one` batch - no crash |
 | All pods in a job fail | `pipeline._run_one` (`pipeline.py:638-647`) | `status="degraded"` if `failed == total` and `total > 0`; `"skipped"` if `total == 0`; `"success"` otherwise (partial success still counts as success) | job-level status only, never raised |
-| `SteelNotConfigured` (`STEEL_API_KEY` unset) | `steel_client.get_crawl_tools` (`steel_client.py:119`) raises; caught in `crawl_agent.run_crawl`'s broad `except Exception` (`crawl_agent.py:127`) | returns the empty manifest `{"endpoints": [], "js_urls": []}` | crawl pod's `crawl` node sees an empty manifest -> `_manifest_is_empty` -> `fail` node (§7.3) |
-| `SteelProviderUnavailable` (playwright/steel deps absent; a real provider exists) | `steel_client._default_client_factory` (`steel_client.py:94`) raises when the deps are not importable | same broad catch in `crawl_agent.run_crawl` -> empty manifest | graceful degrade; `crawl/steel_provider.py::SteelCrawlProvider` is the production provider (§7.3) |
-| Crawl loop LLM/tool error | `crawl_agent.run_crawl`'s `except Exception` (`crawl_agent.py:127`) | returns empty manifest | same degrade path |
+| Missing Steel runtime (`STEEL_BROWSER_API_URL` and `STEEL_API_KEY` unset) | `steel/live.py` raises `LiveCrawlError` | caught by the crawl pod; `CrawlJob` finalizes a partial manifest with the typed stop reason | crawl pod's `crawl` node -> `_manifest_is_empty` -> `fail` node (§7.3) |
+| Steel session attach failure (`unknown_session` / `session_missing`) | `steel/session.py` returns the typed error | `CrawlJob._finish` records the stop reason and finalizes from the ledger | partial manifest -> `fail` node; reduced-coverage Observation |
+| Capture sidecar unavailable | `steel/capture/sidecar.py` raises | `CrawlJob` stops with `capture_unavailable` before the auth verdict | partial manifest -> `fail` node; no false success |
 | Crawl pod: any exception from `crawl()`'s body | `crawl_pod.crawl` node (`crawl_pod.py:176-178`) | caught explicitly (`except Exception as exc`), returns `{"manifest": None, "crawl_error": str(exc)}` | routes through `gate` to `fail` |
 | Crawl pod: empty manifest (both keys empty) | `_manifest_is_empty` (`crawl_pod.py:65-68`), checked in `crawl()` (`crawl_pod.py:180-181`) | `crawl_error="empty crawl manifest"` | routes to `fail` |
 | Crawl pod `fail` node | `crawl_pod.fail` (`crawl_pod.py:230-244`) | curates **one** `reduced_crawl_coverage` `Observation` anchored on the input `BaseURL` (`crawl_pod.py:71-85`), sets `verdict="failed"` | the only pod type that writes something to the graph even on failure |
@@ -381,34 +382,29 @@ sequenceDiagram
 Note: retries never vary the command (no tunable configurator, §9 L1) - three identical requests hit the same block.
 This is the exact operational-blindness gap the unbuilt L1 `recon_signals` scaffold targets: nothing records "this host WAF-blocked jsluice" for a later phase to read.
 
-### 7.3 An unreachable-host / SteelProviderUnavailable crawl pod
+### 7.3 A crawl pod that cannot attach to its Steel session
 
 ```mermaid
 sequenceDiagram
-    participant JA as job_agent.pod_runner (routes to crawl_pod_invoke)
+    participant JA as job_agent.pod_runner
     participant CP as crawl_pod.crawl_pod
-    participant CA as crawl_agent.run_crawl
-    participant SC as steel_client.get_crawl_tools
+    participant CJ as steel.job.CrawlJob
+    participant SC as steel.session.SteelSessionClient
     participant CUR as curator.curate
 
     JA->>CP: crawl_pod_invoke(pod_input, job=steel_crawl, run_id, phase)
-    CP->>CA: default_run_crawl_fn(target, scope=[target])  (run_coro_blocking)
-    CA->>SC: get_crawl_tools()
-    SC->>SC: steel_configured() -> True (STEEL_API_KEY set)
-    SC->>SC: _default_client_factory() -> raise SteelProviderUnavailable(...)
-    SC-->>CA: SteelProviderUnavailable (propagates out of get_crawl_tools)
-    CA->>CA: except Exception: return {"endpoints": [], "js_urls": []}
-    CA-->>CP: empty manifest
-    CP->>CP: crawl node: _manifest_is_empty(manifest) -> True
-    CP->>CP: return {manifest: None, crawl_error: "empty crawl manifest"}
-    CP->>CP: gate: manifest is None -> route "fail"
-    CP->>CUR: curate([], [reduced_crawl_coverage Observation], project_id)
-    CUR-->>CP: (0, 1)
-    CP-->>JA: PodExport{verdict:"failed", observations_merged:1, error:"empty crawl manifest"}
+    CP->>CJ: run_live_crawl(context)
+    CJ->>SC: attach(session_name)
+    SC-->>CJ: unknown_session / session_missing / attached
+    CJ->>CJ: _finish(stop_reason, error, None)
+    CJ->>CUR: finalize -> flush (partial) -> ingest
+    CP->>CP: empty manifest -> crawl_error
+    CP->>CUR: reduced_crawl_coverage Observation anchored to the BaseURL
+    CP-->>JA: PodExport{verdict:"failed", observations_merged:1}
 ```
 
-Same diagram shape covers an unreachable host (network error inside the ReAct loop) and a `SteelNotConfigured` (missing `STEEL_API_KEY`) - both are caught by the identical `except Exception` in `crawl_agent.run_crawl` (`crawl_agent.py:127`) and produce the same empty-manifest degrade.
-A real provider IS wired now: `crawl/steel_provider.py::SteelCrawlProvider` (async Playwright-over-CDP + Steel SDK) is returned by `_default_client_factory` (`steel_client.py:67-103`) whenever the `playwright`/`steel` deps are importable; `SteelProviderUnavailable` (`steel_client.py:94`) fires only when they are absent, so it is a deployment-dependency failure, not the everyday path.
+The same shape covers an unreachable host, a closed Steel runtime, and a `capture_unavailable` failure: the job finalizes from the ledger, records the typed stop reason, and the crawl pod emits the reduced-coverage Observation.
+A failed crawl is never a silent success.
 
 ### 7.4 A triager Observation with an out-of-allowlist anchor (repaired)
 
@@ -428,29 +424,35 @@ sequenceDiagram
     Note over POD,CUR: D8 deterministic re-anchoring repairs Endpoint/Header/Parameter -><br/>BaseURL and Port -> IP, so only Technology or an unrepairable anchor is<br/>dropped, with a server-log warning (curator.py:322-324).
 ```
 
-### 7.5 Steel-provider-unavailable authenticated crawl (viewer URL timing gap)
+### 7.5 The live crawl's session-only auth handoff
 
 ```mermaid
 sequenceDiagram
     participant CP as crawl_pod.crawl node
-    participant CA as crawl_agent.run_crawl
-    participant PROV as SteelCrawlProvider
-    participant LOOP as _run_agentic_crawl (blocking)
+    participant CJ as steel.job.CrawlJob
+    participant SC as SteelSessionClient
+    participant SIDE as CaptureSidecar
+    participant AUTH as AuthOracle
+    participant RUN as CrawlRun
+    participant EDGE as HTTP-history edge
+    participant CUR as curator.curate
 
-    CP->>CP: feed = extra.steel_state + extra.browser_auth
-    CP->>CA: run_crawl_fn(target, scope, steel_state, browser_auth)
-    CA->>PROV: get_crawl_tools(steel_state, browser_auth)
-    PROV->>PROV: sessions.create(session_context=state + auth cookies/storage)
-    PROV->>PROV: set scoped auth headers; navigate; run auth gate
-    PROV->>PROV: capture state on release
-    CA->>LOOP: _run_agentic_crawl(body, mcp_manager) [BLOCKS]
-    LOOP-->>CA: manifest
-    CA-->>CP: manifest
+    CP->>CP: extra.steel_state + extra.browser_auth
+    CP->>CJ: run_live_crawl(context)
+    CJ->>SC: attach (never start)
+    CJ->>SIDE: attach raw CDP
+    CJ->>AUTH: oracle at overview.auth_probe.url
+    AUTH-->>CJ: authenticated / unauthenticated / indeterminate
+    CJ->>RUN: frontier + Jev + sidecar + ledger
+    RUN-->>CJ: flows, parameters, forms, declared records
+    CJ->>EDGE: HistoryClient.ingest (batched)
+    CJ->>CUR: finalize -> manifest v2 -> parse -> triage -> curate
 ```
 
-Auth-material replication (#395, D20): the crawl restores the account's cookies, localStorage, sessionStorage, and indexedDB as application context, then replicates cookies, required headers, header-located tokens, and storage-located tokens. It gates the attempt on application state or on the response to an authenticated part of the surface. A failed gate is `auth_replication_failed` with reduced coverage; it is not a silent authenticated crawl. The crawl does not mount a profile. The retired `steel_await_auth` human-in-the-viewer flow and its viewer-URL surfacing remain gone with their machinery.
-
----
+The auth feed resolves the account identifier bound by the gateway and projects only the browser material the crawl needs: the state reference plus cookies, required headers, header-located tokens, and storage-located tokens.
+The crawl does not mount a profile.
+A failed or indeterminate oracle is `auth_precondition_failed`, not an anonymous crawl.
+The retired `steel_await_auth` human-in-the-viewer flow and its viewer-URL surfacing stay gone.
 
 ## 8. REST API (`src/polymerhus/project_management/api.py`)
 
@@ -534,8 +536,11 @@ Seven operator-validation items (V1-V7: LLM-preprocess cost/latency gating, the 
 | `MAX_POD_ITERS` | 3 | pod retry ceiling before `fail` |
 | `EXEC_TIMEOUT_S` | 300 | per-`execute_command` timeout |
 | `MAX_PODS` | 20 | fan-out cap in `default_preprocess_fn` |
-| `STEEL_API_KEY` | "" | steel.dev cloud-browser credential (in-process Playwright-over-CDP; **no** URL setting - correction vs `recon-mvp-design.md`'s "Steel MCP endpoint" phrasing, see forward-decisions D3) |
-| `CRAWL_MAX_PAGES` / `_MAX_DEPTH` / `_MAX_ITERS` / `_JOB_TIMEOUT_S` | 50 / 3 / 30 / 480 | agentic-crawl loop bounds |
+| `STEEL_API_KEY` / `STEEL_BROWSER_API_URL` | "" | Steel runtime credential and session API; `STEEL_BROWSER_API_URL` is the keyless local-runtime endpoint |
+| `STEEL_CRAWL_CLI` | `steel browser` | optional CLI prefix for the live crawl |
+| `STEEL_CRAWL_MAX_DURATION_S` / `STEEL_CRAWL_MAX_ACTIONS` | 900 / 300 | live crawl wall and action bounds |
+| `KALI_HTTP_HISTORY_EDGE_URL` / `KALI_HTTP_HISTORY_EDGE_TOKEN` | `http://kali:8002` / "" | the HTTP-history ingest edge |
+| `CRAWL_MAX_PAGES` / `_MAX_DEPTH` / `_MAX_ITERS` / `_JOB_TIMEOUT_S` | 50 / 3 / 30 / 480 | legacy ReAct-loop bounds; not used by the live engine |
 | `LLM_<ROLE>` | required per invoked role, `"<provider>:<model>"` | per-role model id, `providers.resolve_role` (`LLM_TRIAGER`, `LLM_CRAWLER`, `LLM_JOB_ORCHESTRATOR`, `LLM_CONFIGURATOR`, ...; there is no `LLM_CROSS`) |
 | `API_KEY_{OPENAI,OPENROUTER,SWISSAI}` | required per configured provider | provider credential |
 | `KALI_MCP_URL` | (in `polymerhus.app.config`, not `recon/config.py`) | fastmcp `execute_command` endpoint |
@@ -561,12 +566,13 @@ src/polymerhus/recon/
   domain/noise_filter.py - classify_profile
   domain/api_scope.py    - derive_scan_targets
   domain/parsers/        - 12 parser modules / 17 parse fns (§4.3)
-  crawl/crawl_pod.py     - the agentic-mode pod subgraph (§3.4)
-  crawl/crawl_agent.py   - thin adapter over the ReAct loop
-  crawl/crawl_agentic.py - the ReAct loop
-  crawl/steel_client.py  - provider seam (SteelNotConfigured / SteelProviderUnavailable)
-  crawl/steel_provider.py- SteelCrawlProvider (Playwright-over-CDP + Steel SDK) (§7.3)
-  crawl/prompts/steel-crawl.md - the crawler's role prompt
+  crawl/crawl_pod.py     - the agent-mode pod subgraph (§3.4)
+  crawl/steel/           - the live engine: job, run, session, auth, frontier, policy, capture, manifest, ledger
+  crawl/crawl_agent.py   - legacy ReAct adapter (compatibility)
+  crawl/crawl_agentic.py - legacy ReAct loop (compatibility)
+  crawl/steel_client.py  - legacy provider seam (compatibility)
+  crawl/steel_provider.py- legacy SteelCrawlProvider (compatibility)
+  crawl/prompts/steel-crawl.md - the legacy crawler role prompt
   config.py              - env-driven tunables
 src/polymerhus/project_management/
   api.py         - REST API (§8)

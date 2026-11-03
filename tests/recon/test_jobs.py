@@ -266,6 +266,14 @@ def test_build_phase_plan_full():
     assert plan is not PHASES
 
 
+def test_the_default_plan_schedules_steel_crawl():
+    plan = build_phase_plan()
+    assert "steel_crawl" in [job for phase in plan for job in phase]
+    assert "steel_crawl" in plan[
+        next(i for i, phase in enumerate(plan) if "steel_crawl" in phase)
+    ]
+
+
 def test_build_phase_plan_subset():
     plan = build_phase_plan(["subfinder", "httpx"])
     flat = [j for phase in plan for j in phase]

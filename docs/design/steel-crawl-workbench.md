@@ -889,7 +889,7 @@ The MCP read tools are unchanged.
 
 **Edge service.**
 A separate process in Kali, not an MCP tool.
-It binds `0.0.0.0:8001` on the compose network only; no host port.
+It binds `0.0.0.0:8002` on the compose network only; no host port.
 It accepts `POST /v1/ingest` with a project id, a batch of artifacts, and bodies.
 It requires a bearer token from `KALI_HTTP_HISTORY_EDGE_TOKEN`.
 It returns `{created, duplicates, rejected}`.

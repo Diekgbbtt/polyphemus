@@ -50,15 +50,20 @@ flowchart TB
     ST -. "crawler role" .-> F2
 ```
 
-### 1.2 Execution steering points
+### 1.2 Execution configuration points
 
-The pipeline adapts to WAF detection through two *distinct* control loops that share primitives in `steering.py` but own their own decisions. Both are fed by `read_steering_signals` (`pipeline.py:148`), a deliberately separate Neo4j read — from the label-allowlist-clean `read_assets` — that returns WAF `Observation`s (`macro_kind` in `{waf_protected, waf_detection}`) anchored to `BaseURL` nodes. Both are **fail-open**: any LLM or parse error returns the neutral decision, so a steering blip degrades adaptivity but never the run.
+The pipeline has exactly one configuration point before phase 0: the recon-orchestrator **auth gateway** (`orchestrator_agent.py::ReconOrchestratorActor`, the `job_orchestrator` role).
+It runs one stateful turn over the auth store and the project's `authn` skill, then emits the structured `GatewayVerdict`.
+The pipeline obeys the verdict: the selected account identifier rides the state for `use_auth` jobs, and a `browser_only` verdict prunes the plan to `steel_crawl` alone (`BROWSER_ONLY_KEEP`).
+The phase plan itself comes from the static registry (`control/jobs.py::JOBS`, `PHASES`) through `build_phase_plan`, narrowed only by the scope gate and the validated `job_subset`.
 
-The first loop is **orchestrator cross-job routing between phases**. Between phases, `run_pipeline` calls `decide_routing(signals, phase_jobs)` (`orchestrator_agent.py:58`, invoked at `pipeline.py:273`) only when signals exist. The orchestrator agent reasons about which upcoming job should *not* receive which flagged host, returning `{job_name: [urls to exclude]}`. The intent, framed in `ORCHESTRATOR_STEERING` over the shared `STEERING_PRIMITIVES`: a WAF's bot-blocking is IP-based, so request-based crawlers (`katana`/`ffuf`/`kiterunner`/`graphql-cop`) egressing from the pipeline IP keep getting 403s — route the flagged host *away* from them and toward `steel_crawl`, which egresses from separate cloud-browser infrastructure and presents a real browser. The pipeline then filters those URLs out of the excluded jobs' input sets (`pipeline.py:306`).
+Mid-run steering is retired (D223-12).
+The former `read_steering_signals`, `decide_routing`, `ORCHESTRATOR_STEERING`, and per-asset throttle turn no longer exist.
+Request phases run unthrottled in the interim; the `configurator` session role stays registered for the rate-limit work in #238.
+The target-type job-set decision node is the open `D-JOBSET` item (#336); it is not a second steering loop.
 
-The second loop is **per-asset throttling within a job**. The job agent's `steering_preprocess_fn` (`job_agent.py:153`), when `extra["steering"]` is present, calls `decide_pod_selection(signals, job.tool, assets)` (`job_agent.py:127`) to decide which candidate assets to *throttle* — it never drops an asset (selection is the orchestrator's job). A throttled asset carries `extra["rate_profile"] = "throttle"`, which `fill_template` turns into the tool's `{rate_flags}` slot (`pod.py:94,122`). Today only `ffuf` carries that slot: it consumes `BaseURL`, so a WAF-flagged host actually reaches `decide_pod_selection`, whereas `httpx` runs in the detection phase *before* any WAF signal exists, so its slot was a dead no-op and was removed. Throttling is a preventive lever against a not-yet-flagged host; it cannot un-flag an already-flagged IP.
-
-Below both, the pod has its own **retry gate** (`pod.py:219`). After `execute`, the `gate` node routes a clean exit (`returncode == 0`) to the parser — even with empty stdout, which is a valid zero-finding result — and a non-zero exit back to `configurator` for retry, up to `MAX_POD_ITERS`, then to `fail`. This is a local reliability loop, orthogonal to the two steering loops above.
+Below the configuration point, the pod has its own **retry gate** (`pod.py:219`). After `execute`, the `gate` node routes a clean exit (`returncode == 0`) to the parser - even with empty stdout, which is a valid zero-finding result - and a non-zero exit back to `configurator` for retry, up to `MAX_POD_ITERS`, then to `fail`.
+This is a local reliability loop, not a steering loop.
 
 ### 1.3 The bundled FastAPI backend
 

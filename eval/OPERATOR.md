@@ -207,6 +207,11 @@ Recon launch (`ph.py recon launch`):
 subfinder, amass, whois, dnsx, puredns, subdomain_takeover, naabu, steel_crawl,
 ffuf, or kiterunner to the subset.
 
+The production pipeline default is the full `PHASES` plan, and that plan includes
+`steel_crawl` in the crawl phase. This eval contract subset omits it
+deliberately: the browser crawl needs a live Steel session and adds minutes to
+every trial. The omission is a trial-cost decision, not the pipeline default.
+
 ### 1.3. The execution discipline (you are the driver of failure handling)
 
 You are responsible for making the execution persist. Monitor the state

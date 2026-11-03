@@ -850,7 +850,7 @@ Body hashes are over decoded bytes.
 
 ### 10.2 Edge service
 
-The HTTP-history edge is a separate Kali process on `0.0.0.0:8001`.
+The HTTP-history edge is a separate Kali process on `0.0.0.0:8002`.
 It is published only on the compose network.
 It is not an MCP tool.
 
@@ -1037,8 +1037,12 @@ The full unit tier is the regression gate.
 The job stops the owned session through the session client and proves the catalogue clean on the finalize path.
 The form executor fills the fields, validates the chosen values, submits with the command mapper, and marks the ledger only after the dispatch-plus-2xx check.
 
-The live P1 to P5 run against White Jotter is deferred to the next batch.
-The implementation subagent provider was unavailable for part of the batch; the remaining tickets were completed directly with tests and committed on `feat/steel-crawl`.
+The live P1 to P5 gate passed on three targets on 2026-11-03: ComfyUI (no auth), SiyuCMS (form login), and PrestaShop (back-office cookie).
+The final runs are `e2e-comfyui-20261103T123532Z`, `e2e-siyucms-20261103T091856Z`, and `e2e-prestashop-20261103T075740Z`.
+Every run has one `steel_crawl` job with `status=success`, `session_closed=true`, and the edge flush reconciled against the ledger.
+The ComfyUI graph is 57 endpoints and 6 parameters after the vendor-script classifier; SiyuCMS is 78 endpoints and 6 parameters; PrestaShop is 117 manifest endpoints and 68 manifest parameters.
+The full FR matrix and the HTTP-history database assessment are in `eval/steel-crawl-e2e/FR-ASSESSMENT.md`.
+The integration impact map is `docs/design/steel-crawl-integration-impact-map.md`.
 The authz residual risk and the coarse effect signal remain accepted as recorded in sections 5.4 and 16.
 
 ## 15. Rollout and compatibility

@@ -48,7 +48,7 @@ artifacts are `cpython-313`). Only three files pin versions directly:
 | Runtime | Python (dev/test toolchain) | 3.13 | `cpython-313` test bytecode |
 | Web framework | FastAPI + `uvicorn` | unpinned (base image) | `agent/app/main.py`, `Dockerfile` CMD |
 | Orchestration | LangGraph | unpinned (base image); verified against **1.2.7** | `agent/recon/job_agent.py` comment |
-| Orchestration | LangChain core | unpinned (base image) | `pod.py`, `crawl_agentic.py` imports |
+| Orchestration | LangChain core | unpinned (base image) | `pod.py`, `crawl/steel/` imports |
 | LLM client | `langchain-openai` (`ChatOpenAI`) | unpinned (base image) | `agent/app/llm/providers.py` |
 | Tool transport | `langchain-mcp-adapters` (`MultiServerMCPClient`) | unpinned (base image) | `pod.py::default_exec_fn` |
 | Graph data | `neo4j` driver | 5.27.0 (dev); server `neo4j:5.26-community` | `requirements-dev.txt`; platform plan |
@@ -134,7 +134,7 @@ This is the complete, class-grouped inventory of every LangGraph artifact in
 
 | Artifact | File | Structure & role |
 |---|---|---|
-| `job_agent` / `build_job_agent(*, pod_invoke, preprocess_fn)` | `job_agent.py` | `StateGraph(JobState)`; nodes `preprocess` → (conditional `fan_out` → `Send`) → `pod_runner`; module-level instance wired with `default_pod_invoke` + `steering_preprocess_fn`. |
+| `job_agent` / `build_job_agent(*, pod_invoke, preprocess_fn)` | `job_agent.py` | `StateGraph(JobState)`; nodes `preprocess` → (conditional `fan_out` → `Send`) → `pod_runner`; module-level instance wired with `default_pod_invoke` + `default_preprocess_fn`. |
 | `pod_graph` / `build_pod_graph(*, exec_fn, curate_fn, triage_fn)` | `pod.py` | `StateGraph(PodState)`; nodes `configurator → execute → gate{parse\|configurator\|fail} → parser → triager → curator/fail`; wired with `default_exec_fn`, `curate`, `default_triage_fn`. |
 | `crawl_pod` / `build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, …)` | `crawl/crawl_pod.py` | `StateGraph(CrawlPodState)`; nodes `crawl → gate{parse\|fail} → parse → triager → curator/fail`; the `configurator_mode="agent"` variant of the pod graph. |
 
@@ -142,14 +142,14 @@ This is the complete, class-grouped inventory of every LangGraph artifact in
 
 | Artifact | File | Role |
 |---|---|---|
-| `run_pipeline` | `pipeline.py` | Async phase-barrier driver over the phase plan; seeds phase 0, reads later phases from Neo4j, threads auth/scope/steering into each job's `extra`, records status in Postgres. **Not a graph.** |
+| `run_pipeline` | `pipeline.py` | Async phase-barrier driver over the phase plan; runs the auth gateway before phase 0, seeds phase 0, reads later phases from Neo4j, threads auth/scope into each job's `extra`, records status in Postgres. **Not a graph.** |
 
 ### 4.3 LLM decision agents (structured-output calls, not graph nodes)
 
 | Artifact | File | Role |
 |---|---|---|
-| `decide_routing` | `orchestrator_agent.py` | Recon-**orchestrator** agent: cross-job routing — routes WAF-flagged hosts away from request-based crawlers toward the agentic crawler. `with_structured_output(RoutingDecision, method="function_calling")`, role `job_orchestrator`, fail-open `{}`. |
-| `decide_pod_selection` | `job_agent.py` | Recon-**job** agent: per-asset **throttle** decision (never asset selection — every candidate always runs). `with_structured_output(PodThrottlePlan, method="function_calling")`, role `job_orchestrator`, fail-open `set()`. |
+| `ReconOrchestratorActor` | `orchestrator_agent.py` | The pre-pipeline **auth gateway**: one stateful turn over the auth store and the `authn` skill, closing with `GatewayVerdict`. Role `job_orchestrator`; fail-closed. |
+| `decide_routing` / `decide_pod_selection` | retired | Mid-run steering is retired (D223-12); the gateway is the only configuration point. The target-type job-set node is the open `D-JOBSET` item (#336). |
 
 ### 4.4 Graph node functions (deterministic pipeline phases)
 
@@ -165,11 +165,11 @@ This is the complete, class-grouped inventory of every LangGraph artifact in
 | `triager` | pod_graph | `pod.py` | LLM triage (`triage_fn`) + deterministic `parse_findings` merge for `graphql-cop`/`subdomain_takeover`. |
 | `curator` (`curator_node`) | pod_graph | `pod.py` | Writes assets/observations via `curate_fn`; builds the success `PodExport`. |
 | `fail` | pod_graph | `pod.py` | Terminal failure node; builds a `verdict="failed"` `PodExport` from `stderr`. |
-| `crawl` | crawl_pod | `crawl/crawl_pod.py` | Runs the agentic Steel crawl (anonymous / cookie-seeded / credentialed / interactive), best-effort; produces `manifest` or `crawl_error`. |
+| `crawl` | crawl_pod | `crawl/crawl_pod.py` | Runs the live authenticated Steel crawl (`run_live_crawl`: CLI + passive CDP + Jev); produces `manifest` or `crawl_error`. |
 | `gate` | crawl_pod | `crawl/crawl_pod.py` | Conditional edge: `manifest is not None → parse`; else `fail`. |
 | `parse` | crawl_pod | `crawl/crawl_pod.py` | Parses the manifest JSON via `get_parser("steel_crawl")`. |
 | `triager` | crawl_pod | `crawl/crawl_pod.py` | Triages a synthetic `ExecResult` carrying the manifest as stdout (shares `default_triage_fn`). |
-| `curator` (`curator_node`) | crawl_pod | `crawl/crawl_pod.py` | Curates assets/observations; carries the Steel `viewer_url` on export stats. |
+| `curator` (`curator_node`) | crawl_pod | `crawl/crawl_pod.py` | Curates assets/observations through the sole graph writer. |
 | `fail` | crawl_pod | `crawl/crawl_pod.py` | Curates one `reduced_crawl_coverage` Observation anchored to the input BaseURL. |
 
 ### 4.5 State schemas & DTOs
@@ -178,7 +178,7 @@ This is the complete, class-grouped inventory of every LangGraph artifact in
 |---|---|---|
 | `JobState` (TypedDict) | `job_agent.py` | `job, input_assets, asset_context, extra, run_id, phase, pod_inputs, pod_exports: Annotated[list[PodExport], operator.add]`. |
 | `PodState` (TypedDict) | `types.py` | `job, input_asset, asset_context, extra, session_id, project_id, invocation, exec_result, iteration, assets, observations, export`. |
-| `CrawlPodState` (TypedDict) | `crawl/crawl_pod.py` | `PodState` + `manifest, crawl_error, viewer_url, run_id, phase` (undeclared keys are silently dropped by `StateGraph`, so they must be declared here). |
+| `CrawlPodState` (TypedDict) | `crawl/crawl_pod.py` | `PodState` + `manifest, crawl_error, run_id, phase` (undeclared keys are silently dropped by `StateGraph`, so they must be declared here). |
 | `ReconState` (TypedDict) | `types.py` | Legacy run-level schema (`run_id, project_id, settings, phase_plan, current_phase, pod_exports, status`); superseded by the hand-written `run_pipeline` driver. |
 | `JobSpec` (BaseModel) | `types.py` | Job definition: `tool, skill, command_template, produces, consumes, consumes_where, batch, use_auth, configurator_mode, eval_criteria`. |
 | `PodExport` (BaseModel) | `types.py` | Pod terminal result: `input_asset, verdict, assets_merged, observations_merged, iterations, error, stats`. |
@@ -196,12 +196,9 @@ This is the complete, class-grouped inventory of every LangGraph artifact in
 | `curate_fn` → `curate` | pod_graph / crawl_pod | `curator.py` | The sole Neo4j MERGE write path. |
 | `triage_fn` → `default_triage_fn` | pod_graph / crawl_pod | `pod.py` | Triager LLM structured-output call. |
 | `pod_invoke` → `default_pod_invoke` | job_agent | `job_agent.py` | Invokes `pod_graph`, or `crawl_pod_invoke` when `configurator_mode=="agent"`. |
-| `preprocess_fn` → `steering_preprocess_fn` (falls back to `default_preprocess_fn`) | job_agent | `job_agent.py` | Builds pod inputs; applies per-asset throttle when steering signals are present; batches for `job.batch`. |
-| `run_crawl_fn` → `default_run_crawl_fn` | crawl_pod | `crawl/crawl_pod.py` | Anonymous / cookie-seeded agentic crawl (wraps `crawl_agent.run_crawl`). |
-| `run_crawl_authenticated_fn` → `default_run_crawl_authenticated_fn` | crawl_pod | `crawl/crawl_pod.py` | Interactive `steel_await_auth` viewer path; returns `(manifest, awaiting_status)`. |
-| `run_crawl_credentialed_fn` → `default_run_crawl_credentialed_fn` | crawl_pod | `crawl/crawl_pod.py` | Autonomous credentialed login crawl (D23), host-gated to the credentials' domain. |
-| `status_sink` → `default_status_sink` | crawl_pod | `crawl/crawl_pod.py` | Surfaces the Steel `viewer_url` to the `recon_jobs` row mid-flight (early surfacing). |
-| `notify_fn` → `default_notify_fn` | crawl_pod | `crawl/crawl_pod.py` | Best-effort out-of-band (Discord) notify of the viewer URL. |
+| `preprocess_fn` → `default_preprocess_fn` | job_agent | `job_agent.py` | Builds pod inputs deterministically; batches for `job.batch`. |
+| `run_crawl_fn` → `live_run_crawl_fn` | crawl_pod | `crawl/crawl_pod.py` | The live authenticated Steel crawl (`run_live_crawl`). |
+| `legacy_agentic_run_crawl_fn` | crawl_pod | `crawl/crawl_pod.py` | The legacy ReAct path, kept for compatibility only. |
 
 ### 4.7 Helpers / deterministic support modules
 
@@ -217,11 +214,12 @@ Collaborators to the graphs, but not graphs themselves.
 | `findings.py` | `finding_to_observation`, `normalize_severity` | Parser findings → `Observation` (canonicalises severities). |
 | `curator.py` | `curate`, `build_asset_cypher`, `build_observation_cypher` | Typed records → parameterised Neo4j MERGE; only graph-write path. |
 | `async_bridge.py` | `run_coro_blocking` | Run an async coroutine to completion from a sync node, loop-safe. |
-| `steering.py` | `STEERING_PRIMITIVES`, `resolve_model`, `describe_job_kind`, `format_signals`, `WAF_MACRO_KINDS` | Shared, decision-free steering primitives; both steering agents frame these for their own scope. |
-| `crawl/crawl_agent.py` | `run_crawl`, `run_crawl_authenticated`, `run_crawl_credentialed` | Thin adapter around the ReAct loop; builds the tools/LLM shim, degrades to empty manifest. |
-| `crawl/crawl_agentic.py` | `_run_agentic_crawl`, `AgenticCrawlRequest`, `CRAWL_TOOL_NAMES`, `precreate_auth_session` | The bounded ReAct loop over `bind_tools`. |
-| `crawl/steel_client.py` | `get_crawl_tools`, `steel_configured` | Factory: returns the `steel_*` tools filtered to `CRAWL_TOOL_NAMES`; raises `SteelNotConfigured` / `SteelProviderUnavailable`. |
-| `crawl/steel_provider.py` | `SteelCrawlProvider`, seven `steel_*` tools | In-process provider driving a steel.dev cloud browser over CDP. |
+| `steering.py` | retired | Mid-run steering retired (D223-12). |
+| `crawl/steel/` | `CrawlJob`, `CrawlRun`, `SteelSessionClient`, `AuthOracle`, `CaptureSidecar`, `JevPolicy`, `RunLedger`, `Manifest` | The live authenticated crawl engine. |
+| `crawl/crawl_agent.py` | `run_crawl` | Legacy ReAct adapter (compatibility). |
+| `crawl/crawl_agentic.py` | `_run_agentic_crawl`, `CRAWL_TOOL_NAMES` | Legacy ReAct loop (compatibility). |
+| `crawl/steel_client.py` | `get_crawl_tools`, `steel_configured` | Legacy provider factory (compatibility). |
+| `crawl/steel_provider.py` | `SteelCrawlProvider` | Legacy in-process Playwright provider (compatibility). |
 
 ### Diagram 1 — LangGraph nesting
 
@@ -272,8 +270,7 @@ flowchart LR
     d1["run_pipeline"]
   end
   subgraph A["LLM decision agents"]
-    a1["decide_routing"]
-    a2["decide_pod_selection"]
+    a1["ReconOrchestratorActor (auth gateway)"]
   end
   subgraph N["Graph node functions"]
     n1["preprocess · fan_out · pod_runner"]
@@ -291,7 +288,7 @@ flowchart LR
   end
   subgraph H["Helpers / deterministic support"]
     h1["parsers · batching · noise_filter · selectors · scope"]
-    h2["findings · curator · async_bridge · steering"]
+    h2["findings · curator · async_bridge"]
   end
 ```
 
@@ -309,8 +306,8 @@ and it leans on the LangGraph structure to give the trace tree for free.
 top-level job trace; each **pod subgraph** invocation nests under it as a pod
 span; and inside each pod, the role **LLM** calls (configurator / triager /
 job_orchestrator / crawler) and the **tool** calls (the Kali MCP
-`execute_command` in normal pods, the seven `steel_*` tools in the crawl ReAct
-loop) become child spans.
+`execute_command` in normal pods, the Steel CLI calls and CDP capture in the
+crawl pod) become child spans.
 
 **Env-gating + fail-open.** Tracing is enabled only when
 `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present, plus at least one
@@ -410,73 +407,47 @@ an LLM — it is reserved for the agent-mode configurator.)
 
 ---
 
-## 7. Agent — Agentic Crawling Stack
+## 7. Agent — the authenticated Steel crawl
 
-The agentic crawler is a **LangChain tool-calling (ReAct) loop**, not a
-`StateGraph`. `_run_agentic_crawl` (`crawl/crawl_agentic.py`) binds the crawl
-tools with `llm.bind_tools(tools)` and loops up to `CRAWL_MAX_ITERS=30` (or a soft
-time deadline inside `CRAWL_JOB_TIMEOUT_S=480`): the LLM emits `tool_calls`, each
-is `await tool.ainvoke(args)`-ed, the result is appended as a `ToolMessage`, and
-the loop continues until `steel_crawl_finish` yields the manifest
-`{endpoints, js_urls}`. `crawl/crawl_agent.py` is a thin adapter that builds the
-tool/LLM shims and degrades any failure to an empty manifest so the crawl pod can
-report reduced coverage instead of crashing.
+The live `steel_crawl` job is a deterministic browser crawl, not a LangChain
+ReAct loop.
+It is the only job with `configurator_mode="agent"`; the crawl pod
+(`crawl/crawl_pod.py`) runs `live_run_crawl` and then rejoins the shared
+`parse -> triager -> curator` shape.
 
-**External cloud browser, not a local/DinD browser.** `steel_provider.py`'s
-`SteelCrawlProvider` is instantiated **in-process** and opens a **steel.dev cloud
-browser** session, driving it with **async Playwright connected over CDP** at
-`wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<id>`. The only
-credential is `STEEL_API_KEY`; there is **no** MCP host URL and no
-`playwright install` of local browsers. Missing runtime deps raise
-`SteelProviderUnavailable` at the factory seam (→ reduced coverage), and an absent
-key raises `SteelNotConfigured`.
+**The engine.** `crawl/steel/` owns the whole crawl:
 
-**The seven `steel_*` tools** (`CRAWL_TOOL_NAMES`), exposed as LangChain
-`StructuredTool`s: `steel_crawl_start`, `steel_navigate`, `steel_frontier`,
-`steel_crawl_finish`, `steel_eval`, `steel_click`, `steel_await_auth`. Scope is
-enforced on what is *recorded* (the frontier `enqueue` scope filter + the
-curator's out-of-scope drop), never by refusing a navigation.
+- `session.py` reads the Steel CLI catalogue, attaches to one pre-authenticated
+  session by name and runtime id, and stops it on exit.
+- `auth.py` runs the authenticated-context oracle once.
+- `capture/sidecar.py` attaches a passive raw-CDP client and records the network
+  lifecycle, bodies, WebSockets, HTTP/3, scripts, frames, and dialogs.
+- `frontier.py` and `state.py` drive the DFS, the page stack, and the consumed
+  set.
+- `policy/` holds the Jev policy port, the removal loop, and the value
+  selection.
+- `forms.py`, `parameters.py`, and `command.py` own the form unit, the observed
+  and declared records, and the Steel CLI command mapping.
+- `manifest.py` writes the v2 graph input; `ledger.py` and `run.py` own the
+  durable ledger, the HTTP-history flush, and `finalize`.
 
-**Four auth channels.** (1) **Anonymous** — plain `run_crawl`. (2)
-**Cookie-seeded** — `auth_context.cookies` are injected into the browser context
-via `context.add_cookies` before any navigation (non-interactive). (3)
-**Autonomous credentialed login** — `run_crawl_credentialed` (D23): the ReAct
-loop logs in with operator credentials before crawling, host-gated to the
-credentials' domain, with a hardened success test (a new in-scope session cookie
-*and* an in-scope non-login page). (4) **Interactive viewer** —
-`run_crawl_authenticated` pre-creates the session so the `viewer_url` surfaces
-early, then `steel_await_auth` blocks for a human to log in. Cookie-injection
-takes precedence over the interactive path.
+**The action surface.** The agent drives the browser only through the Steel CLI.
+The CLI emits JSON envelopes with the session id; the sidecar observes the same
+session over raw CDP and never sends an action method.
 
-### Diagram 4 — Agentic-crawl ReAct loop
+**Authentication.** The live crawl is session-only (D20): the pipeline binds the
+gateway account identifier, the auth feed resolves the state reference and the
+browser material, and the crawl attaches to the operator-owned live session.
+It never starts a session and never signs in.
+The retired four channels (anonymous, cookie-seeded, credentialed, interactive)
+and the `steel_await_auth` viewer flow are not the live path.
+The legacy ReAct loop (`crawl_agentic.py`, `steel_client.py`,
+`steel_provider.py`) remains as a compatibility path but is not the default.
 
-```mermaid
-sequenceDiagram
-  participant LLM as crawler LLM bind_tools
-  participant Loop as run_agentic_crawl
-  participant Tool as steel_ StructuredTool
-  participant Prov as SteelCrawlProvider
-  participant PW as Playwright over CDP
-  participant Steel as steel.dev cloud browser
-
-  Loop->>LLM: SystemMessage(skill) + HumanMessage(target, scope)
-  loop up to CRAWL_MAX_ITERS or soft deadline
-    LLM-->>Loop: AIMessage(tool_calls)
-    Loop->>Tool: ainvoke(args)
-    Tool->>Prov: _steel_crawl_start / _steel_navigate / _steel_click ...
-    Prov->>PW: connect_over_cdp(wss://connect.steel.dev)
-    PW->>Steel: navigate / click / eval
-    Steel-->>PW: responses + captured requests
-    PW-->>Prov: network delta + new links
-    Prov-->>Tool: dict result
-    Tool-->>Loop: ToolMessage
-    Loop-->>LLM: append ToolMessage
-  end
-  Loop->>Tool: steel_crawl_finish
-  Tool->>Prov: _build_manifest
-  Prov-->>Loop: manifest {endpoints, js_urls}
-  Loop-->>Loop: manifest -> parse -> triager -> curator
-```
+**The output.** The crawl writes a `steel-crawl/v2` manifest and a durable JSONL
+ledger, flushes normalized `http-artifact/v1` records to the HTTP-history edge,
+and stops the owned session on every exit.
+The curator remains the sole graph writer.
 
 ---
 

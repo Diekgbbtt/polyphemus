@@ -63,6 +63,19 @@ def test_gateway_prompt_names_the_oracle_and_fails_closed() -> None:
     assert "authenticated landing" not in lower
 
 
+def test_gateway_prompt_names_the_crawl_phase_and_the_job() -> None:
+    text = _read(
+        "src", "polymerhus", "recon", "control", "prompts", "auth-gateway.md"
+    )
+    lower = text.lower()
+    assert "`steel_crawl`" in text
+    assert "`katana`" in text and "`ffuf`" in text
+    assert "`JOBS`" in text and "`PHASES`" in text
+    assert "never starts one" in lower
+    assert "browser_only" in lower
+    assert "d-jobset" in lower
+
+
 def test_authn_meta_skill_and_bootstrap_teach_the_oracle() -> None:
     skill = _read("skills", "meta", "authn-skill-writing", "SKILL.md")
     prompt = _read(

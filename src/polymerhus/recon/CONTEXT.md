@@ -118,9 +118,10 @@ individual Job - the run is the cancellation unit.
 `POST /projects/{id}/recon/{run_id}/stop` requests it; the pipeline's
 cancellation path settles the run to the `stopped` terminal promptly (#287), and
 data already curated up to the stop is preserved (curate persists per pod).
-A per-job cancel is deliberately not provided: a run's jobs run sequentially
-behind a phase barrier, so the in-flight job is the only thing a stop waits on,
-and job selection is a launch-time concern (the `jobs` subset).
+A per-job cancel is deliberately not provided: a run's phases run sequentially
+behind a phase barrier, while the jobs inside one phase run concurrently, so the
+in-flight phase is the only thing a stop waits on, and job selection is a
+launch-time concern (the `jobs` subset).
 Tearing down the in-flight pod/tool (the exec-kill and output suppression) is a
 separate concern owned by #76.
 _Avoid_: a per-job cancel; a manual process kill.
@@ -189,6 +190,7 @@ Mid-run steering is removed entirely (#243, D223-12); a degraded gateway or a
 failed/indeterminate oracle stops the run (fail-closed, D223-21); a declared
 surface with no accounts runs the loop so the orchestrator can mint; a missing
 bootstrap prerequisite stops the run loudly (`GatewayStop`).
+The verdict shapes the plan only by auth posture; the target-type job-set decision node is the open `D-JOBSET` item (#336), and it must read `JOBS`/`PHASES` and keep `steel_crawl` for browser-only targets.
 _Status_: registered `session` (`LLM_JOB_ORCHESTRATOR`).
 _Avoid_: planner; mid-run routing.
 
@@ -392,6 +394,8 @@ _Status_: scaffolded, not built.
 **steel_crawl**:
 One authenticated crawl of one web application, driven only through the Steel CLI and observed only through a passive raw-CDP sidecar.
 It attaches to a pre-authenticated session, never starts one, and writes a graph-ready manifest plus the HTTP-history evidence.
+It is the `steel_crawl` Job in the crawl phase (phase index 5, with `katana` and `ffuf`), consumes `BaseURL`, produces `BaseURL`, `Endpoint`, and `Parameter`, and is the only `configurator_mode="agent"` job.
+It is the only browser-capable job and the `browser_only` fallback.
 _Avoid_: a browser automation job; a login flow.
 
 **CrawlJob**:
@@ -463,7 +467,7 @@ It carries `provenance="observed"` and never the value.
 _Avoid_: parameter value, input record.
 
 **HTTP-history edge**:
-The separate authenticated Kali process on port 8001 that accepts normalized artifacts and body bytes in batches and calls `record_if_absent`; it is never an MCP tool.
+The separate authenticated Kali process on port 8002 that accepts normalized artifacts and body bytes in batches and calls `record_if_absent`; it is never an MCP tool.
 _Avoid_: MCP tool, ingest job.
 
 **policy_provider_error**:

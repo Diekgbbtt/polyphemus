@@ -11,7 +11,7 @@ Every other component is the deployed one: the Steel CLI, the raw-CDP sidecar, t
 
 | target | run | stop | wall | flows | endpoints | parameters | scripts | realtime | pages | actions | removed | declared | edge created/dupes | ledger | manifest |
 | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-| ComfyUI | `e2e-comfyui-20261103T123532Z` | `frontier_empty` (complete) | 30.0 s | 560 | 538 | 32 | 482 | 14 | 1 | 0 | 0 | 0 | 542 / 18 | 13.2 MB | 0.5 MB |
+| ComfyUI | `e2e-comfyui-20261103T135159Z` | `frontier_empty` (complete) | 29.8 s | 560 | 538 | 32 | 482 | 9 | 1 | 0 | 0 | 0 | 542 / 18 | 13.2 MB | 0.5 MB |
 | SiyuCMS | `e2e-siyucms-20261103T091856Z` | `session_deadline` (partial) | 941.3 s | 12,863 | 184 | 16 | 67 | 0 | 7 | 109 | 6 | 1 | 700 / 12,163 | 47.7 MB | 0.2 MB |
 | PrestaShop | `e2e-prestashop-20261103T075740Z` | `session_deadline` (partial) | 950.7 s | 10,654 | 117 | 68 | 71 | 0 | 1 | 59 | 1 | 0 | 1,190 / 9,464 | 64.4 MB | 0.2 MB |
 
@@ -87,6 +87,22 @@ The frontier is time-bounded, not exhausted; the partial flag is correct.
 | N9 | resource bounds on hostile surfaces | pass | the URL cap, parameter-name cap, parameter dedup, realtime frame caps, ledger body dedup, and flush dedup keep the run proportional to the distinct capture budget. The same PrestaShop crawl that previously produced a 5.3 GB ledger and a 2.6 GB manifest (and was OOM-killed at 13.7 GB RSS) now produces a 64.4 MB ledger and a 0.2 MB manifest. |
 | N10 | vendor script legitimacy | pass | the ComfyUI graph has 57 endpoints: 17 application `/assets/` chunks, 16 `/extensions/`, 5 `/scripts/`, 18 `/api/`, and the root. The 435 PrimeVue library scripts are `ScriptAsset` evidence, not endpoints; the app chunks stay. The classifier keeps a vendor-path body that carries `/api/`, the target host, `/graphql`, `/rest/`, `/wp-json/`, or `/ajax`. |
 
+## 2.1 HTTP-history database verification
+
+The crawler writes `http-artifact/v1` records to the per-project SQLite store through the authenticated edge.
+The database change was verified in the contract tier and on the deployed topology.
+
+- `tests/kali/test_http_history_store.py` covers the WAL mode, project isolation, content-addressed bodies, body durability, the schema-version guard, retention, and the read path.
+- `tests/kali/test_http_history_edge.py` covers the bearer token, the 100-artifact and 8 MiB caps, the created/duplicate/rejected counts, the base64 body map, the real `record_if_absent`, and a crawler-to-edge-to-read-service roundtrip.
+- `tests/recon/crawl/steel/test_history.py` covers the normalizer, the deterministic content id, replay lineage, the batch caps, the retry cursor, and the URL-cap fact.
+- The live check started the edge in the Kali container on port 8002 with a bearer token and `/data` as the store root.
+  The agent normalized a capped flow, flushed it twice, and read it back through `HttpHistoryService`.
+  The first flush created one artifact; the second counted one duplicate.
+  The store reported `artifact_count=1`, `body_count=1`, and `schema_version=http-artifact/v1`.
+  The URL-cap fact and the body bytes survived.
+  The temporary project and edge process were removed after the check.
+- The three-target gate uses the same edge code in-process (`eval/steel-crawl-e2e/phase_runner.py`), so the edge and store are not mocked in the crawl walkthroughs.
+
 ## 3. Defects the live gate found and fixed
 
 1. **Restore invalidated the CLI refs.** A rollback reloads the document, and the compact snapshot's `@ref` values are document-scoped. The engine now takes exactly one fresh snapshot after a restore and re-projects the cached candidates; the root starts without an initial restore.
@@ -107,6 +123,8 @@ The frontier is time-bounded, not exhausted; the partial flag is correct.
    The scaffold now runs the bootstrap as `www-data`, raises the PHP limit to 300 s, and warms the entry page in-container before the browser navigates.
 7. **The safety check compared element ids across pages.** Element ids are page-local (`e5`, `n13`), so a removed element on one page and an executed element on another could collide or mask a real overlap. The action record now carries the element fingerprint, and the check compares fingerprints.
 8. **The evidence read stopped at the first edge page.** The phase runner read only the first 200 edge artifacts, so a submitted form whose 2xx response fell outside that page looked failed. The runner now paginates every edge artifact.
+9. **The URL-cap fact was silently dropped.** The normalizer passed `url_truncated` and `url_original_length` into the local `RequestRecord`, but the model did not declare the fields; pydantic's default `extra=ignore` discarded them. The edge stored a clipped URL as the real one. The fields are declared, the read views expose them, and a cross-model field-set test prevents the next drift.
+10. **The edge port collided with the eval MCP server.** The edge defaulted to 8001, but the eval instance runs a second MCP server on 8001. The edge now defaults to 8002, and the deployment test asserts the edge port is distinct from the MCP port. A failed edge start is now logged loudly.
 
 ## 4. Residual risks and limits
 
@@ -116,6 +134,7 @@ The frontier is time-bounded, not exhausted; the partial flag is correct.
 - **External subresources.** The edge captures external analytics flows; the graph keeps only the target host. The evidence therefore contains third-party URLs, and the manifest does not.
 - **Deployed API lag.** The deployed app API predates `overview.auth_probe`. The scaffold places the API-valid overview and writes the full file to `/srv/data/<project>/auth/overview.yaml`; the runtime store reads that file. A deployed API upgrade removes the workaround.
 - **Static gateway in the harness.** The crawl walkthroughs use a deterministic gateway verdict for the already-minted account; the gateway's own model turn is covered by `tests/e2e/test_gateway_*` and `eval/steel-e2e-395`. The crawl still runs the real authenticated-context oracle.
+- **Steel session churn.** One ComfyUI rerun failed in target setup at `steel navigate` with `CDP error (Page.navigate): Session with given id not found`; a clean rerun passed in 231 s. The scaffold mints a fresh session per run, and the Steel runtime can lose a session between start and the first attach. The crawl reports `unknown_session` or `session_missing` cleanly in that case; it never starts a replacement.
 - **The seeded SiyuCMS credential is degenerate.** `password == username == "admin"`; the target should be re-seeded with a distinct password. The N1 check is honest about the identifier but cannot distinguish the password from a path segment in that deployment.
 
 ## 5. Reproduction
