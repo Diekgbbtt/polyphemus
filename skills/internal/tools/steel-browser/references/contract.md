@@ -71,8 +71,8 @@ An operator-owned or pre-authenticated session cannot be recreated without resto
 
 ### What the runtime exposes
 
-- Session metadata: `steel sessions list --json` and `steel sessions get --session <name> --json`.
-  The record carries `id`, `status`, `createdAt`, `duration`, `eventCount`, `timeout`, viewer and debugger URLs, dimensions, and the user agent.
+- Session metadata: `steel browser sessions --json` (the live catalogue) and `steel browser sessions --session <name> --json` (the named entry).
+  The catalogue carries `id`, `status`, and the viewer URL; the full runtime record (`createdAt`, `duration`, `eventCount`, `timeout`, debugger URL, dimensions, user agent, and the CDP websocket) is `GET /v1/sessions/<id>` on the API.
 - Live viewer: `steel browser live --session <name> --json`.
   It returns the viewer URL. It is a live view, not a recording.
 - Static evidence: `steel browser snapshot`, `steel browser screenshot`, and `steel browser diff snapshot|screenshot`.

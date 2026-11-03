@@ -1063,7 +1063,7 @@ The authz residual risk and the coarse effect signal remain accepted as recorded
 | - | - | - |
 | Session | `start --session <name> --session-timeout <ms> --inactivity-timeout <ms>` | Orchestrator only; the crawl never starts. |
 | Session | `sessions` | Catalogue and liveness. |
-| Session | `sessions get --session <name>` | Runtime id, status, viewer and debugger URLs, websocket. |
+| Session | `sessions --session <name>` and `GET /v1/sessions/<id>` | The catalogue entry (id, status, viewer URL); the API record (clocks, debugger URL, websocket). |
 | Session | `stop --session <name>` | Release the owned name; prove the catalogue. |
 | Navigation | `navigate <url> --wait-until domcontentloaded` | Load a page. |
 | Reading | `snapshot -i -c` | Compact interactive tree. |

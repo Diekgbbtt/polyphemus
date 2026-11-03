@@ -142,7 +142,7 @@ class SteelSession:
 
     @classmethod
     def from_api(cls, data: Mapping[str, Any]) -> "SteelSession":
-        """Build from the API session record (`sessions get` / `/v1/sessions`)."""
+        """Build from the API session record (`/v1/sessions/<id>`)."""
         return cls(
             session_id=str(data.get("id") or ""),
             name=_opt_str(data.get("name")),

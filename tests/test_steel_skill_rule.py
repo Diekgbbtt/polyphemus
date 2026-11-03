@@ -64,7 +64,8 @@ def test_skill_pins_the_current_contract_and_references():
     assert "version: '2.2.0'" in text
     for token in (
         "steel_events", "shell_returncode", "browser batch", "browser find",
-        "browser diff", "sessions get", "--inactivity-timeout 300000",
+        "browser diff", "sessions --session", "sessions --json",
+        "--inactivity-timeout 300000",
         "has no effect", "live_view", "addressable", "auth_probe",
         "auth-oracle.sh", "indeterminate",
     ):

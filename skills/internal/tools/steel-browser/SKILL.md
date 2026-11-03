@@ -46,7 +46,8 @@ A `start` on a catalogued live name is refused with `session_taken`; do not rely
 ## Records and replay
 
 A session leaves metadata, a live viewer URL, an accessibility snapshot, a screenshot file, and a snapshot or screenshot diff.
-`sessions get --session <name> --json` returns the runtime id, status, duration, event count, viewer and debugger URLs, dimensions, and user agent.
+`sessions --session <name> --json` returns the catalogue entry: the runtime id, status, and viewer URL.
+The full runtime record (duration, event count, debugger URL, dimensions, user agent, and the CDP websocket) is `GET /v1/sessions/<id>` on the Steel API.
 A viewer URL may be a shared base; only an addressable view carries the specific session id in the URL.
 `references/session-records.py` returns `live_view.addressable` and `live_view.scope`; publish the session id with the URL and never rebuild the URL.
 `browser diff snapshot|screenshot` compares the current page against a baseline and returns `changed`, `additions`, and a unified diff.
@@ -151,7 +152,7 @@ The `steel scrape` family is sessionless and carries only `--json`.
 - Page reading: `snapshot [-i] [-c] [-s css] [-d n] [-u]`, `get text|html|value|attr|url|title|count|box|styles`, `find <css>`, `content`, `is visible|enabled|checked`.
 - DOM family selection: `browser find <css>` returns `{elements:[{index,tagName,text,visible}], selector}`; for attributes or a larger projection, use `eval` with `querySelectorAll` and read `references/select-elements.py`.
 - Evidence: `screenshot [-o path] [--full-page] [--selector css]`, `diff snapshot --baseline <text|file>`, `diff screenshot --baseline <image>`, `live` (viewer URL).
-- Records: `sessions list --json`, `sessions get --session <name> --json`.
+- Records: `sessions --json` (the live catalogue), `sessions --session <name> --json` (the named entry).
   The event-log and trace probes may answer `not_found`; that is an unsupported probe, not a lost session.
 - Interaction: `click`, `dblclick`, `press`, `hover`, `focus`, `check`, `uncheck`, `clear`, `selectall`, `scroll`, `scrollintoview`, `drag`.
 - Variadic verbs (boundary mandatory, options before the `--`): text entry `fill`, `type`, `setvalue`; `select`; `upload`.

@@ -87,7 +87,7 @@ class SteelSession(BaseModel):
     def from_api(
         cls, data: Mapping[str, Any], *, name: str | None = None
     ) -> "SteelSession":
-        """Build from the full record `sessions get --session <name>` returns.
+        """Build from the full runtime record (`GET /v1/sessions/<id>`).
 
         `name` is the requested name, used only when the record omits it.
         """
@@ -425,7 +425,7 @@ class SteelSessionRegistry:
         return observed
 
     def observe_api(self, record: SteelSession) -> SteelSession:
-        """Observe the full `sessions get` record; the newer runtime id wins."""
+        """Observe the full runtime record; the newer runtime id wins."""
         return self._observe(record)
 
     def observe_start(self, record: SteelSession) -> SteelSession:

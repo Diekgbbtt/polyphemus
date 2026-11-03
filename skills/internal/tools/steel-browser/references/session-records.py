@@ -4,7 +4,8 @@
 This is the canonical evidence read. It does not start or stop a session.
 It fetches, in order:
 
-- session metadata (`sessions get`);
+- session metadata (`sessions --session`);
+- the full runtime record from the Steel API when the session id is known;
 - the browser event log, the raw agent event log, and the semantic trace
   timeline when the runtime exposes them;
 - a compact accessibility snapshot;
@@ -207,7 +208,7 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     metadata_proc = _run(
-        ["--local", "sessions", "get", "--session", args.session, "--json"],
+        ["--local", "sessions", "--session", args.session, "--json"],
         args.timeout_s,
     )
     metadata_payload = _json((metadata_proc.stdout or "").strip())
@@ -218,13 +219,25 @@ def main() -> int:
     ):
         print(json.dumps({
             "ok": False,
-            "stage": "sessions_get",
+            "stage": "sessions_metadata",
             "session": args.session,
             "error": _error(metadata_proc),
         }))
         return 2
-
-    metadata = _metadata(metadata_payload.get("data") or {})
+    data = metadata_payload.get("data")
+    if isinstance(data, list):
+        data = next(
+            (item for item in data if item.get("name") == args.session), None
+        )
+    if not isinstance(data, dict):
+        print(json.dumps({
+            "ok": False,
+            "stage": "sessions_metadata",
+            "session": args.session,
+            "error": "the named live session is not in the catalogue",
+        }))
+        return 2
+    metadata = _metadata(data)
     errors: list[dict] = []
     records = {
         "logs": _record_probe(
