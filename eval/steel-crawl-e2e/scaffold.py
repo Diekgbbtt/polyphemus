@@ -1064,7 +1064,36 @@ def _run_phase(
     }
     typesafe = _env_value(INSTANCE_ENV, "API_KEY_TYPESAFE")
     if typesafe:
-        env["API_KEY_TYPESAFE"] = typesafe
+        # Never put the key in `docker exec -e`: the host process list would
+        # show it. Copy a mode-0600 file and let the runner unlink it.
+        local_key = Path(tempfile.gettempdir()) / f"steel-crawl-typesafe-{run_id}"
+        local_key.write_text(typesafe, encoding="utf-8")
+        os.chmod(local_key, 0o600)
+        remote_key = f"/tmp/.steel-crawl-typesafe-{run_id}"
+        try:
+            _run(
+                [
+                    "docker",
+                    "cp",
+                    str(local_key),
+                    f"{AGENT_CONTAINER}:{remote_key}",
+                ],
+                timeout=30,
+            )
+            _run(
+                [
+                    "docker",
+                    "exec",
+                    AGENT_CONTAINER,
+                    "chmod",
+                    "600",
+                    remote_key,
+                ],
+                timeout=30,
+            )
+        finally:
+            local_key.unlink(missing_ok=True)
+        env["STEEL_CRAWL_TYPESAFE_KEY_FILE"] = remote_key
     command = [
         "docker",
         "exec",

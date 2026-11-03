@@ -42,6 +42,29 @@ def _seed_base_url(project_id: str, target_url: str) -> None:
     )
 
 
+def _load_typesafe_key() -> None:
+    """Load the TypeSafe key from a mode-0600 file, then remove it.
+
+    The scaffold copies the key into the container so the key never appears
+    in `docker exec -e` or the host process list. The file is removed after
+    the read; the value lives only in this process's environment.
+    """
+    path = os.environ.get("STEEL_CRAWL_TYPESAFE_KEY_FILE", "").strip()
+    if not path:
+        return
+    source = Path(path)
+    try:
+        key = source.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    if key:
+        os.environ["API_KEY_TYPESAFE"] = key
+    try:
+        source.unlink()
+    except OSError:
+        pass
+
+
 def _align_app_roots() -> None:
     """Point the overlay code at the deployed app's data and skills roots.
 
@@ -227,6 +250,7 @@ def main() -> int:
     server = None
     thread = None
     try:
+        _load_typesafe_key()
         _align_app_roots()
         from kali.http_history.edge import StoreCache, create_edge_server
 
