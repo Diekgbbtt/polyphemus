@@ -33,6 +33,12 @@ from urllib.parse import parse_qsl, urlsplit
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from polymerhus.recon.crawl.steel.state import normalize_url
+from polymerhus.recon.domain.noise_filter import CACHE_BUST_KEYS
+
+# A parameter name is a route word, a query key, or a field name, never a data
+# payload. A base64 blob used as a path segment would otherwise become a
+# 162 KiB "name" repeated on every flow; longer names are not parameter names.
+MAX_PARAMETER_NAME = 256
 
 # The value shape types (spec 8.3). A shape is a type and a length band: `uuid`,
 # `hex`, and `token` are the identifier shapes the path detector recognises;
@@ -326,6 +332,7 @@ def extract_parameters(flow: Mapping[str, Any]) -> tuple[ObservedParameter, ...]
             source_flow_id=source_flow_id,
         )
         for name, value in parse_qsl(urlsplit(url).query, keep_blank_values=True)
+        if name.lower() not in CACHE_BUST_KEYS
     ]
     records.extend(
         _observed(
@@ -350,7 +357,9 @@ def extract_parameters(flow: Mapping[str, Any]) -> tuple[ObservedParameter, ...]
             source_flow_id=source_flow_id,
         )
     )
-    return _dedupe(records)
+    return _dedupe(
+        [record for record in records if len(record.name) <= MAX_PARAMETER_NAME]
+    )
 
 
 # A numeric identifier path segment is three or more digits; a short number is
@@ -410,7 +419,11 @@ def _path_identifier_type(segment: str) -> ValueType | None:
 def _path_identifier_name(segments: Sequence[str], position: int) -> str:
     """`/orders/42` -> `orders_id`; a bare or already-templated id is `id`."""
     previous = segments[position - 1] if position > 0 else ""
-    if previous and _path_identifier_type(previous) is None:
+    if (
+        previous
+        and len(previous) <= MAX_PARAMETER_NAME
+        and _path_identifier_type(previous) is None
+    ):
         slug = re.sub(r"[^a-z0-9]+", "_", previous.lower()).strip("_")
         if slug:
             return f"{slug}_id"

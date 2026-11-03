@@ -150,7 +150,8 @@ def test_v2_parameters_keep_their_provenance_and_anchor_to_their_endpoint():
         "baseurl": "https://example.test",
     }
     assert observed.props["provenance"] == "observed"
-    assert observed.props["value_shape"] == {"type": "number", "length_band": 0}
+    assert observed.props["value_shape_type"] == "number"
+    assert observed.props["value_shape_length_band"] == 0
     assert observed.props["http_artifact_id"] == "http_1"
     assert observed.edges[0].node_identity == {
         "path": "/api/items",
@@ -174,6 +175,14 @@ def test_v2_parameters_keep_their_provenance_and_anchor_to_their_endpoint():
         "method": "POST",
         "baseurl": "https://example.test",
     }
+
+
+def test_v2_graph_props_are_neo4j_safe_scalars():
+    deltas = parse(json.dumps(manifest()))
+
+    for delta in deltas:
+        for key, value in delta.props.items():
+            assert not isinstance(value, dict), (delta.type, key, value)
 
 
 def test_a_v2_script_mints_a_steel_script_endpoint():

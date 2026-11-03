@@ -492,6 +492,16 @@ def filter_deltas(
                 continue
             if classify_endpoint(path, has_params=_endpoint_has_params(delta)) == "static":
                 continue
+        if delta.type == "Parameter":
+            # A parameter anchored to a static-render path (the Steel path-id
+            # detector can mint `plugins_id` from `/static/plugins/...`) is not
+            # application surface. Dropping the endpoint alone would leave the
+            # parameter to re-create its endpoint through the edge MERGE.
+            path = delta.identity.get("endpoint_path", "/")
+            if is_malformed_concat_path(path):
+                continue
+            if classify_endpoint(path) == "static":
+                continue
         # www.<host> dedups to <host> (unconditional - the www convention holds
         # whether the seed was exact or wildcard).
         if _delta_is_www_redundant(delta):

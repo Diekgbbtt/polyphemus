@@ -39,6 +39,19 @@ TRUNCATION_RUN_CAP = "run_cap"
 DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024
 DEFAULT_MAX_RUN_BYTES = 64 * 1024 * 1024
 
+# A request URL is evidence, but an analytics beacon can carry a payload as a
+# path segment or query value. The cap keeps one flow's URL and every graph
+# record derived from it bounded; the first 2 KiB keep the route and the start
+# of the data.
+MAX_URL_CHARS = 2048
+
+
+def cap_url(url: str) -> tuple[str, bool, int]:
+    """The URL, whether it was truncated, and its original length."""
+    if len(url) <= MAX_URL_CHARS:
+        return url, False, len(url)
+    return url[:MAX_URL_CHARS], True, len(url)
+
 
 class Flow(BaseModel):
     """One captured HTTP lifecycle, complete or failed.
@@ -60,6 +73,8 @@ class Flow(BaseModel):
     attribution: Attribution = "unknown"
     method: str = ""
     url: str = ""
+    url_truncated: bool = False
+    url_original_length: int = 0
     request_headers: dict[str, str] = Field(default_factory=dict)
     request_body: str | None = None
     resource_type: str = ""
@@ -165,6 +180,8 @@ class BodyStore:
 __all__ = [
     "DEFAULT_MAX_RESPONSE_BYTES",
     "DEFAULT_MAX_RUN_BYTES",
+    "MAX_URL_CHARS",
+    "cap_url",
     "TRUNCATION_RESPONSE_CAP",
     "TRUNCATION_RUN_CAP",
     "Attribution",

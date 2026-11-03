@@ -242,6 +242,20 @@ def test_filter_uses_url_query_to_preserve_parameterized_endpoint():
     assert filter_deltas([d]) == [d]
 
 
+def test_filter_drops_a_parameter_anchored_to_a_static_endpoint():
+    param = AssetDelta(
+        type="Parameter",
+        identity={
+            "name": "plugins_id",
+            "position": "path",
+            "endpoint_path": "/static/plugins/select2/select2.min.css",
+            "baseurl": "https://h",
+        },
+    )
+
+    assert filter_deltas([param]) == []
+
+
 def test_filter_leaves_non_endpoint_labels_untouched():
     params = [
         AssetDelta(type="Parameter", identity={"name": "id", "position": "query",

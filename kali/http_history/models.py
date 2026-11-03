@@ -36,6 +36,8 @@ class BodyRecord(BaseModel):
 class RequestRecord(BodyRecord):
     method: str = ""
     url: str = ""
+    url_truncated: bool = False
+    url_original_length: int = 0
     http_version: str = ""
     headers: list[tuple[str, str]] = Field(default_factory=list)
     cookies: list[NameValue] = Field(default_factory=list)

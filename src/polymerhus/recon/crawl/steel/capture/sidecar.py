@@ -19,6 +19,7 @@ already started (spec 9.5).
 from __future__ import annotations
 
 import base64
+import hashlib
 from collections.abc import Iterator, Mapping
 from typing import Any, Protocol
 from urllib.parse import urljoin
@@ -29,8 +30,12 @@ from polymerhus.recon.crawl.steel.capture.flow import (
     Attribution,
     BodyStore,
     Flow,
+    cap_url,
 )
 from polymerhus.recon.crawl.steel.capture.typing import (
+    MAX_REALTIME_FRAMES,
+    MAX_REALTIME_PAYLOAD_BYTES,
+    MAX_REALTIME_TOTAL_BYTES,
     DialogRecord,
     FrameNavigation,
     RealtimeRecord,
@@ -101,8 +106,16 @@ class CaptureSidecar:
         *,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         max_run_bytes: int = DEFAULT_MAX_RUN_BYTES,
+        max_realtime_payload_bytes: int = MAX_REALTIME_PAYLOAD_BYTES,
+        max_realtime_total_bytes: int = MAX_REALTIME_TOTAL_BYTES,
+        max_realtime_frames: int = MAX_REALTIME_FRAMES,
     ) -> None:
         self._transport = transport
+        self._max_realtime_payload_bytes = max_realtime_payload_bytes
+        self._max_realtime_total_bytes = max_realtime_total_bytes
+        self._max_realtime_frames = max_realtime_frames
+        self._realtime_payload_bytes = 0
+        self._realtime_frame_count = 0
         self._bodies = BodyStore(
             max_response_bytes=max_response_bytes,
             max_run_bytes=max_run_bytes,
@@ -165,7 +178,12 @@ class CaptureSidecar:
             return
         try:
             for method in ENABLE_METHODS:
-                self._transport.send(method)
+                params = (
+                    {"cacheDisabled": True}
+                    if method == "Network.setCacheDisabled"
+                    else None
+                )
+                self._transport.send(method, params)
         except Exception as exc:
             raise CaptureUnavailable(
                 f"the capture sidecar could not attach: {exc}"
@@ -240,13 +258,18 @@ class CaptureSidecar:
         request = params.get("request")
         if not isinstance(request, Mapping):
             return
+        url, url_truncated, url_original_length = cap_url(
+            _opt_str(request.get("url")) or ""
+        )
         self._flows[request_id] = Flow(
             request_id=request_id,
             page_id=self._page_id,
             action_id=self._action_id,
             attribution=_attribution(self._page_id, self._action_id),
             method=_opt_str(request.get("method")) or "",
-            url=_opt_str(request.get("url")) or "",
+            url=url,
+            url_truncated=url_truncated,
+            url_original_length=url_original_length,
             request_headers=_headers(request.get("headers")),
             request_body=_opt_str(request.get("postData")),
             resource_type=(
@@ -304,7 +327,8 @@ class CaptureSidecar:
             return
         if request_id in self._flows:
             return
-        url = _opt_str(request.get("url")) or self._websockets.get(request_id, "")
+        raw_url = _opt_str(request.get("url")) or self._websockets.get(request_id, "")
+        url, url_truncated, url_original_length = cap_url(raw_url)
         self._flows[request_id] = Flow(
             request_id=request_id,
             page_id=self._page_id,
@@ -312,6 +336,8 @@ class CaptureSidecar:
             attribution=_attribution(self._page_id, self._action_id),
             method=_opt_str(request.get("method")) or "GET",
             url=url,
+            url_truncated=url_truncated,
+            url_original_length=url_original_length,
             request_headers=_headers(request.get("headers")),
             request_body=_opt_str(request.get("postData")),
             resource_type="WebSocket",
@@ -365,18 +391,45 @@ class CaptureSidecar:
     def _record_frame(
         self, params: Mapping[str, Any], direction: str
     ) -> None:
-        """One WebSocket frame direction is one realtime record (spec 9.3)."""
+        """One WebSocket frame direction is one realtime record (spec 9.3).
+
+        The record always carries the frame's size and digest. The raw payload
+        is a bounded prefix: a per-frame cap and a per-run budget, so a chatty
+        socket (analytics, a poll loop) cannot grow the manifest without bound.
+        The frame count is capped too; the retained evidence stays useful while
+        the memory stays predictable.
+        """
         request_id = _opt_str(params.get("requestId"))
         response = params.get("response")
         if request_id is None or not isinstance(response, Mapping):
             return
+        if self._realtime_frame_count >= self._max_realtime_frames:
+            return
+        payload = _opt_str(response.get("payloadData"))
+        raw = payload.encode("utf-8") if payload is not None else b""
+        prefix = raw
+        truncated = False
+        if len(prefix) > self._max_realtime_payload_bytes:
+            prefix = prefix[: self._max_realtime_payload_bytes]
+            truncated = True
+        remaining = self._max_realtime_total_bytes - self._realtime_payload_bytes
+        if len(prefix) > remaining:
+            prefix = prefix[: max(remaining, 0)]
+            truncated = True
+        self._realtime_payload_bytes += len(prefix)
+        self._realtime_frame_count += 1
         self._realtime.append(
             RealtimeRecord(
                 request_id=request_id,
                 kind="frame_sent" if direction == "sent" else "frame_received",
                 direction=direction,
                 opcode=_opt_int(response.get("opcode")),
-                payload=_opt_str(response.get("payloadData")),
+                payload=prefix.decode("utf-8", "replace") if prefix else None,
+                payload_size=len(raw),
+                payload_sha256=(
+                    hashlib.sha256(raw).hexdigest() if raw else None
+                ),
+                payload_truncated=truncated,
                 timestamp=_opt_float(params.get("timestamp")),
                 page_id=self._page_id,
                 action_id=self._action_id,

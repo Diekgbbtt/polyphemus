@@ -56,6 +56,59 @@ def test_the_ledger_is_append_only_and_survives_a_kill(tmp_path):
     assert [json.loads(line)["kind"] for line in lines] == ["artifact", "manifest"]
 
 
+def test_a_repeated_body_is_written_once_and_recovered_for_every_artifact(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    ledger = RunLedger(path)
+    first = artifact()
+    second = artifact().model_copy(update={"artifact_id": "http_2"})
+    body = {"sha256:abc": b"x" * 1024}
+
+    ledger.append_artifact(first, body)
+    ledger.append_artifact(second, body)
+
+    entries = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    first_bodies = entries[0]["payload"]["bodies"]
+    second_bodies = entries[1]["payload"]["bodies"]
+    assert first_bodies[0]["data"]
+    assert "data" not in second_bodies[0]
+    recovered = RunLedger(path).artifacts()
+    assert [item[0].artifact_id for item in recovered] == ["http_1", "http_2"]
+    assert recovered[0][1] == body
+    # The bytes live on the first occurrence; the second artifact names the
+    # same digest and the edge resolves it there.
+    assert recovered[1][1] == {}
+    assert path.stat().st_size < 4 * 1024
+
+
+def test_finalize_sends_each_body_to_the_edge_once(tmp_path):
+    ledger = RunLedger(tmp_path / "ledger.jsonl")
+    body = {"sha256:abc": b"body"}
+    ledger.append_artifact(artifact(), body)
+    ledger.append_artifact(
+        artifact().model_copy(update={"artifact_id": "http_2"}), body
+    )
+    seen: list[list[tuple[HttpArtifact, dict[str, bytes]]]] = []
+
+    result = finalize(
+        ledger=ledger,
+        manifest=build_manifest(run=run()),
+        stop_reason="frontier_empty",
+        finished_at="2026-11-02T10:01:00Z",
+        flush_fn=lambda artifacts: (
+            seen.append(list(artifacts)) or {"cursor": 0}
+        ),
+        ingest_fn=lambda manifest: {"ok": True},
+    )
+
+    assert result.status == "complete"
+    assert len(seen[0]) == 2
+    assert seen[0][0][1] == body
+    assert seen[0][1][1] == {}
+
+
 def test_finalize_runs_on_success_and_marks_the_run_complete(tmp_path):
     ledger = RunLedger(tmp_path / "ledger.jsonl")
     manifest = build_manifest(run=run())

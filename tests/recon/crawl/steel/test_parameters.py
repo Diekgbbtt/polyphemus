@@ -56,6 +56,45 @@ def flow(url: str, **overrides: Any) -> dict[str, Any]:
     return payload
 
 
+def test_a_cache_bust_query_key_is_not_an_observed_parameter():
+    records = extract_parameters(
+        flow("https://example.test/assets/app.js?v=9f2a&cb=1&page=42")
+    )
+
+    assert [record.name for record in records] == ["page"]
+    assert records[0].location == "query"
+
+
+def test_a_payload_sized_path_segment_or_query_key_is_not_a_parameter():
+    long_token = "a1" * 150
+    records = extract_parameters(
+        flow(
+            "https://example.test/items/" + long_token + "?page=42&" + "k" * 300 + "=1"
+        )
+    )
+
+    # The long token is still a path identifier (its NAME comes from the
+    # route word before it); the 300-char query key is not a parameter name.
+    assert [(record.name, record.location) for record in records] == [
+        ("page", "query"),
+        ("items_id", "path"),
+    ]
+
+
+def test_a_payload_sized_previous_segment_does_not_become_a_name():
+    records = extract_parameters(
+        flow("https://example.test/" + "a1" * 150 + "/421")
+    )
+
+    # Both path identifiers name themselves `id`; the huge segment never
+    # becomes a 300-character slug for the number that follows it. The two
+    # shapes stay distinct records because the shape is part of the key.
+    assert [
+        (record.name, record.location, record.value_shape.type)
+        for record in records
+    ] == [("id", "path", "hex"), ("id", "path", "number")]
+
+
 def test_the_extractor_records_identifier_path_segments_on_the_actual_endpoint():
     cases = [
         ("/orders/1234", "orders_id", "number"),

@@ -28,6 +28,13 @@ RealtimeKind = Literal[
 ]
 RealtimeDirection = Literal["sent", "received"]
 
+# A frame's raw payload is evidence, not the manifest's payload. The record
+# keeps a bounded prefix and always the size and digest, so a chatty socket
+# can never grow the manifest without bound (the 8 GiB-admin-target failure).
+MAX_REALTIME_PAYLOAD_BYTES = 16 * 1024
+MAX_REALTIME_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_REALTIME_FRAMES = 20_000
+
 
 class ScriptAsset(BaseModel):
     """One parsed script: an absolute URL, the CDP script id, and provenance."""
@@ -55,6 +62,9 @@ class RealtimeRecord(BaseModel):
     direction: RealtimeDirection | None = None
     opcode: int | None = None
     payload: str | None = None
+    payload_size: int = 0
+    payload_sha256: str | None = None
+    payload_truncated: bool = False
     status: int | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     timestamp: float | None = None

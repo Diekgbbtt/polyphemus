@@ -186,6 +186,175 @@ def load_manifest(path: str | Path) -> Manifest:
     return Manifest.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
+def build_manifest_from_output(
+    output,
+    *,
+    run: RunBlock,
+    flows=(),
+    scripts=(),
+    realtime=(),
+    errors=(),
+    duration_ms: int = 0,
+) -> Manifest:
+    """Assemble the v2 graph input from one `RunOutput` and its capture.
+
+    `output` is the crawl run's `RunOutput`: it carries the frontier, the
+    normalized artifacts, the observed parameters, and the declared records.
+    The endpoint identity is the flow's actual `(method, path, baseurl)`; one
+    id names one route, so two query variants of the same route are one
+    endpoint. Parameters anchor to the endpoint their flow called. Declared
+    records keep their own provenance and never merge with the observed ones.
+    """
+    from polymerhus.recon.crawl.steel.parameters import (
+        endpoint_key,
+        split_url,
+    )
+
+    flow_artifact: dict[str, str] = dict(getattr(output, "flow_artifacts", {}) or {})
+
+    endpoints: dict[str, EndpointRecord] = {}
+    for flow in flows:
+        path, baseurl = split_url(flow.url)
+        key = endpoint_key(flow.method, path, baseurl)
+        existing = endpoints.get(key)
+        if existing is None:
+            endpoints[key] = EndpointRecord(
+                endpoint_id="ep_observed_" + _short_hash(key),
+                provenance="observed",
+                method=flow.method,
+                url=flow.url,
+                path=path,
+                baseurl=baseurl,
+                status_code=flow.status,
+                source="cdp",
+                resource_type=flow.resource_type,
+                http_artifact_id=flow_artifact.get(flow.request_id),
+                source_page_id=flow.page_id,
+                action_id=flow.action_id,
+            )
+        elif existing.status_code is None and flow.status is not None:
+            endpoints[key] = existing.model_copy(
+                update={"status_code": flow.status}
+            )
+
+    parameters: list[ParameterRecord] = []
+    seen_parameters: set[str] = set()
+    for parameter in getattr(output, "parameters", ()):
+        endpoint = endpoints.get(parameter.endpoint_key)
+        if endpoint is None:
+            continue
+        shape = getattr(parameter.value_shape, "model_dump", None)
+        value_shape = (
+            shape(mode="json") if callable(shape) else parameter.value_shape
+        )
+        parameter_id = "param_observed_" + _short_hash(
+            "\x1f".join(parameter.dedup_key)
+        )
+        if parameter_id in seen_parameters:
+            continue
+        seen_parameters.add(parameter_id)
+        parameters.append(
+            ParameterRecord(
+                parameter_id=parameter_id,
+                endpoint_id=endpoint.endpoint_id,
+                provenance="observed",
+                endpoint_path=parameter.endpoint_path,
+                baseurl=parameter.baseurl,
+                position=parameter.location,
+                name=parameter.name,
+                value_shape=value_shape,
+                http_artifact_id=flow_artifact.get(parameter.source_flow_id),
+                content_type=parameter.content_type,
+            )
+        )
+
+    for declared in getattr(output, "declared_endpoints", ()):
+        record = EndpointRecord(
+            endpoint_id=declared.endpoint_id,
+            provenance="declared",
+            method=declared.method,
+            url=declared.url,
+            path=declared.path,
+            baseurl=declared.baseurl,
+            status_code=None,
+            source=declared.source,
+            resource_type=declared.resource_type,
+            http_artifact_id=None,
+            source_page_id=declared.source_page_id,
+            action_id=declared.action_id,
+            enctype=declared.enctype,
+            field_names=tuple(declared.field_names),
+        )
+        endpoints.setdefault(endpoint_key(record.method, record.path, record.baseurl), record)
+    for declared in getattr(output, "declared_fields", ()):
+        if declared.parameter_id in seen_parameters:
+            continue
+        seen_parameters.add(declared.parameter_id)
+        parameters.append(
+            ParameterRecord(
+                parameter_id=declared.parameter_id,
+                endpoint_id=declared.endpoint_id,
+                provenance="declared",
+                endpoint_path=declared.endpoint_path,
+                baseurl=declared.baseurl,
+                position=declared.position,
+                name=declared.name,
+                value_shape=None,
+                http_artifact_id=None,
+                content_type=declared.content_type,
+                field_type=declared.field_type,
+                label=declared.label,
+                options=tuple(declared.options),
+                pattern=declared.pattern,
+                min=declared.min,
+                max=declared.max,
+            )
+        )
+
+    frontier = getattr(output, "frontier", None)
+    error_records = list(errors)
+    if frontier is not None:
+        if frontier.error:
+            error_records.append(
+                ErrorRecord(code="traversal_error", message=frontier.error, stage="frontier")
+            )
+        for stale in frontier.stale:
+            error_records.append(
+                ErrorRecord(
+                    code=stale.error.code,
+                    message=str(stale.error),
+                    stage="executor",
+                    page_id=stale.page.page_visit_id,
+                    action_id=stale.element.element_id,
+                )
+            )
+    unique_flows = {flow.request_id for flow in flows}
+    bytes_seen = sum(
+        int(getattr(flow, "encoded_data_length", 0) or 0)
+        or len(getattr(flow, "response_body", b"") or b"")
+        for flow in flows
+    )
+    return build_manifest(
+        run=run,
+        endpoints=list(endpoints.values()),
+        parameters=parameters,
+        scripts=scripts,
+        realtime=realtime,
+        errors=error_records,
+        flows=len(unique_flows),
+        bytes=bytes_seen,
+        duration_ms=duration_ms,
+        removed_elements=len(getattr(output, "removed", ())),
+        unrecoverable_pages=len(getattr(frontier, "unrecoverable", ())) if frontier else 0,
+    )
+
+
+def _short_hash(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
 __all__ = [
     "EndpointRecord",
     "ErrorRecord",
@@ -195,6 +364,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "Stats",
     "build_manifest",
+    "build_manifest_from_output",
     "load_manifest",
     "write_manifest",
 ]

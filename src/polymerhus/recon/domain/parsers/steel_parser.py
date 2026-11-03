@@ -215,7 +215,6 @@ def _parse_v2(manifest: dict) -> list[AssetDelta]:
             props = _present(
                 {
                     "provenance": entry.get("provenance"),
-                    "value_shape": entry.get("value_shape"),
                     "http_artifact_id": entry.get("http_artifact_id"),
                     "content_type": entry.get("content_type"),
                     "field_type": entry.get("field_type"),
@@ -226,6 +225,7 @@ def _parse_v2(manifest: dict) -> list[AssetDelta]:
                     "max": entry.get("max"),
                 }
             )
+            props.update(_shape_props(entry.get("value_shape")))
             deltas.append(
                 AssetDelta(
                     type="Parameter",
@@ -277,3 +277,23 @@ def _parse_v2(manifest: dict) -> list[AssetDelta]:
 def _present(values: dict) -> dict:
     """Drop absent keys; a present empty list or dict is still meaningful."""
     return {key: value for key, value in values.items() if value is not None}
+
+
+def _shape_props(shape: object) -> dict:
+    """Flatten a `value_shape` mapping into Neo4j-safe scalar properties.
+
+    Neo4j properties cannot carry a nested map, so a parameter's shape is
+    stored as its type and its eight-character length band. The manifest keeps
+    the structured shape; the graph gets the two scalars it can store and
+    query.
+    """
+    if not isinstance(shape, dict):
+        return {}
+    props: dict = {}
+    value_type = shape.get("type")
+    if isinstance(value_type, str) and value_type:
+        props["value_shape_type"] = value_type
+    band = shape.get("length_band")
+    if isinstance(band, int):
+        props["value_shape_length_band"] = band
+    return props

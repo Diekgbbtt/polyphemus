@@ -396,6 +396,8 @@ def normalize_cdp_flow(
             **request_record.model_dump(),
             method=flow.method,
             url=flow.url,
+            url_truncated=flow.url_truncated,
+            url_original_length=flow.url_original_length,
             http_version=flow.http_version or "",
             headers=request_headers,
             cookies=_cookies(request_headers, "cookie"),
@@ -553,9 +555,22 @@ class HistoryClient:
         return data
 
 
-def _batch_size(artifact: HttpArtifact, bodies: Mapping[str, bytes]) -> int:
-    encoded = json.dumps(artifact.model_dump(mode="json"), separators=(",", ":"))
-    return len(encoded.encode("utf-8")) + sum(len(body) for body in bodies.values())
+def _encoded_item_size(
+    artifact: HttpArtifact, bodies: Mapping[str, bytes]
+) -> int:
+    """The wire size of one artifact item, including the base64 bodies.
+
+    The edge caps the request's actual content length, so the client must count
+    the encoded bytes, not the raw body bytes: base64 grows a body by 4/3 and
+    the JSON envelope adds its own overhead.
+    """
+    encoded = json.dumps(
+        artifact.model_dump(mode="json"), separators=(",", ":")
+    )
+    body_bytes = sum(
+        len(base64.b64encode(body)) + 64 for body in bodies.values()
+    )
+    return len(encoded.encode("utf-8")) + body_bytes
 
 
 def _batches(
@@ -568,8 +583,12 @@ def _batches(
     size = 0
     for artifact, bodies in artifacts:
         item = (artifact, dict(bodies))
-        item_size = _batch_size(artifact, bodies)
-        if current and (len(current) >= max_artifacts or size + item_size > max_bytes):
+        item_size = _encoded_item_size(artifact, bodies)
+        # 1 KiB of envelope (project/run ids, the two lists, and separators).
+        if current and (
+            len(current) >= max_artifacts
+            or size + item_size + 1024 > max_bytes
+        ):
             batches.append(_Batch(tuple(current), size))
             current, size = [], 0
         current.append(item)

@@ -43,6 +43,11 @@ class RunLedger:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # A body is written once per run. The sidecar caps DISTINCT bodies at
+        # `DEFAULT_MAX_RUN_BYTES`; repeating the same body on every artifact
+        # that references it would make the ledger grow with the flow count,
+        # not with the capture budget (an 8 GiB ledger on one admin target).
+        self._written_bodies: set[str] = set()
 
     def append(self, kind: str, payload: Mapping[str, Any]) -> None:
         record = {"ts": _utcnow(), "kind": kind, "payload": dict(payload)}
@@ -69,23 +74,34 @@ class RunLedger:
     def append_artifact(
         self, artifact: HttpArtifact, bodies: Mapping[str, bytes]
     ) -> None:
+        encoded: list[dict[str, Any]] = []
+        for ref, content in bodies.items():
+            item: dict[str, Any] = {
+                "body_ref": ref,
+                "sha256": ref.removeprefix("sha256:"),
+            }
+            if ref not in self._written_bodies:
+                item["data"] = base64.b64encode(content).decode("ascii")
+                self._written_bodies.add(ref)
+            encoded.append(item)
         self.append(
             "artifact",
             {
                 "artifact": artifact.model_dump(mode="json"),
-                "bodies": [
-                    {
-                        "body_ref": ref,
-                        "sha256": ref.removeprefix("sha256:"),
-                        "data": base64.b64encode(content).decode("ascii"),
-                    }
-                    for ref, content in bodies.items()
-                ],
+                "bodies": encoded,
             },
         )
 
     def artifacts(self) -> list[tuple[HttpArtifact, dict[str, bytes]]]:
+        """Every artifact, with each distinct body attached once.
+
+        The append-only file stores a body on its first occurrence only. A
+        consumer that needs a later artifact's body resolves `body_ref` in the
+        edge store; the recovery list therefore never materialises one copy per
+        referencing flow (the 8 GiB-admin-target failure).
+        """
         found: list[tuple[HttpArtifact, dict[str, bytes]]] = []
+        known: dict[str, bytes] = {}
         for entry in self.entries():
             if entry.get("kind") != "artifact":
                 continue
@@ -101,12 +117,21 @@ class RunLedger:
                 if not isinstance(item, Mapping):
                     continue
                 ref = item.get("body_ref")
+                if not isinstance(ref, str):
+                    continue
                 data = item.get("data")
-                if isinstance(ref, str) and isinstance(data, str):
+                if isinstance(data, str) and data:
                     try:
-                        bodies[ref] = base64.b64decode(data)
+                        decoded = base64.b64decode(data)
                     except (ValueError, TypeError):
                         continue
+                    self._written_bodies.add(ref)
+                    known[ref] = decoded
+                    bodies[ref] = decoded
+                # A later artifact references a digest whose bytes were already
+                # attached to the first occurrence. The edge keys bodies by
+                # digest, so nothing is lost and the recovery list stays
+                # proportional to the DISTINCT capture budget, not the flows.
             found.append((artifact, bodies))
         return found
 
@@ -210,7 +235,7 @@ def finalize(
     manifest = manifest.model_copy(update={"run": run})
     ledger.append_manifest(manifest)
 
-    artifacts = ledger.artifacts()
+    artifacts = _dedupe_bodies(ledger.artifacts())
     flush_result: Any = None
     ingest_result: Any = None
     flush_error: str | None = None
@@ -276,6 +301,29 @@ def finalize(
         errors=tuple(errors),
         coverage=dict(coverage or {}),
     )
+
+
+def _dedupe_bodies(
+    artifacts: Sequence[tuple[HttpArtifact, dict[str, bytes]]],
+) -> list[tuple[HttpArtifact, dict[str, bytes]]]:
+    """Attach each body to the first artifact that references it.
+
+    The edge keys bodies by content digest, so a later artifact with the same
+    `body_ref` resolves the stored body without a second copy on the wire. The
+    sidecar already caps DISTINCT bodies; this keeps the flush proportional to
+    that budget instead of to the flow count.
+    """
+    seen: set[str] = set()
+    deduped: list[tuple[HttpArtifact, dict[str, bytes]]] = []
+    for artifact, bodies in artifacts:
+        kept: dict[str, bytes] = {}
+        for ref, content in bodies.items():
+            if ref in seen:
+                continue
+            seen.add(ref)
+            kept[ref] = content
+        deduped.append((artifact, kept))
+    return deduped
 
 
 __all__ = [

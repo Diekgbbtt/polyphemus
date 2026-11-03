@@ -69,6 +69,93 @@ def two_flow_stream(bodies: dict[str, str]) -> CdpStream:
     return CdpStream(events=events, bodies=bodies)
 
 
+def frame_event(request_id: str, payload: str) -> CdpEvent:
+    return CdpEvent(
+        method="Network.webSocketFrameReceived",
+        params={
+            "requestId": request_id,
+            "timestamp": 2000.4,
+            "response": {"opcode": 1, "mask": False, "payloadData": payload},
+        },
+    )
+
+
+def test_a_long_request_url_is_capped_and_keeps_its_original_length():
+    long_url = "https://example.test/" + "a1" * 3000
+    event = CdpEvent(
+        method="Network.requestWillBeSent",
+        params={
+            "requestId": "r-long",
+            "request": {
+                "url": long_url,
+                "method": "GET",
+                "headers": {},
+                "resourceType": "XHR",
+            },
+            "frameId": "FRAME-1",
+            "type": "XHR",
+            "wallTime": 1762000000.5,
+        },
+    )
+    transport = FakeCdpTransport(
+        CdpStream(events=[event, finished_event("r-long")], bodies={})
+    )
+    sidecar = CaptureSidecar(transport)
+    sidecar.attach()
+
+    sidecar.pump()
+
+    flow = sidecar.flows[0]
+    assert len(flow.url) == 2048
+    assert flow.url_truncated is True
+    assert flow.url_original_length == len(long_url)
+
+
+def test_a_large_websocket_frame_keeps_a_bounded_prefix_and_its_digest():
+    payload = "x" * 100
+    transport = FakeCdpTransport(
+        CdpStream(events=[frame_event("2000.1", payload)], bodies={})
+    )
+    sidecar = CaptureSidecar(
+        transport,
+        max_realtime_payload_bytes=32,
+        max_realtime_total_bytes=1024,
+        max_realtime_frames=10,
+    )
+    sidecar.attach()
+
+    sidecar.pump()
+
+    record = sidecar.realtime[0]
+    assert record.payload == "x" * 32
+    assert record.payload_size == 100
+    assert record.payload_sha256 == hashlib.sha256(payload.encode()).hexdigest()
+    assert record.payload_truncated is True
+
+
+def test_the_realtime_run_budget_and_frame_count_bound_the_evidence():
+    events = [
+        frame_event("2000.1", "a" * 8),
+        frame_event("2000.1", "b" * 8),
+        frame_event("2000.1", "c" * 8),
+    ]
+    transport = FakeCdpTransport(CdpStream(events=events, bodies={}))
+    sidecar = CaptureSidecar(
+        transport,
+        max_realtime_payload_bytes=8,
+        max_realtime_total_bytes=10,
+        max_realtime_frames=2,
+    )
+    sidecar.attach()
+
+    sidecar.pump()
+
+    # Two frames are retained; the third is dropped at the frame cap.
+    assert [record.payload for record in sidecar.realtime] == ["a" * 8, "b" * 2]
+    assert sidecar.realtime[1].payload_size == 8
+    assert sidecar.realtime[1].payload_truncated is True
+
+
 def test_pump_records_the_fixture_xhr_flow_end_to_end():
     transport = FakeCdpTransport(load_cdp("http_flow"))
     sidecar = CaptureSidecar(transport)
