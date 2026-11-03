@@ -43,8 +43,11 @@ The run table reports **manifest** statistics. The knowledge graph is smaller by
 - **The 22 false positives:** 21 `uploads_id` parameters on the image date directories and 1 `plugins_id` parameter on the `select2` directory of a static JavaScript URL. The old curator did not remove them because `/uploads/` is a preserve segment and the `.js` endpoint is surface by D17.
 - The old curator did remove 26 static CSS `plugins_id` records and 1 external `date` parameter on `/ad.js`.
 - **The fix:** the extractor no longer mints a path parameter from a URL whose final segment has a static-file extension. The curator also drops such a path parameter from any historical manifest. Replaying the saved SiyuCMS manifest through the current filter gives **6 unique parameter identities**, exactly the search query and the five form fields.
-- **The 77 graph endpoints:** 28 `/template/`, 21 `/uploads/`, 19 `/static/`, 7 `/index/`, 1 `/index.php/`, and 1 root. The manifest has 186 endpoints; 177 are in scope; the curator drops 100 static or external endpoints. The application routes are 9; the rest are theme, upload, and static assets kept by the preserve/JavaScript recall bias. The upload and theme endpoints are deliberate evidence for upload and file-serving surfaces; the parameter false positives were not.
-- **Verdict:** the 5,657 is not a legitimate parameter count. It is duplicate observation plus two path-identifier false-positive families. The current code reports 6 legitimate parameters and keeps the file endpoints.
+- **The final run:** `e2e-siyucms-20261103T091856Z` has 184 manifest endpoints and 16 manifest parameters. The graph has **78 endpoints** and **6 parameters**:
+  - 78 endpoints: 28 `/template/`, 21 `/uploads/`, 19 `/static/`, 8 `/index/`, 1 `/index.php/`, and 1 root. Ten are application routes; the rest are theme, upload, and static assets kept by the preserve/JavaScript recall bias.
+  - 6 parameters: `search`, `email`, `password`, `password2` (register), `username`, `password` (login).
+  - The other 10 manifest parameters are one external `date` on `/ad.js` and nine inline image data-URI path segments. The existing out-of-scope filter drops them.
+- **Verdict:** the 5,657 is not a legitimate parameter count. It is duplicate observation plus two path-identifier false-positive families. The final run writes 6 legitimate parameters and keeps the file endpoints for upload and theme evidence.
 
 ### Where the filter runs
 
