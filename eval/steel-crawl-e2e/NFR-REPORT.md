@@ -13,9 +13,10 @@ Every other component is the deployed one: the Steel CLI, the raw-CDP sidecar, t
 | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 | ComfyUI | `e2e-comfyui-20261103T025611Z` | `frontier_empty` (complete) | 30.1 s | 564 | 538 | 52 | 482 | 11 | 1 | 0 | 0 | 0 | 546 / 18 | 13.3 MB | 0.4 MB |
 | SiyuCMS | `e2e-siyucms-20261103T023716Z` | `session_deadline` (partial) | 951.2 s | 11,811 | 186 | 5,657 | 66 | 0 | 6 | 106 | 6 | 1 | 611 / 11,200 | 200.4 MB | 19.1 MB |
-| PrestaShop | `e2e-prestashop-20261103T071922Z` | `session_deadline` (partial) | 963.8 s | 10,793 | 117 | 67 | 71 | 0 | 1 | 61 | 1 | 0 | 1,241 / 9,552 | 67.6 MB | 0.2 MB |
+| PrestaShop | `e2e-prestashop-20261103T075740Z` | `session_deadline` (partial) | 950.7 s | 10,654 | 117 | 68 | 71 | 0 | 1 | 59 | 1 | 0 | 1,190 / 9,464 | 64.4 MB | 0.2 MB |
 
 All runs: 0 edge rejections, 0 unrecoverable pages, the session catalogue clean after the stop, and the `steel_crawl` job `success`.
+The final PrestaShop run also reports `session_closed=true` from the engine itself; the earlier runs' catalogues were empty after the stop.
 
 The two authenticated targets stop at the 15-minute wall (`session_deadline`), not the 300-action cap.
 The frontier is time-bounded, not exhausted; the partial flag is correct.
@@ -32,7 +33,7 @@ The frontier is time-bounded, not exhausted; the partial flag is correct.
 | N6 | bounded runtime and action cap | pass | every run is bounded by 900 s; the wall stop is `session_deadline`; the action cap is `operator_cancel` with exactly `STEEL_CRAWL_MAX_ACTIONS`; finalize runs in every case. |
 | N7 | determinism and schema stability | pass | every manifest is `steel-crawl/v2`; the v1 parser still consumes the same delta vocabulary; the run/stats counts are internally consistent. Repeated ComfyUI runs differ in flow count (cache state), never in schema or invariants. |
 | N8 | observability and traceability | pass | the recon run is `complete`, one `steel_crawl` job is `success`, the graph endpoint/parameter count equals the noise-filtered parser count, the ledger and edge are readable, the engine reports `session_closed=true`, and the session catalogue has no entry after the stop. |
-| N9 | resource bounds on hostile surfaces | pass | the URL cap, parameter-name cap, parameter dedup, realtime frame caps, ledger body dedup, and flush dedup keep the run proportional to the distinct capture budget. The same PrestaShop crawl that previously produced a 5.3 GB ledger and a 2.6 GB manifest (and was OOM-killed at 13.7 GB RSS) now produces a 67.6 MB ledger and a 0.2 MB manifest. |
+| N9 | resource bounds on hostile surfaces | pass | the URL cap, parameter-name cap, parameter dedup, realtime frame caps, ledger body dedup, and flush dedup keep the run proportional to the distinct capture budget. The same PrestaShop crawl that previously produced a 5.3 GB ledger and a 2.6 GB manifest (and was OOM-killed at 13.7 GB RSS) now produces a 64.4 MB ledger and a 0.2 MB manifest. |
 
 ## 3. Defects the live gate found and fixed
 
