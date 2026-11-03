@@ -28,7 +28,7 @@ The run table reports **manifest** statistics. The knowledge graph is smaller by
   - 452 under `/assets/`, 16 under `/extensions/`, 5 under `/scripts/`, 18 under `/api/`, and 1 root.
   - 473 are JavaScript/script assets. The design keeps JavaScript as analysis surface (D17), so the curator does not drop them.
   - 19 are application/API endpoints (`/api/*` and the root).
-- The filter drops 31 static endpoints (CSS, fonts, images) and 3 external endpoints (CDN).
+- The filter drops 34 parser endpoints: 31 static (CSS, fonts, images) and 3 external (CDN). The remaining manifest-to-graph difference is the script-channel duplicate: the observed JavaScript URLs and the script records share one graph identity.
 - The manifest endpoints are unique. The 473 script records are structural duplicates of the observed JavaScript URLs; the graph `MERGE` collapses them, so they do not inflate the graph.
 - **Verdict:** the 538 is a legitimate capture count, but it is not 538 application routes. The 492-node graph is 473 JavaScript assets plus 19 app endpoints. The JavaScript family is kept by design, not by filter failure.
 
@@ -43,7 +43,7 @@ The run table reports **manifest** statistics. The knowledge graph is smaller by
 - **The 22 false positives:** 21 `uploads_id` parameters on the image date directories and 1 `plugins_id` parameter on the `select2` directory of a static JavaScript URL. The old curator did not remove them because `/uploads/` is a preserve segment and the `.js` endpoint is surface by D17.
 - The old curator did remove 26 static CSS `plugins_id` records and 1 external `date` parameter on `/ad.js`.
 - **The fix:** the extractor no longer mints a path parameter from a URL whose final segment has a static-file extension. The curator also drops such a path parameter from any historical manifest. Replaying the saved SiyuCMS manifest through the current filter gives **6 unique parameter identities**, exactly the search query and the five form fields.
-- **The 77 graph endpoints:** 28 `/template/`, 21 `/uploads/`, 19 `/static/`, 7 `/index/`, 1 `/index.php/`, and 1 root. The application routes are 9; the rest are theme, upload, and static assets kept by the preserve/JavaScript recall bias. The upload and theme endpoints are deliberate evidence for upload and file-serving surfaces; the parameter false positives were not.
+- **The 77 graph endpoints:** 28 `/template/`, 21 `/uploads/`, 19 `/static/`, 7 `/index/`, 1 `/index.php/`, and 1 root. The manifest has 186 endpoints; 177 are in scope; the curator drops 100 static or external endpoints. The application routes are 9; the rest are theme, upload, and static assets kept by the preserve/JavaScript recall bias. The upload and theme endpoints are deliberate evidence for upload and file-serving surfaces; the parameter false positives were not.
 - **Verdict:** the 5,657 is not a legitimate parameter count. It is duplicate observation plus two path-identifier false-positive families. The current code reports 6 legitimate parameters and keeps the file endpoints.
 
 ### Where the filter runs
