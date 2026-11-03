@@ -113,6 +113,9 @@ def _assert_common(evidence: scaffold.RunEvidence, spec: scaffold.TargetSpec) ->
     if run["stop_reason"] == "operator_cancel":
         assert len(summary["actions"]) == MAX_ACTIONS
     assert summary["duration_s"] <= MAX_DURATION_S + 300
+    # The engine's own stop result, not the CLI daemon's eventually-consistent
+    # catalogue: the crawl must leave no owned session behind.
+    assert summary.get("session_closed") is True
 
     edge = phase["edge"]
     flush = summary["flush"]
@@ -160,14 +163,10 @@ def _assert_common(evidence: scaffold.RunEvidence, spec: scaffold.TargetSpec) ->
     before_names = {
         item.get("name") for item in evidence.session_catalogue_before
     }
-    phase_names = {
-        item.get("name") for item in evidence.session_catalogue
-    }
     after_names = {
         item.get("name") for item in evidence.session_catalogue_after
     }
     assert evidence.session_name in before_names
-    assert evidence.session_name not in phase_names
     assert evidence.session_name not in after_names
 
     endpoints = _nodes(evidence.graph, "Endpoint")

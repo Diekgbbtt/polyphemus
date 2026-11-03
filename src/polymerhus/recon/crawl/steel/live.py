@@ -725,6 +725,7 @@ def run_live_crawl(ctx: LiveRunContext) -> LiveRunResult:
         ),
         "script_count": len(sidecar.scripts),
         "realtime_count": len(sidecar.realtime),
+        "session_closed": session.attached is None,
         "flush": holder.get("flush"),
         "coverage": dict(ctx.coverage),
     }
