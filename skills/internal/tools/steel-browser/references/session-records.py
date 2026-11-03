@@ -5,7 +5,6 @@ This is the canonical evidence read. It does not start or stop a session.
 It fetches, in order:
 
 - session metadata (`sessions --session`);
-- the full runtime record from the Steel API when the session id is known;
 - the browser event log, the raw agent event log, and the semantic trace
   timeline when the runtime exposes them;
 - a compact accessibility snapshot;
