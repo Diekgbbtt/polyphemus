@@ -18,6 +18,38 @@ Every other component is the deployed one: the Steel CLI, the raw-CDP sidecar, t
 All runs: 0 edge rejections, 0 unrecoverable pages, the session catalogue clean after the stop, and the `steel_crawl` job `success`.
 The final PrestaShop run also reports `session_closed=true` from the engine itself; the earlier runs' catalogues were empty after the stop.
 
+## 2. Count audit: manifest counts versus graph counts
+
+The run table reports **manifest** statistics. The knowledge graph is smaller by construction: the curator drops static and out-of-scope records, and the graph `MERGE` keys on the record identity. The difference is not lost evidence.
+
+### ComfyUI: 538 endpoints
+
+- The 538 observed endpoints reduce to **492 graph endpoints**:
+  - 452 under `/assets/`, 16 under `/extensions/`, 5 under `/scripts/`, 18 under `/api/`, and 1 root.
+  - 473 are JavaScript/script assets. The design keeps JavaScript as analysis surface (D17), so the curator does not drop them.
+  - 19 are application/API endpoints (`/api/*` and the root).
+- The filter drops 31 static endpoints (CSS, fonts, images) and 3 external endpoints (CDN).
+- The manifest endpoints are unique. The 473 script records are structural duplicates of the observed JavaScript URLs; the graph `MERGE` collapses them, so they do not inflate the graph.
+- **Verdict:** the 538 is a legitimate capture count, but it is not 538 application routes. The 492-node graph is 473 JavaScript assets plus 19 app endpoints. The JavaScript family is kept by design, not by filter failure.
+
+### SiyuCMS: 5,657 parameters
+
+- The 5,657 manifest records split by position into 5,606 path, 46 query, and 5 body records.
+- The parser reduces them to 2,587 records; the filter to 2,534; the graph identity set to **28** before the fix.
+- The 5,657 to 28 difference is a **99.5% duplicate/noise rate**:
+  - 2,482 records are `uploads_id` on 21 image files under `/uploads/YYYYMMDD/<hash>.png`; each image repeats 100 to 210 times.
+  - The remaining bulk is a family of base64 data-URI path names (128 repeats each); the current URL and parameter-name caps remove them from a new crawl.
+  - The legitimate survivors are `search` (query) and the five login/register fields (`username`, `password` on login; `email`, `password`, `password2` on register).
+- **The 22 false positives:** 21 `uploads_id` parameters on the image date directories and 1 `plugins_id` parameter on the `select2` directory of a static JavaScript URL. The old curator did not remove them because `/uploads/` is a preserve segment and the `.js` endpoint is surface by D17.
+- The old curator did remove 26 static CSS `plugins_id` records and 1 external `date` parameter on `/ad.js`.
+- **The fix:** the extractor no longer mints a path parameter from a URL whose final segment has a static-file extension. The curator also drops such a path parameter from any historical manifest. Replaying the saved SiyuCMS manifest through the current filter gives **6 unique parameter identities**, exactly the search query and the five form fields.
+- **The 77 graph endpoints:** 28 `/template/`, 21 `/uploads/`, 19 `/static/`, 7 `/index/`, 1 `/index.php/`, and 1 root. The application routes are 9; the rest are theme, upload, and static assets kept by the preserve/JavaScript recall bias. The upload and theme endpoints are deliberate evidence for upload and file-serving surfaces; the parameter false positives were not.
+- **Verdict:** the 5,657 is not a legitimate parameter count. It is duplicate observation plus two path-identifier false-positive families. The current code reports 6 legitimate parameters and keeps the file endpoints.
+
+### Where the filter runs
+
+`curator.curate` calls `filter_deltas` before the graph write. `filter_deltas` drops static endpoints, out-of-scope hosts, parameters anchored to static paths, and path parameters on static-file URLs. The graph `MERGE` then collapses the remaining duplicate identities. The saved SiyuCMS graph still shows the historical 28; the next run writes 6.
+
 The two authenticated targets stop at the 15-minute wall (`session_deadline`), not the 300-action cap.
 The frontier is time-bounded, not exhausted; the partial flag is correct.
 
