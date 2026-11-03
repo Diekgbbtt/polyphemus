@@ -824,6 +824,13 @@ The crawl resolves relative URLs and deduplicates by URL.
 The crawl does not fetch or store source maps.
 The JS client-side code analysis phase owns source-map retrieval.
 
+A script under a canonical vendor root is not a graph Endpoint.
+The roots cover the common package and framework layouts: `/lib/`, `/libs/`, `/libraries/`, `/vendor/`, `/node_modules/`, `/bower_components/`, `/jspm_packages/`, `/webjars/`, `/third_party/`, `/external/`, `/deps/`, `/wp-includes/`, `/_next/`, `/_nuxt/`, `/sap/ui/`, `/etc.clientlibs/`, and the equivalent `/static/lib/`, `/js/vendor/`, and `/scripts/lib/` forms.
+The script remains a `ScriptAsset`, so its URL, version, and provenance survive for outdated-library evidence.
+The path is a strong prior, not proof: an observed endpoint under a vendor root whose body carries a target signal (`/api/`, a target host, `/graphql`, `/rest/`, `/wp-json/`, `/ajax`) stays in the graph.
+A re-export barrel or theme-token module is never an Endpoint.
+The generated-bundle rule remains separate: a fingerprinted vendor bundle (`vendor-*.js`, `runtime-*.js`) is already static noise.
+
 ### 9.5 Correlation
 
 Each flow carries the page visit id and, when available, the action id.
@@ -919,6 +926,10 @@ stats:      {endpoints, parameters, flows, bytes, duration_ms,
 ```
 
 There is no `pages`, no `actions`, no `flows`, no `artifacts`, no `declared_endpoints`, no `declared_fields`, and no `coverage` block.
+
+An observed endpoint carries `vendor_script` when its path is under a canonical vendor root and its body carries no target signal.
+The curator drops that endpoint; the `scripts` list still carries the `ScriptAsset`.
+A parameter on a vendor script path is dropped with the endpoint, so it cannot re-create it through the graph edge.
 
 A parameter name is a route word, a query key, or a field name, never a data payload: a name longer than 256 characters is not a parameter (a base64 path segment is the canonical case).
 One parameter identity is one manifest record; the same `(name, position, endpoint_path, baseurl, kind)` observed on many flows is deduplicated.

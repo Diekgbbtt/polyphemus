@@ -11,7 +11,7 @@ Every other component is the deployed one: the Steel CLI, the raw-CDP sidecar, t
 
 | target | run | stop | wall | flows | endpoints | parameters | scripts | realtime | pages | actions | removed | declared | edge created/dupes | ledger | manifest |
 | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
-| ComfyUI | `e2e-comfyui-20261103T025611Z` | `frontier_empty` (complete) | 30.1 s | 564 | 538 | 52 | 482 | 11 | 1 | 0 | 0 | 0 | 546 / 18 | 13.3 MB | 0.4 MB |
+| ComfyUI | `e2e-comfyui-20261103T123532Z` | `frontier_empty` (complete) | 30.0 s | 560 | 538 | 32 | 482 | 14 | 1 | 0 | 0 | 0 | 542 / 18 | 13.2 MB | 0.5 MB |
 | SiyuCMS | `e2e-siyucms-20261103T091856Z` | `session_deadline` (partial) | 941.3 s | 12,863 | 184 | 16 | 67 | 0 | 7 | 109 | 6 | 1 | 700 / 12,163 | 47.7 MB | 0.2 MB |
 | PrestaShop | `e2e-prestashop-20261103T075740Z` | `session_deadline` (partial) | 950.7 s | 10,654 | 117 | 68 | 71 | 0 | 1 | 59 | 1 | 0 | 1,190 / 9,464 | 64.4 MB | 0.2 MB |
 
@@ -24,13 +24,29 @@ The run table reports **manifest** statistics. The knowledge graph is smaller by
 
 ### ComfyUI: 538 endpoints
 
-- The 538 observed endpoints reduce to **492 graph endpoints**:
-  - 452 under `/assets/`, 16 under `/extensions/`, 5 under `/scripts/`, 18 under `/api/`, and 1 root.
-  - 473 are JavaScript/script assets. The design keeps JavaScript as analysis surface (D17), so the curator does not drop them.
-  - 19 are application/API endpoints (`/api/*` and the root).
-- The filter drops 34 parser endpoints: 31 static (CSS, fonts, images) and 3 external (CDN). The remaining manifest-to-graph difference is the script-channel duplicate: the observed JavaScript URLs and the script records share one graph identity.
-- The manifest endpoints are unique. The 473 script records are structural duplicates of the observed JavaScript URLs; the graph `MERGE` collapses them, so they do not inflate the graph.
-- **Verdict:** the 538 is a legitimate capture count, but it is not 538 application routes. The 492-node graph is 473 JavaScript assets plus 19 app endpoints. The JavaScript family is kept by design, not by filter failure.
+- The 538 observed endpoints reduce to **57 graph endpoints** after the vendor-script classifier:
+  - 17 under `/assets/` (the application chunks), 16 under `/extensions/`, 5 under `/scripts/`, 18 under `/api/`, and 1 root.
+  - 435 of the 452 `/assets/` endpoints are third-party PrimeVue modules: 268 `lib/primevue`, 156 `lib/@primevue`, and 11 `lib/@primeuix`. They are real library source and theme data, not application code. The classifier drops them from the graph and keeps them as `ScriptAsset` evidence.
+  - 19 generated vendor bundles (5.3 MB total with the app chunks) are already dropped by the generated-bundle rule before the vendor classifier.
+- The filter drops 34 parser endpoints: 31 static (CSS, fonts, images) and 3 external (CDN). The vendor classifier drops 435 library scripts; the remaining difference is the script-channel duplicate.
+- The final run has 32 manifest parameter records and 6 graph parameters. The extra records are vendor-path, static, or duplicate variants; the graph keeps only `/api/history` and `/api/userdata` query keys.
+- The manifest endpoints are unique. The 435 library scripts are structural duplicates of the observed library URLs; the graph `MERGE` and the vendor rule remove them, so they do not inflate the graph.
+- **Verdict:** the 538 is a legitimate capture count, but it is not 538 application routes. The 57-node graph is 38 application/custom scripts, 18 API routes, and the root. The PrimeVue library family is third-party source and does not belong in the target graph.
+
+### Vendor-script sample audit
+
+Twenty samples from the live target and the crawl ledger show two families:
+
+| sample family | examples | size and lines | minified | target `/api/` | verdict |
+| - | - | - | - | - | - |
+| Application chunks | `index--PH2IHOc.js`, `index-CLA0XGYE.js`, `GraphView-*.js`, `ComfyQueueButton-*.js`, `audioService-*.js`, `mathUtil-*.js` | 502 B to 1.64 MB; 3 to 84 lines; 1.4% to 4.2% whitespace | yes (Vite/Rollup) | the main bundle has `/api/download/models/833921`; the smaller chunks import the API client | legitimate JS analysis surface; source maps present; no `_0x` obfuscation |
+| PrimeVue library | `lib/primevue/button`, `lib/primevue/dialog`, `lib/primevue/datatable`, `lib/@primevue/core/config`, `lib/@primeuix/styled`, `lib/@primevue/themes/aura/button` | 123 B to 272 KB; 4 to 6,425 lines; 9% to 34% whitespace | no; readable library source or theme tokens | none | third-party library; noise as a target Endpoint |
+
+The main `index--PH2IHOc.js` is truncated at the 1 MB body cap (declared 1.64 MB). The source map sits beyond the captured prefix; the JS analysis phase must fetch it. The library modules have source maps too, but their content carries no target-specific surface.
+
+The classifier uses the vendor roots above. A vendor-path script whose body carries `/api/`, the target host, `/graphql`, `/rest/`, `/wp-json/`, or `/ajax` stays in the graph. The `ScriptAsset` record keeps every vendor URL for version analysis, so a known outdated jQuery or CKEditor path is still visible.
+
+The path rule is not 100% proof. Application code can live under `/lib/` (Magento-style layouts, custom Node apps, monorepo shared modules), and a vendor file can carry target configuration. The content signal covers the common cases; a project-specific allowlist can cover the rest.
 
 ### SiyuCMS: 5,657 parameters
 
@@ -56,7 +72,7 @@ The run table reports **manifest** statistics. The knowledge graph is smaller by
 The two authenticated targets stop at the 15-minute wall (`session_deadline`), not the 300-action cap.
 The frontier is time-bounded, not exhausted; the partial flag is correct.
 
-## 2. N1 - N9 results
+## 2. N1 - N10 results
 
 | id | requirement | result | evidence |
 | - | - | - | - |
@@ -69,6 +85,7 @@ The frontier is time-bounded, not exhausted; the partial flag is correct.
 | N7 | determinism and schema stability | pass | every manifest is `steel-crawl/v2`; the v1 parser still consumes the same delta vocabulary; the run/stats counts are internally consistent. Repeated ComfyUI runs differ in flow count (cache state), never in schema or invariants. |
 | N8 | observability and traceability | pass | the recon run is `complete`, one `steel_crawl` job is `success`, the graph endpoint/parameter count equals the noise-filtered parser count, the ledger and edge are readable, the engine reports `session_closed=true`, and the session catalogue has no entry after the stop. |
 | N9 | resource bounds on hostile surfaces | pass | the URL cap, parameter-name cap, parameter dedup, realtime frame caps, ledger body dedup, and flush dedup keep the run proportional to the distinct capture budget. The same PrestaShop crawl that previously produced a 5.3 GB ledger and a 2.6 GB manifest (and was OOM-killed at 13.7 GB RSS) now produces a 64.4 MB ledger and a 0.2 MB manifest. |
+| N10 | vendor script legitimacy | pass | the ComfyUI graph has 57 endpoints: 17 application `/assets/` chunks, 16 `/extensions/`, 5 `/scripts/`, 18 `/api/`, and the root. The 435 PrimeVue library scripts are `ScriptAsset` evidence, not endpoints; the app chunks stay. The classifier keeps a vendor-path body that carries `/api/`, the target host, `/graphql`, `/rest/`, `/wp-json/`, or `/ajax`. |
 
 ## 3. Defects the live gate found and fixed
 
