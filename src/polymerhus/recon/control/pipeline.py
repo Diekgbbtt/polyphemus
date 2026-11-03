@@ -544,11 +544,17 @@ async def run_pipeline(
                         # (e.g. the `httpx,...` subset, D-SEEDNORM), it seeds the
                         # authority-bearing probe target instead - the same
                         # injection every later-phase Subdomain consumer gets.
-                        input_assets = (
-                            _inject_seed_host([], probe_target)
-                            if job.consumes == "Subdomain"
-                            else seed_assets(settings)
-                        )
+                        # A BaseURL-consuming subset (`steel_crawl` alone) reads
+                        # the target BaseURL the caller pre-curated, so the
+                        # crawl starts at the exact authenticated entry.
+                        if job.consumes == "BaseURL":
+                            input_assets = await asyncio.to_thread(
+                                read_assets, "BaseURL", project_id
+                            )
+                        elif job.consumes == "Subdomain":
+                            input_assets = _inject_seed_host([], probe_target)
+                        else:
+                            input_assets = seed_assets(settings)
                     elif job.consumes_where is not None:
                         input_assets = await asyncio.to_thread(
                             read_assets, job.consumes, project_id, job.consumes_where

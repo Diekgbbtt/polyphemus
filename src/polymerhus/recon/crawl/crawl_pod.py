@@ -65,6 +65,20 @@ class CrawlPodState(PodState, total=False):
 def _manifest_is_empty(manifest: dict | None) -> bool:
     if not manifest or not isinstance(manifest, dict):
         return True
+    if manifest.get("schema_version") == "steel-crawl/v2":
+        # A v2 manifest is the graph input, not the legacy endpoint list: a
+        # real crawl that captured flows but declared no endpoint (an
+        # unauthenticated canvas app, for example) is still a valid result.
+        stats = manifest.get("stats") or {}
+        return not any(
+            (
+                manifest.get("endpoints"),
+                manifest.get("parameters"),
+                manifest.get("scripts"),
+                manifest.get("realtime"),
+                stats.get("flows"),
+            )
+        )
     return not any(manifest.get(key) for key in _EMPTY_MANIFEST_KEYS)
 
 
@@ -85,21 +99,83 @@ def _coverage_observation(input_asset: dict, reason: str) -> Observation:
     )
 
 
-def default_run_crawl_fn(target: str, *, scope: list[str], steel_state=None,
-                         browser_auth=None):
-    """Real collaborator: run the agentic Steel crawl loop synchronously.
+def legacy_agentic_run_crawl_fn(target: str, *, scope: list[str], steel_state=None,
+                                browser_auth=None):
+    """The retired agentic Steel crawl loop, kept for a controlled fallback.
 
-    Wraps `crawl_agent.run_crawl` (async) behind `run_coro_blocking`,
-    resolving the crawl-agent module lazily so importing this module
-    performs no I/O. `steel_state` is the resolved per-account state file;
-    `browser_auth` is the feed-projected material (cookies, headers, storage
-    tokens). Both are empty for an anonymous crawl.
+    Wraps `crawl_agent.run_crawl` (async) behind `run_coro_blocking`. The new
+    `steel_crawl` job uses `live_run_crawl_fn`; this function remains only so a
+    deployment can pin the old loop while the new engine is being validated.
     """
     from polymerhus.recon.crawl import crawl_agent
     from polymerhus.recon.control.async_bridge import run_coro_blocking
 
     return run_coro_blocking(crawl_agent.run_crawl(
         target, scope=scope, steel_state=steel_state, browser_auth=browser_auth))
+
+
+def live_run_crawl_fn(
+    target: str,
+    *,
+    scope: list[str],
+    steel_state=None,
+    browser_auth=None,
+    extra=None,
+):
+    """The production `steel_crawl` collaborator: the deterministic engine.
+
+    The pod passes the job's `extra`, which carries the project and run ids,
+    the selected account, and the feed-projected browser material. The engine
+    attaches to the pre-authenticated session, runs the real CDP sidecar, the
+    CLI page factory, the Jev policy, and the bounded DFS, and returns the v2
+    manifest dict the pod's parser consumes. Every runtime failure is raised to
+    the pod's `fail` node, which records reduced coverage.
+    """
+    import os  # noqa: PLC0415
+
+    extra = dict(extra or {})
+    project_id = str(extra.get("project_id") or "")
+    run_id = str(extra.get("run_id") or "")
+    if not project_id or not run_id:
+        raise RuntimeError(
+            "the live steel crawl needs a project_id and a run_id in its extra"
+        )
+    from polymerhus.app.data_root import DATA_ROOT  # noqa: PLC0415
+    from polymerhus.recon.crawl.steel.live import (  # noqa: PLC0415
+        LiveRunContext,
+        run_live_crawl,
+    )
+
+    session_name = str(
+        extra.get("steel_session") or f"steel-crawl-{project_id}"
+    )
+    cli = os.environ.get("STEEL_CRAWL_CLI", "").strip()
+    prefix = (cli, "browser") if cli else ("steel", "browser")
+    browser_auth = browser_auth or {}
+    context = LiveRunContext(
+        project_id=project_id,
+        run_id=run_id,
+        session_name=session_name,
+        target_url=target,
+        scope=list(scope),
+        data_root=DATA_ROOT,
+        auth_probe=browser_auth.get("auth_probe"),
+        login_url=browser_auth.get("login_url"),
+        account=extra.get("auth_account"),
+        edge_url=os.environ.get("KALI_HTTP_HISTORY_EDGE_URL") or None,
+        edge_token=os.environ.get("KALI_HTTP_HISTORY_EDGE_TOKEN") or None,
+        cli_prefix=prefix,
+        max_duration_s=float(
+            os.environ.get("STEEL_CRAWL_MAX_DURATION_S", "900")
+        ),
+        max_actions=int(os.environ.get("STEEL_CRAWL_MAX_ACTIONS", "300")),
+        coverage={"scope": list(scope)},
+    )
+    result = run_live_crawl(context)
+    return result.manifest.model_dump(mode="json")
+
+
+default_run_crawl_fn = live_run_crawl_fn
 
 
 def _host_of(url: str) -> str:
@@ -138,7 +214,7 @@ def _resolve_crawl_scope(extra: dict, target: str) -> list[str]:
 def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
     """Build the compiled crawl-pod subgraph, injecting the side-effecting
     collaborators: run_crawl_fn(target, scope=scope, steel_state=...,
-    browser_auth=...) -> manifest dict, parse_fn(stdout) ->
+    browser_auth=..., extra=...) -> manifest dict, parse_fn(stdout) ->
     list[AssetDelta], triage_fn(exec_result, assets, job) ->
     list[Observation] (called with a synthetic exec_result carrying the
     manifest JSON as stdout, mirroring pod.py's triager signature),
@@ -151,7 +227,16 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
     present only for a `use_auth` job with a resolved account. A non-auth
     crawl, or an auth-capable job run without a resolved account, crawls
     anonymously. There is no interactive path and no operator prompt.
+
+    The `extra` keyword is passed only to a collaborator that declares it, so
+    the three-argument fakes of the contract tier stay compatible.
     """
+    import inspect  # noqa: PLC0415
+
+    try:
+        accepts_extra = "extra" in inspect.signature(run_crawl_fn).parameters
+    except (TypeError, ValueError):
+        accepts_extra = False
 
     def crawl(state: CrawlPodState) -> dict:
         input_asset = state.get("input_asset") or {}
@@ -165,9 +250,15 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
 
         steel_state = extra.get("steel_state") or None
         browser_auth = extra.get("browser_auth") or None
+        kwargs = {
+            "scope": scope,
+            "steel_state": steel_state,
+            "browser_auth": browser_auth,
+        }
+        if accepts_extra:
+            kwargs["extra"] = extra
         try:
-            manifest = run_crawl_fn(target, scope=scope, steel_state=steel_state,
-                                    browser_auth=browser_auth)
+            manifest = run_crawl_fn(target, **kwargs)
         except Exception as exc:  # noqa: BLE001 - best-effort, never raise
             return {"manifest": None, "crawl_error": str(exc)}
 
@@ -269,8 +360,12 @@ def crawl_pod_invoke(pod_input: dict, job, run_id: str, phase: int) -> PodExport
     project_id scoping (`extra["project_id"]`)."""
     import uuid
 
-    extra = pod_input.get("extra") or {}
+    extra = dict(pod_input.get("extra") or {})
     project_id = extra.get("project_id", run_id)
+    # The live engine needs the run identity; the pod's `extra` is the one
+    # channel the pipeline already threads to the crawl collaborator.
+    extra.setdefault("run_id", run_id)
+    extra.setdefault("phase", phase)
     session_id = f"{run_id}-{phase}-{job.tool}-{uuid.uuid4().hex[:8]}"
 
     pod_state = {
@@ -280,6 +375,8 @@ def crawl_pod_invoke(pod_input: dict, job, run_id: str, phase: int) -> PodExport
         "extra": extra,
         "session_id": session_id,
         "project_id": project_id,
+        "run_id": run_id,
+        "phase": phase,
     }
     # Langfuse tracing: the crawl-pod tree (crawl/parse/triager/curator) becomes
     # the per-pod span tree. Empty list (Langfuse unconfigured) is inert.

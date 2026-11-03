@@ -564,8 +564,13 @@ def _available_types_by_phase(subset: set[str] | None = None) -> list[tuple[list
     subdomain_takeover) regardless of whether a discovery job (subfinder/
     amass/dnsx) is in the selected subset - so a subset that runs httpx
     without subfinder is valid at runtime and must not be rejected here.
+
+    `BaseURL` is seeded for a target-scoped subset: the caller pre-curates the
+    target's BaseURL (the exact authenticated entry) and runs the crawl alone
+    (`steel_crawl`). A full plan still produces its BaseURLs upstream; the
+    seed only admits the subset that starts at the crawl.
     """
-    available = {DOMAIN, "Subdomain"}
+    available = {DOMAIN, "Subdomain", "BaseURL"}
     result = []
     for phase in PHASES:
         phase_jobs = [j for j in phase if subset is None or j in subset]
@@ -579,7 +584,8 @@ def validate_job_subset(subset: list[str]) -> None:
     """Raise ValueError if any selected job's `consumes` type is not produced
     by an earlier selected job (and is not the pre-seeded Domain root, nor
     "Subdomain" - always satisfied by the probe target `pipeline._inject_seed_host`
-    injects into every Subdomain-consuming job)."""
+    injects into every Subdomain-consuming job, nor "BaseURL" - pre-curated by a
+    target-scoped crawl subset)."""
     unknown = [j for j in subset if j not in JOBS]
     if unknown:
         raise ValueError(f"unknown job(s): {unknown}")
