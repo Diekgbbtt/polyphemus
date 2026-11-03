@@ -12,11 +12,11 @@ Every other component is the deployed one: the Steel CLI, the raw-CDP sidecar, t
 | target | run | stop | wall | flows | endpoints | parameters | scripts | realtime | pages | actions | removed | declared | edge created/dupes | ledger | manifest |
 | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 | ComfyUI | `e2e-comfyui-20261103T025611Z` | `frontier_empty` (complete) | 30.1 s | 564 | 538 | 52 | 482 | 11 | 1 | 0 | 0 | 0 | 546 / 18 | 13.3 MB | 0.4 MB |
-| SiyuCMS | `e2e-siyucms-20261103T023716Z` | `session_deadline` (partial) | 951.2 s | 11,811 | 186 | 5,657 | 66 | 0 | 6 | 106 | 6 | 1 | 611 / 11,200 | 200.4 MB | 19.1 MB |
+| SiyuCMS | `e2e-siyucms-20261103T091856Z` | `session_deadline` (partial) | 941.3 s | 12,863 | 184 | 16 | 67 | 0 | 7 | 109 | 6 | 1 | 700 / 12,163 | 47.7 MB | 0.2 MB |
 | PrestaShop | `e2e-prestashop-20261103T075740Z` | `session_deadline` (partial) | 950.7 s | 10,654 | 117 | 68 | 71 | 0 | 1 | 59 | 1 | 0 | 1,190 / 9,464 | 64.4 MB | 0.2 MB |
 
 All runs: 0 edge rejections, 0 unrecoverable pages, the session catalogue clean after the stop, and the `steel_crawl` job `success`.
-The final PrestaShop run also reports `session_closed=true` from the engine itself; the earlier runs' catalogues were empty after the stop.
+The final SiyuCMS and PrestaShop runs report `session_closed=true` from the engine itself; the earlier runs' catalogues were empty after the stop.
 
 ## 2. Count audit: manifest counts versus graph counts
 
