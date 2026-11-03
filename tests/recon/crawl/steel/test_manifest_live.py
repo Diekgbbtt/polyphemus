@@ -39,7 +39,13 @@ def _page():
     )
 
 
-def _flow(request_id: str, url: str, *, status: int = 200) -> Flow:
+def _flow(
+    request_id: str,
+    url: str,
+    *,
+    status: int = 200,
+    body: bytes = b'{"ok":true}',
+) -> Flow:
     return Flow(
         request_id=request_id,
         page_id="page_1",
@@ -52,7 +58,7 @@ def _flow(request_id: str, url: str, *, status: int = 200) -> Flow:
         response_headers={"Content-Type": "application/json"},
         mime_type="application/json",
         encoded_data_length=10,
-        response_body=b'{"ok":true}',
+        response_body=body,
         response_body_sha256="a" * 64,
         finished=True,
     )
@@ -233,6 +239,32 @@ def test_a_repeated_observed_parameter_is_one_manifest_record():
         ).hexdigest()[:16]
     ]
     assert manifest.stats.parameters == 1
+
+
+def test_a_vendor_script_is_marked_unless_its_body_has_a_target_signal():
+    page = _page()
+    library = _flow(
+        "r1", "http://t.example/assets/lib/primevue/button/index.mjs",
+        body=b"export const button = {}",
+    )
+    app = _flow(
+        "r2", "http://t.example/assets/lib/app-api.js",
+        body=b"fetch('/api/items')",
+    )
+    output = RunOutput(
+        frontier=FrontierResult(
+            stop_reason="frontier_empty", page_visits=(PageVisit(page=page),)
+        ),
+        flows=(library, app),
+        artifacts=((_artifact("http_1"), {}), (_artifact("http_2"), {})),
+        flow_artifacts={"r1": "http_1", "r2": "http_2"},
+    )
+
+    manifest = build_manifest_from_output(output, run=_run(), flows=output.flows)
+
+    by_path = {record.path: record for record in manifest.endpoints}
+    assert by_path["/assets/lib/primevue/button/index.mjs"].vendor_script is True
+    assert by_path["/assets/lib/app-api.js"].vendor_script is False
 
 
 def test_a_flow_only_run_is_a_valid_non_empty_manifest():

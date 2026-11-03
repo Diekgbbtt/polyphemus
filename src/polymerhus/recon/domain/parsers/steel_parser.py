@@ -22,6 +22,7 @@ Pure, deterministic, tolerant of malformed/missing-key input - never raises.
 """
 import json
 
+from polymerhus.recon.domain.noise_filter import is_vendor_script_path
 from polymerhus.recon.domain.parsers._urls import base_and_path, url_to_deltas
 from polymerhus.recon.domain.types import AssetDelta, Edge
 
@@ -173,6 +174,7 @@ def _parse_v2(manifest: dict) -> list[AssetDelta]:
                         "action_id": entry.get("action_id"),
                         "enctype": entry.get("enctype"),
                         "field_names": list(entry.get("field_names") or []),
+                        "vendor_script": entry.get("vendor_script"),
                     }
                 ),
                 query_params=[],
@@ -265,6 +267,7 @@ def _parse_v2(manifest: dict) -> list[AssetDelta]:
                         {
                             "script_id": entry.get("script_id"),
                             "provenance": entry.get("provenance"),
+                            "vendor_script": is_vendor_script_path(url),
                         }
                     ),
                     query_params=[],

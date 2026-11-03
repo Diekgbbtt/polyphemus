@@ -20,10 +20,12 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.recon.crawl.steel.capture.typing import RealtimeRecord, ScriptAsset
+from polymerhus.recon.domain.noise_filter import is_vendor_script_path
 
 SCHEMA_VERSION = "steel-crawl/v2"
 
@@ -63,6 +65,10 @@ class EndpointRecord(BaseModel):
     action_id: str | None = None
     enctype: str | None = None
     field_names: tuple[str, ...] = ()
+    # A script under a canonical vendor root with no target signal. The
+    # manifest keeps the record; the curator drops it from the graph. False
+    # means the body carried a target signal and the endpoint stays.
+    vendor_script: bool = False
 
 
 class ParameterRecord(BaseModel):
@@ -216,6 +222,9 @@ def build_manifest_from_output(
     for flow in flows:
         path, baseurl = split_url(flow.url)
         key = endpoint_key(flow.method, path, baseurl)
+        vendor_script = (
+            is_vendor_script_path(path) and not _has_target_signal(flow)
+        )
         existing = endpoints.get(key)
         if existing is None:
             endpoints[key] = EndpointRecord(
@@ -231,11 +240,17 @@ def build_manifest_from_output(
                 http_artifact_id=flow_artifact.get(flow.request_id),
                 source_page_id=flow.page_id,
                 action_id=flow.action_id,
+                vendor_script=vendor_script,
             )
-        elif existing.status_code is None and flow.status is not None:
-            endpoints[key] = existing.model_copy(
-                update={"status_code": flow.status}
-            )
+        else:
+            update: dict[str, Any] = {}
+            if existing.status_code is None and flow.status is not None:
+                update["status_code"] = flow.status
+            if existing.vendor_script and not vendor_script:
+                # A later flow proved the path carries application surface.
+                update["vendor_script"] = False
+            if update:
+                endpoints[key] = existing.model_copy(update=update)
 
     parameters: list[ParameterRecord] = []
     seen_parameters: set[str] = set()
@@ -346,6 +361,32 @@ def build_manifest_from_output(
         duration_ms=duration_ms,
         removed_elements=len(getattr(output, "removed", ())),
         unrecoverable_pages=len(getattr(frontier, "unrecoverable", ())) if frontier else 0,
+    )
+
+
+def _has_target_signal(flow) -> bool:
+    """Whether a captured script body carries target-specific surface.
+
+    A vendor path is a strong prior, not proof. A body that names the target
+    host or an application route marker stays in the graph even under `/lib/`.
+    The markers are deliberately narrow: a generic library that merely uses
+    `fetch` is still a library.
+    """
+    body = getattr(flow, "response_body", None) or b""
+    if not body:
+        return False
+    host = (urlsplit(flow.url).hostname or "").lower()
+    if host and host.encode("utf-8") in body:
+        return True
+    return any(
+        marker in body
+        for marker in (
+            b"/api/",
+            b"/graphql",
+            b"/rest/",
+            b"/wp-json/",
+            b"/ajax",
+        )
     )
 
 

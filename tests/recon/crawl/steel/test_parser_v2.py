@@ -198,6 +198,34 @@ def test_a_v2_script_mints_a_steel_script_endpoint():
     assert script.props["provenance"] == "debugger"
 
 
+def test_a_vendor_script_is_marked_and_filtered_from_the_graph():
+    data = manifest()
+    data["scripts"] = [
+        {
+            "script_url": "https://example.test/assets/lib/primevue/button/index.mjs",
+            "script_id": "11",
+            "provenance": "debugger",
+        }
+    ]
+    deltas = parse(json.dumps(data))
+    script = next(
+        delta
+        for delta in deltas
+        if delta.type == "Endpoint"
+        and delta.identity["path"] == "/assets/lib/primevue/button/index.mjs"
+    )
+    assert script.props["vendor_script"] is True
+
+    from polymerhus.recon.domain.noise_filter import filter_deltas
+
+    kept = filter_deltas(deltas, scope_domain="example.test")
+    assert all(
+        delta.identity.get("path") != "/assets/lib/primevue/button/index.mjs"
+        for delta in kept
+        if delta.type == "Endpoint"
+    )
+
+
 def test_v2_realtime_and_errors_are_not_graph_deltas():
     deltas = parse(json.dumps(manifest()))
 

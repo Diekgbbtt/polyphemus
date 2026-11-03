@@ -213,6 +213,58 @@ def is_static_file_path(path: str) -> bool:
         return False
     return "." + filename.rsplit(".", 1)[-1].lower() in STATIC_FILE_EXTENSIONS
 
+# Canonical vendor roots across the common web stacks. A script under one of
+# these roots is third-party library code by default: it is retained as
+# ScriptAsset evidence, not as a graph Endpoint. The roots cover the common
+# package and framework layouts; the filename-based generated-bundle rule
+# covers the rest.
+VENDOR_SCRIPT_SEGMENTS = frozenset({
+    "lib", "libs", "libraries",
+    "vendor", "vendors",
+    "node_modules", "bower_components", "jspm_packages",
+    "webjars", "meta-inf",
+    "third_party", "third-party", "external", "deps",
+    "wp-includes", "wp-admin",
+    "_next", "_nuxt", "@vite", "@fs",
+    "sitecore", "_layouts", "etc.clientlibs",
+})
+
+
+def is_vendor_script_path(path: str) -> bool:
+    """Whether the path lives under a canonical third-party script root.
+
+    The path test is a strong prior, not proof: an application can put its own
+    code under `/lib/`. The manifest marks the observed endpoint with a target
+    signal when the body carries `/api/`, a target host, or another application
+    marker, and the curator keeps that endpoint even under a vendor root.
+    """
+    segments = [
+        segment.lower()
+        for segment in (path or "").replace("\\", "/").split("/")
+        if segment
+    ]
+    if any(segment in VENDOR_SCRIPT_SEGMENTS for segment in segments):
+        return True
+    if "sap" in segments and "ui" in segments:
+        return True
+    if {"media", "system", "js"}.issubset(segments):
+        return True
+    return False
+
+
+def is_vendor_script_endpoint(delta: AssetDelta) -> bool:
+    """A Script Endpoint under a canonical vendor root."""
+    if delta.type != "Endpoint":
+        return False
+    path = delta.identity.get("path", "/")
+    if not is_vendor_script_path(path):
+        return False
+    resource_type = str(delta.props.get("resource_type") or "").lower()
+    source = str(delta.props.get("source") or "").lower()
+    if resource_type == "script" or source in ("steel-script", "steel_script"):
+        return True
+    return path.lower().endswith((".js", ".mjs", ".cjs"))
+
 # Fingerprinted content-hashed bundle: `app.4f3a2b1c.js`, `main-deadbeef.css`,
 # `x_1a2b3c4d.mjs`. A hex hash of >= 8 chars delimited before a js/css/mjs ext.
 _FINGERPRINT_RE = re.compile(r"[.\-_][0-9a-f]{8,}\.(?:js|css|mjs)$")
@@ -510,6 +562,16 @@ def filter_deltas(
                 continue
             if classify_endpoint(path, has_params=_endpoint_has_params(delta)) == "static":
                 continue
+            # Canonical vendor-script root: third-party library code is not a
+            # graph Endpoint. A manifest-set `vendor_script=False` means the
+            # body carried a target signal (for example `/api/`), so the
+            # endpoint is kept; an absent flag (older manifest) falls back to
+            # the path rule.
+            if (
+                is_vendor_script_endpoint(delta)
+                and delta.props.get("vendor_script") is not False
+            ):
+                continue
         if delta.type == "Parameter":
             # A parameter anchored to a static-render path (the Steel path-id
             # detector can mint `plugins_id` from `/static/plugins/...`) is not
@@ -519,6 +581,12 @@ def filter_deltas(
             if is_malformed_concat_path(path):
                 continue
             if classify_endpoint(path) == "static":
+                continue
+            # A parameter on a vendor script path would re-create the dropped
+            # endpoint through the HAS_PARAMETER edge MERGE.
+            if is_vendor_script_path(path) and path.lower().endswith(
+                (".js", ".mjs", ".cjs")
+            ):
                 continue
             # A path parameter on a static file is a directory/date/stem false
             # positive (`/uploads/20181226/<hash>.png` -> `uploads_id`,

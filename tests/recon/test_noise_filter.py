@@ -286,6 +286,57 @@ def test_filter_keeps_a_path_parameter_on_a_real_route():
     assert filter_deltas([param]) == [param]
 
 
+def _script_endpoint(
+    path, *, source="steel-script", resource_type="Script", vendor=None
+):
+    props = {
+        "url": f"https://h{path}",
+        "source": source,
+        "resource_type": resource_type,
+    }
+    if vendor is not None:
+        props["vendor_script"] = vendor
+    return AssetDelta(
+        type="Endpoint",
+        identity={"path": path, "method": "GET", "baseurl": "https://h"},
+        props=props,
+    )
+
+
+def test_filter_drops_canonical_vendor_scripts():
+    for path in (
+        "/lib/jquery.min.js",
+        "/assets/lib/primevue/button/index.mjs",
+        "/static/js/lib/app.js",
+        "/node_modules/vue/dist/vue.js",
+        "/vendor/app.js",
+        "/webjars/vue.js",
+        "/libraries/app.js",
+        "/_next/static/chunks/main.js",
+        "/sap/ui/core.js",
+        "/wp-includes/js/jquery.js",
+    ):
+        assert filter_deltas([_script_endpoint(path)]) == []
+
+
+def test_filter_keeps_a_vendor_path_script_with_a_target_signal():
+    delta = _script_endpoint("/lib/app-api.js", vendor=False)
+
+    assert filter_deltas([delta]) == [delta]
+
+
+def test_filter_keeps_application_chunks_and_non_vendor_builds():
+    for path in (
+        "/assets/index-abc.js",
+        "/assets/ComfyQueueButton-abc.js",
+        "/dist/app.js",
+        "/build/app.js",
+        "/library/report.js",
+    ):
+        delta = _script_endpoint(path, source="cdp")
+        assert filter_deltas([delta]) == [delta]
+
+
 def test_filter_leaves_non_endpoint_labels_untouched():
     params = [
         AssetDelta(type="Parameter", identity={"name": "id", "position": "query",
