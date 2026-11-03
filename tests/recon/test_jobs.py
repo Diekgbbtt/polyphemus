@@ -296,6 +296,15 @@ def test_validate_job_subset_with_steel_crawl_passes():
     validate_job_subset(["subfinder", "httpx", "steel_crawl"])
 
 
+def test_validate_job_subset_steel_crawl_alone_reads_a_pre_curated_baseurl():
+    # The e2e gate seeds the target BaseURL and runs the crawl alone.
+    validate_job_subset(["steel_crawl"])
+
+
+def test_build_phase_plan_steel_crawl_alone_is_one_phase():
+    assert build_phase_plan(["steel_crawl"]) == [["steel_crawl"]]
+
+
 def test_jsluice_consumes_js_endpoints_via_path_selector_and_is_batched():
     job = JOBS["jsluice"]
     assert job.consumes == "Endpoint"
