@@ -30,7 +30,7 @@ import json
 from typing import Callable, Literal
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.http_history_contract import (
     REPLAY_HTTP_REQUEST_DESCRIPTION,
@@ -58,6 +58,8 @@ class TriagerDecision(BaseModel):
     runner execution.
     `declined_attribute` is the triager's claimed basis; the graph reconciles it
     with the first-uncovered diff and records the RESOLVED basis."""
+
+    model_config = ConfigDict(extra="forbid")
 
     classification: str = ""
     action: Literal["terminate", "variant"] = "terminate"
@@ -280,6 +282,8 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
             model_factory=hc.model_factory)
         if result is None:
             raise ValueError("unmet triager generation")
+        if isinstance(result, dict):
+            result = TriagerDecision.model_validate(result)
         return result.model_dump()
     except Exception as exc:  # noqa: BLE001 - fail-open safe terminal
         from polymerhus.app.llm.provider_failure import as_provider_error

@@ -275,6 +275,36 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatc
     assert "third-party miner verdict" in decision["note"]
 
 
+def test_triager_seam_normalises_a_dict_structured_response(tmp_path, monkeypatch):
+    """The staged triage shares one thread across four schemas, so a dict can
+    survive from a previous stage. The miner must validate it into
+    TriagerDecision, never call `model_dump` on the dict."""
+    log = ExperimentLog()
+    store = PodMemoryStore(tmp_path)
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "stateful_turn",
+        lambda *a, **kw: {
+            "classification": "symptom-absent",
+            "action": "terminate",
+            "verdict": "unsuccessful",
+            "terminal_reason": "space-exhausted",
+            "clean": True,
+            "note": "dict response from the current turn",
+        })
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
+                           spec_id=SPEC_ID, log=log, variant_ref="v0",
+                           model_factory=_factory([]))
+
+    decision = _run(_drive_triager(SPEC, hc, log))
+
+    assert decision["terminal_reason"] == "space-exhausted"
+    assert decision["clean"] is True
+    assert "triager degraded" not in decision["note"]
+
+
 def _drive_stage(stage_fn, spec, hc, log, delta="stage delta"):
     async def _drive():
         with bind_pod_session("run-x", "", SPEC_ID, role_id=POD_TRIAGER_ROLE,
