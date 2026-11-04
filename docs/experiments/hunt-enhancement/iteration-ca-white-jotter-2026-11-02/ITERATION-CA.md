@@ -918,3 +918,55 @@ late-run losses), one knowledge-base cause (004), one class-selection cause
   terminal path.
 - Run C.b on an isolated host.
 - Keep the sibling `iter-c-eval-hunting-config` out of this convergence.
+
+## Follow-up fixes (2026-11-04)
+
+### Triager structured-response staleness
+
+The staged triage runs four schemas on one `pod_triager` thread: assessment,
+divergence, mine, and terminal.
+A turn that produces no new structured output leaves the prior checkpoint value
+in the state.
+The miner read the prior stage's response.
+When that response was a dict, `default_triager_fn` called `model_dump` on it,
+and the broad except mapped the `AttributeError` to `no-symptom-evidence`.
+
+The turn boundary now ignores a structured response unchanged from the prior
+checkpoint, validates a dict against the current schema, and rejects a foreign
+object.
+`TriagerDecision` forbids extra fields, so an assessment or divergence dict
+cannot masquerade as a triager verdict.
+Commit `cfb4f0ad`.
+
+The runtime traces that would confirm which stage left the dict live in the
+eval Langfuse project.
+The eval server was unreachable at fix time, so the code-level mechanism is
+confirmed and the exact trigger (KB crash versus runner termination) is not.
+
+### Notes contract
+
+The C.a modeller made 38 `notes` writes with `option`/`body` but no `cmd`.
+The tool description now states the requirement on the first line and repeats
+it in the `cmd` field, with a valid write shape.
+Commit `6d58e9e9`.
+
+### Pod trajectory assessment
+
+The IDOR overwrite pod ran a genuine control-read, pagination, host/port, and
+pre-image sequence.
+At its last observation it found the list record carrying its marker while the
+canonical read still showed the pre-image.
+That is a list/read divergence, not the full spec symptom.
+It was cut while still investigating.
+
+The XSS id-addressed pod ran the control read, the JS route inventory, the
+pre-image comparison, and the id-addressed write.
+The write did not change the record.
+Its browser confirmation produced a timeout warning before the target
+substitution.
+Its execution was genuine; the overwrite did not land.
+
+Both pods stayed on the spec's axes and did not fabricate evidence.
+The IDOR pod's bottleneck was the target behaviour and the substitution, not
+Kali.
+The XSS pod's browser stage is the Kali cost.
