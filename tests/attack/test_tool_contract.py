@@ -106,6 +106,23 @@ def test_modeller_notes_empty_call_teaches_the_discriminator(tmp_path):
     assert "read" in detail and "write" in detail
 
 
+def test_modeller_notes_description_front_loads_the_required_cmd(tmp_path):
+    """The C.a run rejected 38 notes writes that supplied `option` and `body`
+    but omitted `cmd`. The contract must state the requirement on the first
+    line, and the `cmd` field must repeat it, so a write-intent call cannot
+    read as a complete request."""
+    tool = _surface(ThreatModelStore(root_dir=tmp_path))["notes"]
+    first = tool.description.strip().splitlines()[0]
+    assert first.startswith("REQUIRED")
+    assert "cmd" in first
+    assert "every call" in first.lower()
+    assert "do not imply" in tool.description.lower()
+
+    cmd_field = ModellerNotesArgs.model_fields["cmd"]
+    assert "REQUIRED" in cmd_field.description
+    assert "every call" in cmd_field.description.lower()
+
+
 def test_modeller_notes_invalid_option_is_a_coded_rejection(tmp_path):
     """An invalid enum value is a rejected call the model can act on, not a
     raise - and nothing is persisted."""

@@ -585,17 +585,23 @@ class ModellerAssessImpactTool(BaseTool):
 _NOTE_ACTIONS = ("append", "update", "delete")
 
 _NOTES_DESCRIPTION = (
+    "REQUIRED on every call: `cmd` must be exactly \"read\" or \"write\". "
+    "A call without it is rejected even when `option`, `note_name`, and "
+    "`body` are present; those fields do NOT imply a write.\n"
     "Read or write the project's episodic notes through the per-project threat "
     "model store's notes file.\n"
     "The note key is BOUND to the current unit: `<unit_name>:<note_name>` - you "
     "supply only the note name, never the unit.\n"
-    "Commands: read / write. A write MUST set cmd='write' and an `option` "
-    "(append | update | delete); `kind` is one of "
-    f"{', '.join(NOTE_KINDS)}. Each reasoning phase ends with ONE episodic note "
-    "through this tool: the decision nodes and the rationales of the branches you "
-    "took, in prose.\n"
-    "A read with `key` (a note name or a `<unit_name>:<note_name>` key) filters "
-    "to that note; a read with no key returns the unit's notes, latest-first."
+    "A write is `cmd=\"write\"` plus `option` (append | update | delete) and "
+    "`note_name`; `kind` is one of "
+    f"{', '.join(NOTE_KINDS)}. Example: "
+    "{\"cmd\": \"write\", \"option\": \"append\", \"note_name\": \"grounding\", "
+    "\"kind\": \"freeform\", \"body\": \"...\"}.\n"
+    "Each reasoning phase ends with ONE episodic note through this tool: the "
+    "decision nodes and the rationales of the branches you took, in prose.\n"
+    "A read is `cmd=\"read\"`; with `key` (a note name or a "
+    "`<unit_name>:<note_name>` key) it filters to that note, and with no key it "
+    "returns the unit's notes, latest-first."
 )
 
 
@@ -604,7 +610,9 @@ class ModellerNotesArgs(BaseModel):
     unit key bound on the handle, so no request field carries the unit."""
 
     cmd: Literal["read", "write"] = Field(
-        description="The operation: 'read' or 'write' (required).")
+        description=(
+            "REQUIRED on every call: 'read' or 'write'. Never omit it; "
+            "`option` and `body` do not imply a write."))
     option: Literal["append", "update", "delete"] | None = Field(
         default=None, description="The write option.")
     key: str = Field(
