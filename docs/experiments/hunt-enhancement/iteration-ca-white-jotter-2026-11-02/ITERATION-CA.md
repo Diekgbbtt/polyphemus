@@ -693,8 +693,9 @@ GT-004 and GT-006 stay missed.
   path (10.7%), with 2 cross-unit references. D counted 4 chain pairs over 55
   rows. The C.a row rate is lower because 13 units were abandoned.
 - **90-minute watchdog.** 13 of 37 terminal pods timed out (35.1%), against D's
-  17 of 47 (36.2%) at 60 minutes. The longer bound did not reduce the timeout
-  share, because most timeouts are substitution-driven, not duration-driven.
+  17 of 47 (36.2%) at 60 minutes. Seven of the 13 ended on the substituted
+  host; six ended on white-jotter. The longer bound did not reduce the timeout
+  share.
 
 ### Impact review
 
@@ -741,8 +742,18 @@ The GT-007 symptom is in the mass-assignment experiment log but its pod
 timed out, so the verdict is partial.
 
 The pod rates are confounded by the substitution: 9 of the 13 abandonments and
-most of the 13 watchdog timeouts happened after `21:19Z`.
+all 13 watchdog terminals happened after `21:19Z`.
 The 35.1% timeout share is not a clean C.a-versus-D comparison.
+
+The 13 watchdog terminals split into two sets.
+Seven ended on the substituted host: PrestaShop 401, SIYUCMS `AdminIndex`,
+`CLOSED`, or `NOWINDOW`.
+Six ended on white-jotter: four BFLA edge-prefix variants, the IDOR overwrite,
+and the XSS id-addressed overwrite, with 31-81 tool calls each.
+None of the 13 was stopped by the 7M token cap.
+Their terminals are at 01:39Z, 04:58Z, and 10:41Z; the cap fired at 14:39Z.
+At 10:38Z the run had spent 5,638,969 of 7,000,000 capped tokens.
+The export reason is the per-pod 5,400 s watchdog, not a token-budget stop.
 
 ### Workflow adherence
 
@@ -761,6 +772,9 @@ abandoned models, 9 rejected `hunts_store` writes, 3 triager degradations, and
 - `risk_total` drops the register threat (6.9), as described above.
 - `pod_confirmed` is a candidate-level heuristic; it attributes an XSS pod to
   GT-004.
+- Pod exports carry no `started_at`/`finished_at`, and `duration_ms` is 0.
+  Per-pod wall time is only reconstructable from Langfuse; a 100-observation
+  page shows the tail, not the lifetime.
 - L0 recall 3 of 11 is inherited from iteration C, not produced by this arm.
 
 ### What limited the run
@@ -775,9 +789,10 @@ abandoned models, 9 rejected `hunts_store` writes, 3 triager degradations, and
    vulnerability section for 12 units; the completion checker archived them.
    Nine of the 13 abandonments happened after the substitution, so the
    substitution and the workflow defect compound.
-3. **Thirteen watchdog timeouts.** Most pods polled a substituted host until
-   the 90-minute bound. The timeout share is not evidence that the bound is
-   wrong.
+3. **Thirteen watchdog timeouts.** Seven ended on the substituted host; six
+   ended on white-jotter after 31-81 calls. None was stopped by the token cap;
+   their terminals precede it by 4 to 13 hours. The six are a work-volume and
+   turn-latency problem, not a CPU problem.
 4. **Three triager crashes.** `'dict' object has no attribute 'model_dump'`
    converted three pods to `no-symptom-evidence`.
 5. **GT-007 partial.** The pod observed the GT symptom, then the host
@@ -821,7 +836,7 @@ late-run losses), one knowledge-base cause (004), one class-selection cause
    downstream (pod execution).
 3. **The target substitution is the dominant residual cause.**
    The shared synthetic host was re-pointed at `21:19Z`.
-   Nine of the 13 abandonments, most of the 13 watchdog timeouts, and all four
+   Nine of the 13 abandonments, seven of the 13 watchdog timeouts, and all four
    residual GT verdicts carry a substitution element; for GT-006 and GT-007 it
    is the proximate cause.
    The white-jotter container never moved; the hostname did.
