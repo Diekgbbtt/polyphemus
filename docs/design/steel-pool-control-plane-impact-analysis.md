@@ -2,6 +2,9 @@
 
 Date: 2026-11-03.
 Status: analysis, not approved.
+
+> Revision 2026-11-04: this document is superseded on lease ownership, capacity, crawler integration, start atomicity, and graceful stop by `steel-pool-mcp-requirements.md`.
+> The session-affinity findings in this document remain valid.
 Scope: a pool of self-hosted Steel API workers for concurrent polymerhus agents.
 This document tests the proposed design.
 The design has a pre-created pool, lazy leases per agent, a pending request when the pool is full, and a default size of 4.
