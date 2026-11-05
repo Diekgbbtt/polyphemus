@@ -201,6 +201,7 @@ This is recorded as a follow-up, not implemented in this batch.
 - Added the schema-version mismatch test.
 - Added the cross-model field-set test.
 - Verified the deployed edge and `/data` store live on the eval server.
+- Updated the eval instance mount and compose; verified the container entrypoint starts the edge on 8002 with the shared compose token.
 - Recorded the FR assessment in `eval/steel-crawl-e2e/FR-ASSESSMENT.md`.
 - Recorded the orchestrator interface and the open job-set decision node in `docs/design/recon-pipeline-forward-decisions.md` as `D-JOBSET`.
 - Updated the stale crawl sections of the pipeline design and the technological architecture.
@@ -209,7 +210,6 @@ This is recorded as a follow-up, not implemented in this batch.
 
 - `#336`: the target-type job-set decision node.
 - The targeted-recon browser-state extension in section 5.1.
-- The eval instance Kali image or mount refresh and the edge token.
 - Langfuse page and action records are not asserted by the live e2e (O3).
 - HTTP/3 and the WebSocket frame path are contract-tested; the final three-target runs do not prove them live (C5/C6).
 - A live session-loss resurrection is not induced (A9/A10).
