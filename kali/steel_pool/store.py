@@ -99,9 +99,11 @@ def _timestamp(value: object, field_name: str) -> str:
 def _json_copy(value: object, field_name: str) -> Any:
     """Deep-copy a JSON value, rejecting anything JSON cannot round-trip."""
     try:
-        encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
+        encoded = json.dumps(
+            value, ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
         return json.loads(encoded)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise CorruptSessionRecord(
             f"{field_name} is not JSON-serialisable"
         ) from exc
@@ -250,7 +252,7 @@ class BrowserSessionRecord:
                 "sessionStorage", context.get("session_storage")
             ),
             indexed_db=context.get("indexedDB", context.get("indexed_db")),
-            created_at=created_at or _now(),
+            created_at=created_at if created_at is not None else _now(),
             updated_at=updated_at,
         )
 
@@ -273,6 +275,9 @@ class BrowserSessionRecord:
         name = data.get("name")
         if not isinstance(name, str):
             raise CorruptSessionRecord("session record has no name")
+        created = data.get("createdAt", data.get("created_at"))
+        if created is None:
+            created = _now()
         return cls(
             name=name,
             account=data.get("account"),
@@ -282,7 +287,7 @@ class BrowserSessionRecord:
                 "sessionStorage", data.get("session_storage")
             ),
             indexed_db=data.get("indexedDB", data.get("indexed_db")),
-            created_at=data.get("createdAt", data.get("created_at")) or _now(),
+            created_at=created,
             updated_at=data.get("updatedAt", data.get("updated_at")),
         )
 
@@ -317,17 +322,27 @@ class SessionStore:
 
     def _prepare_root(self) -> None:
         try:
+            existed = self.root.exists()
             if self.root.is_symlink():
                 raise SessionStoreError(
                     f"browser-session store root {self.root} must not be a symlink"
                 )
-            existed = self.root.exists()
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if not self.root.is_dir():
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(self.root, flags)
+            try:
+                info = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+            if not stat.S_ISDIR(info.st_mode):
                 raise SessionStoreError(
                     f"browser-session store root {self.root} is not a directory"
                 )
-            mode = stat.S_IMODE(self.root.stat().st_mode)
+            mode = stat.S_IMODE(info.st_mode)
             if existed:
                 if mode & 0o077:
                     raise SessionStoreError(
@@ -396,7 +411,7 @@ class SessionStore:
         except FileNotFoundError:
             return None
         except OSError as exc:
-            if exc.errno in {errno.ELOOP, getattr(errno, "EMLINK", errno.ELOOP)}:
+            if exc.errno == errno.ELOOP:
                 raise CorruptSessionRecord(
                     f"session record {name!r} is a symlink"
                 ) from exc
@@ -456,8 +471,8 @@ class SessionStore:
                     allow_nan=False,
                 )
                 + "\n"
-            )
-        except (TypeError, ValueError) as exc:
+            ).encode("utf-8")
+        except (TypeError, ValueError, RecursionError) as exc:
             raise CorruptSessionRecord(
                 f"session record {path.stem!r} is not JSON-serialisable"
             ) from exc
@@ -466,7 +481,7 @@ class SessionStore:
         )
         try:
             try:
-                handle = os.fdopen(descriptor, "w", encoding="utf-8")
+                handle = os.fdopen(descriptor, "wb")
             except BaseException:
                 os.close(descriptor)
                 raise

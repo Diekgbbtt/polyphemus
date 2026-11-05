@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 import json
 import os
+from pathlib import Path
 import stat
 
 import pytest
@@ -158,6 +159,20 @@ def test_symlinked_record_is_not_followed(store, tmp_path):
         store.load("linked")
 
 
+def test_open_no_follow_rejects_a_symlink_that_bypasses_the_precheck(
+    store, tmp_path, monkeypatch
+):
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps(_record("linked").to_dict()), encoding="utf-8")
+    store.path_for("linked").symlink_to(outside)
+    monkeypatch.setattr(store_module.Path, "is_symlink", lambda self: False)
+
+    with pytest.raises(CorruptSessionRecord) as caught:
+        store.load("linked")
+
+    assert "symlink" in str(caught.value)
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -177,7 +192,7 @@ def test_invalid_names_are_rejected(store, name):
     with pytest.raises(InvalidSessionName):
         store.load(name)
     with pytest.raises(InvalidSessionName):
-        store.save(_record(name))
+        _record(name)
     with pytest.raises(InvalidSessionName):
         store.delete(name)
 
@@ -207,6 +222,18 @@ def test_store_and_file_modes(store):
 def test_existing_owner_only_root_is_accepted(tmp_path):
     root = tmp_path / "sessions"
     root.mkdir(mode=0o700)
+
+    assert SessionStore(root).root == root
+
+
+def test_existing_root_is_not_chmodded(tmp_path, monkeypatch):
+    root = tmp_path / "sessions"
+    root.mkdir(mode=0o700)
+
+    def fail(*args, **kwargs):
+        raise AssertionError("an existing root must not be chmodded")
+
+    monkeypatch.setattr(store_module.os, "chmod", fail)
 
     assert SessionStore(root).root == root
 
@@ -310,6 +337,36 @@ def test_save_does_not_chmod_after_replace(store, monkeypatch):
     saved = store.save(_record())
 
     assert store.load(saved.name) == saved
+
+
+def test_parent_directory_is_fsynced_after_replace(store, monkeypatch):
+    opened = []
+    real_open = store_module.os.open
+
+    def spy(path, flags, *args, **kwargs):
+        opened.append(Path(path))
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(store_module.os, "open", spy)
+    store.save(_record())
+
+    assert store.root in opened
+
+
+def test_fdopen_failure_preserves_previous_record(store, monkeypatch):
+    first = store.save(_record(account="alice"))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            store_module.os,
+            "fdopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(OSError("fdopen failed")),
+        )
+        with pytest.raises(SessionStoreError):
+            store.save(_record(account="bob"))
+
+    assert store.load(first.name) == first
+    assert not [path for path in store.root.iterdir() if path.name.endswith(".tmp")]
 
 
 def test_json_failure_leaves_previous_record(store, monkeypatch):
@@ -453,6 +510,27 @@ def test_from_context_defaults_missing_fields():
     assert record.indexed_db == {}
 
 
+def test_from_context_rejects_a_falsy_created_at():
+    with pytest.raises(CorruptSessionRecord):
+        BrowserSessionRecord.from_context(
+            "polymerhus-hunt-abc", {}, created_at=""
+        )
+
+
+def test_from_dict_defaults_a_missing_created_at():
+    record = BrowserSessionRecord.from_dict({"name": "polymerhus-hunt-abc"})
+
+    assert record.created_at == record.updated_at
+
+
+@pytest.mark.parametrize("value", ["", 0, False])
+def test_from_dict_rejects_a_falsy_created_at(value):
+    with pytest.raises(CorruptSessionRecord):
+        BrowserSessionRecord.from_dict(
+            {"name": "polymerhus-hunt-abc", "createdAt": value}
+        )
+
+
 def test_from_context_does_not_alias_the_caller():
     context = {
         "cookies": [{"name": "sid", "value": "v"}],
@@ -505,6 +583,23 @@ def test_record_rejects_bad_field_shapes(field, value):
 def test_record_rejects_non_json_values():
     with pytest.raises(CorruptSessionRecord):
         _record(indexed_db={"db": {"store": {object(): "value"}}})
+
+
+def test_record_rejects_a_lone_surrogate():
+    with pytest.raises(CorruptSessionRecord):
+        _record(cookies=[{"name": "sid", "value": "\ud800"}])
+
+
+def test_record_rejects_excessive_nesting():
+    value: dict = {}
+    cursor = value
+    for _ in range(20000):
+        child: dict = {}
+        cursor["n"] = child
+        cursor = child
+
+    with pytest.raises(CorruptSessionRecord):
+        _record(indexed_db=value)
 
 
 def test_record_rejects_non_string_keys():
