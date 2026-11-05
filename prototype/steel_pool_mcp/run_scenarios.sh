@@ -17,6 +17,8 @@ NET="steel-proto-net"
 AGENT_IMAGE="polymerhus-agent:latest"
 SERVER="steel-pool-proto-steel-mcp-1"
 MCP_URL="http://steel-mcp:8003/mcp"
+CLI_URL="https://github.com/steel-dev/cli/releases/download/v0.5.0-preview.6/steel-cli-aarch64-unknown-linux-gnu.tar.gz"
+CLI_SRC="${STEEL_CLI_BIN:-/tmp/steel-cli-aarch64-unknown-linux-gnu/steel}"
 
 mkdir -p "$LOGS"
 
@@ -54,10 +56,20 @@ start_stack() {
     up -d --wait steel-1 steel-2 steel-mcp
   for _ in $(seq 1 30); do
     if docker logs "$SERVER" 2>&1 | grep -q '"event": "startup"'; then
-      return 0
+      break
     fi
     sleep 1
   done
+  if [ "${STEEL_EXECUTOR:-api}" = "cli" ]; then
+    if [ ! -x "$CLI_SRC" ]; then
+      curl -fsSL "$CLI_URL" -o /tmp/steel-cli.tgz
+      rm -rf /tmp/steel-cli-aarch64-unknown-linux-gnu
+      tar -xzf /tmp/steel-cli.tgz -C /tmp
+    fi
+    docker exec "$SERVER" mkdir -p /opt/localbin/.steel
+    docker cp "$CLI_SRC" "$SERVER:/opt/localbin/.steel/steel"
+    docker exec "$SERVER" chmod +x /opt/localbin/.steel/steel
+  fi
   echo "server did not log startup" >&2
   docker logs "$SERVER" 2>&1 | tail -40 >&2
   return 1

@@ -15,12 +15,35 @@ sequence.
 The server leases a worker per MCP session. The client never sees the worker
 URL. The server creates and drives the browser through the Steel command API.
 
-## Why the command API
+## Executors
 
-The pinned CLI `0.5.0-preview.6` starts a per-session daemon that connects to the
-Steel API root WebSocket. The local `latest` API image returns HTTP 500 on that
-root proxy. The deployed API `0.0.1` works. The prototype uses the command API
-to isolate the lease protocol from that image defect.
+The production path is the pinned Steel CLI:
+
+```bash
+STEEL_EXECUTOR=cli STEEL_GUARD=1 bash prototype/steel_pool_mcp/run_scenarios.sh concurrent
+```
+
+The `cli` executor runs the CLI through the existing `kali/steel_guard.py`.
+The guard keeps its command sanitization, live-session check, result
+classification, and trace logic. The server transports the guard output
+unchanged.
+
+The `api` executor is a local fallback. It uses the Steel command engine.
+It is not a production channel.
+
+## The CDP Host fix
+
+The local `latest` API image forwarded the container Host header to Chrome.
+Chrome rejected it and the API root proxy returned HTTP 500.
+The prototype applies two one-line fixes at container boot:
+
+- `changeOrigin: true` on the root WebSocket proxy.
+- `proxy_set_header Host localhost;` on the 9223 CDP proxy.
+
+See `patch-steel-api.sh`. The production fix belongs in the API image.
+
+Direct CDP is available at `ws://<worker>:9223/devtools/browser/<id>` for the
+`steel_crawl` sidecar. The API root proxy is not on the crawler path.
 
 ## Run
 
@@ -68,6 +91,9 @@ The server reads:
 
 The client reads:
 
+- `STEEL_EXECUTOR`: `cli` or `api`.
+- `STEEL_GUARD`: `1` runs the CLI through `kali/steel_guard.py`.
+- `STEEL_CLI`: the pinned CLI binary.
 - `STEEL_MCP_URL`: MCP endpoint.
 - `CLIENT_ID`: log identity.
 - `OWNER`: lease owner.

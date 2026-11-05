@@ -10,6 +10,10 @@ The session-affinity findings in that document remain valid.
 > component on Kali. The progress token is removed as a correctness requirement.
 > The outlier release ladder is expanded. The crawler uses the MCP channel.
 > The persistent MCP session was proven with FastMCP 2.14.7.
+> The CLI is the authoritative executor. The existing guard and contract logic
+> stay in the loop unchanged. The CDP proxy 500 is a Host-header defect; the API
+> image needs `changeOrigin: true` on the root proxy and `Host: localhost` on the
+> 9223 CDP proxy. Direct CDP via 9223 is the `steel_crawl` path.
 > See `docs/design/steel-pool-mcp-prototype-report.md`.
 
 ## 1. Purpose

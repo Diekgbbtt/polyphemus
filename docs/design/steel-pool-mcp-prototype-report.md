@@ -5,6 +5,15 @@ Status: prototype report, not production approval.
 Supersedes the ownership, progress-token, outlier-release, and crawler sections of
 `docs/design/steel-pool-mcp-requirements.md`.
 
+> Update 2026-11-05: the CDP proxy failure is diagnosed and fixed.
+> Chrome rejects the forwarded container Host header.
+> The API root proxy needs `changeOrigin: true`.
+> The 9223 CDP proxy needs `Host: localhost`.
+> The CLI is the authoritative executor, and the existing guard/contract logic
+> was tested in the loop. The command engine was a local fallback, not a
+> production channel. Direct CDP via 9223 works for the `steel_crawl` sidecar.
+> See section 9.
+
 ## 1. Verdict
 
 The co-located MCP server and pool manager on Kali works.
@@ -12,7 +21,8 @@ One MCP session is a stable lease handle across start, execute, and end.
 The pool released explicitly, on owner stop, and on TTL.
 The MCP connection close alone is not a release trigger in this prototype.
 The progress token is not required for correctness.
-The command engine is the working executor on the local Steel image.
+The CLI is the authoritative executor after the Host-header fix.
+The command engine was the local fallback.
 
 The remaining production risk is not the lease protocol.
 It is the Steel API image and CLI daemon compatibility.
@@ -139,7 +149,7 @@ That is the seam for the MCP call.
 - The MCP server on port 8003.
 - The workers on ports 3100 and 3101.
 
-### 3.2 Why the command engine
+### 3.2 Why the command engine (historical fallback)
 
 The pinned CLI `0.5.0-preview.6` starts a per-session daemon.
 The daemon connects to the Steel API root WebSocket.
@@ -156,9 +166,9 @@ The prototype creates the session with `POST /v1/sessions`.
 It drives it with the command engine.
 It releases with `POST /v1/sessions/<id>/release`.
 
-This isolates the MCP and pool protocol from the CLI daemon defect.
-The production design must still choose the executor:
-the command engine, or the CLI with a compatible API image.
+This isolated the MCP and pool protocol from the CLI daemon defect.
+Section 9 replaces it with the authoritative CLI path.
+The command engine is not a production channel.
 
 ### 3.3 Protocol
 
@@ -276,10 +286,10 @@ The final run had no error.
 
 ## 6. Findings and caveats
 
-**The local API image blocks the pinned CLI daemon.**
-The root CDP WebSocket proxy returns 500.
-The deployed API `0.0.1` works.
-Pin the API image and test the CLI daemon path, or use the command engine.
+**The local API image's root proxy forwarded the container Host header.**
+Chrome rejected that Host and returned 500.
+Section 9 gives the one-line fix.
+The CLI is the authoritative executor after the fix.
 
 **MCP DELETE is not a release trigger by itself.**
 The prototype did not hook session termination.
@@ -348,3 +358,131 @@ Before production:
 
 The prototype code and the scenario runner are in `prototype/steel_pool_mcp/`.
 The runner writes evidence to `prototype/steel_pool_mcp/logs/`.
+
+## 9. CDP proxy diagnosis and corrected executor
+
+### 9.1 Root cause
+
+The 500 is not a protocol change and not a CLI incompatibility.
+It is Chrome's DevTools Host-header check.
+
+The Steel API root WebSocket proxy forwarded the client Host header to Chrome.
+The client Host was the container hostname, such as `steel-1:3000`.
+Chrome rejected that Host and the proxy returned HTTP 500.
+
+The evidence:
+
+- `ws://steel-1:9223/devtools/browser/<id>` with the default Host returned 500.
+- The same URL with `Host: localhost` opened.
+- The 9223 nginx config forwarded `proxy_set_header Host $host;`.
+- Changing that line to `proxy_set_header Host localhost;` fixed the 9223 WebSocket.
+- The API root proxy forwarded the client Host because `http-proxy` ran without
+  `changeOrigin`.
+- Adding `changeOrigin: true` to the `wsProxyServer.ws` call fixed the CLI.
+
+The deployed API `0.0.1` works with the pinned CLI.
+The local `latest` image is 0.5.4 and forwards the container hostname.
+The release history shows v0.5.5-beta adds the commands API and a UI/live-view
+overhaul.
+The 500 is a proxy configuration defect, not a protocol change.
+
+### 9.2 API image changes
+
+Two one-line changes make the pinned CLI and direct CDP work.
+
+- `api/src/services/cdp/cdp.service.ts`: pass `changeOrigin: true` to
+  `wsProxyServer.ws`.
+- `api/nginx.conf`: set `proxy_set_header Host localhost;` on the 9223 server.
+
+The prototype applies both at container boot with `patch-steel-api.sh`.
+The production change belongs in the API image or a pinned image.
+
+### 9.3 The CLI is the executor
+
+The CLI is the authoritative executor.
+The command engine was a local fallback while the root proxy was broken.
+It is not a second production channel.
+
+The CLI executor was tested with two agents and two workers:
+
+- Both agents received a different worker.
+- Both CLI daemons started on their worker.
+- Both navigated, evaluated, read the title, and listed tabs.
+- Both released explicitly.
+- No live sessions remained.
+
+The server log records `executor: cli`.
+
+### 9.4 The guard and contract logic stay in the loop
+
+The server ran the CLI through `kali/steel_guard.py` with `STEEL_GUARD=1`.
+The guard performed its existing checks:
+
+- live-session catalogue check;
+- command sanitization;
+- result classification;
+- event trace.
+
+The two-agent CLI run passed with the guard in the loop.
+The guard's success output is passed through.
+Its error text is surfaced without reclassification.
+The error detection and handling logic is not rewritten in the MCP server.
+The pinned-version check remains in the MCP server's exec layer.
+
+### 9.5 Direct CDP for steel_crawl
+
+The `steel_crawl` sidecar uses raw CDP, not the API root proxy.
+The direct endpoint works:
+
+- `ws://steel-1:9223/devtools/browser/<id>` opens with the nginx Host fix.
+- `Target.getTargets` returns the page targets.
+- `Target.attachToTarget` returns a CDP session id.
+- A page-level CDP client enabled `Network` and `Page`.
+- A CLI navigation produced `Network.requestWillBeSent`,
+  `Network.responseReceived`, and `Page.frameNavigated` events.
+
+This is the path the `steel_crawl` sidecar needs.
+The worker's CDP endpoint must be exposed to the host network or an SSH tunnel.
+The API root proxy is not on the crawler path.
+
+### 9.6 Release signal clarification
+
+Only the CLI owns the browser session in production.
+The command engine is not a production channel.
+The CDP sidecar is a passive observer; its death must not release the lease.
+
+The release ladder is therefore:
+
+1. Explicit `browser_end`.
+2. MCP DELETE from a normal client close.
+3. MCP transport disconnect plus a grace period.
+4. Agent run timeout from the platform supervisor.
+5. CLI daemon death, for a session owned by the CLI.
+6. Worker session gone, seen by the reconciler.
+7. TTL from the last command.
+
+The CDP sidecar death is a crawl failure, not a lease release.
+The lease owner is the project or trial, represented by the MCP session.
+
+### 9.7 Greedy boot and read-only state
+
+The workers are created greedily at stack boot.
+The pool manager does not create containers.
+It does not need Docker write access.
+
+The prototype uses a static worker list.
+The production pool manager may read container state through a read-only Docker
+API or each worker's health endpoint.
+The component on Kali remains free of Docker write access.
+
+### 9.8 Corrected verdict
+
+The blocking point is resolved.
+The CLI remains authoritative.
+The API image needs two proxy fixes.
+The MCP server keeps the guard and contract logic unchanged.
+The direct CDP endpoint is the `steel_crawl` path.
+The pool manager stays a static, read-only lease component.
+
+The next production step is to carry the two API proxy fixes into the pinned
+image and run the full `steel_crawl` engine through the direct CDP endpoint.

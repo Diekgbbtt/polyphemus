@@ -5,16 +5,19 @@ One process owns two responsibilities:
 2. A pool manager that leases one Steel API worker per MCP session.
 
 The worker is addressed by the server. The client never sees the worker URL.
-The browser session is created and driven through the Steel command API.
-The command API is used because the local Steel API image has a broken root
-CDP WebSocket proxy. The lease protocol under test is independent of that
-transport detail.
+The executor is configurable:
+- ``cli`` runs the pinned Steel CLI. This is the authoritative path.
+- ``api`` runs the Steel command API. This was the local fallback while the
+  local API image's root CDP proxy rejected the CLI Host header.
+The lease protocol under test is independent of the executor.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -33,6 +36,10 @@ WORKER_URLS = [
     for item in os.environ.get("STEEL_POOL_WORKERS", "").split(",")
     if item.strip()
 ]
+EXECUTOR = os.environ.get("STEEL_EXECUTOR", "api").strip().lower()
+STEEL_CLI = os.environ.get("STEEL_CLI", "/opt/localbin/.steel/steel")
+USE_GUARD = os.environ.get("STEEL_GUARD", "0") == "1"
+GUARD = os.environ.get("STEEL_GUARD_PATH", "/opt/kali/steel_guard.py")
 
 _LOG_LOCK = threading.Lock()
 
@@ -70,7 +77,20 @@ class Lease:
 
 
 class Pool:
-    def __init__(self, worker_urls: list[str], ttl_s: float, wait_s: float) -> None:
+    def __init__(
+        self,
+        worker_urls: list[str],
+        ttl_s: float,
+        wait_s: float,
+        executor: str = EXECUTOR,
+        cli: str = STEEL_CLI,
+        use_guard: bool = USE_GUARD,
+        guard: str = GUARD,
+    ) -> None:
+        self.executor = executor
+        self.cli = cli
+        self.use_guard = use_guard
+        self.guard = guard
         self.workers = [
             Worker(name=f"worker-{index + 1}", base_url=url)
             for index, url in enumerate(worker_urls)
@@ -144,9 +164,14 @@ class Pool:
     def create(self, lease: Lease, url: str | None = None) -> dict:
         worker = lease.worker
         try:
-            response = self.client.post(f"{worker.base_url}/v1/sessions", json={})
-            response.raise_for_status()
-            data = response.json()
+            if self.executor == "cli":
+                data = self._cli_create(lease)
+            else:
+                response = self.client.post(
+                    f"{worker.base_url}/v1/sessions", json={}
+                )
+                response.raise_for_status()
+                data = response.json()
         except Exception:
             self._free_lease(lease, reason="create_failed")
             raise
@@ -168,6 +193,18 @@ class Pool:
     def exec(self, lease: Lease, command: dict) -> dict:
         if not lease.session_id:
             raise RuntimeError("the lease has no session")
+        if self.executor == "cli":
+            data = self._cli_exec(lease, command)
+            lease.last_activity = time.time()
+            log(
+                "exec",
+                lease_id=lease.lease_id,
+                worker=lease.worker.name,
+                session_id=lease.session_id,
+                command=command.get("command"),
+                ok=bool(data.get("success", True)),
+            )
+            return data
         response = self.client.post(
             f"{lease.worker.base_url}/v1/sessions/{lease.session_id}/commands",
             json={"commands": [command]},
@@ -191,9 +228,12 @@ class Pool:
         session_id = lease.session_id
         if session_id:
             try:
-                self.client.post(
-                    f"{worker.base_url}/v1/sessions/{session_id}/release"
-                )
+                if self.executor == "cli":
+                    self._cli_stop(lease)
+                else:
+                    self.client.post(
+                        f"{worker.base_url}/v1/sessions/{session_id}/release"
+                    )
             except Exception as exc:  # noqa: BLE001 - release is best effort
                 log(
                     "release_error",
@@ -201,6 +241,12 @@ class Pool:
                     worker=worker.name,
                     error=str(exc),
                 )
+                try:
+                    self.client.post(
+                        f"{worker.base_url}/v1/sessions/{session_id}/release"
+                    )
+                except Exception:
+                    pass
         with self.cond:
             self._free_locked(lease)
         log(
@@ -209,6 +255,76 @@ class Pool:
             worker=worker.name,
             session_id=session_id,
             reason=reason,
+        )
+
+    def _cli_run(self, lease: Lease, args: list[str]) -> dict:
+        api_url = lease.worker.base_url.rstrip("/") + "/v1"
+        if self.use_guard:
+            command = [sys.executable, self.guard, "--api-url", api_url, *args]
+        else:
+            command = [self.cli, "--api-url", api_url, *args]
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        try:
+            payload = json.loads(completed.stdout) if completed.stdout.strip() else {}
+        except ValueError as exc:
+            raise RuntimeError(
+                f"CLI returned non-JSON (exit {completed.returncode}): "
+                f"{completed.stderr[-300:]}"
+            ) from exc
+        if payload.get("success") is False or payload.get("error"):
+            raise RuntimeError(
+                str(payload.get("error") or payload.get("error_code") or "CLI error")
+            )
+        if not isinstance(payload, dict):
+            raise RuntimeError("CLI returned no JSON object")
+        return payload
+
+    def _cli_create(self, lease: Lease) -> dict:
+        payload = self._cli_run(
+            lease,
+            [
+                "browser",
+                "start",
+                "--session",
+                lease.name,
+                "--session-timeout",
+                "120000",
+                "--inactivity-timeout",
+                "60000",
+                "--json",
+            ],
+        )
+        data = payload.get("data")
+        if not isinstance(data, dict) or not data.get("id"):
+            raise RuntimeError("CLI start returned no session id")
+        return data
+
+    def _cli_exec(self, lease: Lease, command: dict) -> dict:
+        verb = command.get("command")
+        args: list[str]
+        if verb == "navigate":
+            args = ["browser", "navigate", str(command["url"])]
+        elif verb == "eval":
+            args = ["browser", "eval", str(command["script"])]
+        elif verb == "get":
+            args = ["browser", "get", str(command["what"])]
+        elif verb == "tab":
+            args = ["browser", "tab", "list"]
+        else:
+            raise RuntimeError(f"unsupported CLI command: {verb}")
+        args.extend(["--session", lease.name, "--json"])
+        return self._cli_run(lease, args)
+
+    def _cli_stop(self, lease: Lease) -> dict:
+        return self._cli_run(
+            lease,
+            ["browser", "stop", "--session", lease.name, "--json"],
         )
 
     def _free_lease(self, lease: Lease, reason: str) -> None:
@@ -336,7 +452,7 @@ async def browser_start(
         "session_id": lease.session_id,
         "name": lease.name,
         "worker": lease.worker.name,
-        "live_url": data.get("sessionViewerUrl"),
+        "live_url": data.get("sessionViewerUrl") or data.get("liveUrl"),
     }
 
 
@@ -445,6 +561,9 @@ if __name__ == "__main__":
         ttl_s=pool.ttl_s,
         wait_s=pool.wait_s,
         port=PORT,
+        executor=pool.executor,
+        cli=pool.cli if pool.executor == "cli" else None,
+        guard=pool.guard if pool.use_guard else None,
     )
     mcp.run(
         transport="streamable-http",
