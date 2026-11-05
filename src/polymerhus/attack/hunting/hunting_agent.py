@@ -85,6 +85,7 @@ from polymerhus.attack.hunting.hunter_tools import (
     KbQueryFn,
     build_hunter_tools,
 )
+from polymerhus.attack.hunting.browser_tools import open_browser_tools
 from polymerhus.attack.hunting.hunting_tracing import (
     flush_hunting_traces,
     trace_span,
@@ -445,6 +446,35 @@ def _terminal_feedback(state: dict, answer: str) -> str:
     return _state_summary(state)
 
 
+async def invoke_tool(
+    tools_by_name: Mapping[str, Any], name: str, args: Any
+) -> str:
+    """Execute one model-requested tool call, never raising into the turn.
+
+    ``ainvoke`` is preferred over ``invoke``: the browser tools are async-only
+    MCP tools, and a sync invoke on one raises. A sync tool also has
+    ``ainvoke``, which runs it off the loop, so one path covers both. An
+    unknown tool, malformed args, or a raising tool degrades to a denoted
+    fail-open result (O3/O4).
+    """
+    tool = tools_by_name.get(name)
+    if tool is None:
+        return json.dumps({"error": "unknown_tool", "tool": name, "degraded": True})
+    if not isinstance(args, dict):
+        return json.dumps({"error": "invalid_args", "tool": name, "degraded": True})
+    try:
+        # An MCP tool is built with a coroutine and no sync body; a sync seam
+        # (the store tools) overrides `invoke` for its coded rejections, so it
+        # must keep that path. `coroutine` is the discriminator the adapter
+        # sets on every MCP tool.
+        if getattr(tool, "coroutine", None) is not None:
+            return str(await tool.ainvoke(args))
+        return str(await asyncio.to_thread(tool.invoke, args))
+    except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+        logger.warning("hunter tool %s failed (%s)", name, exc)
+        return json.dumps({"error": "tool_failed", "tool": name, "detail": str(exc)})
+
+
 # --- the harness --------------------------------------------------------------
 
 def build_hunting_agent(
@@ -464,6 +494,7 @@ def build_hunting_agent(
     middleware=None,
     model_factory=None,
     observe: bool = True,
+    browser_tools_fn: Callable[[], Any] | None = None,
 ) -> Callable[[Mapping[str, Any]], Awaitable[dict[str, Any]]]:
     """Build the turn-by-turn hunting-agent dispatch seam (IA-2).
 
@@ -478,6 +509,9 @@ def build_hunting_agent(
     middleware (`build_hunter_compaction_middleware`, #95 D9) - capability
     (#99) negotiation attaches via the session seam itself. `model_factory`
     injects a fake model for tests; `observe` toggles session observability.
+    `browser_tools_fn` opens the per-hunt browser tool binding (a callable
+    returning an async context manager); absent, it is built from
+    `KALI_BROWSER_MCP_URL`, and an empty value yields no browser tools.
     Returns `async dispatch_fn(payload: Mapping) -> dict` (the async-native
     harness; sync callers use `build_sync_hunting_agent`). The payload is the
     loop dispatch record materialised by the surfer (S2 8.2).
@@ -495,26 +529,12 @@ def build_hunting_agent(
             return await fn(*args)
         return await asyncio.to_thread(fn, *args)
 
-    async def _invoke_tool(tools_by_name: dict[str, Any], name: str, args: Any) -> str:
-        """Execute one tool call the model requested. An unknown tool, malformed
-        args, or a raising tool degrades to a denoted fail-open result - never a
-        raise into the turn (O3/O4)."""
-        tool = tools_by_name.get(name)
-        if tool is None:
-            return json.dumps({"error": "unknown_tool", "tool": name, "degraded": True})
-        if not isinstance(args, dict):
-            return json.dumps({"error": "invalid_args", "tool": name, "degraded": True})
-        try:
-            return str(await _await_seam(tool.invoke, args))
-        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
-            logger.warning("hunter tool %s failed (%s)", name, exc)
-            return json.dumps({"error": "tool_failed", "tool": name, "detail": str(exc)})
-
     async def _run_hunt(
         payload: Mapping[str, Any],
         feedback: list[str],
         checkpointer,
         middleware,
+        browser_tools=(),
     ) -> dict[str, Any]:
         hunt_key = str(payload.get("dispatch_id") or "")
         if not hunt_key:
@@ -550,7 +570,7 @@ def build_hunting_agent(
         # harness executor map, joined by the tool name; the index middleware
         # joins the turn middleware and carries the role's bounded skill set.
         binding = auth_capable_binding(_HUNTER_ROLE)
-        tools = list(tools) + binding.tools
+        tools = list(tools) + list(browser_tools) + binding.tools
         tools_by_name = {tool.name: tool for tool in tools}
         middleware = list(middleware) + binding.middleware
 
@@ -638,7 +658,7 @@ def build_hunting_agent(
             for tc in tool_calls:
                 tool_name = str(tc.get("name") or "")
                 tool_args = tc.get("args") or {}
-                result = await _invoke_tool(tools_by_name, tool_name, tool_args)
+                result = await invoke_tool(tools_by_name, tool_name, tool_args)
                 # DETECTION + PUSH (S4 14): the signal is read off the model's
                 # REAL call, so the passive machine is never gated by the
                 # tool's own acceptance. The `specs` set write is the one
@@ -726,15 +746,27 @@ def build_hunting_agent(
             get_session_checkpointer,
             module_context,
         )
+
+        browser_opener = browser_tools_fn
+        if browser_opener is None:
+            from polymerhus.app.config import config  # noqa: PLC0415
+
+            def browser_opener():
+                # One hunt holds one browser MCP session, so the three tools
+                # share the lease the start created.
+                return open_browser_tools(config.KALI_BROWSER_MCP_URL)
+
         try:
-            # Convergence: no hand-written agent span - the dispatch trace rides
-            # the handler (attributed session turns, run tag for the join) while
-            # the step records below carry their own explicit run correlation.
-            with hunt_session(run_id, hunt_key, project_id=project_id):
-                with module_context("hunting"):
-                    cp = checkpointer if checkpointer is not None else get_session_checkpointer()
-                    mw = middleware if middleware is not None else [build_hunter_compaction_middleware()]
-                    return await _run_hunt(payload, feedback, cp, mw)
+            async with browser_opener() as browser_tools:
+                # Convergence: no hand-written agent span - the dispatch trace
+                # rides the handler (attributed session turns, run tag for the
+                # join) while the step records below carry their own explicit
+                # run correlation.
+                with hunt_session(run_id, hunt_key, project_id=project_id):
+                    with module_context("hunting"):
+                        cp = checkpointer if checkpointer is not None else get_session_checkpointer()
+                        mw = middleware if middleware is not None else [build_hunter_compaction_middleware()]
+                        return await _run_hunt(payload, feedback, cp, mw, browser_tools)
         except ProviderUnavailableError:
             # #329/#312: a provider failure is infrastructure, never a hunt
             # degrade - propagate it (mirroring the pod) so the run pauses

@@ -183,6 +183,8 @@ def test_operator_overlay_carries_the_agent_and_the_socket():
         if isinstance(mount, dict)
     }
     assert mounts["/run/ssh-agent.sock"] == "/tmp/operator-agent.sock"
+    agent = rendered["services"]["agent"]
+    assert agent["environment"]["KALI_BROWSER_MCP_URL"] == "http://kali:8003/mcp"
 
 
 def test_operator_overlay_fails_without_the_agent():

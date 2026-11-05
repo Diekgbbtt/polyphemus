@@ -91,10 +91,11 @@ On the eval host, from the polymerhus checkout:
 ```bash
 export SSH_AUTH_SOCK=$SSH_AUTH_SOCK
 docker compose -f docker-compose.yml \
-               -f docker-compose.pool-overlay.yml up -d kali
+               -f docker-compose.pool-overlay.yml up -d kali agent
 ```
 
-The overlay mounts the agent at `/run/ssh-agent.sock` and sets `STEEL_POOL_DOCKER_SOCKET=/run/steel-pool/docker.sock`.
+The overlay turns the pool on for both sides: it mounts the agent in Kali, sets the tunnel socket path, and points the agent at `http://kali:8003/mcp`.
+The agent container must be recreated to read the URL.
 Compose refuses to render when `SSH_AUTH_SOCK` is unset.
 That guard exists so a missing agent cannot create a directory at the socket path.
 

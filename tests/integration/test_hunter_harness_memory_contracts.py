@@ -32,6 +32,7 @@ from polymerhus.attack.hunting.hunter_state import (
 from tests.hunting_fixtures import (
     HUNT_KEY,
     PROJECT,
+    UNIT_ID,
     _answer,
     _hunter_payload,
     _tool_call,
@@ -39,9 +40,20 @@ from tests.hunting_fixtures import (
     build_memory_store,
 )
 
+# The spec's required target identity; a spec without a URL is INIT-rejected
+# downstream, so every write helper carries the test target's identity.
+_TARGET = {"url": "https://app.test", "unit_id": UNIT_ID}
+
 
 def _produced(tmp_path):
     return tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / HUNT_KEY / "produced"
+
+
+def _spec(status, fault_keyword="f1", strategy_keyword="probe", **extra):
+    """One spec-set entry with its required target identity."""
+    return {"status": status, "fault_keyword": fault_keyword,
+            "strategy_keyword": strategy_keyword,
+            "target_identity": dict(_TARGET), **extra}
 
 
 def _write(status, *, fault_keyword="f1", strategy_keyword="probe", **extra):
@@ -49,8 +61,7 @@ def _write(status, *, fault_keyword="f1", strategy_keyword="probe", **extra):
     the statuses and the file-name identity per entry (S3 8.7)."""
     return _tool_call("hunts_store", {
         "command": "write",
-        "specs": [{"status": status, "fault_keyword": fault_keyword,
-                   "strategy_keyword": strategy_keyword, **extra}],
+        "specs": [_spec(status, fault_keyword, strategy_keyword, **extra)],
     })
 
 
@@ -74,8 +85,7 @@ def _spec_set(*statuses, keywords=("f1", "f2")):
     return _tool_call("hunts_store", {
         "command": "write",
         "specs": [
-            {"status": status, "fault_keyword": keywords[index],
-             "strategy_keyword": "probe"}
+            _spec(status, keywords[index])
             for index, status in enumerate(statuses)
         ],
     })
@@ -156,10 +166,8 @@ def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
         _tool_call("hunts_store", {
             "command": "write",
             "specs": [
-                {"status": "hypothesised", "fault_keyword": "f1",
-                 "strategy_keyword": "probe"},
-                {"status": "hypothesised", "fault_keyword": "f2",
-                 "strategy_keyword": "probe"},
+                _spec("hypothesised", "f1"),
+                _spec("hypothesised", "f2"),
             ]}),
         # hunts_store read with statuses + attributes
         _tool_call("hunts_store", {
@@ -184,10 +192,8 @@ def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
         _tool_call("hunts_store", {
             "command": "write",
             "specs": [
-                {"status": "ratified", "fault_keyword": "f1",
-                 "strategy_keyword": "probe"},
-                {"status": "dropped", "fault_keyword": "f2",
-                 "strategy_keyword": "probe"},
+                _spec("ratified", "f1"),
+                _spec("dropped", "f2"),
             ]}),
     ]
     agent = build_hunter_agent(store, steps=steps, seen=seen)
@@ -376,10 +382,8 @@ def test_H7_the_terminal_state_follows_a_persisted_set(tmp_path):
         _tool_call("hunts_store", {
             "command": "write",
             "specs": [
-                {"status": "ratified", "fault_keyword": "f1",
-                 "strategy_keyword": "probe"},
-                {"status": "dropped", "fault_keyword": "f1",
-                 "strategy_keyword": "probe"},
+                _spec("ratified", "f1"),
+                _spec("dropped", "f1"),
             ]}),
         _answer("still verifying"),                 # ... the hunt concludes open
     ]
@@ -400,8 +404,7 @@ def test_H7_the_terminal_state_follows_a_persisted_set(tmp_path):
         _phase_note("well_formedness"),
         _tool_call("hunts_store", {
             "command": "write",
-            "specs": [{"status": "ratified", "fault_keyword": "f1",
-                       "strategy_keyword": "probe"}]}),
+            "specs": [_spec("ratified", "f1")]}),
     ]
     result = build_hunter_agent(
         build_memory_store(tmp_path / "second"), steps=steps)(_hunter_payload())

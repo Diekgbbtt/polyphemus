@@ -34,6 +34,9 @@ class Config:
     NEO4J_PASSWORD = os.environ["NEO4J_PASSWORD"]
     POSTGRES_DSN = os.environ["POSTGRES_DSN"]
     KALI_MCP_URL = os.environ["KALI_MCP_URL"]
+    # The browser MCP (#359, W8). Empty keeps the browser tools off every
+    # hunt; the pool overlay points it at the Kali browser server.
+    KALI_BROWSER_MCP_URL = os.environ.get("KALI_BROWSER_MCP_URL", "")
     PROJECT_ID = os.environ.get("PROJECT_ID", "default")
     HEARTBEAT_TICK_SECONDS = int(os.environ.get("HEARTBEAT_TICK_SECONDS", "10"))
     LIVENESS_TTL_SECONDS = int(os.environ.get("LIVENESS_TTL_SECONDS", "30"))
