@@ -107,7 +107,10 @@ GATE_HINTS: dict[ModelState, str] = {
         "with a hunts_store write for state TRUST_MODELLED."
     ),
     ModelState.PRIOR_ART: (
-        "Proceed to the impact assessment: call `assess_impact` once per "
+        "Proceed to the impact assessment: the vulnerability-local impact "
+        "assessment is already recorded in the vulnerabilities note. Use the "
+        "prior art only to fill the capability gaps and extend the chains; it "
+        "never removes a local damage. Call `assess_impact` once per "
         "assessment row, and at least once for every vulnerability that is not "
         "dropped. Each call carries the two prose blocks (impact_description, "
         "exploitability_description) and the eight factors; the tool validates "
@@ -119,33 +122,45 @@ GATE_HINTS: dict[ModelState, str] = {
         "fields, the assumed component and data states, and the loose trust "
         "checks. Each assumption names the trust agreement it bends, the "
         "artifact, the controlling principal, the technical programming fault, "
-        "and the adversarial capability. Write them with a hunts_store write "
+        "and the adversarial capability. Mark an assumption `falsified: true` "
+        "when the probes close its fault. Write them with a hunts_store write "
         "for state TRUST_ASSUMPTIONS_WRITTEN."
     ),
     ModelState.TRUST_ASSUMPTIONS_WRITTEN: (
-        "Proceed to vulnerability citation: for each programming fault name the "
-        "web vulnerability classes freely from the canonical taxonomy first, "
-        "then bind each named class to a suite class parent or leaf. Technique "
-        "families are not classes. Write them with a hunts_store write for "
-        "state VULNERABILITIES_WRITTEN."
+        "Proceed to vulnerability citation: if every trust assumption is "
+        "falsified, write an empty vulnerabilities list; the harness ends the "
+        "unit at COMPLETED with no impact assessment. Otherwise write at least "
+        "one vulnerability for every non-falsified assumption: name the web "
+        "vulnerability classes freely from the canonical taxonomy first, then "
+        "bind each named class to a suite class parent or leaf. Technique "
+        "families are not classes. Then do the vulnerability-local impact "
+        "assessment and record it in the vulnerabilities note: the direct "
+        "impact, the end-damages it could reach, and the capabilities still "
+        "needed. Do not consult prior art yet. Write the vulnerabilities with a "
+        "hunts_store write for state VULNERABILITIES_WRITTEN, then open the "
+        "well-formedness phase with ONE `trust_assumption` note."
     ),
     ModelState.VULNERABILITIES_WRITTEN: (
-        "Proceed to the well-formedness phase: for every vulnerability whose "
-        "class will bound a threat, load the class skill, read its title, "
+        "Proceed to the well-formedness phase: first write the "
+        "`trust_assumption` note (the phase entry), then for every vulnerability "
+        "whose class will bound a threat, load the class skill, read its title, "
         "overview, Trust Assumptions section, and closing summary, and add the "
         "missed assumptions. Patch a local gap or return to the "
         "undermodelled part for a structural gap. When the pass yields no new "
-        "assumption, write the wellformedness note, then run the PRIOR_ART "
-        "gate, then write the IMPACT_ASSESSED rows."
+        "assumption, write the `wellformedness` note (the phase exit), then run "
+        "the PRIOR_ART gate, then write the IMPACT_ASSESSED rows."
     ),
     ModelState.IMPACT_ASSESSED: (
-        "Proceed to completion: the risk is DERIVED from the assessment rows - "
-        "never author a score, a vector, or a factor. Verify the assessment "
-        "coverage (every non-dropped vulnerability has a row with both prose "
-        "blocks and its capability) and the enabling chains (every required "
-        "capability resolves to its provider, ordered in execution order). Then "
-        "write ONLY the threats section; the store mirrors the risk, ranks the "
-        "threats, computes the risk profile, and runs the completion checker."
+        "Proceed to completion: the local impact assessment is the baseline in "
+        "the vulnerabilities note. Persist the rows from that baseline plus "
+        "prior art. End the impact phase with ONE `impact_assessed` note; if a "
+        "non-dropped vulnerability has no row, the response names the residual "
+        "ids and the state stays at IMPACT_ASSESSED. The risk is DERIVED from "
+        "the assessment rows - never author a score, a vector, or a factor. "
+        "Verify the assessment coverage and the enabling chains, then write ONLY "
+        "the threats section; the store mirrors the risk, ranks the threats, "
+        "computes the risk profile, runs the completion checker, and returns "
+        "the validation."
     ),
 }
 
@@ -163,15 +178,17 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "the technical_sharpening section."
     ),
     ModelState.PRIOR_ART: (
-        "Query the store after the vulnerability phase, before you assess the impacts. Use `hunts_store` "
-        "with cmd='query', a `kind` (threat, vulnerability, precursor, "
-        "assumption, or impact), a non-empty AND list of {path, regex, flags} "
-        "filters, and a limit. Search the other units' produced and consumed "
-        "models for the threats, vulnerabilities, and precursor capabilities "
-        "that bear on this unit. Record at least one query per kind (threat, "
-        "vulnerability, precursor) with its filters and its match count, every "
-        "record you reuse with the reason, and a prior_art note as the phase "
-        "exit. Write the prior_art section."
+        "Query the store after the vulnerability-local impact note, before you "
+        "persist the impacts. The local note is the unbiased baseline; prior art "
+        "can add providers and chains, never remove a local damage. Use "
+        "`hunts_store` with cmd='query', a `kind` (threat, vulnerability, "
+        "precursor, assumption, or impact), a non-empty AND list of "
+        "{path, regex, flags} filters, and a limit. Search the other units' "
+        "produced and consumed models for the threats, vulnerabilities, and "
+        "precursor capabilities that bear on this unit. Record at least one "
+        "query per kind (threat, vulnerability, precursor) with its filters and "
+        "its match count, every record you reuse with the reason, and a "
+        "prior_art note as the phase exit. Write the prior_art section."
     ),
     ModelState.TRUST_MODELLED: (
         "Work the four trust axes in order: identity, spatial, temporal, "
@@ -186,26 +203,39 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "assumptions that bend the trust agreements; each names the trust "
         "agreement, the artifact, the controlling principal, and one technical "
         "programming fault (with its label and description), and the adversarial "
-        "capability it yields. Write the assumptions section."
+        "capability it yields. Mark an assumption `falsified: true` when the "
+        "probes close its fault; a falsified assumption yields no vulnerability. "
+        "Write the assumptions section."
     ),
     ModelState.VULNERABILITIES_WRITTEN: (
-        "Switch to the abduction world: for each programming fault, name the web "
+        "Switch to the abduction world. If every trust assumption is falsified, "
+        "write an empty vulnerabilities list; the harness ends the unit at "
+        "COMPLETED with no impact assessment. Otherwise write at least one "
+        "vulnerability for every non-falsified assumption: name the web "
         "vulnerability classes freely from the canonical taxonomy first, then "
         "bind each named class to a suite class parent or leaf (search the "
         "suite with skill_list and a name regex, then skill_load). Technique "
         "families are not classes; bind the nearest parent for a novel class "
-        "and never leave the class empty. Then run the well-formedness phase."
+        "and never leave the class empty. Then do the vulnerability-local impact "
+        "assessment and record it in the vulnerabilities note: the direct "
+        "impact, the end-damages it could reach, and the capabilities still "
+        "needed. Do not consult prior art yet. Then open the well-formedness "
+        "phase with ONE `trust_assumption` note."
     ),
     ModelState.IMPACT_ASSESSED: (
         "Assess each vulnerability through the `assess_impact` tool: once per "
         "assessment row, and at least once for every vulnerability that is not "
-        "dropped. Each row carries impact_description (the victim and the "
-        "damaged property, or why no end damage follows), "
-        "exploitability_description (the chain, its capabilities, and its human "
-        "participation), capability, capability_id, capability_path, "
-        "evidence_refs, and the eight factors. A row with a concrete end damage "
-        "is a threat; a row without one is a precursor. The tool validates the "
-        "row and advances the gate; the score is derived, never authored."
+        "dropped. The local impact assessment in the vulnerabilities note is "
+        "the baseline; prior art can only add providers and chains. Each row "
+        "carries impact_description (the victim and the damaged property, or "
+        "why no end damage follows), exploitability_description (the chain, its "
+        "capabilities, and its human participation), capability, capability_id, "
+        "capability_path, evidence_refs, and the eight factors. A row with a "
+        "concrete end damage is a threat; a row without one is a precursor. End "
+        "the phase with ONE `impact_assessed` note: if a non-dropped "
+        "vulnerability has no row, the response names the residual ids and the "
+        "state stays at IMPACT_ASSESSED. The tool validates the row and advances "
+        "the gate; the score is derived, never authored."
     ),
     ModelState.COMPLETED: (
         "Rank the threats: apply the two-clause drop rule, reference each "
@@ -215,27 +245,30 @@ STATE_INSTRUCTIONS: dict[ModelState, str] = {
         "do not author a score, a vector, or a factor. Verify that every "
         "non-dropped vulnerability has an assessment row and that every "
         "enabling chain resolves to its provider. Write ONLY the threats "
-        "section. The store mirrors the risk, computes the risk profile, and "
-        "runs the completion checker after your write; if validation.valid is "
-        "false, fix every finding and write COMPLETED again before ending the "
-        "pass."
+        "section. A unit whose assumptions are all falsified completes with no "
+        "vulnerabilities and no threats. The store mirrors the risk, computes "
+        "the risk profile, and runs the completion checker after your write; "
+        "the response carries the validation. If validation.valid is false, fix "
+        "every finding and write COMPLETED again before ending the pass."
     ),
 }
 
-# The well-formedness phase is a pass-level pseudo-phase between the
-# vulnerabilities write and the impact-assessed write. It is not a ModelState:
-# the enter signal is the `wellformedness` note, the re-entry signal is a
-# lower-gate write, and the exit is the IMPACT_ASSESSED write.
+# The well-formedness phase is a workflow phase between the vulnerabilities
+# write and prior art (approved 2026-11-05). It is not a persisted ModelState:
+# the `trust_assumption` note is the entry, the `wellformedness` note is the
+# exit, and a lower-gate write re-enters the loop.
 WELLFORMEDNESS = "WELLFORMEDNESS"
 
 WELLFORMEDNESS_INSTRUCTION = (
-    "Run the well-formedness phase: for every vulnerability whose class will "
-    "bound a threat, load the class skill, read its title and overview, its "
-    "Trust Assumptions section, and its closing summary, and add the missed "
-    "assumptions. Patch a local gap or return to the undermodelled part "
-    "for a structural gap. When the pass yields no new assumption and every "
-    "vulnerability has a bound suite class, write ONE wellformedness note and "
-    "then the PRIOR_ART gate, then the IMPACT_ASSESSED rows."
+    "Run the well-formedness phase (entry: the `trust_assumption` note). For "
+    "every vulnerability whose class will bound a threat, load the class skill, "
+    "read its title and overview, its Trust Assumptions section, and its "
+    "closing summary, and add the missed assumptions. Patch a local gap or "
+    "return to the undermodelled part for a structural gap. When the pass "
+    "yields no new assumption and every vulnerability has a bound suite class, "
+    "write ONE `wellformedness` note (the phase exit), then run the PRIOR_ART "
+    "gate, then persist the IMPACT_ASSESSED rows from the local impact note "
+    "plus prior art."
 )
 
 # The last gate carries no hint: the model is published (S1 9.3).
@@ -389,6 +422,44 @@ class GateWrite(BaseModel):
     advanced: bool
 
 
+# The well-formedness phase entry and exit note signals (approved 2026-11-05).
+# The phase is not a persisted ModelState: the trust-assumption note opens it,
+# the well_formedness note closes it into prior art, and a lower-gate
+# assumptions write re-enters the loop.
+TRUST_ASSUMPTION_NOTE_HINT = (
+    "The trust-assumption note opens the well-formedness phase. Load the "
+    "class skills for the vulnerabilities that will bound a threat, check the "
+    "trust assumptions, patch the local gaps, and close the phase with ONE "
+    "well_formedness note. Then run the PRIOR_ART gate."
+)
+WELLFORMEDNESS_EXIT_HINT = (
+    "The well-formedness phase is complete. Proceed to the PRIOR_ART gate: "
+    "query the store for the threats, vulnerabilities, and precursor "
+    "capabilities that bear on this unit."
+)
+WELLFORMEDNESS_DEFERRED_HINT = (
+    "The well-formedness phase opens AFTER the vulnerabilities gate. Finish "
+    "the vulnerability citation and the local impact note first, then write "
+    "the `trust_assumption` entry note. Do not run PRIOR_ART yet."
+)
+
+
+def normalise_note_name(name: str) -> str:
+    """The ONE spelling of the note vocabulary: case, hyphens, and underscores
+    are not a second name. `Well_Formedness` and `wellformedness` are the same
+    exit signal, and the pass and the tracker must agree."""
+    return "_".join(
+        str(name or "").strip().lower().replace("-", " ").replace("_", " ").split())
+
+
+# The workflow phase a seeded state resumes into. `WELLFORMEDNESS` is never a
+# persisted state: an earlier pass that wrote the vulnerabilities gate left
+# that phase open, and its exit note is the only signal that closes it.
+_PHASE_OF_STATE: dict[ModelState, str] = {
+    ModelState.VULNERABILITIES_WRITTEN: "WELLFORMEDNESS",
+}
+
+
 class PassiveGateTracker:
     """The harness's passive reading of the gate writes (S1 6.1).
 
@@ -402,6 +473,16 @@ class PassiveGateTracker:
         self.writes: list[GateWrite] = []
         self.trail: list[TrailEntry] = []
         self.state: ModelState | None = None
+        # The impact-coverage index (approved 2026-11-05): the vulnerabilities
+        # written at the vulnerabilities gate (id -> dropped) and the ids an
+        # `assess_impact` call has covered. The state stays at IMPACT_ASSESSED
+        # until every non-dropped vulnerability has a row.
+        self.vulnerabilities: dict[str, bool] = {}
+        self.assessed_vulnerability_ids: set[str] = set()
+        # The current workflow phase (approved 2026-11-05): the note signals
+        # move it, not the highest gate written. `WELLFORMEDNESS` is a real
+        # phase between the vulnerabilities gate and prior art.
+        self.workflow_phase: str | None = None
 
     def reset(self) -> None:
         """Clear the observation for a NEW unit's pass.
@@ -413,19 +494,53 @@ class PassiveGateTracker:
         self.writes = []
         self.trail = []
         self.state = None
+        self.vulnerabilities = {}
+        self.assessed_vulnerability_ids = set()
+        self.workflow_phase = None
 
-    def seed(self, state: ModelState | None) -> None:
+    def seed(self, state: ModelState | None,
+             model: Mapping[str, Any] | None = None) -> None:
         """Seed the tracked state from the PERSISTED model (a resume, or a
         replayed unit). A seeded state at or ahead of a state the pass would ask
         for makes the pass skip it, so a resume never re-authors a gate that is
-        already written, and a COMPLETED model's sections are never regressed."""
+        already written, and a COMPLETED model's sections are never regressed.
+
+        The coverage index is seeded too: a unit that reached `IMPACT_ASSESSED`
+        in an earlier pass owns its vulnerabilities and its scored rows in the
+        persisted document, not in this fresh tracker. Without the seed the
+        residual check is vacuously empty and a resumed unit could write
+        COMPLETED with an unassessed vulnerability."""
         self.state = state
+        self.workflow_phase = (
+            _PHASE_OF_STATE.get(state) if state is not None else None)
         if state is not None:
             # only a REAL resume rides the trail; a fresh unit has nothing to
             # seed and nothing to report
             self.trail.append(TrailEntry(
                 kind="seeded", state=state.value,
                 at=datetime.now(timezone.utc)))
+        self._seed_coverage(model)
+
+    def _seed_coverage(self, model: Mapping[str, Any] | None) -> None:
+        if not isinstance(model, Mapping):
+            return
+        for row in model.get("vulnerabilities") or []:
+            if hasattr(row, "model_dump"):
+                row = row.model_dump()
+            if not isinstance(row, Mapping):
+                continue
+            vulnerability_id = str(row.get("id") or "")
+            if vulnerability_id:
+                self.vulnerabilities[vulnerability_id] = bool(
+                    row.get("dropped", False))
+        for row in model.get("impact_assessment") or []:
+            if hasattr(row, "model_dump"):
+                row = row.model_dump()
+            if not isinstance(row, Mapping):
+                continue
+            reference = str(row.get("vulnerability_ref") or "")
+            if reference:
+                self.assessed_vulnerability_ids.add(reference)
 
     def observe(self, state: ModelState, sections: Mapping[str, Any]) -> GateWrite:
         """Record one gate write. `advanced` is True only when this write moved
@@ -444,6 +559,22 @@ class PassiveGateTracker:
             advanced=advanced,
         )
         self.writes.append(write)
+        if state is ModelState.VULNERABILITIES_WRITTEN:
+            self._record_vulnerabilities(sections)
+        if advanced:
+            # The phase the NEXT turn runs. `WELLFORMEDNESS` opens at the
+            # vulnerabilities gate and closes on its exit note; prior art and
+            # the impact rows are past it.
+            if state is ModelState.VULNERABILITIES_WRITTEN:
+                self.workflow_phase = "WELLFORMEDNESS"
+            elif state in (ModelState.PRIOR_ART, ModelState.IMPACT_ASSESSED,
+                           ModelState.COMPLETED):
+                self.workflow_phase = None
+        elif self.state is not None and STATE_ORDER[self.state] < STATE_ORDER[
+                ModelState.IMPACT_ASSESSED]:
+            # A lower-gate write inside the phase window is the re-entry
+            # signal: the model found a gap and patched an earlier section.
+            self.workflow_phase = "WELLFORMEDNESS"
         if advanced:
             # the states between the previous and the written one, ordered by
             # their OWN rank - never by the enum's declaration order
@@ -464,6 +595,60 @@ class PassiveGateTracker:
                 tracked=self.state.value if self.state is not None else None,
                 sections=list(sections), at=write.observed_at))
         return write
+
+    def _record_vulnerabilities(self, sections: Mapping[str, Any]) -> None:
+        """Record the vulnerabilities a gate write landed.
+
+        A section write REPLACES the whole list in the document, so the index
+        replaces too: merging would keep an id the model removed, and no
+        `assess_impact` call could ever cover it. A malformed row is skipped;
+        the store's schema already rejected it before this observation runs."""
+        rows = sections.get("vulnerabilities") if isinstance(sections, Mapping) else None
+        recorded: dict[str, bool] = {}
+        for row in rows or []:
+            if hasattr(row, "model_dump"):
+                row = row.model_dump()
+            if not isinstance(row, Mapping):
+                continue
+            vulnerability_id = str(row.get("id") or "")
+            if vulnerability_id:
+                recorded[vulnerability_id] = bool(row.get("dropped", False))
+        self.vulnerabilities = recorded
+
+    def residual_vulnerabilities(self) -> list[str]:
+        """The non-dropped vulnerability ids without a scored assessment row."""
+        return [
+            vulnerability_id
+            for vulnerability_id, dropped in self.vulnerabilities.items()
+            if not dropped
+            and vulnerability_id not in self.assessed_vulnerability_ids
+        ]
+
+    def observe_note(self, note_name: str, kind: str = "") -> str | None:
+        """Move the workflow phase on a successful episodic note write.
+
+        The trust-assumption note opens the well-formedness phase, the
+        well_formedness note closes it into prior art, and the impact exit note
+        closes the impact phase. The residual coverage signal rides the note
+        response, not the phase. Returns the note's next-step hint, or None for
+        an ordinary note.
+        """
+        name = normalise_note_name(note_name)
+        if name in ("trust_assumption", "trust_assumptions", "assumptions"):
+            if self.state is None or _rank(self.state) < _rank(
+                    ModelState.VULNERABILITIES_WRITTEN):
+                # The assumptions phase also writes an episodic note. A note
+                # there must not open a phase that runs two gates later, or the
+                # hint would send the model straight to PRIOR_ART.
+                return WELLFORMEDNESS_DEFERRED_HINT
+            self.workflow_phase = "WELLFORMEDNESS"
+            return TRUST_ASSUMPTION_NOTE_HINT
+        if name in ("well_formedness", "wellformedness"):
+            self.workflow_phase = None
+            return WELLFORMEDNESS_EXIT_HINT
+        if name in ("impact_assessed", "impact"):
+            self.workflow_phase = None
+        return None
 
     def write_states(self) -> list[str]:
         return [write.state.value for write in self.writes]
@@ -519,6 +704,7 @@ class TrackingThreatModelStore:
         before this observation, so a rejected write is never counted."""
         row = self._inner.write_impact_assessment(
             project_id, unit_id, run_id, **fields)
+        self._tracker.assessed_vulnerability_ids.add(row.vulnerability_ref)
         self._tracker.observe(ModelState.IMPACT_ASSESSED,
                               ("impact_assessment",))
         return row
@@ -624,19 +810,25 @@ async def _await_seam(fn, *args):
 
 
 def _has_wellformedness_note(tools, project_id: str, unit_id: str) -> bool:
-    """Whether the unit's exit memory exists. The note is the phase's exit
-    signal; the store owns the key and the kind."""
+    """Whether the unit's exit memory exists. The note NAME is the phase exit
+    signal; the spelling is normalised once, and the kind is not a second
+    gate the model can miss."""
     store = getattr(tools, "threat_store", None)
     if store is None:
         return False
     from .threat_model_store import sanitise_unit_name  # noqa: PLC0415
 
-    key = f"{sanitise_unit_name(unit_id)}:wellformedness"
     try:
-        notes = store.read_notes(project_id, key)
+        notes = store.read_notes(project_id, sanitise_unit_name(unit_id))
     except Exception:  # noqa: BLE001 - a read failure is a missing note
         return False
-    return any(note.get("kind") == "wellformedness" for note in notes)
+    for note in notes:
+        name = note.get("note_name")
+        if not name:
+            name = str(note.get("key") or "").rsplit(":", 1)[-1]
+        if normalise_note_name(name) in ("wellformedness", "well_formedness"):
+            return True
+    return False
 
 
 async def _run_wellformedness_turns(
@@ -654,13 +846,12 @@ async def _run_wellformedness_turns(
 ) -> None:
     """Ask the well-formedness turn until the model exits or re-enters.
 
-    The phase is not a ModelState. The tracker observes the gate writes: a
-    lower-gate write is the re-entry signal, the `wellformedness` note is the
-    exit memory, and the `IMPACT_ASSESSED` write is the exit. The harness never
-    gates the model; it only asks the turn again after a re-entry.
+    The phase is not a ModelState. The tracker observes the note signals: a
+    lower-gate write keeps the phase open (re-entry), the `wellformedness`
+    note closes it, and a prior-art or impact write moves past it. The harness
+    never gates the model; it only asks the turn again after a re-entry.
     """
-    while tracker.state is None or _rank(tracker.state) < _rank(
-            ModelState.IMPACT_ASSESSED):
+    while tracker.workflow_phase == "WELLFORMEDNESS":
         before_trail = len(tracker.trail)
         await breaker.before_turn(WELLFORMEDNESS)
         model = _read_model(tools, project_id, unit_id)
@@ -686,8 +877,7 @@ async def _run_wellformedness_turns(
             logger.warning(
                 "threat modeller well-formedness turn failed (%s)", exc)
             cause = exc
-        if tracker.state is not None and _rank(tracker.state) >= _rank(
-                ModelState.IMPACT_ASSESSED):
+        if tracker.workflow_phase != "WELLFORMEDNESS":
             breaker.record_outcome(WELLFORMEDNESS, True)
             return
         reentered = any(
@@ -697,6 +887,7 @@ async def _run_wellformedness_turns(
             breaker.record_outcome(WELLFORMEDNESS, True)
             continue
         if _has_wellformedness_note(tools, project_id, unit_id):
+            tracker.workflow_phase = None
             breaker.record_outcome(WELLFORMEDNESS, True)
             return
         breaker.record_outcome(WELLFORMEDNESS, None, cause=cause)
@@ -767,9 +958,12 @@ async def arun_modeller_pass(
     first_seam_gap = (
         len(tools.seam_gaps.gaps) if tools.seam_gaps is not None else 0)
     persisted = _read_model(tools, project_id, unit_id)
-    tracker.seed(ModelState(persisted["state"])
-                 if persisted and persisted.get("state") in set(ModelState)
-                 else None)
+    tracker.seed(
+        ModelState(persisted["state"])
+        if persisted and persisted.get("state") in set(ModelState)
+        else None,
+        persisted,
+    )
     context, context_gaps = _grounding_context(tools, unit_id)
     # #438: the RUN read the project's scope once at its start
     # (runtime._run_intake arms this attribute); the pass copies that value onto
@@ -787,6 +981,18 @@ async def arun_modeller_pass(
 
     if turn_fn is None:
         turn_fn = _actor_turn_fn(run_id, project_id, tools, actor_factory)
+
+    # A pass that resumes at the vulnerabilities gate left the well-formedness
+    # phase open (the exit note is the only close signal). Run it before the
+    # main ladder, which would otherwise skip the already-written gate.
+    if tracker.workflow_phase == "WELLFORMEDNESS" and not _has_wellformedness_note(
+            tools, project_id, unit_id):
+        await _run_wellformedness_turns(
+            turn_fn=turn_fn, breaker=breaker, tracker=tracker,
+            tools=tools, project_id=project_id, unit_id=unit_id,
+            context=context, context_gaps=context_gaps, surface=surface,
+            threat_model_scope=threat_model_scope,
+        )
 
     for state in ModelState:
         if tracker.state is not None and \

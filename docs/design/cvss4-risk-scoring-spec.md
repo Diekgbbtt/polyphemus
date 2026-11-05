@@ -4,6 +4,19 @@
 *Impact map: `cvss4-risk-scoring-impact-map.md`.*
 *Supersedes the risk-scoring and assessment-write sections of `impact-assessment-system-spec.md` and `hunting-67-threat-model-artifact-spec.md`.*
 
+## Amendment 2026-11-05: the no-fault terminal and the coverage guard
+
+The iteration C.a diagnosis adds these rules.
+The authoritative record is the 2026-11-05 amendment in `docs/design/impact-assessment-system-spec.md`.
+
+- A unit whose trust assumptions all exist and are all falsified ends at `COMPLETED` with no vulnerability and no assessment row.
+  The empty `vulnerabilities` write is the decision node.
+- The `assess_impact` response carries `residual_vulnerabilities` and the coverage hint while a non-dropped vulnerability has no row.
+- The `COMPLETED` write is refused while a non-dropped vulnerability has no row.
+  It is also refused when the model has no vulnerability and is not a no-fault model, so a forward jump cannot skip the decision node.
+  The completion check below remains the non-blocking report for every other finding.
+- The `COMPLETED` success response carries the `validation` and the derived `risk_profile`.
+
 ## Problem Statement
 
 The threat modeller scores a threat with a free-form `likelihood` enum multiplied by an ordinal `impact` weight.
@@ -231,10 +244,11 @@ class AssessImpactArgs(BaseModel):
 ```
 
 The tool:
-1. validates the field presence and the referential links;
+1. validates the field presence, the non-blank core fields, and the referential links;
 2. calls `store.write_impact_assessment(...)`;
-3. returns `{"ok": True}` or a coded teaching rejection naming the field and the fix.
+3. returns `{"ok": True}` plus the next-state hint, or a coded teaching rejection naming the field and the fix.
 
+The success response carries `residual_vulnerabilities` and the coverage hint while a non-dropped vulnerability has no row.
 The tool never returns `risk`, `risk_vector`, or a factor echo.
 
 The store method:
@@ -254,8 +268,11 @@ The `COMPLETED` write remains the only model-facing threat write.
 
 ### 5. The completion check
 
-The completion check reports findings, not a hard rejection, as today:
+The completion check reports findings, not a hard rejection.
+The hard rejections before the `COMPLETED` write are the structural gate (no vulnerability and not a no-fault model) and the coverage guard below.
+The report covers:
 
+- a no-fault model is valid: at least one assumption exists, every assumption is falsified, and no vulnerability and no assessment row is written;
 - every non-dropped vulnerability has at least one assessment row;
 - every row has a non-empty `impact_description`, `exploitability_description`, `capability`, and `capability_id`;
 - every row has a computed `risk` and `risk_vector`;

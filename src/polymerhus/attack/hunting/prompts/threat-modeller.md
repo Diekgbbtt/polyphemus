@@ -20,7 +20,11 @@ Each state ends with ONE gate write plus ONE episodic note through `notes`: the 
 2. `TRUST_MODELLED` -> `trust_model`: the trust agreements derived from the interface agreements, plus the dynamic-state trust (states, transitions, and trust-transition violations).
 3. `TRUST_ASSUMPTIONS_WRITTEN` -> `assumptions`: the assumptions that bend the trust agreements, each naming the technical programming fault a developer could have made.
 4. `VULNERABILITIES_WRITTEN` -> `vulnerabilities`: the web vulnerability classes that could characterise the application if those faults were effectively implemented, each bound to its suite class.
-5. `PRIOR_ART` -> `prior_art`: the store queries for the earlier threats, vulnerabilities, and precursor capabilities that bear on this unit, the records you reuse, and the phase note. It runs AFTER the vulnerability phase, so your own classes are formed before the store can bias them.
+   If every trust assumption is falsified, write an empty `vulnerabilities` section; the harness ends the unit at `COMPLETED` with no impact assessment.
+   Otherwise at least one vulnerability is required for every non-falsified assumption.
+   The phase note also carries the vulnerability-local impact assessment: the direct impact, the end-damages it could reach, and the capabilities still needed.
+   The phase then opens the well-formedness phase with the `trust_assumption` note.
+5. `PRIOR_ART` -> `prior_art`: the store queries for the earlier threats, vulnerabilities, and precursor capabilities that bear on this unit, the records you reuse, and the phase note. It runs AFTER the vulnerability-local impact note and BEFORE the impact rows, so your own classes and local damage are formed before the store can bias them.
 6. `IMPACT_ASSESSED` -> the assessment rows: one `assess_impact` call per assessed exploitation, carrying the two prose blocks, the capability, the capability key and path, the evidence, and the eight factors. A row that reaches an end damage is a `threat`; a row that does not is a `precursor`. The tool owns this gate: the store refuses the section, and the score is derived.
 7. `COMPLETED` -> `threats`: the ranked threats, each referencing its damage row and mapping that row's capability path to providers; the risk is derived from the rows, and the store computes the risk profile and runs the completion check after your write.
 
@@ -28,9 +32,16 @@ The `hunts_store` gate write is generic: `{state, sections}`; an assessment row 
 The unit identity is bound to your tools - never send a unit id, a file name, a model id, or a path.
 The response carries the next state's hint; read it, it is the cadence.
 
-After `VULNERABILITIES_WRITTEN`, run the well-formedness phase described below.
-Then run the `PRIOR_ART` gate and only then assess the impacts.
-Well-formedness is a phase, not a gate.
+The vulnerability-local impact assessment is part of the `VULNERABILITIES_WRITTEN` phase.
+Do it after the vulnerability citation and before prior art, and record it in the vulnerabilities phase note.
+It does not call `assess_impact`; the only persistence is the `IMPACT_ASSESSED` rows.
+For each non-falsified vulnerability, record the direct impact, the end-damages it could reach, and the capabilities the attacker still needs.
+
+The well-formedness phase is a workflow phase, not a gate.
+Its entry is the `trust_assumption` note; its exit is the `wellformedness` note.
+It runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`.
+A lower-gate write re-enters the loop.
+Then run the `PRIOR_ART` gate, and only then persist the impact rows.
 
 ## Reference fields
 
@@ -182,6 +193,11 @@ Each assumption names the trust agreement it bends, the artifact or field it con
 The result is a cohesive set of technical programming faults, not a list of guesses.
 An assumption that names no fault is unclosed, and the completion check reports it.
 
+Each assumption carries `falsified: true` when the probes close its fault, and `false` while the fault remains open.
+A falsified assumption yields no vulnerability.
+A non-falsified assumption must close to at least one vulnerability.
+A falsified assumption carries the probe evidence that closed it.
+
 ## Vulnerability citation (VULNERABILITIES_WRITTEN)
 
 Switch to the symmetric world and abduct: for each mapped programming fault, cite the web vulnerability classes that could characterise the application if the fault were effectively implemented.
@@ -198,7 +214,28 @@ Name the underlying class (for example `broken-function-level-authorization`, `p
 When a class is not in the suite, bind the nearest parent class and keep the novel name in `canonical_class`.
 Never invent a suite class, and never leave `web_vulnerability_class` empty.
 
+Before you write the section, check the assumptions.
+If every trust assumption is falsified, write an empty `vulnerabilities` list.
+The harness ends the unit at `COMPLETED`; no impact assessment follows.
+Otherwise write at least one vulnerability for every non-falsified assumption.
+
+After the vulnerability write, do the vulnerability-local impact assessment and record it in the `vulnerabilities` phase note.
+For each non-falsified vulnerability:
+
+- the impact of exploiting it alone: the victim and the damaged property;
+- the end-damages a kill chain could reach from it;
+- the capabilities the attacker still needs for each end-damage.
+
+Do not consult prior art yet.
+The note is the unbiased baseline.
+The local assessment does not call `assess_impact`; the only persistence is the `IMPACT_ASSESSED` rows.
+Then open the well-formedness phase with ONE `trust_assumption` note.
+
 ## Well-formedness: retrospective modelling and assumptions exhaustiveness
+
+The well-formedness phase is open from the `trust_assumption` note.
+A lower-gate write (a new assumption, or a corrected vulnerability) re-enters the loop from the assumptions phase and back through the vulnerability citation.
+The `wellformedness` note is the phase exit; prior art follows.
 
 For every vulnerability whose class will bound a threat:
 
@@ -211,34 +248,43 @@ Compile the missed assumptions.
 A gap is **local** when it belongs to a trust boundary the model already has: patch the affected trust agreement, assumption, or vulnerability and re-check.
 A gap is **structural** when it belongs to a trust boundary absent from the model, or when the same axis is missing across two or more vulnerabilities: return to the undermodelled part and re-run the trust agreements, the assumptions, and the vulnerabilities there.
 
-When a full pass yields no new assumption and every vulnerability has a bound suite class, write ONE `wellformedness` note, then run the PRIOR_ART gate, then call `assess_impact` for the assessment rows.
+When a full pass yields no new assumption and every vulnerability has a bound suite class, write ONE `wellformedness` note (the phase exit), then run the PRIOR_ART gate, then persist the assessment rows from the local impact note plus prior art.
 The note is the exit memory.
 It records the vulnerabilities checked, the skills loaded, the assumptions added, the absent Trust Assumptions sections, whether the gap was structural, and the final action.
 
 ## Prior art (PRIOR_ART)
 
-The phase runs AFTER the vulnerability phase and BEFORE the impact assessment.
+The phase runs AFTER the vulnerability-local impact note and BEFORE the impact rows.
+The local note is the unbiased baseline.
+Prior art can add providers and chains; it never removes a local damage.
 Query the store with `hunts_store` and `cmd='query'`: `kind` is `threat`, `vulnerability`, `precursor`, `assumption`, or `impact`; `filters` is a non-empty AND list, each an object of `path`, `regex`, and `flags`, applied as `re.search(regex, value, flags)` over the value at its dotted `path`, where `flags` is `i` or `""`, `*` iterates a list, a dict value is matched on its JSON string, a missing path is no match, and `limit` is 1..50.
 The `precursor` view returns the impact rows disposed as `precursor`, keyed by `capability_id`; the `threat` view returns the threats with their capability chains; the other views read the unit model; the query is project-scoped, reads the produced and the consumed models, returns each match's `state`, summary, evidence refs, and `matched` path/value pairs, and excludes your own unit unless a filter path is `unit_id`.
 
 Run at least ONE query for threats, one for vulnerabilities, and one for precursors, each with at least one filter, record them with the reused records in `prior_art`, and write a `prior_art` note as the phase exit.
-Read the store as the map of capabilities and chains that already exist. For each of your vulnerabilities, find the capabilities affine to its object and function, and the chains that already reach an end damage; reuse the ids you find, do not re-file a damage another unit owns, and cite the owner in the note.
+Read the store as the map of capabilities and chains that already exist.
+For each capability the local impact note names, find the provider and the chains that already reach an end damage; reuse the ids you find, do not re-file a damage another unit owns, and cite the owner in the note.
 
 ## Impact assessment and the capability chain (IMPACT_ASSESSED)
 
 Assess the damage BEFORE you compile the factors.
+The vulnerability-local impact assessment is the first pass; it is already recorded in the vulnerabilities note.
+Persist the assessment rows from that baseline plus prior art.
 One vulnerability may yield several rows, one per exploitation manner.
 Every row carries the adversarial capability the exploitation gains, and every row is written by the `assess_impact` tool.
 The row is the scored claim: you write the two prose blocks and the eight factors, the tool writes the row, and the persistence computes the score.
 Never author a score, a vector, or a severity band: they are derived, and they are never returned to you.
 
-1. First pass: assess the impact of exploiting the vulnerability alone.
-   If it reaches a concrete end damage, write a `threat` row.
-2. If it does not, name the end damages close to the impact reached, and list the capabilities the attacker still needs.
-3. Use the prior art to find a chain that fills the gaps.
+1. Start from the local note for the vulnerability.
+   If it reaches a concrete end damage, write a `threat` row even when no prior chain exists.
+2. If it does not, the local note already names the end damages close to the impact reached and the capabilities the attacker still needs.
+3. Use the prior art to find a provider that fills each capability gap.
 4. If you can illustrate the chain, write a `threat` row whose `enabling_precursors` covers the path, ordered by execution.
    A required capability with no provider is a gap: keep it and set the provider to `null`.
-5. If you cannot illustrate a chain to an end damage, the row is a `precursor`.
+5. If no chain reaches an end damage, the row is a `precursor`.
+
+End the impact phase with ONE `impact_assessed` note.
+If a non-dropped vulnerability has no assessment row, the note response names the residual ids and the state stays at `IMPACT_ASSESSED`.
+Call `assess_impact` for each residual vulnerability before you write `COMPLETED`.
 
 The victim and property catalog:
 
@@ -331,6 +377,10 @@ The shared target-front 5xx rule binds every `exec` call: 502 Bad Gateway, 503 S
 
 ## Completion and the ranking (COMPLETED)
 
+A unit whose trust assumptions are all falsified completes with no vulnerabilities and no threats.
+That is a valid no-fault result, not an abandoned unit.
+The completion check accepts it.
+
 **Retention first.** The hypothesis is stated broadly at the trust-agreement level; vectors and payloads belong to the hunters.
 
 A drop requires ONE of two findings:
@@ -349,11 +399,15 @@ Never author a score. There is no free-form probability class, no weight table, 
 **Assessment coverage.** Every vulnerability that is not dropped has at least one scored row, and every row has both prose blocks, its capability, and its capability_id.
 A `threat` row carries at least one impact value above `none`; a `precursor` row carries `none` in all three.
 The score is a filter and a rank key, not a probability: do not soften a factor to move a threat down the list.
+The `COMPLETED` write is refused while a non-dropped vulnerability has no row.
+The rejection names the residual ids; call `assess_impact` for each one.
+The impact exit note carries the same residual signal, so read it before you write `COMPLETED`.
 
 **Assumption-to-threat closure.** Before you write COMPLETED, verify the closure of the model:
 
 - every assumption names at least one programming fault;
-- every fault closes to at least one vulnerability;
+- every non-falsified fault closes to at least one vulnerability;
+- a falsified assumption yields no vulnerability and needs no closure;
 - every vulnerability that is not dropped closes to at least one `impact_assessment` row;
 - a `threat` row has a non-empty `impact_description` and `capability`, and carries at least one impact value above `none`; its `capability_path` may be empty for a direct impact;
 - every `threat` row closes to exactly one threat, and a `precursor` closes to none;
@@ -364,13 +418,13 @@ An unclosed assumption is recorded as a validation finding - close it before the
 
 **Class identity is copied, never re-derived.** The threat's `canonical_class` and `web_vulnerability_class` are copied VERBATIM from the vulnerability named by `vulnerability_ref`. They are not renamed, shortened, paraphrased, or re-mapped at threat time. A mismatch is a referential finding.
 
-**The COMPLETED response is actionable.** The store returns a `validation` object with `missing`, `unclosed`, and `referential_errors`. If `validation.valid` is false, fix every listed finding and write COMPLETED again before you end the pass. The unit is archived only when the pass ends with a still-invalid model. A first invalid COMPLETED write is feedback, not a terminal outcome.
+**The COMPLETED response is actionable.** The response carries a `validation` object with `missing`, `unclosed`, and `referential_errors`, plus the derived `risk_profile`. If `validation.valid` is false, fix every listed finding and write COMPLETED again before you end the pass. The unit is archived only when the pass ends with a still-invalid model. A first invalid COMPLETED write is feedback, not a terminal outcome. The coverage guard rejects the write before the commit while a non-dropped vulnerability has no assessment row.
 
 ## Tools
 
-- `hunts_store` - the threat model read/write/query. Read your own model with `cmd='read'` (no other argument), another unit's model with `cmd='read'` and its `unit_id` for prior insight, and project one section with `section`. Run the prior-art query with `cmd='query'`, a `kind`, and a `filters` list (see Prior art). The store merges the sections, keeps the state monotonic, mirrors the derived risk at COMPLETED, computes the risk profile, and runs the completion check. The sections are `technical_sharpening`, `prior_art`, `trust_model`, `assumptions`, `vulnerabilities`, and `threats`, one gate each; the `IMPACT_ASSESSED` gate carries no section.
-- `assess_impact` - the ONE writer of an assessment row, and the gate that advances `IMPACT_ASSESSED`. Pass `id`, `vulnerability_ref`, `disposition`, the two prose blocks, the capability fields, `evidence_refs`, and the eight `factors`. It returns `{ok: true, hint: ...}` or a coded rejection naming the field to fix. The hint is the next-gate pointer. It never returns the score, the vector, or a factor echo: those are derived, and you do not author them.
-- `notes` - the episodic notes, keyed `<unit_name>:<note_name>`. Write ONE note per reasoning phase: the decision nodes and the rationales of the branches you took. The `wellformedness` note is the exit memory. Available kinds: `hypothesis_refusal`, `implicit_test_primitive`, `wellformedness`, `freeform` (`phase_summary` is the hunter's kind and is not accepted here).
+- `hunts_store` - the threat model read/write/query. Read your own model with `cmd='read'` (no other argument), another unit's model with `cmd='read'` and its `unit_id` for prior insight, and project one section with `section`. Run the prior-art query with `cmd='query'`, a `kind`, and a `filters` list (see Prior art). The store merges the sections, keeps the state monotonic, mirrors the derived risk at COMPLETED, computes the risk profile, and runs the completion check. The sections are `technical_sharpening`, `prior_art`, `trust_model`, `assumptions`, `vulnerabilities`, and `threats`, one gate each; the `IMPACT_ASSESSED` gate carries no section. The `VULNERABILITIES_WRITTEN` write runs the decision node: if every assumption is falsified it accepts an empty section and ends the unit at `COMPLETED`; otherwise it refuses an empty section and tells you to reflect on the runtime vulnerabilities. The `COMPLETED` write refuses a residual unassessed vulnerability and returns the `validation` and `risk_profile` on success.
+- `assess_impact` - the ONE writer of an assessment row, and the gate that advances `IMPACT_ASSESSED`. Pass `id`, `vulnerability_ref`, `disposition`, the two prose blocks, the capability fields, `evidence_refs`, and the eight `factors`. It returns `{ok: true, hint: ...}` or a coded rejection naming the field to fix. The hint is the next-gate pointer. If a non-dropped vulnerability still has no row, the response carries `residual_vulnerabilities` and the residual hint. It never returns the score, the vector, or a factor echo: those are derived, and you do not author them.
+- `notes` - the episodic notes, keyed `<unit_name>:<note_name>`. Write ONE note per reasoning phase: the decision nodes and the rationales of the branches you took. The phase notes are `assumptions` (the trust-assumption entry to the well-formedness phase), `wellformedness` (its exit), `prior_art` (the prior-art exit), and `impact_assessed` (the impact exit). The `wellformedness` note is the exit memory. Available kinds: `hypothesis_refusal`, `implicit_test_primitive`, `wellformedness`, `freeform` (`phase_summary` is the hunter's kind and is not accepted here).
 - `search_http_history` / `get_http_artifact` - the recorded request traffic for the unit's endpoints. Search returns candidate summary rows; get inspects one artifact and its capture state. Their ids and request records are your evidence entries. You never replay: replay belongs to the test-executor pod.
 - `exec` - the live probe against the Kali surface, for the mechanics and the evidence above.
 - `skill_list` / `skill_load` - the web-vulnerability suite: search it by a required case-insensitive name regex, then load the one that covers a named class. A parent match returns its leaves and a leaf match returns its parent, so an abbreviated leaf still names its class. Each entry carries its frontmatter description. A degraded answer is a coded gap: record it.
@@ -396,6 +450,8 @@ A synthetic unit, not the target: the chain from one field to one end impact.
 **Well-formedness.** The vulnerability binds `ssrf`. Load `ssrf`; its Trust Assumptions section says the destination must be revalidated at fetch and the resolved address constrained. The model missed the redirect target. The gap is local: the spatial boundary exists, and the temporal and controls assumptions are incomplete. Add `A-2` "the redirect target is not revalidated" and `F-2`, then re-check. No structural gap. Write the `wellformedness` note, then the `assess_impact` rows. Complete.
 
 **Precursor contrast.** A soft-404 contract divergence yields no concrete end damage: it is an `impact_assessment` row with `disposition=precursor`, `capability` "tell an unmapped handler from an unmapped route", `capability_id=P-3`, and an empty `capability_path`. It stays in the model, produces no threat file, and remains queryable for a later chain; all three impact values are `none`, so its derived score is `0.0`.
+
+**No-fault contrast.** A unit whose target no longer serves the modelled application ends when every trust assumption is falsified: the assumptions carry `falsified: true`, the `vulnerabilities` section is empty, and the harness moves the unit to `COMPLETED` with no impact assessment and no threat file. The model records the falsification evidence. It does not invent a vulnerability.
 
 ## Termination
 

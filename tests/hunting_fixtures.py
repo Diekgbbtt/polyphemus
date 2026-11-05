@@ -18,6 +18,7 @@ from pydantic import PrivateAttr
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunting_agent import build_sync_hunting_agent
+from polymerhus.attack.hunting.threat_model import ModelState
 
 PROJECT = "proj-a"
 UNIT_ID = "Service:slug:a"
@@ -359,8 +360,6 @@ def modeller_gate_payloads() -> dict:
     section, because the `assess_impact` tool (ticket #407) is that row's sole
     writer and the persistence derives the score from the factors.
     """
-    from polymerhus.attack.hunting.threat_model import ModelState
-
     return {
         ModelState.UNIT_TECHNICAL_SHARP: {
             "technical_sharpening": {
@@ -574,8 +573,6 @@ def write_gate(surface, state, *, payload=None):
     fixture whose model carries no row at all. `payload` defaults to the worked
     example's content for that gate.
     """
-    from polymerhus.attack.hunting.threat_model import ModelState
-
     content = (
         modeller_gate_payloads()[state] if payload is None else payload)
     if state is ModelState.IMPACT_ASSESSED:
@@ -642,8 +639,6 @@ def produce_model(
     gate payloads are a KNOWN-GOOD literal (`modeller_gate_payloads`), never
     derived from the code under test."""
     payloads = modeller_gate_payloads()
-    from polymerhus.attack.hunting.threat_model import ModelState
-
     rows = _coherent_threats(threats) if threats is not None else None
     path = None
     for state in ModelState:
@@ -742,8 +737,6 @@ class ScriptedModellerTurns:
     assessment rows. Returns the tool responses and the turn inputs."""
 
     def __init__(self, states=None, payloads=None):
-        from polymerhus.attack.hunting.threat_model import ModelState
-
         self.states = list(states if states is not None else ModelState)
         # `payloads` OVERRIDES the worked example's gate payloads (one gate's
         # override, never a replacement of the other gates), so a test that
@@ -780,4 +773,14 @@ class ScriptedModellerTurns:
         response = self.write_gate(turn, turn.state)
         if response is not None:
             self.responses.append(response)
+        if turn.state is ModelState.VULNERABILITIES_WRITTEN:
+            # The trust-assumption note opens the well-formedness phase from
+            # the vulnerabilities exit (approved 2026-11-05), after the local
+            # impact note.
+            notes = next(tool for tool in turn.tools if tool.name == "notes")
+            notes.invoke({
+                "cmd": "write", "option": "append",
+                "note_name": "trust_assumption", "kind": "freeform",
+                "body": "the trust assumptions to re-check with the class skills",
+            })
         return None

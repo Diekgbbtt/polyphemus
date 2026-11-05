@@ -10,7 +10,7 @@ Where this document and the amendment disagree, the amendment wins.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
 - The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`. Its entry is the `trust_assumption` note, its exit is the `wellformedness` note, and a lower-gate write re-enters the phase.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 

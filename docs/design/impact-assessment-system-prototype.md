@@ -2,6 +2,7 @@
 
 *Status: prototype (design-shaped), 2026-10-26.*
 *Companion to `docs/design/impact-assessment-system-spec.md`.*
+*Superseded in part by the 2026-10-31 CVSS 4.0 amendment and the 2026-11-05 amendment in the spec; where this prototype and the spec disagree, the spec wins.*
 *This document rewrites the earlier damage-bearing prototype. It removes the heuristic damage families, the victim classes, the damage symptom, the damage verdict, the precursor-use enum, the cross-unit leads, and the run-record damage fields.*
 
 ## 1. What the system does

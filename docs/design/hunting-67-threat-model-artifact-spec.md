@@ -1,5 +1,20 @@
 # Threat model spec: the formal unit threat model artifact
 
+## Amendment 2026-11-05: the no-fault terminal
+
+The 2026-11-05 amendment in `docs/design/impact-assessment-system-spec.md` adds the no-fault terminal, the empty-vulnerabilities decision node, and the impact coverage guard.
+Where this document and that amendment disagree, the amendment wins.
+
+- `Assumption` gains `falsified: bool = False`.
+  A falsified assumption yields no vulnerability and carries the probe evidence that closed it.
+  A non-falsified assumption must close to at least one vulnerability.
+- The `vulnerabilities` section may be empty only for a no-fault model: at least one assumption exists and every one is falsified.
+  Otherwise the empty write is refused and the model must write at least one vulnerability per non-falsified assumption.
+- The `threats` section may be empty when every vulnerability is dropped or when the model is a no-fault model.
+- The completion checker remains non-blocking for every quality finding.
+  The controller refuses the `COMPLETED` write for the structural condition (no vulnerability and not no-fault) and for an unassessed non-dropped vulnerability.
+- The `COMPLETED` success response carries `validation` and the derived `risk_profile`.
+
 ## Amendment 2026-10-31: CVSS 4.0 risk scoring
 
 The CVSS 4.0 risk-scoring workstream supersedes the likelihood and impact-weight scoring, the threat-side CIA carriage, the threat and vulnerability confidence, and the unit-sum dispatch order in this document.
@@ -28,7 +43,7 @@ Where this document and the amendment disagree, the amendment wins.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
 - The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`. Its entry is the `trust_assumption` note, its exit is the `wellformedness` note, and a lower-gate write re-enters the phase.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 ## Amendment 2026-10-26: impact assessment system
@@ -40,13 +55,13 @@ Where this document and the new spec disagree, the new spec wins.
 
 - The impact assessment is a first-class model section.
   A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
-- A `precursor` is a capability entity, not a row.
+- A `precursor` is an impact-assessment row with no concrete end damage that still yields its capability.
   The threat references its precursors through `enabling_precursors`.
 - The `damage` field merges the victim and the damage into one semantic field.
   The damage-family and victim-class enums are removed.
-- The CIA score is authored after the impact assessment.
+- The CVSS 4.0 base score is derived at persistence, after the impact assessment.
   The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
-- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `PRIOR_ART`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `IMPACT_ASSESSED`, `COMPLETED`.
+- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `PRIOR_ART`, `IMPACT_ASSESSED`, `COMPLETED`.
 - `hunts_store` gains `cmd=query`: a required `kind` plus a non-empty AND list of `{path, regex, flags}` filters over the threat-file and model fields. An empty filter, an invalid regex, or an unknown path is a coded rejection.
 - The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
 - The hunter payload carries the impact assessment and the precursors.
@@ -238,12 +253,15 @@ This preserves the single-writer invariant across the mover race.
 
 ### 5.1 Shape
 
+**Superseded.** The block below records the 2026-10-15 design.
+The live schema is `src/polymerhus/attack/hunting/threat_model.py` at `SCHEMA_VERSION` 5, and the amendments at the top of this document win.
+
 The persisted document is a **partial** model at the intermediate gates and a **complete** model at COMPLETED.
 Every section has an empty default.
 The store parses the document as `PartialThreatModel` at every write.
 The completion checker validates the complete `UnitThreatModel` only at COMPLETED.
 Unknown fields are forbidden at every level.
-The schema version is `1`.
+The schema version is `5`.
 
 ```
 Evidence:
@@ -315,6 +333,7 @@ Assumption:
   statement: str
   fault: Fault
   boundary_ref: str = ""
+  falsified: bool = false
   confidence: Confidence
   evidences: list[Evidence]
 
@@ -476,6 +495,8 @@ A threat whose likelihood is `none` carries the retention rationale and is not d
 
 ### 5.7 Completion checker
 
+**Superseded.** The live checker is `check_completion` in `src/polymerhus/attack/hunting/threat_model.py`; the 2026-11-05 amendment at the top of this document wins.
+
 The completion checker is the `ratify` role.
 It runs on the `COMPLETED` write.
 It is non-blocking: it does not reject the write.
@@ -494,11 +515,9 @@ It checks the necessary attributes:
 - `trust_model.dynamic_state_trust.states` non-empty.
 - `assumptions` non-empty.
 - Each assumption has a non-empty fault id, label, and description.
-- `vulnerabilities` non-empty.
-- Each vulnerability has a non-empty `canonical_class` and a `web_vulnerability_class` or a suite gap.
-- `failure_modes` non-empty.
-- Every vulnerability has at least one failure mode, unless the vulnerability is dropped.
-- `threats` is present; it may be empty only when every vulnerability is dropped.
+- `vulnerabilities` is non-empty, unless the model is a no-fault model (at least one assumption, every one falsified).
+- Each vulnerability has a non-empty `canonical_class` and a bound suite `web_vulnerability_class`.
+- `threats` is present; it may be empty when every vulnerability is dropped or the model is a no-fault model.
 - Every threat has a non-empty rationale, valid risk factors, and at least one evidence entry.
 - The threat order is non-increasing by weight and the ids are `threat-1..n`.
 - The risk profile equals the harness-computed total and breakdown.

@@ -450,7 +450,7 @@ Its primitives are:
 The technical and trust-model claims carry a confidence degree.
 The threat and the vulnerability do not: the assessment is the scored claim and the confidence is a verification-planning attribute.
 
-The model's state is structural, not a separate status row: the seven gates (`UNIT_TECHNICAL_SHARP`, `PRIOR_ART`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `IMPACT_ASSESSED`, `COMPLETED`) are the written sections, and a model is consumable once it reaches `COMPLETED` with its threats.
+The model's state is structural, not a separate status row: the seven gates (`UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `PRIOR_ART`, `IMPACT_ASSESSED`, `COMPLETED`) are the written sections, and a model is consumable once it reaches `COMPLETED` with its threats.
 The store moves the model `produced -> consumed` and archives a degraded unit's partial model to `abandoned/`; the model never evolves (a re-model is a new run).
 The **hunter** is dispatched per threat, not per config: the threat payload (the threat plus its unit context) is materialised at dispatch and the threat's dispatch id is the hunter store key (`docs/design/hunting-67-hunting-agent-spec.md`, `docs/design/hunting-164-state-graph-spec.md` section 14).
 

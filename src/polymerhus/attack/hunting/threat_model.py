@@ -286,6 +286,15 @@ class Assumption(_Record):
     statement: str
     fault: Fault
     boundary_ref: str = ""
+    # The falsification status of the trust assumption (approved 2026-11-05):
+    # a falsified assumption closes its fault and yields no vulnerability. A
+    # non-falsified assumption must close to at least one vulnerability.
+    falsified: bool = Field(
+        default=False,
+        description=(
+            "True when the probes close the assumption's fault. A falsified "
+            "assumption yields no vulnerability; a non-falsified assumption "
+            "must close to at least one."))
     confidence: Confidence
     evidences: list[Evidence]
 
@@ -853,6 +862,32 @@ def normalise_threats(
     ]
 
 
+def is_falsified_assumption(row: Any) -> bool:
+    """Whether one assumption row carries the falsified signal.
+
+    The live path reads pydantic `Assumption` objects; the tool's decision node
+    reads the persisted mapping. ONE predicate serves both, so the no-fault
+    terminal cannot disagree between the writer and the checker."""
+    if isinstance(row, Mapping):
+        return bool(row.get("falsified", False))
+    return bool(getattr(row, "falsified", False))
+
+
+def no_fault_terminal(assumptions: Sequence[Any],
+                      vulnerabilities: Sequence[Any]) -> bool:
+    """The valid no-fault end of a unit (approved 2026-11-05).
+
+    It requires at least one trust assumption and every one falsified, with no
+    vulnerability written. `all([])` is true, so an empty assumptions list is a
+    skipped phase, never a no-fault result."""
+    rows = list(assumptions)
+    return (
+        bool(rows)
+        and not list(vulnerabilities)
+        and all(is_falsified_assumption(row) for row in rows)
+    )
+
+
 def _check_necessary(model: UnitThreatModel) -> list[str]:
     """The fixed necessary-attribute set (S2 5.7), as dotted finding paths.
 
@@ -871,21 +906,27 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
         missing.append("technical_sharpening.control_flows")
     if not sharpening.data_flows:
         missing.append("technical_sharpening.data_flows")
+    # The no-fault terminal (approved 2026-11-05): at least one trust
+    # assumption exists and every one is falsified, with no vulnerability
+    # written. The impact stretch is skipped, because there is nothing to
+    # assess. An empty assumptions list is a skipped phase, never this branch.
+    no_fault = no_fault_terminal(model.assumptions, model.vulnerabilities)
     # The prior-art requirement (spec section 7): the modeller grounds the
     # trust model in at least one query for each of the three record kinds, each
     # with at least one filter, and records the phase note.
-    for kind in (
-        PriorArtKind.THREAT,
-        PriorArtKind.VULNERABILITY,
-        PriorArtKind.PRECURSOR,
-    ):
-        queries = [query for query in model.prior_art.queries if query.kind is kind]
-        if not queries:
-            missing.append(f"prior_art.queries.{kind.value}")
-        elif not any(query.filters for query in queries):
-            missing.append(f"prior_art.queries.{kind.value}.filters")
-    if not model.prior_art.notes:
-        missing.append("prior_art.notes")
+    if not no_fault:
+        for kind in (
+            PriorArtKind.THREAT,
+            PriorArtKind.VULNERABILITY,
+            PriorArtKind.PRECURSOR,
+        ):
+            queries = [query for query in model.prior_art.queries if query.kind is kind]
+            if not queries:
+                missing.append(f"prior_art.queries.{kind.value}")
+            elif not any(query.filters for query in queries):
+                missing.append(f"prior_art.queries.{kind.value}.filters")
+        if not model.prior_art.notes:
+            missing.append("prior_art.notes")
     if not model.trust_model.trust_agreements:
         missing.append("trust_model.trust_agreements")
     if not model.trust_model.dynamic_state_trust.states:
@@ -900,7 +941,10 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
             missing.append(f"assumption:{assumption.id}.fault.label")
         if not fault.description:
             missing.append(f"assumption:{assumption.id}.fault.description")
-    if not model.vulnerabilities:
+        if assumption.falsified and not assumption.evidences:
+            missing.append(
+                f"assumption:{assumption.id}.falsification_evidence")
+    if not model.vulnerabilities and not no_fault:
         missing.append("vulnerabilities")
     for vulnerability in model.vulnerabilities:
         if not vulnerability.canonical_class:
@@ -908,9 +952,10 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
     every_vulnerability_dropped = bool(model.vulnerabilities) and all(
         vulnerability.dropped for vulnerability in model.vulnerabilities
     )
-    if not model.impact_assessment and not every_vulnerability_dropped:
+    if not model.impact_assessment and not every_vulnerability_dropped and not no_fault:
         # A model whose vulnerabilities are all dropped has no threats and is
-        # still complete; the scored claims are the impact rows.
+        # still complete; the scored claims are the impact rows. A no-fault
+        # model has no rows and no threats by definition.
         missing.append("impact_assessment")
     # The assessment invariants (S2 5.7, schema 5). Every row carries its two
     # prose blocks, its capability, its key, and the derived vector; the factor
@@ -998,6 +1043,11 @@ def _check_references(
     sharpening = model.technical_sharpening
     dynamic = model.trust_model.dynamic_state_trust
     fault_ids = {assumption.fault.id for assumption in model.assumptions}
+    falsified_fault_ids = {
+        assumption.fault.id
+        for assumption in model.assumptions
+        if assumption.falsified
+    }
     vulnerability_ids = {vulnerability.id for vulnerability in model.vulnerabilities}
     vulnerability_index = {vulnerability.id: vulnerability for vulnerability in model.vulnerabilities}
     agreement_ids = {agreement.id for agreement in sharpening.interface_agreements}
@@ -1026,6 +1076,10 @@ def _check_references(
     for vulnerability in model.vulnerabilities:
         if vulnerability.fault_ref not in fault_ids:
             unresolved(f"vulnerability:{vulnerability.id}", "fault_ref", vulnerability.fault_ref)
+        elif vulnerability.fault_ref in falsified_fault_ids:
+            errors.append(
+                f"vulnerability:{vulnerability.id}.fault_ref="
+                f"{vulnerability.fault_ref!r} names a falsified assumption")
     for assessment in model.impact_assessment:
         if assessment.vulnerability_ref not in vulnerability_ids:
             unresolved(
@@ -1058,6 +1112,10 @@ def _check_references(
     for threat in model.threats:
         if threat.fault_ref not in fault_ids:
             unresolved(f"threat:{threat.id}", "fault_ref", threat.fault_ref)
+        elif threat.fault_ref in falsified_fault_ids:
+            errors.append(
+                f"threat:{threat.id}.fault_ref="
+                f"{threat.fault_ref!r} names a falsified assumption")
         if threat.vulnerability_ref not in vulnerability_ids:
             unresolved(f"threat:{threat.id}", "vulnerability_ref", threat.vulnerability_ref)
         if threat.impact_ref not in impact_ids:
@@ -1114,6 +1172,10 @@ def _check_closure(model: UnitThreatModel) -> list[str]:
         ):
             unclosed.append(f"threat:{threat.id}.enabling_precursors")
     for assumption in model.assumptions:
+        if assumption.falsified:
+            # A falsified assumption closes its fault and yields no
+            # vulnerability (approved 2026-11-05).
+            continue
         if not any(
             vulnerability.fault_ref == assumption.fault.id
             for vulnerability in model.vulnerabilities
@@ -1269,8 +1331,10 @@ __all__ = [
     "GATE_SECTIONS",
     "ImpactAssessment",
     "ImpactDisposition",
+    "is_falsified_assumption",
     "ModelSections",
     "ModelState",
+    "no_fault_terminal",
     "PREVIOUS_SCHEMA_VERSION",
     "PartialThreatModel",
     "PRIOR_ART_PATHS",

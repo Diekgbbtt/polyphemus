@@ -1194,6 +1194,24 @@ def test_the_modeller_surface_wires_the_suite_class_index(tmp_path):
                for finding in validation["class_findings"])
 
 
+def test_the_completion_flags_a_threat_that_references_a_falsified_fault(tmp_path):
+    """A falsified assumption yields no vulnerability, so it yields no threat.
+
+    The vulnerability check already refuses a falsified `fault_ref`; the threat
+    carries the same reference and must not slip past it."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    document = store.read_model(PROJECT, UNIT)
+    document["assumptions"][0]["falsified"] = True
+
+    validation = check_completion(UnitThreatModel.model_validate(document))
+
+    assert any(
+        finding.startswith("threat:") and "falsified" in finding
+        for finding in validation.referential_errors
+    )
+
+
 def test_the_completion_records_a_technique_family_as_a_class_finding(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_to_completed(store)
@@ -1733,9 +1751,8 @@ def test_the_impact_assessed_gate_refuses_an_empty_hunts_store_write(tmp_path):
 def _write_completed_document(store, path: Path, sections: dict) -> Path:
     """Write a COMPLETED document out of band.
 
-    The store now refuses a COMPLETED write that skips a non-dropped
-    vulnerability's assessment. The checker tests need an invalid document, so
-    they write it directly; the checker remains the unit under test."""
+    The checker tests need an invalid document, so they write it directly;
+    the checker remains the unit under test."""
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     document.update(sections)
     document["state"] = "COMPLETED"
@@ -1743,45 +1760,51 @@ def _write_completed_document(store, path: Path, sections: dict) -> Path:
     return path
 
 
-def test_a_completed_write_without_an_assessment_is_rejected(tmp_path):
-    """The pass cannot skip the impact assessment: a COMPLETED write that
-    leaves a non-dropped vulnerability without a scored row is a coded
-    rejection, so the model re-enters with the assess_impact feedback instead
-    of the run archiving the unit as degraded."""
-    store = ThreatModelStore(tmp_path)
-    _write_gates(store)
+def test_a_falsified_assumption_with_no_vulnerabilities_is_a_valid_no_fault_model(tmp_path):
+    """The approved no-fault branch: when every trust assumption is falsified,
+    the model ends at COMPLETED with no vulnerability and no impact row.
 
-    with pytest.raises(ThreatModelIdentityError) as raised:
-        store.write_sections(
-            PROJECT, UNIT, "COMPLETED", {"threats": [_threat()]}, run_id=RUN)
-
-    assert raised.value.fields == ["impact_assessment"]
-    assert "assess_impact" in str(raised.value)
-    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
-
-
-def test_a_completed_write_without_vulnerabilities_is_rejected(tmp_path):
-    """A unit that never wrote the vulnerability section is not complete.
-
-    The C.a run showed the dominant abandonment mode: the modeller wrote
-    COMPLETED from PRIOR_ART with an empty `vulnerabilities` list. The
-    assessment-coverage guard alone is vacuous there, because there is no
-    vulnerability to cover, so the write must refuse the missing section."""
+    The empty-vulnerability write is legitimate here, so the completion checker
+    must accept the model and the pass must not archive it."""
     store = ThreatModelStore(tmp_path)
     sections = [
-        (state, payload)
-        for state, payload in _sections_below_completed()
-        if state != "VULNERABILITIES_WRITTEN"
+        ("UNIT_TECHNICAL_SHARP", {"technical_sharpening": _sharpening()}),
+        ("TRUST_MODELLED", {"trust_model": _trust_model()}),
+        ("TRUST_ASSUMPTIONS_WRITTEN", {
+            "assumptions": [{**_assumptions()[0], "falsified": True}]}),
     ]
     _write_gates(store, sections=sections)
 
-    with pytest.raises(ThreatModelIdentityError) as raised:
-        store.write_sections(
-            PROJECT, UNIT, "COMPLETED", {"threats": []}, run_id=RUN)
+    store.write_sections(
+        PROJECT, UNIT, "COMPLETED", {"threats": []}, run_id=RUN)
 
-    assert raised.value.fields == ["vulnerabilities"]
-    assert "vulnerability section" in str(raised.value)
-    assert store.read_model(PROJECT, UNIT)["state"] == "PRIOR_ART"
+    model = store.read_model(PROJECT, UNIT)
+    assert model["state"] == ModelState.COMPLETED.value
+    assert model["validation"]["valid"] is True
+    assert model["validation"]["missing"] == []
+    assert model["vulnerabilities"] == []
+    assert store.read_threat_files(PROJECT, UNIT) == []
+
+
+def test_an_empty_model_is_not_a_valid_no_fault_model(tmp_path):
+    """The no-fault branch is not vacuous.
+
+    `all([])` is `True`, so a model that never wrote an assumption would pass
+    as "every assumption is falsified". No assumptions means the work was
+    skipped; the completion check must still report the missing sections."""
+    store = ThreatModelStore(tmp_path)
+    _write_gates(store, sections=[
+        ("UNIT_TECHNICAL_SHARP", {"technical_sharpening": _sharpening()}),
+        ("TRUST_MODELLED", {"trust_model": _trust_model()}),
+    ])
+
+    store.write_sections(PROJECT, UNIT, "COMPLETED", {"threats": []}, run_id=RUN)
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["validation"]["valid"] is False
+    assert "assumptions" in model["validation"]["missing"]
+    assert "vulnerabilities" in model["validation"]["missing"]
+    assert "impact_assessment" in model["validation"]["missing"]
 
 
 def test_the_threat_file_carries_the_denormalised_impact_block(tmp_path):

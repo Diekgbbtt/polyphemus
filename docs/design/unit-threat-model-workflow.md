@@ -10,7 +10,7 @@ Where this document and the amendment disagree, the amendment wins.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
 - The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`. Its entry is the `trust_assumption` note, its exit is the `wellformedness` note, and a lower-gate write re-enters the phase.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 ## Amendment 2026-10-26: impact assessment system
@@ -22,13 +22,13 @@ Where this document and the new spec disagree, the new spec wins.
 
 - The impact assessment is a first-class model section.
   A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
-- A `precursor` is a capability entity, not a row.
+- A `precursor` is an impact-assessment row with no concrete end damage that still yields its capability.
   The threat references its precursors through `enabling_precursors`.
 - The `damage` field merges the victim and the damage into one semantic field.
   The damage-family and victim-class enums are removed.
-- The CIA score is authored after the impact assessment.
+- The CVSS 4.0 base score is derived at persistence, after the impact assessment.
   The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
-- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `PRIOR_ART`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `IMPACT_ASSESSED`, `COMPLETED`.
+- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `PRIOR_ART`, `IMPACT_ASSESSED`, `COMPLETED`.
 - `hunts_store` gains `cmd=query`: a required `kind` plus a non-empty AND list of `{path, regex, flags}` filters over the threat-file and model fields. An empty filter, an invalid regex, or an unknown path is a coded rejection.
 - The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
 - The hunter payload carries the impact assessment and the precursors.
