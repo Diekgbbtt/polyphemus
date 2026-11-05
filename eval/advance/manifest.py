@@ -92,6 +92,9 @@ IGNORED_PREFIXES: tuple[str, ...] = (
     "frontend",
     "loop-budget.md",
     "loop-constraints.md",
+    # Prototype scaffolding (the Steel pool spikes): measured evidence, never a
+    # stack artifact, so a version advance never aligns it.
+    "prototype",
     "skills-unspurious",
     "tests",
     "tools",
