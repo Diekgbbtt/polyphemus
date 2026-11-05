@@ -321,6 +321,33 @@ def _deny(
     return 2
 
 
+def _local_mode_flags(argv: list[str]) -> list[str]:
+    """The local-mode flags a shell caller still needs, or an empty list.
+
+    The browser MCP passes ``--api-url`` and ``--local`` itself. A shell caller
+    names only the command, so the guard supplies ``--local`` exactly as the
+    retired wrapper did. An explicit mode flag is never duplicated, and a
+    non-browser command (``--version``, ``login``) is left untouched.
+    """
+    if any(
+        token in ("--local", "-l", "--api-url")
+        or token.startswith("--api-url=")
+        for token in argv
+    ):
+        return []
+    if not any(token in ("browser", "scrape") for token in argv):
+        return []
+    if not os.environ.get("STEEL_BROWSER_API_URL"):
+        return []
+    return ["--local"]
+
+
+def _local_mode_argv(argv: list[str]) -> list[str]:
+    """Return the invocation with the local-mode flag prepended when needed."""
+    flags = _local_mode_flags(argv)
+    return [*flags, *argv] if flags else argv
+
+
 def _query_live_sessions(argv: list[str], real_binary: str) -> set[str] | None:
     """Ask the real CLI for the live catalogue.
 
@@ -328,7 +355,7 @@ def _query_live_sessions(argv: list[str], real_binary: str) -> set[str] | None:
     MCP sanitizer: it never blocks a valid command because the catalogue is
     temporarily unavailable.
     """
-    mode = ["--local"] if ("--local" in argv or os.environ.get("STEEL_BROWSER_API_URL")) else []
+    mode = _local_mode_flags(argv)
     try:
         outcome = run_in_process_group(
             [real_binary, *mode, "browser", "sessions", "--json"],
@@ -391,7 +418,9 @@ def run_guarded(
     if isinstance(parsed, ContractError):
         return _deny(parsed, argv=argv, trace_path=trace_path, catalogue=catalogue)
 
-    stdout, stderr, returncode, duration_ms = _run_real(argv, real_binary, timeout_s)
+    stdout, stderr, returncode, duration_ms = _run_real(
+        _local_mode_argv(argv), real_binary, timeout_s
+    )
     result = {
         "stdout": stdout,
         "stderr": stderr,

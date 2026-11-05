@@ -308,15 +308,19 @@ class SteelCli:
         return self._api_url
 
     def _command(self, args: Sequence[str]) -> list[str]:
+        # `--api-url` and `--local` are the global local-mode pair. The browser
+        # MCP is always a pool client, so both are deterministic and the agent
+        # never supplies either. The CLI accepts the pair (0.5.0-preview.6).
         if self._guard_path:
             return [
                 self._python,
                 self._guard_path,
                 "--api-url",
                 self._api_url,
+                "--local",
                 *args,
             ]
-        return [self._binary, "--api-url", self._api_url, *args]
+        return [self._binary, "--api-url", self._api_url, "--local", *args]
 
     def _run(self, args: Sequence[str], *, check_success: bool) -> dict:
         command = self._command(args)

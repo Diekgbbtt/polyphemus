@@ -144,6 +144,7 @@ def test_start_builds_the_pinned_command(fake_cli):
         [
             "--api-url",
             "http://127.0.0.1:3110/v1",
+            "--local",
             "browser",
             "start",
             "--session",
@@ -226,6 +227,7 @@ def test_exec_appends_the_session_and_returns_the_error_envelope(fake_cli):
         [
             "--api-url",
             "http://127.0.0.1:3110/v1",
+            "--local",
             "browser",
             "click",
             "#missing",
@@ -249,6 +251,7 @@ def test_exec_inserts_the_session_before_a_variadic_boundary(fake_cli):
     assert _calls(calls)[0] == [
         "--api-url",
         "http://127.0.0.1:3110/v1",
+        "--local",
         "browser",
         "fill",
         "--session",
@@ -295,7 +298,8 @@ def test_guard_mode_uses_the_guard_prefix(fake_cli, tmp_path):
     assert programs.read_text(encoding="utf-8").strip() == str(guard)
     assert first[:1] == ["--api-url"]
     assert first[1] == "http://127.0.0.1:3110/v1"
-    assert first[2:4] == ["browser", "start"]
+    assert first[2] == "--local"
+    assert first[3:5] == ["browser", "start"]
 
 
 def test_restore_sets_cookies_and_local_storage(fake_cli):
@@ -333,7 +337,7 @@ def test_restore_sets_cookies_and_local_storage(fake_cli):
         warnings=("1 cookie attribute set is not restorable through the CLI",),
     )
     calls_seen = _calls(calls)
-    assert calls_seen[0][3:] == [
+    assert calls_seen[0][4:] == [
         "cookies",
         "set",
         "--domain",
@@ -349,7 +353,7 @@ def test_restore_sets_cookies_and_local_storage(fake_cli):
         "sid",
         "a value with spaces",
     ]
-    assert calls_seen[1][3:] == [
+    assert calls_seen[1][4:] == [
         "cookies",
         "set",
         "--session",
@@ -359,14 +363,14 @@ def test_restore_sets_cookies_and_local_storage(fake_cli):
         "theme",
         "dark",
     ]
-    assert calls_seen[2][3:] == [
+    assert calls_seen[2][4:] == [
         "navigate",
         "https://app.test",
         "--session",
         "hunt",
         "--json",
     ]
-    assert calls_seen[3][3:] == [
+    assert calls_seen[3][4:] == [
         "storage",
         "local",
         "set",
@@ -377,7 +381,7 @@ def test_restore_sets_cookies_and_local_storage(fake_cli):
         "token",
         "secret token",
     ]
-    assert calls_seen[4][3:] == [
+    assert calls_seen[4][4:] == [
         "storage",
         "local",
         "set",
@@ -388,7 +392,7 @@ def test_restore_sets_cookies_and_local_storage(fake_cli):
         "mode",
         "dark",
     ]
-    assert calls_seen[5][3:] == [
+    assert calls_seen[5][4:] == [
         "navigate",
         "about:blank",
         "--session",
@@ -506,7 +510,7 @@ def test_capture_normalises_a_host_key_to_the_current_origin(fake_cli):
         "localStorage": {"http://localhost:3000": {"token": "t"}},
         "sessionStorage": {"http://localhost:3000": {"flow": "f"}},
     }
-    assert _calls(calls)[0][3:7] == ["get", "url", "--session", "hunt"]
+    assert _calls(calls)[0][4:8] == ["get", "url", "--session", "hunt"]
 
 
 def test_capture_falls_back_to_a_synthetic_origin_when_get_url_fails(fake_cli):
@@ -800,7 +804,7 @@ def test_stop_and_release(fake_cli):
         released = cli.release(_session())
 
     assert released is True
-    assert _calls(calls)[0][3:] == [
+    assert _calls(calls)[0][4:] == [
         "stop",
         "--session",
         "hunt",

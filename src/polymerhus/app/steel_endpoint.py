@@ -13,8 +13,8 @@ The Python SDK appends ``/v1`` to ``base_url`` itself, so this resolver returns
 the SDK-native origin form: one terminal ``/v1`` and any trailing slash removed.
 The resolver is therefore the one place the form is adapted and the single
 construction point for the SDK side. No consumer owns the address; the CLI
-reads the same variable name natively, and the deployment `steel` wrapper
-injects the global ``--local`` flag when the variable is set (#395, D359-13).
+reads the same variable name natively, and the deployed `steel` guard injects
+the global ``--local`` flag when the variable is set (#395, D359-13).
 
 This module performs no I/O at import (CODING_STANDARD section 6); the value is
 read at call time, so a container recreate with a new value is picked up.

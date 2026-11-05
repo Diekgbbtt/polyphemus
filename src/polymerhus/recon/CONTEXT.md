@@ -365,12 +365,12 @@ _Avoid_: the leading-options habit, a hand-maintained flag denylist, reordering 
 The four durable browser stores: cookies, localStorage, sessionStorage, and indexedDB.
 A session captures them before release and restores them at the next create; the state file is per account, owner-only, atomic, and single-writer.
 Profiles are retired in the cloud and local deployments (#395, D20); the tool never mounts, mints, or imports one.
-The one `steel-browser` skill is runtime-agnostic; local mode and the local user agent are hidden by the deployment wrapper.
+The one `steel-browser` skill is runtime-agnostic; local mode is hidden by the deployed guard, and the fixed local user agent is retired with the single-container deploy.
 _Avoid_: profile, Steel profile, browser-profile reference, sessionContext as the capability name.
 
 **Steel endpoint** (`STEEL_BROWSER_API_URL`):
 The one deployment-level value that names the Steel runtime the browser capability addresses. Unset (the default) means the remote Steel cloud servers, unchanged. Set means a self-hosted runtime in the CLI's canonical form, `http://<host>:<port>/v1` (for example the local deployment on the operator's server), which the CLI reaches in `--local` mode and the SDK reaches through its `base_url`.
-It is a deployment fact, never a module constant: the CLI reads the name natively, a shared `app`-layer resolver returns it to any SDK consumer as the SDK-native origin (it removes one terminal `/v1`, because the Python SDK appends `/v1` itself), and the deployment wrapper injects `--local` when it is set (D359-4, D359-13).
+It is a deployment fact, never a module constant: the CLI reads the name natively, a shared `app`-layer resolver returns it to any SDK consumer as the SDK-native origin (it removes one terminal `/v1`, because the Python SDK appends `/v1` itself), and the deployed guard injects `--local` when it is set (D359-4, D359-13).
 It exists so the same runtime serves internal (non-internet) targets, which the cloud pool cannot route to (D359-1, D359-7).
 _Avoid_: a recon-owned endpoint constant; a second name per consumer; reading absence as "local" (absence is remote).
 

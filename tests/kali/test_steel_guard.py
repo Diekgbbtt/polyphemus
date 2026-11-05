@@ -1,8 +1,8 @@
 """Unit tier: the Steel binary guard.
 
-The guard is the chokepoint behind the ``steel`` wrapper. These tests use a
-fake real binary and an injected live catalogue, so no Steel runtime is needed.
-They prove the guard refuses before execution, records the true command result,
+The guard is the public ``steel`` entrypoint. These tests use a fake real
+binary and an injected live catalogue, so no Steel runtime is needed. They
+prove the guard refuses before execution, records the true command result,
 and classifies a masked failure from its own trace.
 """
 from __future__ import annotations
@@ -49,9 +49,9 @@ def _fake_real(tmp_path, monkeypatch):
     script = tmp_path / "steel-real"
     script.write_text(
         """#!/usr/bin/env python3
-import os, sys, time
+import json, os, sys, time
 with open(os.environ["FAKE_MARKER"], "a", encoding="utf-8") as handle:
-    handle.write("ran\\n")
+    handle.write(json.dumps(sys.argv[1:]) + "\\n")
 mode = os.environ.get("FAKE_MODE", "ok")
 if mode == "sleep":
     time.sleep(5)
@@ -68,6 +68,62 @@ print('{"data":1,"success":true}')
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("FAKE_MARKER", str(marker))
     return script, marker
+
+
+def _recorded(marker) -> list[list[str]]:
+    return [
+        json.loads(line)
+        for line in marker.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_shell_invocation_gets_the_local_flag_from_the_guard(tmp_path, monkeypatch):
+    """The retired wrapper supplied `--local` for a shell caller. The guard
+    owns that flag now, so a bare `steel browser ...` still selects local mode."""
+    real, marker = _fake_real(tmp_path, monkeypatch)
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://steel.test:3000/v1")
+
+    code = run_guarded(
+        ["browser", "eval", "1", "--session", "wj-live", "--json"],
+        real_binary=str(real),
+        live_sessions={"wj-live"},
+        trace_path=_trace(tmp_path),
+    )
+
+    assert code == 0
+    assert _recorded(marker) == [
+        ["--local", "browser", "eval", "1", "--session", "wj-live", "--json"]
+    ]
+
+
+def test_an_explicit_mode_flag_is_not_duplicated(tmp_path, monkeypatch):
+    real, marker = _fake_real(tmp_path, monkeypatch)
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://steel.test:3000/v1")
+
+    run_guarded(
+        ["--local", "browser", "eval", "1", "--session", "wj-live", "--json"],
+        real_binary=str(real),
+        live_sessions={"wj-live"},
+        trace_path=_trace(tmp_path),
+    )
+
+    assert _recorded(marker) == [
+        ["--local", "browser", "eval", "1", "--session", "wj-live", "--json"]
+    ]
+
+
+def test_a_non_browser_command_does_not_get_the_local_flag(tmp_path, monkeypatch):
+    real, marker = _fake_real(tmp_path, monkeypatch)
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://steel.test:3000/v1")
+
+    run_guarded(
+        ["--version"],
+        real_binary=str(real),
+        trace_path=_trace(tmp_path),
+    )
+
+    assert _recorded(marker) == [["--version"]]
 
 
 def _trace(tmp_path) -> str:

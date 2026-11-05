@@ -139,8 +139,8 @@ fi
 # carries the defect; replace this pin with 0.5.0 (or later) when it ships.
 # The real CLI lives in a private subdirectory of the persisted binary volume,
 # NOT in a PATH directory. Both public names (`steel` and the compatibility
-# `steel-real`) are the wrapper, which calls the guard; a directly invocable
-# real binary would bypass every policy check.
+# `steel-real`) are the guard; a directly invocable real binary would bypass
+# every policy check.
 _STEEL_PRIVATE_DIR=/opt/localbin/.steel
 _STEEL_REAL="$_STEEL_PRIVATE_DIR/steel"
 mkdir -p "$_STEEL_PRIVATE_DIR" /opt/localbin
@@ -171,11 +171,11 @@ if ! "$_STEEL_REAL" --version 2>/dev/null | grep -q "0.5.0-preview.6"; then
   ) || true
 fi
 
-# The one runtime edge (#395): the wrapper owns local mode, the fixed local
-# user agent, and the guard boundary. The real CLI stays private; `steel-real`
-# remains a public compatibility name but resolves to the same wrapper.
-if [ -x "$_STEEL_REAL" ] && [ -f /opt/kali/steel_wrapper.sh ]; then
-  install -m 0755 /opt/kali/steel_wrapper.sh /opt/localbin/steel
+# The guard is the public `steel` entrypoint (#395, D359-13). It owns the
+# local-mode flag and the policy boundary; the real CLI stays private.
+# `steel-real` remains a public compatibility name, but resolves to the guard.
+if [ -x "$_STEEL_REAL" ] && [ -f /opt/kali/steel_guard.py ]; then
+  install -m 0755 /opt/kali/steel_guard.py /opt/localbin/steel
   rm -f /opt/localbin/steel-real
   ln -s steel /opt/localbin/steel-real
 fi
