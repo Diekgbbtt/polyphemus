@@ -5,6 +5,12 @@ pool manager. It demonstrates one MCP session per browser lease, a typed pool
 wait, explicit release, owner stop, TTL reap, and a crawler-style command
 sequence.
 
+The production design is in `docs/design/steel-pool-mcp-system-design.md`.
+It uses the CLI 0.5.0-preview.6 for every browser command and the v0.5.5 API
+only for context capture and release.
+The commands API executor remains here for comparison and for the early
+concurrency scenarios.
+
 ## What it runs
 
 - Two Steel API workers from the v0.5.5-beta image.
@@ -14,7 +20,9 @@ sequence.
 - The API endpoint is the CDP channel. Chrome's 9222 port is internal.
 
 The server leases a worker per MCP session. The client never sees the worker
-URL. The server creates and drives the browser through the Steel commands API.
+URL. The production path creates and drives the browser through the CLI; the
+prototype's default commands API executor reaches the same commands API
+directly.
 
 ## v0.5.5 image
 
@@ -61,9 +69,10 @@ events.
 
 ## Executors
 
-The default executor is `api`, the v0.5.5 commands API.
-The `cli` executor remains for compatibility testing with the CLI main and the
-guard. It is not the default path.
+The prototype default executor is `api`, the v0.5.5 commands API.
+The production executor is `cli`.
+The `api` executor remains for the early concurrency scenarios and for a
+comparison path without the CLI.
 
 The `cli` executor runs the CLI through the existing `kali/steel_guard.py`.
 The guard keeps its command sanitization, live-session check, result
@@ -71,9 +80,9 @@ classification, and trace logic. The server transports the guard output
 unchanged.
 
 The pinned CLI `0.5.0-preview.6` uses the daemon/CDP path.
-It is not compatible with the no-nginx path.
-The CLI main uses the commands API and is the matching CLI client.
-The prototype's `api` executor proves the same commands API without the CLI.
+Its daemon reaches the API root WebSocket proxy, which is the compatible
+no-nginx CDP transport; the 9223 nginx proxy is not used.
+The live probe `probe_cli_mount.py` exercises this path against one worker.
 
 ## Run
 

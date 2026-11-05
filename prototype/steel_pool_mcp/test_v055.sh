@@ -19,8 +19,8 @@ cleanup
 docker network create "$NET" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --network "$NET" --shm-size=2g \
   -p "$PORT:3000" \
-  -e DOMAIN="$NAME:3000" \
-  -e CDP_DOMAIN="$NAME:3000" \
+  -e DOMAIN="localhost:$PORT" \
+  -e CDP_DOMAIN="localhost:$PORT" \
   -e ENABLE_COMMANDS_API=true \
   -e HOST=0.0.0.0 \
   "$IMAGE" --no-nginx >/dev/null

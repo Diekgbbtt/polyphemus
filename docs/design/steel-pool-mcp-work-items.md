@@ -75,19 +75,20 @@ Gate: unit tests pass. No Steel API needed.
 
 Deliver:
 
-- API session create with `sessionContext`.
-- CLI 0.5.0-preview.6 attach by session id.
-- API context capture.
-- CLI stop and API release.
+- CLI 0.5.0-preview.6 start, execute, and stop on a leased worker.
+- CLI cookie and localStorage restore, with the documented loss.
+- API context capture with a CLI fallback.
+- API release fallback.
 - Guard pass-through.
 - Readiness and error envelopes.
 
 Tests:
 
 - Fake API and fake CLI.
-- Create, attach, exec, capture, stop, release.
-- Create failure compensation.
-- Attach failure compensation.
+- Start, restore, exec, capture, stop, release.
+- Start failure compensation.
+- Restore failure compensation.
+- Capture fallback.
 - Guard refusal propagation.
 - No worker URL in the tool result.
 

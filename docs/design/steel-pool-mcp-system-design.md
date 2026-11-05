@@ -159,16 +159,25 @@ In memory only.
 2. If the MCP session already has a lease, return it.
 3. Acquire a free healthy worker.
 4. Load the stored record for `name`, if present.
-5. Create the Steel API session on the worker with `sessionContext` from
-   cookies and localStorage.
-6. Attach the CLI 0.5.0-preview.6 to the new session id.
-7. Record the lease.
-8. Start the heartbeat task.
-9. Optionally navigate to `url`.
-10. Return the session name and Steel session id.
+5. Start the CLI 0.5.0-preview.6 session on the worker.
+   The start passes `--session-timeout 3600000` and
+   `--inactivity-timeout 0` as safety values.
+   The lease TTL remains the termination authority.
+6. Restore cookies with `browser cookies set`.
+7. Restore localStorage by visiting each stored origin and running
+   `browser storage local set` for each key.
+8. Record the lease.
+9. Start the heartbeat task.
+10. Optionally navigate to `url`.
+11. Return the session name and Steel session id.
 
-If the API create fails, free the worker.
-If the CLI attach fails, release the API session and free the worker.
+If the CLI start fails, free the worker.
+If a restore command fails, stop the CLI session and free the worker.
+
+Cookie expiry, SameSite, priority, and source metadata are not restorable
+through the CLI.
+The restore is best-effort for those attributes.
+The value, domain, path, secure flag, and HttpOnly flag are restored.
 
 ### 5.2 Execute
 
@@ -184,12 +193,14 @@ If the CLI attach fails, release the API session and free the worker.
 1. Capture the API session context.
 2. Save the record atomically.
 3. Stop the CLI session.
-4. Release the API session.
+4. Release the API session as the fallback.
 5. Cancel the heartbeat.
 6. Free the worker.
 
+If the API capture fails, capture cookies with `browser cookies` and
+localStorage for the current origin with `browser storage local`.
 Capture failure does not block the stop or the release.
-The record is saved only when the capture succeeds.
+The record is saved only when a capture succeeds.
 
 ### 5.4 Heartbeat
 

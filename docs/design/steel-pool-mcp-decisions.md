@@ -232,3 +232,33 @@ It does not restore sessionStorage or indexedDB.
 The record may still store those fields as best-effort evidence.
 Is the API-create plus CLI-attach the intended mount?
 Are the non-restorable fields acceptable as evidence only?
+
+## Correction after the CLI source check
+
+F5. The CLI 0.5.0-preview.6 `browser start` always creates a fresh API
+session.
+It has no `--session-context` flag and no attach-by-session-id option.
+The CLI source builds the create body from `CreateSessionOptions`, which has no
+`sessionContext` field.
+The v0.5.5 API has `POST /v1/sessions`, `GET /v1/sessions/<id>/context`, and
+`POST /v1/sessions/<id>/release`.
+It has no context-update route.
+The accepted API-create plus CLI-attach mount is therefore not available.
+
+D28. The mount uses the CLI for all browser control.
+The start runs `browser start` on the worker with `--session-timeout 3600000`
+and `--inactivity-timeout 0` as safety values.
+The lease TTL remains the termination authority.
+The restore runs `browser cookies set` for each stored cookie.
+The restore visits each stored origin and runs `browser storage local set` for
+each key.
+Cookie expiry, SameSite, priority, and source metadata are not restorable
+through the CLI.
+The end path captures `GET /v1/sessions/<id>/context` for full evidence, then
+runs `browser stop`; the API release is the fallback.
+If the API capture fails, the end path captures cookies with
+`browser cookies` and localStorage for the current origin with
+`browser storage local`.
+sessionStorage and indexedDB stay evidence only.
+The upstream `--session-context` flag remains the upgrade path if
+full-fidelity restore is required.
