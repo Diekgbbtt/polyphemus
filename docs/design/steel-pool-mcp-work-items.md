@@ -28,8 +28,10 @@ W9 is last.
 
 Deliver:
 
-- Record model.
-- Atomic owner-only file store.
+- Record model with construction-time field validation and JSON round-trip.
+- Atomic owner-only file store with parent-directory `fsync`.
+- Environment-rooted construction from `STEEL_SESSION_STORE`.
+- Symlink-safe reads and root rejection.
 - Name validation.
 - `sessionContext` projection and restore.
 - Redacted representation.
@@ -40,7 +42,8 @@ Tests:
 - Missing and corrupt records.
 - Invalid names.
 - File and directory modes.
-- Atomic replacement.
+- Owner-only root enforcement and symlink rejection.
+- Atomic replacement and failure at each write stage.
 - Restorable and evidence fields.
 
 Gate: unit tests pass. No CLI, no Docker, no MCP.

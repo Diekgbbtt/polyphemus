@@ -212,6 +212,8 @@ Q4b. The browser-session store is a first-class entity in a volume owned by
 the MCP server.
 The record fields are name, account, cookies, localStorage, sessionStorage,
 indexedDB, created_at, and updated_at.
+The file spells the timestamps `createdAt` and `updatedAt`, matching the API
+JSON.
 The store is owner-only and written atomically.
 The agent never reads the files.
 The auth store's `steel.state` references the session name.

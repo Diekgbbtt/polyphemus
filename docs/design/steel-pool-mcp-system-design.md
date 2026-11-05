@@ -69,10 +69,16 @@ The pool manager never creates, starts, stops, or removes a container.
 ### 3.3 Browser session store
 
 A directory owned by the browser MCP server.
-Path from `STEEL_SESSION_STORE`.
-Directory mode 0700.
-Record files mode 0600.
-Atomic replacement.
+The path comes from `STEEL_SESSION_STORE` through `SessionStore.from_env`.
+The store refuses to guess a root when the variable is unset.
+A new root is created with mode 0700.
+An existing root with group or other permission bits fails loud.
+A symlinked root fails loud.
+Record files are mode 0600.
+Writes are atomic: a same-directory temp file, `fsync`, rename, parent `fsync`.
+Reads do not follow symlinks.
+The record validates every field at construction, so the store never writes a
+record it would reject on load.
 The agent never reads the files.
 
 ### 3.4 CLI adapter
@@ -114,7 +120,10 @@ The operator labels the container with the pool label.
 ```
 
 `name` is the stable handle and the store key.
-The name uses the CLI session-name grammar.
+The store grammar is `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`.
+It is deliberately stricter than the CLI `--session` argument, which accepts
+any string, because the name is also a file name.
+The MCP layer rejects a name outside the grammar before the store.
 `account` is the auth-store reference.
 `cookies` and `localStorage` are the restorable fields.
 `sessionStorage` and `indexedDB` are evidence fields.
@@ -241,6 +250,8 @@ The close hook ends the lease.
 | Docker discovery down | No workers | Warning and failed start |
 | Worker unhealthy | Worker skipped | Quarantine |
 | Store corrupt | Start fails closed | No API create |
+| Store root not owner-only | Store construction fails | Deployment fixes the root |
+| Store root is a symlink | Store construction fails | Deployment fixes the root |
 | API create fails | No session | Free worker |
 | CLI attach fails | Orphan API session | Release API and free worker |
 | Command fails | Lease stays active | Guard envelope |
