@@ -102,6 +102,10 @@ DEFAULT_CLI_TIMEOUT_S = 600.0
 DEFAULT_WORKER_API_SUFFIX = "/v1"
 
 _FORBIDDEN_VERBS = frozenset({"start", "stop", "sessions", "live"})
+# The CLI's `scrape` family is sessionless. A bound command must run in the
+# mounted session, so refuse it here instead of letting the CLI answer a
+# confusing usage error.
+_NON_BROWSER_VERBS = frozenset({"scrape"})
 _FORBIDDEN_OPTIONS = frozenset(
     {"--session", "--api-url", "--local", "-l"}
 )
@@ -181,6 +185,10 @@ def _parse_head(tokens: list[str], *, nested: bool) -> list[str]:
     if verb in _FORBIDDEN_VERBS:
         raise CommandParseError(
             f"the {verb!r} verb is owned by browser_start and browser_end"
+        )
+    if verb in _NON_BROWSER_VERBS:
+        raise CommandParseError(
+            f"the {verb!r} family is sessionless; use a bound browser command"
         )
     boundary = tokens.index("--") if "--" in tokens else len(tokens)
     cleaned: list[str] = []

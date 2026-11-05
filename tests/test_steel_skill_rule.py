@@ -1,15 +1,18 @@
-"""The steel-browser skill is one runtime-agnostic surface (#395, D20).
+"""The steel-browser skill is one three-tool contract (#359, W7).
 
-Seam under test: `skills/internal/tools/steel-browser/SKILL.md`. Drift guard
-only - the behaviour is pinned by the provider, wrapper, and gateway tests.
+Seam under test: the skill text. The behaviour is pinned by the server, CLI,
+and lease tests. This file is a drift guard: the skill must teach the three
+bound tools, never a shell lifecycle and never a session-management verb.
 """
 import re
 from pathlib import Path
 
-SKILL = (
+SKILL_DIR = (
     Path(__file__).resolve().parents[1]
-    / "skills" / "internal" / "tools" / "steel-browser" / "SKILL.md"
+    / "skills" / "internal" / "tools" / "steel-browser"
 )
+SKILL = SKILL_DIR / "SKILL.md"
+CONTRACT = SKILL_DIR / "references" / "contract.md"
 
 # Runtime and identity words the one skill must never teach. `\b` keeps the
 # durable-state field names (`localStorage`, `sessionStorage`) legal.
@@ -19,101 +22,106 @@ _FORBIDDEN_SKILL_WORDS = re.compile(
 )
 
 
+def _skill() -> str:
+    return SKILL.read_text(encoding="utf-8")
+
+
 def test_skill_has_no_runtime_branch_and_no_profile_language():
-    text = SKILL.read_text(encoding="utf-8")
-    assert "selected below this skill" in text
+    text = _skill()
+    assert "browser_start" in text and "browser_exec" in text
     assert "--profile" not in text
     assert "--local" not in text
     assert "STEEL_API_KEY" not in text
     assert "STEEL_BROWSER_API_URL" not in text
-    # `storage local` is a CLI literal, not a deployment word.
+    # `storage local|session` is a command literal, not a runtime word.
     scanned = text.replace("storage local|session", "storage-scope")
     assert _FORBIDDEN_SKILL_WORDS.findall(scanned) == []
 
 
-def test_skill_teaches_the_gateway_and_the_bare_shell_surface():
-    """The hunting and exploit agents bind a plain shell `exec`, not
-    `steel_exec`; the one skill must teach both surfaces without a runtime
-    branch."""
-    text = SKILL.read_text(encoding="utf-8")
-    assert "`steel_exec` gateway" in text
-    assert "shell `exec`" in text
+def test_skill_teaches_only_the_three_bound_tools():
+    text = _skill()
+    for name in ("browser_start", "browser_exec", "browser_end"):
+        assert name in text, name
+    for absent in (
+        "browser_status",
+        "pool_status",
+        "release_owner",
+        "steel_exec",
+        "shell `exec`",
+        "sessions get",
+        "steel browser",
+        "browser start",
+        "browser stop",
+        "--session",
+    ):
+        assert absent not in text, absent
 
 
-def test_skill_names_the_four_durable_state_fields_and_the_cli_limit():
-    text = SKILL.read_text(encoding="utf-8")
+def test_skill_keeps_the_browser_command_grammar():
+    text = _skill()
+    for token in (
+        "navigate", "snapshot", "batch", "fill", "wait", "eval", "get text",
+        "cookies", "storage local|session", "screenshot", "diff", "find",
+        "`--` boundary",
+    ):
+        assert token in text, token
+
+
+def test_skill_names_the_durable_state_fields_and_the_restore_limit():
+    text = _skill()
     for field in ("cookies", "localStorage", "sessionStorage", "indexedDB"):
         assert field in text
-    assert "CLI `start` has no state field" in text
-    assert "reuse a live session" in text
+    assert "not restored" in text
+    assert "durable" in text
 
 
 def test_skill_states_the_auth_gate_signals():
-    text = SKILL.read_text(encoding="utf-8")
+    text = _skill()
     assert "login redirect" in text
     assert "401" in text and "403" in text
     assert "3xx" in text
     assert "indeterminate" in text
     assert "auth_probe" in text
-    assert "storage-located" in text
     assert "reduced coverage" in text
 
 
-def test_skill_pins_the_current_contract_and_references():
-    text = SKILL.read_text(encoding="utf-8")
-    assert "version: '2.2.0'" in text
-    for token in (
-        "steel_events", "shell_returncode", "browser batch", "browser find",
-        "browser diff", "sessions --session", "sessions --json",
-        "--inactivity-timeout 300000",
-        "has no effect", "live_view", "addressable", "auth_probe",
-        "auth-oracle.sh", "indeterminate",
-    ):
-        assert token in text
-    assert "--inactivity-timeout 0" not in text
+def test_skill_pins_the_tool_contract_and_reference():
+    text = _skill()
+    assert "version: '3.0.0'" in text
+    assert "references/contract.md" in text
+    assert "no status or owner tool" in text.lower()
+    assert "--inactivity-timeout" not in text
     assert "steel-real" not in text
-    references = SKILL.parent / "references"
-    for name in (
-        "contract.md", "load-eval.py", "select-elements.py", "session-records.py",
-        "auth-oracle.sh",
-    ):
-        assert name in text
-        assert (references / name).is_file()
+    assert CONTRACT.is_file()
 
 
-def test_contract_reference_pins_the_error_and_record_surface():
-    contract = (SKILL.parent / "references" / "contract.md").read_text(
-        encoding="utf-8")
+def test_contract_reference_pins_the_error_and_state_surface():
+    contract = CONTRACT.read_text(encoding="utf-8")
     for token in (
-        "unknown_session", "session_missing", "recreate_session",
-        "requires_state_restore", "session_taken", "target_lost",
-        "browser_stuck", "invalid_command", "steel_events", "shell_returncode",
-        "not_found", "no video recording", "HTTP history",
+        "pool_exhausted",
+        "session_in_use",
+        "no_session",
+        "invalid_command",
+        "browser_error",
+        "restore_failed",
+        "store_error",
+        "lease_error",
+        "auth_probe",
+        "indeterminate",
+        "data.results",
+        "HTTP history",
+        "not restored",
     ):
-        assert token in contract
-    assert "logs" in contract and "agent-logs" in contract and "traces" in contract
+        assert token in contract, token
 
 
-def test_lifecycle_scripts_mark_ownership_after_start():
-    references = SKILL.parent / "references"
-    for name in (
-        "eval-inline.sh", "eval-interact.sh", "extract-reads.sh",
-        "interact-batch.sh", "navigate-read.sh", "session-lifecycle.sh",
-        "spider-bounded.sh",
+def test_skill_never_teaches_a_session_or_stop_owner():
+    text = _skill().lower()
+    for absent in (
+        "stop owner",
+        "dead-man",
+        "session_taken",
+        "session_missing",
+        "default session",
     ):
-        text = (references / name).read_text(encoding="utf-8")
-        assert "SESSION_NAMED" not in text
-        assert "SESSION_OWNED=1\nSTART_JSON" not in text
-        start = text.index("START_JSON=$(steel browser start")
-        assert text.index("SESSION_OWNED=1", start) > start
-        assert "--inactivity-timeout 300000" in text
-        assert "--inactivity-timeout 0" not in text
-
-
-def test_read_scripts_never_create_sessions():
-    references = SKILL.parent / "references"
-    for name in ("load-eval.py", "select-elements.py", "session-records.py"):
-        text = (references / name).read_text(encoding="utf-8")
-        assert "browser start" not in text
-        assert "browser stop" not in text
-        assert "steel-real" not in text
+        assert absent not in text, absent

@@ -182,6 +182,8 @@ class TestCommandGrammar:
             "navigate --api-url http://worker:3000 https://app.test",
             "navigate --local https://app.test",
             "steel scrape https://app.test",
+            "scrape https://app.test",
+            "browser scrape https://app.test",
             "batch -- 'snapshot -i' 'stop'",
             "batch -- 'navigate --session other https://app.test'",
             "'unterminated",

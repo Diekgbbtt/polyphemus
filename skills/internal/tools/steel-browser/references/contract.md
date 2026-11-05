@@ -1,163 +1,117 @@
-# Steel tool contract and platform records
+# Steel tool contract and recovery
 
 This reference is the lookup table behind the `steel-browser` skill.
-It describes the envelope the tools return, the session lifecycle rules, and the records the platform leaves behind.
-It is not a runtime branch; every `steel` command keeps the same grammar.
+It describes the envelope the three tools return, the error codes, the durable
+state, and the authenticated-context oracle.
+It is not a runtime branch; every browser command keeps the same grammar.
 
 ## Tool envelope
 
-`steel_exec` and `execute_command` return the legacy fields plus the contract fields:
+### `browser_start`
 
-| Field | Meaning |
-|---|---|
-| `stdout` / `stderr` | The command's real output, ANSI-stripped. |
-| `returncode` | The authoritative result. When the guard reports an error, this is the error's rc. |
-| `shell_returncode` | The composition's own rc when it differs from `returncode` (`xargs` 123, `|| true` 0). |
-| `duration_ms` | Wall-clock duration. |
-| `error` | The typed error object. It is authoritative over the rc and the text. |
-| `warning` | A non-fatal classification, such as `empty_target`. |
-| `steel_events` | One compact event per real Steel invocation the guard observed. |
-| `exec_id` / `http_artifact_refs` / `capture_warning` | The HTTP-history capture provenance on `execute_command`. |
+Success:
 
-A `steel_events` entry carries:
+```json
+{"success": true, "session": {"name": "polymerhus-flow-1", "session_id": "<runtime id>"}, "warnings": []}
+```
 
-- `verb`, `session`, `session_id`, `remaining_ms`;
-- `decision` (`allow`, `deny`, `error`);
-- `returncode`, `duration_ms`;
-- `error` or `warning`;
-- `catalogue` (`live`, `unavailable`, `not-required`).
+The name is the durable handle.
+The runtime id is informational and never a command argument.
+A start on a name with a saved record restores its cookies and localStorage.
+A start on a mounted name answers `session_in_use`.
 
-The guard event is the reliable channel behind nested shells, scripts, pipes, and `|| true`.
+### `browser_exec`
+
+Success is the browser command's own envelope: `{"success": true, "data": ...}`.
+`batch` returns the results envelope described below.
+A command that ran and failed keeps its own failure envelope.
+A command the tool refused, or a session-level failure, returns the error envelope.
+
+### `browser_end`
+
+Success:
+
+```json
+{"success": true, "ended": true, "reason": "explicit", "captured": true, "saved": true, "stopped": true, "released": null, "warnings": []}
+```
+
+- `ended` is false when no session was mounted; the call still succeeds.
+- `reason` is `explicit`, `mcp_close`, `ttl`, or `shutdown`.
+- `released` is `null` when the stop was enough, `true` when the stop failed and the API release fallback ran, and `false` when that fallback failed.
+- `captured` and `saved` state whether the durable record was written.
+- A failed capture or store save is a warning; it never blocks the stop.
 
 ## Error and recovery
 
-| Code | Meaning | Fatal | Recovery |
+A failure is one envelope:
+
+```json
+{"success": false, "error": {"code": "...", "message": "...", "retryable": true, "recovery": "..."}}
+```
+
+| Code | Meaning | Retryable | Recovery |
 |---|---|---|---|
-| `unknown_session` | The name was never seen live. | No | `use_live`: choose a live name or start an owned session. |
-| `session_missing` | The name was live and is now gone. | Yes | `recreate_session` with `requires_state_restore: true`. |
-| `session_taken` | A `start` named a live session. | No | `use_live`: reuse it. |
-| `target_lost` | The CDP target disappeared. | No | `tab_new`, then retry the read. |
-| `browser_stuck` | The command exceeded its browser budget. | Yes | `recreate_session`. |
-| `invalid_command` | The CLI rejected the grammar. | No | `fix_command`: fix the request; do not retry blindly. |
-| `command_failed` | The execution surface raised before returning. | No | `inspect`. |
-| `guard_error` | The guard itself failed. | Yes | `inspect`; surface it, do not patch in place. |
+| `pool_exhausted` | No browser slot is free. | Yes | Wait for another flow to end, then retry. |
+| `session_in_use` | The name is mounted by this conversation. | No | Use `browser_exec` on it, or `browser_end` and start again. |
+| `no_session` | No session is mounted. | No | Call `browser_start` first. |
+| `invalid_command` | The command grammar is wrong, or it names a refused verb or flag. | No | Fix the command; do not retry blindly. |
+| `invalid_argument` | A start value is invalid, such as a name outside the rule. | No | Fix the name or the URL. |
+| `browser_error` | The browser command raised. | Yes | Retry once, then end and start again; the end captures the state. |
+| `capture_failed` | A state capture failed. | Yes | Retry the command, then end; the stop still runs. |
+| `restore_failed` | The saved state could not be restored, so the session did not start. | No | Use a new name, or surface the defect; never claim the state was restored. |
+| `store_error` | The durable store is unreadable or malformed. | No | Surface it; the operator fixes the store. |
+| `pool_unavailable` | The browser service cannot reach a browser. | Yes | Retry later; surface a persistent failure. |
+| `lease_error` | The session state machine rejected the call. | No | Surface it; do not patch around it. |
+| `internal_error` | An unexpected failure. | Yes | Retry once, then surface it. |
 
-A known loss is not a typo.
-A typo is not a loss.
-Never auto-create a session to recover from either.
-An operator-owned or pre-authenticated session cannot be recreated without restoring its state.
+A refusal is not a transient.
+A typo is not a lost session.
+Never start a replacement session to recover from a refusal.
+Never stop a session this conversation did not mount.
 
-## Session lifecycle
+## Durable state
 
 - A session is a name, a runtime id, a clock, and browser state.
-- `steel browser start` is create-time for the clock:
-  - `--session-timeout` is the session window;
-  - `--inactivity-timeout` is the idle window.
-- Use a finite inactivity window such as `300000` (5 minutes) below a longer session window, or `86400000` below a longer session window for a 24-hour flow.
-  A zero window was observed to release a session after the daemon's default idle period, despite the flag.
-- The session timeout is the outer bound.
-  An inactivity window at or above it has no effect and the CLI warns.
-- The guard records a successful start immediately, with the runtime `session_id` and `remaining_ms`.
-  A loss before the next catalogue query is therefore `session_missing`, not a typo.
-- A `start` on a catalogued live name is refused before execution with `session_taken`.
-  Do not rely on silent attach.
-- The catalogue is `steel browser sessions --json`.
-  `{"data":[]}` means no live session for this key.
-- Every owned session gets a stop owner.
-  Stop by name, then prove the catalogue clean.
-  A foreign `default` session is untouchable.
+- Cookies and localStorage are restored by a later start with the same name.
+- sessionStorage and indexedDB are captured as evidence and are not restored.
+  Do not claim that a new start restored them.
+- The store is written at the end and read at the next start.
+  Never read, print, or paste a state file.
+- The name is the access key. The state of one name is not visible to another.
+- The idle TTL is the backstop when a conversation disappears without an end.
 
-## Platform records and replay
+## Tool results and platform records
 
-### What the runtime exposes
-
-- Session metadata: `steel browser sessions --json` (the live catalogue) and `steel browser sessions --session <name> --json` (the named entry).
-  The catalogue carries `id`, `status`, and the viewer URL; the full runtime record (`createdAt`, `duration`, `eventCount`, `timeout`, debugger URL, dimensions, user agent, and the CDP websocket) is `GET /v1/sessions/<id>` on the API.
-- Live viewer: `steel browser live --session <name> --json`.
-  It returns the viewer URL. It is a live view, not a recording.
-- Static evidence: `steel browser snapshot`, `steel browser screenshot`, and `steel browser diff snapshot|screenshot`.
+- `browser_start` returns the name, the runtime id, and warnings.
+- `browser_end` returns the capture, save, stop, and release flags.
+- `snapshot`, `screenshot`, and `diff` are the page evidence the tools return.
   A screenshot is a file path. A diff carries `changed`, `additions`, and a unified diff.
-- Multi-step results: `steel browser batch --session <name> --json -- "cmd" "cmd"`.
-  The result is `{"data":{"results":[{"command","data","success"}]}}`.
+- Multi-step results: `batch -- "cmd" "cmd"` returns `{"data":{"results":[{"command","data","success"}]}}`.
+- The stack separately records HTTP history, checkpoints, and run evidence.
+  Those records outlive the call. They are not browser-session status.
+- There is no status, catalogue, stop, live-view, logs, traces, recording, or scrape tool.
+  A request for one is answered by the tool surface, not by this reference.
 
-### Live-view addressability
+### Batch shape
 
-`viewerUrl` and `sessionViewerUrl` are resource attributes, not values to reconstruct.
-A cloud viewer URL can name the session directly (`https://app.steel.dev/sessions/<id>`).
-The self-hosted base can be shared and may not serve a page at all.
-The working player is `debugUrl` (`/v1/sessions/debug`); it is shared and follows the active session.
-Its cast WebSocket is `/v1/sessions/cast` and has no session id.
+A failing batch has two shapes:
 
-A view is addressable only when its URL carries the session id in a path segment or a query value.
-Do not append `?sessionId=` or any other selector unless the runtime documents it.
-`polymerhus.app.steel_session.SteelSession.live_view` makes this decision.
-`SteelSessionRegistry` tracks the name, id, status, and view across start, catalogue, API, and stop observations.
-The crawl provider returns the same object as `live_view`, next to the backward-compatible `viewer_url`.
-Publish the session id next to the URL, and mark the shared player as active, not session-addressable.
+- an op-level failure writes the results envelope on line 1 (carrying `data.results`) and a second line `{"error":"One or more batch commands failed"}` with exit 1;
+- a batch-level failure writes a single `{"error":...}` line and no results envelope.
 
-### What the runtime does not expose here
-
-`steel sessions logs`, `steel sessions agent-logs`, and `steel sessions traces` are advertised for cloud sessions.
-Against the self-hosted runtime in this stack:
-
-- `logs` and `agent-logs` return HTTP 404 for `/v1/sessions/<id>/logs` and `/agent-logs`;
-- `traces` returns 404 for `/v1/sessions/<id>/agent-traces`;
-- `traces` also rejects its advertised `--limit` flag.
-
-Treat these as `not_found`, not as a session failure.
-There is no video recording or recording-replay command in the pinned CLI.
-Use metadata, the snapshot, the screenshot, and the diff as the session record.
-
-### The stack's own traces
-
-These are independent of the Langfuse exporter:
-
-- Guard trace: one JSON event per Steel invocation, merged into `steel_events`.
-  It records the true rc, the decision, the session, the catalogue fact, the start id, and the remaining lifetime.
-- Session registry: a TTL-bounded name registry used to distinguish a typo from a known loss.
-- HTTP history: `search_http_history`, `get_http_artifact`, `replay_http_request`, and `proxy_status`.
-  It records project-scoped requests with `exec_id`, `run_id`, `spec_id`, `variant_ref`, `derived_from`, and `replay_kind`, and supports deterministic baseline or mutated replay.
-- Checkpoints: LangGraph thread state in the configured checkpointer, including the message trail and structured responses.
-- E2 evidence: the gateway summary, verdict, and checkpoint trace; the runtime scenario JSON.
-
-Langfuse is one observability exporter.
-It is not the only record and it is not the authoritative one for the tool contract.
+Line 1 carrying `data.results` is the structural discriminator.
+`--bail` only decides how many ops run.
 
 ## The authenticated-context oracle
 
 The auth store records one oracle: `overview.auth_probe.url`.
-It is a deployment-neutral path such as `/api/authentication`; the model-facing read and the crawl feed resolve it against the project's canonical origin.
+It is a deployment-neutral path such as `/api/authentication`; resolve it against the project's canonical origin.
 A browser request to the resolved URL is the only authentication verdict:
 
 - 2xx with no followed redirect: authenticated;
 - 401, 403, or any 3xx: not authenticated;
 - anything else: indeterminate, never a pass.
 
-A navigation envelope is not the oracle: `steel browser navigate` follows a 302 and reports `success: true` with the final 200 URL, so a stale session looks alive.
-The fetch behind `auth-oracle.sh` exposes `redirected` and the true status.
+A navigation envelope is not the oracle: `navigate` follows a 302 and reports `success: true` with the final 200 URL, so a stale session looks alive.
 Run the fetch from a page on the probe's origin; a cross-origin fetch without CORS is indeterminate, never a pass.
 The oracle is a proof, not a cookie-name check and not a landing-page check.
-
-## The binary boundary
-
-The public command is `steel`.
-The real CLI is private and must never be called by name or path.
-The public `steel-real` name is a compatibility shim to the same wrapper.
-A deliberate absolute path to the private core remains outside name-based enforcement; the supported surface is the public name.
-
-## Canonical scripts
-
-- `load-eval.py`: load a URL, wait, evaluate one JS expression or file, return bounded JSON.
-- `select-elements.py`: select a DOM family, project tag, text, attributes, and visibility, return bounded JSON.
-- `session-records.py`: fetch metadata, snapshot, screenshot, and the record probes that the runtime supports.
-- `session-lifecycle.sh`: survey, open an owned name, use it, release under a trap.
-- `auth-oracle.sh`: ask the authenticated-context oracle in a live session.
-  A browser fetch to the recorded probe answers 2xx only for an authenticated context; 401, 403, or any 3xx fails; anything else is indeterminate and never passes.
-  A followed redirect keeps its 200 body but sets `redirected: true`, so a login page cannot pass.
-- `catalogue.sh`, `navigate-read.sh`, `extract-reads.sh`, `eval-inline.sh`, `eval-interact.sh`, `interact-batch.sh`, `spider-bounded.sh`, `scrape-page.sh`, `stop-owner.sh`: the existing operation families.
-
-The three canonical read scripts require a live session and never start or stop one.
-
-A script that intentionally probes an optional endpoint may scope the trace for that one call by removing `KALI_STEEL_TRACE` from the child environment.
-The guard still enforces the invocation, but the handled 404 does not override the script's own successful result in the outer tool envelope.
-The script must report the handled error in its own JSON; `session-records.py` does this in `records`.
