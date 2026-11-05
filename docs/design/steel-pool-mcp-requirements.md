@@ -6,6 +6,12 @@ Supersedes on lease ownership, capacity, crawler, start atomicity, and graceful 
 `docs/design/steel-pool-control-plane-impact-analysis.md`.
 The session-affinity findings in that document remain valid.
 
+> Revision 2026-11-05: the MCP server and the pool manager are one co-located
+> component on Kali. The progress token is removed as a correctness requirement.
+> The outlier release ladder is expanded. The crawler uses the MCP channel.
+> The persistent MCP session was proven with FastMCP 2.14.7.
+> See `docs/design/steel-pool-mcp-prototype-report.md`.
+
 ## 1. Purpose
 
 This document does two things.

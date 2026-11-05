@@ -1,0 +1,105 @@
+name: steel-pool-proto
+
+services:
+  steel-1:
+    image: ghcr.io/steel-dev/steel-browser-api:latest
+    shm_size: "2gb"
+    environment:
+      DOMAIN: steel-1:3000
+      CDP_DOMAIN: steel-1:9223
+      ENABLE_COMMANDS_API: "true"
+      LOG_STORAGE_ENABLED: "true"
+      LOG_STORAGE_PATH: /data/logs/browser-logs.duckdb
+    ports:
+      - "3100:3000"
+    volumes:
+      - steel1-logs:/data/logs
+      - steel1-exports:/tmp/steel-browser-exports
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [proto-net]
+
+  steel-2:
+    image: ghcr.io/steel-dev/steel-browser-api:latest
+    shm_size: "2gb"
+    environment:
+      DOMAIN: steel-2:3000
+      CDP_DOMAIN: steel-2:9223
+      ENABLE_COMMANDS_API: "true"
+      LOG_STORAGE_ENABLED: "true"
+      LOG_STORAGE_PATH: /data/logs/browser-logs.duckdb
+    ports:
+      - "3101:3000"
+    volumes:
+      - steel2-logs:/data/logs
+      - steel2-exports:/tmp/steel-browser-exports
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [proto-net]
+
+  steel-mcp:
+    image: polymerhus-kali:latest
+    entrypoint: ["/opt/venv/bin/python", "/opt/prototype/server.py"]
+    environment:
+      STEEL_POOL_WORKERS: "http://steel-1:3000,http://steel-2:3000"
+      STEEL_POOL_TTL_S: "15"
+      STEEL_POOL_WAIT_S: "8"
+      STEEL_POOL_LOG: "/tmp/steel-pool-events.jsonl"
+      STEEL_MCP_PORT: "8003"
+    volumes:
+      - ./prototype/steel_pool_mcp:/opt/prototype:ro
+    ports:
+      - "8003:8003"
+    healthcheck:
+      disable: true
+    depends_on:
+      steel-1:
+        condition: service_healthy
+      steel-2:
+        condition: service_healthy
+    networks: [proto-net]
+
+  agent-1:
+    image: polymerhus-agent:latest
+    entrypoint: ["python", "/srv/prototype/steel_pool_mcp/client.py"]
+    environment:
+      STEEL_MCP_URL: "http://steel-mcp:8003/mcp"
+      CLIENT_ID: "agent-1"
+      OWNER: "proto"
+      HOLD_S: "4"
+    volumes:
+      - .:/srv:ro
+    depends_on: [steel-mcp]
+    networks: [proto-net]
+
+  agent-2:
+    image: polymerhus-agent:latest
+    entrypoint: ["python", "/srv/prototype/steel_pool_mcp/client.py"]
+    environment:
+      STEEL_MCP_URL: "http://steel-mcp:8003/mcp"
+      CLIENT_ID: "agent-2"
+      OWNER: "proto"
+      HOLD_S: "4"
+    volumes:
+      - .:/srv:ro
+    depends_on: [steel-mcp]
+    networks: [proto-net]
+
+networks:
+  proto-net:
+    name: steel-proto-net
+    external: true
+
+volumes:
+  steel1-logs:
+  steel1-exports:
+  steel2-logs:
+  steel2-exports:
