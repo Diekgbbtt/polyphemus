@@ -187,3 +187,46 @@ Q4a. `browser_start` signature and the meaning of `options`.
 Q4b. Browser session store location, format, and access control.
 Q4c. Session mount mechanism and the restorable state fields.
 Q7a. The `steel_crawl` conjunction is deferred to integration time.
+
+## Open session-store and heartbeat questions
+
+Q1b. The Steel session timeout must be owned by the agent or the project.
+The MCP server creates the API session with the stored `sessionContext`,
+attaches the 0.5.0-preview.6 CLI by session id, and runs an async heartbeat.
+The heartbeat runs a cheap `get url` command every 60 s for an idle lease.
+The lease TTL is 180 s and releases the lease if the heartbeat stops.
+The CLI `--session-timeout` and `--inactivity-timeout` are not relied on.
+The heartbeat resets after every browsing command.
+Termination stays with `browser_end`, MCP close, server shutdown, and the TTL.
+Is this the intended mechanism, interval, and TTL?
+
+Q4a. `browser_start(name)` uses `name` as the stored browser-session key.
+The `options` map is removed.
+An optional `url` is the only extra argument.
+The MCP server owns the worker, the timeout, the heartbeat, and the local mode.
+The result returns the session name and the Steel session id.
+The agent never sees the worker.
+Is the optional `url` needed?
+
+Q4b. The browser-session store is a first-class entity in a volume owned by
+the MCP server.
+The record fields are name, account, cookies, localStorage, sessionStorage,
+indexedDB, created_at, and updated_at.
+The store is owner-only and written atomically.
+The agent never reads the files.
+The auth store's `steel.state` references the session name.
+One live mount per name is allowed.
+The session name is the access key.
+The instance has one project.
+Is the MCP-server-owned volume the right home, and is the name the right
+access key?
+
+Q4c. A mount uses `POST /v1/sessions` with `sessionContext` for cookies and
+localStorage, then the CLI 0.5.0-preview.6 attaches by session id.
+The end path captures `GET /v1/sessions/<id>/context`, saves the record,
+stops the CLI, and releases the worker.
+The current API restores cookies and localStorage.
+It does not restore sessionStorage or indexedDB.
+The record may still store those fields as best-effort evidence.
+Is the API-create plus CLI-attach the intended mount?
+Are the non-restorable fields acceptable as evidence only?
