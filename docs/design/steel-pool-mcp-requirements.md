@@ -11,9 +11,12 @@ The session-affinity findings in that document remain valid.
 > The outlier release ladder is expanded. The crawler uses the MCP channel.
 > The persistent MCP session was proven with FastMCP 2.14.7.
 > The CLI is the authoritative executor. The existing guard and contract logic
-> stay in the loop unchanged. The CDP proxy 500 is a Host-header defect; the API
-> image needs `changeOrigin: true` on the root proxy and `Host: localhost` on the
-> 9223 CDP proxy. Direct CDP via 9223 is the `steel_crawl` path.
+> stay in the loop unchanged. The selected deployment path is the v0.5.5-beta
+> image with `--no-nginx` and `ENABLE_COMMANDS_API=true`. Browser control uses
+> the commands API. CDP uses the API endpoint with a single `Host: localhost`
+> header. The 9223 nginx proxy and the image-internal Host patch are removed.
+> The CLI main is the matching commands-API client. The pinned daemon CLI is not
+> compatible with the no-nginx path.
 > See `docs/design/steel-pool-mcp-prototype-report.md`.
 
 ## 1. Purpose

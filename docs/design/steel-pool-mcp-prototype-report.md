@@ -388,6 +388,9 @@ The 500 is a proxy configuration defect, not a protocol change.
 
 ### 9.2 API image changes
 
+> Superseded by section 10: these image edits are reversed.
+> The selected path uses the official v0.5.5 flags and the API endpoint.
+
 Two one-line changes make the pinned CLI and direct CDP work.
 
 - `api/src/services/cdp/cdp.service.ts`: pass `changeOrigin: true` to
@@ -430,6 +433,9 @@ The error detection and handling logic is not rewritten in the MCP server.
 The pinned-version check remains in the MCP server's exec layer.
 
 ### 9.5 Direct CDP for steel_crawl
+
+> Superseded by section 10: the 9223 nginx route is removed.
+> The API endpoint carries the browser-level CDP.
 
 The `steel_crawl` sidecar uses raw CDP, not the API root proxy.
 The direct endpoint works:
@@ -486,3 +492,111 @@ The pool manager stays a static, read-only lease component.
 
 The next production step is to carry the two API proxy fixes into the pinned
 image and run the full `steel_crawl` engine through the direct CDP endpoint.
+
+## 10. v0.5.5 structural path
+
+### 10.1 The image patch is reversed
+
+The `changeOrigin` and nginx Host edits are removed.
+The prototype no longer mounts `patch-steel-api.sh`.
+The image is used as shipped.
+
+The reason is structural, not cosmetic.
+The patch fixed a proxy that should not be on the critical path.
+
+### 10.2 The official knobs
+
+The v0.5.5-beta image provides the required controls without file edits:
+
+- `--no-nginx` disables the 9223 reverse proxy.
+- `ENABLE_COMMANDS_API=true` enables the commands API.
+- `HOST=0.0.0.0` lets Chrome expose its native CDP port on 9222.
+- `CDP_DOMAIN=<worker>:9222` points the API's debugger URLs at the direct port.
+
+The control plane uses the commands API over HTTP.
+The capture plane uses direct Chrome CDP on 9222.
+The API root WebSocket proxy is not used.
+The 9223 nginx proxy is not used.
+
+### 10.3 Compatibility
+
+The pinned CLI `0.5.0-preview.6` uses the daemon and the API root WebSocket.
+It is not compatible with the no-nginx/no-root-proxy path.
+The CLI main uses the commands API and is the matching CLI client.
+The prototype's `api` executor proves the same commands API directly.
+
+The guard and contract logic remains in the MCP server for the CLI main.
+The commands API errors are structured and can be mapped by the same server.
+
+The `steel_crawl` sidecar must use the direct page-level CDP URL:
+
+`ws://<worker>:9222/devtools/page/<pageId>`
+
+The client sets `Host: localhost`.
+The API's `live-details` endpoint supplies the page id.
+The crawler no longer reads the API root `websocketUrl`.
+
+### 10.4 Observed results
+
+The v0.5.5 image tag is not published on GHCR.
+The `latest` tag is 0.5.4.
+The v0.5.5 image was built from the tagged source.
+
+Image checks:
+
+- Both workers run `steel-browser-api:v0.5.5-beta`.
+- Both run `--no-nginx`.
+- The process tree is tini and the Node API. There is no nginx.
+- The commands API is enabled.
+- The API health check answers.
+
+Commands API:
+
+- Session create: 1.5 to 3.4 s.
+- Navigate, eval, get, tab list, and release all return `ok`.
+- No live sessions remain after release.
+
+Two-agent MCP run:
+
+- Two agents acquired different workers.
+- Both created a session through the commands API.
+- Both navigated, evaluated, read the title, and listed tabs.
+- Both released explicitly.
+- No live sessions remained.
+
+Pool checks:
+
+- A third client received `pool_exhausted` after the 8 s wait.
+- The TTL reaped both holders at 15.4 s idle.
+- `release_owner` released both leases with reason `owner_stop`.
+- The table was empty afterward.
+
+API-endpoint CDP:
+
+- The API root WebSocket answered `101 Switching Protocols` with a single
+  `Host: localhost` header.
+- `Target.getTargets` listed the page.
+- `Target.attachToTarget` returned a CDP session id.
+- A commands API navigation produced `Network.requestWillBeSent`,
+  `Network.responseReceived`, and `Page.frameNavigated` events.
+
+Direct 9222:
+
+- Chrome 156 binds `127.0.0.1:9222`, not `0.0.0.0`.
+- The host port mapping cannot reach it.
+- The API endpoint on 3000 is the CDP channel.
+- No nginx is needed.
+
+Compatibility:
+
+- The pinned CLI `0.5.0-preview.6` uses the daemon and the API root proxy.
+- It is not compatible with the no-nginx path.
+- The CLI main uses the commands API and is the matching CLI client.
+- The prototype `api` executor proves the commands API without the CLI.
+- The production server should run the CLI main through the existing guard.
+
+The `steel_crawl` sidecar uses the API endpoint with a single
+`Host: localhost` header.
+The Python `websockets` library duplicates the Host header.
+The raw probe in `prototype/steel_pool_mcp/cdp_api_probe.py` works.
+The crawler needs the same single-Host client or a custom transport.

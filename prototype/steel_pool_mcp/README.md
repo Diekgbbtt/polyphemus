@@ -7,43 +7,73 @@ sequence.
 
 ## What it runs
 
-- Two `ghcr.io/steel-dev/steel-browser-api:latest` workers.
+- Two Steel API workers from the v0.5.5-beta image.
 - One `polymerhus-kali:latest` container with the MCP server and pool manager.
 - Two `polymerhus-agent:latest` clients that run concurrently.
 - The MCP server on port 8003. The workers on ports 3100 and 3101.
+- The API endpoint is the CDP channel. Chrome's 9222 port is internal.
 
 The server leases a worker per MCP session. The client never sees the worker
-URL. The server creates and drives the browser through the Steel command API.
+URL. The server creates and drives the browser through the Steel commands API.
+
+## v0.5.5 image
+
+The `v0.5.5-beta` image tag is not published on GHCR.
+The `latest` tag is 0.5.4.
+Build the tagged source locally:
+
+```bash
+curl -fsSL -o /tmp/steel-v055.tar.gz \
+  https://github.com/steel-dev/steel-browser/archive/refs/tags/v0.5.5-beta.tar.gz
+tar -xzf /tmp/steel-v055.tar.gz -C /tmp
+docker build -f /tmp/steel-browser-0.5.5-beta/api/Dockerfile \
+  -t steel-browser-api:v0.5.5-beta /tmp/steel-browser-0.5.5-beta
+```
+
+The image is used as shipped.
+
+- `--no-nginx` is an official entrypoint flag.
+  It removes the 9223 reverse proxy.
+- `ENABLE_COMMANDS_API=true` enables the commands API.
+- `HOST=0.0.0.0` lets Chrome expose its native CDP port on 9222.
+- `CDP_DOMAIN=<worker>:3000` points the API's debugger URLs at the API endpoint.
+
+No image files are patched.
+
+## Why this path
+
+The old path used the API root WebSocket proxy and the 9223 nginx proxy.
+Both forwarded the client Host header to Chrome.
+Chrome rejected the container hostname, and the proxy returned 500.
+
+The structural fix is to avoid both proxies:
+
+- browser control uses the commands API over HTTP;
+- the crawler uses the API endpoint as the browser-level CDP channel;
+- nginx is disabled;
+- the direct 9222 port is not exposed.
+
+The CDP client sets a single `Host: localhost` header.
+Chrome accepts that Host.
+The API proxy forwards the browser-level CDP.
+The `steel_crawl` sidecar attaches to the page target and captures Network
+events.
 
 ## Executors
 
-The production path is the pinned Steel CLI:
-
-```bash
-STEEL_EXECUTOR=cli STEEL_GUARD=1 bash prototype/steel_pool_mcp/run_scenarios.sh concurrent
-```
+The default executor is `api`, the v0.5.5 commands API.
+The `cli` executor remains for compatibility testing with the CLI main and the
+guard. It is not the default path.
 
 The `cli` executor runs the CLI through the existing `kali/steel_guard.py`.
 The guard keeps its command sanitization, live-session check, result
 classification, and trace logic. The server transports the guard output
 unchanged.
 
-The `api` executor is a local fallback. It uses the Steel command engine.
-It is not a production channel.
-
-## The CDP Host fix
-
-The local `latest` API image forwarded the container Host header to Chrome.
-Chrome rejected it and the API root proxy returned HTTP 500.
-The prototype applies two one-line fixes at container boot:
-
-- `changeOrigin: true` on the root WebSocket proxy.
-- `proxy_set_header Host localhost;` on the 9223 CDP proxy.
-
-See `patch-steel-api.sh`. The production fix belongs in the API image.
-
-Direct CDP is available at `ws://<worker>:9223/devtools/browser/<id>` for the
-`steel_crawl` sidecar. The API root proxy is not on the crawler path.
+The pinned CLI `0.5.0-preview.6` uses the daemon/CDP path.
+It is not compatible with the no-nginx path.
+The CLI main uses the commands API and is the matching CLI client.
+The prototype's `api` executor proves the same commands API without the CLI.
 
 ## Run
 
@@ -68,6 +98,12 @@ Stop and remove the stack:
 bash prototype/steel_pool_mcp/run_scenarios.sh down
 ```
 
+Light v0.5.5 checks:
+
+```bash
+bash prototype/steel_pool_mcp/test_v055.sh
+```
+
 ## Scenarios
 
 - `concurrent`: two clients, two workers. Both acquire a different worker and
@@ -88,12 +124,11 @@ The server reads:
 - `STEEL_POOL_WAIT_S`: bounded pool wait.
 - `STEEL_MCP_PORT`: MCP port.
 - `STEEL_POOL_LOG`: JSONL event log.
+- `STEEL_EXECUTOR`: `api` or `cli`.
+- `STEEL_GUARD`: `1` runs the CLI through `kali/steel_guard.py`.
 
 The client reads:
 
-- `STEEL_EXECUTOR`: `cli` or `api`.
-- `STEEL_GUARD`: `1` runs the CLI through `kali/steel_guard.py`.
-- `STEEL_CLI`: the pinned CLI binary.
 - `STEEL_MCP_URL`: MCP endpoint.
 - `CLIENT_ID`: log identity.
 - `OWNER`: lease owner.

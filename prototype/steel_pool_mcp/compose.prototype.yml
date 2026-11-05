@@ -2,19 +2,19 @@ name: steel-pool-proto
 
 services:
   steel-1:
-    image: ghcr.io/steel-dev/steel-browser-api:latest
+    image: steel-browser-api:v0.5.5-beta
     shm_size: "2gb"
-    entrypoint: ["/bin/sh", "/opt/prototype/patch-steel-api.sh"]
+    command: ["--no-nginx"]
     environment:
       DOMAIN: steel-1:3000
-      CDP_DOMAIN: steel-1:9223
+      CDP_DOMAIN: steel-1:3000
       ENABLE_COMMANDS_API: "true"
+      HOST: 0.0.0.0
       LOG_STORAGE_ENABLED: "true"
       LOG_STORAGE_PATH: /data/logs/browser-logs.duckdb
     ports:
       - "3100:3000"
     volumes:
-      - ./prototype/steel_pool_mcp/patch-steel-api.sh:/opt/prototype/patch-steel-api.sh:ro
       - steel1-logs:/data/logs
       - steel1-exports:/tmp/steel-browser-exports
     healthcheck:
@@ -26,19 +26,19 @@ services:
     networks: [proto-net]
 
   steel-2:
-    image: ghcr.io/steel-dev/steel-browser-api:latest
+    image: steel-browser-api:v0.5.5-beta
     shm_size: "2gb"
-    entrypoint: ["/bin/sh", "/opt/prototype/patch-steel-api.sh"]
+    command: ["--no-nginx"]
     environment:
       DOMAIN: steel-2:3000
-      CDP_DOMAIN: steel-2:9223
+      CDP_DOMAIN: steel-2:3000
       ENABLE_COMMANDS_API: "true"
+      HOST: 0.0.0.0
       LOG_STORAGE_ENABLED: "true"
       LOG_STORAGE_PATH: /data/logs/browser-logs.duckdb
     ports:
       - "3101:3000"
     volumes:
-      - ./prototype/steel_pool_mcp/patch-steel-api.sh:/opt/prototype/patch-steel-api.sh:ro
       - steel2-logs:/data/logs
       - steel2-exports:/tmp/steel-browser-exports
     healthcheck:
