@@ -145,3 +145,45 @@ If not, which of those conjunction files may this branch modify?
 
 Q8a. Which image pair is pinned for the E2E: v0.5.5 plus the
 0.5.0-preview.6 CLI, or v0.5.4 plus the 0.5.0-preview.6 CLI?
+
+## Accepted after the latest round
+
+D23. The selected pair is the v0.5.5 image and the 0.5.0-preview.6 CLI.
+The CLI uses the API root WebSocket proxy.
+The loopback `DOMAIN=localhost:<port>` makes the Host `localhost`.
+The 9223 nginx proxy is not on the critical path.
+
+D24. The browser MCP server is a separate FastMCP process on Kali port 8003.
+The pool manager runs in that process.
+
+D25. The pool manager is fully obscure to SSH.
+The operator owns the SSH tunnels, the forwarded agent, the ControlMaster,
+and the loopback port reservation.
+The pool manager reads the local Docker socket and discovers the labeled
+containers and their ports.
+It uses `localhost:<port>` as the worker API.
+It does not open SSH forwards.
+The pool size is configured.
+The effective count is read from the labels.
+A lower count raises a warning.
+
+D26. Release signals in scope: explicit `browser_end`, MCP close, the FastMCP
+session-close hook, MCP server shutdown or project stop, and TTL.
+CLI daemon death is not in scope.
+The CDP sidecar death is not a release.
+The worker session gone is not in scope.
+
+D27. The E2E uses v0.5.5 and the 0.5.0-preview.6 CLI.
+White Jotter covers the pool, CLI, and CDP path.
+ComfyUI covers the `steel_crawl` path.
+The eval host is the jump host.
+No key pairs are stored on the eval host or the pool host.
+Nothing is exposed to the internet.
+
+## Open after the latest round
+
+Q1b. Heartbeat mechanism and timing.
+Q4a. `browser_start` signature and the meaning of `options`.
+Q4b. Browser session store location, format, and access control.
+Q4c. Session mount mechanism and the restorable state fields.
+Q7a. The `steel_crawl` conjunction is deferred to integration time.
