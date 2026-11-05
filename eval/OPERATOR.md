@@ -1048,7 +1048,9 @@ git clone --depth 1 --branch v0.5.5-beta \
 docker build -t steel-browser-api:v0.5.5-beta -f src/api/Dockerfile src
 ```
 
-`DOMAIN` and `CDP_DOMAIN` are `localhost:<published port>` per worker.
+`DOMAIN` and `CDP_DOMAIN` default to `localhost:<published port>` per worker.
+The compose reads `STEEL_WORKER_DOMAIN` for a deployment whose client resolves
+a named host instead; the eval pool keeps `localhost`.
 The CLI reaches the worker through the operator's forward, so the value is the
 loopback origin and never the host's public address.
 
@@ -1056,10 +1058,16 @@ loopback origin and never the host's public address.
 
 The workers publish on `127.0.0.1:3100` and `127.0.0.1:3101`.
 The operator forwards each port and the Docker socket into the Kali container.
+When the forward lands on the Docker host instead, the Kali entrypoint relays
+the worker ports onto the container loopback and keeps the worker URL
+`http://localhost:<port>`; the runbook step 4b states the relay and the
+`Host: localhost` constraint.
 The pool manager reads the socket and discovers the workers by label.
 It has no SSH logic.
 The browser MCP listens on 8003 inside the compose network and is not
 published.
+An eval target has its own synthetic-Host double forward; the runbook step 6
+states it.
 The old public single-container deploy (`docker-compose.steel.yml`) and its
 `allowlist.sh` are retired: nothing publishes port 3000 or 9223.
 
@@ -1069,8 +1077,9 @@ The agent calls `browser_start`, `browser_exec`, and `browser_end` on
 `http://kali:8003/mcp`.
 The MCP owns the worker choice and the session.
 No worker URL, port, or container name reaches the agent.
-`STEEL_BROWSER_API_URL` is the scalar legacy path and stays unset unless a
-later work item wires it to a tunneled worker.
+The pool path does not read `STEEL_BROWSER_API_URL`.
+Keep that value unset or point it at a local runtime; a value for the retired
+public API is a defect.
 
 #### Teardown
 
@@ -1130,8 +1139,9 @@ The state is application context; the crawl also replicates auth material (cooki
 The workers need no `STEEL_API_KEY`; the CLI reaches them through the guard.
 The pool does not set a fixed user agent: the v0.5.5 API's native value follows
 the worker's Chrome build.
-The retired single-container deployment pinned one through the `steel`
-wrapper; see `docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.
+The retired single-container deployment pinned a fixed value through a
+wrapper; the pool keeps the API's native value. See
+`docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.
 
 #### Moving the stack to another host
 

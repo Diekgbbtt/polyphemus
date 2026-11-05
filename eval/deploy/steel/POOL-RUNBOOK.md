@@ -142,6 +142,49 @@ The operator must verify that fingerprint against the pool host out of band.
 For one worker, drop the second pair of forwards.
 For a third worker, add one pair per port and add the worker to the pool compose file.
 
+## 4b. Variant: the forward lands on the Docker host
+
+The published Kali image has no ssh client.
+The eval deployment therefore runs the tunnel on the eval host and relays the
+worker ports into Kali.
+
+On the eval host:
+
+```bash
+mkdir -p /run/steel-pool
+rm -f /run/steel-pool/docker.sock
+ssh -M -S /tmp/steel-pool-mux -fN \
+  -o StrictHostKeyChecking=accept-new \
+  -L /run/steel-pool/docker.sock:/var/run/docker.sock \
+  -L 0.0.0.0:3100:127.0.0.1:3100 \
+  -L 0.0.0.0:3101:127.0.0.1:3101 \
+  ubuntu@dj-viscon-workshop-1.vsos.ethz.ch
+```
+
+The `0.0.0.0` bind is on the eval host only.
+Kali reaches it through `host.docker.internal`, which resolves to `172.17.0.1`.
+The worker APIs stay loopback-only on the pool host.
+
+The Kali overlay sets:
+
+```yaml
+STEEL_WORKER_HOST: localhost
+STEEL_POOL_FORWARD_PORTS: "3100,3101"
+STEEL_POOL_FORWARD_HOST: host.docker.internal
+volumes:
+  - /run/steel-pool/docker.sock:/run/steel-pool/docker.sock
+  - steel-sessions:/var/lib/steel/sessions
+```
+
+The entrypoint starts `kali/steel_pool/forward.py`.
+The relay listens on `127.0.0.1` and `::1` for each port and forwards to
+`host.docker.internal:<port>`.
+It preserves `Host: localhost:<port>`.
+The worker `DOMAIN` and `CDP_DOMAIN` must stay `localhost:<port>`.
+A direct `DOMAIN=host.docker.internal:<port>` makes the CLI fail with a CDP
+500, because the Steel API forwards the client `Host` to Chrome and Chrome
+rejects a non-localhost host.
+
 ## 5. Verify
 
 Check the tunneled Docker socket:
@@ -229,6 +272,121 @@ docker exec polymerhus-kali-1 grep '"event": "pool.warning"' \
 The event carries `reachable` and `configured`.
 The pool still leases every healthy worker.
 The warning is the operator signal, not a hard stop.
+
+## 6. Reaching an eval target from the pool
+
+The eval system routes a target by a synthetic Host (`t-<short>.target`)
+through the shared `ph-eval-front` container on the eval host.
+The pool host cannot reach the eval host beyond TCP 22.
+The worker reaches the front through two forwards.
+
+1. The eval host opens a reverse tunnel to the pool host:
+
+```bash
+ssh -M -S /tmp/steel-target-mux -fN \
+  -o StrictHostKeyChecking=accept-new \
+  -R 127.0.0.1:18080:127.0.0.1:80 \
+  ubuntu@dj-viscon-workshop-1.vsos.ethz.ch
+```
+
+2. The pool host relays its compose bridge gateway port to that tunnel.
+   Read the bridge address with `ip -4 addr show`; the current pool compose
+   uses `172.21.0.1`.
+   Run the relay as root because it binds port 80:
+
+```bash
+sudo -n sh -c 'setsid python3 /home/ubuntu/steel-target-relay.py \
+  >/root/steel-target-relay.log 2>&1 < /dev/null &'
+```
+
+The relay is a small TCP bridge:
+
+```python
+import asyncio
+
+LISTEN = ("172.21.0.1", 80)
+UPSTREAM = ("127.0.0.1", 18080)
+
+
+async def pipe(reader, writer):
+    try:
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+    except Exception:
+        pass
+    finally:
+        writer.close()
+
+
+async def handle(reader, writer):
+    try:
+        ur, uw = await asyncio.open_connection(*UPSTREAM)
+    except Exception:
+        writer.close()
+        return
+    await asyncio.gather(pipe(reader, uw), pipe(ur, writer))
+
+
+async def main():
+    server = await asyncio.start_server(handle, *LISTEN)
+    async with server:
+        await server.serve_forever()
+
+
+asyncio.run(main())
+```
+
+3. The target's front block maps the Host to the target's published port.
+   Run this on the eval host:
+
+```bash
+printf '%s\n' \
+  'server {' \
+  '    server_name t-<short>.target;' \
+  '    listen 80;' \
+  '    location / {' \
+  '        proxy_pass http://host.docker.internal:<published>;' \
+  '        proxy_set_header Host $host;' \
+  '        proxy_set_header X-Real-IP $remote_addr;' \
+  '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
+  '        proxy_set_header X-Forwarded-Proto $scheme;' \
+  '    }' \
+  '}' \
+| docker exec -i ph-eval-front sh -c \
+  'cat > /etc/nginx/conf.d/eval-target-t-<short>.target.conf && nginx -t && nginx -s reload'
+```
+
+4. The worker maps the Host to the pool bridge gateway:
+
+```bash
+for c in steel-1 steel-2; do
+  docker exec "$c" sh -c \
+    'grep -q t-<short>.target /etc/hosts || \
+     echo "172.21.0.1 t-<short>.target" >> /etc/hosts'
+done
+```
+
+The worker's browser now reaches the target.
+Kali also maps the Host to `172.17.0.1` for non-browser clients:
+
+```bash
+docker exec ph-<short>-kali-1 sh -c \
+  'grep -q t-<short>.target /etc/hosts || \
+   echo "172.17.0.1 t-<short>.target" >> /etc/hosts'
+```
+
+Check both targets from a worker:
+
+```bash
+docker exec steel-1 sh -c \
+  'curl -sS -H "Host: t-<short>.target" http://t-<short>.target/ | grep -o "<title>[^<]*</title>"'
+```
+
+The title proves the worker resolved the Host, reached the pool relay, the
+eval reverse tunnel, the front, and the target.
+The eval front is the only place that maps the Host to the target port.
+The worker and Kali aliases only name the pool bridge and the eval host.
 
 ## Failure recovery
 
