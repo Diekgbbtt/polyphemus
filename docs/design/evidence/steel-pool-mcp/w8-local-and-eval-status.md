@@ -65,3 +65,45 @@ STEEL_GUARD=$PWD/kali/steel_guard.py \
   .venv/bin/python prototype/steel_pool_mcp/probe_hunter_binding.py
 # {"ok": true, "record_mode": "0o600"}
 ```
+
+## W9 rebase status
+
+The pool work was replayed onto `feat/steel-crawl` at `4c245af5` in the
+integration worktree `steel-crawl-pool`, branch `feat/steel-crawl-pool`.
+All 23 pool commits applied.
+The one conflict was `kali/entrypoint.sh`: the incoming branch adds the
+HTTP-history ingest edge, and the pool adds the browser MCP lane.
+Both now run: the edge first, the browser lane second, the exec MCP last.
+The skill and contract conflicts resolved to the three-tool contract; the
+incoming branch's `sessions` record edits are CLI-only and have no agent
+surface under the MCP.
+
+Verification on the integration branch:
+
+- `tests/kali`: 534 passed.
+- `tests/recon/crawl`: 531 passed, 7 skipped (unchanged from the incoming
+  branch).
+- `tests/test_steel_skill_rule.py`: 8 passed.
+- The W8 binding and harness tests: 20 passed.
+- `tests/eval/test_steel_deployment_contract.py`: 15 passed.
+- `tests/recon/test_steel_session_only_surfaces.py`: 13 passed.
+- `git diff feat/steel-crawl..HEAD -- src/polymerhus/recon/crawl` is empty.
+
+## Remaining W9 conjunction
+
+The crawler's `SteelSessionClient` still resolves the CLI subprocess by
+default.
+Routing it through the browser MCP is not a drop-in `exec_fn`: `attach` and
+`catalogue` call `sessions` commands that the MCP refuses on purpose, and
+the browser MCP has no catalogue tool.
+The adapter must mount the named session with `browser_start`, build the
+`SteelSession` from that result, and serve every command through
+`browser_exec`.
+It also needs the auth-state handoff: the auth store's `steel.state`
+reference and the pool's `/var/lib/steel/sessions` store are separate today.
+The incoming branch owns the crawler, so this seam is the remaining W9
+design item.
+
+The ComfyUI E2E is blocked: no ComfyUI target is deployed on the eval host.
+The White Jotter target is still crash-looping, and the pool host reaches the
+eval host only on TCP 22.
