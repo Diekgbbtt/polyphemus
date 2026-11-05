@@ -207,8 +207,19 @@ def _compose_modeller_prompt(turn) -> str:
     from .unit_projection_render import render_unit_projection  # noqa: PLC0415
 
     state = getattr(turn, "state", None)
-    state_value = getattr(state, "value", state) or "UNIT_TECHNICAL_SHARP"
+    # The well-formedness phase is a workflow phase in its own right: prefer
+    # the turn's phase label so the prompt never reports the stale
+    # vulnerabilities gate (approved 2026-11-05).
+    state_value = (
+        getattr(turn, "phase", None)
+        or getattr(state, "value", state)
+        or "UNIT_TECHNICAL_SHARP"
+    )
     sections = list(getattr(turn, "sections", ()) or ())
+    from .threat_modeller import WELLFORMEDNESS  # noqa: PLC0415 - phase label
+
+    sections_value = (
+        ", ".join(sections) if sections else "(none - workflow phase)")
     model = getattr(turn, "model", None)
     projection = getattr(turn, "projection", None)
     projection_text = (
@@ -219,7 +230,7 @@ def _compose_modeller_prompt(turn) -> str:
     lines = [
         f"Unit under analysis: {getattr(turn, 'unit_id', '(unbound)')}",
         f"Current workflow state: {state_value}",
-        f"Gate sections to write: {', '.join(sections)}",
+        f"Gate sections to write: {sections_value}",
         "",
         str(getattr(turn, "instruction", "") or ""),
         "",
@@ -252,12 +263,22 @@ def _compose_modeller_prompt(turn) -> str:
             lines.append(f"  risk profile: {model['risk_profile']}")
         if model.get("validation"):
             lines.append(f"  completion validation: {model['validation']}")
-    lines += [
-        "",
-        "Write the gate with ONE `hunts_store` write carrying this state and its "
-        "sections. Then end the reasoning phase with ONE episodic note through "
-        "`notes`: the decision nodes and the rationales of the branches you took.",
-    ]
+    if state_value == WELLFORMEDNESS:
+        lines += [
+            "",
+            "This is the well-formedness phase, not a gate: load the class "
+            "skills, patch the model, then close the phase with ONE "
+            "`wellformedness` note through `notes` and proceed to the PRIOR_ART "
+            "gate. A lower-gate write re-enters the phase.",
+        ]
+    else:
+        lines += [
+            "",
+            "Write the gate with ONE `hunts_store` write carrying this state "
+            "and its sections. Then end the reasoning phase with ONE episodic "
+            "note through `notes`: the decision nodes and the rationales of the "
+            "branches you took.",
+        ]
     # #438: the project scope rides the turn verbatim, under its own heading.
     # An empty scope appends nothing (an unset project makes no claim); the
     # string is never paraphrased, trimmed, or reflowed - it is the operator's

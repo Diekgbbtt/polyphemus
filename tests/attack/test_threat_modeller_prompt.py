@@ -16,6 +16,8 @@ fallback and no accepted legacy segment or role.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from polymerhus.attack.hunting.llm import _compose_modeller_prompt, _modeller_skill
@@ -30,6 +32,8 @@ from polymerhus.attack.hunting.threat_modeller import (
     MODELLER_MODEL_KEY,
     MODELLER_ROLE,
     STATE_INSTRUCTIONS,
+    WELLFORMEDNESS,
+    WELLFORMEDNESS_INSTRUCTION,
     ModellerTurnInput,
 )
 
@@ -155,8 +159,13 @@ def test_the_prompt_states_the_seven_gates_in_workflow_order():
     in the machine's order, not in an arbitrary mention order."""
     prompt = _modeller_skill()
     table = prompt.split("## The seven states and their gates", 1)[1].split("## ", 1)[0]
-    positions = [table.index(state.value) for state in ModelState]
-    assert positions == sorted(positions)
+    items = {}
+    for line in table.splitlines():
+        match = re.match(r"\s*(\d+)\.\s+`([A-Z_]+)`", line)
+        if match:
+            items[int(match.group(1))] = match.group(2)
+    assert [items[index] for index in sorted(items)] == [
+        state.value for state in ModelState]
 
 
 def test_the_prompt_states_the_damage_semantic_and_the_precursor_boundary():
@@ -364,7 +373,48 @@ def test_the_prompt_carries_no_gate_hint():
 
 def test_the_prompt_stays_within_a_reasonable_size():
     """A gate cadence belongs in the tool responses, not a wall of text."""
-    assert len(_modeller_skill().splitlines()) < 440
+    assert len(_modeller_skill().splitlines()) < 500
+
+
+def test_the_entry_note_belongs_to_the_wellformedness_phase_not_the_assumptions():
+    """The phase runs after the vulnerabilities gate, so its entry note does.
+
+    The assumptions phase cannot open a phase that runs two gates later: the
+    old placement sent the model from assumptions straight to PRIOR_ART and
+    skipped the vulnerabilities gate, which is the C.a skip shape."""
+    assumptions = STATE_INSTRUCTIONS[ModelState.TRUST_ASSUMPTIONS_WRITTEN]
+    vulnerabilities = STATE_INSTRUCTIONS[ModelState.VULNERABILITIES_WRITTEN]
+
+    assert "trust_assumption" not in assumptions
+    assert "trust_assumption" in vulnerabilities
+    prompt = _modeller_skill()
+    assumptions_section = prompt.split("## Assumptions (TRUST_ASSUMPTIONS_WRITTEN)")[
+        1].split("## Vulnerability citation (VULNERABILITIES_WRITTEN)")[0]
+    vulnerabilities_section = prompt.split(
+        "## Vulnerability citation (VULNERABILITIES_WRITTEN)")[1].split(
+            "## Well-formedness")[0]
+    assert "trust_assumption" not in assumptions_section
+    assert "trust_assumption" in vulnerabilities_section
+
+
+def test_the_wellformedness_turn_renders_its_phase_not_the_vulnerabilities_state():
+    """The well-formedness phase is a workflow phase, not the vulnerabilities
+    gate. The turn prompt must say WELLFORMEDNESS, never the stale gate."""
+    turn = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.VULNERABILITIES_WRITTEN,
+        phase=WELLFORMEDNESS,
+        sections=(),
+        instruction=WELLFORMEDNESS_INSTRUCTION,
+    )
+
+    rendered = _compose_modeller_prompt(turn)
+
+    assert "Current workflow state: WELLFORMEDNESS" in rendered
+    assert "Current workflow state: VULNERABILITIES_WRITTEN" not in rendered
+    assert "Gate sections to write: (none - workflow phase)" in rendered
+    assert "not a gate" in rendered
+    assert "Write the gate with" not in rendered
 
 
 def test_the_turn_prompt_renders_the_state_the_unit_and_the_fresh_model():
@@ -476,7 +526,7 @@ def test_the_prompt_states_the_prior_art_phase_and_the_query_contract():
     prompt = _modeller_skill()
     required = {
         "phase_heading": "## Prior art (PRIOR_ART)",
-        "phase_order": "AFTER the vulnerability phase and BEFORE the impact assessment",
+        "phase_order": "AFTER the vulnerability-local impact note and BEFORE the impact rows",
         "query_command": "cmd='query'",
         "kind_field": "`kind`",
         "kinds": (

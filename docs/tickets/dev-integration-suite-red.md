@@ -51,3 +51,23 @@ Filed 2026-10-15 during the T3/T4 verification, when a bare `pytest tests --igno
 
 None of the three carries a skip gate, so a full-suite run reports them as reds outside the verifier gate's scope.
 This is not caused by the streamed-pipeline corrections; it is noted so the next full-suite reader does not misattribute them.
+
+## Addendum 2026-11-05 - the reds observed on the impact-refinement branch
+
+A full `pytest -q` run on `feat/threat-modeller-impact-refinement` reported 28 failed and 45 errors.
+None of them exercises the threat-modeller diff, and each one reproduces outside the branch or needs live infrastructure.
+No threat-modeller, prompt, store, or CVSS 4.0 walkthrough test failed.
+
+- `tests/e2e/test_token_tracking_e2e.py` (2): the test calls `Trial._check_spend(PROJECT, "recon", "r0")`, but the method now takes `project_id` and stops the whole project.
+  The test still asserts the retired per-run stop; rewrite it against the project-wide stop contract.
+- `tests/test_llm_providers.py` (2): the test expects `reasoning_effort == "high"`, while the role baseline sets `xhigh`.
+  Decide the intended baseline and align the code or the test.
+- `tests/e2e/test_steel_canonical_actions_mocked.py` (3): the fixture reads `skills/steel-browser/references/catalogue.sh`, which is not present or tracked in this worktree.
+  Provision the reference fixture or skip the tests when it is absent.
+- `tests/test_postgres_schema.py`, `tests/test_stack_smoke.py`, `tests/test_agent_health.py`: no Postgres or compose stack is running.
+- `tests/e2e/test_steel_interactive_local.py`, `test_steel_internal_reachability.py`, `test_steel_session_state_live.py`, `test_recon_crawl_katana_depth.py`: the Steel and Kali live gates need their containers and the `redamon-kali-sandbox` image.
+- `tests/e2e/test_blackloop_*` (3 errors), `test_pod_replay_lineage.py`, `tests/integration/test_targeted_roundtrip.py` (3 errors): the live Neo4j/Postgres fixtures and the replay lineage target are absent.
+- The Neo4j- and Postgres-dependent integration suites error with connection failures when neither database runs: `test_assigner_eval_live`, `test_decoupling_contracts`, `test_graph_read_live`, `test_neo4j_schema`, `test_bootstrap_merge`, `test_l1_curator_merge`, `test_l1_curator_reconcile`, `test_sweep_merge`, `test_unit_threat_model_contracts`, `test_walkthrough_nfr`, `test_analyser_pod_merge`, `test_delivery_merge`, `test_index_card_merge`, and `test_l1_enrich_merge`.
+- `tests/integration/test_frontend_bff_integration.py` and `tests/project_management/test_read_endpoints.py`: both pass in isolation, so the full-run failures are order- or state-sensitive.
+
+The branch-specific suites are green: 1361 passed in `tests/attack` plus the CVSS 4.0 walkthrough, and 354 passed in the fixture-dependent integration set.

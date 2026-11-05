@@ -1538,46 +1538,8 @@ class ThreatModelStore(BoundedRecordStore):
                 unit_id, run_id, gate, sections, now, model_path,
                 project_id=project_id,
             )
-            if gate is ModelState.COMPLETED:
-                self._require_assessment_coverage(doc)
             self._commit(project_id, unit_name, doc, gate, now)
             return model_path
-
-    @staticmethod
-    def _require_assessment_coverage(model: PartialThreatModel) -> None:
-        """A COMPLETED model needs the vulnerability section and one scored
-        assessment per non-dropped vulnerability.
-
-        The completion checker already reports the missing sections, but the
-        write is the last point where the model can be taught. Accepting the
-        write archives the unit as degraded and loses the whole unit; a coded
-        rejection sends the model back with the missing field named.
-
-        An empty `vulnerabilities` list is the C.a failure mode: the coverage
-        check is vacuous there, so the write must reject the missing section
-        itself."""
-        if not model.vulnerabilities:
-            raise ThreatModelIdentityError(
-                ["vulnerabilities"],
-                "threat model store: the COMPLETED write needs the "
-                "vulnerability section; write at least one vulnerability "
-                "(a dropped one is allowed) before the COMPLETED write.",
-            )
-        covered = {row.vulnerability_ref for row in model.impact_assessment}
-        missing = [
-            vulnerability.id
-            for vulnerability in model.vulnerabilities
-            if not vulnerability.dropped and vulnerability.id not in covered
-        ]
-        if missing:
-            raise ThreatModelIdentityError(
-                ["impact_assessment"],
-                "threat model store: the COMPLETED write needs at least one "
-                "scored assessment per non-dropped vulnerability; missing: "
-                + ", ".join(missing)
-                + ". Call assess_impact for each missing vulnerability before "
-                "the COMPLETED write.",
-            )
 
     @staticmethod
     def _raw_version(path: Path) -> Any:

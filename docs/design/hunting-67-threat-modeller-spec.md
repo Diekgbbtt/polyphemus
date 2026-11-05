@@ -1,5 +1,19 @@
 # Hunting agent spec: threat modeller
 
+## Amendment 2026-11-05: the no-fault terminal and the coverage guard
+
+The 2026-11-05 amendment in `docs/design/impact-assessment-system-spec.md` adds the terminal rules; where this document and that amendment disagree, the amendment wins.
+
+- `Assumption.falsified` is the typed falsification signal.
+  A falsified assumption yields no vulnerability and carries the probe evidence that closed it; a non-falsified assumption closes to at least one vulnerability.
+- The empty `vulnerabilities` write is a decision node.
+  It is accepted only for a no-fault model (at least one assumption, every one falsified), refused with the reflect text otherwise, and the refusal does not advance the state.
+- The `COMPLETED` write is refused when the model has no vulnerability and is not a no-fault model, and while a non-dropped vulnerability has no assessment row.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`.
+  Its entry is the `trust_assumption` note written after the vulnerabilities gate and its local impact note; its exit is the `wellformedness` note.
+  A lower-gate write re-enters the phase, and a resume at the vulnerabilities gate runs it before prior art unless the exit note is persisted.
+- The `COMPLETED` success response carries `validation` and the derived `risk_profile` on both the impact-bearing and the no-fault branches.
+
 ## Amendment 2026-10-25: impact-first elicitation
 
 The threat-model impact-elicitation workstream supersedes the likelihood-only risk score and the failure-mode artifact in this document.
@@ -10,7 +24,7 @@ Where this document and the amendment disagree, the amendment wins.
 - The ranking and the dispatch buckets use the combined risk. The run record carries `impact_weights` and `impact_breakdown`.
 - The `failure_modes` artifact, `Threat.failure_mode_refs`, and the pod `failure-mode` variant basis are removed. The modeller no longer judges technical feasibility; the hunter and the pod own the effective attempt.
 - The trust procedure uses the four axes `identity`, `spatial`, `temporal`, and `controls_semantics`.
-- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `COMPLETED`. Its exit is one `wellformedness` note plus the `COMPLETED` write; a lower-gate write is the re-entry signal.
+- The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`. Its entry is the `trust_assumption` note, its exit is the `wellformedness` note, and a lower-gate write re-enters the phase.
 - Every vulnerability binds a suite class parent or leaf. Technique families are not classes. `suite_gap` is removed. Class findings are non-blocking.
 
 ## Amendment 2026-10-26: impact assessment system
@@ -22,13 +36,13 @@ Where this document and the new spec disagree, the new spec wins.
 
 - The impact assessment is a first-class model section.
   A row is a `threat` when it names a concrete victim and damaged property, otherwise a `placeholder`.
-- A `precursor` is a capability entity, not a row.
+- A `precursor` is an impact-assessment row with no concrete end damage that still yields its capability.
   The threat references its precursors through `enabling_precursors`.
 - The `damage` field merges the victim and the damage into one semantic field.
   The damage-family and victim-class enums are removed.
-- The CIA score is authored after the impact assessment.
+- The CVSS 4.0 base score is derived at persistence, after the impact assessment.
   The `end_impact` string is removed from the threat; the damage lives in the impact assessment.
-- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `PRIOR_ART`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `IMPACT_ASSESSED`, `COMPLETED`.
+- The workflow has seven gates: `UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `PRIOR_ART`, `IMPACT_ASSESSED`, `COMPLETED`.
 - `hunts_store` gains `cmd=query`: a required `kind` plus a non-empty AND list of `{path, regex, flags}` filters over the threat-file and model fields. An empty filter, an invalid regex, or an unknown path is a coded rejection.
 - The project `threat_model_scope` string is applied at the assumptions layer and appended verbatim to the prompt.
 - The hunter payload carries the impact assessment and the precursors.
@@ -236,12 +250,13 @@ No `HuntConfig` entity is minted.
 
 The modeller binds one store-write tool for the threat model.
 
-The tool has `cmd: read | write`.
+The tool has `cmd: read | write | query`.
 The name `hunts_store` is shared with the hunter; the modeller binds the threat-model store and the hunter binds the spec store.
 
 A write carries one payload:
 
-- `state`: one of `UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `COMPLETED`.
+- `state`: one of `UNIT_TECHNICAL_SHARP`, `TRUST_MODELLED`, `TRUST_ASSUMPTIONS_WRITTEN`, `VULNERABILITIES_WRITTEN`, `PRIOR_ART`, `COMPLETED`.
+  `IMPACT_ASSESSED` is owned by the `assess_impact` tool, not by a `hunts_store` write.
 - `sections`: a mapping from section name to content for that state.
 
 The store derives the unit directory and the model file name from the harness-bound unit identity.
@@ -380,8 +395,10 @@ The workflow contract is `docs/design/unit-threat-model-workflow.md`.
 | `UNIT_TECHNICAL_SHARP` | `technical_sharpening` | Interface agreements, control flows, data flows; each with confidence and evidence |
 | `TRUST_MODELLED` | `trust_model` | Trust agreements plus dynamic-state trust (states, transitions, violations) |
 | `TRUST_ASSUMPTIONS_WRITTEN` | `assumptions` | Assumptions, each naming an induced programming fault |
-| `VULNERABILITIES_WRITTEN` | `vulnerabilities` | Web vulnerability classes, each mapped to a suite class |
-| `COMPLETED` | `failure_modes`, `threats` | Failure modes for the map-back and the ranked threats; the store computes the risk profile; the completion checker runs |
+| `VULNERABILITIES_WRITTEN` | `vulnerabilities` | Web vulnerability classes, each mapped to a suite class; the decision node accepts an empty list only for a no-fault model |
+| `PRIOR_ART` | `prior_art` | The store queries and the reused records; it runs after the well-formedness exit note |
+| `IMPACT_ASSESSED` | none (`assess_impact` rows) | The assessed exploitation rows; the tool owns the transition |
+| `COMPLETED` | `threats` | The ranked threats; the store computes the risk profile and the validation; the coverage guard refuses a residual unassessed vulnerability |
 
 The states are sequential.
 The harness accepts a forward jump and records the skipped states in the run record's `trajectory`.
@@ -395,7 +412,11 @@ The model's `state` is the latest gate.
 The COMPLETED write makes the model consumable.
 There is no `confirmed` state and no confirmation step.
 
-### 6.2 The five phases
+### 6.2 The workflow phases
+
+**Superseded.** The phase text below records the 2026-10-15 design.
+The 2026-10-25, 2026-10-26, and 2026-10-31 amendments at the top of this document, and the 2026-11-05 amendment in `docs/design/impact-assessment-system-spec.md`, win.
+The authoritative workflow is section 5 of `docs/design/impact-assessment-system-spec.md`.
 
 **Grounding -> UNIT_TECHNICAL_SHARP.**
 Ground on the service contract or the system technical description.

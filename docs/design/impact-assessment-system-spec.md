@@ -24,6 +24,49 @@ Where this document and the amendment disagree, the amendment wins.
 - `SCHEMA_VERSION` is 5.
   A v4 document is read raw and never re-scored.
 
+## Amendment 2026-11-05: the no-fault terminal, the decision node, and the coverage guard
+
+The iteration C.a diagnosis showed that the controller was write-driven, not phase-completion-driven.
+Twelve of the thirteen abandoned units wrote `COMPLETED` from `PRIOR_ART` with an empty `vulnerabilities` list.
+This amendment supersedes the workflow, the impact-assessment, and the completion-check sections below.
+
+- `Assumption` gains `falsified: bool = False`.
+  A falsified assumption closes its fault and yields no vulnerability.
+  A falsified assumption carries the probe evidence that closed it.
+  A non-falsified assumption must close to at least one vulnerability.
+- The empty `vulnerabilities` write is a decision node with three branches:
+  - a non-falsified assumption remains, or no assumption was written: the write is refused, the state does not advance, and the response injects this text verbatim:
+    > You wrote no vulnerability, but at least one trust assumption is NOT falsified.
+    > Reflect more deeply on the vulnerabilities that could characterise the application at runtime if that assumption were effectively implemented.
+    > Write at least one vulnerability for every non-falsified assumption, or falsify the assumption with a probe and record the evidence.
+    > This write was refused and the vulnerability section is NOT closed: write the missing vulnerabilities next.
+  - at least one assumption exists and every one is falsified: the empty section lands, the harness writes `COMPLETED` with no impact assessment, and the unit ends as a valid no-fault model;
+  - a non-empty section: the write advances normally.
+- The no-fault terminal requires at least one falsified assumption.
+  `all([])` is true, so an empty assumptions list is a skipped phase, not a no-fault result.
+- The COMPLETED write carries the same structural invariant: a model with no vulnerability is refused unless it is a no-fault model, computed from the persisted assumptions.
+  A forward jump that never writes the vulnerabilities gate therefore cannot complete, and the C.a shape is unreachable.
+- The well-formedness phase is a real workflow phase.
+  Its entry is the `trust_assumption` note written after the vulnerabilities gate and its local impact note.
+  Its exit is the `wellformedness` note, and `PRIOR_ART` follows.
+  A lower-gate write re-enters the phase.
+  A pass that resumes at `VULNERABILITIES_WRITTEN` runs the phase before prior art unless the exit note is already persisted.
+- The vulnerability-local impact assessment lives in the `vulnerabilities` phase note.
+  It records the direct impact, the end-damages a chain could reach, and the capabilities the attacker still needs.
+  It runs before prior art and does not call `assess_impact`.
+  Prior art follows the note and can add providers and chains; it never removes a local damage.
+- The impact coverage guard lives in the modeller controller, not the store.
+  The tracker keeps the written vulnerability ids and the assessed ids, seeded from the persisted model on a resumed pass.
+  A section rewrite replaces the index, because the document replaces the section.
+  When the live index is absent (a direct seam over a raw store), the persisted document answers instead.
+  The state stays at `IMPACT_ASSESSED` until every non-dropped vulnerability has a row.
+  The `impact_assessed` note and the `assess_impact` response carry the residual ids.
+  The `COMPLETED` write is refused while a residual remains.
+- The `COMPLETED` success response carries the store's `validation` object and the derived `risk_profile`, so an invalid write is repairable feedback.
+- The tools validate their strictly required core parameters before the store write.
+  `assess_impact` rejects a required field that is present but blank, and `hunts_store` rejects a missing `state` and an empty section payload.
+  Each rejection is coded, never a degenerate write or a scored row.
+
 ## Problem Statement
 
 The current unit threat model calls a research direction a `threat`.
@@ -45,16 +88,15 @@ The metric must move to the CIA values the impact assessment produces.
 ## Solution
 
 A `threat` is a row with a concrete end damage to a victim.
-A `precursor` is a row with no concrete end damage that still yields its capability.
-A `precursor` is a capability entity, not a row.
-The modeller writes one `impact_assessment` section at a new `IMPACT_ASSESSED` gate.
-Each assessment names the victim and the damaged property in one `damage` field, the precursors the vulnerability yields, and the capability path.
-One threat references exactly one damage row.
+A `precursor` row has no concrete end damage and still yields its capability.
+The modeller writes the assessment rows through the `assess_impact` tool; the first successful call advances the model state to `IMPACT_ASSESSED`.
+Each assessment names the victim and the damaged property in `impact_description`, the chain in `exploitability_description`, the capability the vulnerability yields, the capability path, and the eight CVSS 4.0 base factors.
+One threat references exactly one assessment row.
 One vulnerability may yield several threats, one per complementary exploitation manner.
-Each threat carries its own damage row and its own capability path.
+Each threat carries its own assessment row and its own capability path.
 The threat stays broad: it names the exploitation manner and the damage, never the request, payload, or procedure.
-The CIA score is authored after the assessment.
-A threat row carries at least one non-none CIA value; a precursor row carries no end damage and still yields a capability.
+The score is derived at persistence.
+A threat row carries at least one non-none impact value; a precursor row carries no end damage and still yields a capability.
 
 The project gains a `threat_model_scope` string.
 The hunting module appends it verbatim to the modeller prompt.
@@ -167,7 +209,7 @@ Examples:
 
 A `threat` row must name a concrete victim and property.
 A `precursor` row states why no concrete end damage follows, and still names the capability gained.
-The CIA score is authored after the damage field.
+The score is derived at persistence, after the damage field.
 The score must reflect the damage.
 
 ### 3. The typed model
@@ -299,27 +341,32 @@ The modeller has seven states.
 | 3 | `TRUST_ASSUMPTIONS_WRITTEN` | `assumptions` | Assumptions, each naming a fault |
 | 4 | `VULNERABILITIES_WRITTEN` | `vulnerabilities` | Web-vulnerability classes |
 | 5 | `PRIOR_ART` | `prior_art` | The store queries and the reused records |
-| 6 | `IMPACT_ASSESSED` | `impact_assessment` | The assessed exploitation rows |
+| 6 | `IMPACT_ASSESSED` | none (`assess_impact` rows) | The assessed exploitation rows |
 | 7 | `COMPLETED` | `threats` | The damage-bearing threats |
 
-The well-formedness loop runs after `VULNERABILITIES_WRITTEN` and before `PRIOR_ART`.
+The well-formedness phase runs after `VULNERABILITIES_WRITTEN` and before `PRIOR_ART`.
+Its entry is the `trust_assumption` note written after the vulnerabilities gate and its local impact note; its exit is the `wellformedness` note.
+A lower-gate write re-enters the phase.
 The harness stays passive.
 The state is monotonic.
 The trajectory records the gates.
 The completion check reports the findings.
 The existing `validation.valid` contract is the dispatch gate.
 
-The `PRIOR_ART` phase runs after the well-formedness loop and before the impact assessment.
+The `PRIOR_ART` phase runs after the well-formedness exit note and before the impact rows.
 The modeller runs at least one query for threats, one for vulnerabilities, and one for precursors.
 It records the queries and the reused records in `prior_art`.
 It writes a `prior_art` note as the phase exit.
 It uses the query to find the capabilities affine to each vulnerability and the chains that already reach an end damage.
+The vulnerability-local impact assessment is the baseline and is recorded in the `vulnerabilities` phase note before this phase.
+Prior art can add providers and chains; it never removes a local damage.
 
 The `IMPACT_ASSESSED` phase runs after the prior art.
-For each vulnerability, it assesses the impact of exploiting it alone.
+The first `assess_impact` call advances the state.
+For each vulnerability, it persists the impact of exploiting it alone.
 If the impact reaches an end damage, it writes a `threat` row.
 If not, it names the missing capabilities, looks for a chain in the prior art, and either writes a `threat` with a full or partial chain or a `precursor`.
-The CIA vector is scored in the `COMPLETED` threats, after the assessment.
+The state stays at `IMPACT_ASSESSED` until every non-dropped vulnerability has a row.
 
 ### 6. The project scope
 

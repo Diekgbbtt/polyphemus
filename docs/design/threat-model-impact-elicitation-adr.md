@@ -28,6 +28,14 @@ A `threat` names a concrete victim and damaged property; a `placeholder` does no
 A `precursor` is a capability entity, not a row.
 The hunter payload carries the impact assessment; the spec and pod contracts are unchanged.
 The class-based green gate is retired in favour of the CIA red/green share.
+
+## Superseded 2026-11-05: the no-fault terminal and the precursor row
+
+The 2026-11-05 amendment in `docs/design/impact-assessment-system-spec.md` supersedes the remaining workflow and precursor statements in this ADR.
+The CIA scoring and the risk formula were already superseded by the 2026-10-31 CVSS amendment.
+A `precursor` is an impact-assessment row with no concrete end damage that still yields its capability.
+The well-formedness phase runs between `VULNERABILITIES_WRITTEN` and `PRIOR_ART`; its entry is the `trust_assumption` note and its exit is the `wellformedness` note.
+
 ## Problem
 
 The eval-server-1 baseline measured 113 threats over 17 unit models.
@@ -114,7 +122,7 @@ The phase has no iteration bound; the run cap is the bound.
 The phase is not a new `ModelState`.
 The passive tracker observes `hunts_store` gate writes.
 A lower-gate write after vulnerabilities is recorded as `lower_gate` and is the re-entry signal.
-The exit is one `wellformedness` note followed by the `COMPLETED` write.
+The exit is one `wellformedness` note followed by the `PRIOR_ART` gate.
 The note is the exit memory, never a per-iteration note.
 It records the vulnerabilities checked, the skills loaded, the assumptions added, the absent Trust Assumptions sections, the structural finding, and the final action.
 

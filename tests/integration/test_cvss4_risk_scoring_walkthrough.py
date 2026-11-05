@@ -435,8 +435,10 @@ def _assess(
         store=store, project_id=PROJECT, unit_id=unit_id, run_id=RUN)
     for response in _ScriptedModeller(calls).assess(tool):
         assert response["ok"] is True
-        # The tool never echoes the derived score, the vector, or a factor echo.
-        assert set(response) == {"ok", "hint"}
+        # The success envelope carries the coverage signal (2026-11-05) and
+        # never echoes the derived score, the vector, or a factor echo.
+        assert set(response) == {"ok", "hint", "residual_vulnerabilities"}
+        assert not ({"risk", "risk_vector", "factors"} & set(response))
     return calls
 
 

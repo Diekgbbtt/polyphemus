@@ -224,6 +224,561 @@ def test_a_lower_gate_write_updates_the_section_without_regressing_the_state(tmp
             == "amended after completion")
 
 
+def _write_to_assumptions(store, *, falsified: bool = False) -> None:
+    payloads = _payloads()
+    assumptions = payloads[ModelState.TRUST_ASSUMPTIONS_WRITTEN]
+    if falsified:
+        assumptions = {
+            "assumptions": [
+                {**row, "falsified": True}
+                for row in assumptions["assumptions"]
+            ],
+        }
+    for state in (ModelState.UNIT_TECHNICAL_SHARP,
+                  ModelState.TRUST_MODELLED):
+        store.write_sections(PROJECT, UNIT, state, payloads[state], run_id=RUN)
+    store.write_sections(
+        PROJECT, UNIT, ModelState.TRUST_ASSUMPTIONS_WRITTEN, assumptions,
+        run_id=RUN)
+
+
+def test_an_empty_vulnerabilities_write_is_refused_when_an_assumption_is_not_falsified(
+        tmp_path):
+    """The decision node's reflect branch: a non-falsified assumption must
+    close to a vulnerability. The empty write is rejected, the state does not
+    advance, and the response tells the model to reflect on the runtime
+    vulnerability."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    _write_to_assumptions(store)
+    tool = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))["hunts_store"]
+
+    response = tool.invoke({
+        "cmd": "write", "state": "VULNERABILITIES_WRITTEN",
+        "sections": {"vulnerabilities": []},
+    })
+
+    assert response["ok"] is False
+    assert response["error"] == "vulnerabilities_write_rejected"
+    assert "reflect more deeply" in response["detail"].lower()
+    assert "runtime" in response["detail"].lower()
+    assert "not closed" in response["detail"].lower()
+    assert "now closed" not in response["detail"].lower()
+    assert store.read_model(PROJECT, UNIT)["state"] == (
+        ModelState.TRUST_ASSUMPTIONS_WRITTEN.value)
+
+
+def test_an_empty_vulnerabilities_write_with_no_assumptions_is_refused(
+        tmp_path):
+    """The no-fault branch requires at least one falsified assumption.
+
+    A model that never wrote the assumptions section has nothing to falsify;
+    `all([])` is vacuously true, so the decision node must refuse the empty
+    write instead of treating the skipped phase as a no-fault terminal."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    payloads = _payloads()
+    for state in (ModelState.UNIT_TECHNICAL_SHARP,
+                  ModelState.TRUST_MODELLED):
+        store.write_sections(
+            PROJECT, UNIT, state, payloads[state], run_id=RUN)
+    tool = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))["hunts_store"]
+
+    response = tool.invoke({
+        "cmd": "write", "state": "VULNERABILITIES_WRITTEN",
+        "sections": {"vulnerabilities": []},
+    })
+
+    assert response["ok"] is False
+    assert response["error"] == "vulnerabilities_write_rejected"
+    assert "reflect more deeply" in response["detail"].lower()
+    assert store.read_model(PROJECT, UNIT)["state"] == (
+        ModelState.TRUST_MODELLED.value)
+
+
+def test_an_empty_vulnerabilities_write_ends_the_unit_when_all_assumptions_are_falsified(
+        tmp_path):
+    """The decision node's no-fault branch: every trust assumption is
+    falsified, so the unit ends at COMPLETED with no vulnerability and no
+    impact assessment."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    _write_to_assumptions(store, falsified=True)
+    tool = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))["hunts_store"]
+
+    response = tool.invoke({
+        "cmd": "write", "state": "VULNERABILITIES_WRITTEN",
+        "sections": {"vulnerabilities": []},
+    })
+
+    assert response["ok"] is True
+    assert response["state"] == ModelState.COMPLETED.value
+    assert "no impact assessment" in response["hint"].lower()
+    model = store.read_model(PROJECT, UNIT)
+    assert model["state"] == ModelState.COMPLETED.value
+    assert model["validation"]["valid"] is True
+    assert store.read_threat_files(PROJECT, UNIT) == []
+
+
+def test_a_non_empty_vulnerabilities_write_advances_the_vulnerabilities_gate(
+        tmp_path):
+    """The decision node's normal branch: a written vulnerability advances the
+    gate and hands the model the well-formedness cadence."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    _write_to_assumptions(store)
+    tool = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))["hunts_store"]
+
+    response = tool.invoke({
+        "cmd": "write", "state": "VULNERABILITIES_WRITTEN",
+        "sections": _payloads()[ModelState.VULNERABILITIES_WRITTEN],
+    })
+
+    assert response["ok"] is True
+    assert response["state"] == ModelState.VULNERABILITIES_WRITTEN.value
+    assert "well-formedness" in response["hint"]
+    assert store.read_model(PROJECT, UNIT)["state"] == (
+        ModelState.VULNERABILITIES_WRITTEN.value)
+
+
+def _write_to_prior_art_with_two_vulnerabilities(store) -> None:
+    payloads = _payloads()
+    for state in (ModelState.UNIT_TECHNICAL_SHARP,
+                  ModelState.TRUST_MODELLED,
+                  ModelState.TRUST_ASSUMPTIONS_WRITTEN):
+        store.write_sections(PROJECT, UNIT, state, payloads[state], run_id=RUN)
+    first = payloads[ModelState.VULNERABILITIES_WRITTEN]["vulnerabilities"][0]
+    second = {**first, "id": "v-2"}
+    store.write_sections(
+        PROJECT, UNIT, ModelState.VULNERABILITIES_WRITTEN,
+        {"vulnerabilities": [first, second]}, run_id=RUN)
+    store.write_sections(
+        PROJECT, UNIT, ModelState.PRIOR_ART, payloads[ModelState.PRIOR_ART],
+        run_id=RUN)
+
+
+def test_the_impact_exit_note_names_the_residual_unassessed_vulnerabilities(
+        tmp_path):
+    """The impact coverage guard: the first assessment leaves `v-2` unassessed,
+    so the notes write that ends the impact phase injects the residual
+    vulnerabilities and the state stays at IMPACT_ASSESSED."""
+    from polymerhus.attack.hunting.threat_modeller import (
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    wrapped = TrackingThreatModelStore(store, tracker)
+    _write_to_prior_art_with_two_vulnerabilities(wrapped)
+    surface = build_modeller_tool_surface(
+        PROJECT, UNIT, _tools(wrapped))
+
+    first = surface["assess_impact"].invoke(
+        dict(_payloads()[ModelState.IMPACT_ASSESSED]))
+    assert first["ok"] is True
+
+    note = surface["notes"].invoke({
+        "cmd": "write", "option": "append", "note_name": "impact_assessed",
+        "kind": "freeform", "body": "impact assessment complete",
+    })
+
+    assert note["ok"] is True
+    assert "v-2" in note["hint"]
+    assert "residual" in note["hint"].lower()
+    assert store.read_model(PROJECT, UNIT)["state"] == (
+        ModelState.IMPACT_ASSESSED.value)
+
+
+def test_the_residual_note_signal_is_normalised(tmp_path):
+    """The note vocabulary is normalised once: `Impact_Assessed` carries the
+    same residual signal as `impact_assessed`."""
+    from polymerhus.attack.hunting.threat_modeller import (
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    wrapped = TrackingThreatModelStore(store, tracker)
+    _write_to_prior_art_with_two_vulnerabilities(wrapped)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(wrapped))
+    surface["assess_impact"].invoke(
+        dict(_payloads()[ModelState.IMPACT_ASSESSED]))
+
+    note = surface["notes"].invoke({
+        "cmd": "write", "option": "append", "note_name": "Impact_Assessed",
+        "kind": "freeform", "body": "impact assessment complete",
+    })
+
+    assert note["ok"] is True
+    assert "v-2" in note["hint"]
+
+
+def test_a_resumed_pass_seeds_the_coverage_index_from_the_persisted_model(
+        tmp_path):
+    """A resumed pass must seed the coverage index from the persisted model.
+
+    The tracker is run-scoped and reset per pass. A unit that reaches
+    IMPACT_ASSESSED in an earlier pass leaves two vulnerabilities and one row
+    behind; without the seed the new tracker sees no vulnerability, the
+    residual check is vacuously empty, and the unit could complete with `v-2`
+    unassessed. The pass reads the persisted document, so it must seed the
+    coverage index from it."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    _write_to_prior_art_with_two_vulnerabilities(store)
+    # sanity: the persisted document is the source the resumed pass reads
+    persisted = store.read_model(PROJECT, UNIT)
+    assert [row["id"] for row in persisted["vulnerabilities"]] == ["v-1", "v-2"]
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+    surface["assess_impact"].invoke(
+        dict(_payloads()[ModelState.IMPACT_ASSESSED]))
+    assert store.read_model(PROJECT, UNIT)["state"] == (
+        ModelState.IMPACT_ASSESSED.value)
+
+    class _Resume(_ScriptedTurns):
+        def __call__(self, turn):
+            self.turn_inputs.append(turn)
+            # the seeded state is already observed, so the pass asks for the
+            # NEXT state: COMPLETED.
+            if turn.state is ModelState.COMPLETED:
+                self.responses.append(self.store_tool(turn).invoke({
+                    "cmd": "write", "state": "COMPLETED",
+                    "sections": {"threats": []},
+                }))
+            return None
+
+    turns = _Resume(states=[ModelState.COMPLETED])
+    asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    response = turns.responses[0]
+    assert response["ok"] is False
+    assert response["error"] == "impact_assessment_incomplete"
+    assert "v-2" in response["detail"]
+    # the refused unit is archived for retry, never completed
+    assert UNIT in store.read_abandoned_units(PROJECT)
+
+
+def test_a_completed_write_with_no_vulnerabilities_is_refused(tmp_path):
+    """The terminal half of the decision node: a forward jump cannot bypass it.
+
+    Iteration C.a lost 12 units that wrote COMPLETED from PRIOR_ART with an
+    empty vulnerabilities list. The decision node only runs on the
+    vulnerabilities write, so the COMPLETED write must refuse the same shape:
+    no vulnerability and not a no-fault model."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    payloads = _payloads()
+    for state in (ModelState.UNIT_TECHNICAL_SHARP, ModelState.TRUST_MODELLED,
+                  ModelState.TRUST_ASSUMPTIONS_WRITTEN):
+        store.write_sections(PROJECT, UNIT, state, payloads[state], run_id=RUN)
+    # the C.a forward jump: prior art straight from the assumptions
+    store.write_sections(
+        PROJECT, UNIT, ModelState.PRIOR_ART, payloads[ModelState.PRIOR_ART],
+        run_id=RUN)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+
+    response = surface["hunts_store"].invoke({
+        "cmd": "write", "state": "COMPLETED", "sections": {"threats": []},
+    })
+
+    assert response["ok"] is False
+    assert response["error"] == "completed_write_rejected"
+    assert response["fields"] == ["sections.vulnerabilities"]
+    assert "vulnerabilit" in response["detail"].lower()
+    assert store.read_model(PROJECT, UNIT)["state"] == (
+        ModelState.PRIOR_ART.value)
+
+
+def test_a_vulnerabilities_rewrite_replaces_the_coverage_index(tmp_path):
+    """A section write replaces the whole list; the coverage index must follow.
+
+    A model that rewrites the vulnerabilities section with `[v-2]` removed
+    `v-1` from the document. A merged tracker index would keep `v-1` residual
+    forever, and `assess_impact` cannot score a removed row, so the unit would
+    dead-end degraded."""
+    from polymerhus.attack.hunting.threat_modeller import (
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    wrapped = TrackingThreatModelStore(store, tracker)
+    _write_to_prior_art_with_two_vulnerabilities(wrapped)
+    first = _payloads()[ModelState.VULNERABILITIES_WRITTEN]["vulnerabilities"][0]
+    second = {**first, "id": "v-2"}
+    wrapped.write_sections(
+        PROJECT, UNIT, ModelState.VULNERABILITIES_WRITTEN,
+        {"vulnerabilities": [second]}, run_id=RUN)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(wrapped))
+    args = {**_payloads()[ModelState.IMPACT_ASSESSED],
+            "vulnerability_ref": "v-2"}
+
+    response = surface["assess_impact"].invoke(args)
+
+    assert response["ok"] is True
+    assert response["residual_vulnerabilities"] == []
+    assert tracker.vulnerabilities == {"v-2": False}
+
+
+def test_the_no_fault_completed_response_carries_the_validation(tmp_path):
+    """The no-fault branch is a COMPLETED success like any other: the model
+    must see the store's validation, so a falsified assumption with no
+    falsification evidence is repairable feedback, not an invisible archive."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    _write_to_assumptions(store, falsified=True)
+    model = store.read_model(PROJECT, UNIT)
+    assumptions = [
+        {**row, "evidences": []} for row in model["assumptions"]
+    ]
+    store.write_sections(
+        PROJECT, UNIT, ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+        {"assumptions": assumptions}, run_id=RUN)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+
+    response = surface["hunts_store"].invoke({
+        "cmd": "write", "state": "VULNERABILITIES_WRITTEN",
+        "sections": {"vulnerabilities": []},
+    })
+
+    assert response["ok"] is True
+    assert response["state"] == ModelState.COMPLETED.value
+    assert response["validation"]["valid"] is False
+    assert any("falsification_evidence" in finding
+               for finding in response["validation"]["missing"])
+    assert response["risk_profile"]["total"] == 0.0
+    assert set(response["risk_profile"]["breakdown"].values()) == {0}
+
+
+def test_the_coverage_guard_reads_the_injected_tracker_or_the_model(tmp_path):
+    """A direct seam may carry the tracker on the tools object while the store
+    is raw (no observations). The guard must still see the persisted
+    vulnerabilities, never silently no-op because the tracker index is empty."""
+    from polymerhus.attack.hunting.threat_modeller import PassiveGateTracker
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    _write_to_prior_art_with_two_vulnerabilities(store)
+    tracker = PassiveGateTracker()
+    surface = build_modeller_tool_surface(
+        PROJECT, UNIT, _tools(store, tracker=tracker))
+
+    first = surface["assess_impact"].invoke(
+        dict(_payloads()[ModelState.IMPACT_ASSESSED]))
+
+    assert first["ok"] is True
+    assert first["residual_vulnerabilities"] == ["v-2"]
+    assert tracker.vulnerabilities == {}
+
+
+def test_a_pass_resumed_at_vulnerabilities_runs_the_wellformedness_phase(tmp_path):
+    """The phase is real on a resume: a pass that starts at the vulnerabilities
+    gate left the phase open, so it must ask the well-formedness turn before
+    prior art, not skip straight to PRIOR_ART."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    payloads = _payloads()
+    for state in (ModelState.UNIT_TECHNICAL_SHARP, ModelState.TRUST_MODELLED,
+                  ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+                  ModelState.VULNERABILITIES_WRITTEN):
+        store.write_sections(PROJECT, UNIT, state, payloads[state], run_id=RUN)
+    turns = _ScriptedTurns()
+
+    outcome = asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    assert turns.turn_inputs[0].phase == "WELLFORMEDNESS"
+    assert [turn.state for turn in turns.turn_inputs[1:]] == [
+        ModelState.PRIOR_ART, ModelState.IMPACT_ASSESSED,
+        ModelState.COMPLETED,
+    ]
+    assert outcome.status == "completed"
+
+
+def test_the_wellformedness_exit_note_is_found_under_its_variant_spelling(
+        tmp_path):
+    """The note vocabulary is normalised once: `well_formedness` and
+    `wellformedness` are the same exit signal, so a resume does not re-run the
+    phase whose exit note is already persisted."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    payloads = _payloads()
+    for state in (ModelState.UNIT_TECHNICAL_SHARP, ModelState.TRUST_MODELLED,
+                  ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+                  ModelState.VULNERABILITIES_WRITTEN):
+        store.write_sections(PROJECT, UNIT, state, payloads[state], run_id=RUN)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+    note = surface["notes"].invoke({
+        "cmd": "write", "option": "append", "note_name": "well_formedness",
+        "kind": "wellformedness", "body": "no new assumption",
+    })
+    assert note["ok"] is True
+    turns = _ScriptedTurns()
+
+    outcome = asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    assert all(turn.phase != "WELLFORMEDNESS" for turn in turns.turn_inputs)
+    assert outcome.status == "completed"
+
+
+def test_a_completed_write_with_a_residual_vulnerability_is_refused(tmp_path):
+    """The impact coverage guard at the COMPLETED write: a non-dropped
+    vulnerability without a scored row is a coded rejection, and the state does
+    not advance past IMPACT_ASSESSED."""
+    from polymerhus.attack.hunting.threat_modeller import (
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    wrapped = TrackingThreatModelStore(store, tracker)
+    _write_to_prior_art_with_two_vulnerabilities(wrapped)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(wrapped))
+    surface["assess_impact"].invoke(
+        dict(_payloads()[ModelState.IMPACT_ASSESSED]))
+
+    response = surface["hunts_store"].invoke({
+        "cmd": "write", "state": "COMPLETED",
+        "sections": {"threats": []},
+    })
+
+    assert response["ok"] is False
+    assert response["error"] == "impact_assessment_incomplete"
+    assert "v-2" in response["detail"]
+    assert store.read_model(PROJECT, UNIT)["state"] == (
+        ModelState.IMPACT_ASSESSED.value)
+
+
+def test_the_assess_impact_response_names_the_residual_vulnerabilities(tmp_path):
+    """The assessment tool also carries the coverage signal: after the first
+    row the response names `v-2`; after the second row the residual is empty
+    and the hint is the completion pointer."""
+    from polymerhus.attack.hunting.threat_modeller import (
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    wrapped = TrackingThreatModelStore(store, tracker)
+    _write_to_prior_art_with_two_vulnerabilities(wrapped)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(wrapped))
+    first_args = dict(_payloads()[ModelState.IMPACT_ASSESSED])
+    second_args = {
+        **first_args, "id": "ia-2", "vulnerability_ref": "v-2",
+        "capability_id": "p-2",
+    }
+
+    first = surface["assess_impact"].invoke(first_args)
+    second = surface["assess_impact"].invoke(second_args)
+
+    assert first["ok"] is True
+    assert first["residual_vulnerabilities"] == ["v-2"]
+    assert "v-2" in first["hint"]
+    assert second["ok"] is True
+    assert second.get("residual_vulnerabilities") == []
+    assert "Proceed to completion" in second["hint"]
+
+
+def test_assess_impact_rejects_an_empty_core_field(tmp_path):
+    """The minimal request validation layer: a core assessment field that is
+    present but empty is a coded rejection, never a scored row with a blank
+    claim."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    _write_to_assumptions(store)
+    for state in (ModelState.VULNERABILITIES_WRITTEN, ModelState.PRIOR_ART):
+        store.write_sections(
+            PROJECT, UNIT, state, _payloads()[state], run_id=RUN)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+    args = {**_payloads()[ModelState.IMPACT_ASSESSED], "capability": ""}
+
+    response = surface["assess_impact"].invoke(args)
+
+    assert response["ok"] is False
+    assert response["error"] == "assess_impact_rejected"
+    assert "capability" in response["fields"]
+    assert store.read_model(PROJECT, UNIT)["impact_assessment"] == []
+
+
+def test_the_completed_gate_response_carries_the_completion_validation(tmp_path):
+    """The COMPLETED response is actionable: it carries the store's validation
+    object, so the model can see `missing`, `unclosed`, and `referential_errors`
+    without a separate read."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    turns = _ScriptedTurns()
+
+    asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    completed = turns.responses[-1]
+    assert completed["state"] == ModelState.COMPLETED.value
+    assert completed["validation"]["valid"] is True
+    assert completed["validation"]["missing"] == []
+    assert completed["validation"]["unclosed"] == []
+
+
+def test_the_notes_tool_tracks_the_wellformedness_phase_signals(tmp_path):
+    """The well-formedness phase has real entry and exit note signals: the
+    trust-assumption note opens it, the well_formedness note closes it into
+    prior art, and a lower-gate assumptions write re-enters the loop."""
+    from polymerhus.attack.hunting.threat_modeller import (
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    wrapped = TrackingThreatModelStore(store, tracker)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(wrapped))
+
+    wrapped.write_sections(
+        PROJECT, UNIT, ModelState.VULNERABILITIES_WRITTEN,
+        _payloads()[ModelState.VULNERABILITIES_WRITTEN], run_id=RUN)
+    assert tracker.workflow_phase == "WELLFORMEDNESS"
+
+    entry = surface["notes"].invoke({
+        "cmd": "write", "option": "append", "note_name": "trust_assumption",
+        "kind": "freeform", "body": "the trust assumptions to re-check",
+    })
+    assert entry["ok"] is True
+    assert entry["hint"].startswith("The trust-assumption note opens")
+    assert tracker.workflow_phase == "WELLFORMEDNESS"
+
+    exit_note = surface["notes"].invoke({
+        "cmd": "write", "option": "append", "note_name": "wellformedness",
+        "kind": "wellformedness", "body": "no new assumption",
+    })
+    assert exit_note["ok"] is True
+    assert exit_note["hint"].startswith("The well-formedness phase is complete")
+    assert tracker.workflow_phase is None
+
+    # a lower-gate write inside the phase window re-enters the loop
+    wrapped.write_sections(
+        PROJECT, UNIT, ModelState.TRUST_ASSUMPTIONS_WRITTEN,
+        _payloads()[ModelState.TRUST_ASSUMPTIONS_WRITTEN], run_id=RUN)
+    assert tracker.workflow_phase == "WELLFORMEDNESS"
+
+
+def test_the_entry_note_is_deferred_before_the_vulnerabilities_gate(tmp_path):
+    """The assumptions phase writes its own episodic note. If that note carries
+    the entry name, it must not open the well-formedness phase and send the
+    model to PRIOR_ART before the vulnerabilities gate: that is the C.a skip."""
+    from polymerhus.attack.hunting.threat_modeller import PassiveGateTracker
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    _write_to_assumptions(store)
+    surface = build_modeller_tool_surface(
+        PROJECT, UNIT, _tools(store, tracker=tracker))
+    tracker.seed(ModelState.TRUST_ASSUMPTIONS_WRITTEN)
+
+    response = surface["notes"].invoke({
+        "cmd": "write", "option": "append", "note_name": "assumptions",
+        "kind": "freeform", "body": "three trust assumptions recorded",
+    })
+
+    assert response["ok"] is True
+    assert "after the vulnerabilities gate" in response["hint"].lower()
+    assert "PRIOR_ART" in response["hint"]
+    assert tracker.workflow_phase is None
+
+
 def test_each_gate_write_response_carries_the_next_state_hint(tmp_path):
     """The hint table (S1 9.3) rides the tool response of every gate but the
     last: `hunts_store` for its gates, `assess_impact` for the tool-only
@@ -1086,9 +1641,11 @@ def test_the_assess_impact_tool_writes_the_row_and_advances_the_state(tmp_path):
         dict(_payloads()[ModelState.IMPACT_ASSESSED]))
 
     # the envelope is success plus the next-state cadence hint: no score, no
-    # vector, no factor echo
+    # vector, no factor echo. The residual coverage signal is empty because the
+    # played example has one vulnerability and this call covered it.
     assert response["ok"] is True
-    assert set(response) == {"ok", "hint"}
+    assert set(response) == {"ok", "hint", "residual_vulnerabilities"}
+    assert response["residual_vulnerabilities"] == []
     model = store.read_model(PROJECT, UNIT)
     assert model["state"] == ModelState.IMPACT_ASSESSED.value
     row = model["impact_assessment"][0]

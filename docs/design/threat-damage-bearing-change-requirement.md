@@ -343,7 +343,7 @@ The state machine becomes six gates.
 | 5 | `IMPACT_ASSESSED` | `damage_assessment` | One gate write. |
 | 6 | `COMPLETED` | `threats` | One gate write. |
 
-The well-formedness loop runs after `VULNERABILITIES_WRITTEN` and before `IMPACT_ASSESSED`.
+The well-formedness loop runs after `VULNERABILITIES_WRITTEN` and before `PRIOR_ART`.
 The loop can add assumptions and vulnerabilities.
 The assessment must cover the final vulnerability set.
 The well-formedness note remains the exit memory of that loop.
