@@ -101,6 +101,7 @@ The database change was verified in the contract tier and on the deployed topolo
   The store reported `artifact_count=1`, `body_count=1`, and `schema_version=http-artifact/v1`.
   The URL-cap fact and the body bytes survived.
   The temporary project and edge process were removed after the check.
+- The deployed entrypoint was verified after a Kali and agent restart: both services carried the shared compose token, the entrypoint logged `HTTP-history edge ready on 0.0.0.0:8002`, and the agent posted a synthetic artifact to `http://kali:8002`; the read service returned it and counted the duplicate.
 - The three-target gate uses the same edge code in-process (`eval/steel-crawl-e2e/phase_runner.py`), so the edge and store are not mocked in the crawl walkthroughs.
 
 ## 3. Defects the live gate found and fixed

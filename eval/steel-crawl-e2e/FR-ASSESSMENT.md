@@ -205,7 +205,8 @@ The edge created plus duplicate counts equal the ledger artifact count.
 4. The crawler-to-edge-to-read-service roundtrip is a test.
 5. The schema-version guard is a test.
 6. The deployed edge and `/data` store were verified live.
-7. The impact map and the job-set decision record are written.
+7. The deployed Kali and agent containers were restarted with the updated mount and compose; the entrypoint started the edge automatically on 8002 and the agent reached it.
+8. The impact map and the job-set decision record are written.
 
 ## 8. Residual items
 
