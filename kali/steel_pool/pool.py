@@ -49,11 +49,18 @@ class DockerClient(Protocol):
 
 @dataclass(frozen=True)
 class Worker:
-    """One reachable Steel API worker on the operator's loopback."""
+    """One reachable Steel API worker on the operator's loopback.
+
+    ``host`` defaults to ``localhost``: the operator's forward normally runs
+    in the browser MCP's own network namespace. A deployment whose forward
+    lands on the Docker host sets ``STEEL_WORKER_HOST`` (for example
+    ``host.docker.internal``) and keeps the published port unchanged.
+    """
 
     container_id: str
     container_name: str
     api_port: int
+    host: str = "localhost"
 
     def __post_init__(self) -> None:
         if not isinstance(self.container_id, str) or not self.container_id:
@@ -64,10 +71,18 @@ class Worker:
             raise ValueError("a worker API port must be an integer")
         if not 0 < self.api_port < 65536:
             raise ValueError("a worker API port is out of range")
+        if not isinstance(self.host, str) or not self.host.strip():
+            raise ValueError("a worker needs a host")
+        if self.host != self.host.strip():
+            raise ValueError("a worker host has surrounding whitespace")
+        if "://" in self.host or "/" in self.host or any(
+            character.isspace() for character in self.host
+        ):
+            raise ValueError("a worker host is not a hostname or address")
 
     @property
     def url(self) -> str:
-        return f"http://localhost:{self.api_port}"
+        return f"http://{self.host}:{self.api_port}"
 
 
 @dataclass(frozen=True)
@@ -89,6 +104,7 @@ def parse_worker(
     container: object,
     *,
     api_private_port: int = STEEL_API_PRIVATE_PORT,
+    worker_host: str = "localhost",
 ) -> Worker | None:
     """Project one Docker container into a worker, or skip it.
 
@@ -138,6 +154,7 @@ def parse_worker(
         container_id=container_id,
         container_name=name,
         api_port=candidates[0][1],
+        host=worker_host,
     )
 
 
@@ -146,6 +163,7 @@ def discover_workers(
     label: str,
     *,
     api_private_port: int = STEEL_API_PRIVATE_PORT,
+    worker_host: str = "localhost",
 ) -> list[Worker]:
     """List labelled containers and project the ones with a published API."""
     filters = json.dumps({"label": [label]})
@@ -154,7 +172,11 @@ def discover_workers(
         raise DockerAPIError("the Docker container list is not an array")
     workers: list[Worker] = []
     for container in payload:
-        worker = parse_worker(container, api_private_port=api_private_port)
+        worker = parse_worker(
+            container,
+            api_private_port=api_private_port,
+            worker_host=worker_host,
+        )
         if worker is not None:
             workers.append(worker)
     return workers
@@ -163,13 +185,13 @@ def discover_workers(
 def check_worker_health(worker: Worker, timeout_s: float) -> bool:
     """Probe ``GET /v1/health`` on one worker."""
     connection = http.client.HTTPConnection(
-        "localhost", worker.api_port, timeout=timeout_s
+        worker.host, worker.api_port, timeout=timeout_s
     )
     try:
         connection.request(
             "GET",
             HEALTH_PATH,
-            headers={"Host": f"localhost:{worker.api_port}"},
+            headers={"Host": f"{worker.host}:{worker.api_port}"},
         )
         response = connection.getresponse()
         response.read()
@@ -197,6 +219,7 @@ class WorkerRegistry:
         health_check: Callable[[Worker, float], bool] = check_worker_health,
         emit: Callable[..., None] | None = None,
         api_private_port: int = STEEL_API_PRIVATE_PORT,
+        worker_host: str = "localhost",
     ) -> None:
         cleaned = (label or "").strip()
         if not cleaned:
@@ -213,6 +236,13 @@ class WorkerRegistry:
             or not 0 < api_private_port < 65536
         ):
             raise ValueError("the worker API port is out of range")
+        if not isinstance(worker_host, str) or not worker_host.strip():
+            raise ValueError("the worker host is required")
+        host = worker_host.strip()
+        if "://" in host or "/" in host or any(
+            character.isspace() for character in host
+        ):
+            raise ValueError("the worker host is not a hostname or address")
         self._client = client
         self._label = cleaned
         self._configured_size = configured_size
@@ -220,6 +250,7 @@ class WorkerRegistry:
         self._health_check = health_check
         self._emit = emit or _noop_emit
         self._api_private_port = api_private_port
+        self._worker_host = host
         self._report: PoolReport | None = None
 
     @property
@@ -232,6 +263,7 @@ class WorkerRegistry:
             self._client,
             self._label,
             api_private_port=self._api_private_port,
+            worker_host=self._worker_host,
         )
         health = self._check_all(workers)
         healthy = tuple(

@@ -409,6 +409,7 @@ class BrowserServerConfig:
     guard_path: str
     pool_label: str = DEFAULT_POOL_LABEL
     pool_size: int = DEFAULT_POOL_SIZE
+    worker_host: str = "localhost"
     pool_wait_s: float = DEFAULT_POOL_WAIT_S
     health_timeout_s: float = DEFAULT_POOL_HEALTH_S
     heartbeat_s: float = DEFAULT_HEARTBEAT_S
@@ -435,6 +436,13 @@ class BrowserServerConfig:
         ):
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                 raise ValueError(f"the {label} must be a positive integer")
+        if not isinstance(self.worker_host, str) or not self.worker_host.strip():
+            raise ValueError("the worker host is required")
+        host = self.worker_host.strip()
+        if host != self.worker_host or "://" in host or "/" in host or any(
+            character.isspace() for character in host
+        ):
+            raise ValueError("the worker host is not a hostname or address")
         for label, value in (
             ("pool wait", self.pool_wait_s),
             ("health timeout", self.health_timeout_s),
@@ -509,6 +517,8 @@ class BrowserServerConfig:
             .strip()
             or DEFAULT_POOL_LABEL,
             pool_size=integer("STEEL_POOL_SIZE", DEFAULT_POOL_SIZE),
+            worker_host=(source.get("STEEL_WORKER_HOST") or "").strip()
+            or "localhost",
             pool_wait_s=number("STEEL_POOL_WAIT_S", DEFAULT_POOL_WAIT_S),
             health_timeout_s=number(
                 "STEEL_POOL_HEALTH_S", DEFAULT_POOL_HEALTH_S
@@ -534,18 +544,33 @@ def build_service(
     *,
     emit=None,
     cli_factory=None,
+    docker_client=None,
 ) -> BrowserService:
-    """Build the pool manager, store, and CLI adapter from the config."""
+    """Build the pool manager, store, and CLI adapter from the config.
+
+    The pool is discovered and health-probed once at boot, so the configured
+    socket and the worker forwards are validated before the first agent call.
+    A failed discovery is logged and the server still starts: the browser lane
+    is a degraded capability, never a reason to take the exec plane down.
+    """
     logger = emit or _event_logger
     store = SessionStore(config.session_store)
-    docker = DockerUnixClient(config.docker_socket)
+    docker = docker_client or DockerUnixClient(config.docker_socket)
     registry = WorkerRegistry(
         docker,
         config.pool_label,
         config.pool_size,
         health_timeout_s=config.health_timeout_s,
         emit=logger,
+        worker_host=config.worker_host,
     )
+    try:
+        registry.refresh()
+    except Exception as exc:  # noqa: BLE001 - a degraded pool must not stop boot
+        logger(
+            "pool.discovery_error",
+            error=f"{type(exc).__name__}: {exc}",
+        )
     child_env = dict(os.environ)
     child_env["STEEL_REAL_BINARY_REAL"] = config.cli_path
 

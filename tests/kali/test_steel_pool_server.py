@@ -614,6 +614,15 @@ def _send(messages: list[dict]):
 
 
 class TestConfig:
+    class _BootDocker:
+        def __init__(self, payload=None):
+            self.payload = payload or []
+            self.calls = []
+
+        def get_json(self, path: str, query: dict | None = None):
+            self.calls.append((path, query))
+            return self.payload
+
     def _files(self, tmp_path: Path):
         socket_path = tmp_path / "docker.sock"
         socket_path.write_text("")
@@ -643,6 +652,7 @@ class TestConfig:
         assert config.mcp_path == "/mcp"
         assert config.pool_label == "polymerhus.steel-pool=true"
         assert config.pool_size == 4
+        assert config.worker_host == "localhost"
         assert config.pool_wait_s == pytest.approx(30.0)
         assert config.heartbeat_s == pytest.approx(120.0)
         assert config.lease_ttl_s == pytest.approx(600.0)
@@ -655,6 +665,7 @@ class TestConfig:
                 "STEEL_MCP_PORT": "9003",
                 "STEEL_POOL_LABEL": "pool=one",
                 "STEEL_POOL_SIZE": "2",
+                "STEEL_WORKER_HOST": "host.docker.internal",
                 "STEEL_POOL_WAIT_S": "5",
                 "STEEL_POOL_HEALTH_S": "3",
                 "STEEL_HEARTBEAT_S": "60",
@@ -670,6 +681,7 @@ class TestConfig:
         assert config.port == 9003
         assert config.pool_label == "pool=one"
         assert config.pool_size == 2
+        assert config.worker_host == "host.docker.internal"
         assert config.pool_wait_s == pytest.approx(5.0)
         assert config.health_timeout_s == pytest.approx(3.0)
         assert config.heartbeat_s == pytest.approx(60.0)
@@ -727,13 +739,55 @@ class TestConfig:
         with pytest.raises(ValueError, match="suffix"):
             BrowserServerConfig.from_env(env)
 
+    def test_invalid_worker_host_fails_loud(self, tmp_path):
+        env = self._env(tmp_path)
+        env["STEEL_WORKER_HOST"] = "http://worker"
+
+        with pytest.raises(ValueError, match="worker host"):
+            BrowserServerConfig.from_env(env)
+
     def test_build_service_wires_the_manager(self, tmp_path):
         config = BrowserServerConfig.from_env(self._env(tmp_path))
 
-        service = build_service(config)
+        service = build_service(
+            config,
+            docker_client=self._BootDocker(),
+            emit=lambda event, **fields: None,
+        )
 
         assert isinstance(service, BrowserService)
         manager = service._manager
         assert manager._store.root == Path(config.session_store)
         assert manager._ttl_s == pytest.approx(600.0)
         assert manager._registry._label == config.pool_label
+
+    def test_build_service_discovers_and_probes_the_pool_at_boot(self, tmp_path):
+        config = BrowserServerConfig.from_env(self._env(tmp_path))
+        docker = self._BootDocker(
+            [
+                {
+                    "Id": "a",
+                    "Names": ["/steel-1"],
+                    "Ports": [
+                        {
+                            "IP": "127.0.0.1",
+                            "PrivatePort": 3000,
+                            "PublicPort": 59999,
+                            "Type": "tcp",
+                        }
+                    ],
+                }
+            ]
+        )
+        events = []
+
+        service = build_service(
+            config,
+            docker_client=docker,
+            emit=lambda event, **fields: events.append((event, fields)),
+        )
+
+        assert docker.calls
+        assert service._manager._registry.report is not None
+        assert [event for event, _ in events][0] == "pool.discovered"
+        assert events[0][1]["discovered"] == 1

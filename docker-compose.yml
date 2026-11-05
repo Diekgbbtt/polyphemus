@@ -119,19 +119,31 @@ services:
       # Steel endpoint (#390, D359-4): the empty fallback means "unset", so a
       # clean clone stays on the remote Steel cloud. Set it to the self-hosted
       # runtime in the CLI's canonical form (`http://<host>:<port>/v1`); the
-      # gateway then injects the global `--local` flag and the CLI reads this
-      # same value natively. Same empty-default convention as STEEL_API_KEY.
+      # guard then injects the global `--local` flag for a shell command, and
+      # the CLI reads this same value natively. Same empty-default convention
+      # as STEEL_API_KEY.
       STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
       # Browser pool (#359, W6). The browser MCP process starts only when the
       # operator has forwarded the pool Docker socket into the container; an
       # empty value keeps the feature off and leaves the exec plane untouched.
-      # The pool manager reads the socket and never opens a connection itself.
-      # Port 8003 stays unpublished: the agent reaches it on the compose
-      # network, and every worker port is the operator's loopback forward.
+      # At boot the pool manager reads that socket, discovers the labelled
+      # workers, and health-probes each one. It never creates, starts, stops,
+      # or removes a container. Port 8003 stays unpublished: the agent reaches
+      # it on the compose network, and every worker port is the operator's
+      # forward.
       STEEL_MCP_PORT: ${STEEL_MCP_PORT:-8003}
       STEEL_POOL_DOCKER_SOCKET: ${STEEL_POOL_DOCKER_SOCKET:-}
       STEEL_POOL_LABEL: ${STEEL_POOL_LABEL:-polymerhus.steel-pool=true}
       STEEL_POOL_SIZE: ${STEEL_POOL_SIZE:-4}
+      # The host the worker URL uses. `localhost` is correct when the
+      # operator's forward lands in this container; `host.docker.internal`
+      # is correct when it lands on the Docker host.
+      STEEL_WORKER_HOST: ${STEEL_WORKER_HOST:-localhost}
+      # When the forward lands on the Docker host, the entrypoint relays the
+      # worker ports onto this container's loopback (both families). Empty
+      # keeps the relay off; the tunnel-inside-Kali deployment needs neither.
+      STEEL_POOL_FORWARD_PORTS: ${STEEL_POOL_FORWARD_PORTS:-}
+      STEEL_POOL_FORWARD_HOST: ${STEEL_POOL_FORWARD_HOST:-host.docker.internal}
       STEEL_POOL_WAIT_S: ${STEEL_POOL_WAIT_S:-30}
       STEEL_POOL_HEALTH_S: ${STEEL_POOL_HEALTH_S:-30}
       STEEL_HEARTBEAT_S: ${STEEL_HEARTBEAT_S:-120}

@@ -14,11 +14,14 @@
 #
 #   docker compose -f docker-compose.steel-pool.yml up -d
 #
-# DOMAIN and CDP_DOMAIN name the origin the CLI uses. The CLI reaches the
-# worker through the operator's local forward, so the value is the loopback
-# origin and never the host's public address. `--no-nginx` keeps the API
-# root WebSocket proxy as the only control path; the nginx 9223 listener is
-# not started.
+# DOMAIN and CDP_DOMAIN name the origin the CLI uses. The default is loopback
+# because the operator's forward normally lands in the CLI's namespace. A
+# forward that lands on the Docker host sets STEEL_WORKER_DOMAIN to that host
+# name (for example `host.docker.internal`); the port stays per worker. The
+# API publishes the websocket URL from DOMAIN, so the value must resolve from
+# the process that runs the CLI, not from the pool host.
+# `--no-nginx` keeps the API root WebSocket proxy as the only control path;
+# the nginx 9223 listener is not started.
 name: polymerhus-steel-pool
 
 x-worker: &worker
@@ -43,8 +46,8 @@ services:
     ports:
       - "127.0.0.1:3100:3000"
     environment:
-      DOMAIN: localhost:3100
-      CDP_DOMAIN: localhost:3100
+      DOMAIN: ${STEEL_WORKER_DOMAIN:-localhost}:3100
+      CDP_DOMAIN: ${STEEL_WORKER_DOMAIN:-localhost}:3100
       ENABLE_COMMANDS_API: "true"
       HOST: 0.0.0.0
 
@@ -54,7 +57,7 @@ services:
     ports:
       - "127.0.0.1:3101:3000"
     environment:
-      DOMAIN: localhost:3101
-      CDP_DOMAIN: localhost:3101
+      DOMAIN: ${STEEL_WORKER_DOMAIN:-localhost}:3101
+      CDP_DOMAIN: ${STEEL_WORKER_DOMAIN:-localhost}:3101
       ENABLE_COMMANDS_API: "true"
       HOST: 0.0.0.0

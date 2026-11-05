@@ -168,6 +168,27 @@ def test_parse_worker_builds_the_loopback_url():
     assert worker.url == "http://localhost:55001"
 
 
+def test_parse_worker_builds_a_configured_host_url():
+    worker = parse_worker(
+        _container(public_port=55001), worker_host="host.docker.internal"
+    )
+
+    assert worker.host == "host.docker.internal"
+    assert worker.url == "http://host.docker.internal:55001"
+
+
+def test_discover_uses_the_configured_worker_host():
+    client = _FakeDocker([_container()])
+
+    workers = discover_workers(
+        client, LABEL, worker_host="host.docker.internal"
+    )
+
+    assert [worker.url for worker in workers] == [
+        "http://host.docker.internal:55001"
+    ]
+
+
 def test_parse_worker_skips_an_unpublished_api_port():
     assert parse_worker(_container(public_port=None)) is None
 
@@ -389,6 +410,14 @@ def test_registry_events_do_not_carry_worker_urls():
 def test_registry_rejects_an_invalid_configuration(size, label):
     with pytest.raises(ValueError):
         WorkerRegistry(_FakeDocker([]), label, size)
+
+
+@pytest.mark.parametrize(
+    "host", ["", "   ", "http://worker", "worker/api", "two words"]
+)
+def test_registry_rejects_an_invalid_worker_host(host):
+    with pytest.raises(ValueError):
+        WorkerRegistry(_FakeDocker([]), LABEL, 1, worker_host=host)
 
 
 @pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])

@@ -39,10 +39,12 @@ PROXY_PID=""
 MCP_PID=""
 EDGE_PID=""
 BROWSER_PID=""
+FORWARD_PID=""
 
 shutdown() {
   trap - EXIT TERM INT
   [ -n "$BROWSER_PID" ] && kill "$BROWSER_PID" 2>/dev/null || true
+  [ -n "$FORWARD_PID" ] && kill "$FORWARD_PID" 2>/dev/null || true
   [ -n "$MCP_PID" ] && kill "$MCP_PID" 2>/dev/null || true
   [ -n "$EDGE_PID" ] && kill "$EDGE_PID" 2>/dev/null || true
   [ -n "$PROXY_PID" ] && kill "$PROXY_PID" 2>/dev/null || true
@@ -128,6 +130,42 @@ else
   echo "[entrypoint] KALI_HTTP_HISTORY_EDGE_TOKEN unset; HTTP-history edge not started"
 fi
 
+# 3a) The worker-port relay. The pool manager derives `localhost:<port>`
+#     worker URLs by design. When the operator's SSH forward lands on the
+#     Docker host rather than inside this container, the relay restores that
+#     contract on both loopback families; it never rewrites the Host header.
+start_browser_forwards() {
+  if [ -z "${STEEL_POOL_FORWARD_PORTS:-}" ]; then
+    echo "[entrypoint] STEEL_POOL_FORWARD_PORTS is unset; worker relays not started"
+    return 0
+  fi
+  "$MCP_BIN" /opt/kali/steel_pool/forward.py >>"$BROWSER_LOG" 2>&1 &
+  FORWARD_PID="$!"
+  ports=$(printf '%s' "$STEEL_POOL_FORWARD_PORTS" | tr ',' ' ')
+  for port in $ports; do
+    bound=0
+    for _ in $(seq 1 40); do
+      if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+        exec 3>&- 2>/dev/null || true
+        bound=1
+        break
+      fi
+      if ! kill -0 "$FORWARD_PID" 2>/dev/null; then
+        echo "[entrypoint] worker relay exited during startup; see $BROWSER_LOG" >&2
+        FORWARD_PID=""
+        return 0
+      fi
+      sleep 0.25
+    done
+    if [ "$bound" -ne 1 ]; then
+      echo "[entrypoint] worker relay did not open 127.0.0.1:$port within 10s" >&2
+      return 0
+    fi
+  done
+  echo "[entrypoint] worker relay ready on 127.0.0.1 ports: $ports (pid $FORWARD_PID)"
+  return 0
+}
+
 # 3) The browser pool MCP (#359, W6). It is optional: the pool manager has no
 #    SSH logic, so without the operator's forwarded Docker socket it cannot
 #    discover a worker. A browser-plane failure is logged and never stops the
@@ -175,5 +213,6 @@ start_browser_mcp() {
 # 4) Exec MCP server. Runs in the foreground lane; the trap owns teardown.
 "$MCP_BIN" /opt/kali/mcp_server.py &
 MCP_PID="$!"
+start_browser_forwards
 start_browser_mcp
 wait "$MCP_PID"
