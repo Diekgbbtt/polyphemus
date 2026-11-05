@@ -35,7 +35,13 @@ def _session_component(session_id: object) -> str:
 class WorkerAPI:
     """The worker API calls the pool needs, addressed at one loopback origin."""
 
-    def __init__(self, base_url: str, *, timeout_s: float = 10.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout_s: float = 10.0,
+        api_suffix: str = "/v1",
+    ) -> None:
         parts = urlsplit(base_url)
         if parts.scheme != "http" or not parts.hostname:
             raise ValueError("the worker API URL must be an http origin")
@@ -43,23 +49,50 @@ class WorkerAPI:
             raise ValueError("the worker API URL must not carry a path or query")
         if timeout_s <= 0:
             raise ValueError("the worker API timeout must be positive")
+        if api_suffix not in ("", "/v1"):
+            raise ValueError("the worker API suffix must be '' or '/v1'")
         self.base_url = base_url.rstrip("/")
         self.host = parts.hostname
         self.port = parts.port or 80
         self.timeout_s = timeout_s
+        self.api_suffix = api_suffix
 
     def context(self, session_id: object) -> dict:
-        """Read ``GET /v1/sessions/<id>/context``."""
+        """Read ``GET <suffix>/sessions/<id>/context``."""
         payload = self._request(
-            "GET", f"/v1/sessions/{_session_component(session_id)}/context"
+            "GET",
+            f"{self.api_suffix}/sessions/"
+            f"{_session_component(session_id)}/context",
         )
         if not isinstance(payload, dict):
             raise WorkerAPIError("the worker context is not an object")
         return payload
 
+    def sessions(self) -> list[dict]:
+        """Read ``GET <suffix>/sessions``.
+
+        The API reports its active session first, then its past sessions. A
+        session in the ``live`` state still holds a browser; a fresh
+        ``idle`` session is the placeholder the API installs only after an
+        end has fully completed.
+        """
+        payload = self._request("GET", f"{self.api_suffix}/sessions")
+        rows = payload.get("sessions") if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            raise WorkerAPIError("the worker session list is not a list")
+        sessions: list[dict] = []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("status"), str):
+                raise WorkerAPIError("the worker session list carries a bad row")
+            sessions.append(row)
+        return sessions
+
     def release(self, session_id: object) -> bool:
         """Release a session. A 404 means it is already gone."""
-        path = f"/v1/sessions/{_session_component(session_id)}/release"
+        path = (
+            f"{self.api_suffix}/sessions/"
+            f"{_session_component(session_id)}/release"
+        )
         try:
             self._request("POST", path)
             return True

@@ -193,14 +193,26 @@ The value, domain, path, secure flag, and HttpOnly flag are restored.
 1. Capture the API session context.
 2. Save the record atomically.
 3. Stop the CLI session.
-4. Release the API session as the fallback.
-5. Cancel the heartbeat.
-6. Free the worker.
+4. Wait until the worker has settled.
+5. Release the API session as the fallback.
+6. Cancel the heartbeat.
+7. Free the worker.
 
 If the API capture fails, capture cookies with `browser cookies` and
 localStorage for the current origin with `browser storage local`.
 Capture failure does not block the stop or the release.
 The record is saved only when a capture succeeds.
+
+The worker is `draining` between the stop and the settle.
+`browser stop` can answer before the v0.5.5 API has finished its end
+handler: the session is marked `released`, the CDP teardown is still running,
+and the fresh `idle` placeholder is not installed yet.
+A start inside that window races the tail of the end, and the API then
+orphans the new browser.
+Settled means no session is `live` and one session is `idle`, polled for a
+bounded 5 seconds.
+A worker that does not settle is a failed stop: the end path falls back to
+the API release, and a worker that is still unsettled is quarantined.
 
 ### 5.4 Heartbeat
 
@@ -267,6 +279,7 @@ The close hook ends the lease.
 | CLI attach fails | Orphan API session | Release API and free worker |
 | Command fails | Lease stays active | Guard envelope |
 | Capture fails | State not saved | Stop and release anyway |
+| Stop returns, worker unsettled | Drain window | Wait, then release; quarantine past the bound |
 | MCP close | Lease active | Capture, stop, release |
 | Server shutdown | All leases active | Capture, stop, release all |
 | Heartbeat stops | TTL expires | Capture, stop, release |

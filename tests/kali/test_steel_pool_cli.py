@@ -88,15 +88,22 @@ def _session(name: str = "hunt", session_id: str = "steel-1") -> CliSession:
 
 
 @contextmanager
-def _api_server(*, status: int = 200, body: object = None):
+def _api_server(*, status: int = 200, body: object = None, bodies=None):
     requests: list[tuple[str, str, bytes]] = []
+    queue = list(bodies) if bodies is not None else None
 
     class Handler(BaseHTTPRequestHandler):
         def _handle(self):
             length = int(self.headers.get("Content-Length", "0"))
             payload = self.rfile.read(length) if length else b""
             requests.append((self.command, self.path, payload))
-            data = b"" if body is None else json.dumps(body).encode("utf-8")
+            if queue is None:
+                selected = body
+            elif len(queue) > 1:
+                selected = queue.pop(0)
+            else:
+                selected = queue[0]
+            data = b"" if selected is None else json.dumps(selected).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
@@ -667,9 +674,126 @@ def test_capture_raises_when_both_paths_fail(fake_cli):
             cli.capture(_session())
 
 
+def _session_row(session_id: str, status: str) -> dict:
+    return {"id": session_id, "status": status}
+
+
+def _settled(placeholder_id: str = "steel-0") -> dict:
+    """The session list a settled worker reports: one idle placeholder."""
+    return {"sessions": [_session_row(placeholder_id, "idle")]}
+
+
+def test_stop_waits_for_the_worker_to_settle(fake_cli):
+    binary, calls = fake_cli
+    mid_teardown = {"sessions": [_session_row("steel-1", "released")]}
+    with _api_server(bodies=[mid_teardown, _settled()]) as (url, requests):
+        cli = SteelCli(
+            url,
+            binary=binary,
+            env=_env(calls),
+            settle_timeout_s=2.0,
+            settle_poll_s=0.01,
+        )
+
+        cli.stop(_session())
+
+    assert requests == [
+        ("GET", "/v1/sessions", b""),
+        ("GET", "/v1/sessions", b""),
+    ]
+
+
+def test_stop_accepts_an_already_settled_worker(fake_cli):
+    binary, calls = fake_cli
+    with _api_server(body=_settled()) as (url, requests):
+        cli = SteelCli(url, binary=binary, env=_env(calls))
+
+        cli.stop(_session())
+
+    assert requests == [("GET", "/v1/sessions", b"")]
+
+
+def test_stop_fails_when_the_worker_never_settles(fake_cli):
+    binary, calls = fake_cli
+    mid_teardown = {"sessions": [_session_row("steel-1", "released")]}
+    with _api_server(body=mid_teardown) as (url, _):
+        cli = SteelCli(
+            url,
+            binary=binary,
+            env=_env(calls),
+            settle_timeout_s=0.2,
+            settle_poll_s=0.01,
+        )
+
+        with pytest.raises(CliError, match="did not finish closing"):
+            cli.stop(_session())
+
+
+def test_stop_fails_when_another_session_stays_live(fake_cli):
+    binary, calls = fake_cli
+    leaked = {
+        "sessions": [
+            _session_row("steel-0", "idle"),
+            _session_row("steel-9", "live"),
+        ]
+    }
+    with _api_server(body=leaked) as (url, _):
+        cli = SteelCli(
+            url,
+            binary=binary,
+            env=_env(calls),
+            settle_timeout_s=0.2,
+            settle_poll_s=0.01,
+        )
+
+        with pytest.raises(CliError, match="did not finish closing"):
+            cli.stop(_session())
+
+
+def test_release_waits_for_the_worker_to_settle(fake_cli):
+    binary, calls = fake_cli
+    mid_teardown = {"sessions": [_session_row("steel-1", "released")]}
+    with _api_server(bodies=[{"ok": True}, mid_teardown, _settled()]) as (url, requests):
+        cli = SteelCli(
+            url,
+            binary=binary,
+            env=_env(calls),
+            settle_timeout_s=2.0,
+            settle_poll_s=0.01,
+        )
+
+        released = cli.release(_session())
+
+    assert released is True
+    assert requests == [
+        ("POST", "/v1/sessions/steel-1/release", b""),
+        ("GET", "/v1/sessions", b""),
+        ("GET", "/v1/sessions", b""),
+    ]
+
+
+def test_release_does_not_wait_when_the_session_is_already_gone(fake_cli):
+    binary, calls = fake_cli
+    with _api_server(status=404, body={"message": "not found"}) as (url, requests):
+        cli = SteelCli(url, binary=binary, env=_env(calls))
+
+        assert cli.release(_session()) is False
+
+    assert requests == [("POST", "/v1/sessions/steel-1/release", b"")]
+
+
+def test_sessions_rejects_a_malformed_list(fake_cli):
+    binary, calls = fake_cli
+    with _api_server(body={"sessions": "nope"}) as (url, _):
+        cli = SteelCli(url, binary=binary, env=_env(calls))
+
+        with pytest.raises(WorkerAPIError, match="session list"):
+            cli.sessions()
+
+
 def test_stop_and_release(fake_cli):
     binary, calls = fake_cli
-    with _api_server(status=200, body={"ok": True}) as (url, requests):
+    with _api_server(bodies=[_settled(), _settled()]) as (url, requests):
         cli = SteelCli(url, binary=binary, env=_env(calls))
 
         cli.stop(_session())
@@ -682,7 +806,11 @@ def test_stop_and_release(fake_cli):
         "hunt",
         "--json",
     ]
-    assert requests == [("POST", "/v1/sessions/steel-1/release", b"")]
+    assert requests == [
+        ("GET", "/v1/sessions", b""),
+        ("POST", "/v1/sessions/steel-1/release", b""),
+        ("GET", "/v1/sessions", b""),
+    ]
 
 
 def test_release_treats_a_missing_session_as_already_released(fake_cli):

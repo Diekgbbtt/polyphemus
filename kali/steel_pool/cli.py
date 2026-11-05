@@ -24,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from urllib.parse import urlsplit
 
 try:  # package layout
@@ -41,6 +42,8 @@ except ImportError:  # flat deployment beside mcp_server.py
 
 DEFAULT_SESSION_TIMEOUT_MS = 3_600_000
 DEFAULT_INACTIVITY_TIMEOUT_MS = 0
+DEFAULT_SETTLE_TIMEOUT_S = 5.0
+DEFAULT_SETTLE_POLL_S = 0.05
 _RESET_URL = "about:blank"
 
 __all__ = [
@@ -50,6 +53,8 @@ __all__ = [
     "CliSession",
     "DEFAULT_INACTIVITY_TIMEOUT_MS",
     "DEFAULT_SESSION_TIMEOUT_MS",
+    "DEFAULT_SETTLE_POLL_S",
+    "DEFAULT_SETTLE_TIMEOUT_S",
     "RestoreError",
     "RestoreReport",
     "SteelCli",
@@ -264,9 +269,12 @@ class SteelCli:
         python: str | None = None,
         timeout_s: float = 180.0,
         api_timeout_s: float = 10.0,
+        api_suffix: str = "/v1",
         env: Mapping[str, str] | None = None,
         session_timeout_ms: int = DEFAULT_SESSION_TIMEOUT_MS,
         inactivity_timeout_ms: int = DEFAULT_INACTIVITY_TIMEOUT_MS,
+        settle_timeout_s: float = DEFAULT_SETTLE_TIMEOUT_S,
+        settle_poll_s: float = DEFAULT_SETTLE_POLL_S,
     ) -> None:
         if not str(binary).strip():
             raise ValueError("the Steel CLI binary is required")
@@ -274,15 +282,23 @@ class SteelCli:
             raise ValueError("the CLI timeout must be positive")
         if session_timeout_ms < 0 or inactivity_timeout_ms < 0:
             raise ValueError("CLI session timeouts must not be negative")
+        if api_suffix not in ("", "/v1"):
+            raise ValueError("the worker API suffix must be '' or '/v1'")
+        if settle_timeout_s <= 0 or settle_poll_s <= 0:
+            raise ValueError("the settle timeout and poll must be positive")
         self._worker_url = worker_url.rstrip("/")
-        self._api_url = f"{self._worker_url}/v1"
-        self._api = WorkerAPI(worker_url, timeout_s=api_timeout_s)
+        self._api_url = f"{self._worker_url}{api_suffix}"
+        self._api = WorkerAPI(
+            worker_url, timeout_s=api_timeout_s, api_suffix=api_suffix
+        )
         self._binary = str(binary)
         self._guard_path = str(guard_path) if guard_path else None
         self._python = python or sys.executable
         self._timeout_s = timeout_s
         self._session_timeout_ms = session_timeout_ms
         self._inactivity_timeout_ms = inactivity_timeout_ms
+        self._settle_timeout_s = settle_timeout_s
+        self._settle_poll_s = settle_poll_s
         self._env = dict(os.environ if env is None else env)
         self._env["STEEL_BROWSER_API_URL"] = self._api_url
         self._env.setdefault("STEEL_TELEMETRY_DISABLED", "1")
@@ -403,15 +419,56 @@ class SteelCli:
         )
 
     def stop(self, session: CliSession) -> dict:
-        """Stop the CLI session and release its API session."""
-        return self._run(
+        """Stop the CLI session and wait for the worker to finish closing it.
+
+        ``browser stop`` can answer before the API finishes its end handler:
+        the session is marked released, the CDP teardown is still running,
+        and the fresh idle placeholder is not installed yet. Releasing the
+        worker inside that window lets the next start race the tail of the
+        end, and the API then orphans the new browser. The worker is only
+        free once the placeholder exists and nothing is live.
+        """
+        payload = self._run(
             ["browser", "stop", "--session", session.name, "--json"],
             check_success=True,
         )
+        self._wait_settled(session.session_id)
+        return payload
 
     def release(self, session: CliSession) -> bool:
         """Release the API session as the fallback after a failed stop."""
-        return self._api.release(session.session_id)
+        released = self._api.release(session.session_id)
+        if released:
+            self._wait_settled(session.session_id)
+        return released
+
+    def sessions(self) -> list[dict]:
+        """Read the worker's session list."""
+        return self._api.sessions()
+
+    def _wait_settled(self, session_id: str) -> None:
+        """Wait until the worker reports no live session and one idle one.
+
+        The v0.5.5 API keeps exactly one active session and installs a fresh
+        ``idle`` placeholder only after ``endSession`` has finished, so the
+        pair is the observable signal that the worker is free. A worker that
+        still holds a live session is corrupt and must not be reused.
+        """
+        deadline = time.monotonic() + self._settle_timeout_s
+        while True:
+            rows = self._api.sessions()
+            live = [row for row in rows if row.get("status") == "live"]
+            idle = [row for row in rows if row.get("status") == "idle"]
+            if not live and idle:
+                return
+            if time.monotonic() >= deadline:
+                states = sorted({str(row.get("status")) for row in rows})
+                raise CliError(
+                    "the Steel worker did not finish closing the session "
+                    f"{session_id} within {self._settle_timeout_s}s: "
+                    f"the session states are {states}"
+                )
+            time.sleep(self._settle_poll_s)
 
     def restore(self, session: CliSession, record: BrowserSessionRecord) -> RestoreReport:
         """Restore cookies and localStorage through the CLI."""
