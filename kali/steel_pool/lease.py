@@ -80,8 +80,10 @@ __all__ = [
     "HeartbeatThread",
     "Lease",
     "LeaseError",
+    "LeaseInUse",
     "LeaseManager",
     "LeaseView",
+    "NoLease",
     "PoolExhausted",
 ]
 
@@ -92,6 +94,14 @@ class LeaseError(RuntimeError):
 
 class PoolExhausted(LeaseError):
     """No healthy worker became free within the bounded pool wait."""
+
+
+class LeaseInUse(LeaseError):
+    """The name or the MCP session is already bound to a start in progress."""
+
+
+class NoLease(LeaseError):
+    """The MCP session has no mounted browser session."""
 
 
 class CliAdapter(Protocol):
@@ -334,12 +344,12 @@ class LeaseManager:
             if existing is not None:
                 return existing.view()
             if mcp_session_id in self._starting:
-                raise LeaseError(
+                raise LeaseInUse(
                     "a browser start is already in progress for this MCP session"
                 )
             self._reject_duplicate_name(name)
             if name in self._names:
-                raise LeaseError(
+                raise LeaseInUse(
                     f"a browser start is already in progress for {name!r}"
                 )
             self._starting.add(mcp_session_id)
@@ -528,7 +538,7 @@ class LeaseManager:
     def _reject_duplicate_name(self, name: str) -> None:
         for lease in self._leases.values():
             if lease.session_name == name:
-                raise LeaseError(
+                raise LeaseInUse(
                     f"the browser session {name!r} is already mounted"
                 )
 
@@ -564,7 +574,7 @@ class LeaseManager:
         with self._lock:
             lease = self._leases.get(mcp_session_id)
         if lease is None:
-            raise LeaseError("no browser session is mounted for this MCP session")
+            raise NoLease("no browser session is mounted for this MCP session")
         return lease
 
     def _abandon_start(
