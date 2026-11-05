@@ -1,3 +1,8 @@
+# RETIRED (#359, W6). The public single-container deploy is replaced by the
+# loopback-only worker pool in `docker-compose.steel-pool.yml`. This file stays
+# for archaeology only: it publishes 3000 and trusts the retired allowlist.
+# Do not deploy it.
+#
 # The local Steel Browser API runtime (#359, T3).
 #
 # Deploy on the host that can reach the internal targets. The host is fixed;

@@ -1,0 +1,60 @@
+# The Steel browser pool (#359, T3).
+#
+# Two v0.5.5 API workers on the design pool host. Each worker publishes its
+# API on the host loopback only. The operator forwards that port to the
+# process that runs the browser MCP server, so no worker port is exposed to
+# the internet. The pool manager discovers the workers by the pool label, so
+# a worker added or removed here needs no pool-manager change.
+#
+# The image is built on this host from the pinned v0.5.5-beta tag:
+#
+#   git clone --depth 1 --branch v0.5.5-beta \
+#     https://github.com/steel-dev/steel-browser.git src
+#   docker build -t steel-browser-api:v0.5.5-beta -f src/api/Dockerfile src
+#
+#   docker compose -f docker-compose.steel-pool.yml up -d
+#
+# DOMAIN and CDP_DOMAIN name the origin the CLI uses. The CLI reaches the
+# worker through the operator's local forward, so the value is the loopback
+# origin and never the host's public address. `--no-nginx` keeps the API
+# root WebSocket proxy as the only control path; the nginx 9223 listener is
+# not started.
+name: polymerhus-steel-pool
+
+x-worker: &worker
+  image: steel-browser-api:v0.5.5-beta
+  restart: unless-stopped
+  init: true
+  shm_size: 2gb
+  labels:
+    polymerhus.steel-pool: "true"
+  command: ["--no-nginx"]
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://localhost:3000/v1/health"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 20s
+
+services:
+  steel-1:
+    <<: *worker
+    container_name: steel-1
+    ports:
+      - "127.0.0.1:3100:3000"
+    environment:
+      DOMAIN: localhost:3100
+      CDP_DOMAIN: localhost:3100
+      ENABLE_COMMANDS_API: "true"
+      HOST: 0.0.0.0
+
+  steel-2:
+    <<: *worker
+    container_name: steel-2
+    ports:
+      - "127.0.0.1:3101:3000"
+    environment:
+      DOMAIN: localhost:3101
+      CDP_DOMAIN: localhost:3101
+      ENABLE_COMMANDS_API: "true"
+      HOST: 0.0.0.0

@@ -14,6 +14,7 @@ volumes:
   resolvers:
   work:
   http-history:    # durable per-project HTTP/HTTPS history (#196)
+  steel-sessions:  # durable browser sessions for the Steel pool (#359)
   skills-procedures:  # per-project skill bundles, lessons, revisions, evolution pass records
 
 services:
@@ -102,6 +103,12 @@ services:
     build: { context: ., dockerfile: kali/Dockerfile }
     image: polymerhus-kali:latest
     entrypoint: ["/opt/kali/entrypoint.sh"]
+    # A stop ends every browser lease (capture, stop, release) before the
+    # browser MCP exits, and that path is bounded by STEEL_CLI_TIMEOUT_S
+    # (180 s) plus the API and settle bounds. Docker's 10 s default would
+    # SIGKILL the end path and orphan the API session until the worker's own
+    # timeout fires. Without an active lease the process exits at once.
+    stop_grace_period: 210s
     ports: ["8000:8000"]
     environment:
       # Browser capability (#221): the steel CLI resolves auth from the
@@ -115,6 +122,24 @@ services:
       # gateway then injects the global `--local` flag and the CLI reads this
       # same value natively. Same empty-default convention as STEEL_API_KEY.
       STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
+      # Browser pool (#359, W6). The browser MCP process starts only when the
+      # operator has forwarded the pool Docker socket into the container; an
+      # empty value keeps the feature off and leaves the exec plane untouched.
+      # The pool manager reads the socket and never opens a connection itself.
+      # Port 8003 stays unpublished: the agent reaches it on the compose
+      # network, and every worker port is the operator's loopback forward.
+      STEEL_MCP_PORT: ${STEEL_MCP_PORT:-8003}
+      STEEL_POOL_DOCKER_SOCKET: ${STEEL_POOL_DOCKER_SOCKET:-}
+      STEEL_POOL_LABEL: ${STEEL_POOL_LABEL:-polymerhus.steel-pool=true}
+      STEEL_POOL_SIZE: ${STEEL_POOL_SIZE:-4}
+      STEEL_POOL_WAIT_S: ${STEEL_POOL_WAIT_S:-30}
+      STEEL_POOL_HEALTH_S: ${STEEL_POOL_HEALTH_S:-30}
+      STEEL_HEARTBEAT_S: ${STEEL_HEARTBEAT_S:-120}
+      STEEL_LEASE_TTL_S: ${STEEL_LEASE_TTL_S:-600}
+      STEEL_SESSION_STORE: /var/lib/steel/sessions
+      STEEL_CLI: /opt/localbin/.steel/steel
+      STEEL_GUARD: /opt/kali/steel_guard.py
+      STEEL_WORKER_API_SUFFIX: ${STEEL_WORKER_API_SUFFIX:-/v1}
       # The #196 capture-plane environment (dev line).
       PYTHONPATH: /opt
       KALI_HTTP_HISTORY_ROOT: /data
@@ -171,6 +196,9 @@ services:
       - kali-tools:/opt/localbin
       - resolvers:/resolvers
       - work:/work
+      # The browser session store. Owner-only; the entrypoint fixes the
+      # volume mode before the browser MCP validates it.
+      - steel-sessions:/var/lib/steel/sessions
     extra_hosts:
       # Route app.online.orders.com to the Docker host, where nginx publishes :443
       # and reverse-proxies to the correct backend. host_gateway = host's gateway IP.

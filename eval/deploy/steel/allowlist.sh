@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# RETIRED (#359, W6). The worker pool publishes on the host loopback only, so
+# it needs no inbound firewall rule. This script stays for archaeology only.
+# Do not install it.
+#
 # Allowlist the Steel API port at Docker's DOCKER-USER chain (#359, D359-3).
 #
 # The Steel API has no authentication, and the deployment host is exposed to

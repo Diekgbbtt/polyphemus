@@ -23,20 +23,31 @@ EDGE_TOKEN="${KALI_HTTP_HISTORY_EDGE_TOKEN:-}"
 EDGE_HOST="${KALI_HTTP_HISTORY_EDGE_HOST:-0.0.0.0}"
 EDGE_PORT="${KALI_HTTP_HISTORY_EDGE_PORT:-8002}"
 EDGE_LOG="${KALI_HTTP_HISTORY_EDGE_LOG:-/var/log/kali-http-edge.log}"
+# Browser pool (#359, W6). The feature is off unless the operator forwards the
+# pool Docker socket into the container; the exec plane never depends on it.
+BROWSER_STORE="${STEEL_SESSION_STORE:-/var/lib/steel/sessions}"
+BROWSER_RUN_DIR="${KALI_BROWSER_MCP_RUN_DIR:-/run/steel-pool}"
+BROWSER_PORT="${STEEL_MCP_PORT:-8003}"
+BROWSER_LOG="${KALI_BROWSER_MCP_LOG:-/var/log/kali-browser-mcp.log}"
+BROWSER_SOCKET_WAIT_S="${KALI_BROWSER_MCP_SOCKET_WAIT_S:-300}"
+BROWSER_READY_WAIT_S="${KALI_BROWSER_MCP_READY_WAIT_S:-30}"
 
-mkdir -p "$STORE_ROOT" /run/kali-http "$MITM_CONFDIR" 2>/dev/null || true
-chmod 700 "$STORE_ROOT" /run/kali-http 2>/dev/null || true
+mkdir -p "$STORE_ROOT" /run/kali-http "$MITM_CONFDIR" "$BROWSER_RUN_DIR" 2>/dev/null || true
+chmod 700 "$STORE_ROOT" /run/kali-http "$BROWSER_RUN_DIR" 2>/dev/null || true
 
 PROXY_PID=""
 MCP_PID=""
 EDGE_PID=""
+BROWSER_PID=""
 
 shutdown() {
   trap - EXIT TERM INT
+  [ -n "$BROWSER_PID" ] && kill "$BROWSER_PID" 2>/dev/null || true
   [ -n "$MCP_PID" ] && kill "$MCP_PID" 2>/dev/null || true
   [ -n "$EDGE_PID" ] && kill "$EDGE_PID" 2>/dev/null || true
   [ -n "$PROXY_PID" ] && kill "$PROXY_PID" 2>/dev/null || true
   wait 2>/dev/null || true
+  exit 0
 }
 trap shutdown EXIT TERM INT
 
@@ -117,7 +128,52 @@ else
   echo "[entrypoint] KALI_HTTP_HISTORY_EDGE_TOKEN unset; HTTP-history edge not started"
 fi
 
-# 3) MCP server. Runs in the foreground lane; the trap owns teardown.
+# 3) The browser pool MCP (#359, W6). It is optional: the pool manager has no
+#    SSH logic, so without the operator's forwarded Docker socket it cannot
+#    discover a worker. A browser-plane failure is logged and never stops the
+#    exec server, which is the container's primary lane.
+start_browser_mcp() {
+  if [ -z "${STEEL_POOL_DOCKER_SOCKET:-}" ]; then
+    echo "[entrypoint] STEEL_POOL_DOCKER_SOCKET is unset; browser MCP not started"
+    return 0
+  fi
+  # The store refuses a root that is not owner-only, so fix the volume mode
+  # before the process validates it.
+  if ! mkdir -p "$BROWSER_STORE" 2>/dev/null || ! chmod 700 "$BROWSER_STORE" 2>/dev/null; then
+    echo "[entrypoint] session store $BROWSER_STORE is not usable; browser MCP not started" >&2
+    return 0
+  fi
+  # The operator's tunnel may land after the container, so wait for its socket
+  # instead of failing the feature on a start-order race.
+  for _ in $(seq 1 "$BROWSER_SOCKET_WAIT_S"); do
+    [ -S "$STEEL_POOL_DOCKER_SOCKET" ] && break
+    sleep 1
+  done
+  if [ ! -S "$STEEL_POOL_DOCKER_SOCKET" ]; then
+    echo "[entrypoint] Docker socket $STEEL_POOL_DOCKER_SOCKET is absent after ${BROWSER_SOCKET_WAIT_S}s; browser MCP not started" >&2
+    return 0
+  fi
+  "$MCP_BIN" /opt/kali/browser_mcp_server.py >>"$BROWSER_LOG" 2>&1 &
+  BROWSER_PID="$!"
+  for _ in $(seq 1 "$((BROWSER_READY_WAIT_S * 2))"); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$BROWSER_PORT") 2>/dev/null; then
+      exec 3>&- 2>/dev/null || true
+      echo "[entrypoint] browser MCP ready on 127.0.0.1:$BROWSER_PORT (pid $BROWSER_PID)"
+      return 0
+    fi
+    if ! kill -0 "$BROWSER_PID" 2>/dev/null; then
+      echo "[entrypoint] browser MCP exited during startup; see $BROWSER_LOG" >&2
+      BROWSER_PID=""
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "[entrypoint] browser MCP did not open 127.0.0.1:$BROWSER_PORT within ${BROWSER_READY_WAIT_S}s; see $BROWSER_LOG" >&2
+  return 0
+}
+
+# 4) Exec MCP server. Runs in the foreground lane; the trap owns teardown.
 "$MCP_BIN" /opt/kali/mcp_server.py &
 MCP_PID="$!"
+start_browser_mcp
 wait "$MCP_PID"

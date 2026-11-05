@@ -1,8 +1,9 @@
-"""Contract tests for the pinned local Steel deployment (#359, T3).
+"""Contract tests for the retired single-container Steel deployment (#359, T3).
 
-Parse the declared artifact, never the host's live state. These assertions are
-the reviewable contract: a `latest` tag, a published UI/CDP port, or a missing
-durable volume must fail here before it can ship.
+The active deployment is the loopback-only worker pool (#359, W6), tested in
+`tests/kali/test_steel_pool_deployment.py`. This file pins the retired artifact
+so it stays recognisably retired, remains valid, and is never presented as the
+active deploy. Parse the declared artifact, never the host's live state.
 """
 from __future__ import annotations
 
@@ -33,6 +34,18 @@ docker = pytest.mark.skipif(
 def _service() -> dict:
     config = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     return config["services"]["steel-api"]
+
+
+def test_the_retired_compose_says_so_in_its_first_lines():
+    head = "\n".join(COMPOSE.read_text(encoding="utf-8").splitlines()[:6])
+    assert "RETIRED" in head
+    assert "docker-compose.steel-pool.yml" in head
+
+
+def test_the_operator_guide_points_at_the_pool_not_the_retired_deploy():
+    text = OPERATOR.read_text(encoding="utf-8")
+    assert "eval/deploy/steel/docker-compose.steel-pool.yml" in text
+    assert "docker compose -f eval/deploy/steel/docker-compose.steel.yml up -d" not in text
 
 
 def test_image_is_pinned_by_digest_and_latest_appears_nowhere():
@@ -231,11 +244,12 @@ def test_allowlist_is_idempotent_and_ipv4_ipv6_aware(tmp_path):
     assert "POLYMERHUS-STEEL" not in v6 and v6["DOCKER-USER"] == []
 
 
-def test_operator_guide_covers_deploy_allowlist_teardown_move_and_boundary():
+def test_operator_guide_covers_deploy_reachability_teardown_move_and_boundary():
     text = OPERATOR.read_text(encoding="utf-8")
     for heading in (
         "#### Deploy",
-        "#### Allowlist",
+        "#### Reachability",
+        "#### Agent path",
         "#### Teardown",
         "#### Moving the stack to another host",
         "#### The #245 portability boundary",
@@ -247,7 +261,7 @@ def test_operator_guide_covers_deploy_allowlist_teardown_move_and_boundary():
         "CAPTCHA",
         "Credentials API",
         "Files API",
-        "Concurrency: 1",
+        "one live session per worker",
         "build-time injection",
     ):
         assert capability in text

@@ -1,0 +1,31 @@
+# Operator overlay for the Steel browser pool (#359, W6).
+#
+# The base compose leaves the pool off. This overlay turns it on for one Kali
+# container and carries the two inputs a clean clone must never hold baked in:
+#
+#   - the operator's SSH agent, so the in-container tunnel reaches the pool
+#     host without a key pair on the eval host or the pool host;
+#   - the path of the Docker socket the tunnel publishes inside the container.
+#
+# Render and start with the agent forwarded first (`ssh -A <eval-host>`):
+#
+#   SSH_AUTH_SOCK=$SSH_AUTH_SOCK \
+#     docker compose -f docker-compose.yml \
+#                    -f docker-compose.pool-overlay.yml up -d kali
+#
+# The tunnel command and the verification steps are in
+# `eval/deploy/steel/POOL-RUNBOOK.md`.
+services:
+  kali:
+    environment:
+      SSH_AUTH_SOCK: /run/ssh-agent.sock
+      STEEL_POOL_DOCKER_SOCKET: /run/steel-pool/docker.sock
+    volumes:
+      # The `:?` guard fails the render when the operator forgot the agent,
+      # and `create_host_path: false` fails the start when the path is stale
+      # instead of silently creating a directory at the socket location.
+      - type: bind
+        source: ${SSH_AUTH_SOCK:?SSH_AUTH_SOCK must point at the forwarded agent}
+        target: /run/ssh-agent.sock
+        bind:
+          create_host_path: false

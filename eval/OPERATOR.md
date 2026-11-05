@@ -1020,83 +1020,66 @@ Example:
 EVAL_SURFER_COMMAND='opencode run --agent eval-surfer --dir <canonical-checkout> "Follow {prompt}. input={input}; destination={destination}. Write only {destination}."'
 ```
 
-### 2.14. The local Steel runtime (#359)
+### 2.14. The Steel browser pool (#359)
 
 The Steel browser capability reaches targets that the public internet cannot
 route to through a Steel runtime on the operator's own network.
 The runtime host is fixed (`dj-viscon-workshop-1`); the polymerhus stack stays
 portable, and mutual reachability is the invariant (D359-1).
-The declared artifact is `eval/deploy/steel/docker-compose.steel.yml`: the API
-container alone, pinned by index digest, with a durable `/app/.cache` volume.
-There is no UI container and no published 5173; the Chrome debug port 9223
-stays container-internal.
+The declared artifact is `eval/deploy/steel/docker-compose.steel-pool.yml`:
+two v0.5.5 API workers, each publishing its API on the host loopback only.
+There is no UI container, no published 5173, and no 9223 listener.
+The full operator sequence is `eval/deploy/steel/POOL-RUNBOOK.md`.
 
 #### Deploy
 
-Run on the Steel host, from the repo root:
+On the pool host, from the synced `steel-pool` directory:
 
 ```
-export STEEL_DOMAIN=<host>:<port>          # for example 192.33.91.87:3000
-export STEEL_TARGET_HOST=<synthetic host>  # for example t-<short>.target
-export STEEL_TARGET_IP=<eval server IP>    # for example 46.224.225.245
-docker compose -f eval/deploy/steel/docker-compose.steel.yml up -d
+cd /home/ubuntu/steel-pool
+docker compose -f docker-compose.steel-pool.yml up -d
 ```
 
-`DOMAIN` is required and must be the host:port the clients can reach; the API
-derives each session's `websocket_url` from it.
-The target alias is optional and defaults to the inert pair
-`steel-target.invalid:127.0.0.1`, so an unconfigured deploy cannot route to a
-real host.
-
-#### Allowlist
-
-The API has no built-in authentication, and the host is internet-exposed.
-Restrict TCP 3000 at Docker's `DOCKER-USER` chain:
+The image is built once from the pinned tag:
 
 ```
-sudo eval/deploy/steel/allowlist.sh \
-  46.224.225.245 \
-  <admin IPv4> \
-  2a04:ee40:214a:f500:9ce6:f07f:fafd:4b6b
+git clone --depth 1 --branch v0.5.5-beta \
+  https://github.com/steel-dev/steel-browser.git src
+docker build -t steel-browser-api:v0.5.5-beta -f src/api/Dockerfile src
 ```
 
-The script takes every allowed source as an argument, IPv4 and IPv6.
-It is idempotent: it flushes and rebuilds its own `POLYMERHUS-STEEL` chain and
-keeps one jump at the top of `DOCKER-USER`. A table with no source denies all
-TCP 3000 traffic (fail closed).
-`sudo eval/deploy/steel/allowlist.sh --remove` removes the rules and the chain.
+`DOMAIN` and `CDP_DOMAIN` are `localhost:<published port>` per worker.
+The CLI reaches the worker through the operator's forward, so the value is the
+loopback origin and never the host's public address.
 
-#### Point the stack at the runtime
+#### Reachability
 
-On the host that runs the polymerhus stack, set the one deployment value in the
-instance `.env` to the CLI's canonical form:
+The workers publish on `127.0.0.1:3100` and `127.0.0.1:3101`.
+The operator forwards each port and the Docker socket into the Kali container.
+The pool manager reads the socket and discovers the workers by label.
+It has no SSH logic.
+The browser MCP listens on 8003 inside the compose network and is not
+published.
+The old public single-container deploy (`docker-compose.steel.yml`) and its
+`allowlist.sh` are retired: nothing publishes port 3000 or 9223.
 
-```
-STEEL_BROWSER_API_URL=http://<host>:<port>/v1
-```
+#### Agent path
 
-Then recreate the affected services. The CLI reads the value natively and
-`steel_exec` injects `--local`; the SDK crawl provider passes the resolver's
-origin form (one terminal `/v1` removed) as `base_url`.
-Unset is the default and keeps the remote Steel cloud.
-
-Verify from the eval server:
-
-```
-curl -fsS http://<host>:3000/v1/sessions
-```
-
-A reachable API answers; a blocked source times out.
+The agent calls `browser_start`, `browser_exec`, and `browser_end` on
+`http://kali:8003/mcp`.
+The MCP owns the worker choice and the session.
+No worker URL, port, or container name reaches the agent.
+`STEEL_BROWSER_API_URL` is the scalar legacy path and stays unset unless a
+later work item wires it to a tunneled worker.
 
 #### Teardown
 
 ```
-docker compose -f eval/deploy/steel/docker-compose.steel.yml down
+docker compose -f docker-compose.steel-pool.yml down
 ```
 
-`down` keeps the `steel-cache` volume and its browser state.
-Use `down -v` only when you intend to destroy the local Steel cache,
-snapshots, and session state.
+`down` keeps the worker volumes and their browser state.
+Use `down -v` only when you intend to destroy that state.
 
 #### Process lifecycle (zombie reaping)
 
@@ -1111,7 +1094,7 @@ Measured on the pinned image: 6 launch/release cycles left 108 zombies without
 Check the tier after a busy period:
 
 ```
-docker exec polymerhus-steel-steel-api-1 sh -lc "ps -eo stat,comm | awk '\$1 ~ /Z/ {c++} END {print c+0}'"
+docker exec steel-1 sh -lc "ps -eo stat,comm | awk '\$1 ~ /Z/ {c++} END {print c+0}'"
 ```
 
 A rising count means the container was started without `init` (recreate it from
@@ -1124,10 +1107,16 @@ Tearing a session down without losing its identity costs three calls, in order:
 
 1. Capture: `GET /v1/sessions/<id>/context` returns `{cookies, localStorage,
    sessionStorage, indexedDB}` while the session is live.
-2. Store: write that JSON to a durable path (the `steel-cache` volume, or a
+2. Store: write that JSON to a durable path (the session store volume, or a
    caller-owned file).
 3. Release: `POST /v1/sessions/<id>/release` ends the session and kills the
    browser.
+
+The pool MCP runs this sequence on every end: `browser_end`, the MCP close
+hook, the server shutdown, and the TTL all use it.
+Its store is `/var/lib/steel/sessions`, one owner-only JSON file per name, and
+the agent never reads it.
+The scalar client path keeps its own file.
 
 Restore by passing the stored JSON as `sessionContext` on the next create
 (`POST /v1/sessions`), the same shape the capture returns.
@@ -1138,34 +1127,34 @@ single-writer. The account holds a `steel.state` reference, not the state.
 The four state fields are cookies, localStorage, sessionStorage, and indexedDB.
 The state is application context; the crawl also replicates auth material (cookies, required headers, header-located tokens, and storage-located tokens) and gates the attempt on application state or an authenticated-surface response.
 
-The local runtime needs no `STEEL_API_KEY`; `STEEL_BROWSER_API_URL` alone
-configures it. The local API sets `SKIP_FINGERPRINT_INJECTION=1`, and the local
-`steel` wrapper sets one fixed user agent after `browser start`. The cloud path
-keeps native jitter. See
-`docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.
+The workers need no `STEEL_API_KEY`; the CLI reaches them through the guard.
+The pool does not set a fixed user agent: the v0.5.5 API's native value follows
+the worker's Chrome build.
+The retired single-container deployment pinned one through the `steel`
+wrapper; see `docs/design/evidence/steel-359/t395-fingerprint-consistency.md`.
 
 #### Moving the stack to another host
 
-1. Deploy the same compose file on the new host.
-2. Set `STEEL_DOMAIN` to the new `host:port`.
-3. Run the allowlist script there with the stack host's address and the admin
-   addresses.
-4. Update `STEEL_BROWSER_API_URL` on the polymerhus side, then recreate the
-   `kali` and `agent` services.
-5. Remove the old host's allowlist rules with `--remove` and tear it down.
+1. Deploy the pool compose file on the new host.
+2. Set each worker's `DOMAIN` and `CDP_DOMAIN` to `localhost:<published port>`.
+3. Update the tunnel target and the forwarded ports in the runbook command.
+4. Update `STEEL_POOL_SIZE` on the polymerhus side when the worker count
+   changes, then recreate the `kali` service.
+5. Tear the old pool down with `down` and keep its volumes for audit.
 
-The runtime address is never a module constant, so no code change is needed.
+The pool manager discovers workers from the Docker labels and their published
+ports, so no code constant changes.
 
 #### The #245 portability boundary
 
 These cloud capabilities do not travel to the local runtime:
 
 - Steel-managed residential proxies: not available; bring-your-own proxy only.
-- Dedicated IPs: not available; the egress is the Steel host's own address.
+- Dedicated IPs: not available; the egress is the pool host's own address.
 - Managed CAPTCHA handling: not available (operator ruling, D237-15).
 - The Credentials API: not supported in Steel Local.
 - The Files API: not supported in Steel Local.
-- Concurrency: 1 (one session at a time).
+- Concurrency: one live session per worker; the pool size is the worker count.
 - Extensions load by build-time injection under `api/src/extensions/`, not by
   API call.
 
@@ -1174,9 +1163,9 @@ egresses from the operator's network, which is the point.
 
 #### Destructive operations to avoid
 
-Never run `docker system prune -a` on the Steel host, and never remove the eval
+Never run `docker system prune -a` on the pool host, and never remove the eval
 target images, the live volumes, or the polymerhus stack images.
-The `steel-cache` volume holds browser state that is not reproducible from the
+The worker volumes hold browser state that is not reproducible from the
 repository.
 
 ## 3. KB authoring
