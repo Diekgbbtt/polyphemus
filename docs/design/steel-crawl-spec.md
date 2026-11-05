@@ -853,6 +853,7 @@ Body hashes are over decoded bytes.
 The HTTP-history edge is a separate Kali process on `0.0.0.0:8002`.
 It is published only on the compose network.
 It is not an MCP tool.
+The compose service supplies a shared dev default token; a non-dev deployment overrides `KALI_HTTP_HISTORY_EDGE_TOKEN`.
 
 ```text
 POST /v1/ingest

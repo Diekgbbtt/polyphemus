@@ -93,7 +93,9 @@ esac
 #    enabled only when the shared bearer token is set; the crawler reaches it
 #    on the compose network and never through the MCP surface.
 if [ -n "$EDGE_TOKEN" ]; then
-  KALI_HTTP_HISTORY_EDGE_HOST="$EDGE_HOST" KALI_HTTP_HISTORY_EDGE_PORT="$EDGE_PORT" \
+  KALI_HTTP_HISTORY_EDGE_TOKEN="$EDGE_TOKEN" \
+    KALI_HTTP_HISTORY_EDGE_HOST="$EDGE_HOST" \
+    KALI_HTTP_HISTORY_EDGE_PORT="$EDGE_PORT" \
     "$MCP_BIN" /opt/kali/http_history/edge.py >"$EDGE_LOG" 2>&1 &
   EDGE_PID="$!"
   EDGE_READY=0

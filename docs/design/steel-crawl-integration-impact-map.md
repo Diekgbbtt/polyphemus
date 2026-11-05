@@ -111,9 +111,10 @@ The database remains the per-project SQLite store with content-addressed bodies.
 3. **A failed edge start was silent.**
    The entrypoint started the edge in the background and never reported a bind failure.
    It now tracks readiness and logs `HTTP-history edge FAILED to start` to stderr.
-4. **The deployed eval instance does not run the edge.**
-   Its Kali mount is a stale `dev` copy and its `KALI_HTTP_HISTORY_EDGE_TOKEN` is empty.
-   This is an operator deployment prerequisite, not a code path; a production image built from this branch carries the edge and the token starts it.
+4. **The deployed eval instance needed the new Kali mount and the compose token.**
+   Its Kali mount was a stale `dev` copy and its compose file did not carry the edge variables.
+   The instance mount and compose were updated; the entrypoint now starts the edge on 8002 and the agent carries the shared token.
+   A fresh checkout gets the same behaviour from `docker-compose.yml`: the compose service supplies a shared dev default token and the mounted `kali/` tree carries the edge. A non-dev deployment overrides the token in `.env`.
 
 ### 4.2 Live database verification
 
@@ -157,7 +158,7 @@ The full three-target walkthrough still uses the in-process edge in `eval/steel-
 ### 4.4 Residual database risks
 
 - Multi-process write contention is unit-tested, not stress-tested with the mitmproxy addon, the edge, and the MCP read tools running concurrently.
-- The eval instance still needs the new Kali image or mount and a non-empty `KALI_HTTP_HISTORY_EDGE_TOKEN` for the deployed edge to run.
+- The eval instance mount and compose are updated; the edge starts automatically on 8002 with the shared compose token. A non-dev deployment must override the dev default token.
 - Retention and the project byte cap are not exercised on a large crawl artifact set.
 
 ## 5. Dependent clients

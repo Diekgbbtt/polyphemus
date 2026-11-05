@@ -59,7 +59,9 @@ def test_kali_exposes_the_edge_to_the_agent_without_a_port_collision():
     assert edge_port == 8002
     assert edge_port != mcp_port
     assert agent_env["KALI_HTTP_HISTORY_EDGE_URL"] == f"http://kali:{edge_port}"
-    assert "KALI_HTTP_HISTORY_EDGE_TOKEN" in agent_env
+    token = kali_env["KALI_HTTP_HISTORY_EDGE_TOKEN"]
+    assert token
+    assert agent_env["KALI_HTTP_HISTORY_EDGE_TOKEN"] == token
 
 
 def test_entrypoint_reports_a_failed_edge_start():
@@ -69,6 +71,7 @@ def test_entrypoint_reports_a_failed_edge_start():
     assert "EDGE_READY" in script
     assert "HTTP-history edge FAILED to start" in script
     assert "KALI_HTTP_HISTORY_EDGE_TOKEN unset" in script
+    assert 'KALI_HTTP_HISTORY_EDGE_TOKEN="$EDGE_TOKEN"' in script
 
 
 def test_postrun_installs_the_operator_upstream_ca():

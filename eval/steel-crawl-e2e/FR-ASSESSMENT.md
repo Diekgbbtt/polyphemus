@@ -214,7 +214,7 @@ The edge created plus duplicate counts equal the ledger artifact count.
 - A9 and A10 resurrection: contract-only.
 - The target-type job-set decision node (#336).
 - The targeted-recon browser-state extension.
-- The eval instance Kali image or mount and the edge token.
+- The eval instance Kali mount and compose token are updated; a non-dev deployment must override the compose dev default token.
 - Multi-process SQLite contention.
 - Retention on a large crawl artifact set.
 - The eval operator subset deliberately excludes `steel_crawl`; the pipeline default includes it.

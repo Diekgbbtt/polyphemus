@@ -121,7 +121,9 @@ services:
       # SC-16: the ingest edge is a separate process on 8002. It starts only
       # when the shared bearer token is set; the crawler posts to it on the
       # compose network, never through the MCP surface.
-      KALI_HTTP_HISTORY_EDGE_TOKEN: ${KALI_HTTP_HISTORY_EDGE_TOKEN:-}
+      # Dev default, shared with the agent. The edge is compose-network only;
+      # override this in .env for any non-dev deployment.
+      KALI_HTTP_HISTORY_EDGE_TOKEN: ${KALI_HTTP_HISTORY_EDGE_TOKEN:-polymerhus-http-history-edge-dev}
       KALI_HTTP_HISTORY_EDGE_HOST: 0.0.0.0
       KALI_HTTP_HISTORY_EDGE_PORT: ${KALI_HTTP_HISTORY_EDGE_PORT:-8002}
       KALI_HTTP_CAPTURE_ENABLED: ${KALI_HTTP_CAPTURE_ENABLED:-true}
@@ -198,7 +200,7 @@ services:
       POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
       KALI_MCP_URL: http://kali:8000/mcp
       KALI_HTTP_HISTORY_EDGE_URL: ${KALI_HTTP_HISTORY_EDGE_URL:-http://kali:8002}
-      KALI_HTTP_HISTORY_EDGE_TOKEN: ${KALI_HTTP_HISTORY_EDGE_TOKEN:-}
+      KALI_HTTP_HISTORY_EDGE_TOKEN: ${KALI_HTTP_HISTORY_EDGE_TOKEN:-polymerhus-http-history-edge-dev}
       PROJECT_ID: default
       LIGHTRAG_API_URL: http://lightrag:9621
       LIGHTRAG_BASE_API_URL: http://lightrag:9621
