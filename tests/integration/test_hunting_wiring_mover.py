@@ -62,6 +62,7 @@ from polymerhus.attack.hunting.mover import (
 )
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
+from polymerhus.attack.hunting.pod_export_memory import PodExportStore
 from polymerhus.attack.hunting.surfer import (
     RunDispatchState,
     build_run_dispatch,
@@ -500,7 +501,7 @@ def test_C36_pod_completion_persists_the_export_envelope_durably(tmp_path):
     (idempotent - the count stays one)."""
     pod_root = tmp_path / "pod"
     pod_store = PodMemoryStore(root_dir=pod_root, project_id=PROJECT)
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
     hunter_builder, pod_builder = _agent_seam_builders()
     run_id = "run-id-42"
 
@@ -508,7 +509,7 @@ def test_C36_pod_completion_persists_the_export_envelope_durably(tmp_path):
         return await run_pod_session(
             spec=_spec(), project_id=PROJECT, run_id=run_id,
             hunt_key=DISPATCH_ID, spec_id=SPEC_FILE,
-            inbox=None, hunter_store=hunter, gate=None,
+            inbox=None, pod_export_store=pod_exports, gate=None,
             pod_builder=pod_builder, pod_store=pod_store,
         )
 
@@ -588,11 +589,11 @@ def test_C41_consumed_spec_with_an_export_or_a_foreign_run_is_not_redispatched(
 def test_C37_durable_parent_keyed_record_written_without_a_live_parent(tmp_path):
     """id: C37 - the durable parent-keyed record is written at pod completion
     under the parent's canonical `config_key` INDEPENDENT of a live parent: with
-    NO parent inbox present, `HunterMemoryStore.write_note`'s record exists keyed
-    by the canonical config_key with the export payload."""
+    NO parent inbox present, the pod-export store's record exists keyed by the
+    canonical config_key with the export payload."""
     pod_root = tmp_path / "pod"
     pod_store = PodMemoryStore(root_dir=pod_root, project_id=PROJECT)
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
     hunter_builder, pod_builder = _agent_seam_builders()
     run_id = "run-id-7"
 
@@ -600,7 +601,7 @@ def test_C37_durable_parent_keyed_record_written_without_a_live_parent(tmp_path)
         return await run_pod_session(
             spec=_spec(), project_id=PROJECT, run_id=RUN,
             hunt_key=DISPATCH_ID, spec_id=SPEC_FILE,
-            inbox=None, hunter_store=hunter, gate=None,
+            inbox=None, pod_export_store=pod_exports, gate=None,
             pod_builder=pod_builder, pod_store=pod_store,
         )
 
@@ -608,7 +609,7 @@ def test_C37_durable_parent_keyed_record_written_without_a_live_parent(tmp_path)
 
     # the durable record is keyed by the parent's CANONICAL config_key (the
     # `::`-joined join key), never by the raw `_`-foldered fault_key
-    notes = hunter.read_notes(PROJECT, parent_key=DISPATCH_ID)
+    notes = pod_exports.read_exports(PROJECT, hunt_key=DISPATCH_ID)
     assert len(notes) == 1
     record = notes[0]
     assert DISPATCH_ID in record["key"]
@@ -630,7 +631,7 @@ def test_C38_live_parent_inbox_receives_pod_export_before_settle_single_record(
     export - the durable record is not re-authored by the live feed)."""
     pod_root = tmp_path / "pod"
     pod_store = PodMemoryStore(root_dir=pod_root, project_id=PROJECT)
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
     state = RunDispatchState()
     # a live co-running parent inbox keyed under the parent's canonical config_key
     inbox = AgentInbox()
@@ -645,7 +646,7 @@ def test_C38_live_parent_inbox_receives_pod_export_before_settle_single_record(
         env = await run_pod_session(
             spec=_spec(), project_id=PROJECT, run_id=run_id,
             hunt_key=DISPATCH_ID, spec_id=SPEC_FILE,
-            inbox=inbox, hunter_store=hunter, gate=None,
+            inbox=inbox, pod_export_store=pod_exports, gate=None,
             pod_builder=pod_builder, pod_store=pod_store,
         )
         delivered = await inbox.get()
@@ -660,8 +661,9 @@ def test_C38_live_parent_inbox_receives_pod_export_before_settle_single_record(
     assert received.payload == envelope
     assert received.source == pod_session_id(run_id, DISPATCH_ID, SPEC_FILE)
     # and the durable record is ONE per export: the live-feed consumption (the
-    # idle-loop verdict stub) must NOT double-record against the pod-completion note
-    notes = hunter.read_notes(PROJECT, parent_key=DISPATCH_ID)
+    # idle-loop verdict stub) must NOT double-record against the pod-completion
+    # record. The record is in the pod-export store, never the hunter notes.
+    notes = pod_exports.read_exports(PROJECT, hunt_key=DISPATCH_ID)
     assert len(notes) == 1
 
 

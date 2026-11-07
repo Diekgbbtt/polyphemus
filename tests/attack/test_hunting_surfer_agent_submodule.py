@@ -13,6 +13,7 @@ import asyncio
 import pytest
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
+from polymerhus.attack.hunting.pod_export_memory import PodExportStore
 from polymerhus.attack.hunting import mover as mover_mod
 from polymerhus.attack.hunting import surfer as surfer_mod
 from polymerhus.attack.hunting.mover import (
@@ -193,13 +194,14 @@ def test_run_pod_session_injects_the_role_compaction_middleware(monkeypatch, tmp
         captured.update(kw)
         return {"verdict": "successful", "terminal_reason": "symptom-confirmed"}
 
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
 
     async def _go():
         return await run_pod_session(
             spec=_spec(), project_id=PROJECT, run_id=RUN, hunt_key=DISPATCH_ID,
             spec_id=SPEC_FILE, inbox=None,
-            hunter_store=hunter, gate=None, pod_builder=_builder, pod_store=None,
+            pod_export_store=pod_exports, gate=None, pod_builder=_builder,
+            pod_store=None,
         )
 
     asyncio.run(_go())
@@ -247,13 +249,14 @@ def test_C12_up_pod_session_acquires_the_role_gate(monkeypatch, tmp_path):
         return None
 
     monkeypatch.setattr(surfer_mod, "_run_hunter_idle", _noop_idle)
-    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_exports = PodExportStore(tmp_path / "pod-export")
 
     async def _go():
         return await run_pod_session(
             spec=_spec(), project_id=PROJECT, run_id=RUN, hunt_key=DISPATCH_ID,
             spec_id=SPEC_FILE, inbox=None,
-            hunter_store=hunter, gate=None, role_gate=control.gates["pod"],
+            pod_export_store=pod_exports, gate=None,
+            role_gate=control.gates["pod"],
             pod_builder=_pod_builder, pod_store=None,
         )
 

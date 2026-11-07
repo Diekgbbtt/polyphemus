@@ -651,50 +651,49 @@ def test_the_phase_kind_is_hunter_only():
 def test_concurrent_note_append_cannot_lose_a_record(tmp_path, monkeypatch):
     """The notes surface is one read-modify-write of the whole file.
 
-    The hunter's `notes` tool runs in a worker thread (`asyncio.to_thread`)
-    while the surfer's durable pod-export write runs on the event loop. Without
-    the per-project lock the stale writer replaces the file with its pre-note
-    list and the phase note is lost without an error (the C.a failure).
+    The hunter's `notes` tool runs in a worker thread (`asyncio.to_thread`),
+    so a second writer can read the same file and replace it with its pre-note
+    list. Without the per-project lock the stale writer drops the other note
+    without an error.
     """
     store = HunterMemoryStore(root_dir=tmp_path)
-    _append_named(store, "pod-export:s1", provenance={"verdict_stub": True})
+    _append_named(store, "probe:one")
 
     real_read = HunterMemoryStore._read_records.__func__
-    surfer_read = threading.Event()
-    release_surfer = threading.Event()
+    second_read = threading.Event()
+    release_second = threading.Event()
 
     def patched_read(cls, path):
         records = real_read(cls, path)
-        if threading.current_thread().name == "surfer":
-            surfer_read.set()
-            release_surfer.wait(timeout=5)
+        if threading.current_thread().name == "second":
+            second_read.set()
+            release_second.wait(timeout=5)
         return records
 
     monkeypatch.setattr(
         HunterMemoryStore, "_read_records", classmethod(patched_read))
 
-    surfer = threading.Thread(
-        target=lambda: _append_named(
-            store, "pod-export:s2", provenance={"verdict_stub": True}),
-        name="surfer")
-    surfer.start()
-    assert surfer_read.wait(timeout=5)
+    second = threading.Thread(
+        target=lambda: _append_named(store, "probe:two"),
+        name="second")
+    second.start()
+    assert second_read.wait(timeout=5)
 
-    hunter_done = threading.Event()
+    first_done = threading.Event()
 
-    def hunter_write() -> None:
+    def first_write() -> None:
         _append_named(store, "phase:grounding")
-        hunter_done.set()
+        first_done.set()
 
-    hunter = threading.Thread(target=hunter_write, name="hunter")
-    hunter.start()
-    # Unfixed: the hunter writes now (the surfer is paused after its read).
-    # Fixed: the hunter blocks on the project lock, so this times out.
-    hunter_done.wait(timeout=1)
-    release_surfer.set()
-    hunter.join(timeout=5)
-    surfer.join(timeout=5)
+    first = threading.Thread(target=first_write, name="first")
+    first.start()
+    # Unfixed: the first writer lands now (the second is paused after its
+    # read). Fixed: the first writer blocks on the project lock.
+    first_done.wait(timeout=1)
+    release_second.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
 
     names = {n["note_name"] for n in store.read_notes(PROJECT)}
     assert "phase:grounding" in names
-    assert {"pod-export:s1", "pod-export:s2"} <= names
+    assert {"probe:one", "probe:two"} <= names
