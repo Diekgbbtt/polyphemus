@@ -1,3 +1,9 @@
+> 2026-11-07: the agent surface is one `browser` tool with the `start`,
+> `exec`, and `end` commands; `browser_start(name)` is an internal MCP
+> tool, the session name is never an agent parameter, and `steel.state`
+> is replaced by `accounts.<account>.browser_context.ref`. The Q/A below
+> is historical. See `docs/design/agent-browser-integration-plan.md`.
+
 # Steel pool MCP decisions
 
 Date: 2026-11-05.

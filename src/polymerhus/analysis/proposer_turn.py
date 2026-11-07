@@ -190,8 +190,10 @@ def _surface_tools(
     """The adjacent-surface read/probe tools bound on a proposer turn.
 
     The mechanism-typist's turn binds the read-only `graph_view`, the
-    HTTP-history pair, and the bounded `exec` term, so its ORIENT / VERIFY
-    phases can witness a mechanism in the target's real response. The
+    HTTP-history pair, the bounded `exec` term, and the one `browser` tool, so
+    its ORIENT / VERIFY phases can witness a mechanism in the target's real
+    response and render a client-side surface when the recorded transaction
+    cannot settle it. The
     assigner's turn binds the HTTP-history pair alone
     (`search_http_history` / `get_http_artifact`) - the `graph_view`
     binding is rolled back (the concentration failure it licensed), and

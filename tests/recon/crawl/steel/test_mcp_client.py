@@ -114,6 +114,26 @@ def test_start_maps_the_restore_and_cdp_contract():
     assert fake.exited is True
 
 
+def test_start_reports_the_mounted_context_not_the_requested_one():
+    result = dict(START_RESULT, context_ref="steel-auth-proj-1-alice")
+    client, _ = _client({"browser_start": [FakeToolResult(result)]})
+
+    start = client.start("hunt", context_ref="steel-auth-proj-1-bob")
+    client.close()
+
+    assert start.context_ref == "steel-auth-proj-1-alice"
+
+
+def test_start_reports_an_anonymous_mount_when_the_server_has_no_context():
+    result = dict(START_RESULT, context_ref=None)
+    client, _ = _client({"browser_start": [FakeToolResult(result)]})
+
+    start = client.start("hunt", context_ref="steel-auth-proj-1-bob")
+    client.close()
+
+    assert start.context_ref is None
+
+
 def test_start_requires_the_cdp_endpoint():
     result = dict(START_RESULT)
     result.pop("cdp_url")

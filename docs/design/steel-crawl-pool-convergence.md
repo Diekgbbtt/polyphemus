@@ -1,3 +1,7 @@
+> 2026-11-07: section 12 supersedes the session-key and `steel.state`
+> details in sections 3-5 and 10. The durable object is the decoupled auth
+> context; the session key is ephemeral and derived by the binding.
+
 # Steel crawl pool convergence: final decisions
 
 Status: design closed, 2026-11-07.
@@ -53,25 +57,26 @@ The JEV engine is unchanged.
   The `websockets` `sock` parameter separates the connect address from the URI host.
 - The raw Chrome debug port stays inside the worker container.
 - `browser_start` returns `cdp_url=ws://<container-ip>:3000/` and `cdp_host=localhost:3000`.
-  The generic `open_browser_tools` wrapper strips both fields.
+  The agent-facing `browser` tool never returns either field.
 
 ## 4. Session state
 
-- The stable state key is `steel-<project_slug>` without an account, and `steel-<project_slug>-<account_slug>` with one.
+- The durable auth context is `steel-auth-<project_slug>-<account_slug>`.
+  The session key is ephemeral and derived from the execution unit.
   The run id stays in the lease, the ledger, and the manifest.
-- The gateway loads the stable key, checks the authenticated-context oracle, re-authenticates if needed, and saves the same key.
+- The gateway mounts the decoupled auth context, checks the authenticated-context oracle, re-authenticates if needed, and saves the same context.
 - A failed save overwrites the same key.
   The next gateway turn detects the non-authenticated state and re-authenticates.
   There is no versioned store and no pointer commit.
-- `accounts.<account>.steel.state` holds the stable key.
+- `accounts.<account>.browser_context.ref` holds the context reference.
 - `browser_auth` carries only `auth_probe` and `login_url` to the crawl.
   Cookies and localStorage live in the pool store.
 
 ## 5. Lifecycle and stop
 
-- The crawler calls `browser_start(name)` with no URL.
+- The crawl mounts the decoupled auth context with an ephemeral session key and no URL.
   The sidecar attaches before the root navigation.
-- The crawler calls `browser_end()` in `finally`.
+- The crawl calls `browser_end()` in `finally`.
 - `browser_start` reports `restored`.
 - `browser_end` reports `stopped`, `released`, `captured`, and `saved`.
   `success` is true only when the session is stopped or released.
@@ -136,7 +141,7 @@ The JEV engine is unchanged.
 2. Discovery and proxy: worker container IP, public port, reverse proxy, `websocketUrl` rewrite, lease view CDP fields.
 3. Crawl client: `SteelSessionClient` MCP backend, `SteelResult` mapping, `LiveCdpTransport` Host override, `run_live_crawl` lifecycle.
 4. Lifecycle and stop: 600-second budget, action-cap removal, partial manifest, `crawl_pod` partial routing.
-5. Auth store and gateway: stable state key, `steel.state`, `browser_auth` reduction, `authn` skill and prompt mapping.
+5. Auth store and gateway: decoupled auth context, `browser_context.ref`, `browser_auth` reduction, `authn` skill and prompt mapping.
 6. Tests and E2E: unit seams, contract over the real MCP protocol, deployment compose checks, White Jotter and ComfyUI live E2E on the eval host.
 7. Documentation: spec sections 2.1, 4.1, 4.3, 4.4, 9.1, 12, and 15; pool runbook; `eval/OPERATOR.md`; conjunction; evidence.
 
@@ -164,9 +169,9 @@ Evidence: `docs/design/evidence/steel-pool-mcp/convergence-e2e-2026-11-07.md`.
 - The baseline stack starts two workers and the MCP discovers both.
 - The CLI reaches each worker through its proxy; the Host is localhost.
 - The agent's CDP capture attaches through the worker container IP with Host localhost.
-- The pool store saves the stable key and the crawler restores it.
+- The pool store saves the decoupled auth context and the crawl restores it.
 - The White Jotter gateway authenticates, saves, and the crawl restores and crawls.
-- The ComfyUI crawl starts a fresh stable key and completes with `frontier_empty`.
+- The ComfyUI crawl starts a fresh auth context and completes with `frontier_empty`.
 - The manifest carries `partial=false` on a complete crawl and `partial=true` on an incomplete one.
 - The action ledger records every action with its true outcome.
 - The JEV engine diff against `feat/steel-crawl` is empty.

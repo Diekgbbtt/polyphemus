@@ -123,7 +123,7 @@ The module-level `pod_graph` (`pod.py:770`) wires the three real collaborators; 
 
 `steel_crawl` is the only job with `configurator_mode="agent"` (`src/polymerhus/recon/control/jobs.py`).
 It replaces `configurator -> execute -> gate` with a single `crawl` node (`crawl_pod.py`) that runs `run_live_crawl` synchronously, then rejoins the shared `parse -> triager -> curator` shape.
-The live run assembles `CrawlJob` and `CrawlRun`: the session client mounts the stable browser key through the browser MCP, the auth oracle runs once, the passive CDP sidecar captures flows, the frontier and the Jev policy traverse, the HTTP-history client flushes normalized artifacts to the edge, and `finalize` writes the v2 manifest and ledger on every exit.
+The live run assembles `CrawlJob` and `CrawlRun`: the session client mounts the decoupled auth context through the browser MCP, the auth oracle runs once, the passive CDP sidecar captures flows, the frontier and the Jev policy traverse, the HTTP-history client flushes normalized artifacts to the edge, and `finalize` writes the v2 manifest and ledger on every exit.
 The in-stack pool MCP is the only browser executor.
 See `docs/design/steel-crawl-spec.md` for the module contract and `docs/design/steel-crawl-pool-convergence.md` for the pool contract.
 

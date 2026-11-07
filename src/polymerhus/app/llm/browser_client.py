@@ -161,13 +161,19 @@ class McpBrowserClient:
         remaining = data.get("remaining_ms")
         cdp_url = data.get("cdp_url")
         cdp_host = data.get("cdp_host")
+        if "context_ref" in data:
+            mounted = data.get("context_ref")
+            if not isinstance(mounted, str) or not mounted:
+                mounted = None
+        else:
+            mounted = context_ref
         return BrowserStart(
             name=session_name,
             session_id=session_id,
             restored=dict(restored) if isinstance(restored, Mapping) else {},
             warnings=tuple(str(item) for item in data.get("warnings") or ()),
             remaining_ms=remaining if isinstance(remaining, int) else None,
-            context_ref=context_ref,
+            context_ref=mounted,
             cdp_url=cdp_url if isinstance(cdp_url, str) else "",
             cdp_host=cdp_host if isinstance(cdp_host, str) else "",
         )

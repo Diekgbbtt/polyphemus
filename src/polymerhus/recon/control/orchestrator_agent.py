@@ -464,7 +464,6 @@ class ReconOrchestratorActor:
                 role="job_orchestrator",
                 instance_id=self._run_id,
                 mcp_url=app_config.KALI_BROWSER_MCP_URL,
-                auth_store=self._auth_store,
             )
             try:
                 await run_session_agent(

@@ -204,7 +204,7 @@ def project_browser_auth(account: dict | None,
 
     The pool store is the only browser-state store, so this projection carries
     NO cookie, header, or storage values: the browser MCP restores them from
-    the stable pool key. The only crawl inputs are the resolved
+    the account's decoupled auth context. The only crawl inputs are the resolved
     authenticated-context oracle (`auth_probe`) and the optional `login_url`
     used by the legacy surface gate.
 

@@ -1,15 +1,14 @@
 """Unit tier: the one agent-facing browser tool and its key helpers.
 
 The MCP client is faked at the call boundary. The tool contract, the
-session/context key rules, the fail-open behaviour, and the CDP-field strip
-are asserted without a pool or a worker.
+session/context key rules, and the fail-open behaviour are asserted without a
+pool or a worker.
 """
 from __future__ import annotations
 
 import json
 import re
 
-import pytest
 
 from polymerhus.app.llm.browser_client import BrowserMcpError, BrowserStart
 from polymerhus.app.llm.browser_tools import (
@@ -20,7 +19,6 @@ from polymerhus.app.llm.browser_tools import (
     browser_context_ref,
     browser_session_name,
     build_browser_tool,
-    resolve_browser_context_ref,
 )
 
 
@@ -80,7 +78,6 @@ def _tool(client=None, *, account=None, record_fn=None):
             if (account_name or account)
             else None
         ),
-        bound_account=account,
         record_fn=record_fn,
     )
 
@@ -229,6 +226,7 @@ def test_a_malformed_pool_url_is_a_fail_open_tool():
 
     assert result["success"] is False
     assert result["error"]["code"] == "browser_unavailable"
+    assert "invalid" in result["error"]["message"]
 
 
 def test_a_typed_mcp_error_keeps_its_code_and_retryability():
@@ -286,47 +284,3 @@ def test_close_is_idempotent():
     tool.close()
 
     assert client.closed is True
-
-
-class _Store:
-    def __init__(self, value):
-        self.value = value
-        self.calls: list[str] = []
-
-    def read(self, project_id, path):
-        self.calls.append(path)
-        return self.value
-
-
-def test_the_context_ref_reads_the_auth_store_reference():
-    store = _Store({"ref": "steel-auth-proj-1-alice"})
-
-    assert resolve_browser_context_ref("proj-1", "alice", store=store) == (
-        "steel-auth-proj-1-alice"
-    )
-    assert store.calls == ["accounts.alice.browser_context"]
-
-
-def test_the_context_ref_is_deterministic_without_a_stored_reference():
-    assert resolve_browser_context_ref(
-        "proj-1", "alice", store=_Store(None)
-    ) == "steel-auth-proj-1-alice"
-
-
-@pytest.mark.parametrize(
-    "value",
-    [None, {}, {"ref": ""}, {"ref": "../bad"}, {"other": "x"}],
-)
-def test_an_invalid_stored_reference_degrades_to_the_deterministic_one(value):
-    assert resolve_browser_context_ref(
-        "proj-1", "alice", store=_Store(value)
-    ) == "steel-auth-proj-1-alice"
-
-
-
-def test_a_foreign_stored_reference_never_overrides_the_deterministic_key():
-    store = _Store({"ref": "steel-auth-other-project-alice"})
-
-    assert resolve_browser_context_ref("proj-1", "alice", store=store) == (
-        "steel-auth-proj-1-alice"
-    )

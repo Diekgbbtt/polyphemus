@@ -14,7 +14,6 @@ The module imports no driver and performs no I/O at import.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from pathlib import Path
 import hashlib
 import json
 import re
@@ -36,7 +35,6 @@ BROWSER_CONTEXT_PREFIX = "steel-auth"
 BROWSER_SESSION_PREFIX = "steel"
 _SESSION_MAX = 128
 _SLUG = re.compile(r"[^A-Za-z0-9_-]+")
-_SESSION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 __all__ = [
     "BROWSER_CONTEXT_PREFIX",
@@ -49,7 +47,6 @@ __all__ = [
     "browser_context_ref",
     "browser_session_name",
     "build_browser_tool",
-    "resolve_browser_context_ref",
 ]
 
 
@@ -57,7 +54,8 @@ BROWSER_TOOL_DESCRIPTION = (
     "One web browser over the shared pool. `command` is exactly one of:\n"
     "- `start`: mount the execution unit's browser. url is optional and "
     "loads the first page; if it is omitted, the first `exec` must be a "
-    "`navigate`. `account` optionally selects an authenticated auth context. "
+    "`navigate`. `account` optionally selects an authenticated auth context; "
+    "if it is omitted, the browser starts anonymous. "
     "The session name is internal; never pass one.\n"
     "- `exec`: run one browser command in `input` (`navigate https://...`, "
     "`snapshot -i`, `get text body`, `fill '#user' -- value`, `eval 1+1`, "
@@ -105,8 +103,8 @@ class BrowserArgs(BaseModel):
     account: str | None = Field(
         default=None,
         description=(
-            "start only: the optional auth-context account name. Defaults to "
-            "the execution unit's selected account."
+            "start only: the optional auth-context account name. If omitted, "
+            "the browser starts anonymous."
         ),
     )
     persist_context: bool = Field(
@@ -165,42 +163,6 @@ def browser_session_name(
     return _bounded(BROWSER_SESSION_PREFIX, parts)
 
 
-def resolve_browser_context_ref(
-    project_id: str,
-    account: str,
-    *,
-    store=None,
-) -> str:
-    """The deterministic auth-context reference for one account.
-
-    The project and account are the contract: the reference is
-    `steel-auth-<project>-<account>`. The auth store records the same
-    reference; a stale or foreign stored value never overrides the
-    deterministic key, so one project can never mount another project's
-    context. The pool store returns no object for an unwritten key, so the
-    fresh session starts anonymous.
-    """
-    deterministic = browser_context_ref(project_id, account)
-    if store is None:
-        try:
-            from polymerhus.app.auth.store import AuthStore  # noqa: PLC0415
-
-            store = AuthStore()
-        except Exception:  # noqa: BLE001 - a missing store is a fresh context
-            return deterministic
-    try:
-        value = store.read(
-            project_id, f"accounts.{account}.browser_context"
-        )
-    except Exception:  # noqa: BLE001 - a missing store is a fresh context
-        value = None
-    if isinstance(value, Mapping):
-        ref = value.get("ref")
-        if ref == deterministic:
-            return ref
-    return deterministic
-
-
 class BrowserTool(BaseTool):
     """One browser tool over one MCP session, bound to one execution unit."""
 
@@ -212,6 +174,7 @@ class BrowserTool(BaseTool):
     _session_name_factory: Callable[[str | None], str] = PrivateAttr()
     _context_ref_resolver: Callable[[str | None], str | None] = PrivateAttr()
     _bound_account: str | None = PrivateAttr(default=None)
+    _unavailable_reason: str | None = PrivateAttr(default=None)
     _record_fn: Callable[[Mapping[str, Any], Mapping[str, Any]], None] | None = (
         PrivateAttr(default=None)
     )
@@ -224,15 +187,15 @@ class BrowserTool(BaseTool):
         client: McpBrowserClient | None,
         session_name_factory: Callable[[str | None], str],
         context_ref_resolver: Callable[[str | None], str | None],
-        bound_account: str | None = None,
         record_fn: Callable[[Mapping[str, Any], Mapping[str, Any]], None] | None = None,
+        unavailable_reason: str | None = None,
     ) -> None:
         super().__init__()
         self._client = client
         self._session_name_factory = session_name_factory
         self._context_ref_resolver = context_ref_resolver
-        self._bound_account = bound_account
         self._record_fn = record_fn
+        self._unavailable_reason = unavailable_reason
 
     def _run(
         self,
@@ -242,7 +205,7 @@ class BrowserTool(BaseTool):
         account: str | None = None,
         persist_context: bool = False,
     ) -> str:
-        selected = account or self._bound_account
+        selected = account
         with self._lock:
             if command == "start":
                 result = self._start(url=url, account=selected)
@@ -272,7 +235,8 @@ class BrowserTool(BaseTool):
         if self._client is None:
             return self._error(
                 "browser_unavailable",
-                "the browser capability is not configured",
+                self._unavailable_reason
+                or "the browser capability is not configured",
                 retryable=False,
             )
         try:
@@ -314,7 +278,8 @@ class BrowserTool(BaseTool):
         if self._client is None:
             return self._error(
                 "browser_unavailable",
-                "the browser capability is not configured",
+                self._unavailable_reason
+                or "the browser capability is not configured",
                 retryable=False,
             )
         text = (input or "").strip()
@@ -430,10 +395,7 @@ def build_browser_tool(
     project_id: str,
     role: str,
     instance_id: str,
-    account: str | None = None,
     mcp_url: str | None = None,
-    data_root: str | Path | None = None,
-    auth_store=None,
     record_fn: Callable[[Mapping[str, Any], Mapping[str, Any]], None] | None = None,
 ) -> BrowserTool:
     """Build the one browser tool for one execution unit.
@@ -446,31 +408,28 @@ def build_browser_tool(
 
         mcp_url = config.KALI_BROWSER_MCP_URL
     target = (mcp_url or "").strip()
+    unavailable_reason = None
     try:
         client = McpBrowserClient(target) if target else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
         # A malformed deployment value is a degraded capability, never a
         # construction failure: the agent surface stays stable and reports
-        # `browser_unavailable`.
+        # `browser_unavailable` with the reason.
         client = None
+        unavailable_reason = f"the browser MCP URL is invalid: {exc}"
 
     def session_name(account_name: str | None) -> str:
-        return browser_session_name(
-            project_id, role, instance_id, account_name or account
-        )
+        return browser_session_name(project_id, role, instance_id, account_name)
 
     def context_ref(account_name: str | None) -> str | None:
-        selected = account_name or account
-        if not selected:
+        if not account_name:
             return None
-        return resolve_browser_context_ref(
-            project_id, selected, store=auth_store
-        )
+        return browser_context_ref(project_id, account_name)
 
     return BrowserTool(
         client=client,
         session_name_factory=session_name,
         context_ref_resolver=context_ref,
-        bound_account=account,
         record_fn=record_fn,
+        unavailable_reason=unavailable_reason,
     )

@@ -123,8 +123,8 @@ def live_run_crawl_fn(
     """The production `steel_crawl` collaborator: the deterministic engine.
 
     The pod passes the job's `extra`, which carries the project and run ids,
-    the selected account, and the stable browser key. The engine mounts that
-    key through the browser MCP, runs the real CDP sidecar, the MCP page
+    the selected account, and the decoupled auth-context reference. The engine
+    mounts that context through the browser MCP, runs the real CDP sidecar, the MCP page
     factory, the Jev policy, and the bounded DFS, and returns the v2 manifest
     dict the pod's parser consumes. Every runtime failure is raised to the
     pod's `fail` node, which records reduced coverage.
@@ -221,7 +221,7 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
     curate_fn(assets, observations, project_id) -> (int, int).
 
     Session-only (#395, D20): the `crawl` node runs `run_crawl_fn` under the
-    feed-projected stable key. The browser MCP restores cookies and
+    feed-projected auth-context reference. The browser MCP restores cookies and
     localStorage from the pool store; the feed supplies only the oracle and
     login URL. Auth-eligibility is the pipeline's single concern (C1): the
     feed keys are present only for a `use_auth` job with a resolved account.
